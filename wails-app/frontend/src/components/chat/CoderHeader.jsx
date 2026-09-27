@@ -1,0 +1,83 @@
+import { useState } from 'react'
+import { FolderOpen, Copy, Check, FolderPlus } from 'lucide-react'
+import { api, notify } from '../../services/api.js'
+import { copyToClipboard } from './toolCardUtils.js'
+
+// Coder conversation header (#203): the CODER badge, the folder the agent
+// works in (full path), and Open folder / Copy path.
+
+const mono = 'var(--font-mono)'
+
+export function CoderBadge({ small = false }) {
+  return (
+    <span data-testid="coder-badge" style={{
+      fontFamily: mono, fontSize: small ? 7.5 : 8.5, fontWeight: 700, letterSpacing: 1,
+      color: '#f59e0b', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.4)',
+      borderRadius: 4, padding: small ? '0 4px' : '2px 5px', flexShrink: 0,
+    }}>
+      CODER
+    </span>
+  )
+}
+
+const iconButton = {
+  display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+  background: 'transparent', border: '1px solid rgba(0,180,216,0.2)', borderRadius: 5,
+  padding: '2px 6px', cursor: 'pointer', color: '#00b4d8', fontFamily: mono, fontSize: 9,
+}
+
+export function CoderHeader({ cwd }) {
+  const [copied, setCopied] = useState(false)
+  if (!cwd) return null
+  const openFolder = () => {
+    Promise.resolve(api.openPathWithOS(cwd)).catch(e => notify('coder', `Could not open ${cwd}: ${e}`))
+  }
+  const copy = () => {
+    copyToClipboard(cwd)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div data-testid="coder-header" style={{
+      padding: '6px 12px', borderBottom: '1px solid rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.03)',
+      display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+    }}>
+      <CoderBadge />
+      <span title={cwd} data-testid="coder-cwd" style={{
+        flex: 1, minWidth: 0, fontFamily: mono, fontSize: 10, color: '#e2e8f0',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left',
+      }}>
+        {/* rtl keeps the folder name visible when the path is cut; the
+            bdi stops it from reordering the path's own characters. */}
+        <bdi>{cwd}</bdi>
+      </span>
+      <button type="button" onClick={openFolder} title="Open folder in the file manager" style={iconButton}>
+        <FolderOpen size={10} /> Open folder
+      </button>
+      <button type="button" onClick={copy} title="Copy path" aria-label="Copy path" style={iconButton}>
+        {copied ? <Check size={10} /> : <Copy size={10} />}
+      </button>
+    </div>
+  )
+}
+
+// CoderInitNote reports the new test folder a coder chat was started in,
+// from `coder workspace new`'s JSON.
+export function CoderInitNote({ workspace }) {
+  const created = workspace?.init?.created || []
+  return (
+    <div data-testid="coder-init-note" style={{
+      display: 'flex', alignItems: 'flex-start', gap: 6, margin: '0 0 8px', padding: '6px 8px', borderRadius: 6,
+      background: 'rgba(0,180,216,0.05)', border: '1px solid rgba(0,180,216,0.15)',
+      fontFamily: mono, fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.5, wordBreak: 'break-all',
+    }}>
+      <FolderPlus size={11} color="#00b4d8" style={{ flexShrink: 0, marginTop: 1 }} />
+      <span>
+        {workspace?.created === false ? 'Using folder ' : 'Created test folder '}
+        <span style={{ color: '#e2e8f0' }}>{workspace?.path}</span>
+        {created.length > 0 && <> · created {created.join(', ')}</>}
+        {workspace?.git && <> · git repository</>}
+      </span>
+    </div>
+  )
+}

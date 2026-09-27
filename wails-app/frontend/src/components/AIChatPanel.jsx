@@ -16,6 +16,9 @@ import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
 import AgentSetupLink from './AgentSetupLink.jsx'
+import { CoderModePicker } from './chat/CoderModePicker.jsx'
+import { CoderHeader, CoderBadge, CoderInitNote } from './chat/CoderHeader.jsx'
+import { useCoderStatus, useRecentWorkspaces, folderName, CODER_RUNTIME } from './chat/useCoderMode.js'
 
 // Shared style for the runtime/model <select>s in the selector row.
 // Without `appearance: none`, WebKitGTK draws the closed box with native
@@ -214,6 +217,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [panelWidth, setPanelWidth]         = useState(380)
   const [presentation, setPresentation]     = useState('docked')
   const [viewportNarrow, setViewportNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640)
+  // Coder mode (#203): chatMode is the current conversation's mode, chosen
+  // with CoderModePicker before the first message and fixed after it.
+  // coderCwd is a coder conversation's folder; coderWorkspace the folder
+  // choice for a coder chat not created yet ({kind:'new'} or
+  // {kind:'folder', path}). Only the general assistant offers coder mode.
+  const [chatMode, setChatMode]             = useState('assistant')
+  const [coderCwd, setCoderCwd]             = useState('')
+  const [coderWorkspace, setCoderWorkspace] = useState({ kind: 'new' })
+  const coderAvailable = workflowID === 'general'
+  const { status: coderStatus } = useCoderStatus(isOpen && coderAvailable)
+  const isCoder = chatMode === 'coder'
 
   const liveTurn = useChatStream({ conversationId, turnId: activeTurnId })
   const streaming = !!activeTurnId
@@ -398,6 +412,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       if (conv.model) setSelectedModel(conv.model)
       setConversationId(conv.id)
       setConversationBackend(conv.backend || 'agent')
+      setChatMode(conv.mode === 'coder' ? 'coder' : 'assistant')
+      setCoderCwd(conv.cwd || '')
       setActiveTurnId('')
       setShowSessions(false)
     }).catch(err => {
@@ -419,6 +435,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     loadGenerationRef.current++ // invalidate any in-flight loadConversation
     setConversationId('')
     setConversationBackend('')
+    setCoderCwd('')
+    setCoderWorkspace({ kind: 'new' })
     setActiveTurnId('')
     setMessages([])
   }, [])
@@ -458,6 +476,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         loadGenerationRef.current++ // invalidate any in-flight loadConversation from the PREVIOUS bucket
         setConversationId('')
         setConversationBackend('')
+        setChatMode('assistant')
+        setCoderCwd('')
         setActiveTurnId('')
         setMessages([])
       }
@@ -497,6 +517,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     setStopRequested(false)
     setConversationId('')
     setConversationBackend('')
+    setChatMode('assistant')
+    setCoderCwd('')
     setMessages([])
   }, [workflowID])
 
@@ -535,12 +557,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       // would dismiss any other popup, without also collapsing/closing the
       // panel underneath in the same keystroke.
       if (showSessions) { setShowSessions(false); return }
+      // A running coder turn is changing files: Escape stops it first,
+      // before it would collapse or close the panel.
+      if (isCoder && activeTurnIdRef.current) { stopRef.current?.(); return }
       if (presentation === 'expanded' && !viewportNarrow) setPresentation('docked')
       else onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isOpen, presentation, viewportNarrow, onClose, showSessions])
+  }, [isOpen, presentation, viewportNarrow, onClose, showSessions, isCoder])
 
   // ── Resize handle: drag the panel's left edge, clamped 380-720px ────────
   const handleResizeStart = useCallback((e) => {
@@ -645,6 +670,35 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // the AI agents page is where that gets fixed.
   const agentNotSetup = runtimeUninitialized || (!runtimesLoading && runtimes.length === 0)
 
+  // ── Create a coder conversation for the first message ──────────────────
+  // A new test folder is created first (`coder workspace new`) so its path
+  // and init result show in the transcript; the conversation then runs in
+  // that folder, or in the one the user chose.
+  const createCoderConversation = useCallback(async () => {
+    let cwd = coderWorkspace.kind === 'folder' ? coderWorkspace.path : ''
+    if (!cwd) {
+      const ws = await api.coderWorkspaceNew()
+      cwd = ws.path
+      setMessages(msgs => [...msgs.slice(0, -1), { role: 'coder-init', workspace: ws }, ...msgs.slice(-1)])
+    }
+    const conv = await api.createCoderConversation(CODER_RUNTIME, selectedModel, cwd, false)
+    setConversationId(conv.id)
+    setConversationBackend('agent')
+    setCoderCwd(conv.cwd || cwd)
+    return conv.id
+  }, [coderWorkspace, selectedModel])
+
+  // Picking Coder switches to the runtime coder mode runs on.
+  const chooseMode = useCallback((mode) => {
+    setChatMode(mode)
+    if (mode === 'coder' && runtimes.some(r => r.id === CODER_RUNTIME)) setSelectedRuntime(CODER_RUNTIME)
+  }, [runtimes])
+
+  const pickCoderFolder = useCallback(async () => {
+    const dir = await Promise.resolve(api.pickCoderFolder()).catch(() => '')
+    if (dir) setCoderWorkspace({ kind: 'folder', path: dir })
+  }, [])
+
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     const text = input.trim()
@@ -657,15 +711,19 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
 
     try {
       let convId = conversationId
-      if (!convId) {
+      if (!convId && isCoder) {
+        convId = await createCoderConversation()
+      } else if (!convId) {
         const conv = await api.createChatConversation(workflowID, selectedRuntime, selectedModel)
         convId = conv.id
         setConversationId(convId)
         setConversationBackend('agent')
       }
       const turnId = newTurnId()
-      const tools = getAssistantTools()
-      const allowRuns = getAssistantAllowRuns()
+      // A coder turn runs without monoagent tools: the CLI refuses --tools
+      // for a coder conversation (Claude Code brings its own).
+      const tools = !isCoder && getAssistantTools()
+      const allowRuns = !isCoder && getAssistantAllowRuns()
       activeStreamRef.current = { workflowID, conversationId: convId, turnId }
       const res = await api.startChatTurn(convId, turnId, text, !!tools, !!allowRuns)
       if (res?.ok === false) {
@@ -687,7 +745,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         { role: 'error', content: String(err), code: err?.code || '' },
       ])
     }
-  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, conversationId])
+  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, conversationId, isCoder, createCoderConversation])
 
   // Whether an agent runtime is selected — gates the input, matching
   // send()'s own guard.
@@ -757,6 +815,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       notify('chat', `Could not stop: ${err}`)
     }
   }, [conversationId, activeTurnId])
+  const stopRef = useRef(stop)
+  stopRef.current = stop
 
   // ── Clear history ───────────────────────────────────────────────────────
   const clearHistory = useCallback(async () => {
@@ -768,6 +828,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     setPastConversations([])
     setConversationId('')
     setConversationBackend('')
+    setCoderCwd('')
     setMessages([])
   }, [workflowID])
 
@@ -790,6 +851,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     revalidateAndOpenArtifact(call, artifact, { api, notify, onOpen: onOpenArtifact })
   }, [onOpenArtifact])
 
+  // The mode is chosen before the first message and fixed after it.
+  const showModePicker = coderAvailable && !conversationId && !activeTurnId && messages.length === 0
+  const recentWorkspaces = useRecentWorkspaces(isOpen && showModePicker && isCoder)
+  // Coder mode turned off (or not ready) while a coder chat was being set
+  // up: fall back to the assistant rather than a choice that would fail.
+  const coderUsable = !!coderStatus?.enabled && coderStatus.ready !== false
+  useEffect(() => {
+    if (isCoder && !conversationId && !coderUsable) setChatMode('assistant')
+  }, [isCoder, conversationId, coderStatus, coderUsable])
   if (!isOpen) return null
 
   return (
@@ -849,7 +919,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         }}>
           AI ASSISTANT
         </span>
-        {assistantToolsOn && (
+        {isCoder && <CoderBadge />}
+        {assistantToolsOn && !isCoder && (
           <span
             title={`monoagent tools enabled${assistantAllowRuns ? ' — including running workflows/actions from chat' : ''}`}
             style={{
@@ -944,7 +1015,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                   }}>
                     {c.model || c.runtimeId || c.providerId || '(no model)'}
                   </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, minWidth: 0 }}>
+                    {c.mode === 'coder' && (
+                      <>
+                        <CoderBadge small />
+                        <span title={c.cwd} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {folderName(c.cwd)}
+                        </span>
+                      </>
+                    )}
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>
                       {c.backend === 'provider' ? 'removed AI provider · read-only' : c.runtimeId}
                     </span>
@@ -1083,6 +1162,21 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         )}
       </div>
 
+      {/* ── Coder mode: the mode/folder choice before a conversation
+          starts, then the folder header for a coder conversation ── */}
+      {showModePicker && (
+        <CoderModePicker
+          status={coderStatus}
+          mode={chatMode}
+          onModeChange={chooseMode}
+          workspace={coderWorkspace}
+          onWorkspaceChange={setCoderWorkspace}
+          recent={recentWorkspaces}
+          onPickFolder={pickCoderFolder}
+        />
+      )}
+      {isCoder && <CoderHeader cwd={coderCwd} />}
+
       {/* ── Messages area ── */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
       <div ref={scroll.containerRef} style={{
@@ -1139,7 +1233,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         )}
 
         {messages.map((msg, i) => (
-          msg.role === 'turn' ? (
+          msg.role === 'coder-init' ? (
+            <CoderInitNote key={i} workspace={msg.workspace} />
+          ) : msg.role === 'turn' ? (
             <div key={i} className="chat-assistant-turn">
               <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} />
               {Object.values(msg.state.calls).map(call => {

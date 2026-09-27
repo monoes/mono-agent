@@ -1,25 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronDown, ChevronRight, Loader, Check, X, Copy } from 'lucide-react'
-
-// Same self-contained tick pattern as TurnStatus.jsx's own live "idle for
-// Ns" clock: own `now`, tick once a second only while `active`, stop
-// entirely once the call completes so a finished card never re-renders on
-// a timer it no longer needs.
-function useTicker(active) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!active) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [active])
-  return now
-}
-
-function formatDuration(ms) {
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  const totalSeconds = Math.round(ms / 1000)
-  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
-}
+import { useTicker, formatDuration, copyToClipboard } from './toolCardUtils.js'
+import { NativeToolCard } from './NativeToolCard.jsx'
 
 function formatArgs(args) {
   if (args === null || args === undefined) return null
@@ -37,10 +19,6 @@ function formatResult(call) {
   if (call.status !== 'completed') return null
   if (call.result === '') return '(empty result)'
   return call.result
-}
-
-function copyToClipboard(text) {
-  try { navigator.clipboard?.writeText(text) } catch { /* clipboard unavailable — copy is a convenience, not required */ }
 }
 
 // One accessible, expandable timeline step per tool call — identity is
@@ -62,7 +40,13 @@ function copyToClipboard(text) {
 // live-ticking "Running" clock counting up from its original startedAt
 // indefinitely, for a call that will never run again. Defaults to true so
 // existing callers that only ever render live turns are unaffected.
-export function ToolActivityCard({ call, turnId = '', isLive = true }) {
+export function ToolActivityCard(props) {
+  // Coder turns' native tools (Bash, Edit, …) get their own per-tool cards;
+  // every other call keeps the generic args/result card below.
+  return props.call.native ? <NativeToolCard {...props} /> : <GenericToolCard {...props} />
+}
+
+function GenericToolCard({ call, turnId = '', isLive = true }) {
   const failed = call.status === 'completed' && call.ok === false
   const orphaned = !isLive && call.status === 'started'
   // Never collapse a card the user would need to see: an error stays open

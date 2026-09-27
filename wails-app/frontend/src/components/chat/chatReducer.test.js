@@ -198,4 +198,18 @@ describe('chatReducer', () => {
     expect(state.usage.inputTokens).toBe(0)
     expect(state.usage.outputTokens).toBeNull()
   })
+
+  it('keeps a coder turn\'s native-tool fields, and leaves other calls\' shape alone', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'task', name: 'Task', arguments: { description: 'x' }, native: true }, 1),
+      ev('tool.started', { callId: 'b1', name: 'Bash', arguments: { command: 'ls' }, native: true, parentCallId: 'task' }, 2),
+      ev('tool.completed', { callId: 'b1', ok: false, result: 'x', truncated: true, durationMs: 1200, denied: true }, 3),
+      ev('tool.completed', { callId: 'orphan', ok: null, result: '', cancelled: true }, 4),
+      ev('tool.started', { callId: 'plain', name: 'workflow_list', arguments: null }, 5),
+    )
+    expect(state.calls.b1).toMatchObject({ native: true, parentCallId: 'task', truncated: true, durationMs: 1200, denied: true, status: 'completed' })
+    expect(state.calls.task.parentCallId).toBeUndefined()
+    expect(state.calls.orphan.cancelled).toBe(true)
+    expect(Object.keys(state.calls.plain).sort()).toEqual(['arguments', 'callId', 'name', 'ok', 'result', 'startedAt', 'status'])
+  })
 })

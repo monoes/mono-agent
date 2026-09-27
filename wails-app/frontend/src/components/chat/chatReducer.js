@@ -28,6 +28,16 @@ function upsertTextPart(parts, partId, text) {
   return next
 }
 
+// The optional tool.completed fields a coder turn adds, kept only when set.
+function completionFlags(payload) {
+  const flags = {}
+  if (payload.truncated) flags.truncated = true
+  if (payload.denied) flags.denied = true
+  if (payload.cancelled) flags.cancelled = true
+  if (typeof payload.durationMs === 'number' && payload.durationMs > 0) flags.durationMs = payload.durationMs
+  return flags
+}
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
   switch (ev.type) {
@@ -51,6 +61,12 @@ function eventPatch(state, ev) {
           ok: null,
           result: null,
           startedAt: ev.at,
+          // Coder turns (#202): native marks one of Claude Code's own tools
+          // (Bash, Edit, …); parentCallId nests a call made inside a
+          // subagent (Task/Agent) call. Only set when present, so other
+          // calls keep their exact shape.
+          ...(payload.native ? { native: true } : {}),
+          ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
         },
       }
       return { calls, parts: [...state.parts, { kind: 'tool', callId: payload.callId }] }
@@ -58,6 +74,7 @@ function eventPatch(state, ev) {
 
     case 'tool.completed': {
       const existing = state.calls[payload.callId]
+      const flags = completionFlags(payload)
       const calls = {
         ...state.calls,
         // No startedAt/finishedAt on the unmatched-completion fallback below:
@@ -66,7 +83,7 @@ function eventPatch(state, ev) {
         // keeps "both timestamps present" the one signal ToolActivityCard
         // needs to decide whether elapsed time can be shown at all.
         [payload.callId]: existing
-          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at }
+          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at, ...flags }
           : {
               callId: payload.callId,
               name: 'unknown',
@@ -74,6 +91,7 @@ function eventPatch(state, ev) {
               status: 'completed',
               ok: payload.ok,
               result: payload.result,
+              ...flags,
             },
       }
       // Retain an unmatched result as its own step (plan: "retain unmatched
