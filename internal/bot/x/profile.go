@@ -143,7 +143,9 @@ const scrapeProfileJS = `() => {
 		const links = [...art.querySelectorAll("a[href*='/status/']")];
 		const a = links.find((x) => x.querySelector('time')) || links[0];
 		out.pinned_url = a ? new URL(a.getAttribute('href'), location.href).href.split('?')[0] : '';
-		out.pinned_text = txt(art.querySelector("[data-testid='tweetText']"));
+		// textContent: innerText puts each @mention on a line of its own.
+		const tt = art.querySelector("[data-testid='tweetText']");
+		out.pinned_text = tt ? (tt.textContent || '').trim() : '';
 		break;
 	}
 	// The profile's own data, as the header's components hold it: exact
@@ -345,7 +347,7 @@ func (b *XBot) scrapeProfile(ctx context.Context, p browser.PageInterface, pageU
 const pinnedTextJS = `(id) => {
 	const a = document.querySelector("[data-testid='primaryColumn'] article a[href*='/status/" + id + "']");
 	const t = a && a.closest('article') && a.closest('article').querySelector("[data-testid='tweetText']");
-	return t ? (t.innerText || t.textContent || '').trim() : '';
+	return t ? (t.textContent || '').trim() : ''; // innerText splits out each @mention
 }`
 
 // apply overlays the header's user object onto the page read: it has exact
