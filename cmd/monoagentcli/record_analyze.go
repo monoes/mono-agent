@@ -18,6 +18,7 @@ import (
 	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/recordanalyze"
 	"github.com/monoes/mono-agent/internal/recording"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -41,7 +42,7 @@ var recordVerifyExec = func(ctx context.Context, automationID string, verbose, k
 	}
 	// Same connect path as `node run`: reuse or start the bridge, and when
 	// the extension is not attached launch the user's real Chrome and wait.
-	bridge := setupExtensionBridge(logger, 3*time.Second)
+	bridge := setupProfileBridge(vault.ProfileIDFromContext(ctx), logger, 3*time.Second)
 	if !bridge.IsConnected() {
 		if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 			return nil, fmt.Errorf("browser bridge not connected: %w", err)
@@ -176,7 +177,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 			}
 			secrets, release := recordSecretLookup(cmd.Context(), cfg, d.TargetAutomation)
 			defer release()
-			exec, err := recordVerifyExec(cmd.Context(), d.TargetAutomation, cfg.Verbose, keepOpen, secrets)
+			exec, err := recordVerifyExec(vault.ContextWithProfileID(cmd.Context(), browserProfile(cfg)), d.TargetAutomation, cfg.Verbose, keepOpen, secrets)
 			if err != nil {
 				return err
 			}

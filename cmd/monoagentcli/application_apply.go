@@ -24,8 +24,8 @@ import (
 // tests that stub out browser mechanics entirely (see
 // TestApplicationApplyAutoModeSkipsPrompt), mirroring
 // apply.OpenForApplicationFunc/documents.RenderPDFFunc's convention.
-var applicationApplyBridgeFunc = func() (browserpkg.ExtensionBridge, error) {
-	bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+var applicationApplyBridgeFunc = func(profileID string) (browserpkg.ExtensionBridge, error) {
+	bridge := setupProfileBridge(profileID, newExtensionBridgeLogger(), 3*time.Second)
 	if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func newApplicationApplyCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("preparing documents: %w", err)
 			}
 
-			bridge, err := applicationApplyBridgeFunc()
+			bridge, err := applicationApplyBridgeFunc(cfg.ProfileID)
 			if err != nil {
 				return fmt.Errorf("connecting to browser extension: %w", err)
 			}

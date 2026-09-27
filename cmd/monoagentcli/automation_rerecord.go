@@ -14,6 +14,7 @@ import (
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/extension"
 	"github.com/monoes/mono-agent/internal/recording"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,7 @@ var rerecordOpenPicker = func(ctx context.Context, url string, verbose bool) (el
 	if !verbose {
 		logger = logger.Level(zerolog.WarnLevel)
 	}
-	bridge := setupExtensionBridge(logger, 3*time.Second)
+	bridge := setupProfileBridge(vault.ProfileIDFromContext(ctx), logger, 3*time.Second)
 	if !bridge.IsConnected() {
 		if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 			return nil, fmt.Errorf("browser bridge not connected: %w", err)
@@ -120,7 +121,7 @@ func newAutomationRerecordCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := rerecordSelector(cmd.Context(), reg, reg, args[0], args[1], url, timeout, cfg.Verbose)
+			res, err := rerecordSelector(vault.ContextWithProfileID(cmd.Context(), browserProfile(cfg)), reg, reg, args[0], args[1], url, timeout, cfg.Verbose)
 			if err != nil {
 				return err
 			}

@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 // The extension→Go request channel.
@@ -109,6 +107,11 @@ type Request struct {
 	ID     string         `json:"id"`
 	Method string         `json:"method"`
 	Params map[string]any `json:"params,omitempty"`
+
+	// Origin is the browser that asked, filled in by the server and never
+	// read off the wire. A handler uses it to answer "for this browser",
+	// e.g. profile.list defaulting to the profile the browser is bound to.
+	Origin ConnInfo `json:"-"`
 }
 
 // Reply is one frame back. A frame with Progress set is informational and
@@ -265,7 +268,7 @@ func isRequestFrame(msg []byte) bool {
 // serveRequest runs one request to completion and settles it. Called from
 // the read loop, so the actual work is handed to a goroutine — this
 // function must return promptly no matter what the handler does.
-func (s *Server) serveRequest(msg []byte) {
+func (s *Server) serveRequest(c *extConn, msg []byte) {
 	var req Request
 	if err := json.Unmarshal(msg, &req); err != nil {
 		// Nothing to reply to: without an id, a reply could not be
@@ -278,10 +281,11 @@ func (s *Server) serveRequest(msg []byte) {
 		s.logger.Warn().Str("method", req.Method).Msg("extension request with no id, dropped")
 		return
 	}
+	req.Origin = c.info()
 
 	handler, ok := s.handlerFor(req.Method)
 	if !ok {
-		s.replyError(req.ID, CodeUnknownMethod, fmt.Errorf("unknown method %q", req.Method))
+		s.replyError(c, req.ID, CodeUnknownMethod, fmt.Errorf("unknown method %q", req.Method))
 		return
 	}
 
@@ -291,7 +295,7 @@ func (s *Server) serveRequest(msg []byte) {
 	select {
 	case s.requestSem() <- struct{}{}:
 	default:
-		s.replyError(req.ID, CodeBusy, fmt.Errorf("too many requests in flight (max %d)", maxInflightRequests))
+		s.replyError(c, req.ID, CodeBusy, fmt.Errorf("too many requests in flight (max %d)", maxInflightRequests))
 		return
 	}
 
@@ -308,10 +312,10 @@ func (s *Server) serveRequest(msg []byte) {
 			// The handler's own panic is caught beside it, in runHandler.
 			if r := recover(); r != nil {
 				s.logger.Error().Interface("panic", r).Str("method", req.Method).Msg("request dispatch panicked")
-				s.replyError(req.ID, CodeInternal, fmt.Errorf("handler panicked"))
+				s.replyError(c, req.ID, CodeInternal, fmt.Errorf("handler panicked"))
 			}
 		}()
-		s.runHandler(handler, &req)
+		s.runHandler(c, handler, &req)
 	}()
 }
 
@@ -334,7 +338,7 @@ type handlerOutcome struct {
 // What this does not do is stop the handler: Go has no way to. A wedged
 // handler leaks one goroutine, which is the cheaper of the two failures and
 // the one the extension can recover from.
-func (s *Server) runHandler(handler RequestHandler, req *Request) {
+func (s *Server) runHandler(c *extConn, handler RequestHandler, req *Request) {
 	base := s.ctx
 	if base == nil {
 		base = context.Background()
@@ -354,7 +358,7 @@ func (s *Server) runHandler(handler RequestHandler, req *Request) {
 		if settled.Load() {
 			return
 		}
-		s.writeReply(&Reply{
+		s.writeReply(c, &Reply{
 			Kind:     KindReply,
 			ID:       req.ID,
 			Progress: &Progress{Stage: stage, Detail: detail},
@@ -388,15 +392,15 @@ func (s *Server) runHandler(handler RequestHandler, req *Request) {
 			} else if ctx.Err() != nil {
 				code = CodeTimeout
 			}
-			s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: false, Error: out.err.Error(), Code: code, Data: data})
+			s.writeReply(c, &Reply{Kind: KindReply, ID: req.ID, OK: false, Error: out.err.Error(), Code: code, Data: data})
 			return
 		}
-		s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: true, Data: out.data})
+		s.writeReply(c, &Reply{Kind: KindReply, ID: req.ID, OK: true, Data: out.data})
 	case <-ctx.Done():
 		settled.Store(true)
 		s.logger.Warn().Str("method", req.Method).Str("id", req.ID).
 			Dur("after", timeout).Msg("request handler outlived its deadline")
-		s.replyError(req.ID, CodeTimeout,
+		s.replyError(c, req.ID, CodeTimeout,
 			fmt.Errorf("%s did not answer within %s", req.Method, timeout))
 	}
 }
@@ -439,29 +443,23 @@ func asRequestError(err error, target **RequestError) bool {
 	return false
 }
 
-func (s *Server) replyError(id, code string, err error) {
-	s.writeReply(&Reply{Kind: KindReply, ID: id, OK: false, Error: err.Error(), Code: code})
+func (s *Server) replyError(c *extConn, id, code string, err error) {
+	s.writeReply(c, &Reply{Kind: KindReply, ID: id, OK: false, Error: err.Error(), Code: code})
 }
 
-// writeReply writes one frame to the extension socket. Failures are logged
-// and swallowed: the socket being gone is the ordinary case (the browser
-// closed, the worker was suspended), not an error anyone can act on.
-func (s *Server) writeReply(reply *Reply) {
+// writeReply writes one frame back to the browser that asked. Failures are
+// logged and swallowed: the socket being gone is the ordinary case (the
+// browser closed, the worker was suspended), not an error anyone can act on.
+func (s *Server) writeReply(c *extConn, reply *Reply) {
 	data, err := json.Marshal(reply)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("marshal reply")
 		return
 	}
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-	if conn == nil {
+	if c == nil {
 		return
 	}
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	s.writeMu.Unlock()
-	if err != nil {
+	if err := c.write(data); err != nil {
 		s.logger.Debug().Err(err).Str("id", reply.ID).Msg("could not write reply")
 	}
 }

@@ -1,0 +1,278 @@
+package extension
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
+)
+
+// One bridge, several browsers.
+//
+// Every browser profile with the extension installed runs its own copy of
+// it: its own service worker, its own chrome.storage, its own socket to this
+// server. The server used to keep exactly one of those sockets, and a second
+// one knocked the first off. So two browser profiles could never be driven
+// at once, and since a browser profile holds one cookie jar per site,
+// neither could two accounts on the same site.
+//
+// Now each socket is kept under the instance id its extension generated
+// once and reports in its auth frame, along with the monoagent profile the
+// user bound that browser to. A command goes to one browser, chosen by a
+// Target (see resolve). An extension too old to report an instance id is
+// kept under legacyInstanceID. That is exactly the old single-socket
+// behaviour, for everyone who has not updated the extension.
+
+// legacyInstanceID keys the socket of an extension that sent no usable
+// instance id. There is one such slot, so two old extensions still replace
+// each other the way every extension used to.
+const legacyInstanceID = "legacy"
+
+// validInstanceID bounds what an extension may call itself. The id shows
+// up in URLs, logs and CLI output, so it is held to a UUID-ish alphabet.
+var validInstanceID = regexp.MustCompile(`^[A-Za-z0-9-]{8,64}$`)
+
+// maxLabelLen bounds the user-chosen browser label.
+const maxLabelLen = 60
+
+// Target names the browser a command is for. Instance wins when set. A
+// Profile resolves to the browser bound to that monoagent profile. The zero
+// Target is "the browser a caller that knows nothing about profiles would
+// have reached before", i.e. the default browser.
+type Target struct {
+	Profile  string
+	Instance string
+}
+
+// ConnInfo describes one connected browser.
+type ConnInfo struct {
+	Instance    string    `json:"instance"`
+	Profile     string    `json:"profile,omitempty"`
+	Label       string    `json:"label,omitempty"`
+	Version     string    `json:"version,omitempty"`
+	Legacy      bool      `json:"legacy,omitempty"`
+	ConnectedAt time.Time `json:"connectedAt"`
+	// Conflict: another connected browser is bound to the same profile.
+	// Only the newest of them is used.
+	Conflict bool `json:"conflict,omitempty"`
+}
+
+// ErrNoExtension means no browser is connected at all. The words are the
+// ones every caller already knows from before there were several.
+var ErrNoExtension = errors.New("no extension connected")
+
+// ErrBrowserGone means a specific browser was asked for and is not
+// connected, e.g. it was closed in the middle of a run.
+var ErrBrowserGone = errors.New("that browser is not connected")
+
+// NoBrowserError means browsers are connected, but none may run this
+// profile: each one is bound to some other profile, and there is no
+// unbound (default) browser to fall back to.
+type NoBrowserError struct {
+	Profile string
+	BoundTo []string // the profiles the connected browsers ARE bound to
+}
+
+func (e *NoBrowserError) Error() string {
+	return fmt.Sprintf("no browser is set up for profile %q (the connected browsers run profiles %s) — "+
+		"open the MonoAgent Bridge side panel in the browser this profile should use and choose it under "+
+		"\"Automations in this browser\", or run `monoagentcli extension bind <browser> %s`",
+		e.Profile, strings.Join(e.BoundTo, ", "), e.Profile)
+}
+
+// extConn is one browser's socket.
+type extConn struct {
+	id          string
+	legacy      bool
+	version     string
+	connectedAt time.Time
+
+	ws      *websocket.Conn
+	writeMu sync.Mutex // gorilla/websocket forbids concurrent writers, per socket
+
+	mu      sync.Mutex // guards profile and label, which change while connected
+	profile string
+	label   string
+}
+
+func newExtConn(ws *websocket.Conn, auth authFrame, now time.Time) *extConn {
+	c := &extConn{id: legacyInstanceID, legacy: true, ws: ws, connectedAt: now}
+	if validInstanceID.MatchString(auth.Instance) {
+		c.id, c.legacy = auth.Instance, false
+	}
+	c.version = cleanLabel(auth.Version)
+	c.setBinding(auth.Profile, auth.Label)
+	return c
+}
+
+// setBinding records which profile the browser says it runs. An id that
+// profiledir would refuse is dropped rather than trusted, because the id is
+// used as a directory name further down.
+func (c *extConn) setBinding(profile, label string) {
+	profile = strings.TrimSpace(profile)
+	if profile != "" && !profiledir.ValidProfileID(profile) {
+		profile = ""
+	}
+	c.mu.Lock()
+	c.profile = profile
+	c.label = cleanLabel(label)
+	c.mu.Unlock()
+}
+
+func cleanLabel(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > maxLabelLen {
+		s = string(r[:maxLabelLen])
+	}
+	return s
+}
+
+func (c *extConn) boundProfile() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.profile
+}
+
+func (c *extConn) write(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.WriteMessage(websocket.TextMessage, data)
+}
+
+func (c *extConn) ping() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.WriteMessage(websocket.PingMessage, nil)
+}
+
+func (c *extConn) info() ConnInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ConnInfo{
+		Instance: c.id, Profile: c.profile, Label: c.label, Version: c.version,
+		Legacy: c.legacy, ConnectedAt: c.connectedAt,
+	}
+}
+
+// installConn makes c the socket for its browser and closes the one it
+// replaces. That is routine: an MV3 service worker that respawns before its
+// previous socket was reaped reconnects on top of itself many times a day.
+func (s *Server) installConn(c *extConn) {
+	s.connMu.Lock()
+	if s.conns == nil {
+		s.conns = make(map[string]*extConn)
+	}
+	old := s.conns[c.id]
+	s.conns[c.id] = c
+	s.connMu.Unlock()
+	if old != nil {
+		s.logger.Info().Str("instance", c.id).Msg("replacing the previous connection from this browser")
+		_ = old.ws.Close()
+	}
+}
+
+// removeConn forgets c, unless a newer socket from the same browser has
+// already taken its slot.
+func (s *Server) removeConn(c *extConn) {
+	s.connMu.Lock()
+	if s.conns[c.id] == c {
+		delete(s.conns, c.id)
+	}
+	s.connMu.Unlock()
+}
+
+// connList is every connected browser, newest first.
+func (s *Server) connList() []*extConn {
+	s.connMu.Lock()
+	out := make([]*extConn, 0, len(s.conns))
+	for _, c := range s.conns {
+		out = append(out, c)
+	}
+	s.connMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].connectedAt.After(out[j].connectedAt) })
+	return out
+}
+
+// resolve picks the browser a command for t goes to:
+//
+//   - an Instance: that browser, or ErrBrowserGone;
+//   - a Profile: the newest browser bound to it; failing that, the newest
+//     unbound browser (the "default browser" everyone had before binding
+//     existed); never a browser bound to a DIFFERENT profile, because that
+//     browser is logged into the other profile's accounts;
+//   - neither: the newest unbound browser, else the newest browser, which
+//     is what an older client that sends no target always got.
+func (s *Server) resolve(t Target) (*extConn, error) {
+	conns := s.connList()
+	if len(conns) == 0 {
+		return nil, ErrNoExtension
+	}
+	if t.Instance != "" {
+		for _, c := range conns {
+			if c.id == t.Instance {
+				return c, nil
+			}
+		}
+		return nil, fmt.Errorf("%w: %s", ErrBrowserGone, t.Instance)
+	}
+	var unbound *extConn
+	var boundTo []string
+	for _, c := range conns {
+		p := c.boundProfile()
+		if t.Profile != "" && p == t.Profile {
+			return c, nil
+		}
+		if p == "" {
+			if unbound == nil {
+				unbound = c
+			}
+		} else {
+			boundTo = append(boundTo, p)
+		}
+	}
+	if unbound != nil {
+		return unbound, nil
+	}
+	if t.Profile == "" {
+		return conns[0], nil
+	}
+	sort.Strings(boundTo)
+	return nil, &NoBrowserError{Profile: t.Profile, BoundTo: slices.Compact(boundTo)}
+}
+
+// ResolveTarget reports which browser t resolves to right now.
+func (s *Server) ResolveTarget(t Target) (ConnInfo, error) {
+	c, err := s.resolve(t)
+	if err != nil {
+		return ConnInfo{}, err
+	}
+	return c.info(), nil
+}
+
+// Browsers lists the connected browsers, newest first. Two browsers bound
+// to the same profile are both flagged Conflict.
+func (s *Server) Browsers() []ConnInfo {
+	conns := s.connList()
+	infos := make([]ConnInfo, len(conns))
+	perProfile := map[string]int{}
+	for i, c := range conns {
+		infos[i] = c.info()
+		if p := infos[i].Profile; p != "" {
+			perProfile[p]++
+		}
+	}
+	for i := range infos {
+		if p := infos[i].Profile; p != "" && perProfile[p] > 1 {
+			infos[i].Conflict = true
+		}
+	}
+	return infos
+}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 
 	"github.com/monoes/mono-agent/internal/capture"
 )
@@ -97,6 +96,10 @@ type CaptureRequest struct {
 	// relay hop as a query parameter instead (see
 	// RemoteSender.CapturePage).
 	Inbox string
+	// Target picks the browser to capture in. The zero Target is the
+	// default browser. Like Inbox, it rides the relay hop as query
+	// parameters and never reaches the extension.
+	Target Target
 }
 
 // Capturer is implemented by both bridges — the one that owns the extension
@@ -308,7 +311,7 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 		assembler.Drop(cmd.ID)
 	}()
 
-	if err := s.writeCommand(cmd); err != nil {
+	if err := s.writeCommand(req.Target, cmd); err != nil {
 		return nil, err
 	}
 	s.logger.Debug().Str("id", cmd.ID).Str("type", cmd.Type).Msg("command sent")
@@ -339,29 +342,6 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 	}
 }
 
-// writeCommand marshals and writes one command to the extension socket.
-func (s *Server) writeCommand(cmd *Command) error {
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("marshal command: %w", err)
-	}
-
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-	if conn == nil {
-		return fmt.Errorf("no extension connected")
-	}
-
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	s.writeMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("write command: %w", err)
-	}
-	return nil
-}
-
 // dispatch routes one decoded response from the extension. A capture is
 // streamed (many messages share one id), an ordinary command gets its
 // single reply, and a capture nobody asked for is written to the inbox
@@ -369,7 +349,7 @@ func (s *Server) writeCommand(cmd *Command) error {
 // process was down (CLIP-08). Every send here is non-blocking: the read
 // loop must never be parked by a slow or vanished receiver, because that
 // would stall the whole extension connection.
-func (s *Server) dispatch(resp *Response) {
+func (s *Server) dispatch(c *extConn, resp *Response) {
 	s.pendMu.Lock()
 	stream, streaming := s.streams[resp.ID]
 	pending, waiting := s.pending[resp.ID]
@@ -392,7 +372,7 @@ func (s *Server) dispatch(resp *Response) {
 		// The extension's own keepalive (background.js, every 20s): it
 		// only keeps the socket busy, so there is nothing to route.
 	case isCdpEvent(resp):
-		s.fanoutCdpEvent(resp)
+		s.fanoutCdpEvent(c, resp)
 	case isCaptureResponse(resp):
 		s.acceptUnsolicitedCapture(resp)
 	default:
@@ -486,8 +466,10 @@ func (s *Server) sweepCaptures() {
 // process that owns the extension connection is the one that assembles and
 // writes the envelope; the caller gets back only the small Result, so a
 // 60MB archive never crosses the loopback HTTP hop.
-func (s *Server) serveRelayCapture(w http.ResponseWriter, cmd *Command, timeout time.Duration, inbox string) {
-	res, err := s.CapturePage(captureRequestFromCommand(cmd, timeout, inbox))
+func (s *Server) serveRelayCapture(w http.ResponseWriter, target Target, cmd *Command, timeout time.Duration, inbox string) {
+	req := captureRequestFromCommand(cmd, timeout, inbox)
+	req.Target = target
+	res, err := s.CapturePage(req)
 	resp := &Response{ID: cmd.ID, Type: CmdPageCapture}
 	if err != nil {
 		resp.Error = err.Error()
@@ -516,6 +498,9 @@ func (r *RemoteSender) CapturePage(req CaptureRequest) (*capture.Result, error) 
 	url := fmt.Sprintf("%s/monoagent/relay?timeout_ms=%d", r.baseURL, timeout.Milliseconds())
 	if req.Inbox != "" {
 		url += "&inbox=" + neturl.QueryEscape(req.Inbox)
+	}
+	if enc := targetValues(req.Target).Encode(); enc != "" {
+		url += "&" + enc
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

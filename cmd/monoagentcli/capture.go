@@ -87,7 +87,7 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+			bridge := setupProfileBridge(browserProfile(cfg), newExtensionBridgeLogger(), 3*time.Second)
 			capturer, ok := bridge.(extension.Capturer)
 			if !ok {
 				return errAuthConnection("this extension bridge cannot capture pages (%T)%s", bridge, bridgeAdvice)

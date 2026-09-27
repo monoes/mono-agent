@@ -33,6 +33,9 @@ func newExtensionCmd(cfg *globalConfig) *cobra.Command {
 		newExtensionStatusCmd(cfg),
 		newExtensionPairCmd(),
 		newExtensionResetCmd(),
+		newExtensionBrowsersCmd(cfg),
+		newExtensionBindCmd(cfg),
+		newExtensionUnbindCmd(cfg),
 	)
 	return cmd
 }
