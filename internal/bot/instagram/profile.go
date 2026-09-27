@@ -263,8 +263,11 @@ func buildProfileResult(username string, user map[string]interface{}) map[string
 	if id := firstNonEmpty(getString(user, "pk"), getString(user, "id")); id != "" {
 		result["platform_id"] = id
 	}
-	if cat := firstNonEmpty(getString(user, "category"), getString(user, "category_name"), getString(user, "business_category_name")); cat != "" {
-		result["profile_category"] = cat
+	// The category, unless the account hides it from its profile.
+	if show, ok := user["should_show_category"].(bool); !ok || show {
+		if cat := firstNonEmpty(getString(user, "category"), getString(user, "category_name"), getString(user, "business_category_name")); cat != "" {
+			result["profile_category"] = cat
+		}
 	}
 	if t := accountType(user); t != "" {
 		result["account_type"] = t
