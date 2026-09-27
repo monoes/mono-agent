@@ -66,6 +66,10 @@ export function ApprovePendingPerson(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePendingPerson'](arg1, arg2, arg3);
 }
 
+export function BindBrowser(arg1, arg2) {
+  return window['go']['main']['App']['BindBrowser'](arg1, arg2);
+}
+
 export function CancelHealthRun(arg1) {
   return window['go']['main']['App']['CancelHealthRun'](arg1);
 }
@@ -240,6 +244,10 @@ export function GetApplication(arg1) {
 
 export function GetApplications(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetApplications'](arg1, arg2, arg3);
+}
+
+export function GetBrowsers() {
+  return window['go']['main']['App']['GetBrowsers']();
 }
 
 export function GetCaptureView(arg1) {
