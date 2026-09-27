@@ -37,7 +37,6 @@ type App struct {
 	dbPath  string
 	logs    []LogEntry
 	logsMu  sync.Mutex
-	connMgr *connections.Manager
 	chatSup *chatSupervisor // conversation/turn/event supervisor; see app_chat.go
 
 	runningMu      sync.Mutex
@@ -128,14 +127,6 @@ func (a *App) startup(ctx context.Context) {
 	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	if err := os.MkdirAll(vaultDir, 0700); err != nil {
 		runtime.LogErrorf(ctx, "vault dir error: %v", err)
-	}
-
-	// Initialize connections manager.
-	mgr, err := connections.NewManager(a.db)
-	if err != nil {
-		fmt.Printf("connections manager init error: %v\n", err)
-	} else {
-		a.connMgr = mgr
 	}
 
 	// The chat supervisor reaches chat history only through the CLI
