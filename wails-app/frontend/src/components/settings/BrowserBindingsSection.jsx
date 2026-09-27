@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { GetBrowsers, BindBrowser, GetProfiles } from '../../wailsjs/go/main/App'
 
 // Which browser each profile's automations run in. Everything goes through
@@ -21,6 +21,8 @@ const input = {
   borderRadius: 'var(--radius)', fontFamily: mono, fontSize: 12, padding: '6px 10px', minWidth: 180,
 }
 
+export const BROWSERS_POLL_MS = 10000
+
 const errMsg = (e) => String(e?.message || e || 'unknown error')
 
 export default function BrowserBindingsSection() {
@@ -41,6 +43,18 @@ export default function BrowserBindingsSection() {
   }, [])
   useEffect(() => { load() }, [load])
 
+  // A binding can change outside this section (the extension's side panel,
+  // `monoagentcli extension bind`). Re-read on window focus, and every
+  // 10 s while the section is actually on screen: the app keeps pages
+  // mounted behind display:none, where polling would only spawn CLIs.
+  const cardRef = useRef(null)
+  useEffect(() => {
+    const onFocus = () => load()
+    window.addEventListener('focus', onFocus)
+    const id = setInterval(() => { if (cardRef.current?.offsetParent) load() }, BROWSERS_POLL_MS)
+    return () => { window.removeEventListener('focus', onFocus); clearInterval(id) }
+  }, [load])
+
   const bind = async (instance, profileId) => {
     setBusy(instance)
     try {
@@ -55,7 +69,7 @@ export default function BrowserBindingsSection() {
 
   const browsers = report?.browsers || []
   return (
-    <div style={card} data-testid="browser-bindings">
+    <div ref={cardRef} style={card} data-testid="browser-bindings">
       <div style={label}>Browsers</div>
       <div style={hint}>
         Each browser profile with the MonoAgent Bridge extension can run one profile's automations,

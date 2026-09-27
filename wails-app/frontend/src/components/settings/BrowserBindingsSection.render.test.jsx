@@ -51,3 +51,12 @@ describe('BrowserBindingsSection', () => {
     expect(await screen.findByText(/No bridge is running/)).toBeInTheDocument()
   })
 })
+
+describe('BrowserBindingsSection freshness', () => {
+  it('re-reads when the window regains focus, so a bind made elsewhere shows up', async () => {
+    await mount({ running: true, browsers: [edge] })
+    App.GetBrowsers.mockResolvedValue({ running: true, browsers: [{ ...edge, profile_id: 'p-home', profile_name: 'Personal' }] })
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(screen.getByLabelText('Profile for Edge Work')).toHaveValue('p-home'))
+  })
+})
