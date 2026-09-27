@@ -18,13 +18,24 @@ func TestGetUserInfoFromProfileEndpoint(t *testing.T) {
 	}
 	m := resultMap(t, res)
 	want := map[string]interface{}{
-		"username": "fake.ada", "full_name": "Ada Fixture (API)", "introduction": "Synthetic API bio",
+		"username": "fake.ada", "full_name": "Ada Fixture (API)", "bio": "Synthetic API bio",
 		"follower_count": "1234", "following_count": "56", "content_count": "12", "is_verified": true,
 		"website": "https://example.test/", "url": "https://www.instagram.com/fake.ada/",
 	}
 	for k, v := range want {
 		if m[k] != v {
 			t.Errorf("%s = %#v, want %#v", k, m[k], v)
+		}
+	}
+	for k, v := range map[string]string{
+		"links":            "[map[url:https://example.test/]]",
+		"pronouns":         "[she/her]",
+		"contact":          "map[address:Synthetic Str. 1, Testville, 10999 email:shop@example.test phone:+49301234567]",
+		"profile_category": "Synthetic Shop", "account_type": "business", "platform_id": "9001",
+		"image_url": "https://scontent.fixture.invalid/ada_hd.jpg",
+	} {
+		if got := fmt.Sprint(m[k]); got != v {
+			t.Errorf("%s = %s, want %s", k, got, v)
 		}
 	}
 	if len(rec.Matching("GET", "*web_profile_info/?username=fake.ada")) == 0 {
@@ -41,7 +52,7 @@ func TestGetUserInfoFallsBackToRenderedProfile(t *testing.T) {
 	}
 	m := resultMap(t, res)
 	want := map[string]interface{}{
-		"username": "fake.ada", "full_name": "Ada Fixture", "introduction": "Synthetic bio used only by tests",
+		"username": "fake.ada", "full_name": "Ada Fixture", "bio": "Synthetic bio used only by tests",
 		"follower_count": "1234", "following_count": "56", "content_count": "12", "is_verified": true,
 		"website": "https://example.test/", "is_private": false,
 	}
@@ -49,6 +60,47 @@ func TestGetUserInfoFallsBackToRenderedProfile(t *testing.T) {
 		if m[k] != v {
 			t.Errorf("%s = %#v, want %#v", k, m[k], v)
 		}
+	}
+}
+
+// The profile page's own data store holds everything the profile shows:
+// it is read first, and the profile endpoint is not asked.
+func TestGetUserInfoFromPageStore(t *testing.T) {
+	s := newSite()
+	s.profileAPI = true
+	s.profiles["fake.ada"] = fx{"state": "follow", "store": true}
+	page, rec := s.open(t)
+	res, err := call(t, page, "get_user_info", "https://www.instagram.com/fake.ada/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resultMap(t, res)
+	want := map[string]interface{}{
+		"username": "fake.ada", "full_name": "Ada Fixture (Store)", "bio": "Synthetic store bio\nSecond line",
+		"follower_count": "12345", "following_count": "67", "content_count": "89", "is_verified": true, "is_private": false,
+		"website": "https://example.test/store", "image_url": "https://scontent.fixture.invalid/ada_hd.jpg",
+		"profile_category": "Synthetic Artist", "account_type": "creator", "threads_handle": "fake.ada", "platform_id": "9001",
+	}
+	for k, v := range want {
+		if m[k] != v {
+			t.Errorf("%s = %#v, want %#v", k, m[k], v)
+		}
+	}
+	for k, v := range map[string]string{
+		"links":      "[map[title:Store url:https://example.test/store] map[url:https://example.test/second]]",
+		"pronouns":   "[they/them]",
+		"highlights": "[Travel Food]",
+		"contact":    "map[address:Synthetic Str. 1, Testville, 10999 email:ada@example.test phone:+49 30 1234567]",
+	} {
+		if got := fmt.Sprint(m[k]); got != v {
+			t.Errorf("%s = %s, want %s", k, got, v)
+		}
+	}
+	if _, has := m["introduction"]; has {
+		t.Errorf("the bio came back as introduction: %v", m)
+	}
+	if n := len(rec.Matching("GET", "*web_profile_info*")); n != 0 {
+		t.Errorf("profile endpoint called %d times, want 0", n)
 	}
 }
 

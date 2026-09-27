@@ -94,6 +94,47 @@ window.FX = {{FX}};
       '<section><div role="menu"><ul><li><a aria-label="View fixtures highlight" href="/stories/highlights/1111/" role="link"><span>fixtures</span></a></li></ul></div></section>';
   }
 
+  // FX.store: the page's Relay store, reached through the header's React
+  // fiber (props.environment), shaped as instagram.com holds it (2026-09):
+  // the profile's XDTUserDict record with linked records by __ref/__refs,
+  // and the highlights tray connection under client:root. It arrives a
+  // moment after the header, as the profile query resolves.
+  if (FX.store) {
+    const uid = 'XDTUserDict:9001';
+    const R = {
+      'client:root': { __id: 'client:root', __typename: '__Root',
+        'xdt_api__v1__user_id__paginated_highlights_tray_connection(user_id:"9001")': { __ref: 'client:tray' } },
+      'client:tray': { __typename: 'XDTMaterialTrayConnection', edges: { __refs: ['client:tray:e0', 'client:tray:e1'] } },
+      'client:tray:e0': { __typename: 'XDTMaterialTrayEdge', node: { __ref: 'XDTReelDict:highlight:2' } },
+      'client:tray:e1': { __typename: 'XDTMaterialTrayEdge', node: { __ref: 'XDTReelDict:highlight:1' } },
+      'XDTReelDict:highlight:1': { __typename: 'XDTReelDict', id: 'highlight:1', title: 'Food', user: { __ref: uid } },
+      'XDTReelDict:highlight:2': { __typename: 'XDTReelDict', id: 'highlight:2', title: 'Travel', user: { __ref: uid } },
+      // A follower in the facepile: same type, another user, few fields.
+      'XDTUserDict:9002': { __id: 'XDTUserDict:9002', __typename: 'XDTUserDict', pk: '9002', username: 'fake.friend' },
+      [uid]: { __id: uid, __typename: 'XDTUserDict', pk: '9001', id: '9001', username: U,
+        full_name: 'Ada Fixture (Store)', biography: 'Synthetic store bio\nSecond line', category: 'Synthetic Artist',
+        account_type: 3, is_verified: true, is_private: false, follower_count: 12345, following_count: 67, media_count: 89,
+        external_url: 'https://example.test/store', pronouns: ['they/them'],
+        bio_links: { __refs: ['client:' + uid + ':bio_links:0', 'client:' + uid + ':bio_links:1'] },
+        hd_profile_pic_url_info: { __ref: 'client:' + uid + ':hd_profile_pic_url_info' },
+        profile_pic_url: 'https://scontent.fixture.invalid/ada_s150.jpg',
+        show_text_post_app_badge: true, text_post_app_badge_label: U,
+        public_email: 'ada@example.test', public_phone_country_code: '49', public_phone_number: '30 1234567',
+        address_street: 'Synthetic Str. 1', city_name: 'Testville', zip: '10999',
+        'latest_reel_media(fetch_latest_reel_media:true)': 0 },
+      ['client:' + uid + ':bio_links:0']: { __typename: 'XDTUserBioLinkDict', url: 'https://example.test/store', title: 'Store', link_type: 'external' },
+      ['client:' + uid + ':bio_links:1']: { __typename: 'XDTUserBioLinkDict', url: '', title: '', link_type: 'external',
+        lynx_url: 'https://l.instagram.com/?u=https%3A%2F%2Fexample.test%2Fsecond&e=AT0' },
+      ['client:' + uid + ':hd_profile_pic_url_info']: { __typename: 'XDTProfilePicUrlInfo', url: 'https://scontent.fixture.invalid/ada_hd.jpg' },
+    };
+    const src = { getRecordIDs: () => Object.keys(R), get: (id) => R[id] };
+    const env = { getStore: () => ({ getSource: () => src }) };
+    setTimeout(() => {
+      document.querySelector('header')['__reactFiber$fixture'] = { memoizedProps: { children: [] },
+        return: { memoizedProps: { environment: env, children: [] }, return: null } };
+    }, 300);
+  }
+
   // Avatar: with an active story the avatar is a story ring.
   $('#avatar').innerHTML = FX.story
     ? '<div><div aria-label="View profile story" role="button" tabindex="0" id="ring"><canvas height="165" width="165"></canvas><span role="link" tabindex="-1"><img alt="' + U + '\'s profile picture" src="' + GIF + '"></span></div></div>'
