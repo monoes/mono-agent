@@ -20,6 +20,8 @@ function fakeCtx(overrides = {}) {
       "Page.captureScreenshot": { data: b64("PNGDATA") },
       "Page.printToPDF": { data: b64("%PDF-1.7") },
       "Page.captureSnapshot": { data: "From: <Snapshot>\r\nContent-Type: multipart/related" },
+      "Emulation.setDeviceMetricsOverride": {},
+      "Emulation.clearDeviceMetricsOverride": {},
     },
     overrides.cdpAnswers || {}
   );
@@ -38,6 +40,7 @@ function fakeCtx(overrides = {}) {
         },
         markdown: "# The Lighthouse at Dunmore\n\nThe keeper kept a ledger.",
         text: "The Lighthouse at Dunmore The keeper kept a ledger.",
+        dimensions: { width: 1200, height: 3000 },
         selectionRequested: false,
         selectionFound: false,
       },
@@ -301,4 +304,23 @@ test("a capture too big for the storage bucket is refused rather than half-writt
   const result = await MonoCapture.queueCapture(storage, huge);
   assert.equal(result.queued, false);
   assert.match(result.reason, /too large to queue offline/);
+});
+
+test("full-page screenshot sets device metrics override and clears it", async () => {
+  const cdpCalls = [];
+  const ctx = fakeCtx();
+  const origCdp = ctx.cdp;
+  ctx.cdp = async (tabId, method, params) => {
+    cdpCalls.push({ method, params });
+    return origCdp(tabId, method, params);
+  };
+  const result = await MonoCapture.pageCapture({ formats: ["screenshot"] }, ctx);
+  assert.ok(result.artifacts.some((a) => a.name === "screenshot.png"));
+  const methods = cdpCalls.map((c) => c.method);
+  assert.ok(methods.includes("Emulation.setDeviceMetricsOverride"), "sets device metrics override for full page");
+  assert.ok(methods.includes("Page.captureScreenshot"), "captures screenshot");
+  assert.ok(methods.includes("Emulation.clearDeviceMetricsOverride"), "clears device metrics override");
+  const overrideCall = cdpCalls.find((c) => c.method === "Emulation.setDeviceMetricsOverride");
+  assert.equal(overrideCall.params.height, 3000);
+  assert.equal(overrideCall.params.width, 1200);
 });
