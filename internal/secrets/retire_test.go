@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func countKind(t *testing.T, db *sql.DB, kind string) int {
@@ -151,5 +152,80 @@ func TestRetireAIProviderEntries_LeavesUndecryptableEntries(t *testing.T) {
 	entries, _ := List(ctx, db.DB, "default")
 	if findEntryID(entries, RetiredAIProviderBackupName) != "" {
 		t.Error("passphrase entry saved for a failed profile")
+	}
+}
+
+// Two runs in the same second never share a backup file name.
+func TestRetiredBackupPath_UniqueWithinASecond(t *testing.T) {
+	now := time.Date(2026, 9, 27, 3, 0, 0, 0, time.UTC)
+	a, err := retiredBackupPath("/b", "default", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := retiredBackupPath("/b", "default", now)
+	if a == b {
+		t.Fatalf("both runs would write %s", a)
+	}
+	if !strings.HasPrefix(filepath.Base(a), "retired-ai-providers-default-20260927T030000Z-") {
+		t.Errorf("name = %s", a)
+	}
+}
+
+// A second process retiring the same entries while this one is between
+// saving its passphrase and deleting: the entries are deleted once, and
+// exactly one backup remains, opened by the one passphrase entry that
+// names it.
+func TestRetireAIProviderEntries_ConcurrentRunKeepsOneWorkingBackup(t *testing.T) {
+	db := newExportTestDB(t)
+	ctx := context.Background()
+	backupDir := filepath.Join(t.TempDir(), "backups")
+	for _, name := range []string{"My OpenAI", "Claude key"} {
+		if _, err := addEntry(ctx, db.DB, "default", retiredAIProviderKind, name, map[string]string{"api_key": "k-" + name}, "", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	otherRetired := 0
+	beforeRetireDelete = func() {
+		beforeRetireDelete = nil
+		n, err := retireProfileAIProviders(ctx, db.DB, "default", backupDir, now)
+		if err != nil {
+			t.Errorf("concurrent run: %v", err)
+		}
+		otherRetired = n
+	}
+	t.Cleanup(func() { beforeRetireDelete = nil })
+
+	n, err := retireProfileAIProviders(ctx, db.DB, "default", backupDir, now)
+	if err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if n != 0 || otherRetired != 2 {
+		t.Fatalf("retired %d here and %d in the other run, want 0 and 2", n, otherRetired)
+	}
+	if left := countKind(t, db.DB, retiredAIProviderKind); left != 0 {
+		t.Fatalf("%d ai_provider entries left", left)
+	}
+	files, _ := filepath.Glob(filepath.Join(backupDir, "retired-ai-providers-*.json"))
+	if len(files) != 1 {
+		t.Fatalf("backups = %v, want exactly one", files)
+	}
+	entries, _ := List(ctx, db.DB, "default")
+	var passIDs []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name, RetiredAIProviderBackupName) {
+			passIDs = append(passIDs, e.ID)
+		}
+	}
+	if len(passIDs) != 1 {
+		t.Fatalf("passphrase entries = %v, want one", passIDs)
+	}
+	fields, notes, err := DecryptFields(ctx, db.DB, "default", passIDs[0])
+	if err != nil || !strings.Contains(notes, files[0]) {
+		t.Fatalf("passphrase notes %q (%v) do not name %s", notes, err, files[0])
+	}
+	data, _ := os.ReadFile(files[0])
+	if imported, _, err := Import(ctx, newExportTestDB(t).DB, "default", fields["passphrase"], data, nil, nil); err != nil || imported != 2 {
+		t.Fatalf("Import(backup) = %d, %v; the passphrase must open the backup", imported, err)
 	}
 }
