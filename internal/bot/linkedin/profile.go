@@ -213,15 +213,22 @@ func (b *LinkedInBot) GetProfile(ctx context.Context, page browser.PageInterface
 	return b.getProfile(ctx, page, target, true)
 }
 
+// profileTargetURL turns a profile target — a URL, a site-relative path, or
+// a bare member slug such as "jane-doe" or "@jane-doe" — into a URL.
+func profileTargetURL(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" || strings.Contains(target, "linkedin.com/") || strings.HasPrefix(target, "/") {
+		return target
+	}
+	return "https://www.linkedin.com/in/" + url.PathEscape(strings.TrimPrefix(strings.Trim(target, "/"), "@")) + "/"
+}
+
 func (b *LinkedInBot) getProfile(ctx context.Context, page browser.PageInterface, target string, details bool) (map[string]interface{}, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, fmt.Errorf("linkedin: profile URL is required")
 	}
-	u := target
-	if !strings.Contains(target, "linkedin.com/") && !strings.HasPrefix(target, "/") {
-		u = "https://www.linkedin.com/in/" + url.PathEscape(strings.Trim(target, "/")) + "/"
-	}
+	u := profileTargetURL(target)
 	if err := navigate(ctx, page, b.ResolveURL(u)); err != nil {
 		return nil, err
 	}

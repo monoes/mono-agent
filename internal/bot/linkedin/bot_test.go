@@ -99,3 +99,20 @@ func TestActivityFeedURL(t *testing.T) {
 		t.Error("feed URL should be rejected")
 	}
 }
+
+func TestProfileTargetURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"jane-doe-test":    "https://www.linkedin.com/in/jane-doe-test/",
+		" @jane-doe-test/": "https://www.linkedin.com/in/jane-doe-test/",
+		"https://www.linkedin.com/in/jane-doe-test/": "https://www.linkedin.com/in/jane-doe-test/",
+		"/in/jane-doe-test/":                         "/in/jane-doe-test/",
+		"":                                           "",
+	} {
+		if got := profileTargetURL(in); got != want {
+			t.Errorf("profileTargetURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got, err := activityFeedURL(profileTargetURL("jane-doe-test"), ""); err != nil || got != "https://www.linkedin.com/in/jane-doe-test/recent-activity/all/" {
+		t.Errorf("feed for bare slug = %q, %v", got, err)
+	}
+}
