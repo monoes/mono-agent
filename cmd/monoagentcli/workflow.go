@@ -1570,6 +1570,11 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
+			// An import lands in the profile it was run for. The file's own
+			// profile_id is where it was exported from (or nothing, which
+			// the store reads as default), never where it is going.
+			wf.ProfileID = cfg.ProfileID
+
 			// Finalize every id BEFORE any store call: assign fresh UUIDs to
 			// nodes/connections that arrived without one. This must happen
 			// here, not later (the old code assigned node UUIDs only right
