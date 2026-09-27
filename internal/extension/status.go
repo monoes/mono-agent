@@ -141,7 +141,13 @@ const statusProbeTimeout = 800 * time.Millisecond
 // the same port answers HTTP, and reporting that as a live bridge is how
 // the CLI ends up waiting forever for an extension that can never arrive.
 func FetchStatus(baseURL string) (Status, error) {
-	client := &http.Client{Timeout: statusProbeTimeout}
+	return FetchStatusTimeout(baseURL, statusProbeTimeout)
+}
+
+// FetchStatusTimeout is FetchStatus with a caller-chosen budget, for
+// callers polled in the background (`monoagentcli summary`).
+func FetchStatusTimeout(baseURL string, timeout time.Duration) (Status, error) {
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(baseURL + "/monoagent/health")
 	if err != nil {
 		return Status{}, fmt.Errorf("no bridge answering at %s: %w", baseURL, err)

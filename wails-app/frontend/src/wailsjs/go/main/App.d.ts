@@ -189,6 +189,8 @@ export function GetOrgReport(arg1:string,arg2:boolean,arg3:string):Promise<strin
 
 export function GetOrgStatus(arg1:string):Promise<string>;
 
+export function GetOrgSummary(arg1:boolean):Promise<string>;
+
 export function GetPendingPeopleApprovals():Promise<Array<main.PendingPersonApproval>>;
 
 export function GetPeople(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.PersonInfo>>;
@@ -228,6 +230,10 @@ export function GetSecretFields(arg1:string):Promise<main.VaultFieldsAndNotes>;
 export function GetSessions():Promise<Array<main.SessionInfo>>;
 
 export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
+
+export function GetSummary():Promise<string>;
+
+export function GetSummarySections(arg1:string):Promise<string>;
 
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
 
@@ -330,6 +336,10 @@ export function ListWorkflowTemplates():Promise<Array<workflow.Template>>;
 export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function LoginSocial(arg1:string):Promise<string>;
+
+export function MarkPersonMessageUnread(arg1:string):Promise<void>;
+
+export function MarkPersonMessagesRead(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
 

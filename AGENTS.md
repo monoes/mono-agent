@@ -70,7 +70,9 @@ monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: f
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,
-bridge, pairing), `services` (daemon, start at login) and `integrations`
+bridge, pairing), `automations` (installed packages that are unavailable,
+and broken or decaying selectors — each with its `automation rerecord` fix;
+read-only, never seeds packages), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration, TypeSafe Jev key; `jev.api` runs
 on demand with `--deep`), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections and AI connections
@@ -139,10 +141,74 @@ Typical agent loop: `workflow search --json` → inspect template with
 `workflow templates show <id>` → `workflow run --dry-run` → real run with
 `--json` → read per-node outputs.
 
+### At a glance: `summary`
+
+`monoagentcli --json summary [--section workflows,executions,…]` is one
+read-only call that returns counts for:
+
+- workflows
+- runs (running/queued, last 24 h, recent 15)
+- next scheduled run per `trigger.schedule` node, plus `daemon_running`. `source` says where the time comes from: `daemon` means the running daemon's own scheduler, as published in its heartbeat; `computed` means it was worked out from the cron spec
+- things waiting for a person: workflow HIL, leads to review, drafts, suggested person links
+- people
+- captures, documents and messages (7 days)
+- applications by status
+- automation packages and selector health
+- recordings
+- Jev usage (24 h, from the local usage table)
+- logins: active, expiring within 72 h, expired
+- vault counts (counts only, never secret names or values)
+- daemon, extension bridge and org-serve state
+
+It is local-only: it never calls Jev, monomind or the network (apart from a
+loopback probe of the extension bridge), so it is safe to poll. The desktop
+dashboard polls it. A failing section reports `"error"` inside itself, and the
+command still exits 0. For orgs, use `monoagentcli org summary [--fast]`. For
+the full run list, use `monoagentcli --json workflow executions --all --limit N`.
+
 > **Importing a workflow is equivalent to executing code.** Workflows can
 > run shell commands (`system.execute_command`), inline JavaScript
 > (`core.code`), and template expressions against local files. Only import
 > workflows from sources you trust.
+
+### Updating
+
+- `monoagentcli update` replaces this binary with the latest release.
+- `update --check [--current <v>]` only reports whether a newer release exists.
+- `update --app <exe> [--current <v>]` updates the desktop app at that path. On Linux it also updates the `monoagentcli` bundled next to the app.
+- Every download must match the release's `SHA256SUMS.txt`, or nothing is installed.
+- With `--json`, progress is NDJSON on stderr and the result goes to stdout.
+
+### What the desktop app calls
+
+The desktop app does everything through these commands; they are equally usable from scripts. All support `--json`: snake_case keys, `[]` for empty lists, exit 2 for not found and exit 3 for invalid input.
+
+- **People:**
+  - `people list [--platform P] [--search Q] [--limit N] [--offset M]` and `people count [--platform] [--search]`
+  - `people get <id>` and `people interactions <id>`
+  - `people posts list <person>`, `people posts get <post>` and `people posts comments <post>`
+  - `people tag list [--person]`, `people tag map -- <ids…>` and `people tag add|color|remove`
+  - `people status set|get|history`
+  - `people messages list|all [--unread]|add|compose|drafts|send-draft|reject-draft|read|unread`
+- **Social lists:** `list ls`.
+- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL.
+- **Workflows:**
+  - `workflow save` creates or replaces a workflow from the editor's document on stdin.
+  - `workflow execution <id>` shows run detail with redacted items.
+  - `workflow cancel <execution-id>` stops the recorded process (never the daemon), marks the run cancelled and rejects its pending HIL items. It leaves a finished run alone.
+  - `workflow delete <id> --yes` refuses a workflow that an org uses; `--force` also revokes its grants.
+  - `workflow get`, `workflow export` and `workflow delete` are profile-scoped.
+- **Sessions and connections:**
+  - `login test <id>` and `login delete <id>` (delete also removes the vault entry).
+  - `connect list|test|remove|refresh` are profile-scoped.
+  - `connect save <platform> --method M --stdin-json`: field values arrive on stdin.
+  - `connect get-oauth-client <platform> [--reveal]` and `connect set-oauth-client <platform> --client-id X [--client-secret-stdin]`. Secrets travel on stdin and are only printed with `--reveal`.
+  - `connect for-node <node-type>` and `connect oauth <platform>` (progress is NDJSON on stderr).
+- **Profiles:**
+  - `profile list|get|current|switch|create [--root-dir] [--icon]`
+  - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
+  - `profile documents list|get|capture|index|rm`
+- **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
 
 ## MCP server
 
@@ -310,6 +376,8 @@ each one) entirely out of the Go binary.
   at all.
 
 ## Orgs, automations, and autonomy
+
+`monoagentcli org summary [--fast]` prints one row per org (running, autonomy level, paused, queued messages, `needs_you`) plus totals. `--fast` reads only local files and the database and leaves `needs_you` null. Without it, `needs_you` is computed for every org in parallel (monomind round-trips, each org capped at 10 s).
 
 An **org** is a team of agent roles run by monomind (`monomind org serve`).
 Its config lives in the active profile's folder:

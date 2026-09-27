@@ -247,6 +247,9 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 	// Subcommand: login status
 	cmd.AddCommand(newLoginStatusCmd(cfg))
 
+	// Subcommands: login test|delete <session-id>
+	cmd.AddCommand(newLoginTestCmd(cfg), newLoginDeleteCmd(cfg))
+
 	return cmd
 }
 
@@ -330,6 +333,43 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 	}
 }
 
+type sessionRow struct {
+	ID        int
+	Username  string
+	Platform  string
+	Expiry    time.Time
+	WhenAdded time.Time
+	Status    string // active | expired | logged_out
+}
+
+// loginStatusRow is one `login status --json` row. A logged_out row (an
+// installed automation with no session yet) has no id, expiry or when_added.
+type loginStatusRow struct {
+	ID        int    `json:"id,omitempty"`
+	Username  string `json:"username"`
+	Platform  string `json:"platform"`
+	Expiry    string `json:"expiry,omitempty"`     // RFC3339 UTC
+	WhenAdded string `json:"when_added,omitempty"` // RFC3339 UTC
+	Status    string `json:"status"`               // active | expired | logged_out
+}
+
+// loginStatusJSON is the --json form: snake_case keys, and [] (not null)
+// when there is nothing to report.
+func loginStatusJSON(sessions []sessionRow) []loginStatusRow {
+	out := make([]loginStatusRow, 0, len(sessions))
+	for _, s := range sessions {
+		r := loginStatusRow{ID: s.ID, Username: s.Username, Platform: s.Platform, Status: s.Status}
+		if !s.Expiry.IsZero() {
+			r.Expiry = s.Expiry.UTC().Format(time.RFC3339)
+		}
+		if !s.WhenAdded.IsZero() {
+			r.WhenAdded = s.WhenAdded.UTC().Format(time.RFC3339)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -349,15 +389,6 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("querying sessions: %w", err)
 			}
 			defer rows.Close()
-
-			type sessionRow struct {
-				ID        int
-				Username  string
-				Platform  string
-				Expiry    time.Time
-				WhenAdded time.Time
-				Status    string // active | expired | logged_out
-			}
 
 			var sessions []sessionRow
 			for rows.Next() {
@@ -388,9 +419,7 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if cfg.JSONOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(sessions)
+				return writeJSONTo(cmd.OutOrStdout(), loginStatusJSON(sessions))
 			}
 
 			if len(sessions) == 0 {
@@ -427,7 +456,7 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logout [platform]",
 		Short: "Delete saved session for a platform",
-		Long:  "Removes saved cookies/session for the specified platform. Use --all to remove all sessions.",
+		Long:  "Removes saved cookies/session for the specified platform, including the vault entry holding the cookies. Use --all to remove all sessions, or `login delete <id>` for one.",
 		Example: `  monoagentcli logout instagram
   monoagentcli logout --all`,
 		Args: cobra.MaximumNArgs(1),
@@ -439,11 +468,10 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			if all {
-				result, err := db.DB.Exec("DELETE FROM crawler_sessions WHERE profile_id = ?", cfg.ProfileID)
+				count, err := deleteSessions(cmd.Context(), db.DB, profileOrDefault(cfg), "1 = 1")
 				if err != nil {
 					return fmt.Errorf("deleting all sessions: %w", err)
 				}
-				count, _ := result.RowsAffected()
 				fmt.Fprintf(os.Stderr, "Deleted %d session(s).\n", count)
 				return nil
 			}
@@ -453,11 +481,10 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			platform := strings.ToLower(args[0])
-			result, err := db.DB.Exec("DELETE FROM crawler_sessions WHERE platform = ? AND profile_id = ?", platform, cfg.ProfileID)
+			count, err := deleteSessions(cmd.Context(), db.DB, profileOrDefault(cfg), "platform = ?", platform)
 			if err != nil {
 				return fmt.Errorf("deleting session for %s: %w", platform, err)
 			}
-			count, _ := result.RowsAffected()
 			if count == 0 {
 				fmt.Fprintf(os.Stderr, "No session found for %s.\n", platform)
 			} else {

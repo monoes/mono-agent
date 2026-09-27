@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -134,7 +135,8 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
-			go daemonhb.Run(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, Version: getVersion()})
+			go daemonhb.RunWith(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, Version: getVersion()},
+				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
 			orgs.start(ctx, engine)
 
 			msg := "Daemon running. Active workflows' triggers are live."
@@ -219,4 +221,13 @@ func startDaemonAPI(ctx context.Context, cfg *globalConfig, db *storage.Database
 		}
 	}()
 	return srv.Addr(), nil
+}
+
+// heartbeatSchedules is the heartbeat form of the engine's schedule triggers.
+func heartbeatSchedules(runs []workflow.ScheduledRun) []daemonhb.Schedule {
+	out := make([]daemonhb.Schedule, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, daemonhb.Schedule{WorkflowID: r.WorkflowID, NodeID: r.NodeID, NextRun: r.Next.UTC().Format(time.RFC3339)})
+	}
+	return out
 }

@@ -5,16 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
-	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
-	"github.com/monoes/mono-agent/internal/orggrant"
 )
 
 // newOrgDesignApp returns a test App whose active profile's root is an empty
-// temp directory, so org config files and the CLI's --project agree, and
-// reconcileOrgDoc's profile/root guard passes.
+// temp directory, so org config files and the CLI's --project agree.
 func newOrgDesignApp(t *testing.T) (*App, string) {
 	t.Helper()
 	a := newTestApp(t)
@@ -26,23 +24,33 @@ func newOrgDesignApp(t *testing.T) (*App, string) {
 		t.Fatalf("seed profile: %v", err)
 	}
 	a.setActiveProfileID("gui")
+	a.ctx = context.Background()
 	return a, root
 }
 
-// fakeValidateCLI installs a stub monoagentcli on MONOAGENTCLI_BIN whose
-// `org validate` answers with the given JSON payload (exit 0, as the real
-// command does — it reports invalidity in the payload, not the exit code).
-func fakeValidateCLI(t *testing.T, payload string) {
+// fakeOrgCLI installs a stub monoagentcli on MONOAGENTCLI_BIN: `org
+// validate` answers with validatePayload (exit 0, as the real command does —
+// it reports invalidity in the payload, not the exit code), and `org
+// reconcile-doc` saves its stdin and answers with reconcilePayload. Every
+// call's argv is appended to the returned log.
+func fakeOrgCLI(t *testing.T, validatePayload, reconcilePayload string) (argsLog, stdinFile string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the stub CLI is a shell script (unix-only)")
 	}
-	bin := filepath.Join(t.TempDir(), "monoagentcli")
-	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = \"validate\" ]; then\n    printf '%s\\n' '" + payload + "'\n    exit 0\n  fi\ndone\nprintf '{\"ok\":true}\\n'\n"
+	dir := t.TempDir()
+	argsLog = filepath.Join(dir, "args.log")
+	stdinFile = filepath.Join(dir, "stdin.json")
+	script := "#!/bin/sh\necho \"$*\" >> '" + argsLog + "'\ncase \"$*\" in\n" +
+		"  *reconcile-doc*) cat > '" + stdinFile + "'; printf '%s\\n' '" + reconcilePayload + "' ;;\n" +
+		"  *validate*) printf '%s\\n' '" + validatePayload + "' ;;\n" +
+		"  *) printf '{\"ok\":true}\\n' ;;\nesac\n"
+	bin := filepath.Join(dir, "monoagentcli")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write stub cli: %v", err)
 	}
 	t.Setenv("MONOAGENTCLI_BIN", bin)
+	return argsLog, stdinFile
 }
 
 func strPtr(s string) *string { return &s }
@@ -63,41 +71,28 @@ func twoRoleDoc() *orgdesign.Doc {
 	}
 }
 
-// TestSaveOrgDoc_RejectedSaveLeavesGrantRowsIntact covers the ordering bug:
+// TestSaveOrgDoc_RejectedSaveNeverReconciles covers the ordering bug:
 // reconcile revokes the grant rows a role no longer backs, so it may not run
 // until `monoagentcli org validate` has accepted the document — the rollback
 // can only restore the FILE, never a revoked row.
-func TestSaveOrgDoc_RejectedSaveLeavesGrantRowsIntact(t *testing.T) {
-	fakeValidateCLI(t, `{"v":1,"org":"growth","valid":false,"error":"monomind says no"}`)
+func TestSaveOrgDoc_RejectedSaveNeverReconciles(t *testing.T) {
+	log, _ := fakeOrgCLI(t, `{"v":1,"org":"growth","valid":false,"error":"monomind says no"}`, `{}`)
 	a, root := newOrgDesignApp(t)
-	ctx := context.Background()
 
 	if _, err := orgdesign.Save(root, twoRoleDoc()); err != nil {
 		t.Fatalf("seed org file: %v", err)
 	}
-	store := orggrant.NewStore(a.db)
-	if _, err := store.UpsertGrant(ctx, orggrant.GrantInput{
-		ProfileID: "gui", OrgName: "growth", RoleID: "worker",
-		Tool: orggrant.Tool{Alias: "publish_post", WorkflowID: "wf-1"},
-	}); err != nil {
-		t.Fatalf("seed grant: %v", err)
-	}
-
 	// Drop the worker role — the change monomind's validate will reject.
 	next := twoRoleDoc()
 	next.Roles = next.Roles[:1]
-	if _, err := a.saveOrgDoc(root, next); err == nil {
-		t.Fatal("expected the save to be rejected by the CLI validate check")
+	if _, err := a.saveOrgDoc(root, next); err == nil || !strings.Contains(err.Error(), "monomind says no") {
+		t.Fatalf("saveOrgDoc = %v, want the CLI validate rejection", err)
 	}
-
-	grants, err := store.ListGrants(ctx, "gui", "growth", "")
-	if err != nil {
-		t.Fatalf("ListGrants: %v", err)
+	for _, call := range loggedArgs(t, log) {
+		if strings.Contains(call, "reconcile-doc") {
+			t.Fatalf("a rejected save reached the grant rows: %q", call)
+		}
 	}
-	if len(grants) != 1 {
-		t.Fatalf("live grant rows after a rejected save = %d, want 1 (the row must survive)", len(grants))
-	}
-
 	// And the file must still be the pre-image, worker and all.
 	back, err := orgdesign.Load(root, "growth")
 	if err != nil {
@@ -108,28 +103,36 @@ func TestSaveOrgDoc_RejectedSaveLeavesGrantRowsIntact(t *testing.T) {
 	}
 }
 
-// TestReconcileOrgDoc_NewOrgKeepsDocumentAutonomyPolicy: creating an org from
-// a document that carries an autonomy block must keep its decider policy
-// text, exactly as cmd/monoagentcli's ensureNewOrgAutonomy does.
-func TestReconcileOrgDoc_NewOrgKeepsDocumentAutonomyPolicy(t *testing.T) {
-	fakeValidateCLI(t, `{"v":1,"org":"growth","valid":true}`)
+// TestSaveOrgDoc_ReconcilesThroughTheCLI: an accepted save of a new org
+// sends the document to `org reconcile-doc --new` and writes back the
+// document the CLI returns (the rows' version of it).
+func TestSaveOrgDoc_ReconcilesThroughTheCLI(t *testing.T) {
+	reconciled := `{"v":1,"org":{"name":"growth","goal":"reconciled","status":"stopped","schedule":null,"roles":[{"id":"lead","title":"Lead","type":"boss","reports_to":null,"responsibilities":["lead"]}]},"reconcile":[]}`
+	log, stdin := fakeOrgCLI(t, `{"v":1,"org":"growth","valid":true}`, reconciled)
 	a, root := newOrgDesignApp(t)
-	ctx := context.Background()
 
 	d := twoRoleDoc()
-	d.Autonomy = &orgdesign.Autonomy{Level: orgdesign.LevelManual, Policy: "never spend money without asking"}
 	if _, err := a.saveOrgDoc(root, d); err != nil {
 		t.Fatalf("saveOrgDoc: %v", err)
 	}
-
-	row, err := orgdecide.NewStore(a.db).Get(ctx, "gui", "growth")
+	calls := loggedArgs(t, log)
+	want := "--profile gui --json org reconcile-doc growth --new --by gui"
+	found := false
+	for _, c := range calls {
+		found = found || c == want
+	}
+	if !found {
+		t.Fatalf("CLI calls = %q, want %q", calls, want)
+	}
+	sent, err := os.ReadFile(stdin)
+	if err != nil || !strings.Contains(string(sent), `"publish_post"`) {
+		t.Fatalf("reconcile-doc stdin = %s, %v", sent, err)
+	}
+	back, err := orgdesign.Load(root, "growth")
 	if err != nil {
-		t.Fatalf("autonomy Get: %v", err)
+		t.Fatalf("reload: %v", err)
 	}
-	if row.Policy != "never spend money without asking" {
-		t.Errorf("starting autonomy policy = %q, want the document's policy text", row.Policy)
-	}
-	if row.Level != orgdesign.LevelManual {
-		t.Errorf("starting autonomy level = %q, want manual (the document asked for it)", row.Level)
+	if back.Goal != "reconciled" || len(back.Roles) != 1 || d.Goal != "reconciled" {
+		t.Fatalf("saved %+v (caller's doc goal %q), want the reconciled document", back, d.Goal)
 	}
 }

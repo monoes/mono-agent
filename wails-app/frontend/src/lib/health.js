@@ -13,7 +13,7 @@ const PROBLEM = new Set(['warn', 'fail'])
 
 // Groups in the order `monoagentcli doctor` registers them, so rows carried
 // over from an earlier report (appended at the end) still show in place.
-const GROUP_ORDER = ['core', 'monomind', 'runtimes', 'browser', 'services', 'integrations', 'accounts']
+const GROUP_ORDER = ['core', 'monomind', 'runtimes', 'browser', 'automations', 'services', 'integrations', 'accounts']
 const groupRank = g => { const i = GROUP_ORDER.indexOf(g); return i < 0 ? GROUP_ORDER.length : i }
 
 /** Rows of a report nested under their parent row (report.results is flat). */

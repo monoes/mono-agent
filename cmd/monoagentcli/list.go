@@ -54,7 +54,7 @@ func newListLsCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer rows.Close()
 
-			var lists []storage.SocialList
+			lists := []storage.SocialList{}
 			for rows.Next() {
 				var l storage.SocialList
 				if err := rows.Scan(&l.ID, &l.ListType, &l.Name, &l.ItemCount, &l.CreatedAt, &l.UpdatedAt); err != nil {

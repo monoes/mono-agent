@@ -593,7 +593,7 @@ func (s *SQLiteWorkflowStore) GetExecution(ctx context.Context, id string) (*Wor
 	e := &WorkflowExecution{}
 	var createdAt sqliteTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at, COALESCE(resume_state,''), COALESCE(profile_id,'default')
+		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, COALESCE(error_message,''), created_at, COALESCE(resume_state,''), COALESCE(profile_id,'default')
 		FROM workflow_executions WHERE id = ?`, id,
 	).Scan(
 		&e.ID, &e.WorkflowID, &e.Status, &e.TriggerType, &e.TriggerDataRaw,
@@ -624,7 +624,7 @@ func (s *SQLiteWorkflowStore) GetExecution(ctx context.Context, id string) (*Wor
 // Pass limit <= 0 to return all executions. Execution nodes are not populated.
 func (s *SQLiteWorkflowStore) ListExecutions(ctx context.Context, workflowID string, limit int) ([]WorkflowExecution, error) {
 	query := `
-		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at
+		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, COALESCE(error_message,''), created_at
 		FROM workflow_executions WHERE workflow_id = ? ORDER BY created_at DESC`
 	var args []interface{}
 	args = append(args, workflowID)

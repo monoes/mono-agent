@@ -370,6 +370,10 @@ export function GetOrgStatus(arg1) {
   return window['go']['main']['App']['GetOrgStatus'](arg1);
 }
 
+export function GetOrgSummary(arg1) {
+  return window['go']['main']['App']['GetOrgSummary'](arg1);
+}
+
 export function GetPendingPeopleApprovals() {
   return window['go']['main']['App']['GetPendingPeopleApprovals']();
 }
@@ -448,6 +452,14 @@ export function GetSessions() {
 
 export function GetSocialLists() {
   return window['go']['main']['App']['GetSocialLists']();
+}
+
+export function GetSummary() {
+  return window['go']['main']['App']['GetSummary']();
+}
+
+export function GetSummarySections(arg1) {
+  return window['go']['main']['App']['GetSummarySections'](arg1);
 }
 
 export function GetTemplates() {
@@ -652,6 +664,14 @@ export function ListWorkflows() {
 
 export function LoginSocial(arg1) {
   return window['go']['main']['App']['LoginSocial'](arg1);
+}
+
+export function MarkPersonMessageUnread(arg1) {
+  return window['go']['main']['App']['MarkPersonMessageUnread'](arg1);
+}
+
+export function MarkPersonMessagesRead(arg1, arg2) {
+  return window['go']['main']['App']['MarkPersonMessagesRead'](arg1, arg2);
 }
 
 export function MoveProfileFolder(arg1, arg2) {

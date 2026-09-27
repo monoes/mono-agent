@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar.jsx'
+import { usePendingCount } from './lib/usePendingCount.js'
 import StatusBar from './components/StatusBar.jsx'
 import { startBackgroundHealth, subscribeHealth, summarize, isFixing } from './lib/health.js'
 import Toasts from './components/Toasts.jsx'
@@ -55,7 +56,8 @@ export default function App() {
   const [globalChatOpen, setGlobalChatOpen] = useState(false)
   const [globalChatRuntime, setGlobalChatRuntime] = useState('')
   const [globalHilOpen, setGlobalHilOpen] = useState(false)
-  const [globalHilCount, setGlobalHilCount] = useState(0)
+  const [globalHilCount, setGlobalHilCount] = useState(0) // reported by the open drawer (incl. org items)
+  const { count: pendingCount } = usePendingCount()     // Jev-free summary count, drawer closed
   // The document a chat result artifact card asked to open (Task 6) — a
   // separate instance from Documents.jsx's own viewingDoc, since that page
   // may not even be mounted yet (persistentPages only mounts a page once
@@ -91,6 +93,7 @@ export default function App() {
     if (page !== 'postDetail') setPostId(null)
     if (page !== 'profile' && page !== 'postDetail') setProfileId(null)
     setNavData(data || null)
+    if (page === 'orgs' && data?.org) setPendingOrgSelect({ name: data.org, tab: data.tab || 'overview' })
     setActivePage(page)
   }, [])
 
@@ -246,11 +249,11 @@ export default function App() {
   // and — for pages like Agents/Orgs that fetch on mount — re-running
   // their (multi-second) initial data load every single time.
   const persistentPages = {
-    dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={navigate} />,
+    dashboard: <Dashboard isActive={activePage === 'dashboard'} onRefresh={refreshStats} onNavigate={navigate} onOpenHil={() => setGlobalHilOpen(true)} />,
     noderunner: <NodeRunner onNavigate={navigate} navData={navData} onWorkflowsChanged={refreshStats} />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     communications: <Communications onProfile={openProfile} />,
-    connections: <Connections onRefresh={refreshStats} />,
+    connections: <Connections onRefresh={refreshStats} navData={activePage === 'connections' ? navData : null} />,
     vault: <ImageVault />,
     secretsVault: <Vault />,
     applications: <Applications />,
@@ -259,7 +262,7 @@ export default function App() {
     aiProviders: <AIProviders />,
     orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,
-    settings:  <SettingsPage onNavigate={setActivePage} />,
+    settings:  <SettingsPage onNavigate={navigate} navData={activePage === 'settings' ? navData : null} />,
   }
 
   // Detail views keyed by a changing id (which profile/post) — these SHOULD
@@ -336,7 +339,7 @@ export default function App() {
         chatOpen={globalChatOpen}
         onToggleChat={() => setGlobalChatOpen(v => !v)}
         hilOpen={globalHilOpen}
-        hilCount={globalHilCount}
+        hilCount={globalHilOpen ? globalHilCount : pendingCount}
         onToggleHil={() => setGlobalHilOpen(v => !v)}
         onOpenHealth={() => navigate('settings')}
       />

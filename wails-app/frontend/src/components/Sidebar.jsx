@@ -13,7 +13,6 @@ import { confirm } from './ConfirmDialog.jsx'
 import NewProfileModal from './NewProfileModal.jsx'
 import { iconUrl } from './orgdesigner/roleIcons.js'
 
-const GetHILItems          = WailsApp.GetHILItems          ?? (async () => [])
 const GetProfiles          = WailsApp.GetProfiles          ?? (async () => [])
 const SwitchProfile        = WailsApp.SwitchProfile        ?? (async () => {})
 const ChooseProfileFolder  = WailsApp.ChooseProfileFolder  ?? (async () => '')
@@ -42,21 +41,9 @@ function requestNotifyPermission() {
   }
 }
 
-function notifyNewHIL(items) {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-  const count = items.length
-  const label = count === 1
-    ? `"${items[0].workflow_name || items[0].node_name}" needs your review`
-    : `${count} items are waiting for your review`
-  try {
-    new Notification('Human in Loop', { body: label, tag: 'hil-pending' })
-  } catch { /* sandboxed webview may block */ }
-}
-
 export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) {
   const { t } = useTranslation()
   const [ver, setVer] = useState(null)
-  const [hilCount, setHilCount] = useState(0)
   const [profiles, setProfiles] = useState([])
   const [activeProfileID, setActiveProfileID] = useState('default')
   const [profileOpen, setProfileOpen] = useState(false)
@@ -169,28 +156,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
 
   const activeProfileName = profiles.find(p => p.id === activeProfileID)?.name ?? 'Default'
 
-  const pollHIL = useCallback(async () => {
-    try {
-      const items = await GetHILItems()
-      const next = Array.isArray(items) ? items.length : 0
-      // Functional updater gives us the previous count without needing a ref.
-      setHilCount(prev => {
-        if (next > prev) notifyNewHIL(Array.isArray(items) ? items : [])
-        return next
-      })
-    } catch {
-      // non-fatal
-    }
-  }, [])
-
-  useEffect(() => {
-    pollHIL()
-    const t = setInterval(pollHIL, 5000)
-    return () => clearInterval(t)
-  }, [pollHIL])
-
   const getBadge = (id) => {
-    if (id === 'hil' && hilCount > 0) return hilCount
     if (!stats) return null
     if (id === 'people' && stats.total_people > 0) return stats.total_people
     return null

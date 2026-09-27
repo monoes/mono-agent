@@ -212,6 +212,10 @@ type Env struct {
 	// that proves the API accepts it (network).
 	JevKey    func(ctx context.Context) (source string, err error)
 	JevModels func(ctx context.Context) error
+
+	// Automations reads installed packages and their selector health
+	// (local files and the database; never seeds or installs).
+	Automations func(ctx context.Context) (*AutomationsInfo, error)
 }
 
 // ConnectionInfo is a saved connection, without any secret.

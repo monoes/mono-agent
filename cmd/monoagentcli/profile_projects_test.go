@@ -7,7 +7,7 @@ import (
 )
 
 // makeMonomindProject creates dir/.monomind/config.yaml so
-// isMonomindInitializedAt(dir) reports true — the same on-disk marker
+// isMonomindProject(dir) reports true — the same on-disk marker
 // monomind's own CLI uses.
 func makeMonomindProject(t *testing.T, dir string) {
 	t.Helper()
