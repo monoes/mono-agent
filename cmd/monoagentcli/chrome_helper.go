@@ -128,6 +128,22 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		return nil
 	}
 
+	// 0. Browsers are attached, just none this profile may use. The
+	// extension is plainly installed and a browser is plainly running, so
+	// neither check below applies, and launching another browser would not
+	// pick the right one. Wait for this profile's browser (its service
+	// worker may be asleep), then say how to bind one.
+	if hint := routeHint(bridge); hint != "" {
+		deadline := time.Now().Add(timeout)
+		for !bridge.IsConnected() && time.Now().Before(deadline) {
+			time.Sleep(routeWaitPoll)
+		}
+		if bridge.IsConnected() {
+			return nil
+		}
+		return fmt.Errorf("no browser for this profile connected within %s%s", timeout, routeHint(bridge))
+	}
+
 	// 1. Check if the extension is installed
 	if !isExtensionInstalled() {
 		extDir := getExtensionDir()

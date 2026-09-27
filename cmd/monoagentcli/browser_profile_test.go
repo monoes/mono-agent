@@ -116,3 +116,24 @@ func TestRouteHintNamesTheFix(t *testing.T) {
 		t.Fatalf("no hint for a plain bridge, got %q", h)
 	}
 }
+
+// routedDown is a narrowed bridge whose profile has no browser, while other
+// browsers are attached.
+type routedDown struct{ routedStub }
+
+func (r *routedDown) IsConnected() bool { return false }
+
+func TestEnsureConnectedExplainsAMissingProfileBrowser(t *testing.T) {
+	prev := routeWaitPoll
+	routeWaitPoll = 5 * time.Millisecond
+	t.Cleanup(func() { routeWaitPoll = prev })
+
+	b := &routedDown{routedStub{err: &extension.NoBrowserError{Profile: "p-solo", BoundTo: []string{"p-work"}}}}
+	err := ensureExtensionConnected(b, 30*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "no browser is set up for profile \"p-solo\"") {
+		t.Fatalf("err = %v, want the routing explanation", err)
+	}
+	if strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("an attached browser means the extension is installed: %v", err)
+	}
+}

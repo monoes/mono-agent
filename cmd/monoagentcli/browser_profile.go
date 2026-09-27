@@ -43,6 +43,10 @@ func browserProfile(cfg *globalConfig) string {
 	return cfg.ProfileID
 }
 
+// routeWaitPoll is how often ensureExtensionConnected re-checks while it
+// waits for a profile's browser; a var so tests can shorten it.
+var routeWaitPoll = 500 * time.Millisecond
+
 // routeHint explains, for a bridge narrowed to a profile, why no browser
 // may run it. It is appended to ensureExtensionConnected's timeout errors,
 // which otherwise only say "did not connect".
