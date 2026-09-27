@@ -51,7 +51,9 @@ func TestCheckExtensionTrustsLiveConnectionOverProfileScan(t *testing.T) {
 
 	env := &Env{
 		ExtensionInstalled: func() (bool, bool) { return false, true }, // scan says "definitely not found"
-		Bridge:             func(context.Context) (BridgeInfo, bool) { return BridgeInfo{Addr: "127.0.0.1:9323", Status: "connected"}, true },
+		Bridge: func(context.Context) (BridgeInfo, bool) {
+			return BridgeInfo{Addr: "127.0.0.1:9323", Status: "connected"}, true
+		},
 	}
 	if res := checkExtension(ctx, env); res.Status != StatusOK {
 		t.Errorf("live connection must win over a scan that found nothing: %+v", res)
