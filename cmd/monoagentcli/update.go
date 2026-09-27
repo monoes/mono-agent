@@ -28,7 +28,10 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Update monoagentcli to the latest release",
 		Long: "Downloads the latest release, verifies it against the release's SHA256SUMS.txt and replaces this binary.\n\n" +
 			"--check only reports whether a newer release exists (nothing is downloaded). --current compares against another " +
-			"version instead of this binary's — the desktop app asks about its own version this way.",
+			"version instead of this binary's — the desktop app asks about its own version this way.\n\n" +
+			"--app updates the desktop app at that executable path, and the CLI bundled with it, instead of this binary: " +
+			"every asset is verified against SHA256SUMS.txt and the files are swapped all-or-nothing. With --json, progress is " +
+			"NDJSON on stderr ({\"kind\":\"line\",\"message\":…}) and the result is one JSON object on stdout.",
 		Example: `  monoagentcli update
   monoagentcli --json update --check
   monoagentcli --json update --check --current v0.72.0
@@ -51,7 +54,7 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "Only report whether a newer release exists; download nothing")
 	cmd.Flags().StringVar(&current, "current", "", "Version to compare against (default: this binary's)")
-	cmd.Flags().StringVar(&app, "app", "", "Update the desktop app at this executable path (and its bundled CLI on Linux) instead of this binary")
+	cmd.Flags().StringVar(&app, "app", "", "Update the desktop app at this executable path (and the CLI bundled with it) instead of this binary")
 	return cmd
 }
 

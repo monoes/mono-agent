@@ -1,4 +1,4 @@
-package main
+package appupdate
 
 import (
 	"archive/tar"
@@ -154,7 +154,7 @@ func installLinux(exe string, tgz []byte) error {
 	}
 	items := []swapItem{{target: exe, staged: stagedApp}}
 	if cli != nil {
-		target, ok := siblingCLI(dir, "linux", "amd64")
+		target, ok := SiblingCLI(dir, "linux", "amd64")
 		if !ok {
 			target = filepath.Join(dir, linuxTarCLI)
 		}
