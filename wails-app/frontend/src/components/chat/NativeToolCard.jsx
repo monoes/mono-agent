@@ -246,7 +246,7 @@ export function NativeToolCard({ call, turnId = '', isLive = true, childCalls = 
   const running = status.key === 'running'
   const now = useTicker(running)
   let durationText = null
-  if (call.durationMs) durationText = formatDuration(call.durationMs)
+  if (call.durationMs) durationText = call.durationMs < 1000 ? `${call.durationMs}ms` : formatDuration(call.durationMs)
   else if (call.startedAt && call.finishedAt) durationText = formatDuration(new Date(call.finishedAt) - new Date(call.startedAt))
   else if (running && call.startedAt) durationText = formatDuration(now - new Date(call.startedAt).getTime())
 
@@ -256,6 +256,9 @@ export function NativeToolCard({ call, turnId = '', isLive = true, childCalls = 
       background: '#020509',
       border: `1px solid ${failed ? 'rgba(239,68,68,0.3)' : status.key === 'denied' ? 'rgba(245,158,11,0.3)' : 'rgba(0,180,216,0.12)'}`,
       borderRadius: 8, marginTop: 6, overflow: 'hidden',
+      // Fill the turn's width (a long command or path then ellipsizes)
+      // instead of growing past the panel edge.
+      alignSelf: 'stretch', minWidth: 0,
     }}>
       <button
         type="button"
@@ -273,7 +276,9 @@ export function NativeToolCard({ call, turnId = '', isLive = true, childCalls = 
           {status.icon}
           <Icon size={11} color={CYAN} />
         </span>
-        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* width 0 + flex 1: a long nowrap title must not raise the card's
+            min-content width, or the turn grows past the panel edge. */}
+        <span style={{ flex: 1, width: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{
             fontFamily: mono, fontSize: 10, color: d.titleMono ? '#e2e8f0' : CYAN, fontWeight: d.titleMono ? 500 : 600,
             whiteSpace: open && !d.compact ? 'pre-wrap' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', wordBreak: 'break-all',

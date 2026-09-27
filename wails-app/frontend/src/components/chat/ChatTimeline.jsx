@@ -63,11 +63,14 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
     />
   )
 
+  // A coder turn's cards take the turn's full width (commands and paths
+  // are long); other turns keep sizing to their content.
+  const hasNative = Object.values(calls).some(c => c.native)
   const statusNotices = notices.filter(n => n.code === 'coder.status')
   const showStatus = isLive && !state.terminal && parts.length === 0 && statusNotices.length > 0
 
   return (
-    <div data-testid="chat-timeline">
+    <div data-testid="chat-timeline" style={hasNative ? { alignSelf: 'stretch' } : undefined}>
       {notices.filter(n => n.code === 'coder.workspace').slice(-1).map((notice, i) => (
         <div key={`ws-${i}`} data-testid="coder-workspace-line" style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
           <FolderOpen size={10} style={{ flexShrink: 0 }} />

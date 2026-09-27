@@ -919,7 +919,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         }}>
           AI ASSISTANT
         </span>
-        {isCoder && <CoderBadge />}
+        {isCoder && !coderCwd && <CoderBadge />}
         {assistantToolsOn && !isCoder && (
           <span
             title={`monoagent tools enabled${assistantAllowRuns ? ' — including running workflows/actions from chat' : ''}`}

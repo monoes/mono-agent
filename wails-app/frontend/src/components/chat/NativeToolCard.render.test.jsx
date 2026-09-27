@@ -80,8 +80,9 @@ describe('native tool cards', () => {
   })
 
   it('Write: path and line count, content collapsed', () => {
-    renderEvents(() => [started('w1', 'Write', { file_path: '/w/hello.py', content: 'print(1)\nprint(2)' }), completed('w1')])
+    renderEvents(() => [started('w1', 'Write', { file_path: '/w/hello.py', content: 'print(1)\nprint(2)' }), completed('w1', { durationMs: 90 })])
     const el = card('Write')
+    expect(within(el).getByText('· 90ms')).toBeInTheDocument()
     expect(within(el).getByText('/w/hello.py')).toBeInTheDocument()
     expect(within(el).getByText('2 lines')).toBeInTheDocument()
     expect(within(el).getByText(/print\(1\)/)).not.toBeVisible()
