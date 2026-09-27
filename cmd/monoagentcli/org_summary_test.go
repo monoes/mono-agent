@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 func runOrgSummary(t *testing.T, root string, args ...string) map[string]interface{} {
@@ -101,5 +103,54 @@ func TestOrgSummaryNeedsYouTimeoutHolds(t *testing.T) {
 	}
 	if m.Orgs[0].NeedsYou != nil || !strings.Contains(m.Orgs[0].NeedsYouError, "timed out") {
 		t.Fatalf("want a timeout error, got %+v", m.Orgs[0])
+	}
+}
+
+func TestOrgSummaryAllProfiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dbPath := filepath.Join(t.TempDir(), "o.db")
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	rootD, rootW := t.TempDir(), t.TempDir()
+	if _, err := db.DB.Exec(`UPDATE profiles SET root_dir = ? WHERE id = 'default'`, rootD); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.Exec(`INSERT INTO profiles (id, name, root_dir) VALUES ('p-work', 'Work', ?)`, rootW); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	writeOrgFile(t, rootD, "home.json", `{"name":"home"}`)
+	writeOrgFile(t, rootW, "acme.json", `{"name":"acme"}`)
+
+	cfg := &globalConfig{DBPath: dbPath, ProfileID: "default"}
+	cmd := newOrgCmd(cfg)
+	cmd.SetArgs([]string{"summary", "--all-profiles", "--fast"})
+	var runErr error
+	out := captureStdout(t, func() { runErr = cmd.Execute() })
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	var m struct {
+		Scope string `json:"scope"`
+		Orgs  []struct {
+			Name        string `json:"name"`
+			ProfileID   string `json:"profile_id"`
+			ProfileName string `json:"profile_name"`
+		} `json:"orgs"`
+		Totals map[string]int `json:"totals"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if m.Scope != "global" || len(m.Orgs) != 2 || m.Totals["orgs"] != 2 {
+		t.Fatalf("payload = %s", out)
+	}
+	if m.Orgs[0].Name != "home" || m.Orgs[0].ProfileID != "default" || m.Orgs[1].Name != "acme" || m.Orgs[1].ProfileName != "Work" {
+		t.Fatalf("orgs = %+v", m.Orgs)
 	}
 }

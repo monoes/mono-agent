@@ -45,6 +45,10 @@ type ExecRow struct {
 	FinishedAt   string `json:"finished_at"`
 	CreatedAt    string `json:"created_at"`
 	Error        string `json:"error"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type ExecutionsSection struct {
@@ -69,12 +73,20 @@ type ScheduleRow struct {
 	// Source says where NextRun comes from: "daemon" (the running
 	// scheduler's own time) or "computed" (from the cron spec).
 	Source string `json:"source"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type ScheduleIssue struct {
 	WorkflowID string `json:"workflow_id"`
 	NodeID     string `json:"node_id"`
 	Error      string `json:"error"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type SchedulesSection struct {

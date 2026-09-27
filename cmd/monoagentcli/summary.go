@@ -11,13 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/automation"
-	"github.com/monoes/mono-agent/internal/capture"
-	"github.com/monoes/mono-agent/internal/capturesummary"
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/extension"
-	"github.com/monoes/mono-agent/internal/monomind"
-	"github.com/monoes/mono-agent/internal/profiledir"
-	"github.com/monoes/mono-agent/internal/recording"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/summary"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -28,6 +23,7 @@ const summaryBridgeTimeout = 400 * time.Millisecond
 
 func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 	var sections string
+	var allProfiles bool
 	cmd := &cobra.Command{
 		Use:   "summary",
 		Short: "At-a-glance roll-up of everything that needs attention (read-only, local, fast)",
@@ -37,7 +33,8 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 			"A section that fails reports \"error\" inside itself; the command still succeeds. " +
 			"The vault section is counts only. For orgs, use `org summary`.",
 		Example: `  monoagentcli --json summary
-  monoagentcli --json summary --section hil,executions`,
+  monoagentcli --json summary --section hil,executions
+  monoagentcli --json summary --all-profiles`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			want, err := parseSummarySections(sections)
@@ -49,54 +46,14 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
-			root := profiledir.Root(db.DB, cfg.ProfileID)
-			opts := summary.Options{
-				DB: db.DB, ProfileID: cfg.ProfileID, Now: time.Now(), Sections: want,
-				Workflows:     readOnlyHybridStore(db),
-				DaemonRunning: func() bool { _, live := daemonhb.Read(); return live },
-				DaemonSchedules: func() map[string]time.Time {
-					hb, live := daemonhb.Read()
-					if !live {
-						return nil
-					}
-					out := make(map[string]time.Time, len(hb.Schedules))
-					for _, s := range hb.Schedules {
-						if t, err := time.Parse(time.RFC3339, s.NextRun); err == nil {
-							out[s.WorkflowID+"/"+s.NodeID] = t
-						}
-					}
-					return out
-				},
-				Daemon: summaryDaemon,
-				Bridge: summaryBridge,
-				OrgServe: func() (bool, []string) {
-					hb, live := monomind.ReadServeHeartbeat(root)
-					if hb == nil || !live {
-						return false, nil
-					}
-					return true, hb.Running
-				},
-				Recordings: func() ([]recording.Summary, error) {
-					if err := applyRecordScope(cfg); err != nil {
-						return nil, err
-					}
-					return recording.List()
-				},
-				Captures: func() ([]capture.Entry, error) {
-					inbox, err := capture.ProfileInbox(cfg.ProfileID)
-					if err != nil {
-						return nil, err
-					}
-					return capture.List(inbox)
-				},
-				SummaryState: func(dir string) string { return capturesummary.StateOf(dir, time.Now()) },
-			}
-			if want == nil || want["automations"] {
-				if reg, err := openAutomationRegistry(); err == nil {
-					opts.Automations = summaryAutomations{reg: reg, db: db.DB}
+			var s summary.Summary
+			if allProfiles {
+				if s, err = buildGlobalSummary(cmd.Context(), cfg, db, want); err != nil {
+					return err
 				}
+			} else {
+				s = summary.Build(cmd.Context(), summaryOptions(cfg, db, cfg.ProfileID, want))
 			}
-			s := summary.Build(cmd.Context(), opts)
 			if cfg.JSONOutput {
 				return writeJSONTo(cmd.OutOrStdout(), s)
 			}
@@ -105,6 +62,7 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sections, "section", "", "Comma-separated sections to include (default: all): "+strings.Join(summary.SectionNames, ","))
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "Roll up every profile (the dashboard's All profiles view); list rows carry profile_id and profile_name")
 	return cmd
 }
 
