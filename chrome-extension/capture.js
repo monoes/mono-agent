@@ -199,27 +199,82 @@
     return { name: "page.pdf", encoding: "base64", bytes, rawBytes: base64Bytes(bytes) };
   }
 
-  async function captureScreenshot(ctx, tabId, warnings) {
+  async function captureScreenshot(ctx, tabId, warnings, page) {
     let clip = null;
+    let width = 0;
+    let height = 0;
+
+    // 1. DOM scroll dimensions from extract() or in-page query.
+    if (page && page.dimensions && page.dimensions.width && page.dimensions.height) {
+      width = page.dimensions.width;
+      height = page.dimensions.height;
+    } else {
+      try {
+        const dims = await ctx.callPage(tabId, "dimensions", []);
+        if (dims && dims.width && dims.height) {
+          width = dims.width;
+          height = dims.height;
+        }
+      } catch {
+        // Fall back to layout metrics below.
+      }
+    }
+
+    // 2. CDP layout metrics: compare with DOM dimensions to take the true document extent.
     try {
       const metrics = await ctx.cdp(tabId, "Page.getLayoutMetrics", {});
       const size = (metrics && (metrics.cssContentSize || metrics.contentSize)) || null;
       if (size && size.width && size.height) {
-        const height = Math.min(Math.ceil(size.height), MAX_SCREENSHOT_PX);
-        if (Math.ceil(size.height) > MAX_SCREENSHOT_PX) {
-          warnings.push(`screenshot.png truncated to ${MAX_SCREENSHOT_PX}px of ${Math.ceil(size.height)}px page height`);
-        }
-        clip = { x: 0, y: 0, width: Math.min(Math.ceil(size.width), MAX_SCREENSHOT_PX), height, scale: 1 };
+        width = Math.max(width, Math.ceil(size.width));
+        height = Math.max(height, Math.ceil(size.height));
+      }
+      if (!width && metrics && metrics.cssLayoutViewport) {
+        width = Math.ceil(metrics.cssLayoutViewport.clientWidth);
+      }
+      if (!height && metrics && metrics.cssLayoutViewport) {
+        height = Math.ceil(metrics.cssLayoutViewport.clientHeight);
       }
     } catch {
-      // No layout metrics — fall back to the viewport-sized capture below.
+      // Fall back.
     }
-    const params = { format: "png", captureBeyondViewport: true };
-    if (clip) params.clip = clip;
-    const result = await ctx.cdp(tabId, "Page.captureScreenshot", params);
-    const bytes = (result && result.data) || "";
-    if (!bytes) throw new Error("Page.captureScreenshot returned nothing");
-    return { name: "screenshot.png", encoding: "base64", bytes, rawBytes: base64Bytes(bytes) };
+
+    if (width > 0 && height > 0) {
+      const clampedWidth = Math.min(width, MAX_SCREENSHOT_PX);
+      const clampedHeight = Math.min(height, MAX_SCREENSHOT_PX);
+      if (height > MAX_SCREENSHOT_PX) {
+        warnings.push(`screenshot.png truncated to ${MAX_SCREENSHOT_PX}px of ${height}px page height`);
+      }
+      clip = { x: 0, y: 0, width: clampedWidth, height: clampedHeight, scale: 1 };
+    }
+
+    // 3. Temporarily override device metrics so Chrome rasterizes off-screen content.
+    let overridden = false;
+    if (clip) {
+      try {
+        await ctx.cdp(tabId, "Emulation.setDeviceMetricsOverride", {
+          width: clip.width,
+          height: clip.height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        overridden = true;
+      } catch {
+        // Emulation override may not be supported on all targets; continue without it.
+      }
+    }
+
+    try {
+      const params = { format: "png", captureBeyondViewport: true, fromSurface: true };
+      if (clip) params.clip = clip;
+      const result = await ctx.cdp(tabId, "Page.captureScreenshot", params);
+      const bytes = (result && result.data) || "";
+      if (!bytes) throw new Error("Page.captureScreenshot returned nothing");
+      return { name: "screenshot.png", encoding: "base64", bytes, rawBytes: base64Bytes(bytes) };
+    } finally {
+      if (overridden) {
+        await ctx.cdp(tabId, "Emulation.clearDeviceMetricsOverride", {}).catch(() => {});
+      }
+    }
   }
 
   // --- the capture itself -------------------------------------------------
@@ -336,7 +391,7 @@
           // Page.enable is a courtesy; the three capture commands work without it.
         }
         const jobs = [
-          ["screenshot", () => captureScreenshot(ctx, tabId, warnings)],
+          ["screenshot", () => captureScreenshot(ctx, tabId, warnings, page)],
           ["pdf", () => capturePdf(ctx, tabId, meta)],
           ["mhtml", () => captureMhtml(ctx, tabId)],
         ];

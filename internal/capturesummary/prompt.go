@@ -110,8 +110,9 @@ func Prompt(in *Input) string {
 	if in.Kind == KindVideo {
 		what = "YouTube video"
 	}
-	fmt.Fprintf(&b, "Summarize this %s that the user saved. Write Markdown in the same language as the content, with exactly these sections and nothing before or after them:\n\n", what)
-	b.WriteString("## TL;DR\nTwo or three sentences: what it is and why it matters.\n\n")
+	fmt.Fprintf(&b, "Summarize this %s that the user saved. Write Markdown always in English, regardless of the language of the source text, captions, or video. Use exactly these sections and nothing before or after them:\n\n", what)
+	b.WriteString("## Super summary\nA short paragraph of two to three lines stating all the most important points and core takeaways.\n\n")
+	b.WriteString("## Summary\nA detailed narrative summary explaining what is covered and discussed throughout the content.\n\n")
 	b.WriteString("## Key points\nFive to ten bullet points with the substance: claims, findings, numbers, steps, conclusions.\n\n")
 	if in.Kind == KindVideo && in.Source == "transcript.md" {
 		b.WriteString("## Highlights\nFive to ten bullets, each starting with a timestamp link copied exactly from the transcript " +
