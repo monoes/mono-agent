@@ -618,3 +618,59 @@ func TestListVideoCommentsHoldsVideoPaused(t *testing.T) {
 		t.Fatalf("hold left installed: %v", v)
 	}
 }
+
+// The profile's embedded JSON (__UNIVERSAL_DATA_FOR_REHYDRATION__) fills
+// what the header doesn't show as text: exact counts, video and friend
+// counts, private flag, language, category, the bio link, HD avatar.
+func TestGetProfileDataReadsEmbeddedJSON(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "get_profile_data", profileURL("fake_rich"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resultMap(t, res)
+	want := map[string]interface{}{
+		"username": "fake_rich", "handle": "fake_rich", "full_name": "Fake Rich Name", "bio": "Synthetic rich bio",
+		"follower_count": "1846041", "following_count": "23", "likes_count": "9682672", "content_count": "48",
+		"friend_count": "17", "is_verified": true, "is_private": false, "language": "en",
+		"website": "https://links.example.test/fake", "profile_category": "Synthetic category",
+		"account_type": "business", "platform_id": "7000000000000000001",
+		"profile_picture_url": "https://media.fixture.invalid/rich-1080.jpeg",
+	}
+	for k, v := range want {
+		if m[k] != v {
+			t.Errorf("%s = %#v, want %#v", k, m[k], v)
+		}
+	}
+	if fmt.Sprint(m["links"]) != "[map[url:https://links.example.test/fake]]" {
+		t.Errorf("links = %v", m["links"])
+	}
+}
+
+// Embedded JSON about another profile (left over from in-app navigation)
+// is ignored: the header is what this profile shows.
+func TestGetProfileDataIgnoresOtherProfilesJSON(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "get_profile_data", profileURL("fake_stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resultMap(t, res)
+	if m["username"] != "fake_stale" || m["full_name"] != "Fake Stale" || m["bio"] != "Stale header bio" || m["follower_count"] != "1234" || m["platform_id"] != nil {
+		t.Fatalf("profile = %v", m)
+	}
+}
+
+// The header's bio link is tiktok.com's /link/v2 redirect; the website is
+// its destination.
+func TestUnwrapBioLink(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://www.tiktok.com/link/v2?aid=1988&lang=en&scene=bio_url&target=spr.ly%2Fnatgeotiktok": "https://spr.ly/natgeotiktok",
+		"https://example.test/x":        "https://example.test/x",
+		"https://www.tiktok.com/@fake/": "https://www.tiktok.com/@fake/",
+	} {
+		if got := unwrapBioLink(in); got != want {
+			t.Errorf("unwrapBioLink(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

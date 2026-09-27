@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "TIKTOK",
-  "version": "1.1.0",
-  "description": "Extract profile information (handle, display name, bio, follower/following/like counts, avatar, link, verified badge) from TikTok profiles. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
+  "version": "1.2.0",
+  "description": "Extract profile information from TikTok profiles: handle, display name, bio, bio link, exact follower/following/like/video/friend counts, verified and private flags, HD avatar, language and business category (from the data the profile page embeds, else its header). If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "read",
   "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
@@ -27,9 +27,17 @@
       "following_count",
       "follower_count",
       "likes_count",
+      "content_count",
+      "friend_count",
       "profile_picture_url",
       "website",
-      "is_verified"
+      "links",
+      "is_verified",
+      "is_private",
+      "language",
+      "profile_category",
+      "account_type",
+      "platform_id"
     ],
     "failure": [
       "failedProfileSearches"
