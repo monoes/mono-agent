@@ -13,13 +13,13 @@ will succeed — `workflow import` and `--dry-run` work without them.
 
 | File | What it does | Trigger | Nodes |
 |---|---|---|---|
-| `morning-briefing.json` | Weekday 7am: RSS → filter → AI summary → human review → email digest | `trigger.schedule` | `system.rss_read` → `core.filter` → `service.openrouter` → `core.human_in_loop` → `comm.email_send` |
+| `morning-briefing.json` | Weekday 7am: RSS → filter → AI summary → human review → email digest | `trigger.schedule` | `system.rss_read` → `core.filter` → `agent.ask` → `core.human_in_loop` → `comm.email_send` |
 | `sheets-to-gmail.json` | Read pending rows from a Sheet and send a follow-up email per row | `trigger.manual` | `service.google_sheets` → `core.filter` → `comm.email_send` |
 | `http-to-slack.json` | JSON POST in → formatted message → Slack channel | `trigger.webhook` | `core.set` → `comm.slack` |
 | `github-issues-to-linear.json` | Every 6h: mirror new GitHub issues into Linear | `trigger.schedule` | `service.github` → `service.linear` |
 | `webhook-to-postgres.json` | JSON event in → normalize → insert row into Postgres | `trigger.webhook` | `core.set` → `db.postgres` |
 | `stripe-events-to-sheets.json` | Stripe-style event in → append row to a Sheets ledger | `trigger.webhook` | `service.google_sheets` |
-| `image-gen-vault.json` | Generate an image with HuggingFace, lands in the local image vault | `trigger.manual` | `service.huggingface` |
+| `image-gen-vault.json` | Generate an image with Gemini (your browser session), lands in the local image vault | `trigger.manual` | `gemini.generate_image` |
 | `outlook-inbox-sync.json` | Hourly: sync Outlook inbox + sent mail into People (adapted from the bundled template) | `trigger.schedule` | `service.outlook_mail` → `people.sync_outlook_message` (×2 branches) |
 | `telegram-notify.json` | Every morning: RSS items pushed as Telegram bot messages | `trigger.schedule` | `system.rss_read` → `comm.telegram` |
 | `data-pipeline.json` | Fetch API JSON → reshape in code → write CSV → sum totals | `trigger.manual` | `http.request` → `core.code` → `data.spreadsheet` → `core.aggregate` |
@@ -126,6 +126,10 @@ headers at all, so cross-origin browser requests are blocked outright.
 - **Credentials**: nodes with a `credential_id` field need a connection first —
   see `monoagentcli ref connections`. Secrets can be piped in via stdin
   (`monoagentcli secret add --kind secret --name ...`), never argv.
+- **AI steps**: `agent.ask` runs on a local agent CLI through monomind — no API
+  key. Check what you have with `monoagentcli agent scan --installed` and set
+  the node's `runtime` to one of them (see "How AI works in Mono Agent" in the
+  root README). `gemini.generate_image` needs `monoagentcli login gemini` once.
 - **Cron format** is 6-field (seconds first): `0 0 7 * * 1-5` = weekdays 07:00.
 - **Docker**: see `docker-compose.yml` in the repo root for running the daemon
   as a container with persistent state.

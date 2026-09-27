@@ -20,10 +20,11 @@ func newAgentCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Local AI agent runtimes (via the monomind engine)",
-		Long: "Detect and smoke-test the AI agent CLIs installed on this machine — claude, codex, " +
-			"kimi, qwen, grok, crush, copilot, pi, and more — through the monomind engine. " +
-			"monomind is the AI engine mono-agent delegates every chat and AI node to; if it is " +
-			"missing, these commands print the install hint.",
+		Long: "Detect, install and smoke-test the AI agent CLIs on this machine — claude, codex, " +
+			"kimicode, opencode, qwen, grok, crush, copilot, pi, and more — through the monomind engine. " +
+			"monomind runs every chat turn and AI generation in mono-agent on one of these runtimes, " +
+			"using the runtime's own login; mono-agent stores no API keys for text AI. " +
+			"If monomind is missing, these commands print the install hint.",
 	}
 	cmd.AddCommand(
 		newAgentScanCmd(cfg),
