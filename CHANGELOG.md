@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-09-27
+
+### Removed
+
+- **The legacy in-app AI provider is gone. All AI now runs through monomind
+  on your local agents** (Claude Code, Codex and others). Removed:
+  - `monoagentcli ai provider …`;
+  - the AI Providers page and the "AI connections (legacy)" Settings card;
+  - the provider choice in the chat panel, which now uses agents only;
+  - the OpenRouter connection type (saved ones still list and delete).
+
+  `service.openrouter` and the `generate_text` operation of
+  `service.huggingface` fail with a hint to use `agent.ask`;
+  `service.huggingface` still generates images. Migration 051 drops the
+  `ai_providers` table. Saved provider keys are first exported to
+  `~/.monoagent/backups/retired-ai-providers-<profile>-<time>.json`. Its
+  passphrase is kept as the secret "Retired AI provider keys backup", and
+  `secret import` restores the keys as plain secrets. Old provider
+  conversations stay readable.
+
 ### Added
 
 - **A new dashboard.** The desktop home page now shows everything the app does:
@@ -44,6 +64,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read. The dashboard shows how many are unread.
 - **`monoagentcli update --app <exe>`** updates the desktop app from the
   CLI.
+- **`monoagentcli chat history …`** lists, shows, creates and deletes chat
+  conversations, and reads their turns and events. `chat --conversation C
+  --turn T` runs one journaled turn. The desktop chat now goes through
+  these commands, and its history is restored after a restart.
+- **`monoagentcli image sync`** and **`profile documents sync`** scan the
+  profile folder and reconcile the vault in one pass. The desktop app's
+  folder watchers now only notice changes and run these commands.
+- **Project images are discovered automatically.** Images in the profile
+  folder appear in the Image Vault. Images made in the chat or by workflows
+  are added too. Deleting a discovered image keeps your file.
+- **Settings › System health** groups the checks with severity badges.
 - **The daemon publishes its scheduler's real next run times** in its
   heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
   schedules show their actual next run.
@@ -66,7 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `profile documents get|capture`.
   - `node palette` and `org reconcile-doc`.
 - Image Vault thumbnails load as they scroll into view.
-
+- **The desktop app's update installer lives in the CLI** (`update --app`),
+  and the node editor's resource picker goes through the CLI.
+- **An unknown `--profile` exits with code 3** (invalid input) for every
+  command. Before, it exited with 1.
+- The "AI agents" tab is hidden from the sidebar.
+- The AI docs describe monomind and the supported local agents.
 - The dashboard, sidebar and status-bar counts now come from the CLI instead of
   the desktop app reading the database itself.
 - The dashboard stops polling while another page is open.
@@ -97,8 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder first.
 - **`workflow executions`** failed on runs with no error message, and
   `people list --platform` missed upper-case platform names.
-
-
+- **`ai.extract_page` in natural mode** used the fields the AI generated
+  instead of ignoring them. It falls back to the list selector, then to
+  markdown.
+- **The test suite wrote into the real `~/.monoagent`.** Test binaries now get
+  a throwaway HOME.
 - The dashboard showed successful runs in grey, and the running indicator never
   pulsed.
 
