@@ -623,7 +623,8 @@ label,
 }
 
 input[type="text"],
-#binding-profile {
+#binding-profile,
+#rec-save-as {
   width: 100%;
   min-width: 0;
   padding: 7px 9px;
@@ -636,6 +637,11 @@ input[type="text"],
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 
+#binding-profile,
+#rec-save-as {
+  cursor: pointer;
+}
+
 input[type="text"].mono {
   font-family: var(--mono);
 }
@@ -644,11 +650,15 @@ input[type="text"]::placeholder {
   color: var(--ink-2);
 }
 
-input[type="text"]:hover {
+input[type="text"]:hover,
+#binding-profile:hover,
+#rec-save-as:hover {
   border-color: color-mix(in oklch, var(--accent) 40%, var(--line-strong));
 }
 
-input[type="text"]:focus-visible {
+input[type="text"]:focus-visible,
+#binding-profile:focus-visible,
+#rec-save-as:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
