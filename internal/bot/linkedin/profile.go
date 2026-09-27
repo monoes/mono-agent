@@ -70,6 +70,12 @@ const profileJS = `() => {
 		}
 		if (picture) break;
 	}
+	// The cover (banner) image, when the member set one.
+	let banner = '';
+	for (const img of main.querySelectorAll('img')) {
+		const u = img.currentSrc || img.src || '';
+		if (/displaybackgroundimage/i.test(u)) { banner = u; break; }
+	}
 	// About: the section holding the #about anchor, or the one headed
 	// "About" (a <section> or a server-driven card keyed by componentkey).
 	let aboutSec = null;
@@ -88,7 +94,7 @@ const profileJS = `() => {
 		connections: conn ? conn[1] : '',
 		followers: fol ? fol[1] : '',
 		degree: deg ? deg[1] : '',
-		picture,
+		picture, banner,
 		isSelf: !!card.querySelector('a[href*="/edit/intro/"], a[href*="/edit/forms/intro"]'),
 		url: window.location.href,
 	};
@@ -104,6 +110,7 @@ type rawProfile struct {
 	Followers   string `json:"followers"`
 	Degree      string `json:"degree"`
 	Picture     string `json:"picture"`
+	Banner      string `json:"banner"`
 	IsSelf      bool   `json:"isSelf"`
 	URL         string `json:"url"`
 }
@@ -133,7 +140,7 @@ func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterfac
 		u.RawQuery, u.Fragment = "", ""
 		clean = u.String()
 	}
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"username":            b.ExtractUsername(clean),
 		"profile_url":         clean,
 		"full_name":           raw.Name,
@@ -144,8 +151,21 @@ func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterfac
 		"follower_count":      raw.Followers,
 		"connection_degree":   raw.Degree,
 		"profile_picture_url": raw.Picture,
+		"cover_image_url":     raw.Banner,
 		"is_self":             raw.IsSelf,
-	}, nil
+	}
+	// Experience and education as far as the profile page itself shows
+	// them; GetProfile replaces them with the full /details/ lists.
+	var exp []Position
+	var edu []School
+	if sec, err := readSection(p, "experience"); err == nil && sec.Found {
+		exp = parseExperience(sec.Entries)
+	}
+	if sec, err := readSection(p, "education"); err == nil && sec.Found {
+		edu = parseEducation(sec.Entries)
+	}
+	setDetails(m, exp, edu)
+	return m, nil
 }
 
 // aboutScrolls bounds how often loadAbout scrolls looking for the About
@@ -186,8 +206,14 @@ func (b *LinkedInBot) loadAbout(ctx context.Context, p browser.PageInterface, ra
 	}
 }
 
-// GetProfile navigates to a profile (URL or slug) and reads it.
+// GetProfile navigates to a profile (URL or slug) and reads it, including
+// the full Experience and Education lists from the profile's /details/
+// pages (the profile page itself shows only the first few entries).
 func (b *LinkedInBot) GetProfile(ctx context.Context, page browser.PageInterface, target string) (map[string]interface{}, error) {
+	return b.getProfile(ctx, page, target, true)
+}
+
+func (b *LinkedInBot) getProfile(ctx context.Context, page browser.PageInterface, target string, details bool) (map[string]interface{}, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, fmt.Errorf("linkedin: profile URL is required")
@@ -199,7 +225,30 @@ func (b *LinkedInBot) GetProfile(ctx context.Context, page browser.PageInterface
 	if err := navigate(ctx, page, b.ResolveURL(u)); err != nil {
 		return nil, err
 	}
-	return b.GetProfileData(ctx, page)
+	m, err := b.GetProfileData(ctx, page)
+	if err != nil || !details {
+		return m, err
+	}
+	profileURL, _ := m["profile_url"].(string)
+	if b.ExtractUsername(profileURL) == "" {
+		return m, nil
+	}
+	exp, _ := m["experience"].([]interface{})
+	edu, _ := m["education"].([]interface{})
+	var positions []Position
+	var schools []School
+	if entries, ok := b.readDetails(ctx, page, profileURL, "experience"); ok {
+		positions = parseExperience(entries)
+	} else {
+		positions = fromJSONList[Position](exp)
+	}
+	if entries, ok := b.readDetails(ctx, page, profileURL, "education"); ok {
+		schools = parseEducation(entries)
+	} else {
+		schools = fromJSONList[School](edu)
+	}
+	setDetails(m, positions, schools)
+	return m, nil
 }
 
 // peopleCardsJS reads person cards from a search-results or network list
