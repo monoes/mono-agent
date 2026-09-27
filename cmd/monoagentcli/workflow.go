@@ -609,6 +609,7 @@ func newWorkflowTemplatesUseCmd(cfg *globalConfig) *cobra.Command {
 // newWorkflowListCmd lists all workflows.
 func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 	var jsonOut bool
+	var allProfiles bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -623,21 +624,12 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 			store := newHybridStore(db)
 			ctx := context.Background()
 
-			all, err := store.ListWorkflows(ctx, cfg.ProfileID)
+			if allProfiles {
+				return printAllProfilesWorkflows(ctx, db, store, jsonOut || cfg.JSONOutput)
+			}
+			workflows, err := profileWorkflows(ctx, store, cfg.ProfileID)
 			if err != nil {
 				return fmt.Errorf("list workflows: %w", err)
-			}
-			// The store's file half has no profile filter: apply the same
-			// COALESCE(profile_id,'default') rule its SQLite half uses.
-			workflows := make([]workflow.Workflow, 0, len(all))
-			for _, wf := range all {
-				owner := wf.ProfileID
-				if owner == "" {
-					owner = "default"
-				}
-				if owner == cfg.ProfileID {
-					workflows = append(workflows, wf)
-				}
 			}
 
 			if jsonOut || cfg.JSONOutput {
@@ -675,6 +667,7 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "List every profile's workflows, each tagged with its profile")
 	return cmd
 }
 
@@ -1117,6 +1110,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	var limit int
 	var jsonOut bool
 	var all bool
+	var allProfiles bool
 
 	cmd := &cobra.Command{
 		Use:   "executions <workflow-id> | --all",
@@ -1125,6 +1119,9 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
 				return errInvalidInput("pass either a workflow id or --all")
+			}
+			if allProfiles && !all {
+				return errInvalidInput("--all-profiles goes with --all")
 			}
 			db, err := initDB(cfg)
 			if err != nil {
@@ -1137,7 +1134,12 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 				if n <= 0 {
 					n = -1 // SQLite: no limit
 				}
-				rows, err := summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				var rows []summary.ExecRow
+				if allProfiles {
+					rows, err = allProfilesRecentExecutions(cmd.Context(), db.DB, n)
+				} else {
+					rows, err = summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				}
 				if err != nil {
 					return fmt.Errorf("list executions: %w", err)
 				}
@@ -1205,6 +1207,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of executions to show (0 = all)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVar(&all, "all", false, "List recent executions across every workflow in the profile, newest first")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "With --all: every profile's runs, tagged with their profile")
 	return cmd
 }
 
