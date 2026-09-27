@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, KeyRound, ShieldAlert } from 'lucide-react'
+import { ChevronRight, ChevronDown, ChevronUp, KeyRound, ShieldAlert, Zap, Loader2 } from 'lucide-react'
 import { JevStatus, JevSetKey, JevTestKey, JevRemoveKey, JevSetSurface, JevUsage } from '../../wailsjs/go/main/App'
 
 // TypeSafe Jev settings. Everything goes through `monoagentcli jev …` (Go
@@ -208,7 +208,12 @@ function UsageTable({ usage, titles }) {
   )
 }
 
-export default function JevSection() {
+export default function JevSection({ collapsible = false, defaultExpanded = false } = {}) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  useEffect(() => {
+    if (defaultExpanded) setIsExpanded(true)
+  }, [defaultExpanded])
+
   const [status, setStatus] = useState(null)
   const [loadErr, setLoadErr] = useState('')
   const [usage, setUsage] = useState(null)
@@ -267,16 +272,89 @@ export default function JevSection() {
     return (
       <div id="settings-jev" data-testid="jev-section">
         {header}
-        <div style={card}>
-          {loadErr ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ ...errText, flex: 1 }}>Couldn't read Jev settings: {loadErr}</div>
-              <button className="btn btn-secondary btn-sm" onClick={load}>Retry</button>
+        {collapsible ? (
+          <>
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={isExpanded}
+              data-testid="jev-fold-toggle"
+              onClick={() => setIsExpanded(v => !v)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setIsExpanded(v => !v)
+                }
+              }}
+              style={{
+                background: 'var(--surface)',
+                border: `1px solid ${loadErr ? 'rgba(239,68,68,.35)' : 'var(--border)'}`,
+                borderRadius: 'var(--radius-lg)',
+                padding: '12px 18px',
+                marginBottom: isExpanded ? 12 : 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+                userSelect: 'none',
+                transition: 'border-color 0.15s ease, background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Zap size={16} style={{ color: loadErr ? 'var(--red)' : 'var(--text-muted)', flexShrink: 0 }} />
+                  <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: 0.5 }}>
+                    TypeSafe Jev
+                  </span>
+                </div>
+                {loadErr ? (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10.5,
+                    color: 'var(--red)', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.25)',
+                    borderRadius: 99, padding: '2px 9px',
+                  }}>
+                    Error reading settings
+                  </span>
+                ) : (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10.5,
+                    color: 'var(--cyan)', background: 'rgba(0,180,216,.1)', border: '1px solid rgba(0,180,216,.25)',
+                    borderRadius: 99, padding: '2px 9px',
+                  }}>
+                    <Loader2 size={11} className="spin" style={{ color: 'var(--cyan)' }} /> Loading…
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {isExpanded ? <ChevronUp size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} />}
+              </div>
             </div>
-          ) : (
-            <div style={hint}>Loading Jev settings…</div>
-          )}
-        </div>
+
+            {isExpanded && (
+              <div style={card}>
+                {loadErr ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ ...errText, flex: 1 }}>Couldn't read Jev settings: {loadErr}</div>
+                    <button className="btn btn-secondary btn-sm" onClick={load}>Retry</button>
+                  </div>
+                ) : (
+                  <div style={hint}>Loading Jev settings…</div>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={card}>
+            {loadErr ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ ...errText, flex: 1 }}>Couldn't read Jev settings: {loadErr}</div>
+                <button className="btn btn-secondary btn-sm" onClick={load}>Retry</button>
+              </div>
+            ) : (
+              <div style={hint}>Loading Jev settings…</div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -286,11 +364,87 @@ export default function JevSection() {
   const titles = Object.fromEntries(surfaces.map(s => [s.surface, s.title || s.surface]))
   const hasKey = status.key_source && status.key_source !== 'none'
   const disabled = !!busy
+  const activeCount = surfaces.filter(s => s.enabled).length
 
   return (
     <div id="settings-jev" data-testid="jev-section">
       {header}
-      <div style={card}>
+      {collapsible && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
+          data-testid="jev-fold-toggle"
+          onClick={() => setIsExpanded(v => !v)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setIsExpanded(v => !v)
+            }
+          }}
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '12px 18px',
+            marginBottom: isExpanded ? 12 : 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            userSelect: 'none',
+            transition: 'border-color 0.15s ease, background 0.15s ease',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Zap size={16} style={{ color: hasKey ? 'var(--cyan)' : 'var(--text-muted)', flexShrink: 0 }} />
+              <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: 0.5 }}>
+                TypeSafe Jev
+              </span>
+            </div>
+
+            <span
+              data-testid="jev-fold-key-chip"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10.5,
+                color: chip.color, background: chip.bg, border: `1px solid ${chip.bd}`, borderRadius: 99, padding: '2px 9px',
+              }}
+            >
+              <KeyRound size={11} /> {chip.text}
+            </span>
+
+            <span
+              data-testid="jev-fold-features-badge"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10.5,
+                color: activeCount > 0 ? 'var(--green-neon)' : 'var(--text-muted)',
+                background: activeCount > 0 ? 'rgba(16,185,129,.1)' : 'rgba(255,255,255,.05)',
+                border: `1px solid ${activeCount > 0 ? 'rgba(74,222,128,.25)' : 'var(--border)'}`,
+                borderRadius: 99, padding: '2px 9px',
+              }}
+            >
+              {activeCount} {activeCount === 1 ? 'feature' : 'features'} active
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {usage?.total?.calls ? (
+              <span style={{ fontFamily: mono, fontSize: 10, color: 'var(--text-muted)' }}>
+                {usage.total.calls} {usage.total.calls === 1 ? 'call' : 'calls'} (7d) · {formatUSD(usage.total.estimated_usd)}
+              </span>
+            ) : null}
+            {isExpanded ? (
+              <ChevronUp size={16} style={{ color: 'var(--text-muted)' }} />
+            ) : (
+              <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {(!collapsible || isExpanded) && (
+        <div style={card}>
         <div style={hint}>
           Fast pick-one and yes/no decisions for a few monoagent features. Jev never writes text,
           and nothing is sent to TypeSafe until you turn a feature on below. Get an API key at console.typesafe.ai.
@@ -379,6 +533,7 @@ export default function JevSection() {
           {usageErr ? <div style={errText}>Couldn't read usage: {usageErr}</div> : <UsageTable usage={usage} titles={titles} />}
         </div>
       </div>
+      )}
     </div>
   )
 }
