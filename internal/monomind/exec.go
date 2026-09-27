@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,14 @@ type ExecOptions struct {
 	// access to a well-known CLI is far more reliable for the model to
 	// actually use than a large custom tool surface alone.
 	AllowBashPrefixes []string
+	// Access "full" runs the turn with the runner's own tools unrestricted
+	// (monomind#355); "" keeps monomind's scoped default. Needs Cwd.
+	Access string
+	// Settings lists the Claude Code setting sources the turn loads
+	// ("user", "project", "local"; monomind#356). Empty loads none.
+	Settings []string
+	// MaxTurns caps agent turns (--max-turns); zero keeps monomind's default.
+	MaxTurns int
 	// Stderr receives monomind's diagnostics; nil means os.Stderr.
 	Stderr io.Writer
 }
@@ -282,6 +291,18 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 	if len(opts.AllowBashPrefixes) > 0 {
 		args = append(args, "--allow-bash-prefix", strings.Join(opts.AllowBashPrefixes, ","))
+	}
+	if opts.Access != "" {
+		if opts.Access == AccessFull && opts.Cwd == "" {
+			return nil, fmt.Errorf("ExecOptions.Access %q needs Cwd", opts.Access)
+		}
+		args = append(args, "--access", opts.Access)
+	}
+	if len(opts.Settings) > 0 {
+		args = append(args, "--settings", strings.Join(opts.Settings, ","))
+	}
+	if opts.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
 	if opts.Timeout > 0 {
 		args = append(args, "--timeout", formatDuration(opts.Timeout))

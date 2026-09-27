@@ -228,3 +228,19 @@ func TestRedactAndBoundJSON_EmptyInputUnchanged(t *testing.T) {
 		t.Errorf("RedactAndBoundJSON(nil) = %v, want nil", out)
 	}
 }
+
+func TestRedactAndBoundFieldsKeepsObjectShape(t *testing.T) {
+	big := strings.Repeat("x", MaxToolFieldBytes+50)
+	raw, _ := json.Marshal(map[string]string{"file_path": "/a.go", "new_string": big, "old_string": "y"})
+	out, truncated := RedactAndBoundFields(raw)
+	var obj map[string]string
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("not an object any more: %v", err)
+	}
+	if !truncated || obj["file_path"] != "/a.go" || obj["old_string"] != "y" || len(obj["new_string"]) > MaxToolFieldBytes {
+		t.Errorf("truncated=%v obj=%.60v", truncated, obj)
+	}
+	if out, truncated := RedactAndBoundFields(json.RawMessage(`{"command":"ls"}`)); truncated || string(out) != `{"command":"ls"}` {
+		t.Errorf("small input changed: %s %v", out, truncated)
+	}
+}

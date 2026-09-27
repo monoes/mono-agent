@@ -129,6 +129,10 @@ type ToolStartedPayload struct {
 	CallID    string          `json:"callId"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Native marks one of the agent's own tools (Bash, Edit, …) in a coder
+	// turn; ParentCallID nests a call made inside a subagent call.
+	Native       bool   `json:"native,omitempty"`
+	ParentCallID string `json:"parentCallId,omitempty"`
 }
 
 // ToolCompletedPayload is tool.completed's payload. OK is nullable (some
@@ -136,9 +140,13 @@ type ToolStartedPayload struct {
 // present once this event fires — an empty string is a valid result, not a
 // missing one, so it is a plain string rather than a pointer.
 type ToolCompletedPayload struct {
-	CallID string `json:"callId"`
-	OK     *bool  `json:"ok"`
-	Result string `json:"result"`
+	CallID     string `json:"callId"`
+	OK         *bool  `json:"ok"`
+	Result     string `json:"result"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	DurationMs int64  `json:"durationMs,omitempty"`
+	Denied     bool   `json:"denied,omitempty"`
+	Cancelled  bool   `json:"cancelled,omitempty"`
 }
 
 // UsageUpdatedPayload is usage.updated's payload. Every metric is nullable

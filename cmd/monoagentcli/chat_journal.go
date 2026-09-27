@@ -195,6 +195,17 @@ func (j *turnJournal) handle(ev monomind.Event) {
 		}
 		bounded, _, _ := chatevents.BoundText(resultText, chatevents.MaxToolPreviewBytes)
 		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: ev.ID, OK: ev.OK, Result: bounded})
+	case monomind.EventToolActivity:
+		j.toolActivityLocked(ev)
+	case monomind.EventStatus:
+		if msg := coderStatusMessage(ev); msg != "" {
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderStatus, Message: msg, Severity: chatevents.SeverityInfo})
+		}
+	case monomind.EventDone:
+		if len(ev.BackgroundPids) > 0 {
+			j.forceFlushLocked()
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderBackground, Message: backgroundMessage(ev.BackgroundPids), Severity: chatevents.SeverityWarning})
+		}
 	case monomind.EventUsage:
 		j.usageLocked("usage")
 	case monomind.EventResult:
