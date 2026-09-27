@@ -21,10 +21,10 @@ const coderConfigName = "coder_mode"
 // coder conversation and turn: the CLI enforces it, not the app.
 type coderSettings struct {
 	Enabled       bool    `json:"enabled"`
-	WorkspaceRoot string  `json:"workspaceRoot,omitempty"`
-	MaxTurns      int     `json:"maxTurns,omitempty"`
-	Timeout       string  `json:"timeout,omitempty"`
-	BudgetUSD     float64 `json:"budgetUsd,omitempty"`
+	WorkspaceRoot string  `json:"workspaceRoot"`
+	MaxTurns      int     `json:"maxTurns"`
+	Timeout       string  `json:"timeout"`
+	BudgetUSD     float64 `json:"budgetUsd"`
 }
 
 const (
