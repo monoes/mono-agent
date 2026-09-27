@@ -334,6 +334,9 @@ func runExtensionStatus(out io.Writer, asJSON bool) error {
 		fmt.Fprintf(out, "  This client: %s\n", extension.PairingMismatchHint)
 	}
 	fmt.Fprintf(out, "  Extension: %s\n", bridgeExtensionLine(st))
+	if pairing != extension.PairingMismatch && st.Browsers > 1 {
+		fmt.Fprintf(out, "  Browsers: %d attached — see `monoagentcli extension browsers`\n", st.Browsers)
+	}
 	if st.Status == extension.StatusUnpaired {
 		fmt.Fprintln(out, "  Pair it with: monoagentcli extension pair (paste the token into the extension side panel)")
 	}
