@@ -406,9 +406,9 @@ export default function Settings({ onNavigate, navData }) {
 
         <AssistantToolsSection />
 
-        <VaultKeyringSection />
-
-        <div ref={sectionRefs.jev} data-section="jev"><JevSection /></div>
+        <div ref={sectionRefs.jev} data-section="jev">
+          <JevSection collapsible defaultExpanded={section === 'jev'} />
+        </div>
 
         {/* Application Info */}
         <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

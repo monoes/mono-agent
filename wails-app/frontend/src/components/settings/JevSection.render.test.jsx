@@ -159,4 +159,57 @@ describe('JevSection', () => {
     expect(within(table).getByText('Total')).toBeInTheDocument()
     expect(within(table).getByText('<$0.0001')).toBeInTheDocument()
   })
+
+  it('renders folded by default when collapsible is true, and expands on click/key', async () => {
+    App.JevStatus.mockResolvedValue(status('vault', 'typesafe', { hil: { enabled: true } }))
+    App.JevUsage.mockResolvedValue({ surfaces: [], total: { surface: 'total', calls: 5, estimated_usd: 0.001 } })
+    const { default: JevSection } = await import('./JevSection.jsx')
+    render(<JevSection collapsible defaultExpanded={false} />)
+
+    await screen.findByTestId('jev-fold-key-chip')
+    const toggle = screen.getByTestId('jev-fold-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('jev-fold-key-chip')).toHaveTextContent('Vault entry "typesafe"')
+    expect(screen.getByTestId('jev-fold-features-badge')).toHaveTextContent('1 feature active')
+    expect(screen.getByText('5 calls (7d) · $0.0010')).toBeInTheDocument()
+    // The main card body is hidden
+    expect(screen.queryByLabelText('TypeSafe API key')).not.toBeInTheDocument()
+
+    // Click to expand
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByLabelText('TypeSafe API key')).toBeInTheDocument()
+
+    // Enter key to fold
+    fireEvent.keyDown(toggle, { key: 'Enter' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByLabelText('TypeSafe API key')).not.toBeInTheDocument()
+  })
+
+  it('renders expanded when defaultExpanded is true', async () => {
+    App.JevStatus.mockResolvedValue(status('none'))
+    App.JevUsage.mockResolvedValue(emptyUsage)
+    const { default: JevSection } = await import('./JevSection.jsx')
+    render(<JevSection collapsible defaultExpanded={true} />)
+
+    const toggle = await screen.findByTestId('jev-fold-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByLabelText('TypeSafe API key')).toBeInTheDocument()
+  })
+
+  it('renders fold toggle while loading when collapsible is true', async () => {
+    let resolveStatus
+    App.JevStatus.mockReturnValue(new Promise(r => { resolveStatus = r }))
+    App.JevUsage.mockResolvedValue(emptyUsage)
+    const { default: JevSection } = await import('./JevSection.jsx')
+    render(<JevSection collapsible defaultExpanded={false} />)
+
+    const toggle = await screen.findByTestId('jev-fold-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText(/Loading…/)).toBeInTheDocument()
+
+    resolveStatus(status('none'))
+    await waitFor(() => expect(screen.getByTestId('jev-fold-key-chip')).toHaveTextContent('Not set'))
+  })
 })
+
