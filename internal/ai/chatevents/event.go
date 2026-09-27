@@ -89,14 +89,15 @@ func New(profileID, conversationID, turnID string, seq int64, at time.Time, typ 
 // ── Payload types, one per EventType ────────────────────────────────────
 
 // TurnStartedPayload is turn.started's payload — sequence 1 for a turn,
-// emitted before the runtime/provider process is even launched, so a crash
-// before any other event still leaves a record of what was asked.
+// emitted before the runtime process is even launched, so a crash before
+// any other event still leaves a record of what was asked. Turns recorded
+// by the removed provider backend carry backend "provider" and a
+// "provider" key this struct no longer reads.
 type TurnStartedPayload struct {
-	Backend  string `json:"backend"` // "agent" | "provider"
-	Runtime  string `json:"runtime,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Text     string `json:"text"` // the accepted user message
+	Backend string `json:"backend"` // "agent"
+	Runtime string `json:"runtime,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Text    string `json:"text"` // the accepted user message
 }
 
 // SessionBoundPayload is session.bound's payload — the runtime-assigned

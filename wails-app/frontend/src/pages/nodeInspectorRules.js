@@ -28,7 +28,6 @@ export const CREDENTIAL_PLATFORMS = {
   'db.mysql': 'mysql',
   'db.mongodb': 'mongodb',
   'db.redis': 'redis',
-  'service.openrouter': 'openrouter',
   'service.huggingface': 'huggingface',
 }
 

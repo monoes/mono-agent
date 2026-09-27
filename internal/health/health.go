@@ -203,8 +203,6 @@ type Env struct {
 	Connections       func(ctx context.Context) ([]ConnectionInfo, error)
 	TestConnection    func(ctx context.Context, id string) error
 	RefreshConnection func(ctx context.Context, id string) error // silent refresh_token exchange only
-	AIProviders       func(ctx context.Context) ([]ProviderInfo, error)
-	TestAIProvider    func(ctx context.Context, id string) error
 	LoginSessions     func(ctx context.Context) ([]SessionInfo, error)
 
 	// TypeSafe Jev: where the active profile's key comes from (config,
@@ -222,11 +220,6 @@ type Env struct {
 type ConnectionInfo struct {
 	ID, Platform, Label, Method string
 	HasRefreshToken             bool
-}
-
-// ProviderInfo is an AI connection (legacy provider), without its key.
-type ProviderInfo struct {
-	ID, Name, ProviderID, Model string
 }
 
 // SessionInfo is a saved platform login session.

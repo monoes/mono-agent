@@ -15,13 +15,12 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/health"
 )
 
 // The accounts checks only read. On a real, migrated database: testing a
-// connection or an AI provider saves nothing (no status, no new label),
+// connection saves nothing (no status, no new label),
 // prints nothing to stdout (doctor --json stays parseable), and no stored
 // secret reaches the error text — Telegram's validator puts the bot token
 // in the URL and Go's HTTP errors print the whole URL.
@@ -61,23 +60,13 @@ func TestAccountChecksOnlyReadAndLeakNothing(t *testing.T) {
 		Label: "orig", Status: "untested", ProfileID: "default", Data: map[string]interface{}{"bot_token": token}}); err != nil {
 		t.Fatal(err)
 	}
-	const apiKey = "sk-TESTKEY-must-not-leak-1234"
-	aiStore, err := ai.NewAIStore(db.DB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := aiStore.SaveProvider(ai.AIProvider{ID: "p1", Name: "mine", ProviderID: "openai", Tier: "known",
-		APIKey: apiKey, BaseURL: "http://127.0.0.1:1", Status: "untested", ProfileID: "default"}); err != nil {
-		t.Fatal(err)
-	}
 
 	env := &health.Env{ProfileID: "default"}
 	addAccountHooks(env, db.DB)
 
-	var connErr, aiErr error
+	var connErr error
 	out := captureStdout(t, func() {
 		connErr = env.TestConnection(ctx, "c1")
-		aiErr = env.TestAIProvider(ctx, "p1")
 	})
 	if out != "" {
 		t.Errorf("checks printed to stdout: %q", out)
@@ -85,17 +74,10 @@ func TestAccountChecksOnlyReadAndLeakNothing(t *testing.T) {
 	if connErr == nil || strings.Contains(connErr.Error(), token) || strings.Contains(connErr.Error(), "SUPERSECRET") {
 		t.Errorf("connection error %v: want a failure that does not name the token", connErr)
 	}
-	if aiErr != nil && strings.Contains(aiErr.Error(), apiKey) {
-		t.Errorf("AI provider error names the key: %v", aiErr)
-	}
 
 	c, err := store.Get(ctx, "c1", "default")
 	if err != nil || c.Label != "orig" || c.Status != "untested" || c.LastTested != "" {
 		t.Errorf("connection changed by a check: %+v, %v", c, err)
-	}
-	p, err := aiStore.GetProvider("p1", "default")
-	if err != nil || p.Status != "untested" {
-		t.Errorf("AI provider status changed by a check: %q, %v", p.Status, err)
 	}
 
 	// A connection of another profile is not visible to this one's checks
@@ -141,7 +123,7 @@ func fakeHTTP(t *testing.T, status int) func() []string {
 	return func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), seen...) }
 }
 
-func accountTestDB(t *testing.T) (*health.Env, *connections.Store, *ai.AIStore) {
+func accountTestDB(t *testing.T) (*health.Env, *connections.Store) {
 	t.Helper()
 	keyring.MockInit()
 	db, err := initDB(&globalConfig{DBPath: filepath.Join(t.TempDir(), "monoagent.db"), ProfileID: "default"})
@@ -153,13 +135,9 @@ func accountTestDB(t *testing.T) (*health.Env, *connections.Store, *ai.AIStore) 
 	if err := store.EnsureTable(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	aiStore, err := ai.NewAIStore(db.DB)
-	if err != nil {
-		t.Fatal(err)
-	}
 	env := &health.Env{ProfileID: "default"}
 	addAccountHooks(env, db.DB)
-	return env, store, aiStore
+	return env, store
 }
 
 // connectionFixIDs runs the default connections check against env and
@@ -183,7 +161,7 @@ func connectionFixIDs(t *testing.T, env *health.Env) map[string]string {
 // The connection check offers the silent refresh only when the service
 // refused the token or it expired; a server error gets no fix at all.
 func TestConnectionFailuresAreClassified(t *testing.T) {
-	env, store, _ := accountTestDB(t)
+	env, store := accountTestDB(t)
 	ctx := context.Background()
 	oauth := func(id, expires string) *connections.Connection {
 		return &connections.Connection{ID: id, Platform: "github", Method: connections.MethodOAuth, ProfileID: "default",
@@ -212,33 +190,6 @@ func TestConnectionFailuresAreClassified(t *testing.T) {
 	// Past its expires_at: the refresh is the cure, whatever the status.
 	if f := fixFor(404, "expired"); f != health.FixConnectionRefresh+":expired" {
 		t.Errorf("expired: %q", f)
-	}
-}
-
-// The AI check lists models (free) where that needs the key, and only
-// falls back to the paid completion elsewhere.
-func TestAIProviderCheckUsesFreeModelList(t *testing.T) {
-	env, _, aiStore := accountTestDB(t)
-	for _, p := range []ai.AIProvider{
-		{ID: "oa", Name: "OpenAI", ProviderID: "openai", Tier: "known", APIKey: "sk-123456", ProfileID: "default"},
-		{ID: "or", Name: "OpenRouter", ProviderID: "openrouter", Tier: "known", APIKey: "sk-654321", ProfileID: "default"},
-	} {
-		if err := aiStore.SaveProvider(p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ctx := context.Background()
-	seen := fakeHTTP(t, 401)
-	if err := env.TestAIProvider(ctx, "oa"); err == nil || !strings.Contains(err.Error(), "401") {
-		t.Errorf("openai with a refused key: %v", err)
-	}
-	if got := seen(); len(got) != 1 || got[0] != "GET api.openai.com/v1/models" {
-		t.Errorf("openai requests: %v, want only the model list", got)
-	}
-	seen = fakeHTTP(t, 401)
-	_ = env.TestAIProvider(ctx, "or")
-	if got := seen(); len(got) == 0 || !strings.HasPrefix(got[0], "POST openrouter.ai/api/v1/chat/completions") {
-		t.Errorf("openrouter requests: %v, want the completion", got)
 	}
 }
 

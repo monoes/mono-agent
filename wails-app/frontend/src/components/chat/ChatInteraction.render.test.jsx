@@ -81,18 +81,15 @@ describe('ChatComposer', () => {
 
 // ── AIChatPanel: resize, scroll-follow, close/reopen, Escape/focus ──────────
 //
-// Only enough mocked surface to mount the panel in "providers" mode (no
-// runtime scan needed) — resize/scroll/focus/Escape are orthogonal to which
-// backend is active.
+// Only enough mocked surface to mount the panel on one mocked agent runtime
+// ("claude") — resize/scroll/focus/Escape are orthogonal to which runtime
+// is active.
 
 const createChatConversation2 = vi.fn()
 const startChatTurn2 = vi.fn()
-// Base default is deliberately {items: []} — every test in this file runs
-// providers-only (scanAgentRuntimes resolves no agents), so the bucket
-// effect fires exactly once and each artifact test's own .mockResolvedValueOnce
-// covers that one call. If a future test adds a runtime here, a second
-// bucket call would fall through to this base mock and wipe `messages`
-// (the Task 4 bucket-switch else-branch) — reseed both calls if so.
+// Base default is deliberately {items: []} — the bucket effect fires
+// exactly once per workflowID, and each artifact test's own
+// .mockResolvedValueOnce covers that one call.
 const listChatConversations2 = vi.fn().mockResolvedValue({ items: [] })
 const getChatTurns2 = vi.fn().mockResolvedValue({ items: [] })
 const getChatEvents2 = vi.fn().mockResolvedValue({ items: [], hasMore: false })
@@ -108,8 +105,8 @@ vi.mock('../../services/api.js', async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      scanAgentRuntimes: vi.fn().mockResolvedValue({ agents: [] }),
-      listAIProviders: vi.fn().mockResolvedValue([{ id: 1, name: 'openai', status: 'active', default_model: 'gpt' }]),
+      scanAgentRuntimes: vi.fn().mockResolvedValue({ agents: [{ id: 'claude', installed: true, binary: '' }] }),
+      getAgentRuntimeModels: vi.fn().mockResolvedValue([{ id: 'sonnet' }]),
       listChatConversations: (...args) => listChatConversations2(...args),
       createChatConversation: (...args) => createChatConversation2(...args),
       startChatTurn: (...args) => startChatTurn2(...args),
@@ -130,7 +127,7 @@ beforeEach(() => {
 
 describe('AIChatPanel stop() error handling', () => {
   it('recovers from a failed stopChatTurn instead of stranding the UI on "Stopping" forever', async () => {
-    createChatConversation2.mockResolvedValue({ id: 'conv-4', backend: 'provider' })
+    createChatConversation2.mockResolvedValue({ id: 'conv-4', backend: 'agent' })
     startChatTurn2.mockResolvedValue({ ok: true, turnId: 'ignored', status: 'active' })
     // stopChatTurn goes through parseStreamResult, which throws on this
     // exact {"error":...} shape (same convention every other chat binding
@@ -168,7 +165,7 @@ describe('AIChatPanel resize/scroll/focus/Escape', () => {
   })
 
   it('dragging the resize handle changes the panel width without touching an in-flight turn', async () => {
-    createChatConversation2.mockResolvedValue({ id: 'conv-1', backend: 'provider' })
+    createChatConversation2.mockResolvedValue({ id: 'conv-1', backend: 'agent' })
     startChatTurn2.mockResolvedValue({ ok: true, turnId: 'ignored', status: 'active' })
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
@@ -197,7 +194,7 @@ describe('AIChatPanel resize/scroll/focus/Escape', () => {
   })
 
   it('shows Jump to latest once new content arrives while the reader has scrolled away, and returns to following on click', async () => {
-    createChatConversation2.mockResolvedValue({ id: 'conv-1', backend: 'provider' })
+    createChatConversation2.mockResolvedValue({ id: 'conv-1', backend: 'agent' })
     startChatTurn2.mockResolvedValue({ ok: true, turnId: 'ignored', status: 'active' })
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
@@ -316,8 +313,8 @@ describe('AIChatPanel resize/scroll/focus/Escape', () => {
   })
 
   it('past-session rows are keyboard-focusable and activatable with Enter, not just mouse-clickable', async () => {
-    const convA = { id: 'conv-a', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
-    const convB = { id: 'conv-b', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
+    const convA = { id: 'conv-a', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
+    const convB = { id: 'conv-b', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
     listChatConversations2.mockResolvedValueOnce({ items: [convA, convB] })
     getChatTurns2.mockImplementation((convId) => Promise.resolve({
       items: [{ id: `turn-${convId}`, prompt: convId === 'conv-a' ? 'from-A' : 'from-B', status: 'completed' }],
@@ -339,8 +336,8 @@ describe('AIChatPanel resize/scroll/focus/Escape', () => {
   })
 
   it("marks the current conversation's row as aria-selected, not just a background tint", async () => {
-    const convA = { id: 'conv-a', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
-    const convB = { id: 'conv-b', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
+    const convA = { id: 'conv-a', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
+    const convB = { id: 'conv-b', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
     listChatConversations2.mockResolvedValueOnce({ items: [convA, convB] })
     getChatTurns2.mockResolvedValue({ items: [] })
     getChatEvents2.mockResolvedValue({ items: [], hasMore: false })
@@ -385,7 +382,7 @@ function turnEvents(callName, resultObj) {
 
 describe('AIChatPanel chat result artifacts', () => {
   it('renders an Open action for a create_org result once the name is confirmed against the real org listing, and wires it to onOpenArtifact', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-1', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-1', prompt: 'create an org called Acme', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({ items: turnEvents('create_org', { org_name: 'Acme', created: true }), hasMore: false })
     // Two calls expected: the initial resolve that builds the card, and the
@@ -403,7 +400,7 @@ describe('AIChatPanel chat result artifacts', () => {
   })
 
   it('renders no action for a save_document result whose vault id no longer resolves on either the initial lookup or its automatic retry (deleted/cross-profile), leaving the generic tool card as the only output', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-2', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-2', prompt: 'save a report', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({
       items: turnEvents('save_document', { filename: 'report.md', path: '/x/report.md', size_bytes: 10, vault_document_id: 'doc-999' }),
@@ -431,7 +428,7 @@ describe('AIChatPanel chat result artifacts', () => {
     // uniqueness guarantee (plan: tool identity is (turnId,callId), never
     // callId alone) — turnEvents() below hardcodes callId 'call-1' for
     // every turn, so both turns here collide on purpose.
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-3', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-3', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({
       items: [
         { id: 'turn-a', prompt: 'make a workflow', status: 'completed' },
@@ -460,7 +457,7 @@ describe('AIChatPanel chat result artifacts', () => {
   })
 
   it('re-validates at click time — a card that resolved successfully but whose org was since deleted refuses to open', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-5', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-5', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-5', prompt: 'create an org called Acme', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({ items: turnEvents('create_org', { org_name: 'Acme', created: true }), hasMore: false })
     // First call (initial resolve, while building the card) finds it;
@@ -496,7 +493,7 @@ describe('AIChatPanel chat result artifacts', () => {
 // exactly one automatic retry before caching it.
 describe('AIChatPanel resolved-artifact retry on transient failure', () => {
   it('retries exactly once after a transient failure and shows the card once the retry succeeds', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-1', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-retry-1', prompt: 'save a report', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({
       items: turnEvents('save_document', { filename: 'report.md', path: '/x/report.md', size_bytes: 10, vault_document_id: 'doc-flaky' }),
@@ -517,7 +514,7 @@ describe('AIChatPanel resolved-artifact retry on transient failure', () => {
   })
 
   it('gives up after exactly one retry when the second attempt also fails, and never calls the lookup a third time even across later re-renders', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-2', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-retry-2', prompt: 'save a report', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({
       items: turnEvents('save_document', { filename: 'gone.md', path: '/x/gone.md', size_bytes: 5, vault_document_id: 'doc-really-gone' }),
@@ -548,7 +545,7 @@ describe('AIChatPanel resolved-artifact retry on transient failure', () => {
 // ── Replayed turns must not misreport an orphaned tool call as live ────────
 describe('AIChatPanel replayed tool-call status', () => {
   it('a call still "started" in a reopened (finalized) conversation shows Interrupted, not a live-ticking Running', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-6', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-6', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-6', prompt: 'do something slow', status: 'cancelled' }] })
     getChatEvents2.mockResolvedValueOnce({
       items: [
@@ -589,7 +586,7 @@ describe('AIChatPanel cross-instance ownership label', () => {
   }
 
   it('shows a static "Running in another window" label, with no live spinner and no reachable Stop, for an active turn owned by a different instance', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-foreign', prompt: 'do something in the other window', status: 'active', ownedByThisInstance: false }] })
     getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
 
@@ -625,7 +622,7 @@ describe('AIChatPanel cross-instance ownership label', () => {
     // window's own next send() in that conversation gets refused
     // (ErrTurnOwnedByOtherInstance) — worse than a stale label, a fully
     // silent one.
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign-empty', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign-empty', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-foreign-empty', prompt: 'just started elsewhere', status: 'active', ownedByThisInstance: false }] })
     getChatEvents2.mockResolvedValueOnce({ items: [{ seq: 1, at: '2026-09-12T00:00:00Z', type: 'turn.started', payload: {} }], hasMore: false })
 
@@ -636,7 +633,7 @@ describe('AIChatPanel cross-instance ownership label', () => {
   })
 
   it('regression: an active turn with ownedByThisInstance:true renders its normal live "Running <tool>" treatment, unaffected', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-1', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-own-1', prompt: 'do something here', status: 'active', ownedByThisInstance: true }] })
     getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
 
@@ -647,7 +644,7 @@ describe('AIChatPanel cross-instance ownership label', () => {
   })
 
   it('regression: an active turn with ownedByThisInstance entirely absent (older data / backend not yet carrying the field) is treated as normal, not foreign', async () => {
-    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-2', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-own-2', prompt: 'do something here too', status: 'active' }] }) // no ownedByThisInstance field at all
     getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
 
@@ -668,8 +665,8 @@ describe('AIChatPanel cross-instance ownership label', () => {
 // before that first fetch finishes is a completely ordinary interaction.
 describe('AIChatPanel loadConversation race', () => {
   it('a later click wins even if its fetch resolves before an earlier, still-in-flight one', async () => {
-    const convA = { id: 'conv-a', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
-    const convB = { id: 'conv-b', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
+    const convA = { id: 'conv-a', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
+    const convB = { id: 'conv-b', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
     // items[0] (convA) auto-continues on mount via the bucket effect.
     listChatConversations2.mockResolvedValueOnce({ items: [convA, convB] })
 
@@ -712,21 +709,21 @@ describe('AIChatPanel loadConversation race', () => {
 //
 // conversationsFetchedRef marks a bucket "fetched" synchronously, before the
 // request it guards even resolves — so a failure must not leave that mark in
-// place, or the bucket becomes permanently stuck: same workflowID/useAgents,
+// place, or the bucket becomes permanently stuck: same workflowID,
 // same bucket string, so a plain close/reopen of the panel (isOpen only)
 // never re-triggers the effect's fetch again once the ref already matches.
 describe('AIChatPanel bucket-switch history fetch', () => {
   it('retries on close/reopen after a failed fetch, instead of leaving the bucket stuck', async () => {
     listChatConversations2.mockRejectedValueOnce(new Error('backend unavailable'))
     listChatConversations2.mockResolvedValueOnce({
-      items: [{ id: 'conv-retry', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'retried-model', updatedAt: '2026-09-12T00:00:00Z' }],
+      items: [{ id: 'conv-retry', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'retried-model', updatedAt: '2026-09-12T00:00:00Z' }],
     })
     getChatTurns2.mockResolvedValue({ items: [] })
 
     const { rerender } = render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
     await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(1))
 
-    // Close and reopen the SAME bucket (workflowID/useAgents unchanged) —
+    // Close and reopen the SAME bucket (workflowID unchanged) —
     // the only user action a stuck ref would make unrecoverable, since
     // isOpen toggling is the one thing that still re-runs this effect.
     rerender(<AIChatPanel workflowID="general" isOpen={false} onClose={() => {}} />)
@@ -746,7 +743,7 @@ describe('AIChatPanel bucket-switch history fetch', () => {
     const bucketA = deferred()
     listChatConversations2.mockImplementationOnce(() => bucketA.promise) // wf-a's fetch — stays pending
     listChatConversations2.mockResolvedValueOnce({
-      items: [{ id: 'conv-b', backend: 'provider', workflowContext: 'wf-b', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01Z' }],
+      items: [{ id: 'conv-b', backend: 'agent', workflowContext: 'wf-b', runtimeId: 'claude', model: 'model-b', updatedAt: '2026-09-12T00:00:01Z' }],
     })
     getChatTurns2.mockImplementation((convId) => Promise.resolve({
       items: [{ id: `turn-${convId}`, prompt: convId === 'conv-a' ? 'from-A' : 'from-B', status: 'completed' }],
@@ -756,8 +753,7 @@ describe('AIChatPanel bucket-switch history fetch', () => {
     const { rerender } = render(<AIChatPanel workflowID="wf-a" isOpen={true} onClose={() => {}} />)
     await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(1))
 
-    // Switch buckets (a new workflowID, same shape of change a quick
-    // agents<->providers toggle produces) before wf-a's fetch resolves.
+    // Switch buckets (a new workflowID) before wf-a's fetch resolves.
     rerender(<AIChatPanel workflowID="wf-b" isOpen={true} onClose={() => {}} />)
     await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(2))
     await screen.findByText('from-B')
@@ -765,7 +761,7 @@ describe('AIChatPanel bucket-switch history fetch', () => {
     // The stale wf-a fetch finally resolves, with a conversation for the
     // bucket the UI no longer shows.
     await act(async () => {
-      bucketA.resolve({ items: [{ id: 'conv-a', backend: 'provider', workflowContext: 'wf-a', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00Z' }] })
+      bucketA.resolve({ items: [{ id: 'conv-a', backend: 'agent', workflowContext: 'wf-a', runtimeId: 'claude', model: 'model-a', updatedAt: '2026-09-12T00:00:00Z' }] })
       await new Promise(r => setTimeout(r, 0))
     })
 

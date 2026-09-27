@@ -234,8 +234,6 @@
     "quickAccess": "Acceso rápido",
     "connectionsTitle": "Conexiones",
     "connectionsDesc": "Gestiona cuentas, OAuth, claves de API",
-    "aiProvidersTitle": "Conexiones IA (heredadas)",
-    "aiProvidersDesc": "Claves API usadas por nodos IA de flujos antiguos",
     "aiAgentsDesc": "Instala y usa Claude Code, Codex y otros runtimes de agentes",
     "aiAgentsTitle": "Agentes IA",
     "language": {

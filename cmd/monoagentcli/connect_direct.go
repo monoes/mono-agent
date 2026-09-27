@@ -26,7 +26,7 @@ func newConnectSaveCmd(cfg *globalConfig) *cobra.Command {
 			"platform and saves the connection under the active profile. Field values are never " +
 			"printed; --json prints the saved connection without its credentials. Exit code 3 for an " +
 			"unknown platform or malformed input, 4 when the platform rejects the credentials.",
-		Example: `  printf '%s' '{"api_key":"..."}' | monoagentcli connect save openrouter --method apikey --stdin-json`,
+		Example: `  printf '%s' '{"api_key":"..."}' | monoagentcli connect save linear --method apikey --stdin-json`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !stdinJSON {
@@ -147,7 +147,7 @@ var socialNodePlatforms = []string{"instagram", "linkedin", "tiktok", "x", "twit
 var serviceNodePlatforms = []string{
 	"airtable", "asana", "bluesky", "devto", "discord", "github", "gmail", "google_drive",
 	"google_sheets", "hashnode", "hubspot", "huggingface", "jira", "linear", "mastodon",
-	"notion", "openrouter", "outlook", "producthunt", "reddit", "salesforce", "shopify",
+	"notion", "outlook", "producthunt", "reddit", "salesforce", "shopify",
 	"slack", "stripe", "telegram", "twilio", "whatsapp", "youtube",
 }
 

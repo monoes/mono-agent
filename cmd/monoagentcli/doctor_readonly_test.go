@@ -32,7 +32,7 @@ var mutatingHooks = map[string]bool{
 var readOnlyHooks = map[string]bool{
 	"PendingMigrations": true, "QuickCheck": true, "VaultState": true, "ProfileRoot": true, "FreeBytes": true,
 	"ManagedNode": true, "FindBrowser": true, "ExtensionInstalled": true, "ExtensionDir": true, "Daemon": true,
-	"ClaudeSkills": true, "MCPRegistration": true, "Connections": true, "AIProviders": true, "LoginSessions": true,
+	"ClaudeSkills": true, "MCPRegistration": true, "Connections": true, "LoginSessions": true,
 	"MonomindProjects": true, "Automations": true,
 }
 

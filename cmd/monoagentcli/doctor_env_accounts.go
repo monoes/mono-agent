@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/health"
 )
@@ -65,38 +64,6 @@ func addAccountHooks(env *health.Env, db *sql.DB) {
 			return err
 		}
 		return scrubSecrets(mgr.Refresh(ctx, id, time.Minute), connectionSecrets(conn)...)
-	}
-
-	aiStore := ai.OpenAIStore(db)
-	env.AIProviders = func(ctx context.Context) ([]health.ProviderInfo, error) {
-		if !tableExists(ctx, db, "ai_providers") {
-			return nil, nil
-		}
-		ps, err := aiStore.ListProviders(profileID)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]health.ProviderInfo, 0, len(ps))
-		for _, p := range ps {
-			out = append(out, health.ProviderInfo{ID: p.ID, Name: p.Name, ProviderID: p.ProviderID, Model: p.DefaultModel})
-		}
-		return out, nil
-	}
-	env.TestAIProvider = func(ctx context.Context, id string) error {
-		p, err := aiStore.GetProvider(id, profileID)
-		if err != nil {
-			return err
-		}
-		// Listing models is free where it needs the key; elsewhere only a
-		// (paid, 5-token) completion shows whether the key works.
-		ok, err := ai.VerifyKey(ctx, p)
-		if !ok {
-			_, err = testAIProvider(ctx, aiStore, p, profileID, false)
-		}
-		if isUnreachable(err) {
-			return health.Unreachable(scrubSecrets(err, p.APIKey))
-		}
-		return scrubSecrets(err, p.APIKey)
 	}
 
 	env.LoginSessions = func(ctx context.Context) ([]health.SessionInfo, error) {

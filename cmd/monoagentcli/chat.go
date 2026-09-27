@@ -21,6 +21,21 @@ import (
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
+// openAIStore opens the DB and builds an AIStore over it, creating the chat
+// history tables if they are missing.
+func openAIStore(cfg *globalConfig) (*ai.AIStore, func(), error) {
+	db, err := initDB(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initializing database: %w", err)
+	}
+	store, err := ai.NewAIStore(db.DB)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("initializing AI store: %w", err)
+	}
+	return store, func() { db.Close() }, nil
+}
+
 // parseDurationFlag accepts plain seconds ("90") or suffixed ("90s", "10m", "2h").
 func parseDurationFlag(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
@@ -412,7 +427,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimi, … — see `agent scan`)")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimicode, … — see `agent scan`)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override for the runtime")
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")

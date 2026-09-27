@@ -24,7 +24,7 @@ import (
 // imports internal/monomind — every call shells out to `monoagentcli org
 // <sub> ...`, whose stdout JSON is the UI contract. The Wails methods here
 // return that JSON verbatim as a string; the frontend parses it (same
-// pattern as ScanAgentRuntimes/StreamAgentChat).
+// pattern as ScanAgentRuntimes).
 //
 // Per-profile scoping: `monoagentcli org` resolves org state under
 // `--project <root>/.monomind/orgs/` (see cmd/monoagentcli/org.go), NOT via
@@ -221,7 +221,7 @@ func (a *App) GateRejectOrgAction(name, gateID, resolution string) string {
 // line is re-emitted as a Wails "org:event" event {orgName, event}; the
 // subprocess is tracked the same way agent chat is (a.runningCmds, keyed so
 // a new stream for the same org supersedes the previous one) and killed as
-// a process group on Stop/supersede/shutdown — matching StreamAgentChat.
+// a process group on Stop/supersede/shutdown — as chat turns are.
 func (a *App) StreamOrgEvents(orgName string) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {

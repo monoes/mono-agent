@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/monoes/mono-agent/internal/ai"
-	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -27,12 +26,11 @@ import (
 //
 // This is the SOLE GUI supervisor for the new conversation/turn/event
 // architecture: it owns admission, the per-turn registry, event sequencing,
-// write-before-emit ordering, process lifecycle, and finalization for both
-// the agent (monoagentcli subprocess) and provider (in-process ChatService)
-// backends. app_ai.go's StreamAgentChat/StopAgentChat/StreamAIChat and their
-// raw ai:chunk/ai:tool/ai:error events remain as separate, untouched
-// compatibility bindings — the new UI consumes only the "chat:event" stream
-// this file emits, via the bindings at the bottom of this file.
+// write-before-emit ordering, process lifecycle, and finalization for agent
+// turns (a `monoagentcli chat` subprocess). The UI consumes only the
+// "chat:event" stream this file emits, via the bindings at the bottom of
+// this file. Conversations recorded by the removed in-app provider backend
+// (backend "provider") stay readable but cannot take new turns.
 //
 // Known, deliberate scope limits (stated here rather than silently assumed):
 //   - Startup reconciliation (reconcileOrphanedTurns) marks every turn left
@@ -44,14 +42,6 @@ import (
 //     primary scenario the plan's "two app owners" concern is guarding.
 //     Never destructive (only rewrites in-memory-admission-relevant status
 //     on rows already left in a non-terminal state), but worth knowing.
-//   - The provider backend routes through ChatService.StreamChatScoped,
-//     which does not itself support Stop mid-stream (no context-cancellation
-//     plumbing inside ai.AIClient.StreamComplete/Complete) — StopChatTurn on
-//     a provider turn cancels the turn's own ctx (stopping further event
-//     emission and marking it cancelled here) but cannot interrupt a
-//     provider HTTP call already in flight underneath. The agent backend's
-//     Stop is the fully "kills the real process" implementation the plan
-//     describes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // chatProcess abstracts a running `monoagentcli chat` subprocess so tests
@@ -70,9 +60,8 @@ type chatProcess interface {
 	Kill()
 }
 
-// realChatProcess wraps a real *exec.Cmd, reusing the exact process-group
-// helpers app_ai.go's StreamAgentChat already uses for the compatibility
-// path (proc_unix.go/proc_windows.go).
+// realChatProcess wraps a real *exec.Cmd, using the process-group helpers
+// in proc_unix.go/proc_windows.go.
 type realChatProcess struct {
 	cmd    *exec.Cmd
 	stdout io.ReadCloser
@@ -122,14 +111,14 @@ type chatTurnHandle struct {
 	profileID      string // captured at admission, immutable for the turn's life
 	conversationID string
 	turnID         string
-	backend        string // "agent" | "provider"
+	backend        string // "agent"
 	runtimeID      string
 
 	cancel context.CancelFunc
 
 	mu            sync.Mutex
 	stopRequested bool
-	proc          chatProcess // nil for provider-backend turns
+	proc          chatProcess // nil until the subprocess is launched
 }
 
 func (h *chatTurnHandle) requestStop() {
@@ -157,11 +146,10 @@ func (h *chatTurnHandle) isStopRequested() bool {
 // Independently constructible (no Wails runtime/App required) so it is
 // fully unit-testable — see app_chat_test.go.
 type chatSupervisor struct {
-	store       *ai.AIStore
-	chatService *aichat.ChatService
-	launcher    chatProcessLauncher
-	emit        chatEventEmitter
-	findCLI     func() (string, error)
+	store    *ai.AIStore
+	launcher chatProcessLauncher
+	emit     chatEventEmitter
+	findCLI  func() (string, error)
 	// instanceID identifies this running app process, stamped as a turn's
 	// OwnerInstanceID — distinguishes "my own turn, resumable/stoppable
 	// here" from "another live instance's turn, read-only here" (plan
@@ -173,10 +161,9 @@ type chatSupervisor struct {
 	activeByConversation map[string]chatTurnKey // one active turn per conversation
 }
 
-func newChatSupervisor(store *ai.AIStore, chatService *aichat.ChatService, launcher chatProcessLauncher, emit chatEventEmitter, findCLI func() (string, error)) *chatSupervisor {
+func newChatSupervisor(store *ai.AIStore, launcher chatProcessLauncher, emit chatEventEmitter, findCLI func() (string, error)) *chatSupervisor {
 	return &chatSupervisor{
 		store:                store,
-		chatService:          chatService,
 		launcher:             launcher,
 		emit:                 emit,
 		findCLI:              findCLI,
@@ -594,93 +581,11 @@ func (sup *chatSupervisor) finalize(h *chatTurnHandle, res *monomind.TurnResult)
 	sup.release(h.conversationID, h.turnID)
 }
 
-// ─── Provider backend ────────────────────────────────────────────────────────
-
-// startProviderTurn runs one provider-backend turn in-process via
-// ChatService.StreamChatScoped, translating its callbacks into the same
-// append-then-emit pipeline the agent backend uses. Runs synchronously in
-// its own goroutine (there is no subprocess to supervise), and — like the
-// agent path — only this one goroutine ever calls appendAndEmit for this
-// turn, satisfying the same "serialize writes per turn" requirement.
-func (sup *chatSupervisor) startProviderTurn(h *chatTurnHandle, conv ai.Conversation, prompt string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	h.cancel = cancel
-
-	if _, err := sup.appendAndEmit(h, chatevents.EventTurnStarted, chatevents.TurnStartedPayload{
-		Backend: "provider", Provider: conv.ProviderID, Model: conv.Model, Text: prompt,
-	}); err != nil {
-		cancel()
-		// Same reasoning as startAgentTurn's identical check: without this,
-		// CreateTurn's "active" row never gets finalized.
-		sup.finalize(h, &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}})
-		return err
-	}
-
-	go func() {
-		res := &monomind.TurnResult{SawDone: true} // a provider call that returns is inherently "terminal evidence seen"
-		coalescer := chatevents.NewTextCoalescer()
-		partSeq := 0
-		currentPartID := nextProviderPart(&partSeq)
-
-		onChunk := func(chunk ai.StreamChunk) {
-			if chunk.Content == "" {
-				return
-			}
-			partID, text, flushed := coalescer.Push(currentPartID, chunk.Content, time.Now())
-			if flushed {
-				sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
-				currentPartID = nextProviderPart(&partSeq)
-			}
-		}
-		// onToolStart fires before the tool actually executes, giving a true
-		// start timestamp — service.go's tool loop now calls this
-		// separately from onToolCall below instead of synthesizing both
-		// events back-to-back after execution already finished (the root
-		// cause of tool cards always showing ~0.0s elapsed time). The
-		// pending-text flush belongs here, not in onToolCall: it closes out
-		// any assistant text that preceded this call so ordering is
-		// preserved (text, then tool.started, then — later — tool.completed).
-		onToolStart := func(callID, name, args string) {
-			if partID, text, ok := coalescer.ForceFlush(); ok {
-				sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
-				currentPartID = nextProviderPart(&partSeq)
-			}
-			sup.appendAndEmit(h, chatevents.EventToolStarted, chatevents.ToolStartedPayload{CallID: callID, Name: name, Arguments: chatevents.RedactAndBoundJSON(json.RawMessage(args))})
-		}
-		// onToolCall fires once execution finishes. ok is now derived from
-		// the explicit error service.go's tool loop reports, not
-		// hardcoded true — the root cause of tool failures always
-		// rendering as success. ok is declared fresh inside this closure
-		// body on every call, so &ok never aliases a previous call's value.
-		onToolCall := func(callID, name, args, result string, toolErr error) {
-			bounded, _, _ := chatevents.BoundText(result, chatevents.MaxToolPreviewBytes)
-			ok := toolErr == nil
-			sup.appendAndEmit(h, chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: callID, OK: &ok, Result: bounded})
-		}
-
-		err := sup.chatService.StreamChatScoped(ctx, h.profileID, conv.HistoryKey, prompt, conv.ProviderID, conv.Model, onChunk, onToolStart, onToolCall)
-		if partID, text, ok := coalescer.ForceFlush(); ok {
-			sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
-		}
-		if err != nil && ctx.Err() == nil {
-			res.Err = &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}
-		}
-		sup.finalize(h, res)
-	}()
-	return nil
-}
-
-func nextProviderPart(seq *int) string {
-	*seq++
-	return "part-" + strconv.Itoa(*seq)
-}
-
 // ─── Wails bindings ─────────────────────────────────────────────────────────
 //
-// New contracts per the plan (§175) — kept alongside, not replacing, the
-// existing StreamAIChat/StreamAgentChat compatibility bindings. Responses
-// follow the existing JSON-string convention: {"error":...} on failure,
-// otherwise a typed payload.
+// New contracts per the plan (§175). Responses follow the existing
+// JSON-string convention: {"error":...} on failure, otherwise a typed
+// payload.
 
 func (a *App) chatBindingError(err error) string { return aiError(err) }
 
@@ -711,18 +616,15 @@ type chatTurnListItem struct {
 	OwnedByThisInstance bool `json:"ownedByThisInstance"`
 }
 
-// CreateChatConversation creates a new scoped conversation for either
-// backend ("agent" or "provider"). workflowID is the tool/ownership context
-// ("general"/"draft"/an owned workflow id); an opaque history key is
-// generated internally and never exposed to the caller.
-func (a *App) CreateChatConversation(backend, workflowID, runtimeID, providerID, model string) string {
+// CreateChatConversation creates a new scoped agent conversation.
+// workflowID is the tool/ownership context ("general"/"draft"/an owned
+// workflow id); an opaque history key is generated internally and never
+// exposed to the caller.
+func (a *App) CreateChatConversation(workflowID, runtimeID, model string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
-	if backend != "agent" && backend != "provider" {
-		return a.chatBindingError(fmt.Errorf("backend must be \"agent\" or \"provider\", got %q", backend))
-	}
-	conv, err := a.aiStore.CreateConversation(a.getActiveProfileID(), backend, workflowID, runtimeID, providerID, model)
+	conv, err := a.aiStore.CreateConversation(a.getActiveProfileID(), "agent", workflowID, runtimeID, "", model)
 	if err != nil {
 		return a.chatBindingError(err)
 	}
@@ -741,6 +643,11 @@ func (a *App) StartChatTurn(conversationID, turnID, message string, tools, allow
 	conv, err := a.aiStore.GetConversation(conversationID, profileID)
 	if err != nil {
 		return a.chatBindingError(err)
+	}
+	if conv.Backend != "agent" {
+		// "provider": the in-app AI provider stack is gone; its
+		// conversations are history only.
+		return a.chatBindingError(fmt.Errorf("conversation %s used a removed AI provider and is read-only; start a new chat", conversationID))
 	}
 
 	h, alreadyActive, err := a.chatSup.admit(conversationID, turnID)
@@ -770,20 +677,9 @@ func (a *App) StartChatTurn(conversationID, turnID, message string, tools, allow
 		return string(b)
 	}
 
-	switch conv.Backend {
-	case "agent":
-		if err := a.chatSup.startAgentTurn(h, conv, turnID, message, tools, allowRuns); err != nil {
-			a.chatSup.release(conversationID, turnID)
-			return a.chatBindingError(err)
-		}
-	case "provider":
-		if err := a.chatSup.startProviderTurn(h, conv, message); err != nil {
-			a.chatSup.release(conversationID, turnID)
-			return a.chatBindingError(err)
-		}
-	default:
+	if err := a.chatSup.startAgentTurn(h, conv, turnID, message, tools, allowRuns); err != nil {
 		a.chatSup.release(conversationID, turnID)
-		return a.chatBindingError(fmt.Errorf("conversation %s has unknown backend %q", conversationID, conv.Backend))
+		return a.chatBindingError(err)
 	}
 	return fmt.Sprintf(`{"ok":true,"turnId":%q,"status":"active"}`, turnID)
 }
@@ -909,12 +805,12 @@ func wailsChatEmitter(ctx context.Context) chatEventEmitter {
 	}
 }
 
-// initChatSupervisor wires a.chatSup once aiStore/chatService are ready
-// (called from startup(), after both are constructed). db is accepted for
-// symmetry with other init* helpers even though the supervisor itself only
-// needs the store/chatService handles.
+// initChatSupervisor wires a.chatSup once aiStore is ready (called from
+// startup(), after it is constructed). db is accepted for symmetry with
+// other init* helpers even though the supervisor itself only needs the
+// store handle.
 func (a *App) initChatSupervisor(db *sql.DB) {
-	a.chatSup = newChatSupervisor(a.aiStore, a.chatService, defaultChatProcessLauncher, wailsChatEmitter(a.ctx), findMonoAgentCLI)
+	a.chatSup = newChatSupervisor(a.aiStore, defaultChatProcessLauncher, wailsChatEmitter(a.ctx), findMonoAgentCLI)
 	if errs := a.chatSup.reconcileOrphanedTurns(); len(errs) > 0 {
 		for _, e := range errs {
 			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("chat turn reconciliation: %v", e))

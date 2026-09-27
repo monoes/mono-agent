@@ -1,5 +1,5 @@
 // Assistant tool access settings (GX2 contract): whether the AI chat panels
-// pass monoagentTools / allowRuns to StreamAgentChat. Both default ON and
+// pass tools / allowRuns to StartChatTurn. Both default ON and
 // are persisted to localStorage; toggled from Settings → "Assistant tool
 // access" and read at render/send time by AIChatPanel. Unset (never
 // touched) reads as ON — only an explicit '0' turns either off, so a user

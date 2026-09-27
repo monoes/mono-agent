@@ -234,8 +234,6 @@
     "quickAccess": "Quick Access",
     "connectionsTitle": "Connections",
     "connectionsDesc": "Manage accounts, OAuth, API keys",
-    "aiProvidersTitle": "AI connections (legacy)",
-    "aiProvidersDesc": "API keys used by older workflow AI nodes",
     "aiAgentsDesc": "Install and use Claude Code, Codex and other agent runtimes",
     "aiAgentsTitle": "AI agents",
     "language": {

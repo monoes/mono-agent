@@ -44,7 +44,7 @@ var ErrTurnOwnedByOtherInstance = errors.New("chat: conversation has an active t
 type Conversation struct {
 	ID              string `json:"id"`
 	ProfileID       string `json:"profileId"`
-	Backend         string `json:"backend"` // "agent" | "provider"
+	Backend         string `json:"backend"` // "agent", or "provider" for a read-only legacy conversation
 	WorkflowContext string `json:"workflowContext"`
 	RuntimeID       string `json:"runtimeId,omitempty"`
 	ProviderID      string `json:"providerId,omitempty"`

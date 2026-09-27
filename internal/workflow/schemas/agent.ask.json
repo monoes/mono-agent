@@ -3,7 +3,7 @@
   "credential_platform": null,
   "fields": [
     {
-      "help": "Locally-installed agent runtime id — claude, codex, kimi, qwen, … (list: monoagentcli agent scan --installed).",
+      "help": "Locally-installed agent runtime id — claude, codex, kimicode, qwen, … (list: monoagentcli agent scan --installed).",
       "key": "runtime",
       "label": "Agent Runtime",
       "required": true,

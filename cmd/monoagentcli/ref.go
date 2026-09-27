@@ -704,18 +704,20 @@ Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
 	{
 		Type:     "service.huggingface",
 		Category: "service",
-		Short:    "Call Hugging Face inference API for text/image models",
-		Config:   `{ "credential_id": "hf-token", "model": "gpt2", "inputs": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt/input",
-		Outputs:  "generated_text or other model output",
+		Short:    "Generate an image with a Hugging Face inference model",
+		Description: `Operation generate_image (the default) posts the prompt to the model and saves
+the returned image to a temp file. Text generation (generate_text) was removed:
+it fails at run time — use the "agent.ask" node (local AI agent via monomind).`,
+		Config:  `{ "credential_id": "hf-token", "operation": "generate_image", "prompt": "{{ $json.prompt }}", "model": "black-forest-labs/FLUX.1-schnell" }`,
+		Inputs:  "item with the prompt fields",
+		Outputs: "the input item plus file_path (the saved image) and url",
 	},
 	{
 		Type:     "service.openrouter",
 		Category: "service",
-		Short:    "Call any LLM via OpenRouter unified API",
-		Config:   `{ "credential_id": "openrouter-key", "model": "mistralai/mistral-7b-instruct", "prompt": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt",
-		Outputs:  "response_text",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask"); for images use "service.huggingface" with operation generate_image.`,
 	},
 	{
 		Type:     "service.outlook_mail",

@@ -119,7 +119,6 @@ var Manifest = []ManifestEntry{
 	{NodeType: "service.linear", GoFile: "internal/nodes/service/linear_schema.go", StructName: "LinearNodeSchema"},
 	{NodeType: "service.mastodon", GoFile: "internal/nodes/service/mastodon_schema.go", StructName: "MastodonNodeSchema"},
 	{NodeType: "service.notion", GoFile: "internal/nodes/service/notion_schema.go", StructName: "NotionNodeSchema"},
-	{NodeType: "service.openrouter", GoFile: "internal/nodes/service/openrouter_schema.go", StructName: "OpenRouterNodeSchema"},
 	{NodeType: "service.outlook_mail", GoFile: "internal/nodes/service/outlook_schema.go", StructName: "OutlookMailNodeSchema"},
 	{NodeType: "service.producthunt", GoFile: "internal/nodes/service/producthunt_schema.go", StructName: "ProductHuntNodeSchema"},
 	{NodeType: "service.reddit", GoFile: "internal/nodes/service/reddit_schema.go", StructName: "RedditNodeSchema"},

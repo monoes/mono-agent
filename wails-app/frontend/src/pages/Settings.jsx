@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link2, Brain, ExternalLink, Download, Bot } from 'lucide-react'
+import { Link2, ExternalLink, Download, Bot } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
@@ -152,7 +152,7 @@ function ExportRow() {
 
 // ── AssistantToolsSection ────────────────────────────────────────────────────
 
-// GX2 contract: StreamAgentChat takes monoagentTools + allowRuns flags (both
+// GX2 contract: StartChatTurn takes tools + allowRuns flags (both
 // default ON — see lib/assistantTools.js). Persisted to localStorage and
 // read by the AI chat panels at send time; a visible indicator in the panel
 // shows when tools are active. Toggling applies to the next message sent.
@@ -382,12 +382,6 @@ export default function Settings({ onNavigate, navData }) {
             title={t('settings.aiAgentsTitle')}
             description={t('settings.aiAgentsDesc')}
             onClick={() => onNavigate?.('ai')}
-          />
-          <QuickAccessCard
-            icon={Brain}
-            title={t('settings.aiProvidersTitle')}
-            description={t('settings.aiProvidersDesc')}
-            onClick={() => onNavigate?.('aiProviders')}
           />
         </div>
 

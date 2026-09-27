@@ -80,7 +80,7 @@ func TestExportImport_RoundTrip(t *testing.T) {
 	}
 
 	db2 := newExportTestDB(t)
-	imported, skipped, err := Import(context.Background(), db2.DB, "default", exportPW, data, nil, nil, nil)
+	imported, skipped, err := Import(context.Background(), db2.DB, "default", exportPW, data, nil, nil)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestExport_SkipsEntryThatFailsToDecrypt(t *testing.T) {
 
 	// The payload itself must only contain the two decryptable entries.
 	db2 := newExportTestDB(t)
-	imported, importSkipped, err := Import(context.Background(), db2.DB, "default", "pw-correct1", data, nil, nil, nil)
+	imported, importSkipped, err := Import(context.Background(), db2.DB, "default", "pw-correct1", data, nil, nil)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestImport_WrongPassphraseFails(t *testing.T) {
 	}
 
 	db2 := newExportTestDB(t)
-	if _, _, err := Import(ctx, db2.DB, "default", "pw-incorrect1", data, nil, nil, nil); err == nil {
+	if _, _, err := Import(ctx, db2.DB, "default", "pw-incorrect1", data, nil, nil); err == nil {
 		t.Fatal("expected import with an incorrect passphrase to fail")
 	}
 }
@@ -181,7 +181,7 @@ func TestImport_SkipsDuplicateNames(t *testing.T) {
 	}
 
 	// Import into the SAME vault — "shared" already exists there.
-	imported, skipped, err := Import(ctx, db.DB, "default", "pw-correct1", data, nil, nil, nil)
+	imported, skipped, err := Import(ctx, db.DB, "default", "pw-correct1", data, nil, nil)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestImport_SkipsDuplicateNames(t *testing.T) {
 
 func TestImport_RejectsUnrecognizedFormat(t *testing.T) {
 	db := newExportTestDB(t)
-	if _, _, err := Import(context.Background(), db.DB, "default", "any-passphrase", []byte(`{"format":"something-else","version":1}`), nil, nil, nil); err == nil {
+	if _, _, err := Import(context.Background(), db.DB, "default", "any-passphrase", []byte(`{"format":"something-else","version":1}`), nil, nil); err == nil {
 		t.Fatal("expected error for an unrecognized export format, got nil")
 	}
 }
@@ -247,7 +247,7 @@ func TestExportImport_SystemEntryRoundTripsWithMetaAndRematerializes(t *testing.
 		return err
 	}
 
-	imported, importSkipped, err := Import(ctx, dst.DB, "default", passphrase, data, rematerializeConnection, nil, nil)
+	imported, importSkipped, err := Import(ctx, dst.DB, "default", passphrase, data, rematerializeConnection, nil)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestImport_NilRematerializerSkipsGracefully(t *testing.T) {
 
 	dst := newExportTestDB(t)
 	// nil rematerializeConnection: the vault entry still imports, no panic.
-	imported, _, err := Import(ctx, dst.DB, "default", passphrase, data, nil, nil, nil)
+	imported, _, err := Import(ctx, dst.DB, "default", passphrase, data, nil, nil)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -313,11 +313,11 @@ func TestImport_RejectsBadVersionOrKDF(t *testing.T) {
 	db := newExportTestDB(t)
 
 	// Same format, but version 2.
-	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":2,"kdf":"argon2id"}`), nil, nil, nil); err == nil {
+	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":2,"kdf":"argon2id"}`), nil, nil); err == nil {
 		t.Fatal("expected error for unsupported version, got nil")
 	}
 	// Same format, but a different KDF.
-	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":1,"kdf":"scrypt"}`), nil, nil, nil); err == nil {
+	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":1,"kdf":"scrypt"}`), nil, nil); err == nil {
 		t.Fatal("expected error for unsupported KDF, got nil")
 	}
 }

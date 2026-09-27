@@ -14,10 +14,10 @@ import './chat/chat.css'
 import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
-// Shared style for the three backend/runtime/provider <select>s in the
-// selector row. Without `appearance: none`, WebKitGTK draws the closed box
-// with native GTK combo-box chrome — light background, dark text — ignoring
-// the inline background/color below entirely; the custom chevron replaces
+// Shared style for the runtime/model <select>s in the selector row.
+// Without `appearance: none`, WebKitGTK draws the closed box with native
+// GTK combo-box chrome — light background, dark text — ignoring the
+// inline background/color below entirely; the custom chevron replaces
 // the native dropdown arrow that appearance:none also removes. Same SVG
 // arrow index.css already uses for .filter-select/.form-select.
 const selectStyle = {
@@ -86,6 +86,14 @@ export function composeLiveAnnouncement(turnState, alreadyAnnouncedCount = 0) {
   return parts.join(' ')
 }
 
+// A conversation this panel lists for workflowID. "provider" conversations
+// predate the removal of the in-app AI provider: they stay listed so their
+// history can still be read, but they are read-only (StartChatTurn refuses
+// them), and the panel never auto-continues one.
+function isListedConversation(c, workflowID) {
+  return c.workflowContext === workflowID && (c.backend === 'agent' || c.backend === 'provider')
+}
+
 // Relative time for the past-conversations list ("5m ago", "3d ago").
 function relativeTime(iso) {
   if (!iso) return ''
@@ -143,7 +151,7 @@ export function MessageBubble({ role, content, isError }) {
           // uses for assistant text — scheme-gated links, no raw HTML, no
           // auto-loaded images — rather than a second, less-careful
           // markdown config (an error string ultimately traces back to a
-          // subprocess/provider failure message, not first-party copy).
+          // subprocess failure message, not first-party copy).
           <ChatMarkdown content={content} />
         )}
       </div>
@@ -163,16 +171,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [activeTurnId, setActiveTurnId]     = useState('')
   const [stopRequested, setStopRequested]   = useState(false)
   const [liveAnnouncement, setLiveAnnouncement] = useState('')
-  const [providers, setProviders]           = useState([])
-  const [selectedProvider, setSelectedProvider] = useState('')
+  // Backend of the loaded conversation ('' until one is loaded or created).
+  // 'provider' marks a read-only conversation from the removed AI provider.
+  const [conversationBackend, setConversationBackend] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
   const [runtimes, setRuntimes]             = useState([])
   // Seeded from isOpen, not a flat `false`: the scan effect below fires on
   // the very next tick whenever the component mounts already-open (isOpen
   // true from the start — direct-open call sites, and every render/mount
   // test), so a flat `false` here would commit one render where
-  // disabledReasonText is still the old "Select an AI provider..."/"Select
-  // an agent runtime..." text before flipping to the loading message —
+  // disabledReasonText is still the "Select an agent runtime..." text
+  // before flipping to the loading message —
   // and prevDisabledReasonRef below seeds its "resting state" baseline
   // from that first render. That stray transition would then read as a
   // genuine post-mount change and get announced through the live region,
@@ -184,7 +193,6 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [selectedRuntime, setSelectedRuntime] = useState('')
   const [runtimeModels, setRuntimeModels]   = useState([]) // models for selectedRuntime, from getAgentRuntimeModels
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
-  const [useAgents, setUseAgents]           = useState(false)
   const [monomindMissing, setMonomindMissing] = useState(false)
   // Scan failed for a reason other than "not installed" — the backend's own
   // message (e.g. "monomind 2.1.0 is too old…"), shown verbatim. A null
@@ -204,13 +212,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
 
   const liveTurn = useChatStream({ conversationId, turnId: activeTurnId })
   const streaming = !!activeTurnId
-  // Only meaningful for the monomind-delegated agent path (useAgents) —
-  // the older in-process provider chat (useAgents:false) is a separate
-  // backend this capability says nothing about, so it keeps TurnStatus's
-  // own default (true, today's behavior) rather than being judged by
-  // whatever agent runtime happens to be selected in the (unused, in that
-  // mode) runtime picker. Within the agent path, strict `=== true`, not
-  // `!== false`: a stale scan, an older monomind that predates this
+  // Strict `=== true`, not `!== false`: a stale scan, an older monomind
+  // that predates this
   // field, or any plumbing gap all decode to `undefined` — which must
   // mean "assume non-streaming" (TurnStatus's own calmer waiting copy)
   // rather than silently reverting to the exact misleading "No new
@@ -219,7 +222,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // selects are disabled mid-turn), so it's safe to read this at render
   // time rather than snapshotting it onto the turn itself.
   const activeRuntimeInfo = runtimes.find(r => r.id === selectedRuntime)
-  const activeRuntimeStreamsIncrementally = !useAgents || activeRuntimeInfo?.streams_incrementally === true
+  const activeRuntimeStreamsIncrementally = activeRuntimeInfo?.streams_incrementally === true
   // Changes whenever new content arrives — a finalized turn (messages
   // grows) or a live delta/tool/notice within the current turn (lastSeq
   // advances) — driving useChatScroll's follow-vs-unread decision below.
@@ -231,11 +234,10 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // stays mounted under keep-alive navigation — expensive loads below key
   // off these latches so a never-opened panel costs (almost) nothing:
   // hasOpenedRef latches on the first isOpen false→true transition,
-  // hasScannedRef/providersLoadedRef make the runtime scan and provider
-  // list one-shot per panel lifetime (FV4-3/4).
+  // hasScannedRef makes the runtime scan one-shot per panel lifetime
+  // (FV4-3/4).
   const hasOpenedRef      = useRef(false)
   const hasScannedRef     = useRef(false)
-  const providersLoadedRef = useRef(false)
   // Latest-value mirrors for guards inside callbacks/effects that must not
   // re-run (or go stale) when the underlying state changes:
   // activeTurnIdRef — mid-stream switch guards (FV4-6); activeStreamRef — the
@@ -285,7 +287,6 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           ? initialRuntime
           : installed[0].id
         setSelectedRuntime(preferred)
-        setUseAgents(true) // prefer local agents when any is installed
       }
     }).finally(() => setRuntimesLoading(false))
     // initialRuntime intentionally excluded: changes to it are reconciled
@@ -299,7 +300,6 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     if (!initialRuntime) return
     if (runtimes.some(r => r.id === initialRuntime)) {
       setSelectedRuntime(initialRuntime)
-      setUseAgents(true)
     }
   }, [initialRuntime, runtimes])
 
@@ -312,7 +312,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // here. A stale response for a runtime the user has since switched away
   // from is dropped rather than applied (the `current` guard).
   useEffect(() => {
-    if (!useAgents || !selectedRuntime) { setRuntimeModels([]); return }
+    if (!selectedRuntime) { setRuntimeModels([]); return }
     const runtime = runtimes.find(r => r.id === selectedRuntime)
     let current = true
     setRuntimeModelsLoading(true)
@@ -321,9 +321,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       const list = Array.isArray(models) ? models : []
       setRuntimeModels(list)
       // An empty list is deliberately NOT written back into selectedModel:
-      // that state is shared with the provider backend, so clearing it here
-      // wipes the provider's model too (caught by AIChatPanel.mount.test).
-      // The stale id is instead made unusable — runtimeUninitialized hides it
+      // the stale id is instead made unusable — runtimeUninitialized hides it
       // behind the "Not initialized" label and blocks send — so it can never
       // reach --model as this runtime's model.
       if (list.length > 0 && !list.some(m => m.id === selectedModel)) {
@@ -335,32 +333,16 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     // runtime change, and re-including it would refetch on every keystroke
     // if the model field is ever hand-edited.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useAgents, selectedRuntime, runtimes])
+  }, [selectedRuntime, runtimes])
 
-  // ── Load providers on first open ─────────────────────────────────────────
-  useEffect(() => {
-    if (!isOpen || providersLoadedRef.current) return
-    providersLoadedRef.current = true
-    api.listAIProviders().then(list => {
-      const active = (list || []).filter(p => p.status === 'active')
-      setProviders(active)
-      if (active.length > 0 && !selectedProvider) {
-        setSelectedProvider(String(active[0].id))
-        setSelectedModel(active[0].default_model || '')
-      }
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen])
-
-  // ── Refresh the past-conversations list for the current workflowID/mode ──
+  // ── Refresh the past-conversations list for the current workflowID ────
   const refreshPastConversations = useCallback(() => {
     if (!workflowID) return
-    const backend = useAgents ? 'agent' : 'provider'
     api.listChatConversations('', 50).then(res => {
       const items = Array.isArray(res?.items) ? res.items : []
-      setPastConversations(items.filter(c => c.workflowContext === workflowID && c.backend === backend))
+      setPastConversations(items.filter(c => isListedConversation(c, workflowID)))
     }).catch(err => notify('chat', `Could not refresh session list: ${err}`))
-  }, [workflowID, useAgents])
+  }, [workflowID])
 
   // ── Load one past conversation's turns into the visible transcript ──────
   const loadConversation = useCallback((conv) => {
@@ -410,6 +392,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       if (conv.runtimeId && !initialRuntime) setSelectedRuntime(conv.runtimeId)
       if (conv.model) setSelectedModel(conv.model)
       setConversationId(conv.id)
+      setConversationBackend(conv.backend || 'agent')
       setActiveTurnId('')
       setShowSessions(false)
     }).catch(err => {
@@ -430,13 +413,14 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     }
     loadGenerationRef.current++ // invalidate any in-flight loadConversation
     setConversationId('')
+    setConversationBackend('')
     setActiveTurnId('')
     setMessages([])
   }, [])
 
-  // ── Load past conversations + auto-continue the most recent one when the
-  //     panel switches to a new workflowID (chat-history bucket) ──────────
-  const conversationsFetchedRef = useRef(null) // "workflowID:mode" bucket last fetched for
+  // ── Load past conversations + auto-continue the most recent agent one
+  //     when the panel switches to a new workflowID (chat-history bucket) ─
+  const conversationsFetchedRef = useRef(null) // workflowID bucket last fetched for
   useEffect(() => {
     if (!workflowID) return
     // Deferred until the panel has been opened at least once — a
@@ -444,12 +428,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     // skips the history fetch (FV4-3/4). After that, only an actual
     // bucket change refetches: close/reopen transitions must not rebind
     // the active conversation out from under the user.
-    const bucket = `${workflowID}:${useAgents ? 'agent' : 'provider'}`
+    const bucket = workflowID
     if ((!isOpen && !hasOpenedRef.current) || conversationsFetchedRef.current === bucket) return
     conversationsFetchedRef.current = bucket
-    const backend = useAgents ? 'agent' : 'provider'
     api.listChatConversations('', 50).then(res => {
-      // A later bucket switch (e.g. a quick agents<->providers toggle) may
+      // A later bucket switch (e.g. a quick workflow switch) may
       // already have moved conversationsFetchedRef on to a different
       // bucket by the time this resolves — same staleness check the
       // .catch() below already applies. Without it, a late-resolving fetch
@@ -457,26 +440,26 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       // already-loaded transcript (or wipe it via the empty-items branch).
       if (conversationsFetchedRef.current !== bucket) return
       const items = (Array.isArray(res?.items) ? res.items : [])
-        .filter(c => c.workflowContext === workflowID && c.backend === backend)
+        .filter(c => isListedConversation(c, workflowID))
       setPastConversations(items)
-      if (items.length > 0) {
-        loadConversation(items[0])
+      // Read-only provider conversations are never auto-continued.
+      const latest = items.find(c => c.backend === 'agent')
+      if (latest) {
+        loadConversation(latest)
       } else {
         // No conversation for this bucket yet — without this, a
-        // conversationId left over from the PREVIOUS bucket (e.g. the
-        // agent conversation, right after flipping to providers) stays
-        // bound, and the next send() would dispatch on the wrong backend
-        // (StartChatTurn branches on the stored conversation's own
-        // Backend, not on whatever this panel's useAgents currently is).
+        // conversationId left over from the PREVIOUS bucket stays bound,
+        // and the next send() would continue the wrong conversation.
         loadGenerationRef.current++ // invalidate any in-flight loadConversation from the PREVIOUS bucket
         setConversationId('')
+        setConversationBackend('')
         setActiveTurnId('')
         setMessages([])
       }
     }).catch(err => {
       // The ref above was set synchronously, before this request resolved —
       // left in place, this bucket would be stuck forever: same
-      // workflowID/useAgents means the same bucket string, and isOpen is
+      // workflowID means the same bucket string, and isOpen is
       // the only other dep, so a plain close/reopen would never retry.
       // Only clear it if it's still this bucket; a switch that already
       // moved on to a different bucket while this request was in flight
@@ -488,7 +471,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     // when the panel's bucket actually changes, not every time
     // loadConversation's own deps (e.g. initialRuntime) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowID, useAgents, isOpen])
+  }, [workflowID, isOpen])
 
   // ── Canvas re-key / workflow switch must not orphan an in-flight turn ───
   // This panel's live turn is keyed by conversationId/turnId, not
@@ -508,6 +491,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     setActiveTurnId('')
     setStopRequested(false)
     setConversationId('')
+    setConversationBackend('')
     setMessages([])
   }, [workflowID])
 
@@ -645,15 +629,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // there is no model id to send. Distinct from "still loading" so the panel
   // does not flash the message while the scan is in flight.
   const runtimeUninitialized =
-    useAgents && !!selectedRuntime && !runtimeModelsLoading && runtimeModels.length === 0
+    !!selectedRuntime && !runtimeModelsLoading && runtimeModels.length === 0
+
+  // A conversation from the removed in-app AI provider: its history stays
+  // readable, but no new turn can run on it.
+  const readOnly = conversationBackend === 'provider'
 
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || activeTurnId || !workflowID) return
-    if (useAgents && !selectedRuntime) return
-    if (runtimeUninitialized) return // implies useAgents
-    if (!useAgents && !selectedProvider) return
+    if (!text || activeTurnId || !workflowID || readOnly) return
+    if (!selectedRuntime || runtimeUninitialized) return
 
     setMessages(msgs => [...msgs, { role: 'user', content: text }])
     setInput('')
@@ -662,15 +648,14 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     try {
       let convId = conversationId
       if (!convId) {
-        const conv = useAgents
-          ? await api.createChatConversation('agent', workflowID, selectedRuntime, '', selectedModel)
-          : await api.createChatConversation('provider', workflowID, '', selectedProvider, selectedModel)
+        const conv = await api.createChatConversation(workflowID, selectedRuntime, selectedModel)
         convId = conv.id
         setConversationId(convId)
+        setConversationBackend('agent')
       }
       const turnId = newTurnId()
-      const tools = useAgents && getAssistantTools()
-      const allowRuns = useAgents && getAssistantAllowRuns()
+      const tools = getAssistantTools()
+      const allowRuns = getAssistantAllowRuns()
       activeStreamRef.current = { workflowID, conversationId: convId, turnId }
       const res = await api.startChatTurn(convId, turnId, text, !!tools, !!allowRuns)
       if (res?.ok === false) {
@@ -692,11 +677,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         { role: 'error', content: String(err) },
       ])
     }
-  }, [input, activeTurnId, workflowID, useAgents, selectedRuntime, runtimeUninitialized, selectedProvider, selectedModel, conversationId])
+  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, conversationId])
 
-  // Whether a backend is actually selected for the current mode — gates the
-  // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
-  const hasBackend = useAgents ? !!selectedRuntime : !!selectedProvider
+  // Whether an agent runtime is selected — gates the input, matching
+  // send()'s own guard.
+  const hasBackend = !!selectedRuntime
+  const readOnlyReason = 'This conversation used a removed AI provider. Start a new chat to continue.'
 
   // Plain-text mirror of the JSX `disabledReason` passed to <ChatComposer>
   // below (near the bottom of this component) — kept logically in sync with
@@ -704,21 +690,18 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // after this needs a flat string to compare/speak, not the JSX element
   // the monomindMissing branch uses there (an inline <code> tag). If you
   // change one, change the other the same way.
-  // runtimesLoading is nested INSIDE !hasBackend, not checked first: a
-  // provider that's already resolved and selected must enable Send
-  // immediately, independent of whatever the (separate, often slower)
-  // runtime scan is still doing — the scan finishing has no bearing on an
-  // already-usable provider backend.
-  const disabledReasonText = runtimeUninitialized
+  const disabledReasonText = readOnly
+    ? readOnlyReason
+    : runtimeUninitialized
     ? 'This runtime reports no models — it is not initialized, so chatting is unavailable'
     : !hasBackend
     ? (runtimesLoading
         ? 'Loading available AI systems…'
         : (monomindMissing
-            ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
+            ? 'monomind not found — install with npm install -g @monoes/monomindcli'
             : scanError
-            ? `monomind couldn't be used: ${scanError} — or select an AI provider above`
-            : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')))
+            ? `monomind couldn't be used: ${scanError}`
+            : 'Select an agent runtime above to start chatting'))
     : ''
 
   // Assistant tool access (Settings → "Assistant tool access", GX2 contract):
@@ -727,8 +710,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const assistantAllowRuns = getAssistantAllowRuns()
 
   // ── Announce ChatComposer's disabledReason banner as it changes ─────────
-  // The banner changes asynchronously as the runtime scan/provider list
-  // resolve (monomindMissing, hasBackend) — a user focused on the composer
+  // The banner changes asynchronously as the runtime scan resolves
+  // (monomindMissing, hasBackend) — a user focused on the composer
   // otherwise has no indication why Send just became enabled/disabled.
   // Announced through the same persistent live region rather than a second
   // one. prevDisabledReasonRef seeds from the first render's own value, so
@@ -766,23 +749,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // ── Clear history ───────────────────────────────────────────────────────
   const clearHistory = useCallback(async () => {
     if (!workflowID || activeTurnIdRef.current) return
-    const backend = useAgents ? 'agent' : 'provider'
     const res = await api.listChatConversations('', 50).catch(() => null)
     const items = (Array.isArray(res?.items) ? res.items : [])
-      .filter(c => c.workflowContext === workflowID && c.backend === backend)
+      .filter(c => isListedConversation(c, workflowID))
     await Promise.all(items.map(c => api.deleteChatConversation(c.id).catch(() => {})))
     setPastConversations([])
     setConversationId('')
+    setConversationBackend('')
     setMessages([])
-  }, [workflowID, useAgents])
-
-  // ── Provider change ─────────────────────────────────────────────────────
-  const handleProviderChange = (e) => {
-    const id = e.target.value
-    setSelectedProvider(id)
-    const p = providers.find(p => String(p.id) === id)
-    if (p) setSelectedModel(p.default_model || '')
-  }
+  }, [workflowID])
 
   // Flat list of every call across finalized turns + the live one, each
   // paired with the turn id it belongs to — see useResolvedArtifacts' own
@@ -958,7 +933,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                     {c.model || c.runtimeId || c.providerId || '(no model)'}
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>{c.runtimeId || c.providerId}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>
+                      {c.backend === 'provider' ? 'removed AI provider · read-only' : c.runtimeId}
+                    </span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>{relativeTime(c.updatedAt)}</span>
                   </div>
                 </div>
@@ -994,7 +971,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         </button>
       </div>
 
-      {/* ── Runtime / Provider / Model selectors ── */}
+      {/* ── Runtime / Model selectors ── */}
       <div style={{
         padding: '8px 12px',
         borderBottom: '1px solid rgba(0,180,216,0.06)',
@@ -1003,16 +980,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       }}>
         {/* Before the initial agent scan resolves (~6-7s: monomind spawn +
             handshake + a parallel probe of every known agent CLI), runtimes
-            is indistinguishable from "none installed" — without this branch
-            the UI below falls straight into the providers empty-state
-            ("No providers" / "Select an AI provider above"), which actively
-            misleads a user whose real backend (agent runtimes) just hasn't
-            finished loading yet. Show a plain loading placeholder instead
-            of the real selector row until the scan settles — but only
-            while nothing is usable yet (!hasBackend): a provider that's
-            already resolved and selected must render its real dropdown
-            immediately rather than being hidden behind an unrelated,
-            often-slower runtime scan. */}
+            is indistinguishable from "none installed" — show a plain
+            loading placeholder instead of the real selector row until the
+            scan settles, rather than a misleading "No agent runtimes". */}
         {(runtimesLoading && !hasBackend) ? (
           <div style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(226,232,240,0.55)' }}>
             <Loader size={13} className="chat-spin" style={{ color: '#00b4d8', flexShrink: 0 }} />
@@ -1020,66 +990,30 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           </div>
         ) : (
         <>
-        {/* Only a real choice when both a local runtime and a configured
-            provider exist — one-option dropdowns are noise, not a control. */}
-        {(runtimes.length > 0 && providers.length > 0) && (
-          <select
-            value={useAgents ? 'agents' : 'providers'}
-            onChange={e => {
-              // Same mid-turn guard as the runtime/model selects below —
-              // flipping backends while a turn is active would otherwise
-              // fetch the OTHER bucket's conversations underneath a still-
-              // running turn instead of blocking like every other switch.
-              if (activeTurnIdRef.current) {
-                notify('chat', 'Stop the current response first')
-                return
-              }
-              setUseAgents(e.target.value === 'agents')
-            }}
-            title="Chat backend"
-            style={selectStyle}
-          >
-            {runtimes.length > 0 && <option value="agents">agents</option>}
-            {providers.length > 0 && <option value="providers">providers</option>}
-          </select>
-        )}
-        {useAgents ? (
-          <select
-            value={selectedRuntime}
-            onChange={e => {
-              // Runtime change resets the conversation — blocked mid-turn
-              // for the same crosstalk reason as loadConversation (FV4-6).
-              if (activeTurnIdRef.current) {
-                notify('chat', 'Stop the current response first')
-                return
-              }
-              setSelectedRuntime(e.target.value)
-              startNewSession()
-            }}
-            title="Locally installed AI agent (via monomind)"
-            style={{ ...selectStyle, flex: 1 }}
-          >
-            {runtimes.length === 0 && (
-              <option value="">
-                {monomindMissing ? 'monomind missing — npm i -g @monoes/monomindcli' : scanError ? 'monomind couldn’t be used — see below' : 'No agent runtimes'}
-              </option>
-            )}
-            {runtimes.map(r => (
-              <option key={r.id} value={r.id}>{r.id}</option>
-            ))}
-          </select>
-        ) : (
-          <select
-            value={selectedProvider}
-            onChange={handleProviderChange}
-            style={{ ...selectStyle, flex: 1 }}
-          >
-            {providers.length === 0 && <option value="">No providers</option>}
-            {providers.map(p => (
-              <option key={p.id} value={String(p.id)}>{p.name}</option>
-            ))}
-          </select>
-        )}
+        <select
+          value={selectedRuntime}
+          onChange={e => {
+            // Runtime change resets the conversation — blocked mid-turn
+            // for the same crosstalk reason as loadConversation (FV4-6).
+            if (activeTurnIdRef.current) {
+              notify('chat', 'Stop the current response first')
+              return
+            }
+            setSelectedRuntime(e.target.value)
+            startNewSession()
+          }}
+          title="Locally installed AI agent (via monomind)"
+          style={{ ...selectStyle, flex: 1 }}
+        >
+          {runtimes.length === 0 && (
+            <option value="">
+              {monomindMissing ? 'monomind missing — npm i -g @monoes/monomindcli' : scanError ? 'monomind couldn’t be used — see below' : 'No agent runtimes'}
+            </option>
+          )}
+          {runtimes.map(r => (
+            <option key={r.id} value={r.id}>{r.id}</option>
+          ))}
+        </select>
         {runtimeUninitialized ? (
           // No model id exists for this runtime, so there is nothing to pick
           // and nothing to type: say so where the picker would be, rather
@@ -1100,7 +1034,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           >
             Not initialized
           </span>
-        ) : useAgents && (runtimeModels.length > 0 || runtimeModelsLoading) ? (
+        ) : (runtimeModels.length > 0 || runtimeModelsLoading) ? (
           <select
             value={selectedModel}
             onChange={e => { setSelectedModel(e.target.value); startNewSession() }}
@@ -1155,28 +1089,23 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           }}>
             <span style={{ fontSize: 24, opacity: 0.15 }}>AI</span>
             {monomindMissing && !hasBackend ? (
-              // Local agents are the primary chat path (useAgents defaults
-              // true once any runtime is installed) — when monomind itself
+              // Local agents are the only chat path — when monomind itself
               // isn't found, staying silent here just leaves the panel
-              // looking broken with an empty "No providers" dropdown, since
-              // there's usually nothing in the providers list either for a
-              // fresh install. Surface the same fix Agents.jsx's empty
+              // looking broken. Surface the same fix Agents.jsx's empty
               // state gives, right where the user is already looking.
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
                 monomind (the local AI agent engine) isn't installed.<br />
-                Install it with <code>npm install -g @monoes/monomindcli</code><br />
-                — or add an AI provider API key in Settings instead.
+                Install it with <code>npm install -g @monoes/monomindcli</code>
               </span>
             ) : scanError && !hasBackend ? (
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6, wordBreak: 'break-word' }}>
                 monomind couldn't be used:<br />
-                <code>{scanError}</code><br />
-                — or add an AI provider API key in Settings instead.
+                <code>{scanError}</code>
               </span>
             ) : (
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
                 {workflowID === 'general'
-                  ? <>Chat with your connected AI providers.<br />Ask anything.</>
+                  ? <>Chat with a local AI agent.<br />Ask anything.</>
                   : <>Ask the AI about your workflow,<br />request changes, or get help.</>
                 }
               </span>
@@ -1252,19 +1181,21 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         onSend={send}
         onStop={stop}
         streaming={streaming}
-        disabled={!hasBackend || runtimeUninitialized}
+        disabled={readOnly || !hasBackend || runtimeUninitialized}
         // Kept in sync by hand with the plain-text disabledReasonText above
         // (used by the live-region announcement effect) — update both the
         // same way.
-        disabledReason={runtimeUninitialized
+        disabledReason={readOnly
+          ? readOnlyReason
+          : runtimeUninitialized
           ? 'This runtime reports no models — it is not initialized, so chatting is unavailable'
           : runtimesLoading && !hasBackend
           ? 'Loading available AI systems…'
           : (monomindMissing
-              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
+              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code></>
               : scanError
-              ? <>monomind couldn't be used: <code>{scanError}</code> — or select an AI provider above</>
-              : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))}
+              ? <>monomind couldn't be used: <code>{scanError}</code></>
+              : 'Select an agent runtime above to start chatting')}
       />
     </div>
   )

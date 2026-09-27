@@ -15,6 +15,9 @@ var DeprecatedNodeTypes = map[string]string{
 	"ai.transform": `replace it with the "agent.ask" node`,
 	"ai.agent":     `replace it with the "agent.ask" node`,
 	"ai.embed":     `no local-agent equivalent exists — remove the node, or approximate via an "agent.ask" prompt (no true embeddings API)`,
+	// Called an LLM over HTTP with its own API key (text, and images through
+	// the same chat endpoint).
+	"service.openrouter": `replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask"); for images use "service.huggingface" with operation generate_image`,
 }
 
 // IsDeprecatedNodeType reports whether a node type is deprecated, returning
@@ -22,6 +25,13 @@ var DeprecatedNodeTypes = map[string]string{
 func IsDeprecatedNodeType(nodeType string) (string, bool) {
 	hint, ok := DeprecatedNodeTypes[nodeType]
 	return hint, ok
+}
+
+// DeprecatedNodeError is the error a deprecated node's executor fails with:
+// the type and its migration hint.
+func DeprecatedNodeError(nodeType string) error {
+	hint, _ := IsDeprecatedNodeType(nodeType)
+	return fmt.Errorf("node %q is deprecated by the local-agent transition — %s (docs/plans/local-agent-monomind-delegation.md)", nodeType, hint)
 }
 
 // ValidateForSave checks a workflow definition before saving.

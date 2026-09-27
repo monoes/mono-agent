@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/noderegistry"
@@ -405,16 +404,16 @@ func intParam(desc string) map[string]interface{} {
 }
 
 // ToolDefs returns every monoagent-domain tool the model can call.
-func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
-	def := func(name, desc string, props map[string]interface{}, required []string) ai.ToolDef {
+func (mt *MonoagentTools) ToolDefs() []ToolDef {
+	def := func(name, desc string, props map[string]interface{}, required []string) ToolDef {
 		params := map[string]interface{}{"type": "object", "properties": props}
 		if len(required) > 0 {
 			params["required"] = required
 		}
-		return ai.ToolDef{Type: "function", Function: ai.ToolFunction{Name: name, Description: desc, Parameters: params}}
+		return ToolDef{Type: "function", Function: ToolFunction{Name: name, Description: desc, Parameters: params}}
 	}
 
-	defs := []ai.ToolDef{
+	defs := []ToolDef{
 		// Workflows
 		def("list_workflows", "List all workflows in the active profile", nil, nil),
 		def("get_workflow", "Get a workflow's metadata, nodes, and connections", map[string]interface{}{
