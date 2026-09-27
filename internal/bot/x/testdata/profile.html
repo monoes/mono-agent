@@ -8,6 +8,7 @@
 <div id="react-root"><header role="banner"><nav><a data-testid="AppTabBar_Profile_Link" href="/synth_me">Profile</a></nav></header>
 <main role="main">
 <div data-testid="primaryColumn">
+  <div id="topbar"><div><h2 dir="ltr"><span>Synth Alice</span></h2><div dir="ltr">1,234 posts</div></div></div>
   <div><a href="/synth_alice/header_photo"><img src="https://pbs.example.test/banners/synthetic_1500x500.jpg" alt=""></a></div>
   <div data-testid="UserAvatar-Container-synth_alice"><a href="/synth_alice/photo"><img src="https://pbs.example.test/avatars/synthetic_400x400.jpg" alt="Opens profile photo"></a></div>
   <div id="actions">
@@ -23,6 +24,8 @@
   <div data-testid="UserProfileHeader_Items">
     <span data-testid="UserLocation"><span>Nowhere, Testland</span></span>
     <a data-testid="UserUrl" href="https://t.co/synthetic1" rel="noopener"><span>synth-alice.example</span></a>
+    <span data-testid="UserProfessionalCategory"><span>Synthetic Science</span></span>
+    <span data-testid="UserBirthdate">Born April 2, 1990</span>
     <span data-testid="UserJoinDate"><span>Joined March 2011</span></span>
   </div>
   <div>
@@ -30,6 +33,14 @@
     <a href="/synth_alice/verified_followers" role="link"><span><span>12.5K</span></span> <span><span>Followers</span></span></a>
     <a href="/synth_alice/followers_you_follow" role="link"><span>Followed by 3 people you follow</span></a>
   </div>
+  <section id="timeline">
+    <article data-testid="tweet"><div data-testid="socialContext">Pinned</div>
+      <a href="/synth_alice/status/1900000000000000001"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a>
+      <div data-testid="tweetText"><span>Synthetic pinned post</span></div></article>
+    <article data-testid="tweet">
+      <a href="/synth_alice/status/1900000000000000002"><time datetime="2026-01-02T00:00:00Z">Jan 2</time></a>
+      <div data-testid="tweetText"><span>Synthetic later post</span></div></article>
+  </section>
 </div>
 <div data-testid="sidebarColumn">
   <div data-testid="UserCell"><a href="/synth_carol">Synth Carol</a> <span>@synth_carol</span>
@@ -45,6 +56,27 @@
     for (const a of document.querySelectorAll("[data-testid='primaryColumn'] a[href^='/synth_alice']")) a.setAttribute('href', a.getAttribute('href').replace('/synth_alice', '/' + who));
     document.getElementById('dm').remove();
     document.querySelector("[data-testid='icon-verified']").remove();
+  }
+  // synth_fiber: the header's components hold the user object (as x.com's
+  // React props do); its values differ from the text so a test can tell
+  // which one was read. The badge is gold (a business).
+  if (who === 'synth_fiber') {
+    document.getElementById('name').textContent = 'Synth Fiber';
+    document.getElementById('timeline').remove();
+    const box = document.querySelector("[data-testid='UserName']");
+    box.insertAdjacentHTML('afterbegin', '<svg data-testid="icon-verified" aria-label="Verified account"><linearGradient id="g"></linearGradient><path fill="url(#g)"></path></svg>');
+    box['__reactFiber$synthetic'] = { memoizedProps: { children: [] }, return: { memoizedProps: { user: {
+      id_str: '4200000001', name: 'Synth Fiber', screen_name: 'Synth_Fiber', description: 'Fiber bio https://t.co/synthbio',
+      location: 'Fiberland', followers_count: 12345, friends_count: 67, statuses_count: 8910,
+      entities: { url: { urls: [{ url: 'https://t.co/synthetic1', expanded_url: 'https://synth-fiber.example/home', display_url: 'synth-fiber.example/home' }] },
+        description: { urls: [{ url: 'https://t.co/synthbio', expanded_url: 'https://shop.example.test/', display_url: 'shop.example.test' }] } },
+      verified: false, verified_type: 'Business', is_blue_verified: true, protected: false,
+      profile_image_url_https: 'https://pbs.example.test/avatars/fiber_normal.jpg',
+      profile_banner_url: 'https://pbs.example.test/banners/fiber',
+      created_at: '2011-03-14T09:26:53.000Z', birthdate: { day: 2, month: 4, visibility: 'public' },
+      professional: { professional_type: 'Business', category: [{ id: 1, name: 'Synthetic Business' }] },
+      pinned_tweet_ids_str: ['1900000000000000009'], business_account: { affiliates_count: 3 },
+    } }, return: null } };
   }
   document.getElementById('dm') && document.getElementById('dm').addEventListener('click', () => {
     setTimeout(() => location.assign('/messages/100-200'), 150);
