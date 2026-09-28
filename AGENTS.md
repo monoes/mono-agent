@@ -218,7 +218,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `profile documents list|get|capture|index|rm`, and `profile documents sync`, which scans the profile folder and reconciles documents
 - **Chat:**
   - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
-  - `chat history create --runtime R [--model M] [--workflow W] [--mode coder --cwd DIR|--new-workspace]` makes a conversation (coder mode: see "Coder mode" below), `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
+  - `chat history create --runtime R [--model M] [--workflow W] [--mode coder --cwd DIR|--coder-root|--new-workspace]` makes a conversation (coder mode: see "Coder mode" below), `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
   - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
   - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
   - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
@@ -435,8 +435,9 @@ with no approval prompts, and it loads the user's normal Claude Code setup
 monoagentcli coder status --json                          # settings + whether monomind supports it
 monoagentcli coder enable --yes-i-understand              # off until enabled; the CLI enforces it
 monoagentcli coder set --workspace-root ~/monoagent-coder --max-turns 200 --timeout 60m --budget-usd 5
-monoagentcli coder workspace new --json                   # fresh random test folder, git + monomind initialized
-monoagentcli chat history create --runtime claude --mode coder --new-workspace   # or --cwd <any folder>
+monoagentcli coder workspace root --json                  # the coder root itself, set up as a shared working folder
+monoagentcli coder workspace new --json                   # or a fresh random test folder inside it
+monoagentcli chat history create --runtime claude --mode coder --coder-root   # or --cwd <any folder>, --new-workspace
 monoagentcli chat --conversation <conv> --turn <id> -- "make the tests pass"
 monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled turn
 ```
