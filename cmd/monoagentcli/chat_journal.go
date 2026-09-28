@@ -118,11 +118,13 @@ func (j *turnJournal) commitText(partID, text string) {
 	}
 }
 
+// forceFlushLocked commits pending text and ends the current text part, so
+// text after a tool call or notice starts a new one.
 func (j *turnJournal) forceFlushLocked() {
 	if partID, text, ok := j.coalescer.ForceFlush(); ok {
 		j.commitText(partID, text)
-		j.currentPartID = ""
 	}
+	j.currentPartID = ""
 }
 
 // tick flushes text that has waited out the coalescing window.
@@ -132,9 +134,11 @@ func (j *turnJournal) tick() {
 	if j.finished {
 		return
 	}
+	// A timed flush only publishes what has arrived so far: the part goes
+	// on until a tool call (forceFlushLocked) ends it, so a streamed reply
+	// stays one text block instead of splitting mid-word.
 	if partID, text, ok := j.coalescer.Flush(time.Now()); ok {
 		j.commitText(partID, text)
-		j.currentPartID = ""
 	}
 }
 
@@ -182,7 +186,6 @@ func (j *turnJournal) handle(ev monomind.Event) {
 			}
 			if partID, text, flushed := j.coalescer.Push(j.currentPartID, ev.Text, time.Now()); flushed {
 				j.commitText(partID, text)
-				j.currentPartID = ""
 			} else {
 				time.AfterFunc(chatevents.CoalesceWindow+10*time.Millisecond, j.tick)
 			}

@@ -154,3 +154,40 @@ func TestCoderTurnClosesToolCallsLeftOpen(t *testing.T) {
 		t.Errorf("the call must close before turn.finished: %+v", j.events)
 	}
 }
+
+// TestStreamedReplyStaysOnePart: chunks that arrive further apart than the
+// coalescing window are still one text part until a tool call ends it, so
+// the app renders one block instead of a line per chunk.
+func TestStreamedReplyStaysOnePart(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	bin, _ := writeCoderMonomind(t, `  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
+  echo '{"v":1,"type":"assistant","text":"Created `+"`not"+`"}'
+  sleep 0.3
+  echo '{"v":1,"type":"assistant","text":"es.txt`+"`"+` with"}'
+  sleep 0.3
+  echo '{"v":1,"type":"tool_activity","id":"b1","phase":"start","name":"Bash","input":{"command":"ls"}}'
+  echo '{"v":1,"type":"tool_activity","id":"b1","phase":"end","name":"Bash","ok":true,"output":""}'
+  echo '{"v":1,"type":"assistant","text":"Done."}'
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"x"}'
+  echo '{"v":1,"type":"done","exit_code":0}'`)
+	withCoderCaps(t, monomind.CoderCapabilities...)
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+	conv, _ := openTestChatStore(t, dbPath).CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
+	out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "go")
+	if err != nil {
+		t.Fatalf("turn: %v\n%s", err, out)
+	}
+	texts := map[string]string{}
+	var order []string
+	for _, e := range parseJournaledTurn(t, out).byType(chatevents.EventAssistantDelta) {
+		var p chatevents.AssistantDeltaPayload
+		json.Unmarshal(e.Payload, &p)
+		if _, ok := texts[p.PartID]; !ok {
+			order = append(order, p.PartID)
+		}
+		texts[p.PartID] += p.Text
+	}
+	if len(order) != 2 || texts[order[0]] != "Created `notes.txt` with" || texts[order[1]] != "Done." {
+		t.Errorf("parts = %v %q", order, texts)
+	}
+}
