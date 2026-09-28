@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-09-28
+
+### Changed
+
+- **Model pickers list each runtime's real models.** With monomind 2.18 or
+  later, the model lists for Claude, Codex, Antigravity and OpenCode come
+  from `monomind agent models`: for Claude, exactly what Claude Code's own
+  model picker offers your account, so new models show up without a
+  mono-agent update. Claude's aliases are named by the model they point at
+  ("Default (Opus 5.5)", "Opus 5.5"). Older monomind versions keep the
+  previous lists.
+
+### Fixed
+
+- A full-access org role that was never granted now reads "not granted",
+  with "Grant full access…", instead of "suspended" with "Grant again" on
+  monomind 2.18, which reports such roles for orgs that haven't run.
+
 ## [0.88.0] - 2026-09-28
 
 ### Changed
