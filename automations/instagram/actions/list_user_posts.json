@@ -1,0 +1,90 @@
+{
+  "$schema": "../../../data/schemas/action.v1.schema.json",
+  "actionType": "list_user_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url; older configs that set targetUsername, profileUrl, targets or username still work. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
+  "sideEffects": "read",
+  "visibility": ["account_preference_prompt"],
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "target_url",
+        "type": "string",
+        "description": "Profile URL or username to list posts from (without @)",
+        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
+        "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxCount",
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 200,
+        "description": "Maximum number of posts to return"
+      },
+      {
+        "name": "delayAfterLoad",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 30,
+        "description": "Seconds to wait after page load"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "url",
+      "shortcode",
+      "type",
+      "thumbnail_src",
+      "alt_text",
+      "author",
+      "author_url"
+    ],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "list_posts",
+      "type": "call_bot_method",
+      "methodName": "list_user_posts",
+      "args": [
+        "{{target_url}}",
+        "{{maxCount or limit or 20}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 180,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "store_count",
+      "type": "update_progress",
+      "set": {
+        "postsCount": "{{posts.count}}"
+      }
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Posts listed",
+      "value": "Count: {{postsCount}}"
+    }
+  ],
+  "loops": [],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

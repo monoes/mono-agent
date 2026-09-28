@@ -9,7 +9,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 )
 
 func seedFS(version, body string) fstest.MapFS {
@@ -31,7 +31,7 @@ func indexMod(t *testing.T, r *Registry) time.Time {
 
 func TestSeedEmbeddedBuiltins(t *testing.T) {
 	r := newReg(t)
-	rep, err := r.SeedWithReport(data.AutomationsFS)
+	rep, err := r.SeedWithReport(automations.Tree())
 	if err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSeedEmbeddedBuiltins(t *testing.T) {
 	// Second seed: nothing to do, nothing written.
 	before := indexMod(t, r)
 	time.Sleep(20 * time.Millisecond)
-	rep, err = r.SeedWithReport(data.AutomationsFS)
+	rep, err = r.SeedWithReport(automations.Tree())
 	if err != nil || rep.Changed() {
 		t.Fatalf("re-seed changed=%v err=%v %+v", rep.Changed(), err, rep)
 	}
@@ -245,12 +245,12 @@ func TestLegacyActionsWrappedOnce(t *testing.T) {
 }
 
 func TestSeedAllBuiltinsIncludingX(t *testing.T) {
-	sub, err := fs.Sub(data.AutomationsFS, "automations")
+	sub, err := fs.Sub(automations.Tree(), "automations")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Both the raw embed FS and the fs.Sub'd root (as startup passes it).
-	for name, builtins := range map[string]fs.FS{"embed": data.AutomationsFS, "sub": sub} {
+	for name, builtins := range map[string]fs.FS{"embed": automations.Tree(), "sub": sub} {
 		t.Run(name, func(t *testing.T) {
 			r := newReg(t)
 			rep, err := r.SeedWithReport(builtins)

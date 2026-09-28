@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot/bottest"
@@ -31,7 +31,7 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-const hnTests = "../../data/automations/hackernews/tests"
+const hnTests = "../../automations/hackernews/tests"
 
 // pkgSource serves one package as the whole definition source.
 type pkgSource struct{ p *automation.Package }
@@ -73,7 +73,7 @@ func nativePkg(t *testing.T) *automation.Package {
 
 func declarativePkg(t *testing.T) *automation.Package {
 	t.Helper()
-	sub, err := fs.Sub(data.AutomationsFS, "automations/hackernews")
+	sub, err := fs.Sub(automations.Tree(), "automations/hackernews")
 	if err != nil {
 		t.Fatal(err)
 	}

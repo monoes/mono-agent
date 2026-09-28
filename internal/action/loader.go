@@ -3,12 +3,12 @@ package action
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/monoes/mono-agent/data"
 )
 
 // userActionsDir returns the path to ~/.monoagent/actions where user-installed
@@ -21,8 +21,9 @@ func userActionsDir() string {
 	return filepath.Join(home, ".monoagent", "actions")
 }
 
-// ActionDef represents a complete action definition loaded from an embedded
-// JSON file under data/actions/<platform>/<TYPE>.json.
+// ActionDef represents a complete action definition: an automation
+// package's actions/<action>.json (or a legacy
+// ~/.monoagent/actions/<platform>/<action>.json).
 type ActionDef struct {
 	ActionType  string                 `json:"actionType"`
 	Platform    string                 `json:"platform"`
@@ -72,8 +73,9 @@ type GlobalErrorConfig struct {
 	OnFinalFailure string `json:"onFinalFailure,omitempty"`
 }
 
-// ActionLoader loads and caches action definitions from the embedded JSON files
-// in data.AutomationsFS. It is safe for concurrent use.
+// ActionLoader loads and caches action definitions from the installed
+// automation packages (the DefSource) or, without one, from the legacy
+// ~/.monoagent/actions directory. It is safe for concurrent use.
 type ActionLoader struct {
 	cache sync.Map
 	// srcCache caches DefSource definitions per key as genEntry, valid only
@@ -119,29 +121,28 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 		return cached.(*ActionDef), nil
 	}
 
-	var fileData []byte
-	var err error
-
-	path := fmt.Sprintf("automations/%s/actions/%s.json", normalPlatform, normalType)
-	fileData, err = data.AutomationsFS.ReadFile(path)
+	// No registry: only the legacy ~/.monoagent/actions directory (the app
+	// no longer embeds any packages), plus the tests' fallback tree.
+	if fb := testFallbackFS(); fb != nil {
+		if b, err := fs.ReadFile(fb, path.Join(normalPlatform, "actions", normalType+".json")); err == nil {
+			return l.parseAndCache(key, normalPlatform, normalType, b)
+		}
+	}
+	userDir := userActionsDir()
+	if userDir == "" {
+		return nil, fmt.Errorf("action definition not found: %s/%s", normalPlatform, normalType)
+	}
+	fileData, err := os.ReadFile(filepath.Join(userDir, normalPlatform, normalType+".json"))
 	if err != nil {
-		// Fall back to user-installed templates in ~/.monoagent/actions/
-		userDir := userActionsDir()
-		if userDir != "" {
-			userPath := filepath.Join(userDir, normalPlatform, normalType+".json")
-			fileData, err = os.ReadFile(userPath)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("action definition not found: %s/%s", normalPlatform, normalType)
-		}
+		return nil, fmt.Errorf("action definition not found: %s/%s", normalPlatform, normalType)
 	}
 
 	return l.parseAndCache(key, normalPlatform, normalType, fileData)
 }
 
 // loadFromSource loads through the registry, which is authoritative: a
-// removed or disabled package's actions must not load from the embedded
-// seed, nor from a cache filled before it changed (long-lived processes).
+// removed or disabled package's actions must not load from the legacy
+// directory, nor from a cache filled before it changed (long-lived processes).
 func (l *ActionLoader) loadFromSource(src DefSource, key, platform, actionType string) (*ActionDef, error) {
 	gen, hasGen := "", false
 	if g, ok := src.(Generational); ok {
@@ -194,30 +195,15 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 		return src.List()
 	}
 	var result []string
-
-	// Dynamically discover all platform directories under actions/
-	platformDirs, err := data.AutomationsFS.ReadDir("automations")
-	if err != nil {
-		return nil, fmt.Errorf("list platforms: %w", err)
-	}
-
-	for _, pd := range platformDirs {
-		if !pd.IsDir() {
-			continue
-		}
-		p := pd.Name()
-		entries, err := data.AutomationsFS.ReadDir(fmt.Sprintf("automations/%s/actions", p))
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-				name := strings.TrimSuffix(e.Name(), ".json")
-				result = append(result, fmt.Sprintf("%s/%s", p, name))
-			}
+	if fb := testFallbackFS(); fb != nil {
+		files, _ := fs.Glob(fb, "*/actions/*.json")
+		for _, f := range files {
+			parts := strings.Split(strings.TrimSuffix(f, ".json"), "/")
+			result = append(result, parts[0]+"/"+parts[2])
 		}
 	}
-	// Merge user-installed templates from ~/.monoagent/actions/
+
+	// Legacy action files in ~/.monoagent/actions/
 	userDir := userActionsDir()
 	if userDir != "" {
 		userPlatformDirs, _ := os.ReadDir(userDir)
@@ -229,19 +215,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 			entries, _ := os.ReadDir(filepath.Join(userDir, p))
 			for _, e := range entries {
 				if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-					name := strings.TrimSuffix(e.Name(), ".json")
-					candidate := fmt.Sprintf("%s/%s", p, name)
-					// Deduplicate: skip if embedded FS already provided this one.
-					duplicate := false
-					for _, existing := range result {
-						if existing == candidate {
-							duplicate = true
-							break
-						}
-					}
-					if !duplicate {
-						result = append(result, candidate)
-					}
+					result = append(result, fmt.Sprintf("%s/%s", p, strings.TrimSuffix(e.Name(), ".json")))
 				}
 			}
 		}
@@ -251,7 +225,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 }
 
 // Invalidate removes a cached action definition, forcing the next Load call
-// for that key to re-read from the embedded filesystem.
+// for that key to re-read its definition.
 func (l *ActionLoader) Invalidate(platform, actionType string) {
 	key := fmt.Sprintf("%s/%s", strings.ToLower(platform), strings.ToLower(actionType))
 	l.cache.Delete(key)
@@ -277,7 +251,7 @@ var (
 
 // SetDefSource installs the definition source used by every loader (the
 // automation registry calls this at startup). nil restores the legacy
-// embedded-seed + ~/.monoagent/actions behaviour. Clears the cache.
+// ~/.monoagent/actions-only behaviour. Clears the cache.
 func SetDefSource(src DefSource) {
 	defSourceMu.Lock()
 	defSource = src
@@ -290,4 +264,26 @@ func CurrentDefSource() DefSource {
 	defSourceMu.RLock()
 	defer defSourceMu.RUnlock()
 	return defSource
+}
+
+var (
+	testFallbackMu sync.RWMutex
+	testFallback   fs.FS
+)
+
+// SetTestFallback gives the no-registry loader an extra definition tree
+// (<automation>/actions/<action>.json), read before ~/.monoagent/actions.
+// Only tests call it, to load the official packages' source from the repo
+// (automations.FS()); the app never sets one. nil removes it.
+func SetTestFallback(fsys fs.FS) {
+	testFallbackMu.Lock()
+	testFallback = fsys
+	testFallbackMu.Unlock()
+	GetLoader().InvalidateAll()
+}
+
+func testFallbackFS() fs.FS {
+	testFallbackMu.RLock()
+	defer testFallbackMu.RUnlock()
+	return testFallback
 }

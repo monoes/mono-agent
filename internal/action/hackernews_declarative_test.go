@@ -30,7 +30,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
-const hnDir = "../../data/automations/hackernews"
+const hnDir = "../../automations/hackernews"
 
 const hnCSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
 

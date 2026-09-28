@@ -12,8 +12,7 @@ import (
 // workflow node "<automation>.<action>", e.g. "linkedin.find_by_keyword".
 //
 // Actions come from the automation registry (enabled, available packages)
-// once it is booted, else from the legacy loader (embedded seed plus
-// ~/.monoagent/actions).
+// once it is booted, else from the legacy loader (~/.monoagent/actions).
 func RegisterBrowserNodes(r *workflow.NodeTypeRegistry) {
 	ensureAutomationsBooted()
 

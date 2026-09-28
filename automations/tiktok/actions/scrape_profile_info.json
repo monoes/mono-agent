@@ -1,0 +1,94 @@
+{
+  "$schema": "../../../data/schemas/action.v1.schema.json",
+  "actionType": "scrape_profile_info",
+  "platform": "TIKTOK",
+  "version": "1.2.0",
+  "description": "Extract profile information from TikTok profiles: handle, display name, bio, bio link, exact follower/following/like/video/friend counts, verified and private flags, HD avatar, language and business category (from the data the profile page embeds, else its header). If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
+  "sideEffects": "read",
+  "visibility": ["profile_view_visible_to_owner"],
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      "selectedListItems"
+    ],
+    "optional": []
+  },
+  "outputs": {
+    "success": [
+      "username",
+      "full_name",
+      "handle",
+      "profile_url",
+      "bio",
+      "following_count",
+      "follower_count",
+      "likes_count",
+      "content_count",
+      "friend_count",
+      "profile_picture_url",
+      "website",
+      "links",
+      "is_verified",
+      "is_private",
+      "language",
+      "profile_category",
+      "account_type",
+      "platform_id"
+    ],
+    "failure": [
+      "failedProfileSearches"
+    ]
+  },
+  "steps": [
+    {
+      "id": "get_profile_data",
+      "type": "call_bot_method",
+      "methodName": "get_profile_data",
+      "args": [
+        "{{item.url or item.href or item}}"
+      ],
+      "variable_name": "profile",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      },
+      "onSuccess": {
+        "action": "update_progress",
+        "increment": "profilesCount"
+      }
+    },
+    {
+      "id": "save_profile_data",
+      "type": "save_data",
+      "dataSource": "profile"
+    },
+    {
+      "id": "wait_between_profiles",
+      "type": "wait",
+      "duration": "{{delayBetweenProfiles or 3}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "get_profile_data",
+        "save_profile_data",
+        "wait_between_profiles"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

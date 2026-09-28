@@ -1,7 +1,7 @@
 {
   "$defs": {
     "ActionDef": {
-      "description": "ActionDef represents a complete action definition loaded from an embedded JSON file under data/actions/\u003cplatform\u003e/\u003cTYPE\u003e.json.",
+      "description": "ActionDef represents a complete action definition: an automation package's actions/\u003caction\u003e.json (or a legacy ~/.monoagent/actions/\u003cplatform\u003e/\u003caction\u003e.json).",
       "properties": {
         "$schema": {
           "description": "Schema is the editor \"$schema\" pointer; ignored at run time.",

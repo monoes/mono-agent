@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/jev/jevtest"
@@ -373,7 +373,7 @@ func TestActionIntentsAreValid(t *testing.T) {
 		return (typ == "find_element" || typ == "click" || typ == "type") && (sel != "" || xp != "")
 	}
 	count := 0
-	err := fs.WalkDir(data.AutomationsFS, "automations", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(automations.Tree(), "automations", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
 			return err
 		}
@@ -382,7 +382,7 @@ func TestActionIntentsAreValid(t *testing.T) {
 		if parts := strings.Split(path, "/"); len(parts) != 4 || parts[2] != "actions" {
 			return nil
 		}
-		raw, err := data.AutomationsFS.ReadFile(path)
+		raw, err := automations.Tree().ReadFile(path)
 		if err != nil {
 			return err
 		}

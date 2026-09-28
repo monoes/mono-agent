@@ -336,8 +336,8 @@ func newAutomationLifecycleCmds(cfg *globalConfig) []*cobra.Command {
 	ops := []op{
 		{"uninstall", "Uninstall an automation (a built-in stays removed until restored)", "Uninstalled",
 			func(r *automation.Registry, id string) error { return r.Uninstall(id) }},
-		{"restore", "Reinstall a built-in automation from the copy shipped with this binary", "Restored",
-			func(r *automation.Registry, id string) error { return r.Restore(id, builtinAutomations()) }},
+		{"restore", "Reinstall an official automation (now installed from monoes.me)", "Restored",
+			func(r *automation.Registry, id string) error { return restoreFromLibraryError(id) }},
 		{"enable", "Enable an installed automation", "Enabled",
 			func(r *automation.Registry, id string) error { return r.SetEnabled(id, true) }},
 		{"disable", "Disable an installed automation", "Disabled",
@@ -379,4 +379,10 @@ func newAutomationLifecycleCmds(cfg *globalConfig) []*cobra.Command {
 		})
 	}
 	return cmds
+}
+
+// restoreFromLibraryError is `automation restore`'s answer: this binary no
+// longer ships built-in packages, so the official copy comes from monoes.me.
+func restoreFromLibraryError(id string) error {
+	return errNotFound("automation %s: this version of monoagent no longer ships built-in automations; reinstall the official copy from monoes.me with `monoagentcli library install automation %s`", id, id)
 }
