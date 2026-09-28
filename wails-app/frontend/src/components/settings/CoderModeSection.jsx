@@ -123,6 +123,11 @@ export default function CoderModeSection() {
       </label>
 
       {loadErr && <div role="alert" style={errText}>Coder mode is unavailable: {loadErr}</div>}
+      {status && status.ready !== false && (
+        <div data-testid="coder-ready" style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--green-neon)' }}>
+          Ready{status.monomindVersion ? ` · monomind ${status.monomindVersion}` : ''}{status.runtime ? ` · ${status.runtime}` : ''}
+        </div>
+      )}
       {status && status.ready === false && (
         <div data-testid="coder-needs-update" style={warnText}>
           Coder mode {missingText(status)}. You can turn it on now; Coder chats start once monomind is updated.

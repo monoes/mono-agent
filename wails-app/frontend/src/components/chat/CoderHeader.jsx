@@ -61,6 +61,18 @@ export function CoderHeader({ cwd }) {
   )
 }
 
+// The init files worth naming; `monomind init` creates a few hundred more
+// (skills, helpers, …), which stay behind a "show all".
+const KEY_INIT_FILES = ['CLAUDE.md', '.claude/settings.json', '.mcp.json']
+
+// initSummary names the key files created and counts the rest.
+export function initSummary(created) {
+  const key = KEY_INIT_FILES.filter(f => created.includes(f))
+  const shown = key.length ? key : created.slice(0, 3)
+  const more = created.length - shown.length
+  return shown.join(', ') + (more > 0 ? ` and ${more} more` : '')
+}
+
 // CoderInitNote reports the new test folder a coder chat was started in,
 // from `coder workspace new`'s JSON.
 export function CoderInitNote({ workspace }) {
@@ -75,8 +87,14 @@ export function CoderInitNote({ workspace }) {
       <span>
         {workspace?.created === false ? 'Using folder ' : 'Created test folder '}
         <span style={{ color: '#e2e8f0' }}>{workspace?.path}</span>
-        {created.length > 0 && <> · created {created.join(', ')}</>}
+        {created.length > 0 && <> · created {initSummary(created)}</>}
         {workspace?.git && <> · git repository</>}
+        {created.length > KEY_INIT_FILES.length && (
+          <details style={{ marginTop: 3 }}>
+            <summary style={{ cursor: 'pointer' }}>show all {created.length}</summary>
+            <div data-testid="coder-init-all" style={{ maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{created.join('\n')}</div>
+          </details>
+        )}
       </span>
     </div>
   )

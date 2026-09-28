@@ -71,6 +71,12 @@ describe('CoderModeSection', () => {
     await waitFor(() => expect(toggle).not.toBeChecked())
   })
 
+  it('shows the monomind version when ready', async () => {
+    mount(status({ enabled: true, monomindVersion: '2.17.0' }))
+    expect(await screen.findByTestId('coder-ready')).toHaveTextContent('Ready · monomind 2.17.0 · claude')
+    expect(screen.queryByTestId('coder-needs-update')).not.toBeInTheDocument()
+  })
+
   it('says monomind needs an update when not ready, and still allows turning it on', async () => {
     mount(status({ ready: false, missingCapabilities: ['agent-exec-tool-activity', 'init-json'] }))
     expect(await screen.findByTestId('coder-needs-update')).toHaveTextContent('needs monomind update (missing: agent-exec-tool-activity, init-json)')

@@ -160,7 +160,8 @@ function describe(call, args, childCalls, renderChild) {
     }
     case 'Write': {
       const content = args.content ?? ''
-      const lineCount = content ? content.split('\n').length : 0
+      // A trailing newline ends the last line; it doesn't start another.
+      const lineCount = content ? content.replace(/\n$/, '').split('\n').length : 0
       return {
         icon: FilePlus, title: args.file_path, titleMono: true,
         tags: [

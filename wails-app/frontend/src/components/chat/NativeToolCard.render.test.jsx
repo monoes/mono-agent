@@ -117,6 +117,11 @@ describe('native tool cards', () => {
     expect(within(b3).queryByTestId('exit-code')).not.toBeInTheDocument()
   })
 
+  it('Write counts a trailing newline as the end of the last line', () => {
+    renderEvents(() => [started('w1', 'Write', { file_path: '/w/notes.txt', content: 'hello\n' })])
+    expect(within(card('Write')).getByText('1 line')).toBeInTheDocument()
+  })
+
   it('Read/Glob/Grep render as compact one-liners', () => {
     renderEvents(() => [
       started('r1', 'Read', { file_path: '/w/a.go', offset: 10, limit: 5 }),

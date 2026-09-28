@@ -63,9 +63,9 @@ export function CoderEnable():Promise<string>;
 
 export function CoderSet(arg1:string,arg2:number,arg3:string,arg4:number):Promise<string>;
 
-export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
-
 export function CoderStatus():Promise<string>;
+
+export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
 
 export function CoderWorkspaceList():Promise<string>;
 

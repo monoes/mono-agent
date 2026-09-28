@@ -36,6 +36,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
 })
 
 import AIChatPanel from './AIChatPanel.jsx'
+import { initSummary } from './chat/CoderHeader.jsx'
 
 const status = (over = {}) => ({
   enabled: true, workspaceRoot: '/home/u/monoagent-coder', maxTurns: 200, timeout: '60m', budgetUsd: 0,
@@ -178,5 +179,11 @@ describe('AIChatPanel coder mode', () => {
     expect(within(rows[0]).getByTestId('coder-badge')).toBeInTheDocument()
     expect(within(rows[0]).getByText('20260927-brisk-otter')).toBeInTheDocument()
     expect(within(rows[1]).queryByTestId('coder-badge')).not.toBeInTheDocument()
+  })
+
+  it('summarizes a real monomind init (hundreds of files) to the key ones', () => {
+    const created = ['.claude', '.claude/skills', ...Array.from({ length: 200 }, (_, i) => `.claude/skills/s${i}`), '.claude/settings.json', '.mcp.json', 'CLAUDE.md']
+    expect(initSummary(created)).toBe('CLAUDE.md, .claude/settings.json, .mcp.json and 202 more')
+    expect(initSummary(['a', 'b'])).toBe('a, b')
   })
 })

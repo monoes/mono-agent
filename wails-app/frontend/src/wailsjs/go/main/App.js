@@ -118,12 +118,12 @@ export function CoderSet(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CoderSet'](arg1, arg2, arg3, arg4);
 }
 
-export function CoderStopBackground(arg1, arg2) {
-  return window['go']['main']['App']['CoderStopBackground'](arg1, arg2);
-}
-
 export function CoderStatus() {
   return window['go']['main']['App']['CoderStatus']();
+}
+
+export function CoderStopBackground(arg1, arg2) {
+  return window['go']['main']['App']['CoderStopBackground'](arg1, arg2);
 }
 
 export function CoderWorkspaceList() {
