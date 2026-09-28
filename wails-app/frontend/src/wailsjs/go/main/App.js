@@ -742,6 +742,10 @@ export function OrgGroupStatus(arg1) {
   return window['go']['main']['App']['OrgGroupStatus'](arg1);
 }
 
+export function OrgRoleSetAccess(arg1, arg2, arg3) {
+  return window['go']['main']['App']['OrgRoleSetAccess'](arg1, arg2, arg3);
+}
+
 export function PauseOrgAutonomy(arg1, arg2) {
   return window['go']['main']['App']['PauseOrgAutonomy'](arg1, arg2);
 }
@@ -1004,6 +1008,10 @@ export function ValidateAutomation(arg1) {
 
 export function ValidateOrgDesign(arg1) {
   return window['go']['main']['App']['ValidateOrgDesign'](arg1);
+}
+
+export function ValidateOrgReport(arg1) {
+  return window['go']['main']['App']['ValidateOrgReport'](arg1);
 }
 
 export function VerifyDraft(arg1, arg2, arg3) {

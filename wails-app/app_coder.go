@@ -24,11 +24,13 @@ import (
 // with tools=false: the CLI refuses --tools for them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// coderCLI runs `monoagentcli [--profile P] --json <args>` and returns its
+// jsonCLI runs `monoagentcli [--profile P] --json <args>` and returns its
 // stdout. Unlike chatSupervisor.cli it keeps the {"error","code"} object a
 // --json failure prints on stdout, so codes such as coder_disabled and
-// needs_monomind_update reach the frontend.
-func (a *App) coderCLI(args ...string) (string, error) {
+// needs_monomind_update reach the frontend. On failure it still returns the
+// stdout it got, for commands whose report is their output even then (org
+// validate).
+func (a *App) jsonCLI(args ...string) (string, error) {
 	if a.chatSup == nil {
 		return "", fmt.Errorf("chat supervisor not initialized")
 	}
@@ -47,6 +49,7 @@ func (a *App) coderCLI(args ...string) (string, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	trimmed := strings.TrimSpace(string(out))
 	if err != nil {
 		var refusal chatRefusal
 		_ = json.Unmarshal([]byte(lastLine(string(out))), &refusal)
@@ -58,19 +61,19 @@ func (a *App) coderCLI(args ...string) (string, error) {
 			msg = err.Error()
 		}
 		if refusal.Code != "" {
-			return "", &codedError{msg: msg, code: refusal.Code}
+			return trimmed, &codedError{msg: msg, code: refusal.Code}
 		}
-		return "", errors.New(msg)
+		return trimmed, errors.New(msg)
 	}
-	trimmed := strings.TrimSpace(string(out))
 	if !looksLikeJSON(trimmed) {
 		return "", fmt.Errorf("monoagentcli %s: unexpected output: %q", strings.Join(args, " "), trimmed)
 	}
 	return trimmed, nil
 }
 
-func (a *App) coderResult(args ...string) string {
-	out, err := a.coderCLI(args...)
+// jsonResult is jsonCLI's stdout, or its error in aiError's shape.
+func (a *App) jsonResult(args ...string) string {
+	out, err := a.jsonCLI(args...)
 	if err != nil {
 		return aiError(err)
 	}
@@ -79,13 +82,13 @@ func (a *App) coderResult(args ...string) string {
 
 // CoderStatus returns `coder status`: enabled, workspace root, defaults,
 // and whether monomind has the capabilities coder mode needs (ready).
-func (a *App) CoderStatus() string { return a.coderResult("coder", "status") }
+func (a *App) CoderStatus() string { return a.jsonResult("coder", "status") }
 
 // CoderEnable turns coder mode on. The frontend only calls it after the user
 // confirmed the risk dialog, which is what --yes-i-understand records.
-func (a *App) CoderEnable() string { return a.coderResult("coder", "enable", "--yes-i-understand") }
+func (a *App) CoderEnable() string { return a.jsonResult("coder", "enable", "--yes-i-understand") }
 
-func (a *App) CoderDisable() string { return a.coderResult("coder", "disable") }
+func (a *App) CoderDisable() string { return a.jsonResult("coder", "disable") }
 
 // coderSetArgs builds `coder set`. An empty workspace root, maxTurns <= 0 or
 // an empty timeout leave that setting unchanged; budgetUsd 0 clears the
@@ -108,22 +111,22 @@ func coderSetArgs(workspaceRoot string, maxTurns int, timeout string, budgetUsd 
 }
 
 func (a *App) CoderSet(workspaceRoot string, maxTurns int, timeout string, budgetUsd float64) string {
-	return a.coderResult(coderSetArgs(workspaceRoot, maxTurns, timeout, budgetUsd)...)
+	return a.jsonResult(coderSetArgs(workspaceRoot, maxTurns, timeout, budgetUsd)...)
 }
 
 // CoderWorkspaceNew creates and initializes a fresh random folder under the
 // workspace root: {path, created, git, init:{created, skipped}}.
-func (a *App) CoderWorkspaceNew() string { return a.coderResult("coder", "workspace", "new") }
+func (a *App) CoderWorkspaceNew() string { return a.jsonResult("coder", "workspace", "new") }
 
 // CoderWorkspaceList returns the folders coder conversations used, newest
 // first.
-func (a *App) CoderWorkspaceList() string { return a.coderResult("coder", "workspace", "list") }
+func (a *App) CoderWorkspaceList() string { return a.jsonResult("coder", "workspace", "list") }
 
 // CoderStopBackground stops the background processes a coder turn left
 // running (its coder.background notice): {stopped, gone, refused} pids. The
 // CLI only touches pids that turn reported and that still carry its marker.
 func (a *App) CoderStopBackground(conversationID, turnID string) string {
-	return a.coderResult("coder", "stop-background", "--conversation", conversationID, "--turn", turnID)
+	return a.jsonResult("coder", "stop-background", "--conversation", conversationID, "--turn", turnID)
 }
 
 // coderConversationArgs builds `chat history create` for a coder
@@ -148,7 +151,7 @@ func (a *App) CreateCoderConversation(runtimeID, model, cwd string, newWorkspace
 	if !newWorkspace && cwd == "" {
 		return aiError(fmt.Errorf("choose a folder for the coder conversation"))
 	}
-	out, err := a.coderCLI(coderConversationArgs(runtimeID, model, cwd, newWorkspace)...)
+	out, err := a.jsonCLI(coderConversationArgs(runtimeID, model, cwd, newWorkspace)...)
 	if err != nil {
 		return aiError(err)
 	}

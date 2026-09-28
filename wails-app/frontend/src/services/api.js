@@ -226,6 +226,11 @@ export const api = {
   chooseInstructionsFile: () => GoApp.ChooseInstructionsFile(),
   saveOrgLayout:       (name, layout) => GoApp.SaveOrgLayout(name, JSON.stringify(layout)).then(s => JSON.parse(s)),
   saveOrgDesign:       (name, doc) => GoApp.SaveOrgDesign(name, JSON.stringify(doc)).then(s => JSON.parse(s)),
+  // Full-access roles (#205): grant ('full', only after the confirm dialog)
+  // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.
+  orgRoleSetAccess:    (name, roleID, access) => GoApp.OrgRoleSetAccess(name, roleID, access).then(parseStreamResult),
+  // `org validate`'s report {valid, error?, warnings}, taint problems included.
+  validateOrgReport:   (name) => GoApp.ValidateOrgReport(name).then(parseStreamResult),
   validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
   reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
   // Org × workflow unification — grants, automations, automation roles,

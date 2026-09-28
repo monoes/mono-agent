@@ -375,6 +375,8 @@ export function OpenVaultImportFilePicker():Promise<string>;
 
 export function OrgGroupStatus(arg1:string):Promise<string>;
 
+export function OrgRoleSetAccess(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function PauseOrgAutonomy(arg1:string,arg2:string):Promise<string>;
 
 export function PickCoderFolder():Promise<string>;
@@ -506,5 +508,7 @@ export function UploadProfileDocument(arg1:string,arg2:string):Promise<main.Uplo
 export function ValidateAutomation(arg1:string):Promise<string>;
 
 export function ValidateOrgDesign(arg1:string):Promise<string>;
+
+export function ValidateOrgReport(arg1:string):Promise<string>;
 
 export function VerifyDraft(arg1:string,arg2:boolean,arg3:string):Promise<string>;
