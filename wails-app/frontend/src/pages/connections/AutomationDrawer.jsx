@@ -13,6 +13,7 @@ import ActionsTab from './ActionsTab.jsx'
 import HealthTab from './HealthTab.jsx'
 import RecordingsTab from './RecordingsTab.jsx'
 import PublishToMonoesDialog from '../../components/library/PublishToMonoesDialog.jsx'
+import { library } from '../../services/library.js'
 
 const TABS = ['Overview', 'Session', 'Actions', 'Health', 'Recordings']
 
@@ -64,7 +65,7 @@ function Tabs({ tabs, current, onSelect }) {
 export default function AutomationDrawer({ automation, initialTab = 'Overview', onClose, onChanged }) {
   const id = automation.id
   // An uninstalled built-in has no package to show (`automation show`
-  // refuses it): the drawer only offers Restore.
+  // refuses it): the drawer only offers to reinstall it from monoes.me.
   const removed = !!automation.removed
   const tabs = removed ? ['Overview'] : TABS
   const dialog = useDialog(onClose)
@@ -140,7 +141,7 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
 
         <div role="tabpanel" id="automation-tabpanel" aria-labelledby={`automation-tab-${tab}`} style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <ErrorBox>{error}</ErrorBox>
-          {removed && <div style={body}>This built-in is uninstalled: its workflow nodes do not run. Restore it to use it again.</div>}
+          {removed && <div style={body}>{t('library.reinstallNote')}</div>}
           {!removed && !detail && !error && <Busy text="Loading…" />}
           {detail && tab === 'Overview' && <OverviewTab info={info} manifest={detail.manifest || {}} issues={detail.issues || []} fragments={detail.fragments || []} onTrustChanged={() => Promise.all([load(), onChanged?.()])} />}
           {!removed && tab === 'Session' && <SessionTab automation={info} manifest={detail?.manifest} onChanged={onChanged} />}
@@ -168,8 +169,9 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
             </button>
           )}
           {info.removed ? (
-            <button className="btn btn-primary btn-sm" disabled={!!busy} style={{ gap: 5 }} onClick={() => lifecycle('restore', api.restoreAutomation)}>
-              <Undo2 size={11} /> Restore
+            <button className="btn btn-primary btn-sm" disabled={!!busy} style={{ gap: 5 }}
+              onClick={() => lifecycle('reinstall', (pkg) => library.install('automation', pkg, { yes: true }))}>
+              <Undo2 size={11} /> {busy === 'reinstall' ? t('library.adding') : t('library.reinstall')}
             </button>
           ) : info.enabled === false ? (
             <button className="btn btn-ghost btn-sm" disabled={!!busy || info.available === false} title={info.unavailableReason || ''} style={{ gap: 5 }} onClick={() => lifecycle('enable', api.enableAutomation)}>
@@ -183,7 +185,7 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
           <div style={{ flex: 1 }} />
           {!info.removed && (
             <button className="btn btn-danger btn-sm" disabled={!!busy} style={{ gap: 5 }}
-              onClick={() => lifecycle('uninstall', api.uninstallAutomation, `Uninstall ${info.name || id}? Its workflow nodes stop working until it is reinstalled${info.source === 'builtin' ? ' or restored' : ''}.`)}>
+              onClick={() => lifecycle('uninstall', api.uninstallAutomation, `Uninstall ${info.name || id}? Its workflow nodes stop working until it is reinstalled${info.source === 'builtin' ? ' from monoes.me' : ''}.`)}>
               <Trash2 size={11} /> Uninstall
             </button>
           )}

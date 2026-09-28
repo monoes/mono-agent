@@ -295,7 +295,10 @@ func newLibraryLoginCmd(e *libEnv) *cobra.Command {
 			}
 			t, err := c.LoginPKCE(ctx, opts)
 			if err != nil {
-				return libErr(err)
+				if err = libErr(err); exitCodeFor(err) == 1 {
+					err = errAuthConnection("%v", err) // no answer, refused, or a bad redirect
+				}
+				return err
 			}
 			return printStatus(e.cfg, cmd, statusFrom(e, t))
 		},

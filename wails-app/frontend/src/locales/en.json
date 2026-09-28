@@ -600,6 +600,8 @@
       "done": "Published {{name}} {{version}}.",
       "open": "Open on monoes.me",
       "loginFirst": "Log in to monoes.me to publish."
-    }
+    },
+    "reinstall": "Reinstall from monoes.me",
+    "reinstallNote": "This built-in is uninstalled: its workflow nodes do not run. Reinstall it from monoes.me to use it again."
   }
 }

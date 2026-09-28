@@ -600,6 +600,8 @@
       "done": "Publicado {{name}} {{version}}.",
       "open": "Abrir en monoes.me",
       "loginFirst": "Inicia sesión en monoes.me para publicar."
-    }
+    },
+    "reinstall": "Reinstalar desde monoes.me",
+    "reinstallNote": "Esta automatización integrada está desinstalada: sus nodos de flujo de trabajo no se ejecutan. Reinstálala desde monoes.me para volver a usarla."
   }
 }
