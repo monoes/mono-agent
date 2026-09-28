@@ -191,7 +191,7 @@ func querySessionIndex(db *sql.DB, profileID string, now time.Time) sessionIndex
 		}
 		idx[key] = automationSession{
 			LoggedIn:  status == "active",
-			Username:  username,
+			Username:  automation.DisplayUsername(username),
 			ExpiresAt: expiry.UTC().Format(time.RFC3339),
 			Status:    status,
 		}

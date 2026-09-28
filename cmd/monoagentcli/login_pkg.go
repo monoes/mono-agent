@@ -169,8 +169,8 @@ func confirmPackageLogin(ctx context.Context, cfg *globalConfig, db *sql.DB, m *
 	if err := upsertSessionRowTTL(ctx, db, cfg.ProfileID, m.ID, username, cookiesJSON, ttl); err != nil {
 		return fmt.Errorf("saving session: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Captured %d cookie(s) for %s (user: %s). Session saved.\n", len(cookies), m.Name, username)
-	fmt.Printf("username: %s\n", username)
+	fmt.Fprintf(os.Stderr, "Captured %d cookie(s) for %s (%s). Session saved.\n", len(cookies), m.Name, accountPhrase(username))
+	fmt.Printf("username: %s\n", automation.DisplayUsername(username))
 	return nil
 }
 
@@ -209,11 +209,11 @@ func checkLoggedIn(page browserpkg.PageInterface, cookies []chromecookies.Cookie
 // attribute, or the element's text), "unknown" when it can't.
 func readLoginUsername(page browserpkg.PageInterface, from *automation.AttrProbe) string {
 	if from == nil || from.Selector == "" {
-		return "unknown"
+		return automation.UnknownUsername
 	}
 	el, err := page.Element(from.Selector, 5*time.Second)
 	if err != nil || el == nil {
-		return "unknown"
+		return automation.UnknownUsername
 	}
 	var v string
 	if from.Attribute != "" {
@@ -223,8 +223,8 @@ func readLoginUsername(page browserpkg.PageInterface, from *automation.AttrProbe
 	} else if t, err := el.Text(); err == nil {
 		v = t
 	}
-	if v = strings.TrimSpace(v); v == "" {
-		return "unknown"
+	if v = automation.NormalizeLoginUsername(v); v == "" {
+		return automation.UnknownUsername
 	}
 	return v
 }
@@ -246,4 +246,13 @@ func unsupportedLoginError(arg string, err error) error {
 	}
 	sort.Strings(supported)
 	return fmt.Errorf("unsupported platform %q; supported: %s", arg, strings.Join(supported, ", "))
+}
+
+// accountPhrase names the logged-in account for a message: "user: jack", or
+// "account name not readable" when the login couldn't read one.
+func accountPhrase(username string) string {
+	if u := automation.DisplayUsername(username); u != "" {
+		return "user: " + u
+	}
+	return "account name not readable"
 }

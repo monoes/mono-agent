@@ -3,7 +3,7 @@
   "schema": "monoagent.automation/v1",
   "id": "x",
   "name": "X",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Read X (Twitter) profiles, posts and followers; like, reply, message and post from your own account",
   "publisher": {
     "name": "Mono Agent",
@@ -27,6 +27,7 @@
       "selector": "[data-testid='SideNav_AccountSwitcher_Button'], [data-testid='SideNav_NewTweet_Button'], [data-testid='AppTabBar_Profile_Link']",
       "cookie": "auth_token"
     },
+    "usernameFrom": { "selector": "a[data-testid='AppTabBar_Profile_Link']", "attribute": "href" },
     "sessionTtlDays": 30
   },
   "permissions": {

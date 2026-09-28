@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/chromecookies"
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -320,14 +321,14 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 			// Without DOM access there's no reliable way to read the actual
 			// username here — "unknown" matches the existing fallback these
 			// bots already use when ExtractUsername can't determine one.
-			username := "unknown"
+			username := automation.UnknownUsername
 
 			if err := upsertSessionRow(cmd.Context(), db.DB, cfg.ProfileID, strings.ToLower(platform), username, cookiesJSON); err != nil {
 				return fmt.Errorf("saving session: %w", err)
 			}
 
-			fmt.Fprintf(os.Stderr, "Captured %d cookie(s) for %s (user: %s). Session saved.\n", len(cookies), platform, username)
-			fmt.Printf("username: %s\n", username)
+			fmt.Fprintf(os.Stderr, "Captured %d cookie(s) for %s (%s). Session saved.\n", len(cookies), platform, accountPhrase(username))
+			fmt.Printf("username: %s\n", automation.DisplayUsername(username))
 			return nil
 		},
 	}
@@ -358,7 +359,7 @@ type loginStatusRow struct {
 func loginStatusJSON(sessions []sessionRow) []loginStatusRow {
 	out := make([]loginStatusRow, 0, len(sessions))
 	for _, s := range sessions {
-		r := loginStatusRow{ID: s.ID, Username: s.Username, Platform: s.Platform, Status: s.Status}
+		r := loginStatusRow{ID: s.ID, Username: automation.DisplayUsername(s.Username), Platform: s.Platform, Status: s.Status}
 		if !s.Expiry.IsZero() {
 			r.Expiry = s.Expiry.UTC().Format(time.RFC3339)
 		}
@@ -438,7 +439,7 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 				table.Append([]string{
 					fmt.Sprintf("%d", s.ID),
 					s.Platform,
-					s.Username,
+					automation.DisplayUsername(s.Username),
 					s.Status,
 					s.Expiry.Format("2006-01-02 15:04"),
 					s.WhenAdded.Format("2006-01-02 15:04"),

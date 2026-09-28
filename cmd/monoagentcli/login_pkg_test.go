@@ -72,6 +72,9 @@ func TestLoginReadUsername(t *testing.T) {
 		"#me":     {text: "  pg \n"},
 		".avatar": {attrs: map[string]string{"title": "jane"}},
 		".empty":  {},
+		// X and TikTok read the account from the nav bar's profile link.
+		"a.x":      {attrs: map[string]string{"href": "/jack"}},
+		"a.tiktok": {attrs: map[string]string{"href": "https://www.tiktok.com/@jane"}},
 	}}
 	cases := []struct {
 		from *automation.AttrProbe
@@ -83,6 +86,8 @@ func TestLoginReadUsername(t *testing.T) {
 		{&automation.AttrProbe{Selector: ".avatar", Attribute: "alt"}, "unknown"},
 		{&automation.AttrProbe{Selector: ".empty"}, "unknown"},
 		{&automation.AttrProbe{Selector: ".missing"}, "unknown"},
+		{&automation.AttrProbe{Selector: "a.x", Attribute: "href"}, "jack"},
+		{&automation.AttrProbe{Selector: "a.tiktok", Attribute: "href"}, "jane"},
 	}
 	for _, c := range cases {
 		if got := readLoginUsername(page, c.from); got != c.want {
