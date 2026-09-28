@@ -1,5 +1,6 @@
 // Org Designer toolbar: org name and validation, Design / Live / Grants view
 // switch, the run picker while Live, and the design-only actions.
+import { useState } from 'react'
 import { Maximize2, Minimize2, Milestone, RefreshCw, PencilRuler, Activity, Grid3x3, Workflow } from 'lucide-react'
 import { pendingGates, pendingCounts } from './orgActivity.js'
 
@@ -27,6 +28,37 @@ function LiveSummary({ state }) {
   return <span data-testid="live-summary" style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)' }}>{parts.join(' · ')}</span>
 }
 
+// ValidationIssues is the toolbar's "N issues" count; clicking it lists
+// them: the structural checks plus `org validate`'s own, which include
+// full-access taint problems (#205).
+export function ValidationIssues({ errors }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: '#f87171', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline dotted' }}
+      >
+        {errors.length} issue{errors.length === 1 ? '' : 's'}
+      </button>
+      {open && (
+        <ul data-testid="validation-issues" style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 30, width: 420, maxWidth: '70vw',
+          listStyle: 'none', padding: 8, margin: 0, display: 'flex', flexDirection: 'column', gap: 5,
+          background: 'var(--surface, #0d1520)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+        }}>
+          {errors.map((e, i) => (
+            <li key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fca5a5', lineHeight: 1.5, wordBreak: 'break-word' }}>{e}</li>
+          ))}
+        </ul>
+      )}
+    </span>
+  )
+}
+
 export default function DesignerToolbar({
   orgName, validation, pendingUpdateCount, onApplyPending,
   viewMode, onViewMode, liveSource, runs = [], onLiveSource, live,
@@ -37,9 +69,7 @@ export default function DesignerToolbar({
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0, flexWrap: 'wrap' }}>
       <Milestone size={12} style={{ color: 'var(--text-muted)' }} />
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-secondary)' }}>{orgName}</span>
-      {!validation.valid && (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: '#f87171' }}>{validation.errors.length} issue{validation.errors.length === 1 ? '' : 's'}</span>
-      )}
+      {!validation.valid && <ValidationIssues errors={validation.errors} />}
       {pendingUpdateCount > 0 && (
         <button
           onClick={onApplyPending}

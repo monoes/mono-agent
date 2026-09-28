@@ -41,6 +41,8 @@ import { suggestIcon, loadIconManifest, CATEGORY_TYPE, iconUrl } from './roleIco
 import OrgCanvas from './OrgCanvas.jsx'
 import RolePalette from './RolePalette.jsx'
 import RoleInspector from './RoleInspector.jsx'
+import { useRolesAccess } from './fullAccess.jsx'
+import { useOrgValidateReport, mergeValidation } from './orgValidateReport.js'
 import IconPickerModal from './IconPickerModal.jsx'
 import DeleteRoleModal from './DeleteRoleModal.jsx'
 import AutomationsDrawer from './AutomationsDrawer.jsx'
@@ -225,7 +227,14 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   }, [applyLivePatch])
 
   // ── Validation (recomputed on every node change) ─────────────────────
-  const validation = useMemo(() => validateStructure(nodes), [nodes])
+  // The role config without positions: what full-access grants and
+  // `org validate` depend on, so dragging a role doesn't refetch them.
+  const configStamp = useMemo(() => JSON.stringify(nodes.map(n => [n.id, n.parentId, n.title, n.type, n.responsibilities, n.rest])), [nodes])
+  // Full-access state per role (#205), and `org validate`'s report (which
+  // carries full-access taint problems) merged into the structural checks.
+  const rolesAccess = useRolesAccess(orgName, configStamp)
+  const cliValidation = useOrgValidateReport(orgName, configStamp)
+  const validation = useMemo(() => mergeValidation(validateStructure(nodes), cliValidation), [nodes, cliValidation])
 
   // ── Selection / persistence helpers ──────────────────────────────────
   const refreshFromServer = useCallback(async (res) => {
@@ -700,6 +709,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               readOnly={isLive}
               engineOffline={engineOffline}
               onAutomationDrop={handleAutomationDrop}
+              fullAccessByRole={rolesAccess.byRole}
             />
           )}
         </div>
@@ -726,6 +736,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onGrantsChanged={automationData.refresh}
                 onOpenWorkflow={onOpenWorkflow}
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
+                fullAccess={selectedId ? rolesAccess.byRole[selectedId] || null : null}
+                onAccessChanged={rolesAccess.refresh}
               />
             </div>
           </div>

@@ -53,6 +53,7 @@
 import { Crown, X, Workflow, Lock, FileText, KeyRound, WifiOff } from 'lucide-react'
 import { NODE_W, NODE_H } from './orgGraph'
 import { iconUrl } from './roleIcons'
+import { FullAccessBadge } from './fullAccess.jsx'
 
 const FLASH_WINDOW_MS = 1500
 export const AUTOMATION_COLOR = '#a78bfa'
@@ -88,6 +89,9 @@ export default function RoleNode({
   live = null,
   engineOffline = false,
   readOnly = false,
+  // Full access (#205): the role's roles_access entry, or {} when its policy
+  // declares full access but no state came back; null for a scoped role.
+  fullAccess = null,
 }) {
   const isAutomation = isAutomationNode(node)
   const color = node.color || (isAutomation ? AUTOMATION_COLOR : isRoot ? 'var(--yellow)' : 'var(--cyan)')
@@ -208,6 +212,7 @@ export default function RoleNode({
           }}>
             {isAutomation ? 'automation' : isRoot ? 'ROOT' : typeChip(node.type)}
           </span>
+          {fullAccess && <FullAccessBadge entry={fullAccess} compact />}
           {liveStatus && (
             <span data-testid="live-status" style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: LIVE_STATUS_COLORS[liveStatus] || 'var(--text-muted)' }}>
               {liveStatus}

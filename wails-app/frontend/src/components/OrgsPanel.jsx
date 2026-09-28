@@ -17,6 +17,7 @@ import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
 import useQueuedCount from './orgs/useQueuedCount.js'
 import { Badge, Chip } from './orgs/ui.jsx'
+import FullAccessSummary from './orgs/FullAccessSummary.jsx'
 
 // Fold button shown atop the expanded org-list panel — mirrors
 // OrgDesigner.jsx's panelFoldBtnStyle for visual consistency between the
@@ -891,6 +892,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
 
                 {!tabLoading && tab === 'overview' && (
                   <>
+                    <FullAccessSummary orgName={selected} status={data.overview} onChanged={() => loadTab(selected, 'overview')} />
                     {!selectedRun ? (
                       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>No completed runs yet.</div>
                     ) : selectedRun === 'live' ? (
