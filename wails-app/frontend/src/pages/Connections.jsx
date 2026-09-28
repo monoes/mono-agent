@@ -7,6 +7,7 @@ import { RefreshCw, Upload, Circle } from 'lucide-react'
 import { api } from '../services/api.js'
 import { emitAutomationsChanged } from '../lib/appEvents.js'
 import BrowserAutomations, { RecordHelpDialog } from './connections/BrowserAutomations.jsx'
+import LibraryModal from '../components/library/LibraryModal.jsx'
 import ApiConnections, { resolveConn } from './connections/ApiConnections.jsx'
 import ApiConnectionModal from './connections/ApiConnectionModal.jsx'
 import AutomationDrawer from './connections/AutomationDrawer.jsx'
@@ -28,6 +29,7 @@ export default function Connections({ onRefresh, navData }) {
   const [drawerTab,    setDrawerTab]    = useState('Overview')
   const [importing,    setImporting]    = useState(false)
   const [recordHelp,   setRecordHelp]   = useState(false)
+  const [libraryOpen,  setLibraryOpen]  = useState(false)
   const pollRef = useRef(null)
 
   const loadAutomations = useCallback(async () => {
@@ -126,6 +128,7 @@ export default function Connections({ onRefresh, navData }) {
               onOpen={openDrawer}
               onRecord={() => setRecordHelp(true)}
               onImport={() => setImporting(true)}
+              onLibrary={() => setLibraryOpen(true)}
             />
             <ApiConnections platforms={platforms} connections={connections} onSelect={setSelected} />
           </div>
@@ -152,6 +155,7 @@ export default function Connections({ onRefresh, navData }) {
       )}
       {importing && <ImportDialog installedPackages={automations} onClose={() => setImporting(false)} onInstalled={automationsChanged} />}
       {recordHelp && <RecordHelpDialog onClose={() => setRecordHelp(false)} />}
+      {libraryOpen && <LibraryModal kind="automation" onClose={() => setLibraryOpen(false)} onInstalled={automationsChanged} />}
     </>
   )
 }

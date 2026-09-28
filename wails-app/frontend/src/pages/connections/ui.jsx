@@ -11,7 +11,7 @@ export const body = { fontFamily: 'var(--font-body)', fontSize: 12, color: 'var(
 export const panel = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '10px 14px' }
 export const spin = { animation: 'spin .7s linear infinite' }
 
-export const SOURCE_LABELS = { builtin: 'built-in', imported: 'imported', local: 'local' }
+export const SOURCE_LABELS = { builtin: 'built-in', imported: 'imported', local: 'local', monoes: 'monoes.me' }
 
 // Colours for an action's declared side effects (spec §4.3).
 export const EFFECT_COLORS = {

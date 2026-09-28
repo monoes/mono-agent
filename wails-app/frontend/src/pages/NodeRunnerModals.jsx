@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { List, X, Trash2 } from 'lucide-react'
+import { List, X, Trash2, Library } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { notify } from '../services/api.js'
 import { parseTriggerInput } from './triggerInput.js'
+import LibraryModal from '../components/library/LibraryModal.jsx'
+import LogInToMonoesButton from '../components/library/LogInToMonoesButton.jsx'
 
 // Wails bindings used by the workflow modals, with dev fallbacks.
 const ListWorkflows = WailsApp.ListWorkflows ?? (async () => [])
@@ -74,7 +77,7 @@ export function SaveModal({ initialName, onConfirm, onClose }) {
 }
 
 // ── Workflows modal ───────────────────────────────────────────────────────────
-export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
+export function WorkflowsModal({ currentId, onLoad, onDelete, onClose, onLibraryInstalled }) {
   const [tab, setTab]         = useState('saved') // 'saved' | 'templates'
   const [list, setList]       = useState([])
   const [loading, setLoading] = useState(true)
@@ -83,6 +86,9 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
   const [usingTemplate, setUsingTemplate] = useState(null) // template id being instantiated
   const [execsFor, setExecsFor] = useState(null) // workflowId to show executions for
   const [execs, setExecs]     = useState([])
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryAdded, setLibraryAdded] = useState(null) // last workflow added from monoes.me
+  const { t } = useTranslation()
 
   useEffect(() => {
     ListWorkflows().then(d => { setList(d || []); setLoading(false) }).catch(() => setLoading(false))
@@ -91,10 +97,11 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
 
   // Esc closes the modal
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    // The library dialog on top handles its own Escape.
+    const onKey = (e) => { if (e.key === 'Escape' && !libraryOpen) onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, libraryOpen])
 
   const useTemplate = async (id) => {
     setUsingTemplate(id)
@@ -106,6 +113,12 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
       setUsingTemplate(null)
       notify('create workflow from template', e.message || e)
     }
+  }
+
+  // Closing the library opens the last workflow added from it.
+  const closeLibrary = () => {
+    setLibraryOpen(false)
+    if (libraryAdded) { onLoad(libraryAdded); onClose() }
   }
 
   const showExecs = async (id) => {
@@ -168,8 +181,13 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
                 {ex.started_at && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>{new Date(ex.started_at).toLocaleString()}</span>}
               </div>
             ))
-          ) : tab === 'templates' ? (
-            templatesLoading ? (
+          ) : tab === 'templates' ? (<>
+            <div style={{ padding: '6px 16px 10px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--border-dim)' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>{t('library.workflowMore')}</span>
+              <LogInToMonoesButton compact />
+              <button className="btn btn-secondary btn-sm" style={{ gap: 5 }} onClick={() => setLibraryOpen(true)}><Library size={11} /> {t('library.browse')}</button>
+            </div>
+            {templatesLoading ? (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', padding: '24px', textAlign: 'center' }}>Loading…</div>
             ) : templates.length === 0 ? (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', padding: '24px', textAlign: 'center' }}>No templates available</div>
@@ -192,8 +210,8 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
                   onMouseLeave={e => e.currentTarget.style.background='rgba(0,180,216,0.08)'}
                 >{usingTemplate === t.id ? 'Creating…' : 'Use Template'}</button>
               </div>
-            ))
-          ) : loading ? (
+            ))}
+          </>) : loading ? (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', padding: '24px', textAlign: 'center' }}>Loading…</div>
           ) : list.length === 0 ? (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', padding: '24px', textAlign: 'center' }}>No saved workflows yet</div>
@@ -243,6 +261,10 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
           ))}
         </div>
       </div>
+      {libraryOpen && (
+        <LibraryModal kind="workflow" onClose={closeLibrary}
+          onInstalled={res => { if (res?.local_id) setLibraryAdded(res.local_id); onLibraryInstalled?.(res) }} />
+      )}
     </div>
   )
 }

@@ -1,11 +1,14 @@
 // "Browser Automations" section of the Connections page (spec §7.1): one
 // card per installed package from `automation list --json`, plus the
 // Create card. Also the "Record new" explainer dialog.
-import { X } from 'lucide-react'
+import { X, Library } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import AutomationCard, { CreateAutomationCard } from './AutomationCard.jsx'
-import { SectionHeader, ErrorBox, body, mono, muted, useDialog } from './ui.jsx'
+import { SectionHeader, ErrorBox, body, mono, muted, panel, useDialog } from './ui.jsx'
+import LogInToMonoesButton from '../../components/library/LogInToMonoesButton.jsx'
 
-export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport }) {
+export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport, onLibrary }) {
+  const { t } = useTranslation()
   const all = automations || []
   const list = all.filter(a => !a.removed)
   const removed = all.filter(a => a.removed)
@@ -15,6 +18,21 @@ export default function BrowserAutomations({ automations, error, onOpen, onRecor
       <h2 id="browser-automations-title" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Browser automations</h2>
       <SectionHeader title="Browser Automations" hint="actions & crawl — run in your browser" count={`${loggedIn} / ${list.length} logged in`} />
       <ErrorBox>{error}</ErrorBox>
+      {onLibrary && (list.length === 0 && !error ? (
+        <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+          <span style={{ ...mono, fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{t('library.automationsEmpty.title')}</span>
+          <span style={body}>{t('library.automationsEmpty.body')}</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <LogInToMonoesButton compact />
+            <button className="btn btn-secondary btn-sm" onClick={onLibrary} style={{ gap: 5 }}><Library size={11} /> {t('library.browse')}</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+          <LogInToMonoesButton compact />
+          <button className="btn btn-secondary btn-sm" onClick={onLibrary} style={{ gap: 5 }}><Library size={11} /> {t('library.browse')}</button>
+        </div>
+      ))}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginTop: error ? 10 : 0 }}>
         {list.map(a => <AutomationCard key={a.id} automation={a} onOpen={() => onOpen(a)} />)}
         <CreateAutomationCard onRecord={onRecord} onImport={onImport} />
