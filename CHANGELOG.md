@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-09-28
+
+### Fixed
+
+- **Pages saved from the extension are now searchable.** A page saved
+  into a profile from the side panel used to become a Documents row that
+  "Ask your brain" and chat never found. Nothing indexed captures on its
+  own, and both searches looked in the wrong store.
+  - The extension bridge (the daemon's, or `extension serve`) now indexes
+    each capture within seconds of saving it, into that profile's own
+    monomind store (`profile:<id>`). The row shows Indexed, or the error.
+    A failed capture is retried three times over about ten minutes, and
+    again when the bridge next starts. Two processes indexing at once
+    never ingest the same capture twice.
+  - "Ask your brain", "already saved" and related pages search the profile
+    the side panel is "Saving into", and only that one. A page saved into
+    work does not turn up while you are saving into personal. With no
+    profile chosen, they search the shared brain as before.
+  - Chat knowledge search in the app includes the profile's captures along
+    with its uploaded documents.
+  - When Ask finds nothing, it now says why: nothing saved in this profile
+    yet, pages still being indexed, or pages that could not be indexed
+    (with the command that retries them).
+  - The Documents list refreshes when indexing finishes.
+- `monoagentcli profile documents index --all [--all-profiles]` indexes
+  every capture that is not indexed yet, has changed, or failed before.
+  It is the backfill for pages saved before this release.
+  `profile documents index <id>` on a capture uses the capture store too.
+
 ## [0.89.0] - 2026-09-28
 
 ### Changed
