@@ -256,10 +256,15 @@ func (s *Server) handleDocLookup(ctx context.Context, req *Request, _ ProgressFu
 	}
 	runner := s.knowledgeRunner()
 
+	scope, err := captureScopeOf(req)
+	if err != nil {
+		return nil, err
+	}
+
 	// The direct answer: one exec, and the only one that carries the NOTE
 	// written at save time, which is the whole difference between this and
 	// a bookmark. See packages/@monomind/cli/src/knowledge/lookup.ts.
-	if doc, err := lookupViaCommand(ctx, runner, target); err == nil {
+	if doc, err := lookupViaCommand(ctx, runner, target, scope); err == nil {
 		return doc, nil
 	} else if isUnavailable(err) {
 		// monomind is not installed at all — the fallback would fail the
@@ -273,7 +278,7 @@ func (s *Server) handleDocLookup(ctx context.Context, req *Request, _ ProgressFu
 	// first choice. `--limit` is deliberately NOT passed: it applies after
 	// the newest-first sort, so it would hide exactly the old captures
 	// this is looking for.
-	doc, err := lookupViaLibrary(ctx, runner, target)
+	doc, err := lookupViaLibrary(ctx, runner, target, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -300,8 +305,12 @@ type urlLookup struct {
 // lookupViaCommand asks `doc lookup`. Any failure — including the command
 // not existing on an older monomind, which surfaces as help text where JSON
 // was expected — is an error the caller falls back from.
-func lookupViaCommand(ctx context.Context, runner Runner, target string) (*SavedDocument, error) {
-	out, err := runDoc(ctx, runner, "lookup", []string{"--json", "--highlights"}, target)
+func lookupViaCommand(ctx context.Context, runner Runner, target, scope string) (*SavedDocument, error) {
+	flags := []string{"--json", "--highlights"}
+	if scope != "" {
+		flags = append(flags, "--scope", scope)
+	}
+	out, err := runDoc(ctx, runner, "lookup", flags, target)
 	if err != nil {
 		return nil, err
 	}
@@ -340,13 +349,19 @@ func lookupViaCommand(ctx context.Context, runner Runner, target string) (*Saved
 // The global brain is asked FIRST because that is where extension captures
 // land (`doc ingest` routes paths outside the project there, and the inbox
 // is under ~/.monomind). The project store is only consulted when the
-// global one has nothing, so the common case stays at one exec.
-func lookupViaLibrary(ctx context.Context, runner Runner, target string) (*SavedDocument, error) {
-	var firstErr error
-	for _, flags := range [][]string{
+// global one has nothing, so the common case stays at one exec. A capture
+// scope (a profile's store) is the only store asked: the shared brain's
+// pages are not that profile's.
+func lookupViaLibrary(ctx context.Context, runner Runner, target, scope string) (*SavedDocument, error) {
+	stores := [][]string{
 		{"--global", "--json"},
 		{"--json"},
-	} {
+	}
+	if scope != "" {
+		stores = [][]string{{"--scope", scope, "--json"}}
+	}
+	var firstErr error
+	for _, flags := range stores {
 		out, err := runDoc(ctx, runner, "list", flags)
 		if err != nil {
 			if firstErr == nil {
@@ -480,9 +495,66 @@ func envelopeDir(filePath string) string {
 	return filePath[:sep]
 }
 
+// captureScopeOf is the monomind scope of the profile a request names
+// (`profile`, the one the side panel is "Saving into"): that profile's own
+// capture store, so a question asked while saving into work is answered
+// from work's captures only. No profile keeps the shared brain, exactly as
+// before profiles existed. An id profiledir would not accept is refused
+// rather than dropped: answering from the shared brain instead would show
+// pages from outside the profile the person asked about.
+func captureScopeOf(req *Request) (string, error) {
+	profile := strings.TrimSpace(req.String("profile"))
+	if profile == "" {
+		return "", nil
+	}
+	scope := monomind.CaptureScope(profile)
+	if scope == "" {
+		return "", fmt.Errorf("unusable profile id %q", firstLine(profile))
+	}
+	return scope, nil
+}
+
+// BrainStatus is how far a profile's captures are from searchable (see
+// captureindex.Status, which the host process adapts into this).
+type BrainStatus struct {
+	Captures  int    `json:"captures"`
+	Indexed   int    `json:"indexed"`
+	Pending   int    `json:"pending"`
+	Failed    int    `json:"failed"`
+	LastError string `json:"lastError,omitempty"`
+}
+
+// BrainStatusSource answers "how many of this profile's captures are
+// searchable". Supplied by the host process, which owns the database.
+type BrainStatusSource func(ctx context.Context, profileID string) (*BrainStatus, error)
+
+// SetBrainStatusSource installs the source doc.ask reports Brain from.
+func (s *Server) SetBrainStatusSource(src BrainStatusSource) {
+	s.knowledgeMu.Lock()
+	s.brain = src
+	s.knowledgeMu.Unlock()
+}
+
+// brainStatus is nil when there is no source or it fails: the status only
+// improves the message around the answers, so it never fails the ask.
+func (s *Server) brainStatus(ctx context.Context, profileID string) *BrainStatus {
+	s.knowledgeMu.Lock()
+	src := s.brain
+	s.knowledgeMu.Unlock()
+	if src == nil {
+		return nil
+	}
+	st, err := src(ctx, profileID)
+	if err != nil {
+		return nil
+	}
+	return st
+}
+
 // knowledgeState is the knowledge handlers' slice of Server, embedded there
 // for the same reason handlerState is.
 type knowledgeState struct {
 	knowledge   Runner
+	brain       BrainStatusSource
 	knowledgeMu sync.Mutex
 }

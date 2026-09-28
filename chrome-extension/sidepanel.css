@@ -1086,6 +1086,10 @@ button.chip:hover {
   min-height: 15px;
 }
 
+.ask-status[data-tone="warn"] {
+  color: var(--warn);
+}
+
 .ask-answers {
   display: grid;
   gap: var(--sp-4);

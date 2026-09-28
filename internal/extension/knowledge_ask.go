@@ -33,9 +33,16 @@ func (s *Server) handleDocRelated(ctx context.Context, req *Request, _ ProgressF
 	if !ok {
 		return []map[string]any{}, nil
 	}
+	scope, err := captureScopeOf(req)
+	if err != nil {
+		return nil, err
+	}
 	limit := clamp(req.Int("limit", 3), 1, askResultLimit)
-	out, err := runDoc(ctx, s.knowledgeRunner(), "related",
-		[]string{"--limit", strconv.Itoa(limit), "--json"}, target)
+	flags := []string{"--limit", strconv.Itoa(limit), "--json"}
+	if scope != "" {
+		flags = append(flags, "--scope", scope)
+	}
+	out, err := runDoc(ctx, s.knowledgeRunner(), "related", flags, target)
 	if err != nil {
 		return nil, err
 	}
@@ -76,16 +83,26 @@ type AskResult struct {
 	Query    string      `json:"query"`
 	Answers  []AskAnswer `json:"answers"`
 	Warnings []string    `json:"warnings,omitempty"`
+	// Profile is the profile whose captures were searched; empty for the
+	// shared brain.
+	Profile string `json:"profile,omitempty"`
+	// Brain says how many of that profile's captures are searchable yet,
+	// so an empty answer can say "still indexing" or "nothing saved" rather
+	// than nothing. Absent without a profile, or when it could not be read.
+	Brain *BrainStatus `json:"brain,omitempty"`
 }
 
 // searchHit is one row of `monomind doc search --json`. The fused result
 // carries several kinds; only `excerpt` rows have a document behind them.
 type searchHit struct {
-	Kind       string  `json:"kind"`
-	FilePath   string  `json:"filePath"`
-	Scope      string  `json:"scope"`
-	Text       string  `json:"text"`
-	Score      float64 `json:"score"`
+	Kind     string  `json:"kind"`
+	FilePath string  `json:"filePath"`
+	Scope    string  `json:"scope"`
+	Text     string  `json:"text"`
+	Score    float64 `json:"score"`
+	// Similarity is what `doc search --json` actually names an excerpt's
+	// score; Score is kept for the fused rows that carry one.
+	Similarity float64 `json:"similarity"`
 	ChunkIndex int     `json:"chunkIndex"`
 	Anchor     string  `json:"anchor"`
 	Provenance struct {
@@ -126,12 +143,22 @@ func (s *Server) handleDocAsk(ctx context.Context, req *Request, progress Progre
 	if query == "" {
 		return nil, &RequestError{Code: CodeUnavailable, Err: fmt.Errorf("doc.ask needs a question")}
 	}
+	scope, err := captureScopeOf(req)
+	if err != nil {
+		return nil, err
+	}
 	limit := clamp(req.Int("limit", 4), 1, askResultLimit)
 	runner := s.knowledgeRunner()
 
+	flags := []string{"-q", query, "--limit", strconv.Itoa(limit), "--json"}
+	if scope != "" {
+		// The profile's own capture store and nothing else: excerpts only,
+		// because the knowledge-graph, rule and memory surfaces belong to
+		// whatever project this process runs in, not to the profile.
+		flags = append(flags, "--scope", scope, "--store", "project", "--surfaces", "chunks")
+	}
 	progress("searching", query)
-	out, err := runDoc(ctx, runner, "search",
-		[]string{"-q", query, "--limit", strconv.Itoa(limit), "--json"})
+	out, err := runDoc(ctx, runner, "search", flags)
 	if err != nil {
 		return nil, err
 	}
@@ -141,11 +168,18 @@ func (s *Server) handleDocAsk(ctx context.Context, req *Request, progress Progre
 	}
 
 	result := &AskResult{Query: query, Answers: []AskAnswer{}}
+	if scope != "" {
+		result.Profile = strings.TrimSpace(req.String("profile"))
+		result.Brain = s.brainStatus(ctx, result.Profile)
+	}
 	// Only document hits. The fused result also carries knowledge-graph
 	// triplets and memory rows, which have no capture to cite — and a
 	// citation is the entire point of this panel.
 	docHits := make([]searchHit, 0, len(hits))
 	for _, h := range hits {
+		if h.Score == 0 {
+			h.Score = h.Similarity
+		}
 		if h.FilePath != "" && (h.Kind == "" || h.Kind == "excerpt") {
 			docHits = append(docHits, h)
 		}
