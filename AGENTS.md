@@ -21,7 +21,8 @@ desktop GUI (`wails-app/`).
 - No telemetry: no analytics, phone-home checks, or usage counters. What
   can leave the machine (see [SECURITY.md](SECURITY.md) for the full
   statement): the API calls your workflows make, commands you explicitly
-  invoke that talk to an external service (e.g. `login`, `update`), and
+  invoke that talk to an external service (e.g. `login`, `update`,
+  `library`), and
   opt-in crash reporting. Crash reports are written to local files under
   `~/.monoagent/crashes/` by default and are only filed to GitHub when
   `MONOAGENT_CRASH_REPORT=1` is set **and** the `monomind` CLI is on PATH.
@@ -32,6 +33,12 @@ desktop GUI (`wails-app/`).
   Product Hunt) are in the default build and in every release. A
   `go build -tags nosocial` build leaves them out; there those node types
   are absent, not merely disabled.
+- **Web automations come from monoes.me.** The app no longer ships the
+  browser automation packages (gemini, hackernews, instagram, linkedin,
+  producthunt, tiktok, x). Their node types exist once the package is
+  installed: `monoagentcli library install automation <id>` (see
+  [monoes.me library](#monoesme-library)). Packages an older release
+  installed keep working. The compiled bots they call stay in the binary.
 
 ## Start here
 
@@ -72,7 +79,8 @@ Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,
 bridge, pairing), `automations` (installed packages that are unavailable,
 and broken or decaying selectors — each with its `automation rerecord` fix;
-read-only, never seeds packages), `services` (daemon, start at login) and `integrations`
+read-only, never installs packages; with none installed it points at
+`library install`), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration, TypeSafe Jev key; `jev.api` runs
 on demand with `--deep`), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections — a failing OAuth
@@ -214,8 +222,66 @@ The desktop app does everything through these commands; they are equally usable 
   - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
   - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
   - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
+- **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
 - **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
+
+## monoes.me library
+
+monoes.me keeps workflows, orgs and web automations: **official** ones
+published by monoes (the web automations the app used to ship, the workflow
+templates, starter orgs), **public** ones from the community, and each
+user's **private** ones. The `library` commands log in, browse, install and
+publish; the desktop app calls the same commands.
+
+```bash
+monoagentcli library login                        # browser sign-in (OAuth 2.1 + PKCE, loopback redirect on 127.0.0.1)
+monoagentcli library login --email you@x.com      # headless: emails a code, then asks for it (--send / --code split the steps)
+monoagentcli library status [--offline]           # logged in? as whom
+monoagentcli library list --kind automation       # official + public; --scope official|mine, --search, --tag, --page, --per-page
+monoagentcli library show automation/instagram    # one item (id or <kind>/<slug>)
+monoagentcli library install automation instagram # download, verify sha256, install
+monoagentcli library install org research-team --rename research-2
+monoagentcli library publish workflow <id> [--public] [--name --description --tags --version]
+monoagentcli library update [<id>] [--dry-run]    # newer versions of what came from the library
+monoagentcli library installed                    # what this profile installed from it
+monoagentcli library logout
+```
+
+- Host: `https://monoes.me`, or `MONOES_BASE_URL` (plain `http` only for a
+  loopback dev server). The login is stored per profile in the encrypted
+  vault (entry `monoes-library`, one per host) and refreshed
+  automatically; `logout` revokes and forgets it.
+- `install` checks the download against the `X-Content-SHA256` header and
+  the item's sha256 (a mismatch installs nothing, exit 3), then hands it
+  over:
+  - **automation** → the package installer, pinned to that hash, with
+    source `monoes`. Official items (visibility `official`, owner
+    `monoes`) get the trust tier the built-ins had (scripts allowed, no
+    live-run confirmation, bare-name vault fallback); everything else is
+    `imported`. Replacing a more trusted or your own package needs
+    `--replace` (or `--yes`).
+  - **workflow** → `workflow import` into the active profile (bundled
+    automations install with `--yes`); reinstalling replaces the earlier
+    import in place. `missing_automations` lists packages it needs.
+  - **org** → the active profile's org folder, stopped. A name in use
+    needs `--rename <name>` or `--yes` (replace).
+- Provenance (`{source:"monoes", item_id, version, sha256}`) is recorded in
+  the automation index and in `~/.monoagent/library/installed.json`
+  (workflows and orgs, per profile). Built-ins an older release installed
+  are matched to the official item with the same id, so `library update`
+  covers them.
+- `publish` packs the automation (`.mpkg`), exports the workflow (bundling
+  the automations it uses except built-in/official ones; `--no-bundle` for
+  none) or the org JSON, and uploads it private unless `--public`.
+  Publishing something you published before uploads a new version of your
+  item (`--new` for a separate item); an automation's version is its
+  manifest's and must grow.
+- Exit codes: 2 not found (or a private item you can't see), 3 rejected
+  (bad input, sha256 mismatch, name collision, 409/413), 4 login or
+  connection (401/403/429, unreachable, login timeout).
+- Official artifacts are built from the repo with `make library-official`
+  (packages under `automations/`, workflow templates, `orgtemplates/`).
 
 ## MCP server
 
@@ -766,6 +832,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
 | `MONOAGENT_SUMMARY_RUNTIME` | Agent runtime the extension bridge uses to write `summary.md` for captures saved with "Save page summary" / "Save video summary" (`extension serve --summary-runtime` wins over it). This is the default: a capture can name its own installed runtime and model (the side panel's "AI for summaries" picker, or `capture page --summary-runtime/--summary-model`), and `summary.json` records the pair used. `off` disables summaries; each capture that asked then records why in `summary.json`. Default: unset — `claude`. |
+| `MONOES_BASE_URL` | monoes.me library host for the `library` commands. Default: unset — `https://monoes.me`. Plain `http` is accepted only for a loopback host (a local dev server). |
 | `MONOMIND_BIN` | Path to the `monomind` binary; checked before `PATH` and the other install locations (see [How AI works in mono-agent](#how-ai-works-in-mono-agent)). Default: unset — discovered. |
 | `MONOAGENT_AI_RUNTIME` | Agent runtime `ai.extract_page` uses to generate selectors. Default: unset — the first installed runtime, `claude` first. |
 | `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |

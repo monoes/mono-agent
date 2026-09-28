@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-09-28
+
+### Added
+
+- **monoes.me library.** Log in to monoes.me and keep workflows, orgs and
+  web automations there: official ones published by monoes, public ones
+  from the community, and your own private ones.
+  - `monoagentcli library login` signs in through the browser (OAuth 2.1
+    with PKCE and a one-time 127.0.0.1 listener); `--email` sends a code
+    for machines without a browser. The login is stored per profile in the
+    encrypted vault and refreshed automatically. `library status` and
+    `library logout` go with it.
+  - `library list` / `show` browse the official, public and your own
+    (`--scope mine`) items, and show what is installed here and whether an
+    update exists.
+  - `library install <kind> <id|slug>` downloads the item, checks its
+    sha256 (a mismatch installs nothing), and installs it: automations
+    through the package installer, workflows through `workflow import`
+    into the active profile, orgs into the profile's org folder (`--rename`,
+    or `--yes` to replace one of the same name).
+  - Automations from the library get the source `monoes`. Official ones get
+    the trust the bundled packages had, so the social flows work without
+    extra confirmations; community ones install as imported.
+  - `library publish <kind> <local id>` uploads a workflow, automation or
+    org, private unless `--public`; publishing again uploads a new version.
+    `library update` installs newer versions of what came from the library.
+  - The desktop app has a "Log in to monoes" button and a library dialog
+    (Official, Community and Mine tabs) in the workflow Templates tab, in
+    Browser Automations and under a new "Org templates" entry on the Orgs
+    page, and "Publish to monoes" on workflows, automations and orgs.
+- `make library-official` builds the official artifacts (the 7 automation
+  packages, the 4 workflow templates and 3 starter orgs) with a
+  `manifest.json`, for uploading to monoes.me.
+
+### Changed
+
+- **The web automations moved out of the app into monoes.me.** New installs
+  no longer come with the gemini, hackernews, instagram, linkedin,
+  producthunt, tiktok and x packages. Install the ones you need with
+  `monoagentcli library install automation <id>` or from Browser
+  Automations. Packages already installed stay installed and keep working;
+  `library update` matches them to their official monoes.me items. The
+  compiled bots they use are still in the binary.
+  - `doctor` reports a fresh install without automations as info with the
+    `library` commands to run, instead of failing later.
+  - `automation restore` has nothing left to restore and points at
+    `library install automation <id>`; the app's Restore button reinstalls
+    from monoes.me.
+  - The package sources moved from `data/automations/` to `automations/`,
+    used by tests and `make library-official`.
+
 ## [0.85.0] - 2026-09-28
 
 ### Added
