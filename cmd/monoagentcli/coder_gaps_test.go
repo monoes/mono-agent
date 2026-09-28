@@ -28,7 +28,7 @@ func TestCoderTurnReportsFileExistedAndExitCodes(t *testing.T) {
   echo '{"v":1,"type":"tool_activity","id":"b1","phase":"start","name":"Bash","input":{"command":"true"}}'
   echo '{"v":1,"type":"tool_activity","id":"b1","phase":"end","name":"Bash","ok":true,"output":""}'
   echo '{"v":1,"type":"tool_activity","id":"b2","phase":"start","name":"Bash","input":{"command":"false"}}'
-  echo '{"v":1,"type":"tool_activity","id":"b2","phase":"end","name":"Bash","ok":false,"output":"Exit code 2\nboom"}'
+  printf '%s\n' '{"v":1,"type":"tool_activity","id":"b2","phase":"end","name":"Bash","ok":false,"output":"Exit code 2\nboom"}'
   echo '{"v":1,"type":"tool_activity","id":"b3","phase":"start","name":"Bash","input":{"command":"sleep 9","run_in_background":true}}'
   echo '{"v":1,"type":"tool_activity","id":"b3","phase":"end","name":"Bash","ok":true,"output":"started"}'
   echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok"}'
@@ -74,9 +74,12 @@ func TestCoderStopBackgroundStopsOnlyTheSameProcess(t *testing.T) {
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
 		}
-		c := c
-		t.Cleanup(func() { c.Process.Kill(); c.Wait() })
-		go c.Wait() // reap, so a stopped process doesn't linger as a zombie
+		// One goroutine reaps it (so a stopped process doesn't linger as a
+		// zombie); cleanup kills and waits for that, never calling Wait
+		// itself.
+		reaped := make(chan struct{})
+		go func(c *exec.Cmd) { c.Wait(); close(reaped) }(c)
+		t.Cleanup(func() { c.Process.Kill(); <-reaped })
 	}
 	time.Sleep(100 * time.Millisecond)
 	mp, sp := marked.Process.Pid, stranger.Process.Pid
