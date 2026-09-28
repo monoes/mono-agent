@@ -236,7 +236,7 @@ func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 	// The binary ships no built-in copy any more: restore points at the
 	// library instead (exit 2, not_found).
 	out, _, err = runAutomationCLI(t, home, "automation", "restore", "gemini", "--json")
-	if exitCodeFor(err) != 2 || !strings.Contains(out, "library install automation gemini") {
+	if exitCodeFor(err) != 2 || !strings.Contains(out, "library install automation gemini") || !strings.Contains(out, "library login") {
 		t.Fatalf("restore: err=%v stdout=%s", err, out)
 	}
 }

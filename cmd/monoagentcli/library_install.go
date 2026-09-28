@@ -44,7 +44,7 @@ func newLibraryInstallCmd(e *libEnv) *cobra.Command {
 	var o libInstallOptions
 	cmd := &cobra.Command{
 		Use:   "install <workflow|automation|org> <id | slug>  (or <kind>/<slug>)",
-		Short: "Download a library item, verify its sha256 and install it into this profile",
+		Short: "Download a library item, verify its sha256 and install it into this profile (needs a login)",
 		Long: "Downloads the item's artifact, checks it against the sha256 the library reports, and hands " +
 			"it to the matching local install:\n" +
 			"  automation  the automation package installer (official items get built-in trust; others install as imported)\n" +
@@ -67,11 +67,11 @@ func newLibraryInstallCmd(e *libEnv) *cobra.Command {
 			if o.rename != "" && kind != library.KindOrg {
 				return errInvalidInput("--rename only applies to orgs")
 			}
-			c, err := e.open()
+			ctx := cmd.Context()
+			c, err := e.requireLogin(ctx)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
 			it, err := resolveItem(ctx, c, kind, ref)
 			if err != nil {
 				return err

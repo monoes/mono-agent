@@ -384,5 +384,5 @@ func newAutomationLifecycleCmds(cfg *globalConfig) []*cobra.Command {
 // restoreFromLibraryError is `automation restore`'s answer: this binary no
 // longer ships built-in packages, so the official copy comes from monoes.me.
 func restoreFromLibraryError(id string) error {
-	return errNotFound("automation %s: this version of monoagent no longer ships built-in automations; reinstall the official copy from monoes.me with `monoagentcli library install automation %s`", id, id)
+	return errNotFound("automation %s: this version of monoagent no longer ships built-in automations; reinstall the official copy from monoes.me: log in with `monoagentcli library login`, then run `monoagentcli library install automation %s`", id, id)
 }

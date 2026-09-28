@@ -70,10 +70,11 @@ func (f *libFixture) must(v any, args ...string) {
 	}
 }
 
-func (f *libFixture) login() {
+// login logs the default profile in, or another one: login("--profile", "x").
+func (f *libFixture) login(profile ...string) {
 	f.t.Helper()
 	var st libStatus
-	f.must(&st, "library", "login")
+	f.must(&st, append(profile, "library", "login")...)
 	if !st.LoggedIn || st.User == nil || st.User.Username != "ada" {
 		f.t.Fatalf("login status = %+v", st)
 	}
@@ -193,6 +194,7 @@ func TestLibraryInstallAutomationTrust(t *testing.T) {
 	f.fake.Add("eve", "automation", "producthunt", "Product Hunt (community)", "public", "1.0.0", pack(t, "producthunt", ""), nil)
 	// "official" visibility from anyone but monoes is not trusted.
 	f.fake.Add("eve", "automation", "x", "X (fake official)", "official", "1.0.0", pack(t, "x", ""), nil)
+	f.login()
 
 	if automationRow(t, f, "hackernews") != nil {
 		t.Fatal("a fresh install has hackernews")
@@ -230,6 +232,7 @@ func TestLibraryInstallRejectsBadSHA256(t *testing.T) {
 	noSeed(t)
 	f := newLibFixture(t)
 	f.fake.Add("monoes", "automation", "hackernews", "Hacker News", "official", "1.1.0", pack(t, "hackernews", ""), nil)
+	f.login()
 	f.fake.TamperArtifact = true
 	out, err := f.run("library", "install", "automation", "hackernews")
 	if err == nil || exitCodeFor(err) != 3 || !strings.Contains(out, "sha256") {
@@ -242,16 +245,107 @@ func TestLibraryInstallRejectsBadSHA256(t *testing.T) {
 
 func TestLibraryErrorsExitCodes(t *testing.T) {
 	f := newLibFixture(t)
-	if _, err := f.run("library", "show", "workflow/nope"); exitCodeFor(err) != 2 {
-		t.Fatalf("missing item: %v", err)
-	}
-	if _, err := f.run("library", "list", "--scope", "mine"); exitCodeFor(err) != 4 {
-		t.Fatalf("mine logged out: %v", err)
-	}
 	if _, err := f.run("library", "list", "--kind", "bogus"); exitCodeFor(err) != 3 {
 		t.Fatalf("bad kind: %v", err)
 	}
 	if _, err := f.run("library", "publish", "org", "none"); err == nil {
 		t.Fatal("publish without login worked")
+	}
+	f.login()
+	if _, err := f.run("library", "show", "workflow/nope"); exitCodeFor(err) != 2 {
+		t.Fatalf("missing item: %v", err)
+	}
+}
+
+// loginRequired asserts exit 4 with the "log in first" message, both as
+// --json (with login_required) and as plain text.
+func (f *libFixture) loginRequired(args ...string) {
+	f.t.Helper()
+	out, err := f.run(args...)
+	var body struct {
+		Error, Code   string
+		LoginRequired bool `json:"login_required"`
+	}
+	if exitCodeFor(err) != 4 || json.Unmarshal([]byte(lastJSONObject([]byte(out))), &body) != nil ||
+		body.Error != "Log in to monoes.me first: monoagentcli library login" || !body.LoginRequired || body.Code != "auth_or_connection" {
+		f.t.Fatalf("%v: want exit 4 + log in first, got %v %s", args, err, out)
+	}
+	_, errOut, err := runCLI(f.t, f.home, args...)
+	if exitCodeFor(err) != 4 || !strings.Contains(errOut+err.Error(), "Log in to monoes.me first: monoagentcli library login") {
+		f.t.Fatalf("%v (text): %v %s", args, err, errOut)
+	}
+}
+
+// Browsing and installing need a login, official items included: without
+// one the CLI stops before asking monoes.me anything.
+func TestLibraryReadsNeedALogin(t *testing.T) {
+	noSeed(t)
+	f := newLibFixture(t)
+	f.fake.Add("monoes", "automation", "hackernews", "Hacker News", "official", "1.1.0", pack(t, "hackernews", ""),
+		map[string]any{"automation_id": "hackernews"})
+	for _, args := range [][]string{
+		{"library", "list"},
+		{"library", "list", "--scope", "official", "--kind", "automation"},
+		{"library", "list", "--scope", "mine"},
+		{"library", "show", "automation/hackernews"},
+		{"library", "install", "automation", "hackernews"},
+		{"library", "install", "automation", "hackernews", "--dry-run"},
+		{"library", "update"},
+		{"library", "update", "--dry-run"},
+	} {
+		f.loginRequired(args...)
+	}
+	for k, n := range f.fake.Requests {
+		if strings.Contains(k, "/api/library/") && n > 0 {
+			t.Fatalf("%s was called %d times without a login", k, n)
+		}
+	}
+	// status and the local list still work logged out.
+	var st libStatus
+	f.must(&st, "library", "status")
+	if st.LoggedIn {
+		t.Fatalf("status = %+v", st)
+	}
+	f.must(nil, "library", "installed")
+}
+
+// A 401 on a read refreshes the login once and retries; a 401 the refresh
+// cannot cure (the login was revoked) is "log in first", exit 4.
+func TestLibraryRead401RefreshesThenAsksForLogin(t *testing.T) {
+	noSeed(t)
+	f := newLibFixture(t)
+	f.fake.Add("monoes", "automation", "hackernews", "Hacker News", "official", "1.1.0", pack(t, "hackernews", ""),
+		map[string]any{"automation_id": "hackernews"})
+	f.login()
+
+	f.fake.ExpireAccessTokens()
+	var list libList
+	f.must(&list, "library", "list", "--scope", "official")
+	if list.Total != 1 || f.fake.Refreshes != 1 {
+		t.Fatalf("list after expiry = %+v (refreshes %d)", list, f.fake.Refreshes)
+	}
+	var res libInstallResult
+	f.must(&res, "library", "install", "automation", "hackernews")
+	if !res.Installed {
+		t.Fatalf("install = %+v", res)
+	}
+
+	f.fake.RevokeAll()
+	before := f.fake.Requests["GET /api/library/items"]
+	f.loginRequired("library", "list", "--scope", "official")
+	if got := f.fake.Requests["GET /api/library/items"] - before; got != 2 { // --json run + text run, no retry after the failed refresh
+		t.Fatalf("list requests = %d, want 2", got)
+	}
+	f.loginRequired("library", "show", "automation/hackernews")
+	f.loginRequired("library", "update", "--dry-run")
+	if f.fake.Refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1", f.fake.Refreshes)
+	}
+
+	// Logging in again fixes it.
+	f.login()
+	f.must(&list, "library", "list", "--scope", "official")
+	if list.Total != 1 || list.Items[0].Installed == nil {
+		t.Fatalf("list after a new login = %+v", list)
 	}
 }

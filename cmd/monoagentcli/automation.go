@@ -24,7 +24,8 @@ func newAutomationCmd(cfg *globalConfig) *cobra.Command {
 		Long: `Browser automation packages: a manifest, actions, fragments, selectors and
 optional page scripts for one site, installed under ~/.monoagent/automations.
 The official packages (Instagram, LinkedIn, X, TikTok, Hacker News, Product
-Hunt, Gemini) are published on monoes.me: install them with
+Hunt, Gemini) are published on monoes.me: log in with
+` + "`monoagentcli library login`" + `, then install them with
 ` + "`monoagentcli library install automation <id>`" + `. Anything else is installed
 from a .mpkg file, a package directory or a URL. Packages an earlier version
 seeded stay installed.`,

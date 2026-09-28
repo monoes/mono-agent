@@ -143,7 +143,7 @@ func newLibraryListCmd(e *libEnv) *cobra.Command {
 	var q library.ListQuery
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List library items (official and public by default; --scope mine for your own)",
+		Short: "List library items (official and public by default; --scope mine for your own; needs a login)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q.Kind = library.NormalizeKind(q.Kind)
@@ -161,11 +161,11 @@ func newLibraryListCmd(e *libEnv) *cobra.Command {
 			if q.PerPage > 100 {
 				return errInvalidInput("--per-page is at most 100")
 			}
-			c, err := e.open()
+			ctx := cmd.Context()
+			c, err := e.requireLogin(ctx)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
 			res, err := c.List(ctx, q)
 			if err != nil {
 				return libErr(err)
@@ -183,7 +183,7 @@ func newLibraryListCmd(e *libEnv) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&q.Kind, "kind", "", "workflow, automation or org (default: all)")
-	cmd.Flags().StringVar(&q.Scope, "scope", "public", "public (public + official), official, or mine (needs login)")
+	cmd.Flags().StringVar(&q.Scope, "scope", "public", "public (public + official), official, or mine")
 	cmd.Flags().StringVar(&q.Search, "search", "", "Search names and descriptions")
 	cmd.Flags().StringVar(&q.Tag, "tag", "", "Only items with this tag")
 	cmd.Flags().IntVar(&q.Page, "page", 1, "Page number")
@@ -218,14 +218,14 @@ func printItemTable(w io.Writer, items []libItem, total int) {
 func newLibraryShowCmd(e *libEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <id | kind/slug>",
-		Short: "Show one library item",
+		Short: "Show one library item (needs a login)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.open()
+			ctx := cmd.Context()
+			c, err := e.requireLogin(ctx)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
 			ref := args[0]
 			if k, slug, ok := strings.Cut(ref, "/"); ok {
 				ref = library.NormalizeKind(k) + "/" + slug
