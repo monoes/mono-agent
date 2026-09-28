@@ -225,3 +225,14 @@ describe('not granted (no human acknowledgement on file)', () => {
     expect(api.validateOrgReport).toHaveBeenCalledWith('growth')
   })
 })
+
+describe('roles_access from monomind 2.18', () => {
+  it('shows a never-granted role as not granted, not suspended', () => {
+    const byRole = rolesAccessByRole({ roles_access: [
+      { role: 'builder', access: 'scoped', access_state: 'suspended', reason: 'no human acknowledgement on file — run `monomind org role set-access <org> <role> full`' },
+      { role: 'ops', access: 'scoped', access_state: 'suspended', reason: 'config changed since the grant' },
+    ] })
+    expect(byRole.builder.access_state).toBe('not-granted')
+    expect(byRole.ops.access_state).toBe('suspended')
+  })
+})
