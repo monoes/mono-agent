@@ -13,8 +13,9 @@ import (
 // RuntimeModel is one selectable model for an agent runtime — an id to pass
 // as --model plus a human-readable label for the picker.
 type RuntimeModel struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // claudeModels is curated by hand: unlike antigravity and codex (see
@@ -25,8 +26,9 @@ type RuntimeModel struct {
 // asking the model to describe itself instead of failing, which is exactly
 // the surprising/costly behavior this static list avoids triggering. The
 // Agent SDK's supportedModels() is the real list (what Claude Code's /model
-// picker shows); this mirrors it as of 2026-09-28, concrete ids in its
-// order, until monomind exposes that list to callers.
+// picker shows); monomind exposes it as `agent models` (capability
+// agent-models, see listAgentModels), and this copy of it as of 2026-09-28
+// is only the fallback for a monomind without that capability.
 var claudeModels = []RuntimeModel{
 	{ID: "claude-opus-5-5", Label: "Opus 5.5"},
 	{ID: "claude-fable-5-1", Label: "Fable 5.1"},
@@ -48,6 +50,23 @@ var claudeModels = []RuntimeModel{
 // returns a nil, nil slice so callers can fall back to a plain free-text
 // model field.
 func ListModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
+	if set, err := Capabilities(ctx); err == nil && set.Has(CapAgentModels) {
+		models, supported, err := listAgentModels(ctx, runtimeID)
+		switch {
+		case err == nil && !supported:
+			return nil, nil
+		case err == nil:
+			return models, nil
+		}
+		// A failed listing (runtime not logged in, timed out) falls back to
+		// the built-in sources rather than leaving the picker empty.
+	}
+	return builtinModels(ctx, runtimeID, binary)
+}
+
+// builtinModels is ListModels without monomind's agent models: the
+// runtimes' own listing commands, and the curated claude list.
+func builtinModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
 	switch runtimeID {
 	case "antigravity":
 		if binary == "" {
@@ -149,4 +168,90 @@ func listCodexModels(ctx context.Context, binary string) ([]RuntimeModel, error)
 		models = append(models, RuntimeModel{ID: m.Slug, Label: label})
 	}
 	return models, nil
+}
+
+// CapAgentModels is `monomind agent models` (monomind#369).
+const CapAgentModels = "agent-models"
+
+// agentModelsResult is `monomind agent models --json` (protocol §12).
+type agentModelsResult struct {
+	Supported bool `json:"supported"`
+	Models    []struct {
+		ID          string `json:"id"`
+		ResolvedID  string `json:"resolved_id"`
+		Label       string `json:"label"`
+		Description string `json:"description"`
+		Default     bool   `json:"default"`
+	} `json:"models"`
+	Error *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// agentModelsTimeout bounds `agent models`; monomind's own limit is 30s.
+var agentModelsTimeout = 45 * time.Second
+
+// listAgentModels runs `monomind agent models --runtime <id> --json`, the
+// runtime's own model list (for claude, what Claude Code's /model picker
+// shows for this account). supported is false for a runtime with no
+// listing command.
+func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeModel, supported bool, err error) {
+	bin, err := Find()
+	if err != nil {
+		return nil, false, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, agentModelsTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, "agent", "models", "--runtime", runtimeID, "--json")
+	cmd.Env = FilteredEnviron()
+	out, runErr := cmd.Output()
+	var res agentModelsResult
+	if err := json.Unmarshal(lastJSONDocument(out), &res); err != nil {
+		if runErr != nil {
+			return nil, false, fmt.Errorf("monomind agent models: %w", runErr)
+		}
+		return nil, false, fmt.Errorf("monomind agent models: unparseable output: %w", err)
+	}
+	if res.Error != nil {
+		return nil, false, fmt.Errorf("monomind agent models: %s: %s", res.Error.Code, res.Error.Message)
+	}
+	if runErr != nil {
+		return nil, false, fmt.Errorf("monomind agent models: %w", runErr)
+	}
+	for _, m := range res.Models {
+		if m.ID == "" {
+			continue
+		}
+		models = append(models, RuntimeModel{ID: m.ID, Label: modelLabel(m.Label, m.Description, m.ID, m.Default), Description: m.Description})
+	}
+	return models, res.Supported, nil
+}
+
+// modelLabel names a listed model for a picker. Claude's aliases carry a
+// generic label ("Opus", "Default (recommended)") and put the concrete
+// model first in the description ("Opus 5.5 · Best for …"), so that name
+// is used: "Opus 5.5", "Default (Opus 5.5)".
+func modelLabel(label, description, id string, isDefault bool) string {
+	concrete, _, found := strings.Cut(description, " · ")
+	concrete = strings.TrimSpace(concrete)
+	switch {
+	case label == "":
+		label = id
+	case !found || concrete == "":
+	case isDefault:
+		label = "Default (" + concrete + ")"
+	case strings.HasPrefix(concrete, label):
+		label = concrete
+	}
+	return label
+}
+
+// lastJSONDocument returns out from its first '{' on, skipping any banner
+// text a runtime printed before the JSON.
+func lastJSONDocument(out []byte) []byte {
+	if i := strings.IndexByte(string(out), '{'); i > 0 {
+		return out[i:]
+	}
+	return out
 }

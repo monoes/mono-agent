@@ -20,7 +20,7 @@ func writeFakeScript(t *testing.T, script string) string {
 }
 
 func TestListModelsUnknownRuntimeReturnsNilNil(t *testing.T) {
-	models, err := ListModels(context.Background(), "some-future-runtime", "")
+	models, err := builtinModels(context.Background(), "some-future-runtime", "")
 	if err != nil {
 		t.Fatalf("ListModels(unknown runtime) error = %v, want nil (caller falls back to free text)", err)
 	}
@@ -30,7 +30,7 @@ func TestListModelsUnknownRuntimeReturnsNilNil(t *testing.T) {
 }
 
 func TestListModelsClaudeIsStatic(t *testing.T) {
-	models, err := ListModels(context.Background(), "claude", "")
+	models, err := builtinModels(context.Background(), "claude", "")
 	if err != nil {
 		t.Fatalf("ListModels(claude) unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestListModelsAntigravityParsesTabSeparatedOutput(t *testing.T) {
 		"echo 'claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)'\n"
 	bin := writeFakeScript(t, script)
 
-	models, err := ListModels(context.Background(), "antigravity", bin)
+	models, err := builtinModels(context.Background(), "antigravity", bin)
 	if err != nil {
 		t.Fatalf("ListModels(antigravity) unexpected error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestListModelsAntigravityParsesTabSeparatedOutput(t *testing.T) {
 }
 
 func TestListModelsAntigravityRequiresBinary(t *testing.T) {
-	if _, err := ListModels(context.Background(), "antigravity", ""); err == nil {
+	if _, err := builtinModels(context.Background(), "antigravity", ""); err == nil {
 		t.Fatal("expected an error when antigravity's binary path is empty, got nil")
 	}
 }
@@ -87,7 +87,7 @@ func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 		"\nEOF\n"
 	bin := writeFakeScript(t, script)
 
-	models, err := ListModels(context.Background(), "codex", bin)
+	models, err := builtinModels(context.Background(), "codex", bin)
 	if err != nil {
 		t.Fatalf("ListModels(codex) unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 }
 
 func TestListModelsCodexRequiresBinary(t *testing.T) {
-	if _, err := ListModels(context.Background(), "codex", ""); err == nil {
+	if _, err := builtinModels(context.Background(), "codex", ""); err == nil {
 		t.Fatal("expected an error when codex's binary path is empty, got nil")
 	}
 }

@@ -31,19 +31,28 @@ export function accessState(entry) {
   return ACCESS_STATES[entry?.access_state] || UNKNOWN_STATE
 }
 
+// A role that was never granted comes back "suspended" with this reason
+// (monomind 2.18); it is shown as not granted, since there is nothing to
+// grant again.
+const NEVER_GRANTED = /no human acknowledgement on file/
+
 // rolesAccessByRole maps role id → roles_access entry.
 export function rolesAccessByRole(status) {
   const out = {}
   for (const e of Array.isArray(status?.roles_access) ? status.roles_access : []) {
-    if (e?.role) out[e.role] = e
+    if (!e?.role) continue
+    out[e.role] = e.access_state === 'suspended' && NEVER_GRANTED.test(e.reason || '')
+      ? { ...e, access_state: 'not-granted' }
+      : e
   }
   return out
 }
 
 // withNotGranted adds a "not-granted" entry for each role that `org
 // validate` says has no human acknowledgement and that roles_access doesn't
-// cover. An org that never ran, or is stopped, reports no roles_access at
-// all (monomind#367), so this is where an ungranted role is told apart.
+// cover. Before monomind 2.18 an org that never ran, or is stopped,
+// reported no roles_access at all (monomind#367); this keeps that case
+// working.
 export function withNotGranted(byRole, unacknowledged = {}) {
   const out = { ...byRole }
   for (const [role, line] of Object.entries(unacknowledged)) {
