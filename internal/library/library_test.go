@@ -147,7 +147,7 @@ func TestDownloadVerifiesSHA256(t *testing.T) {
 	fake := libraryfake.New()
 	defer fake.Close()
 	id := fake.Add("monoes", "workflow", "demo", "Demo", "official", "1.0.0", []byte(`{"name":"Demo","nodes":[]}`), nil)
-	c, _ := library.NewClient(fake.URL, nil)
+	c := login(t, fake, &memStore{})
 	ctx := context.Background()
 	it, err := c.Get(ctx, "workflow/demo")
 	if err != nil || it.ID != id || !it.Official() {
@@ -173,20 +173,15 @@ func TestErrorsAndVisibility(t *testing.T) {
 	fake := libraryfake.New()
 	defer fake.Close()
 	fake.Add("ada", "org", "secret-org", "Secret", "private", "1.0.0", []byte(`{}`), nil)
-	anon, _ := library.NewClient(fake.URL, nil)
+	fake.AddUser(&libraryfake.User{ID: "u-eve", Username: "eve", Name: "Eve", Email: "eve@example.com"})
 	ctx := context.Background()
-	_, err := anon.Get(ctx, "org/secret-org")
-	var ae *library.APIError
-	if !errors.As(err, &ae) || ae.Status != 404 || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("private item anonymously: %v", err)
-	}
-	if _, err := anon.List(ctx, library.ListQuery{Scope: "mine"}); !errors.Is(err, library.ErrNotLoggedIn) {
-		t.Fatalf("mine anonymously: %v", err)
-	}
-	for status, want := range map[int]string{413: "too large", 429: "rate limited", 403: "not allowed", 401: "library login"} {
+	for status, want := range map[int]string{413: "too large", 429: "rate limited", 403: "not allowed", 401: "Log in to monoes.me first"} {
 		e := &library.APIError{Status: status, Message: "x"}
 		if !strings.Contains(e.Error(), want) {
 			t.Errorf("%d: %q lacks %q", status, e.Error(), want)
+		}
+		if errors.Is(e, library.ErrNotLoggedIn) != (status == 401) {
+			t.Errorf("%d: errors.Is(ErrNotLoggedIn) = %v", status, !(status == 401))
 		}
 	}
 	store := &memStore{}
@@ -194,6 +189,114 @@ func TestErrorsAndVisibility(t *testing.T) {
 	it, err := c.Get(ctx, "org/secret-org")
 	if err != nil || it.Visibility != "private" {
 		t.Fatalf("owner Get = %+v, %v", it, err)
+	}
+	fake.BrowserUser = fake.User("eve")
+	other := login2(t, fake)
+	_, err = other.Get(ctx, "org/secret-org")
+	var ae *library.APIError
+	if !errors.As(err, &ae) || ae.Status != 404 || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("someone else's private item: %v", err)
+	}
+}
+
+// login2 logs the fake's current BrowserUser in, whoever that is.
+func login2(t *testing.T, fake *libraryfake.Server) *library.Client {
+	t.Helper()
+	c, _ := library.NewClient(fake.URL, &memStore{})
+	if _, err := c.LoginPKCE(context.Background(), library.LoginOptions{Open: browser(t), Timeout: 10 * time.Second}); err != nil {
+		t.Fatalf("LoginPKCE: %v", err)
+	}
+	return c
+}
+
+// Every read needs a login, official items included: without one the
+// client refuses before sending anything.
+func TestReadsNeedALogin(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	fake.Add("monoes", "workflow", "demo", "Demo", "official", "1.0.0", []byte(`{}`), nil)
+	ctx := context.Background()
+	for name, c := range map[string]*library.Client{"no store": mustClient(t, fake.URL, nil), "empty store": mustClient(t, fake.URL, &memStore{})} {
+		if _, err := c.List(ctx, library.ListQuery{Scope: "official"}); !errors.Is(err, library.ErrNotLoggedIn) {
+			t.Errorf("%s: List = %v", name, err)
+		}
+		if _, err := c.Get(ctx, "workflow/demo"); !errors.Is(err, library.ErrNotLoggedIn) {
+			t.Errorf("%s: Get = %v", name, err)
+		}
+		if _, _, err := c.Download(ctx, &library.Item{ID: "it-1"}); !errors.Is(err, library.ErrNotLoggedIn) {
+			t.Errorf("%s: Download = %v", name, err)
+		}
+	}
+	if n := fake.Requests["GET /api/library/items"] + fake.Requests["GET /api/library/items/workflow/demo"] +
+		fake.Requests["GET /api/library/items/it-1/artifact"]; n != 0 {
+		t.Fatalf("%d library requests went out without a login", n)
+	}
+	if msg := library.ErrNotLoggedIn.Error(); msg != "Log in to monoes.me first: monoagentcli library login" {
+		t.Fatalf("ErrNotLoggedIn = %q", msg)
+	}
+}
+
+func mustClient(t *testing.T, base string, store library.TokenStore) *library.Client {
+	t.Helper()
+	c, err := library.NewClient(base, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// A 401 on a read refreshes the token once and retries; when the refresh
+// fails too, the answer is "log in first".
+func TestReadRefreshesOnceOn401(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	fake.Add("monoes", "workflow", "demo", "Demo", "official", "1.0.0", []byte(`{}`), nil)
+	store := &memStore{}
+	c := login(t, fake, store)
+	ctx := context.Background()
+
+	fake.ExpireAccessTokens()
+	res, err := c.List(ctx, library.ListQuery{Scope: "official"})
+	if err != nil || res.Total != 1 || fake.Refreshes != 1 {
+		t.Fatalf("List after server-side expiry = %+v, %v (refreshes %d)", res, err, fake.Refreshes)
+	}
+	if fake.Requests["GET /api/library/items"] != 2 {
+		t.Fatalf("list requests = %d, want 2 (401, then the retry)", fake.Requests["GET /api/library/items"])
+	}
+
+	fake.RevokeAll()
+	_, err = c.Get(ctx, "workflow/demo")
+	var ae *library.APIError
+	if !errors.As(err, &ae) || ae.Status != 401 || !errors.Is(err, library.ErrNotLoggedIn) ||
+		err.Error() != library.ErrNotLoggedIn.Error() {
+		t.Fatalf("Get after revocation = %v", err)
+	}
+	if fake.Refreshes != 1 || fake.Requests["GET /api/library/items/workflow/demo"] != 1 {
+		t.Fatalf("refreshes %d, gets %d: want no retry after the failed refresh",
+			fake.Refreshes, fake.Requests["GET /api/library/items/workflow/demo"])
+	}
+}
+
+// With AnonymousReads the fake behaves like monoes.me before the change,
+// so a server still allowing it just sees an authenticated read.
+func TestFakeAnonymousReadsToggle(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	fake.Add("monoes", "workflow", "demo", "Demo", "official", "1.0.0", []byte(`{}`), nil)
+	get := func() int {
+		resp, err := http.Get(fake.URL + "/api/library/items?scope=official")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := get(); got != 401 {
+		t.Fatalf("anonymous list = %d, want 401", got)
+	}
+	fake.AnonymousReads = true
+	if got := get(); got != 200 {
+		t.Fatalf("anonymous list with AnonymousReads = %d, want 200", got)
 	}
 }
 

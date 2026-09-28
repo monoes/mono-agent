@@ -74,7 +74,9 @@ func isLoopbackHost(h string) bool {
 }
 
 // ErrNotLoggedIn is returned by calls that need a login when there is none.
-var ErrNotLoggedIn = errors.New("not logged in to monoes.me: run `monoagentcli library login`")
+// Every library call does: monoes.me answers 401 to anonymous reads too,
+// official items included. A 401 *APIError matches it with errors.Is.
+var ErrNotLoggedIn = errors.New("Log in to monoes.me first: monoagentcli library login")
 
 // ErrSHA256Mismatch is returned when downloaded bytes don't hash to what
 // the library reported.
@@ -95,7 +97,7 @@ func (e *APIError) Error() string {
 	}
 	switch e.Status {
 	case http.StatusUnauthorized:
-		return "monoes.me: not logged in or the session expired (" + msg + "): run `monoagentcli library login`"
+		return ErrNotLoggedIn.Error()
 	case http.StatusForbidden:
 		return "monoes.me: not allowed: " + msg
 	case http.StatusNotFound:
@@ -109,6 +111,12 @@ func (e *APIError) Error() string {
 		return "monoes.me: rate limited, retry later: " + msg
 	}
 	return fmt.Sprintf("monoes.me: HTTP %d: %s", e.Status, msg)
+}
+
+// Is makes a 401 match ErrNotLoggedIn: the login is missing, expired or
+// was refused, and logging in again is the fix either way.
+func (e *APIError) Is(target error) bool {
+	return target == ErrNotLoggedIn && e.Status == http.StatusUnauthorized
 }
 
 func apiError(resp *http.Response) error {
@@ -137,27 +145,16 @@ func apiError(resp *http.Response) error {
 	return e
 }
 
-type authMode int
-
-const (
-	authNone     authMode = iota // never send a token
-	authOptional                 // send one when logged in; retry anonymously on 401
-	authRequired
-)
-
-// do sends a request, adding the bearer token per mode and refreshing it
-// once on a 401. body is buffered so the request can be replayed.
-func (c *Client) do(ctx context.Context, method, path string, body []byte, contentType string, mode authMode) (*http.Response, error) {
-	var tok *Token
-	var err error
-	if mode != authNone {
-		tok, err = c.currentToken(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if tok == nil && mode == authRequired {
-			return nil, ErrNotLoggedIn
-		}
+// do sends a request with the bearer token, refreshing it once on a 401.
+// Without a login it fails with ErrNotLoggedIn before any network call.
+// body is buffered so the request can be replayed.
+func (c *Client) do(ctx context.Context, method, path string, body []byte, contentType string) (*http.Response, error) {
+	tok, err := c.currentToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tok == nil {
+		return nil, ErrNotLoggedIn
 	}
 	send := func(t *Token) (*http.Response, error) {
 		var rd io.Reader
@@ -182,24 +179,18 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, conte
 		return resp, nil
 	}
 	resp, err := send(tok)
-	if err != nil || resp.StatusCode != http.StatusUnauthorized || tok == nil {
+	if err != nil || resp.StatusCode != http.StatusUnauthorized || tok.RefreshToken == "" {
 		return resp, err
 	}
-	if tok.RefreshToken != "" {
-		if nt, rerr := c.refresh(ctx, tok); rerr == nil {
-			resp.Body.Close()
-			return send(nt)
-		}
-	}
-	if mode == authOptional {
+	if nt, rerr := c.refresh(ctx, tok); rerr == nil {
 		resp.Body.Close()
-		return send(nil)
+		return send(nt)
 	}
 	return resp, nil // the 401, for the caller's error
 }
 
-func (c *Client) getJSON(ctx context.Context, path string, mode authMode, out any) error {
-	resp, err := c.do(ctx, http.MethodGet, path, nil, "", mode)
+func (c *Client) getJSON(ctx context.Context, path string, out any) error {
+	resp, err := c.do(ctx, http.MethodGet, path, nil, "")
 	if err != nil {
 		return err
 	}
@@ -217,7 +208,7 @@ func decodeJSON(r io.Reader, out any) error {
 	return nil
 }
 
-// List lists items. Scope "mine" needs a login.
+// List lists items.
 func (c *Client) List(ctx context.Context, q ListQuery) (*ListResult, error) {
 	v := url.Values{}
 	for k, s := range map[string]string{"kind": q.Kind, "scope": q.Scope, "q": q.Search, "tag": q.Tag} {
@@ -231,12 +222,8 @@ func (c *Client) List(ctx context.Context, q ListQuery) (*ListResult, error) {
 	if q.PerPage > 0 {
 		v.Set("per_page", strconv.Itoa(q.PerPage))
 	}
-	mode := authOptional
-	if q.Scope == "mine" {
-		mode = authRequired
-	}
 	var out ListResult
-	if err := c.getJSON(ctx, "/api/library/items?"+v.Encode(), mode, &out); err != nil {
+	if err := c.getJSON(ctx, "/api/library/items?"+v.Encode(), &out); err != nil {
 		return nil, err
 	}
 	if out.Items == nil {
@@ -248,7 +235,7 @@ func (c *Client) List(ctx context.Context, q ListQuery) (*ListResult, error) {
 // Get returns one item by id or "<kind>/<slug>".
 func (c *Client) Get(ctx context.Context, ref string) (*Item, error) {
 	var it Item
-	if err := c.getJSON(ctx, "/api/library/items/"+escapeRef(ref), authOptional, &it); err != nil {
+	if err := c.getJSON(ctx, "/api/library/items/"+escapeRef(ref), &it); err != nil {
 		return nil, err
 	}
 	return &it, nil
@@ -265,7 +252,7 @@ func escapeRef(ref string) string {
 // Me returns the logged-in account.
 func (c *Client) Me(ctx context.Context) (*Me, error) {
 	var me Me
-	if err := c.getJSON(ctx, "/api/library/me", authRequired, &me); err != nil {
+	if err := c.getJSON(ctx, "/api/library/me", &me); err != nil {
 		return nil, err
 	}
 	return &me, nil
@@ -275,7 +262,7 @@ func (c *Client) Me(ctx context.Context) (*Me, error) {
 // the X-Content-SHA256 header and the item's own sha256. It returns the
 // bytes and their hash.
 func (c *Client) Download(ctx context.Context, it *Item) ([]byte, string, error) {
-	resp, err := c.do(ctx, http.MethodGet, "/api/library/items/"+url.PathEscape(it.ID)+"/artifact", nil, "", authOptional)
+	resp, err := c.do(ctx, http.MethodGet, "/api/library/items/"+url.PathEscape(it.ID)+"/artifact", nil, "")
 	if err != nil {
 		return nil, "", err
 	}
@@ -328,7 +315,7 @@ func (c *Client) Patch(ctx context.Context, id string, fields map[string]any) (*
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.do(ctx, http.MethodPatch, "/api/library/items/"+url.PathEscape(id), body, "application/json", authRequired)
+	resp, err := c.do(ctx, http.MethodPatch, "/api/library/items/"+url.PathEscape(id), body, "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +353,7 @@ func (c *Client) upload(ctx context.Context, method, path string, fields map[str
 	if err := mw.Close(); err != nil {
 		return nil, err
 	}
-	resp, err := c.do(ctx, method, path, buf.Bytes(), mw.FormDataContentType(), authRequired)
+	resp, err := c.do(ctx, method, path, buf.Bytes(), mw.FormDataContentType())
 	if err != nil {
 		return nil, err
 	}
