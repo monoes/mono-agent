@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every capture that is not indexed yet, has changed, or failed before.
   It is the backfill for pages saved before this release.
   `profile documents index <id>` on a capture uses the capture store too.
+- Needs monomind 2.18.3 or later. Older versions cannot index pages whose
+  URL has a query string (every YouTube video) and do not index
+  transcripts or summaries. `doctor` warns about this, and the error on
+  the capture's row says to update.
 
 ## [0.89.0] - 2026-09-28
 
