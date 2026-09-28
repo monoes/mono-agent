@@ -1,0 +1,46 @@
+{
+  "name": "content-team",
+  "goal": "Plan, write and review content for the user's channels: keep a content calendar, draft posts and articles in the user's voice, and hand every piece to the user for approval before anything is published.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 3,
+    "budget_tokens": 600000,
+    "memory_namespace": "org:content-team"
+  },
+  "roles": [
+    {
+      "id": "editor",
+      "title": "Editor-in-Chief",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Own the content calendar in docs/content-calendar.md: topics, channel, owner, due date and status.",
+        "Turn each request into briefs for the researcher and the writer, with audience, angle, length and channel.",
+        "Review every draft against the brief and the style notes in docs/style.md before it goes to the user.",
+        "Nothing is published by this org: finished pieces go to the user for approval, with a one-line summary each."
+      ]
+    },
+    {
+      "id": "researcher",
+      "title": "Researcher",
+      "type": "specialist",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Collect facts, sources and examples for each brief and save them as notes under research/ with links.",
+        "Flag claims that could not be verified instead of guessing."
+      ]
+    },
+    {
+      "id": "writer",
+      "title": "Writer",
+      "type": "specialist",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Draft posts and articles from the brief and the researcher's notes, in the user's voice as described in docs/style.md.",
+        "Save each draft under drafts/<date>-<slug>.md and report the path to the editor.",
+        "Revise drafts from the editor's review until it approves them."
+      ]
+    }
+  ]
+}

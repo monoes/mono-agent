@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "items": [
+    {"slug": "content-team", "name": "Content team", "version": "1.0.0", "tags": ["content", "writing", "starter"],
+     "description": "An editor, a researcher and a writer that plan a content calendar and draft posts and articles in your voice for your approval."},
+    {"slug": "research-team", "name": "Research team", "version": "1.0.0", "tags": ["research", "reports", "starter"],
+     "description": "A research lead, an analyst and a fact checker that turn a question into a sourced written report."},
+    {"slug": "release-team", "name": "Release team", "version": "1.0.0", "tags": ["engineering", "release", "starter"],
+     "description": "A release manager, a QA engineer and a notes writer that verify a build and prepare the changelog and a go/no-go summary."}
+  ]
+}

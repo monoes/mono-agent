@@ -1,0 +1,45 @@
+{
+  "name": "release-team",
+  "goal": "Prepare software releases for the user's project: collect the changes since the last release, verify the build and tests, write the changelog and release notes, and hand the user a go/no-go summary. The user tags and publishes.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 3,
+    "budget_tokens": 1000000,
+    "memory_namespace": "org:release-team",
+    "workspace": "repo"
+  },
+  "roles": [
+    {
+      "id": "release-manager",
+      "title": "Release Manager",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "List the commits since the last release tag and decide the next version (breaking change: major; feature: minor; otherwise patch).",
+        "Ask the QA engineer to verify the build and tests and the writer to draft the changelog and release notes.",
+        "Give the user a go/no-go summary with the version, the verification results and the notes. Never tag, push or publish yourself."
+      ]
+    },
+    {
+      "id": "qa",
+      "title": "QA Engineer",
+      "type": "specialist",
+      "reports_to": "release-manager",
+      "responsibilities": [
+        "Run the project's build, linters and test suites and record each command with its exit code and a short log excerpt.",
+        "Report failures with a reproduction; do not change code."
+      ]
+    },
+    {
+      "id": "writer",
+      "title": "Release Notes Writer",
+      "type": "specialist",
+      "reports_to": "release-manager",
+      "responsibilities": [
+        "Draft the CHANGELOG entry and the release notes from the commit list, grouped as Added, Changed and Fixed, in plain language for users.",
+        "Link each entry to its pull request or commit."
+      ]
+    }
+  ]
+}

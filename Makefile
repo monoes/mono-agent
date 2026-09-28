@@ -55,6 +55,14 @@ bench:
 		./internal/workflow/... ./internal/nodes/control/... \
 		> bench.txt
 
+# Official monoes.me library artifacts: the automation packages in
+# automations/ as .mpkg, the workflow templates, the starter orgs in
+# orgtemplates/ and manifest.json (uploaded by monoes.me's seed script).
+OUT ?= $(HOME)/scratch/monoes-library/official
+.PHONY: library-official
+library-official:
+	scripts/library-official.sh "$(OUT)"
+
 .PHONY: clean
 clean:
 	rm -rf bin/
