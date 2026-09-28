@@ -39,7 +39,7 @@ func newLibraryPublishCmd(e *libEnv) *cobra.Command {
 			"version of that item; --new always creates a new item. Items are private unless --public.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			kind, local := args[0], args[1]
+			kind, local := library.NormalizeKind(args[0]), args[1]
 			if !library.ValidKind(kind) {
 				return errInvalidInput("kind must be workflow, automation or org, not %q", kind)
 			}

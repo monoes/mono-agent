@@ -146,6 +146,7 @@ func newLibraryListCmd(e *libEnv) *cobra.Command {
 		Short: "List library items (official and public by default; --scope mine for your own)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			q.Kind = library.NormalizeKind(q.Kind)
 			if q.Kind != "" && !library.ValidKind(q.Kind) {
 				return errInvalidInput("--kind must be workflow, automation or org")
 			}
@@ -225,7 +226,11 @@ func newLibraryShowCmd(e *libEnv) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			it, err := c.Get(ctx, args[0])
+			ref := args[0]
+			if k, slug, ok := strings.Cut(ref, "/"); ok {
+				ref = library.NormalizeKind(k) + "/" + slug
+			}
+			it, err := c.Get(ctx, ref)
 			if err != nil {
 				return libErr(err)
 			}
@@ -311,6 +316,7 @@ func newLibraryInstalledCmd(e *libEnv) *cobra.Command {
 		Short: "List what this profile installed from the library",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			kind = library.NormalizeKind(kind)
 			if kind != "" && !library.ValidKind(kind) {
 				return errInvalidInput("--kind must be workflow, automation or org")
 			}

@@ -208,7 +208,7 @@ func TestLibraryInstallAutomationTrust(t *testing.T) {
 		t.Fatalf("hackernews row = %+v", row)
 	}
 
-	f.must(&res, "library", "install", "automation", "producthunt")
+	f.must(&res, "library", "install", "automations", "producthunt") // the plural the web shows
 	if row := automationRow(t, f, "producthunt"); row == nil || row.Trust != automation.TrustImported || row.Library == nil || row.Library.Official {
 		t.Fatalf("community row = %+v", row)
 	}

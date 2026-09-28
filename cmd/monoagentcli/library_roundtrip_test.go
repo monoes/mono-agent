@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/library/libraryfake"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
@@ -197,5 +198,32 @@ func TestLibraryAdoptsSeededBuiltins(t *testing.T) {
 	row = automationRow(t, f, "hackernews")
 	if row.Version != "1.2.0" || row.Source != automation.SourceMonoes || row.Trust != automation.TrustBuiltin || row.PreviousVersion != "1.1.0" {
 		t.Fatalf("updated row = %+v", row)
+	}
+}
+
+// A community fork of an official package keeps the package id but gets
+// another slug: it is never adopted, and replacing the more trusted copy
+// needs confirmation.
+func TestLibraryForkIsNotAdoptedOrSilentlyReplaced(t *testing.T) {
+	f := newLibFixture(t)
+	f.fake.AddUser(&libraryfake.User{ID: "u-eve", Username: "eve", Name: "Eve", Email: "eve@example.com"})
+	f.fake.Add("eve", "automation", "hackernews-2", "HN fork", "public", "1.1.0", pack(t, "hackernews", ""),
+		map[string]any{"automation_id": "hackernews"})
+	var list libList
+	f.must(&list, "library", "list", "--kind", "automations")
+	if len(list.Items) != 1 || list.Items[0].Installed != nil {
+		t.Fatalf("fork = %+v", list.Items)
+	}
+	if row := automationRow(t, f, "hackernews"); row.Library != nil {
+		t.Fatalf("the fork was adopted: %+v", row.Library)
+	}
+	out, err := f.run("library", "install", "automation", "hackernews-2")
+	if exitCodeFor(err) != 3 || !strings.Contains(out, "--replace") {
+		t.Fatalf("fork over the built-in: %v %s", err, out)
+	}
+	var res libInstallResult
+	f.must(&res, "library", "install", "automations/hackernews-2", "--replace")
+	if res.LocalID != "hackernews" || res.Trust != automation.TrustImported {
+		t.Fatalf("fork install = %+v", res)
 	}
 }

@@ -40,6 +40,17 @@ const (
 // OfficialOwner is the username that publishes official items.
 const OfficialOwner = "monoes"
 
+// NormalizeKind maps the plural forms monoes.me shows ("automations",
+// "workflows", "orgs") to the kind; anything else is returned as is.
+func NormalizeKind(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	switch k {
+	case "workflows", "automations", "orgs":
+		return strings.TrimSuffix(k, "s")
+	}
+	return k
+}
+
 // ValidKind reports whether k is a library kind.
 func ValidKind(k string) bool {
 	return k == KindWorkflow || k == KindAutomation || k == KindOrg

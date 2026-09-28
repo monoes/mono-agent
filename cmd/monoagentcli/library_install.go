@@ -43,7 +43,7 @@ type libInstallResult struct {
 func newLibraryInstallCmd(e *libEnv) *cobra.Command {
 	var o libInstallOptions
 	cmd := &cobra.Command{
-		Use:   "install <workflow|automation|org> <id | slug>",
+		Use:   "install <workflow|automation|org> <id | slug>  (or <kind>/<slug>)",
 		Short: "Download a library item, verify its sha256 and install it into this profile",
 		Long: "Downloads the item's artifact, checks it against the sha256 the library reports, and hands " +
 			"it to the matching local install:\n" +
@@ -51,9 +51,16 @@ func newLibraryInstallCmd(e *libEnv) *cobra.Command {
 			"  workflow    workflow import into the active profile, installing automations bundled in it\n" +
 			"  org         the active profile's org folder; an org of the same name needs --rename <new> or --yes (replace)\n\n" +
 			"Where the item came from is recorded, so `library update` can install newer versions.",
-		Args: cobra.ExactArgs(2),
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			kind, ref := args[0], args[1]
+			if len(args) == 1 { // "automations/instagram", as a library page's URL names it
+				k, slug, ok := strings.Cut(args[0], "/")
+				if !ok {
+					return errInvalidInput("usage: library install <workflow|automation|org> <id | slug>")
+				}
+				args = []string{k, k + "/" + slug}
+			}
+			kind, ref := library.NormalizeKind(args[0]), args[1]
 			if !library.ValidKind(kind) {
 				return errInvalidInput("kind must be workflow, automation or org, not %q", kind)
 			}
@@ -87,6 +94,9 @@ func newLibraryInstallCmd(e *libEnv) *cobra.Command {
 func resolveItem(ctx context.Context, c *library.Client, kind, ref string) (*library.Item, error) {
 	var it *library.Item
 	var err error
+	if k, slug, ok := strings.Cut(ref, "/"); ok {
+		ref = library.NormalizeKind(k) + "/" + slug // "automations/instagram" as the web shows it
+	}
 	if !strings.Contains(ref, "/") {
 		it, err = c.Get(ctx, kind+"/"+ref)
 	}
