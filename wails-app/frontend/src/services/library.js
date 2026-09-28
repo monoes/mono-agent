@@ -32,6 +32,12 @@ export function onLibraryLogin(callback) {
   return subscribeEvent('library:login', callback)
 }
 
+// A call refused because this profile is not logged in to monoes.me, or its
+// login expired and could not be refreshed: every library read needs one.
+export function isLoginRequired(res) {
+  return !!res?.error && (res.login_required === true || /^Log in to monoes\.me first/.test(res.error))
+}
+
 // An org install refused because the name is taken: the CLI says so with
 // invalid_input and names the --rename way out.
 export function isNameCollision(res) {

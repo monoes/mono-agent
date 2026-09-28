@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BadgeCheck, Download, Loader, RefreshCw } from 'lucide-react'
-import { library, isNameCollision } from '../../services/library.js'
+import { library, isNameCollision, isLoginRequired } from '../../services/library.js'
 
 const mono = { fontFamily: 'var(--font-mono)' }
 
@@ -16,7 +16,7 @@ function Tag({ children, color = 'var(--text-muted)' }) {
   )
 }
 
-export default function LibraryItemCard({ item, kind, onInstalled }) {
+export default function LibraryItemCard({ item, kind, onInstalled, onLoginRequired }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -35,6 +35,7 @@ export default function LibraryItemCard({ item, kind, onInstalled }) {
     // the click itself.
     const res = await library.install(kind, item.id, { yes: update, ...opts })
     setBusy(false)
+    if (isLoginRequired(res) && onLoginRequired) { onLoginRequired(); return }
     if (isNameCollision(res)) {
       setCollision({ name: item.slug || item.name })
       setRename(`${item.slug || 'org'}-2`)

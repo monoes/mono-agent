@@ -547,6 +547,15 @@
       "automation": "Web automations from monoes.me",
       "org": "Org templates from monoes.me"
     },
+    "gate": {
+      "title": "Log in to monoes to browse the library",
+      "body": {
+        "workflow": "Workflow templates on monoes.me, the official ones included, are for people with a monoes account. Log in to browse them and add them here.",
+        "automation": "Web automations on monoes.me, the official ones included, are for people with a monoes account. Log in to browse them and add them here.",
+        "org": "Org templates on monoes.me, the official ones included, are for people with a monoes account. Log in to browse them and add them here."
+      },
+      "expired": "Your monoes session has expired. Log in again to keep browsing."
+    },
     "tabs": {
       "official": "Official",
       "community": "Community",
@@ -556,7 +565,6 @@
     "loading": "Loading…",
     "empty": "Nothing here yet.",
     "emptyMine": "You have not published anything of this kind yet.",
-    "mineLoginPrompt": "Log in to see what you have published.",
     "loadMore": "Load more",
     "retry": "Retry",
     "close": "Close",
@@ -582,7 +590,7 @@
     "workflowMore": "More templates on monoes.me",
     "automationsEmpty": {
       "title": "No web automations installed",
-      "body": "Web automations now come from monoes.me. Log in and add the ones you need."
+      "body": "Web automations now come from monoes.me. Log in to monoes to browse them and add the ones you need."
     },
     "publish": {
       "button": "Publish to monoes",
