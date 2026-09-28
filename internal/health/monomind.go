@@ -270,8 +270,8 @@ func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
 	}
 	// Not a capability but a version: older releases fail to index most
 	// pages saved from the browser, so "Ask your brain" finds nothing.
-	if !monomind.CaptureIndexingSupported(vi.Version) {
-		missing = append(missing, fmt.Sprintf("monomind %s or later — indexing pages saved from the browser "+
+	if !monomind.CaptureIndexingSupported(vi.Version, vi.HasCapability(monomind.CapKnowledgeProfileCaptures)) {
+		missing = append(missing, fmt.Sprintf("monomind %s or newer — indexing pages saved from the browser "+
 			"(any page with a ? in its URL, e.g. every YouTube video) and their transcripts and summaries, "+
 			"so \"Ask your brain\" and chat can find them", monomind.CaptureCompanionsVersion))
 	}

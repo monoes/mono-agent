@@ -90,8 +90,8 @@ func IngestCapture(ctx context.Context, profileID, path string) error {
 		// The most common cause is a monomind that predates capture
 		// indexing; say so on the row rather than leave "all chunk stores
 		// failed" to be decoded.
-		if set, capErr := Capabilities(ctx); capErr == nil && set != nil && !CaptureIndexingSupported(set.Version) {
-			return fmt.Errorf("monomind.IngestCapture: %w (monomind %s cannot index every saved page; update to %s or later: npm install -g @monoes/monomindcli@latest)",
+		if set, capErr := Capabilities(ctx); capErr == nil && set != nil && !CaptureIndexingSupported(set.Version, set.Has(CapKnowledgeProfileCaptures)) {
+			return fmt.Errorf("monomind.IngestCapture: %w (monomind %s cannot index every saved page; update to %s or newer: npm install -g @monoes/monomindcli@latest)",
 				err, set.Version, CaptureCompanionsVersion)
 		}
 		return fmt.Errorf("monomind.IngestCapture: %w", err)
@@ -361,6 +361,11 @@ func runKnowledgeSearch(ctx context.Context, bin, monomindDir string, params map
 // URL has a query string (every YouTube video): "all chunk stores failed".
 const CaptureCompanionsVersion = "2.18.3"
 
+// CapKnowledgeProfileCaptures is advertised by monomind releases after
+// 2.18.3 that ingest browser captures fully (see CaptureCompanionsVersion).
+// Either it or the version is enough.
+const CapKnowledgeProfileCaptures = "knowledge-profile-captures"
+
 // SupportsCaptureCompanions reports whether the installed monomind can take
 // a capture's companion documents. False when monomind is missing or its
 // version cannot be read.
@@ -369,11 +374,13 @@ func SupportsCaptureCompanions(ctx context.Context) bool {
 	if err != nil || set == nil {
 		return false
 	}
-	return CaptureIndexingSupported(set.Version)
+	return CaptureIndexingSupported(set.Version, set.Has(CapKnowledgeProfileCaptures))
 }
 
-// CaptureIndexingSupported reports whether monomind version can index
-// every browser capture (CaptureCompanionsVersion), for `doctor`.
-func CaptureIndexingSupported(version string) bool {
-	return versionAtLeast(version, CaptureCompanionsVersion)
+// CaptureIndexingSupported reports whether a monomind can index every
+// browser capture: it advertises CapKnowledgeProfileCaptures, or its
+// version is CaptureCompanionsVersion or later (2.18.3 has the fix but not
+// the capability).
+func CaptureIndexingSupported(version string, hasCapability bool) bool {
+	return hasCapability || versionAtLeast(version, CaptureCompanionsVersion)
 }
