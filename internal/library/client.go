@@ -185,16 +185,17 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, conte
 	if err != nil || resp.StatusCode != http.StatusUnauthorized || tok == nil {
 		return resp, err
 	}
-	resp.Body.Close()
 	if tok.RefreshToken != "" {
 		if nt, rerr := c.refresh(ctx, tok); rerr == nil {
+			resp.Body.Close()
 			return send(nt)
 		}
 	}
 	if mode == authOptional {
+		resp.Body.Close()
 		return send(nil)
 	}
-	return send(tok) // the 401 again, for the caller's error
+	return resp, nil // the 401, for the caller's error
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, mode authMode, out any) error {
