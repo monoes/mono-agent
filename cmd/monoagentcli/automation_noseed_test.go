@@ -67,8 +67,8 @@ func TestAutomationPreviouslySeededBuiltinsSurvive(t *testing.T) {
 			t.Errorf("%s after upgrade = %+v (present %v), want an enabled built-in", id, a, ok)
 		}
 	}
-	if a := byID["hackernews"]; !a.Available {
-		t.Errorf("hackernews unavailable after upgrade: %+v", a)
+	if a := byID["gemini"]; !a.Available { // standard tier: available in every build
+		t.Errorf("gemini unavailable after upgrade: %+v", a)
 	}
 }
 

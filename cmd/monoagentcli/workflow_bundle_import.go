@@ -120,7 +120,7 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 		if info, ok := known[id]; ok {
 			item.Status, item.InstalledVersion = "present", info.Version
 			if info.Removed {
-				item.Status, item.Error = "conflict", "a removed built-in has this id; restore it with `automation restore`"
+				item.Status, item.Error = "conflict", "a removed built-in has this id; reinstall it from monoes.me with `monoagentcli library install automation "+id+"`"
 			} else if info.Version == b.Version {
 				checkDiffers(reg, id, b, o, &item)
 			}

@@ -222,6 +222,18 @@ scaffolds a full package tree from `data/automation-templates/<name>/`.
 
 ### 5.1 Storage
 
+> **Amended 2026-09-28 (monoes.me library, v0.85.0).** The built-ins are no
+> longer embedded or seeded. Their source moved to `automations/<id>` at the
+> repo root and they are published as **official items on monoes.me**; users
+> install them with `monoagentcli library install automation <id>` (official
+> items get the trust the built-ins had). Startup only folds legacy
+> `~/.monoagent/actions/<p>` directories (`Registry.FoldLegacy`). Packages an
+> earlier version seeded stay installed and keep working (`source: builtin`
+> in `index.json`); `automation restore` now points at the library.
+> `make library-official` packs the official artifacts. The seeding rules
+> below describe the behaviour up to v0.84.
+
+
 ```
 ~/.monoagent/automations/
 ├── index.json                       # installed set: id → {version, source, enabled, sha256, installedAt, trust}
@@ -269,7 +281,7 @@ monoagentcli automation pack <dir> [-o file.mpkg]       # directory → package
 monoagentcli automation install <file.mpkg|dir|url> [--yes]           # also updates an installed package
 monoagentcli automation export <id> [-o file] [--actions a,b] [--with-recordings] [--with-selectors-cache]
 monoagentcli automation uninstall <id> | enable <id> | disable <id> | rollback <id>
-monoagentcli automation restore <id>                     # reinstall a removed built-in from the shipped seed
+monoagentcli automation restore <id>                     # (≤ v0.84) reinstall a removed built-in; now: library install automation <id>
 monoagentcli automation doctor [<id>]                    # selector health, missing native bots, login state
 
 monoagentcli action export <id>.<action> [-o file.mpkg]  # single action, packaged with its deps

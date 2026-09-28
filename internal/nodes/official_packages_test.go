@@ -40,14 +40,14 @@ func TestBootAutomations_KeepsPreviouslySeededBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := reg.Info("hackernews")
+	info, err := reg.Info("gemini")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Source != automation.SourceBuiltin || !info.Enabled || !info.Available {
-		t.Fatalf("hackernews after boot = %+v", info)
+		t.Fatalf("gemini after boot = %+v", info)
 	}
-	if _, err := action.CurrentDefSource().Load("hackernews", "list_comments"); err != nil {
-		t.Fatalf("load hackernews/list_comments through the booted registry: %v", err)
+	if _, err := action.CurrentDefSource().Load("gemini", "generate_text"); err != nil {
+		t.Fatalf("load gemini/generate_text through the booted registry: %v", err)
 	}
 }
