@@ -274,7 +274,54 @@
     return /[.!?]$/.test(first) ? first : `${first}.`;
   }
 
+  /**
+   * askStatus is the line under "Ask your brain" once an answer is back:
+   * how many passages, or — when there are none — WHY, from the profile's
+   * brain status (doc.ask's `brain`). An empty answer used to read the same
+   * whether nothing was saved, the saves were still being indexed, or
+   * indexing had failed, and only the first of those is "no match".
+   *
+   * Returns {text, tone} with tone "" | "warn". `profileName` is what the
+   * header calls the profile ("" for the shared inbox).
+   */
+  function askStatus(answer, profileName) {
+    const answers = (answer && answer.answers) || [];
+    const brain = answer && answer.brain;
+    const where = profileName ? ` in ${profileName}` : "";
+    const plural = (n, one, many) => (n === 1 ? one : many);
+    const pendingLine = (n) =>
+      `${n} ${plural(n, "page is", "pages are")} still being indexed — ask again in a few seconds.`;
+
+    if (answers.length) {
+      const text = plural(answers.length, "1 passage", `${answers.length} passages`);
+      if (brain && brain.pending > 0) return { text: `${text}. ${pendingLine(brain.pending)}`, tone: "" };
+      return { text, tone: "" };
+    }
+    if (!brain) return { text: "Nothing in your captures matches that yet.", tone: "" };
+    if (brain.captures === 0) {
+      return { text: `Nothing saved${where} yet. Save a page, then ask about it.`, tone: "" };
+    }
+    if (brain.pending > 0) return { text: pendingLine(brain.pending), tone: "" };
+    if (brain.indexed === 0 && brain.failed > 0) {
+      const why = brain.lastError ? ` (${brain.lastError})` : "";
+      return {
+        text:
+          `${plural(brain.failed, "Your saved page", `Your ${brain.failed} saved pages`)}${where} could not be indexed${why}. ` +
+          "Run `monoagentcli profile documents index --all` to retry.",
+        tone: "warn",
+      };
+    }
+    if (brain.failed > 0) {
+      return {
+        text: `Nothing matches that yet — and ${brain.failed} saved ${plural(brain.failed, "page", "pages")} could not be indexed.`,
+        tone: "warn",
+      };
+    }
+    return { text: `Nothing in your captures${where} matches that yet.`, tone: "" };
+  }
+
   root.MonoPanelView = {
+    askStatus,
     describeTab,
     tabChange,
     describeProfiles,

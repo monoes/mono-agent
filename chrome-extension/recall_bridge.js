@@ -31,10 +31,72 @@
   function install(d) {
     deps = d;
     root.MonoAsk.install({ send: d.send, isConnected: d.isConnected });
-    root.MonoSaved.install({ ask: root.MonoAsk.request, badge: paintBadge });
+    // "Already saved" is asked about the profile captures are being saved
+    // into, so every lookup carries it.
+    root.MonoSaved.install({
+      ask: async (method, params, opts) =>
+        root.MonoAsk.request(method, withProfile(params, await stickyProfile()), opts),
+      badge: paintBadge,
+    });
     registerTabs();
     registerMessages();
     registerCommands();
+    registerProfileChanges();
+  }
+
+  // ── Which brain a question is about ──────────────────────────────
+
+  // Captures saved into a profile are searchable from that profile only, so
+  // every recall question names the profile the side panel is "Saving
+  // into". capture_profile.js owns that choice; the key is read here
+  // directly because this group also runs without it (tests, and a worker
+  // that failed to load it), in which case no profile is sent and the
+  // backend answers from the shared brain, as before profiles existed.
+  const PROFILE_KEY = "captureProfile";
+
+  function validProfile(id) {
+    if (root.MonoCaptureProfile) return root.MonoCaptureProfile.isValidProfileId(id);
+    const v = typeof id === "string" ? id.trim() : "";
+    return !!v && !v.includes("/") && !v.includes("\\") && !v.includes("..");
+  }
+
+  /** stickyProfile is the remembered "Saving into" choice, or "". */
+  async function stickyProfile() {
+    try {
+      const got = (await storage().get(PROFILE_KEY)) || {};
+      const id = got[PROFILE_KEY];
+      return validProfile(id) ? id.trim() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** profileFor prefers the profile a message names (the side panel sends
+   *  the one it shows, "" included for the shared inbox) over the stored
+   *  one, which is what the badge path and older panels rely on. */
+  async function profileFor(msg) {
+    if (msg && typeof msg.profile === "string") {
+      return validProfile(msg.profile) ? msg.profile.trim() : "";
+    }
+    return stickyProfile();
+  }
+
+  /** withProfile adds `profile` to a request's params when there is one;
+   *  no profile leaves the params exactly as they were. */
+  function withProfile(params, profile) {
+    return profile ? Object.assign({}, params, { profile }) : params;
+  }
+
+  /** A new "Saving into" choice changes every "already saved" answer: the
+   *  cache belongs to the old profile, so it goes, and the tab in front is
+   *  asked again. */
+  function registerProfileChanges() {
+    if (!chrome.storage || !chrome.storage.onChanged) return;
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local" || !changes[PROFILE_KEY]) return;
+      root.MonoSaved.reset();
+      checkActiveTab();
+    });
   }
 
   /**
@@ -170,7 +232,7 @@
     ask_brain: async (msg) => {
       const answer = await root.MonoAsk.request(
         "doc.ask",
-        { q: msg.q, limit: msg.limit || 4 },
+        withProfile({ q: msg.q, limit: msg.limit || 4 }, await profileFor(msg)),
         {
           timeoutMs: 40000,
           idleTimeoutMs: 15000,
@@ -185,7 +247,10 @@
 
     ask_related: async (msg) => ({
       ok: true,
-      related: await root.MonoAsk.request("doc.related", { url: msg.url, limit: msg.limit || 3 }),
+      related: await root.MonoAsk.request(
+        "doc.related",
+        withProfile({ url: msg.url, limit: msg.limit || 3 }, await profileFor(msg))
+      ),
     }),
 
     ask_ready: async () => ({ ok: true, methods: await root.MonoAsk.probe() }),

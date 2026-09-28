@@ -168,6 +168,16 @@
 
   // ── RCL-05: ask your brain ───────────────────────────────────────
 
+  /** savingInto is the profile the header shows ("Saving into"), from
+   *  sidepanel.js's own state: {id, name}, with id "" for the shared
+   *  inbox. Before the header has drawn it is empty, and the worker falls
+   *  back to the stored choice. */
+  function savingInto() {
+    // eslint-disable-next-line no-undef
+    const shown = typeof profiles !== "undefined" && profiles ? profiles.current : null;
+    return shown ? { id: shown.id || "", name: shown.id ? shown.name || "" : "" } : { id: undefined, name: "" };
+  }
+
   function drawAnswer(answer) {
     const box = document.createElement("div");
     box.className = "answer";
@@ -212,21 +222,24 @@
     askStatus.textContent = "asking…";
     askBtn.disabled = true;
 
-    const reply = await ask({ type: "ask_brain", q, limit: 4 });
+    // Asked of the profile the header says pages are being saved into: a
+    // page saved into work is only searchable from work.
+    const dest = savingInto();
+    const reply = await ask({ type: "ask_brain", q, limit: 4, profile: dest.id });
     askBtn.disabled = false;
 
     if (!reply || reply.ok === false) {
       // "unavailable" is an absence, not a failure: monomind is not
       // installed, or the bridge is down. Said plainly either way.
       askStatus.textContent = reply && reply.error ? reply.error : "no answer";
+      delete askStatus.dataset.tone;
       return;
     }
     const answers = (reply.answer && reply.answer.answers) || [];
-    if (!answers.length) {
-      askStatus.textContent = "Nothing in your captures matches that yet.";
-      return;
-    }
-    askStatus.textContent = answers.length === 1 ? "1 passage" : `${answers.length} passages`;
+    const status = globalThis.MonoPanelView.askStatus(reply.answer, dest.name);
+    askStatus.textContent = status.text;
+    if (status.tone) askStatus.dataset.tone = status.tone;
+    else delete askStatus.dataset.tone;
     for (const answer of answers) askAnswers.appendChild(drawAnswer(answer));
     for (const warning of (reply.answer && reply.answer.warnings) || []) {
       const note = document.createElement("div");

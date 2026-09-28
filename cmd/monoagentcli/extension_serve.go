@@ -148,6 +148,7 @@ func runExtensionServe(ctx context.Context, out io.Writer) error {
 	srv := newExtensionServer(newBridgeServeLogger())
 	summaries := installCaptureSummaries(srv, narrateLogf(out))
 	defer summaries.Close()
+	summaries.sweepIndexAfter(ctx, captureIndexStartupDelay)
 	errCh := srv.StartAsync(ctx)
 	defer srv.Close() //nolint:errcheck
 

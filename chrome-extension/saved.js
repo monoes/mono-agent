@@ -244,6 +244,13 @@
     });
   }
 
+  /** reset drops every cached answer, for a change that makes them all
+   *  wrong at once: a different profile to ask about. Pending debounces
+   *  are left to finish; they ask with whatever profile is current then. */
+  function reset() {
+    cache.clear();
+  }
+
   /** invalidate drops a URL from the cache without asking anything — for a
    *  capture that landed in some other tab. */
   function invalidate(rawUrl) {
@@ -257,6 +264,7 @@
     forget,
     capturedNow,
     invalidate,
+    reset,
     identityUrl,
     capturable,
     savedTitle,

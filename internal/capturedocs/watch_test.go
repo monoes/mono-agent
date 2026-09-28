@@ -61,3 +61,19 @@ func TestWatcher_FiresOnANewCapture(t *testing.T) {
 		t.Fatal("watcher did not notice a new capture")
 	}
 }
+
+func TestInboxSignatureSeesIndexStamp(t *testing.T) {
+	root := t.TempDir()
+	inbox := filepath.Join(root, "inbox")
+	if err := os.MkdirAll(inbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := capturedocs.InboxSignature(inbox)
+	if err := os.WriteFile(filepath.Join(root, capturedocs.IndexStampFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := capturedocs.InboxSignature(inbox)
+	if before == after {
+		t.Fatal("an indexing pass must change the signature, so the Documents list refreshes")
+	}
+}
