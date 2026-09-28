@@ -147,6 +147,9 @@ if [ "$1" = "mcp" ] && [ "$2" = "exec" ]; then
   # here so a regression in the client's JSON-extraction robustness (it
   # must locate the balanced {...} object, not assume out is pure JSON)
   # fails a test instead of only surfacing in a real environment.
+  # FAKE_MCP_LOG records each call (tool, params, working directory) so a
+  # test can check which store was asked for.
+  if [ -n "$FAKE_MCP_LOG" ]; then printf '%s\t%s\t%s\t%s\n' "$tool" "$params" "$(pwd)" "$MONOMIND_CWD" >> "$FAKE_MCP_LOG"; fi
   echo "  Parameters: $params"
   echo ""
   echo "[OK] Tool executed in 0.42ms"
@@ -169,6 +172,17 @@ if [ "$1" = "mcp" ] && [ "$2" = "exec" ]; then
       exit 0
       ;;
     knowledge_search)
+      case "$params" in
+        *'"scope":"profile:'*)
+          # A profile's capture store (scope profile:<id>).
+          if [ "$SEARCH_CAPTURES_FAIL" = "1" ]; then
+            echo "fake-monomind: capture store unavailable" >&2
+            exit 1
+          fi
+          echo '{"tool":"knowledge_search","result":{"content":[{"type":"text","text":"{\"success\":true,\"count\":1,\"results\":[{\"kind\":\"excerpt\",\"filePath\":\"/fake/inbox/cap/readable.md\",\"text\":\"A captured page about distributed systems.\",\"similarity\":0.95}]}"}]},"duration":1.0}'
+          exit 0
+          ;;
+      esac
       echo '{"tool":"knowledge_search","result":{"content":[{"type":"text","text":"{\"success\":true,\"count\":2,\"results\":[{\"kind\":\"excerpt\",\"filePath\":\"/fake/resume.txt\",\"text\":\"Experienced backend engineer with 8 years in distributed systems.\",\"similarity\":0.91},{\"kind\":\"rule\",\"key\":\"r1\",\"text\":\"unrelated rule entry\"}]}"}]},"duration":1.0}'
       exit 0
       ;;

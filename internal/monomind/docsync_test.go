@@ -87,6 +87,7 @@ func TestIngestDocumentDetectsToolLevelFailure(t *testing.T) {
 
 func TestSearchKnowledgeReturnsExcerptsOnly(t *testing.T) {
 	setFakeMonomindOnPath(t)
+	t.Setenv("SEARCH_CAPTURES_FAIL", "1") // documents store only
 	db := newDocsyncTestDB(t)
 
 	results, err := monomind.SearchKnowledge(context.Background(), db, "default", "backend engineer")
@@ -104,5 +105,77 @@ func TestSearchKnowledgeReturnsExcerptsOnly(t *testing.T) {
 	}
 	if results[0].Score != 0.91 {
 		t.Fatalf("unexpected score: %v", results[0].Score)
+	}
+}
+
+// TestSearchKnowledgeIncludesProfileCaptures: browser captures live in the
+// profile's own capture store (scope profile:<id>), not in the documents
+// store, so chat search must ask both and merge them by score.
+func TestSearchKnowledgeIncludesProfileCaptures(t *testing.T) {
+	setFakeMonomindOnPath(t)
+	log := filepath.Join(t.TempDir(), "mcp.log")
+	t.Setenv("FAKE_MCP_LOG", log)
+	db := newDocsyncTestDB(t)
+
+	results, err := monomind.SearchKnowledge(context.Background(), db, "work", "distributed systems")
+	if err != nil {
+		t.Fatalf("SearchKnowledge: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("want the capture and the document, got %+v", results)
+	}
+	if results[0].Path != "/fake/inbox/cap/readable.md" || results[1].Path != "/fake/resume.txt" {
+		t.Fatalf("want results merged by score (capture 0.95 first), got %+v", results)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := string(raw)
+	if !strings.Contains(calls, `"scope":"profile:work"`) || !strings.Contains(calls, `"surfaces":["chunks"]`) {
+		t.Fatalf("capture search must name the profile's scope and only the chunk surface; calls:\n%s", calls)
+	}
+	if strings.Contains(calls, `"scope":"profile:default"`) {
+		t.Fatalf("searched another profile's captures:\n%s", calls)
+	}
+}
+
+// TestSearchKnowledgeOneStoreFailing keeps the documents' answers when the
+// capture store cannot be searched, and fails only when both fail.
+func TestSearchKnowledgeOneStoreFailing(t *testing.T) {
+	setFakeMonomindOnPath(t)
+	t.Setenv("SEARCH_CAPTURES_FAIL", "1")
+	db := newDocsyncTestDB(t)
+	results, err := monomind.SearchKnowledge(context.Background(), db, "work", "x")
+	if err != nil || len(results) != 1 {
+		t.Fatalf("want the documents store's result despite the capture store failing, got %+v, %v", results, err)
+	}
+}
+
+func TestIngestCaptureNamesProfileScope(t *testing.T) {
+	setFakeMonomindOnPath(t)
+	log := filepath.Join(t.TempDir(), "mcp.log")
+	t.Setenv("FAKE_MCP_LOG", log)
+
+	if err := monomind.IngestCapture(context.Background(), "work", "/fake/inbox/cap/readable.md"); err != nil {
+		t.Fatalf("IngestCapture: %v", err)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"scope":"profile:work"`) {
+		t.Fatalf("ingest must name the profile's capture scope, got %s", raw)
+	}
+	if err := monomind.IngestCapture(context.Background(), "../x", "/p"); err == nil {
+		t.Fatal("a traversal id must be refused before any exec")
+	}
+}
+
+func TestCaptureScope(t *testing.T) {
+	for id, want := range map[string]string{"work": "profile:work", " a1 ": "profile:a1", "": "", "../x": "", "a/b": ""} {
+		if got := monomind.CaptureScope(id); got != want {
+			t.Errorf("CaptureScope(%q) = %q, want %q", id, got, want)
+		}
 	}
 }
