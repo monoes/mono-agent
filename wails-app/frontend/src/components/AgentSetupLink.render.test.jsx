@@ -142,8 +142,10 @@ describe('AIChatPanel', () => {
     render(<AIChatPanel workflowID="general" isOpen onClose={() => {}} onNavigate={onNavigate} />)
     await screen.findByText('second')
     await waitFor(() => expect(screen.getAllByText('Failed')).toHaveLength(2))
+    // Wait for the settled state: while the runtime list is still loading a
+    // second, transient link can render (seen on slow CI runners).
+    await waitFor(() => expect(screen.getAllByRole('button', { name: ACTION })).toHaveLength(1))
     const buttons = screen.getAllByRole('button', { name: ACTION })
-    expect(buttons).toHaveLength(1)
     fireEvent.click(buttons[0])
     expect(onNavigate).toHaveBeenCalledWith('ai')
   })
