@@ -313,3 +313,49 @@ func TestCoderTurnRefusedOnceDisabled(t *testing.T) {
 		t.Error("a disabled coder turn still ran the agent")
 	}
 }
+
+func TestCoderRootIsOneSharedFolder(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	_, argsLog := writeCoderMonomind(t, "")
+	withCoderCaps(t, monomind.CoderCapabilities...)
+	root := filepath.Join(t.TempDir(), "coder root")
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true, WorkspaceRoot: root})
+
+	out, code := runCoderCLI(t, dbPath, "workspace", "root")
+	var ws coderWorkspace
+	decodeChatJSON(t, out, &ws)
+	if code != 0 || ws.Path != root || !ws.Created || ws.Init == nil {
+		t.Fatalf("workspace root: exit %d %+v", code, ws)
+	}
+	if _, err := exec.LookPath("git"); err == nil && !ws.Git {
+		t.Error("root not git-initialized")
+	}
+	os.WriteFile(filepath.Join(root, "keep.txt"), []byte("mine"), 0o644)
+
+	var convs []ai.ConversationRecord
+	for i := 0; i < 2; i++ {
+		out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "claude", "--mode", "coder", "--coder-root")
+		var rec ai.ConversationRecord
+		decodeChatJSON(t, out, &rec)
+		if code != 0 || rec.Cwd != root {
+			t.Fatalf("create --coder-root: exit %d %+v", code, rec)
+		}
+		convs = append(convs, rec)
+	}
+	if convs[0].ID == convs[1].ID {
+		t.Error("two chats in the root should be two conversations")
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "keep.txt")); string(b) != "mine" {
+		t.Error("existing file in the root changed")
+	}
+	entries, _ := os.ReadDir(filepath.Dir(root))
+	if len(entries) != 1 {
+		t.Errorf("--coder-root must not create folders beside or inside the root: %v", entries)
+	}
+	if logged, _ := os.ReadFile(argsLog); strings.Count(string(logged), "init --project "+root+" --if-missing") != 3 {
+		t.Errorf("init not run on the root each time:\n%s", logged)
+	}
+	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "claude", "--mode", "coder", "--coder-root", "--new-workspace"); code != 3 {
+		t.Errorf("--coder-root with --new-workspace: exit %d %s", code, out)
+	}
+}

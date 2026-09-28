@@ -71,6 +71,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 		mode         string
 		coderCwd     string
 		newWorkspace bool
+		coderRoot    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "chat [prompt]",
@@ -112,7 +113,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				if conversationID == "" || turnID == "" {
 					return errInvalidInput("--conversation and --turn go together")
 				}
-				if runtime != "" || model != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace {
+				if runtime != "" || model != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace || coderRoot {
 					return errInvalidInput("--runtime, --model, --resume, --canvas, --history-id, --mode and --cwd come from the conversation; drop them with --conversation")
 				}
 				jstore, jprofile, closeJournal, err := openChatHistory(cfg)
@@ -156,7 +157,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				if runtime != "" && runtime != coderRuntime {
 					return errInvalidInput("coder mode runs on the %s runtime only (got %q)", coderRuntime, runtime)
 				}
-				dir, err := coderFolder(cmd, cfg, coderCwd, newWorkspace)
+				dir, err := coderFolder(cmd, cfg, coderFolderChoice{cwd: coderCwd, root: coderRoot, newWorkspace: newWorkspace})
 				if err != nil {
 					return err
 				}
@@ -165,8 +166,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			if mode != "" && mode != ai.ModeAssistant {
 				return errInvalidInput("unknown --mode %q (assistant or coder)", mode)
 			}
-			if coderCwd != "" || newWorkspace {
-				return errInvalidInput("--cwd and --new-workspace only apply to --mode coder")
+			if coderCwd != "" || newWorkspace || coderRoot {
+				return errInvalidInput("--cwd, --coder-root and --new-workspace only apply to --mode coder")
 			}
 			if runtime == "" {
 				return fmt.Errorf("--runtime is required (see `agent scan --installed`)")
@@ -529,8 +530,9 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().StringVar(&conversationID, "conversation", "", "Run the turn in this stored conversation (see chat history), journaling its events")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Client-chosen turn id for --conversation; a repeated id never runs twice")
 	cmd.Flags().StringVar(&instanceID, "instance", "", "App instance id recorded as the turn's owner (used with --conversation)")
-	cmd.Flags().StringVar(&mode, "mode", "", "Set to coder for a full-access turn (see the coder command); needs --cwd or --new-workspace")
+	cmd.Flags().StringVar(&mode, "mode", "", "Set to coder for a full-access turn (see the coder command); needs --cwd, --coder-root or --new-workspace")
 	cmd.Flags().StringVar(&coderCwd, "cwd", "", "Coder mode: the folder the agent works in")
+	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
