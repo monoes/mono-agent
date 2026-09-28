@@ -1,6 +1,7 @@
 import { AlertTriangle, Info, AlertCircle, Loader, FolderOpen } from 'lucide-react'
 import { ChatMarkdown } from './ChatMarkdown.jsx'
 import { ToolActivityCard } from './ToolActivityCard.jsx'
+import { CoderBackgroundBanner } from './CoderBackgroundBanner.jsx'
 
 const NOTICE_ICON = {
   info: Info,
@@ -13,11 +14,11 @@ const NOTICE_COLOR = {
   error: '#ef4444',
 }
 
-function NoticeBanner({ notice, testId }) {
+function NoticeBanner({ notice }) {
   const Icon = NOTICE_ICON[notice.severity] || Info
   const color = NOTICE_COLOR[notice.severity] || '#00b4d8'
   return (
-    <div data-testid={testId} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '6px 8px', marginTop: 6, borderRadius: 6, background: `${color}14`, border: `1px solid ${color}40` }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '6px 8px', marginTop: 6, borderRadius: 6, background: `${color}14`, border: `1px solid ${color}40` }}>
       <Icon size={11} color={color} style={{ marginTop: 1, flexShrink: 0 }} />
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color }}>{notice.message}</span>
     </div>
@@ -39,7 +40,7 @@ function NoticeBanner({ notice, testId }) {
 // at the top level. And three notice codes get their own treatment:
 // coder.status (startup progress) is a transient line shown only while the
 // live turn has produced nothing yet, coder.workspace a compact folder
-// line, and coder.background a warning banner.
+// line, and coder.background a warning banner with "Stop all".
 export function ChatTimeline({ state, turnId = '', isLive = true }) {
   const { parts, calls } = state
   const notices = state.notices || []
@@ -93,8 +94,8 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
       )}
       {notices.map((notice, i) => {
         if (notice.code === 'coder.status' || notice.code === 'coder.workspace') return null
-        const background = notice.code === 'coder.background'
-        return <NoticeBanner key={i} notice={background ? { ...notice, severity: 'warning' } : notice} testId={background ? 'coder-background-banner' : undefined} />
+        if (notice.code === 'coder.background') return <CoderBackgroundBanner key={i} notice={notice} />
+        return <NoticeBanner key={i} notice={notice} />
       })}
     </div>
   )

@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
 
-vi.mock('../../services/api.js', () => ({ api: { openURL: vi.fn() } }))
+vi.mock('../../services/api.js', () => ({ api: { openURL: vi.fn(), coderStopBackground: vi.fn() } }))
+import { api } from '../../services/api.js'
 
 import { ChatTimeline } from './ChatTimeline.jsx'
 import { chatReducer, initialChatState } from './chatReducer.js'
@@ -13,7 +14,7 @@ import { diffLines } from './unifiedDiff.js'
 // tool.started {native: true, parentCallId?} / tool.completed {truncated?,
 // durationMs?, denied?, cancelled?} and render as per-tool cards.
 
-afterEach(() => { cleanup() })
+afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 let seq = 0
 function ev(type, payload) {
@@ -86,6 +87,34 @@ describe('native tool cards', () => {
     expect(within(el).getByText('/w/hello.py')).toBeInTheDocument()
     expect(within(el).getByText('2 lines')).toBeInTheDocument()
     expect(within(el).getByText(/print\(1\)/)).not.toBeVisible()
+  })
+
+  it('Write/Edit say whether the file existed (fileExisted), and nothing when unknown', () => {
+    renderEvents(() => [
+      started('w1', 'Write', { file_path: '/w/new.py', content: 'x' }, { fileExisted: false }),
+      started('w2', 'Write', { file_path: '/w/old.py', content: 'y' }, { fileExisted: true }),
+      started('e1', 'Edit', { file_path: '/w/old.py', old_string: 'a', new_string: 'b' }, { fileExisted: true }),
+      started('w3', 'Write', { file_path: '/w/unknown.py', content: 'z' }),
+    ])
+    const [w1, w2, e1, w3] = screen.getAllByTestId('native-tool-card')
+    expect(within(w1).getByTestId('file-state')).toHaveTextContent('new file')
+    expect(within(w2).getByTestId('file-state')).toHaveTextContent('overwrite')
+    expect(within(e1).getByTestId('file-state')).toHaveTextContent('modified')
+    expect(within(w3).queryByTestId('file-state')).not.toBeInTheDocument()
+  })
+
+  it('Bash shows its exit code when known: red on failure', () => {
+    renderEvents(() => [
+      started('b1', 'Bash', { command: 'false' }), completed('b1', { ok: false, result: 'Exit code 1', exitCode: 1 }),
+      started('b2', 'Bash', { command: 'true' }), completed('b2', { exitCode: 0 }),
+      started('b3', 'Bash', { command: 'sleep 60' }), completed('b3', { ok: false, cancelled: true }),
+    ])
+    const [b1, b2, b3] = screen.getAllByTestId('native-tool-card')
+    expect(within(b1).getByTestId('exit-code')).toHaveTextContent('exit 1')
+    expect(within(b1).getByTestId('exit-code').style.color).toBe('rgb(239, 68, 68)')
+    expect(b1).toHaveAttribute('data-status', 'failed')
+    expect(within(b2).getByTestId('exit-code')).toHaveTextContent('exit 0')
+    expect(within(b3).queryByTestId('exit-code')).not.toBeInTheDocument()
   })
 
   it('Read/Glob/Grep render as compact one-liners', () => {
@@ -182,6 +211,28 @@ describe('coder notices', () => {
     ])
     expect(screen.getByTestId('coder-workspace-line')).toHaveTextContent('Working in /w/20260927-brisk-otter')
     expect(screen.getByTestId('coder-background-banner')).toHaveTextContent('2 background processes still running: 1234, 5678')
+  })
+
+  it('"Stop all" stops that turn\'s background processes and shows what happened', async () => {
+    api.coderStopBackground.mockResolvedValue({ stopped: [1234], gone: [5678], refused: [] })
+    renderEvents(() => [ev('notice', { code: 'coder.background', message: '2 background processes still running: 1234, 5678', severity: 'warning', pids: [1234, 5678] })])
+    fireEvent.click(screen.getByRole('button', { name: /Stop all/ }))
+    expect(await screen.findByTestId('coder-background-result')).toHaveTextContent('Stopped 1 process · 1 had already exited')
+    expect(api.coderStopBackground).toHaveBeenCalledWith('c1', 't1')
+    expect(screen.queryByRole('button', { name: /Stop all/ })).not.toBeInTheDocument()
+  })
+
+  it('"Stop all" reports refused pids and errors', async () => {
+    api.coderStopBackground.mockResolvedValueOnce({ stopped: [], gone: [], refused: [99] })
+    renderEvents(() => [ev('notice', { code: 'coder.background', message: '1 background process still running: 99', severity: 'warning', pids: [99] })])
+    fireEvent.click(screen.getByRole('button', { name: /Stop all/ }))
+    expect(await screen.findByTestId('coder-background-result')).toHaveTextContent("1 not stopped (no longer this turn's: 99)")
+    cleanup()
+    api.coderStopBackground.mockRejectedValueOnce(new Error('unknown command "stop-background"'))
+    renderEvents(() => [ev('notice', { code: 'coder.background', message: '1 background process still running: 7', severity: 'warning', pids: [7] })])
+    fireEvent.click(screen.getByRole('button', { name: /Stop all/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not stop them: unknown command "stop-background"')
+    expect(screen.getByRole('button', { name: /Stop all/ })).not.toBeDisabled()
   })
 })
 

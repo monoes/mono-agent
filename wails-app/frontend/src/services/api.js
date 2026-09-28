@@ -181,6 +181,9 @@ export const api = {
   // budgetUsd 0 clears the per-turn budget; see coderSetArgs (app_coder.go).
   coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
     GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
+  // {stopped, gone, refused} pids of a turn's leftover background processes.
+  coderStopBackground: (conversationID, turnID) =>
+    GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
   coderWorkspaceNew:  () => GoApp.CoderWorkspaceNew().then(parseStreamResult),
   coderWorkspaceList: () => GoApp.CoderWorkspaceList().then(parseStreamResult),
   createCoderConversation: (runtimeID, model, cwd, newWorkspace = false) =>

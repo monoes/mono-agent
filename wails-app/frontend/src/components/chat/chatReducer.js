@@ -35,6 +35,7 @@ function completionFlags(payload) {
   if (payload.denied) flags.denied = true
   if (payload.cancelled) flags.cancelled = true
   if (typeof payload.durationMs === 'number' && payload.durationMs > 0) flags.durationMs = payload.durationMs
+  if (typeof payload.exitCode === 'number') flags.exitCode = payload.exitCode // Bash, when known
   return flags
 }
 
@@ -67,6 +68,9 @@ function eventPatch(state, ev) {
           // calls keep their exact shape.
           ...(payload.native ? { native: true } : {}),
           ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
+          // Write/Edit: whether file_path existed when the call started
+          // ("new file" vs "overwrite"); absent when unknown.
+          ...(typeof payload.fileExisted === 'boolean' ? { fileExisted: payload.fileExisted } : {}),
         },
       }
       return { calls, parts: [...state.parts, { kind: 'tool', callId: payload.callId }] }
@@ -112,8 +116,15 @@ function eventPatch(state, ev) {
         },
       }
 
-    case 'notice':
-      return { notices: [...state.notices, { code: payload.code, message: payload.message, severity: payload.severity }] }
+    case 'notice': {
+      const notice = { code: payload.code, message: payload.message, severity: payload.severity }
+      // A coder turn's leftover background processes: keep the pids and the
+      // turn they belong to, which "Stop all" needs.
+      if (payload.code === 'coder.background') {
+        Object.assign(notice, { pids: Array.isArray(payload.pids) ? payload.pids : [], conversationId: ev.conversationId, turnId: ev.turnId })
+      }
+      return { notices: [...state.notices, notice] }
+    }
 
     case 'turn.finished':
       return {

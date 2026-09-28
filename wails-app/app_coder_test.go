@@ -153,3 +153,15 @@ func TestChatTurnArgs_CoderTurnHasNoToolsFlag(t *testing.T) {
 		t.Errorf("chatTurnArgs = %q\nwant %q", got, want)
 	}
 }
+
+func TestApp_CoderStopBackground_ShellsOut(t *testing.T) {
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "coder stop-background", stdout: `{"stopped":[41822],"gone":[41830],"refused":[]}` + "\n"})
+	a, _ := newCLIChatApp(t, bin)
+	if got := a.CoderStopBackground("conv-1", "turn-1"); got != `{"stopped":[41822],"gone":[41830],"refused":[]}` {
+		t.Errorf("CoderStopBackground = %s", got)
+	}
+	want := "--profile default --json coder stop-background --conversation conv-1 --turn turn-1"
+	if got := readArgsLog(t, argsLog); len(got) != 1 || got[0] != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}

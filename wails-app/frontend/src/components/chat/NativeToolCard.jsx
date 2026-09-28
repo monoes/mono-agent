@@ -103,6 +103,17 @@ export function DiffView({ oldText, newText }) {
   )
 }
 
+// fileTags labels a Write/Edit by whether its file existed when the call
+// started (tool.started's fileExisted, absent when unknown): "new file",
+// else existingLabel ("overwrite" for Write, "modified" for Edit).
+function fileTags(call, existingLabel) {
+  if (call.fileExisted === false) return [<Tag key="nf" testId="file-state" color="#86efac">new file</Tag>]
+  if (call.fileExisted === true) {
+    return [<Tag key="ex" testId="file-state" color={existingLabel === 'overwrite' ? '#fbbf24' : '#94a3b8'}>{existingLabel}</Tag>]
+  }
+  return []
+}
+
 function editPairs(name, args) {
   if (name === 'MultiEdit') return Array.isArray(args.edits) ? args.edits : []
   return [{ old_string: args.old_string, new_string: args.new_string }]
@@ -116,7 +127,12 @@ function describe(call, args, childCalls, renderChild) {
     case 'Bash':
       return {
         icon: Terminal, title: `$ ${args.command ?? ''}`, titleMono: true, subtitle: args.description,
-        tags: args.run_in_background ? [<Tag key="bg" color="#fbbf24">background</Tag>] : [],
+        tags: [
+          ...(args.run_in_background ? [<Tag key="bg" color="#fbbf24">background</Tag>] : []),
+          ...(typeof call.exitCode === 'number'
+            ? [<Tag key="exit" testId="exit-code" color={call.exitCode === 0 ? '#94a3b8' : '#ef4444'}>{`exit ${call.exitCode}`}</Tag>]
+            : []),
+        ],
         body: <ResultSection call={call} />,
       }
     case 'Edit':
@@ -130,6 +146,7 @@ function describe(call, args, childCalls, renderChild) {
         icon: FilePen, title: args.file_path, titleMono: true, defaultOpen: true,
         tags: [
           <Tag key="st" color="#94a3b8">{`+${stats.added} −${stats.removed}`}</Tag>,
+          ...fileTags(call, 'modified'),
           ...(args.replace_all ? [<Tag key="ra">replace all</Tag>] : []),
         ],
         body: (
@@ -147,7 +164,7 @@ function describe(call, args, childCalls, renderChild) {
         icon: FilePlus, title: args.file_path, titleMono: true,
         tags: [
           <Tag key="lines" color="#94a3b8">{`${lineCount} line${lineCount === 1 ? '' : 's'}`}</Tag>,
-          ...(args.overwrite === true ? [<Tag key="ow" color="#fbbf24">overwrite</Tag>] : args.overwrite === false ? [<Tag key="nf" color="#86efac">new file</Tag>] : []),
+          ...fileTags(call, 'overwrite'),
         ],
         body: (
           <>

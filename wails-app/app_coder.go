@@ -119,6 +119,13 @@ func (a *App) CoderWorkspaceNew() string { return a.coderResult("coder", "worksp
 // first.
 func (a *App) CoderWorkspaceList() string { return a.coderResult("coder", "workspace", "list") }
 
+// CoderStopBackground stops the background processes a coder turn left
+// running (its coder.background notice): {stopped, gone, refused} pids. The
+// CLI only touches pids that turn reported and that still carry its marker.
+func (a *App) CoderStopBackground(conversationID, turnID string) string {
+	return a.coderResult("coder", "stop-background", "--conversation", conversationID, "--turn", turnID)
+}
+
 // coderConversationArgs builds `chat history create` for a coder
 // conversation: either in cwd, or (newWorkspace) in a folder the CLI
 // creates. Coder chats belong to the general assistant's history.

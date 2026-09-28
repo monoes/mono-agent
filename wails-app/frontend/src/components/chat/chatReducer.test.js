@@ -212,4 +212,19 @@ describe('chatReducer', () => {
     expect(state.calls.orphan.cancelled).toBe(true)
     expect(Object.keys(state.calls.plain).sort()).toEqual(['arguments', 'callId', 'name', 'ok', 'result', 'startedAt', 'status'])
   })
+
+  it('keeps fileExisted, exitCode and a coder.background notice\'s pids and turn', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'w', name: 'Write', arguments: {}, native: true, fileExisted: false }, 1),
+      ev('tool.started', { callId: 'b', name: 'Bash', arguments: {}, native: true }, 2),
+      ev('tool.completed', { callId: 'b', ok: false, result: 'Exit code 2', exitCode: 2 }, 3),
+      ev('notice', { code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8] }, 4),
+      ev('notice', { code: 'other', message: 'n', severity: 'info' }, 5),
+    )
+    expect(state.calls.w.fileExisted).toBe(false)
+    expect(state.calls.b.fileExisted).toBeUndefined()
+    expect(state.calls.b.exitCode).toBe(2)
+    expect(state.notices[0]).toEqual({ code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8], conversationId: 'conv-1', turnId: 'turn-1' })
+    expect(state.notices[1]).toEqual({ code: 'other', message: 'n', severity: 'info' })
+  })
 })
