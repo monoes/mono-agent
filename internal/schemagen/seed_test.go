@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
@@ -254,7 +255,7 @@ func checkPackage(t *testing.T, p pkgFiles, strictActions bool) (*automation.Man
 }
 
 func TestBuiltinPackages(t *testing.T) {
-	pkgs := readPackages(t, data.AutomationsFS, "automations", nil)
+	pkgs := readPackages(t, automations.Tree(), "automations", nil)
 	total := 0
 	for _, p := range pkgs {
 		m, defs := checkPackage(t, p, false)
@@ -291,7 +292,7 @@ func TestBuiltinPackages(t *testing.T) {
 			}
 		}
 		for name, def := range defs {
-			if def.Schema != "../../../schemas/action.v1.schema.json" {
+			if def.Schema != "../../../data/schemas/action.v1.schema.json" {
 				t.Errorf("%s/%s: $schema = %q", p.name, name, def.Schema)
 			}
 			for _, s := range def.Steps {
@@ -338,7 +339,7 @@ func TestBuiltinPackages(t *testing.T) {
 				}
 			}
 		}
-		if m.SchemaRef != "../../schemas/automation.v1.schema.json" {
+		if m.SchemaRef != "../../data/schemas/automation.v1.schema.json" {
 			t.Errorf("%s: $schema = %q", p.name, m.SchemaRef)
 		}
 	}
@@ -481,7 +482,7 @@ func TestShippedFilesMatchSchemas(t *testing.T) {
 		dir  string
 		tf   func([]byte, string) []byte
 	}{
-		{data.AutomationsFS, "automations", nil},
+		{automations.Tree(), "automations", nil},
 		{data.TemplatesFS, "automation-templates", substitute},
 	} {
 		for _, p := range readPackages(t, src.fsys, src.dir, src.tf) {

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/action"
 )
 
@@ -197,7 +197,7 @@ func TestDryRunAndUpdateChanges(t *testing.T) {
 // byte-identical, for every built-in and for an imported package.
 func TestExportRoundTrip(t *testing.T) {
 	a := newReg(t)
-	if err := a.Seed(data.AutomationsFS); err != nil {
+	if err := a.Seed(automations.Tree()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Install(acmeDir(t), InstallOptions{}); err != nil {

@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"strings"
 
-	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/spf13/cobra"
@@ -24,9 +22,12 @@ func newAutomationCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "automation",
 		Short: "Manage browser automation packages",
 		Long: `Browser automation packages: a manifest, actions, fragments, selectors and
-optional page scripts for one site. Built-ins ship with the binary and are
-seeded into ~/.monoagent/automations; everything else is installed from a
-.mpkg file, a package directory or a URL.`,
+optional page scripts for one site, installed under ~/.monoagent/automations.
+The official packages (Instagram, LinkedIn, X, TikTok, Hacker News, Product
+Hunt, Gemini) are published on monoes.me: install them with
+` + "`monoagentcli library install automation <id>`" + `. Anything else is installed
+from a .mpkg file, a package directory or a URL. Packages an earlier version
+seeded stay installed.`,
 	}
 	cmd.AddCommand(
 		newAutomationListCmd(cfg),
@@ -138,18 +139,11 @@ func withInstallResult(err error, res *automation.InstallResult) error {
 	return &installResultError{err: err, res: res}
 }
 
-// builtinAutomations is the embedded seed set rooted at the package dirs.
-func builtinAutomations() fs.FS {
-	sub, err := fs.Sub(data.AutomationsFS, "automations")
-	if err != nil {
-		panic(err) // embed layout is fixed at compile time
-	}
-	return sub
-}
-
-// openAutomationRegistry opens the default registry and seeds the embedded
-// built-ins (cheap when nothing changed). Every automation subcommand starts
-// here so the installed set is never older than the binary.
+// openAutomationRegistry opens the default registry and folds any new
+// legacy ~/.monoagent/actions/<p> directories into local-<p> packages.
+// Every automation subcommand starts here. Nothing is seeded: the official
+// packages come from monoes.me (`monoagentcli library install automation
+// <id>`), and packages installed by earlier versions stay as they are.
 func openAutomationRegistry() (*automation.Registry, error) {
 	if version != "" { // release build: enforce manifests' "engine" ranges
 		automation.EngineVersion = version
@@ -158,15 +152,12 @@ func openAutomationRegistry() (*automation.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open automation registry: %w", err)
 	}
-	rep, err := reg.SeedWithReport(builtinAutomations())
+	rep, err := reg.Boot()
 	if err != nil {
-		return nil, fmt.Errorf("seed built-in automations: %w", err)
+		return nil, fmt.Errorf("fold legacy actions: %w", err)
 	}
 	for _, id := range rep.LegacyWrapped {
 		stderrf("note: wrapped legacy actions into automation package %s (~/.monoagent/actions is left as is)\n", id)
-	}
-	for _, s := range rep.Skipped {
-		stderrf("warning: built-in automation skipped: %s\n", s)
 	}
 	return reg, nil
 }

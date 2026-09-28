@@ -3,13 +3,11 @@ package nodes
 import (
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
@@ -28,10 +26,12 @@ var (
 )
 
 // BootAutomations opens the automation registry under home (normally
-// ~/.monoagent; "" means automation.Default), seeds the embedded built-in
-// packages and switches the action loader to the registry. It is idempotent
-// per home. On error the loader is left as it was (the legacy embedded seed
-// + ~/.monoagent/actions), so callers log the error and carry on.
+// ~/.monoagent; "" means automation.Default), folds legacy
+// ~/.monoagent/actions directories into local-<p> packages and switches the
+// action loader to the registry. Nothing is seeded: official packages are
+// installed from monoes.me. It is idempotent per home. On error the loader
+// is left as it was (~/.monoagent/actions only), so callers log the error
+// and carry on.
 func BootAutomations(home string) (*automation.Registry, error) {
 	action.SetGlobalHostDeny(socialHostDeny)
 	bootMu.Lock()
@@ -56,12 +56,8 @@ func BootAutomations(home string) (*automation.Registry, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("open automation registry: no registry")
 	}
-	seed, err := fs.Sub(data.AutomationsFS, "automations")
-	if err != nil {
-		return nil, fmt.Errorf("embedded automations: %w", err)
-	}
-	if err := reg.Seed(seed); err != nil {
-		return nil, fmt.Errorf("seed built-in automations: %w", err)
+	if _, err := reg.Boot(); err != nil {
+		return nil, fmt.Errorf("fold legacy actions: %w", err)
 	}
 	src := reg.DefSource()
 	if src == nil {
@@ -91,7 +87,7 @@ func ensureAutomationsBooted() {
 	}
 	if _, err := BootAutomations(""); err != nil {
 		l := zerolog.New(os.Stderr).With().Timestamp().Logger()
-		l.Warn().Err(err).Msg("automations: registry unavailable, using the built-in action set")
+		l.Warn().Err(err).Msg("automations: registry unavailable, using ~/.monoagent/actions only")
 	}
 }
 

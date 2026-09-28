@@ -134,8 +134,8 @@ type SelectorCandidateObserver interface {
 
 // DefSource supplies action definitions to the loader. The automation
 // registry installs one at startup (SetDefSource); with none set the loader
-// reads the embedded seed (data.AutomationsFS) and the legacy
-// ~/.monoagent/actions directory.
+// reads only the legacy ~/.monoagent/actions directory (the app embeds no
+// packages; official ones are installed from monoes.me).
 type DefSource interface {
 	// Load returns the raw action JSON for automation/action.
 	Load(automation, actionType string) ([]byte, error)

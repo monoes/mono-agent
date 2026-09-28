@@ -1,0 +1,91 @@
+{
+  "$schema": "../../../data/schemas/action.v1.schema.json",
+  "actionType": "scrape_profile_info",
+  "platform": "X",
+  "version": "2.1.0",
+  "description": "Extract profile information from X (Twitter) profiles: name, handle, bio, location, website (behind t.co) and bio links, join date, birth date, professional category, exact follower/following/post counts, verification type (blue, business, government), protected flag, avatar, banner and pinned post",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs or usernames to scrape" }
+    ],
+    "optional": [
+      { "name": "delayBetweenProfiles", "type": "number", "default": 3, "min": 0, "max": 120, "description": "Seconds to wait between profiles" }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "profile_url",
+      "username",
+      "full_name",
+      "bio",
+      "location",
+      "website",
+      "website_href",
+      "join_date",
+      "is_verified",
+      "is_protected",
+      "profile_picture_url",
+      "banner_url",
+      "can_dm",
+      "followers_text",
+      "following_text",
+      "followers_count",
+      "following_count",
+      "content_count",
+      "links",
+      "birth_date",
+      "profile_category",
+      "account_type",
+      "verification_type",
+      "pinned_post",
+      "affiliates_count",
+      "platform_id"
+    ],
+    "failure": [
+      "failedProfileSearches"
+    ]
+  },
+  "steps": [
+    {
+      "id": "get_profile_data",
+      "type": "call_bot_method",
+      "methodName": "get_profile_data",
+      "args": [
+        "{{item.url or item.href or item.username or item}}"
+      ],
+      "variable_name": "profileData",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_profiles",
+      "type": "wait",
+      "duration": "{{delayBetweenProfiles or 3}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "get_profile_data",
+        "wait_between_profiles"
+      ]
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 1,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

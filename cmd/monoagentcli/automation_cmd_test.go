@@ -233,13 +233,11 @@ func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 	}
 
 	mustJSON(t, home, &un, "automation", "uninstall", "gemini")
-	var res struct {
-		OK   bool                      `json:"ok"`
-		Info *automation.InstalledInfo `json:"info"`
-	}
-	mustJSON(t, home, &res, "automation", "restore", "gemini")
-	if !res.OK || res.Info == nil || res.Info.Source != automation.SourceBuiltin || res.Info.Removed {
-		t.Fatalf("restore = %+v", res.Info)
+	// The binary ships no built-in copy any more: restore points at the
+	// library instead (exit 2, not_found).
+	out, _, err = runAutomationCLI(t, home, "automation", "restore", "gemini", "--json")
+	if exitCodeFor(err) != 2 || !strings.Contains(out, "library install automation gemini") {
+		t.Fatalf("restore: err=%v stdout=%s", err, out)
 	}
 }
 
@@ -463,6 +461,16 @@ func TestAutomationValidateBuiltinDir(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "actions", "a.json"), []byte(action), 0o644)
 	if !isBuiltinSourceDir(dir) {
 		t.Fatal("dir under data/automations not detected")
+	}
+	// The current layout: <checkout>/automations/<id> next to embed.go.
+	moved := filepath.Join(home, "automations", "plain")
+	os.MkdirAll(moved, 0o755)
+	if isBuiltinSourceDir(moved) {
+		t.Fatal("automations/<id> without embed.go (e.g. an installed registry) must not count as the official source")
+	}
+	os.WriteFile(filepath.Join(home, "automations", "embed.go"), []byte("package automations\n"), 0o644)
+	if !isBuiltinSourceDir(moved) {
+		t.Fatal("automations/<id> in a checkout not detected")
 	}
 	var v struct {
 		OK     bool                   `json:"ok"`

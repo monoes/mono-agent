@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 )
 
 // seedPkg is a PackageContext over one embedded built-in package
@@ -28,7 +28,7 @@ func seedPkg(t *testing.T, id string) *fakePkg {
 			Native string `json:"native"`
 		} `json:"requires"`
 	}
-	raw, err := data.AutomationsFS.ReadFile(root + "/automation.json")
+	raw, err := automations.Tree().ReadFile(root + "/automation.json")
 	if err != nil {
 		t.Fatalf("%s: %v", id, err)
 	}
@@ -38,21 +38,21 @@ func seedPkg(t *testing.T, id string) *fakePkg {
 	p := &fakePkg{id: id, startURL: m.Site.StartURL, domains: m.Site.Domains, permitted: m.Permissions.Steps,
 		native: m.Requires.Native, fragments: map[string]*FragmentDef{}, scripts: map[string]string{},
 		selectors: map[string]*SelectorEntry{}}
-	frags, _ := fs.Glob(data.AutomationsFS, root+"/fragments/*.json")
+	frags, _ := fs.Glob(automations.Tree(), root+"/fragments/*.json")
 	for _, f := range frags {
-		b, _ := data.AutomationsFS.ReadFile(f)
+		b, _ := automations.Tree().ReadFile(f)
 		var fd FragmentDef
 		if err := json.Unmarshal(b, &fd); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
 		p.fragments[strings.TrimSuffix(path.Base(f), ".json")] = &fd
 	}
-	scripts, _ := fs.Glob(data.AutomationsFS, root+"/scripts/*")
+	scripts, _ := fs.Glob(automations.Tree(), root+"/scripts/*")
 	for _, f := range scripts {
-		b, _ := data.AutomationsFS.ReadFile(f)
+		b, _ := automations.Tree().ReadFile(f)
 		p.scripts[path.Base(f)] = string(b)
 	}
-	if b, err := data.AutomationsFS.ReadFile(root + "/selectors.json"); err == nil {
+	if b, err := automations.Tree().ReadFile(root + "/selectors.json"); err == nil {
 		if err := json.Unmarshal(b, &p.selectors); err != nil {
 			t.Fatalf("%s selectors.json: %v", id, err)
 		}
@@ -63,13 +63,13 @@ func seedPkg(t *testing.T, id string) *fakePkg {
 // Every shipped built-in action validates with zero errors against its own
 // package; native-backed (legacy) packages also validate with no package.
 func TestBuiltinActionsValidate(t *testing.T) {
-	files, err := fs.Glob(data.AutomationsFS, "automations/*/actions/*.json")
+	files, err := fs.Glob(automations.Tree(), "automations/*/actions/*.json")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob: %v (%d files)", err, len(files))
 	}
 	pkgs := map[string]*fakePkg{}
 	for _, f := range files {
-		raw, err := data.AutomationsFS.ReadFile(f)
+		raw, err := automations.Tree().ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}

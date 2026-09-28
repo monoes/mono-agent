@@ -26,7 +26,7 @@ import (
 
 // openLoginRegistry returns the booted automation registry, or nil when there
 // is none. Test binaries get nil unless a test swaps this out, so they never
-// seed the real ~/.monoagent.
+// touch the real ~/.monoagent.
 var openLoginRegistry = func() (*automation.Registry, error) {
 	if testing.Testing() {
 		return nil, nil

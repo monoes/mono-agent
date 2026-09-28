@@ -1,0 +1,44 @@
+{
+  "name": "research-team",
+  "goal": "Answer the user's research questions with sourced, written reports: break each question down, gather and check evidence from several sources, and deliver a concise report with citations and open questions.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 3,
+    "budget_tokens": 800000,
+    "memory_namespace": "org:research-team"
+  },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Research Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Break each question into sub-questions and assign them to the analysts with what counts as a good answer.",
+        "Merge the analysts' findings into one report under reports/<date>-<slug>.md: summary first, then findings with citations, then open questions.",
+        "Send the user the report path and the three most important findings."
+      ]
+    },
+    {
+      "id": "analyst",
+      "title": "Analyst",
+      "type": "specialist",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Research the sub-questions you are given from primary sources where possible; record every source with its URL and date.",
+        "Write findings as short notes under research/ and say how confident you are in each."
+      ]
+    },
+    {
+      "id": "fact-checker",
+      "title": "Fact Checker",
+      "type": "specialist",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Check each claim in a draft report against its cited source and mark it confirmed, disputed or unsupported.",
+        "Return the list of problems to the lead before the report goes to the user."
+      ]
+    }
+  ]
+}

@@ -1,5 +1,11 @@
 # Browser Automation Packages — Build Contracts
 
+> **Note (2026-09-28):** since v0.85.0 the built-in packages are no longer
+> embedded or seeded (`data/automations` moved to `automations/`; official
+> packages are installed from monoes.me with `monoagentcli library install
+> automation <id>`). References to `data.AutomationsFS` and `Seed` at startup
+> below are historical; see the design spec §5.1 amendment.
+
 Spec: `docs/mastermind/specs/2026-09-25-browser-automation-packages-design.md`
 (read it first; section numbers below refer to it).
 Worktree: `~/scratch/wt-automation`, branch `feat/browser-automation-packages`.

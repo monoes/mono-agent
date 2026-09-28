@@ -3,11 +3,9 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"strings"
 	"unicode"
 
-	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/action"
 )
 
@@ -49,14 +47,19 @@ var sessionField = NodeSchemaField{
 	Help:     "Username of the browser session to use. Leave blank to use the default session.",
 }
 
-// isBuiltinAutomation reports whether id is one of the embedded built-in
-// packages, whose nodes keep their pre-package forms.
+// officialAutomations are the packages that used to ship built into the
+// app and are now published as official items on monoes.me (source:
+// automations/ in the repo). Their nodes keep their pre-package forms
+// whichever way they were installed.
+var officialAutomations = map[string]bool{
+	"gemini": true, "hackernews": true, "instagram": true, "linkedin": true,
+	"producthunt": true, "tiktok": true, "x": true,
+}
+
+// isBuiltinAutomation reports whether id is one of the official packages,
+// whose nodes keep their pre-package forms.
 func isBuiltinAutomation(id string) bool {
-	if id == "" || strings.ContainsAny(id, "/\\.") {
-		return false
-	}
-	_, err := fs.Stat(data.AutomationsFS, "automations/"+id+"/automation.json")
-	return err == nil
+	return officialAutomations[id]
 }
 
 // loadActionDef finds the action behind a browser node type, through the

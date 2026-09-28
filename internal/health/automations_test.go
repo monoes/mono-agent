@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,9 @@ func TestAutomationPackagesCheck(t *testing.T) {
 	if r := checkAutomationPackages(ctx, &Env{}); r.Status != StatusSkip {
 		t.Fatalf("no hook: %+v", r)
 	}
-	if r := checkAutomationPackages(ctx, autoEnv(&AutomationsInfo{}, nil)); r.Status != StatusInfo {
+	if r := checkAutomationPackages(ctx, autoEnv(&AutomationsInfo{}, nil)); r.Status != StatusInfo ||
+		!strings.Contains(r.Summary, "monoes.me") || !strings.Contains(r.Detail, "library install automation") ||
+		r.FixID != FixInstallFromLibrary {
 		t.Fatalf("none installed: %+v", r)
 	}
 	r := checkAutomationPackages(ctx, autoEnv(&AutomationsInfo{Installed: 3,
