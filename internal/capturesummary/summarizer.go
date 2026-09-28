@@ -80,7 +80,8 @@ type Summarizer struct {
 	Now func() time.Time
 	// Logf, when set, receives one line per summary outcome.
 	Logf func(format string, args ...any)
-	// OnDone, when set, is called after each summary finishes (tests).
+	// OnDone, when set, is called after each summary finishes: the bridge
+	// queues the capture for indexing again, so summary.md is searchable.
 	OnDone func(dir string, st Status)
 
 	once   sync.Once

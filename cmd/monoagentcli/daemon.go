@@ -183,6 +183,7 @@ func startDaemonBridge(ctx context.Context) (addr string, closeFn func(), err er
 	logger := newBridgeServeLogger()
 	srv := newExtensionServer(logger)
 	summaries := installCaptureSummaries(srv, loggerLogf(logger))
+	summaries.sweepIndexAfter(ctx, captureIndexStartupDelay)
 	closeFn = func() {
 		summaries.Close()
 		srv.Close() //nolint:errcheck
