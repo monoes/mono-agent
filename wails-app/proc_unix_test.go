@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func startGroup(t *testing.T, ctx context.Context, script string) (*exec.Cmd, <-
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { done <- waitChatProcess(cmd) }()
 	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
 	return cmd, done
 }
@@ -106,4 +107,47 @@ func TestKillChatProcessGroup_AfterExit(t *testing.T) {
 	cmd, done := startGroup(t, context.Background(), "exit 0")
 	<-done
 	killChatProcessGroup(cmd)
+}
+
+// Once Wait has reaped the leader its pid (the group id) may be reused, so
+// the delayed SIGKILL must not fire, even for a group that ignored SIGTERM.
+func TestKillChatProcessGroup_NoSIGKILLAfterReap(t *testing.T) {
+	withGrace(t, 700*time.Millisecond)
+	var mu sync.Mutex
+	var sent []syscall.Signal
+	prev := groupKill
+	groupKill = func(pid int, sig syscall.Signal) error {
+		mu.Lock()
+		sent = append(sent, sig)
+		mu.Unlock()
+		return syscall.Kill(pid, sig)
+	}
+	t.Cleanup(func() { groupKill = prev })
+
+	// Ignores SIGTERM but exits on its own well before the grace period.
+	cmd, done := startGroup(t, context.Background(), `trap "" TERM; sleep 0.3`)
+	time.Sleep(100 * time.Millisecond) // let sh install its trap
+	killChatProcessGroup(cmd)
+	select {
+	case err := <-done:
+		if sig := exitSignal(err); sig != 0 {
+			t.Fatalf("exit = %v (signal %v), want a normal exit", err, sig)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("process did not exit")
+	}
+	time.Sleep(900 * time.Millisecond) // past the grace period
+	mu.Lock()
+	defer mu.Unlock()
+	for _, sig := range sent {
+		if sig == syscall.SIGKILL {
+			t.Fatalf("signals sent = %v: SIGKILL after the leader was reaped", sent)
+		}
+	}
+	if len(sent) != 1 || sent[0] != syscall.SIGTERM {
+		t.Errorf("signals sent = %v, want just SIGTERM", sent)
+	}
+	if reapedChan(cmd) != nil {
+		t.Error("reaped command is still tracked")
+	}
 }

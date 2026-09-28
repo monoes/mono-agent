@@ -22,6 +22,7 @@ func setChatProcessGroup(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
+	trackChatGroup(cmd)
 	if cmd.Cancel != nil {
 		cmd.Cancel = func() error {
 			killChatProcessGroup(cmd)
@@ -47,21 +48,33 @@ func terminateCLI(cmd *exec.Cmd) error {
 // A variable so tests can shorten it.
 var chatKillGrace = 15 * time.Second
 
+// groupKill signals a process group; a variable so tests can watch it.
+var groupKill = syscall.Kill
+
 // killChatProcessGroup SIGTERMs the whole chat process group, then SIGKILLs
-// whatever is left of it after chatKillGrace. It returns at once; the
-// SIGKILL runs on a timer, and only if some member of the group is still
-// alive (signal 0 to the group fails with ESRCH once it is empty).
+// it after chatKillGrace unless its leader has been reaped by then. It
+// returns at once; the SIGKILL runs on a timer.
+//
+// Reaped means nothing is left to kill and the group id may be reused: the
+// group only ever holds monoagentcli itself (it starts monomind in its own
+// group), and once Wait has reaped the leader its pid is free again. So
+// the timer only fires while waitChatProcess hasn't returned. A command
+// that isn't tracked (reaped before the stop, or never set up with
+// setChatProcessGroup) gets the SIGTERM only.
 func killChatProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
 	pgid := cmd.Process.Pid
-	if err := syscall.Kill(-pgid, syscall.SIGTERM); err == syscall.ESRCH {
-		return // the group is already gone
+	reaped := reapedChan(cmd)
+	if err := groupKill(-pgid, syscall.SIGTERM); err == syscall.ESRCH || reaped == nil {
+		return
 	}
 	time.AfterFunc(chatKillGrace, func() {
-		if syscall.Kill(-pgid, 0) == nil {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		select {
+		case <-reaped:
+		default:
+			_ = groupKill(-pgid, syscall.SIGKILL)
 		}
 	})
 }

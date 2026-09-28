@@ -67,7 +67,7 @@ type realChatProcess struct {
 
 func (p *realChatProcess) Stdout() io.Reader { return p.stdout }
 func (p *realChatProcess) Stderr() io.Reader { return p.stderr }
-func (p *realChatProcess) Wait() error       { return p.cmd.Wait() }
+func (p *realChatProcess) Wait() error       { return waitChatProcess(p.cmd) }
 func (p *realChatProcess) Kill()             { killChatProcessGroup(p.cmd) }
 
 // chatProcessLauncher starts one `monoagentcli chat ...` turn. Injectable so

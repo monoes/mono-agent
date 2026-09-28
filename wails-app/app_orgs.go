@@ -275,7 +275,7 @@ func (a *App) StreamOrgEvents(orgName string) string {
 				"event":   json.RawMessage(append([]byte(nil), line...)),
 			})
 		}
-		_ = cmd.Wait()
+		_ = waitChatProcess(cmd)
 		runtime.EventsEmit(a.ctx, "org:eventsClosed", map[string]interface{}{"orgName": orgName})
 	}()
 	return `{"ok":true}`
@@ -352,7 +352,7 @@ func (a *App) RunOrg(orgName, task string) string {
 	runtime.EventsEmit(a.ctx, "org:runStatus", map[string]interface{}{"orgName": orgName, "status": "running"})
 
 	go func() {
-		waitErr := cmd.Wait()
+		waitErr := waitChatProcess(cmd)
 		a.runningMu.Lock()
 		delete(a.runningCmds, key)
 		a.runningMu.Unlock()
