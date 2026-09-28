@@ -24,6 +24,10 @@ vi.mock('../../services/api.js', () => ({
   onConnectionOpened: () => () => {},
 }))
 
+const go = vi.hoisted(() => ({ LibraryInstall: vi.fn() }))
+vi.mock('../../wailsjs/go/main/App', () => go)
+
+import i18n from '../../i18n.js'
 import ConfirmHost from '../../components/ConfirmDialog.jsx'
 import AutomationCard from './AutomationCard.jsx'
 import BrowserAutomations from './BrowserAutomations.jsx'
@@ -112,15 +116,17 @@ describe('AutomationDrawer', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('offers only Restore for an uninstalled built-in and never calls show', async () => {
-    api.restoreAutomation.mockResolvedValue({ ok: true })
+  it('offers only a reinstall from monoes.me for an uninstalled built-in and never calls show', async () => {
+    await i18n.changeLanguage('en')
+    go.LibraryInstall.mockResolvedValue(JSON.stringify({ installed: true, local_id: 'acme' }))
     const onChanged = vi.fn()
     render(<AutomationDrawer automation={{ ...base, source: 'builtin', removed: true }} onClose={() => {}} onChanged={onChanged} />)
     expect(screen.getByText(/This built-in is uninstalled/)).toBeInTheDocument()
     expect(screen.getAllByRole('tab')).toHaveLength(1)
     expect(screen.queryByText('Uninstall')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByText('Restore'))
-    await waitFor(() => expect(api.restoreAutomation).toHaveBeenCalledWith('acme'))
+    fireEvent.click(screen.getByText('Reinstall from monoes.me'))
+    await waitFor(() => expect(go.LibraryInstall).toHaveBeenCalledWith('automation', 'acme', '', true))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
     expect(api.showAutomation).not.toHaveBeenCalled()
   })
 

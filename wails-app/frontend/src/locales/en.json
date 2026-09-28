@@ -526,5 +526,82 @@
       "government": "Verified government",
       "verified": "Verified"
     }
+  },
+  "library": {
+    "loginButton": "Log in to monoes",
+    "loggingIn": "Waiting for your browser…",
+    "cancel": "Cancel",
+    "openLink": "Open the sign-in page",
+    "useEmail": "Use an email code instead",
+    "useBrowser": "Use the browser instead",
+    "emailPlaceholder": "you@example.com",
+    "sendCode": "Send code",
+    "codePlaceholder": "6-digit code",
+    "verify": "Log in",
+    "codeSent": "We emailed a code to {{email}}.",
+    "loggedInAs": "Logged in as {{name}}",
+    "logout": "Log out",
+    "checking": "Checking monoes.me…",
+    "title": {
+      "workflow": "Workflow templates from monoes.me",
+      "automation": "Web automations from monoes.me",
+      "org": "Org templates from monoes.me"
+    },
+    "tabs": {
+      "official": "Official",
+      "community": "Community",
+      "mine": "Mine"
+    },
+    "searchPlaceholder": "Search…",
+    "loading": "Loading…",
+    "empty": "Nothing here yet.",
+    "emptyMine": "You have not published anything of this kind yet.",
+    "mineLoginPrompt": "Log in to see what you have published.",
+    "loadMore": "Load more",
+    "retry": "Retry",
+    "close": "Close",
+    "add": "Add",
+    "adding": "Adding…",
+    "added": "Added",
+    "update": "Update",
+    "installedVersion": "Installed {{version}}",
+    "updateAvailable": "Update available",
+    "official": "Official",
+    "by": "by {{owner}}",
+    "addedAs": "Added as {{id}}.",
+    "missingAutomations": "It uses web automations that are not installed yet: {{ids}}.",
+    "collision": {
+      "title": "That name is already in use",
+      "body": "An org named {{name}} already exists on this machine.",
+      "renameLabel": "New name",
+      "rename": "Add under the new name",
+      "replace": "Replace the existing org"
+    },
+    "browse": "Browse monoes.me",
+    "orgTemplates": "Org templates",
+    "workflowMore": "More templates on monoes.me",
+    "automationsEmpty": {
+      "title": "No web automations installed",
+      "body": "Web automations now come from monoes.me. Log in and add the ones you need."
+    },
+    "publish": {
+      "button": "Publish to monoes",
+      "title": "Publish to monoes.me",
+      "name": "Name",
+      "description": "Description",
+      "tags": "Tags",
+      "tagsHint": "Comma separated",
+      "version": "Version",
+      "versionHint": "Optional, e.g. 1.0.0",
+      "public": "Public: anyone can find and add it",
+      "privateNote": "Leave unticked to keep it private to you.",
+      "submit": "Publish",
+      "publishing": "Publishing…",
+      "done": "Published {{name}} {{version}}.",
+      "open": "Open on monoes.me",
+      "loginFirst": "Log in to monoes.me to publish."
+    },
+    "reinstall": "Reinstall from monoes.me",
+    "reinstallNote": "This built-in is uninstalled: its workflow nodes do not run. Reinstall it from monoes.me to use it again."
   }
 }

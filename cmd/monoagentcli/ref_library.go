@@ -1,0 +1,57 @@
+package main
+
+// The `library` entries of `ref commands` (kept apart from ref.go, which is
+// long enough).
+func init() {
+	cliDocs = append(cliDocs,
+		cmdDoc{
+			Name:  "library login",
+			Short: "Log in to monoes.me (browser with PKCE, or a code by email)",
+			Usage: "monoagentcli library login [--no-browser] [--timeout 5m] | --email <addr> [--send | --code <code>]",
+			Flags: `  --no-browser        Print the sign-in URL instead of opening the browser
+  --timeout duration  How long to wait for the browser (default 5m)
+  --email string      Log in with a code sent to this address
+  --send              With --email: only send the code
+  --code string       With --email: the code from the email`,
+			Examples: []string{
+				"monoagentcli library login",
+				"monoagentcli library login --email you@example.com --send",
+				"monoagentcli library login --email you@example.com --code 123456",
+				"monoagentcli library status",
+				"monoagentcli library logout",
+			},
+		},
+		cmdDoc{
+			Name:  "library list",
+			Short: "Browse monoes.me: official, public (community) and your own items",
+			Usage: "monoagentcli library list [--kind workflow|automation|org] [--scope public|official|mine] [--search q] [--tag t]",
+			Examples: []string{
+				"monoagentcli library list --kind automation --scope official",
+				"monoagentcli --json library list --scope mine",
+				"monoagentcli library show automation/instagram",
+				"monoagentcli library installed",
+			},
+		},
+		cmdDoc{
+			Name:  "library install",
+			Short: "Download a library item, verify its sha256 and install it",
+			Usage: "monoagentcli library install <workflow|automation|org> <id|slug> [--yes] [--dry-run] [--replace] [--rename <name>]",
+			Examples: []string{
+				"monoagentcli library install automation hackernews",
+				"monoagentcli library install workflow gemini-generate-one-image",
+				"monoagentcli library install org research-team --rename research-2",
+				"monoagentcli library update --dry-run",
+			},
+		},
+		cmdDoc{
+			Name:  "library publish",
+			Short: "Upload a workflow, automation or org to your monoes.me library (private unless --public)",
+			Usage: "monoagentcli library publish <workflow|automation|org> <local id> [--public] [--name] [--description] [--tags a,b] [--version v] [--no-bundle] [--new]",
+			Examples: []string{
+				"monoagentcli library publish workflow 3f1c… --public --tags email,crm",
+				"monoagentcli library publish org growth-team",
+				"monoagentcli library publish automation my-site",
+			},
+		},
+	)
+}

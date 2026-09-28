@@ -49,14 +49,14 @@ func newAutomationValidateCmd(cfg *globalConfig) *cobra.Command {
 			return fmt.Errorf("%s has validation errors", args[0])
 		},
 	}
-	cmd.Flags().BoolVar(&builtin, "builtin", false, "Validate as a built-in package (automatic under data/automations/)")
+	cmd.Flags().BoolVar(&builtin, "builtin", false, "Validate as a built-in package (automatic under a source checkout's automations/)")
 	return cmd
 }
 
 // validateTarget validates whatever path points at. Always returns a
 // non-nil slice so --json prints "issues": []. A package is checked as a
 // built-in (no imported-package rules) with builtin or when it lives under
-// data/automations/.
+// a source checkout's automations/ (the official packages' source).
 func validateTarget(target string, builtin bool) ([]automation.IssueJSON, error) {
 	st, err := os.Stat(target)
 	if err != nil {
@@ -84,15 +84,23 @@ func validateTarget(target string, builtin bool) ([]automation.IssueJSON, error)
 	return issues, nil
 }
 
-// isBuiltinSourceDir reports whether dir is a package of the shipped seed
-// set: data/automations/<id> in a source checkout.
+// isBuiltinSourceDir reports whether dir is one of the official packages'
+// sources in a checkout: automations/<id> (next to automations/embed.go),
+// or data/automations/<id> in a checkout from before the move.
 func isBuiltinSourceDir(dir string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return false
 	}
-	return filepath.Base(filepath.Dir(abs)) == "automations" &&
-		filepath.Base(filepath.Dir(filepath.Dir(abs))) == "data"
+	parent := filepath.Dir(abs)
+	if filepath.Base(parent) != "automations" {
+		return false
+	}
+	if filepath.Base(filepath.Dir(parent)) == "data" {
+		return true
+	}
+	_, err = os.Stat(filepath.Join(parent, "embed.go"))
+	return err == nil
 }
 
 // validateActionFile lints one loose action JSON with no package context.

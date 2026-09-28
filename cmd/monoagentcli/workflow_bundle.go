@@ -74,6 +74,10 @@ type bundleOptions struct {
 	// useSuggested uses a legacy package's suggested domains (derived from
 	// its literal navigate URLs) when no explicit domains are given.
 	useSuggested bool
+	// skipShipped leaves out built-in and official monoes.me packages
+	// (built-in trust): `library publish` relies on the library to install
+	// those, at their own trust, instead of copying them as imported.
+	skipShipped bool
 }
 
 // parseAutomationDomains parses --automation-domains values "<id>=<a,b>".
@@ -107,7 +111,7 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (
 	}
 	for _, id := range ids {
 		info, err := reg.Info(id)
-		if err != nil {
+		if err != nil || (opts.skipShipped && info.Trust == automation.TrustBuiltin) {
 			continue
 		}
 		var buf bytes.Buffer

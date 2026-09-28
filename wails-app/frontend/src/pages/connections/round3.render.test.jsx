@@ -27,6 +27,7 @@ vi.mock('../../services/api.js', () => ({
 import HealthTab from './HealthTab.jsx'
 import ImportDialog from './ImportDialog.jsx'
 import AutomationDrawer from './AutomationDrawer.jsx'
+import i18n from '../../i18n.js'
 import ActionsTab from './ActionsTab.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -116,7 +117,8 @@ describe('ImportDialog round 3', () => {
 })
 
 describe('AutomationDrawer removed', () => {
-  it('shows no "unavailable" chip for an uninstalled built-in', () => {
+  it('shows no "unavailable" chip for an uninstalled built-in', async () => {
+    await i18n.changeLanguage('en')
     render(<AutomationDrawer automation={{ id: 'hn', name: 'HN', source: 'builtin', version: '1.1.0', removed: true, available: false }} onClose={() => {}} />)
     expect(screen.getByText(/This built-in is uninstalled/)).toBeInTheDocument()
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument()

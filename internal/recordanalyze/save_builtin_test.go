@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/automation"
 )
 
@@ -16,7 +16,7 @@ import (
 // optionally with its manifest version replaced.
 func hackernewsSeed(t *testing.T, version string) fs.FS {
 	t.Helper()
-	sub, err := fs.Sub(data.AutomationsFS, "automations")
+	sub, err := fs.Sub(automations.Tree(), "automations")
 	if err != nil {
 		t.Fatal(err)
 	}

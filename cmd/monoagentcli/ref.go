@@ -2394,7 +2394,9 @@ Or workflow:
 7. CRAWL A NEW WEBSITE / CUSTOM PLATFORM (Claude Code integration)
 ──────────────────────────────────────────────────────────────
 Use this when you want to automate scraping on any site that does NOT
-have a built-in node type (i.e. not instagram/linkedin/x/tiktok/gemini).
+have an official automation package on monoes.me (instagram, linkedin, x,
+tiktok, hackernews, producthunt, gemini — install those with
+` + "`monoagentcli library install automation <id>`" + `).
 
 Step 1 — capture the rendered page HTML (real browser, JS executed):
   monoagent action template capture https://somesite.com/someuser
@@ -2545,8 +2547,11 @@ func refCrawlingCmd() *cobra.Command {
 ║        monoagentcli — crawling new platforms with Claude Code      ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Built-in node types cover: instagram, linkedin, x, tiktok, gemini.
-For any other website, use the action template workflow below.
+Official automation packages on monoes.me cover instagram, linkedin, x,
+tiktok, hackernews, producthunt and gemini (monoagentcli library list
+--kind automation; install one with monoagentcli library install
+automation <id>). For any other website, use the action template
+workflow below.
 No API keys required — Claude Code's built-in reasoning does the analysis.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -11,13 +11,13 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot/bottest"
 )
 
-// JSON-flow tests: each data/automations/hackernews/actions/*.json
+// JSON-flow tests: each automations/hackernews/actions/*.json
 // definition, loaded from the embedded seed like production, run through the
 // real action executor with its package attached (fragments, selectors,
 // scripts) against a bottest page. The actions are declarative now: no bot
@@ -25,7 +25,7 @@ import (
 
 func runAction(t *testing.T, p *bottest.Page, typ string, params map[string]interface{}) (*action.ExecutionResult, error) {
 	t.Helper()
-	sub, err := fs.Sub(data.AutomationsFS, "automations/hackernews")
+	sub, err := fs.Sub(automations.Tree(), "automations/hackernews")
 	if err != nil {
 		t.Fatal(err)
 	}

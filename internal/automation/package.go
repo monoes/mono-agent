@@ -17,7 +17,7 @@ import (
 type Package struct {
 	Manifest Manifest
 	FS       fs.FS  // rooted at the package directory
-	Source   string // builtin | imported | local
+	Source   string // builtin | imported | local | monoes
 	Dir      string // on-disk dir when installed ("" for zip/embed)
 	// Trust is the trust tier (TrustBuiltin…TrustImported). Registry.Get
 	// sets it from the index; "" means derived from Source.
@@ -28,6 +28,8 @@ type Package struct {
 
 	scriptsFlag *bool // index scriptsAllowed (registry packages)
 	liveFlag    bool  // index liveRunConfirmed
+
+	library *LibraryOrigin // monoes.me provenance (library installs)
 }
 
 // OpenDir opens a package directory (source local).

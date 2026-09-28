@@ -15,6 +15,17 @@ const (
 	CheckAutomationSelectors = "automations.selectors"
 
 	FixRerecordSelector = "automations.rerecord"
+	// FixInstallFromLibrary points at monoes.me: the app no longer ships
+	// web automations, so a fresh install has none until the user adds them.
+	FixInstallFromLibrary = "automations.library"
+)
+
+// NoAutomationsSummary and NoAutomationsDetail are the packages check's
+// answer when nothing is installed (also what the app shows).
+const (
+	NoAutomationsSummary = "No web automations installed — install them from monoes.me"
+	NoAutomationsDetail  = "Web automations (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt, Gemini) are published on monoes.me. " +
+		"List them with `monoagentcli library list --kind automation`, then install one with `monoagentcli library install automation <id>`."
 )
 
 // AutomationsInfo is what the automations checks read (all local).
@@ -48,6 +59,11 @@ func automationFixes() []Fix {
 		{FixInfo: FixInfo{ID: FixRerecordSelector, Label: "Re-record the selector by pointing at the element in the browser",
 			Safety: SafetyManual, Command: "monoagentcli automation rerecord <automation> <selector>"},
 			Apply: func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }},
+		{FixInfo: FixInfo{ID: FixInstallFromLibrary, Label: "Install web automations from monoes.me",
+			Safety: SafetyManual, Command: "monoagentcli library list --kind automation"},
+			Apply: func(context.Context, *Env, func(string)) error {
+				return fmt.Errorf("choose the automations to install: monoagentcli library install automation <id>")
+			}},
 	}
 }
 
@@ -60,7 +76,7 @@ func checkAutomationPackages(ctx context.Context, env *Env) Result {
 		return Result{Status: StatusSkip, Summary: "cannot read the automation registry", Detail: err.Error()}
 	}
 	if info.Installed == 0 {
-		return Result{Status: StatusInfo, Summary: "no automation packages installed"}
+		return Result{Status: StatusInfo, Summary: NoAutomationsSummary, Detail: NoAutomationsDetail, FixID: FixInstallFromLibrary}
 	}
 	res := Result{Status: StatusOK, Summary: fmt.Sprintf("%d installed", info.Installed)}
 	for _, u := range info.Unavailable {

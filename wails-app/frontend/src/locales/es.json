@@ -526,5 +526,82 @@
       "government": "Gobierno verificado",
       "verified": "Verificada"
     }
+  },
+  "library": {
+    "loginButton": "Iniciar sesión en monoes",
+    "loggingIn": "Esperando a tu navegador…",
+    "cancel": "Cancelar",
+    "openLink": "Abrir la página de inicio de sesión",
+    "useEmail": "Usar un código por correo",
+    "useBrowser": "Usar el navegador",
+    "emailPlaceholder": "tu@ejemplo.com",
+    "sendCode": "Enviar código",
+    "codePlaceholder": "Código de 6 dígitos",
+    "verify": "Iniciar sesión",
+    "codeSent": "Enviamos un código a {{email}}.",
+    "loggedInAs": "Sesión iniciada como {{name}}",
+    "logout": "Cerrar sesión",
+    "checking": "Comprobando monoes.me…",
+    "title": {
+      "workflow": "Plantillas de flujos de monoes.me",
+      "automation": "Automatizaciones web de monoes.me",
+      "org": "Plantillas de organizaciones de monoes.me"
+    },
+    "tabs": {
+      "official": "Oficiales",
+      "community": "Comunidad",
+      "mine": "Mías"
+    },
+    "searchPlaceholder": "Buscar…",
+    "loading": "Cargando…",
+    "empty": "Todavía no hay nada aquí.",
+    "emptyMine": "Aún no has publicado nada de este tipo.",
+    "mineLoginPrompt": "Inicia sesión para ver lo que has publicado.",
+    "loadMore": "Cargar más",
+    "retry": "Reintentar",
+    "close": "Cerrar",
+    "add": "Añadir",
+    "adding": "Añadiendo…",
+    "added": "Añadido",
+    "update": "Actualizar",
+    "installedVersion": "Instalado {{version}}",
+    "updateAvailable": "Actualización disponible",
+    "official": "Oficial",
+    "by": "de {{owner}}",
+    "addedAs": "Añadido como {{id}}.",
+    "missingAutomations": "Usa automatizaciones web que aún no están instaladas: {{ids}}.",
+    "collision": {
+      "title": "Ese nombre ya está en uso",
+      "body": "Ya existe una organización llamada {{name}} en este equipo.",
+      "renameLabel": "Nuevo nombre",
+      "rename": "Añadir con el nuevo nombre",
+      "replace": "Reemplazar la existente"
+    },
+    "browse": "Explorar monoes.me",
+    "orgTemplates": "Plantillas de organizaciones",
+    "workflowMore": "Más plantillas en monoes.me",
+    "automationsEmpty": {
+      "title": "No hay automatizaciones web instaladas",
+      "body": "Las automatizaciones web ahora vienen de monoes.me. Inicia sesión y añade las que necesites."
+    },
+    "publish": {
+      "button": "Publicar en monoes",
+      "title": "Publicar en monoes.me",
+      "name": "Nombre",
+      "description": "Descripción",
+      "tags": "Etiquetas",
+      "tagsHint": "Separadas por comas",
+      "version": "Versión",
+      "versionHint": "Opcional, p. ej. 1.0.0",
+      "public": "Pública: cualquiera puede encontrarla y añadirla",
+      "privateNote": "Déjala sin marcar para que sea privada.",
+      "submit": "Publicar",
+      "publishing": "Publicando…",
+      "done": "Publicado {{name}} {{version}}.",
+      "open": "Abrir en monoes.me",
+      "loginFirst": "Inicia sesión en monoes.me para publicar."
+    },
+    "reinstall": "Reinstalar desde monoes.me",
+    "reinstallNote": "Esta automatización integrada está desinstalada: sus nodos de flujo de trabajo no se ejecutan. Reinstálala desde monoes.me para volver a usarla."
   }
 }

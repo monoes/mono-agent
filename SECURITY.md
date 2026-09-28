@@ -198,7 +198,10 @@ makes network requests:
 1. API calls made by workflows you run, against services you configured
    (HTTP nodes, service nodes, browser nodes, etc.)
 2. Commands you explicitly invoke that talk to an external service — for
-   example `login` (OAuth flows) or `update` (release check/download)
+   example `login` (OAuth flows), `update` (release check/download) or
+   `library` (the monoes.me library: sign-in, browsing, downloads you ask
+   for, and uploads you publish; the host is `MONOES_BASE_URL` or
+   https://monoes.me)
 3. Opt-in crash reporting as described above
 
 Everything else — workflow definitions, execution history, the secrets

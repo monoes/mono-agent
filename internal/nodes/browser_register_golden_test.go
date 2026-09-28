@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monoes/mono-agent/data"
+	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
@@ -90,7 +90,7 @@ func TestBrowserNodeTypes_LegacyGolden(t *testing.T) {
 func TestBrowserNodeTypes_RegistryGolden(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if _, err := data.AutomationsFS.ReadDir("automations"); err != nil {
+	if _, err := automations.Tree().ReadDir("automations"); err != nil {
 		t.Fatalf("embedded automations: %v", err)
 	}
 	reg, err := BootAutomations(filepath.Join(home, ".monoagent"))

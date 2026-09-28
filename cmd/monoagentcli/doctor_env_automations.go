@@ -11,8 +11,8 @@ import (
 )
 
 // addAutomationHooks feeds the doctor's automations group. It opens the
-// registry WITHOUT seeding built-ins (openAutomationRegistry would write
-// files; a check must not), and reads selector health the way
+// registry without booting it (openAutomationRegistry may fold legacy
+// actions and write files; a check must not), and reads selector health the way
 // `automation doctor` does: a row whose key the package no longer
 // declares is stale, not a problem.
 func addAutomationHooks(env *health.Env) {

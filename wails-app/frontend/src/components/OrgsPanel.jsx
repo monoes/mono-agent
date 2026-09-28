@@ -8,6 +8,7 @@ import {
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
 import { KVBlock } from './KVBlock.jsx'
+import { OrgTemplatesButton, PublishOrgButton } from './orgs/OrgLibraryActions.jsx'
 import MonomindInitPrompt from './MonomindInitPrompt.jsx'
 import AutonomyBar from './orgs/AutonomyBar.jsx'
 import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
@@ -680,6 +681,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
               </div>
             </div>
           )}
+          <OrgTemplatesButton onInstalled={res => { loadOrgs(true).then(() => { if (res?.local_id) selectOrg(res.local_id, { tab: 'design' }) }) }} />
           {loadingOrgs ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}><div className="spinner" /></div>
           ) : orgs.length === 0 ? (
@@ -735,6 +737,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 <Building2 size={12} style={{ color: 'var(--text-muted)' }} />
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>{selected}</span>
                 {isHolding && <Chip>holding</Chip>}
+                <PublishOrgButton orgName={selected} />
                 {/* flex-basis 0 keeps the bar beside the name and lets it wrap
                     its own second line (the jev note) instead of the header's. */}
                 <div style={{ flex: '1 1 0', display: 'flex', justifyContent: 'flex-end' }}>

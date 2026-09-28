@@ -120,7 +120,7 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 		if info, ok := known[id]; ok {
 			item.Status, item.InstalledVersion = "present", info.Version
 			if info.Removed {
-				item.Status, item.Error = "conflict", "a removed built-in has this id; restore it with `automation restore`"
+				item.Status, item.Error = "conflict", "a removed built-in has this id; reinstall it from monoes.me with `monoagentcli library install automation "+id+"`"
 			} else if info.Version == b.Version {
 				checkDiffers(reg, id, b, o, &item)
 			}
@@ -368,8 +368,9 @@ func checkDiffers(reg *automation.Registry, id string, b bundledAutomation, o bu
 	item.Hint = "Re-import with --replace-automations to review and replace it, or install the bundled copy with `automation install <file> --replace`."
 	item.Error = differsSummary(review) + "; the installed copy was kept. To replace it, re-import with --replace-automations (shows this review and asks), or install the bundled copy with `automation install <file> --replace`"
 	replaceable := true
-	if info, err := reg.Info(id); err == nil && info.Source == automation.SourceBuiltin {
-		// A bundle never replaces a built-in (restore/rollback manage those).
+	if info, err := reg.Info(id); err == nil && info.Trust == automation.TrustBuiltin {
+		// A bundle never replaces a built-in or an official monoes.me
+		// package (`library update` and rollback manage those).
 		replaceable = false
 		item.Builtin, item.Replaceable = true, &replaceable
 		item.Hint = "A bundle never replaces a built-in; the installed copy stays."
