@@ -51,6 +51,16 @@ func processIdentity(pid int) string {
 	return ""
 }
 
+// shortCommand is pid's command line (processCommand), shortened for a
+// notice.
+func shortCommand(pid int) string {
+	cmd := processCommand(pid)
+	if len(cmd) > 120 {
+		cmd = cmd[:117] + "..."
+	}
+	return cmd
+}
+
 // backgroundStop is `coder stop-background --json`.
 type backgroundStop struct {
 	Stopped []int `json:"stopped"`

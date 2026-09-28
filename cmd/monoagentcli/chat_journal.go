@@ -242,6 +242,7 @@ func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, c
 		return
 	}
 	j.forceFlushLocked()
+	j.closeOpenNativeCallsLocked()
 	j.finished = true
 
 	status, reason := chatevents.ComputeTurnStatus(stopRequested, res)

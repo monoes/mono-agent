@@ -195,6 +195,7 @@ type NoticePayload struct {
 type ProcessRef struct {
 	Pid      int    `json:"pid"`
 	Identity string `json:"identity,omitempty"`
+	Command  string `json:"command,omitempty"`
 }
 
 // TurnStatus is turn.finished's terminal classification — see the

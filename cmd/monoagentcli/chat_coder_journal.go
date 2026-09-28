@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -74,6 +75,22 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 	}
 }
 
+// closeOpenNativeCallsLocked ends every native call still open as the turn
+// finishes (a stopped or failed turn), so no tool card is left running.
+// monomind closes them itself on a cancel frame, but not on every path.
+func (j *turnJournal) closeOpenNativeCallsLocked() {
+	ids := make([]string, 0, len(j.nativeRun))
+	for id := range j.nativeRun {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		notOK := false
+		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: id, OK: &notOK, Cancelled: true})
+	}
+	j.nativeRun = nil
+}
+
 // fileExisted reports whether a file tool's target exists as the call
 // starts, i.e. before it runs; nil for other tools.
 func (j *turnJournal) fileExisted(name string, input map[string]any) *bool {
@@ -130,31 +147,44 @@ func coderStatusMessage(ev monomind.Event) string {
 		}
 		return "Starting Claude Code…"
 	case "ready":
-		var failed []string
+		var failed, connecting []string
 		for _, s := range ev.MCPServers {
-			if s.Status != "connected" {
+			switch s.Status {
+			case "connected":
+			case "pending":
+				connecting = append(connecting, s.Name)
+			default:
 				failed = append(failed, s.Name+" ("+s.Status+")")
 			}
 		}
-		if len(failed) > 0 {
-			return "Ready. MCP servers not connected: " + strings.Join(failed, ", ")
+		msg := "Ready"
+		if len(connecting) > 0 {
+			msg += ". Still connecting: " + strings.Join(connecting, ", ")
 		}
-		return "Ready"
+		if len(failed) > 0 {
+			msg += ". Not available: " + strings.Join(failed, ", ")
+		}
+		return msg
 	}
 	return ""
 }
 
-// backgroundMessage describes processes a turn left running.
-func backgroundMessage(pids []int) string {
-	ids := make([]string, len(pids))
-	for i, p := range pids {
-		ids[i] = strconv.Itoa(p)
+// backgroundMessage describes processes a turn left running. They are
+// not necessarily the agent's own: the folder's session hooks can start
+// daemons too, so each is named by its command.
+func backgroundMessage(refs []chatevents.ProcessRef) string {
+	items := make([]string, len(refs))
+	for i, r := range refs {
+		items[i] = strconv.Itoa(r.Pid)
+		if r.Command != "" {
+			items[i] += " (" + r.Command + ")"
+		}
 	}
 	noun := "processes"
-	if len(pids) == 1 {
+	if len(refs) == 1 {
 		noun = "process"
 	}
-	return fmt.Sprintf("%d background %s still running: %s", len(pids), noun, strings.Join(ids, ", "))
+	return fmt.Sprintf("%d %s started during this turn still running: %s", len(refs), noun, strings.Join(items, ", "))
 }
 
 // backgroundNotice is the coder.background notice for processes a turn left
@@ -162,10 +192,10 @@ func backgroundMessage(pids []int) string {
 func backgroundNotice(pids []int) chatevents.NoticePayload {
 	refs := make([]chatevents.ProcessRef, len(pids))
 	for i, pid := range pids {
-		refs[i] = chatevents.ProcessRef{Pid: pid, Identity: processIdentity(pid)}
+		refs[i] = chatevents.ProcessRef{Pid: pid, Identity: processIdentity(pid), Command: shortCommand(pid)}
 	}
 	return chatevents.NoticePayload{
-		Code: noticeCoderBackground, Message: backgroundMessage(pids), Severity: chatevents.SeverityWarning,
+		Code: noticeCoderBackground, Message: backgroundMessage(refs), Severity: chatevents.SeverityWarning,
 		Pids: pids, Processes: refs,
 	}
 }

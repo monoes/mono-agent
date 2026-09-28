@@ -127,3 +127,30 @@ func TestCoderStopBackgroundStopsOnlyTheSameProcess(t *testing.T) {
 		t.Errorf("arrays must be present, not null: %s", out)
 	}
 }
+
+func TestCoderTurnClosesToolCallsLeftOpen(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	bin, _ := writeCoderMonomind(t, `  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
+  echo '{"v":1,"type":"tool_activity","id":"b1","phase":"start","name":"Bash","input":{"command":"python3 -c pass"}}'
+  echo '{"v":1,"type":"error","code":"cancelled","fatal":false,"message":"cancelled"}'
+  echo '{"v":1,"type":"done","exit_code":130}'
+  exit 130`)
+	withCoderCaps(t, monomind.CoderCapabilities...)
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+	conv, _ := openTestChatStore(t, dbPath).CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
+	out, _ := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "go")
+	j := parseJournaledTurn(t, out)
+	done := j.byType(chatevents.EventToolCompleted)
+	if len(done) != 1 {
+		t.Fatalf("want the open call closed, got %d tool.completed", len(done))
+	}
+	var p chatevents.ToolCompletedPayload
+	json.Unmarshal(done[0].Payload, &p)
+	if p.CallID != "b1" || !p.Cancelled || p.OK == nil || *p.OK {
+		t.Errorf("closing event = %+v", p)
+	}
+	fin := j.byType(chatevents.EventTurnFinished)
+	if len(fin) != 1 || done[0].Seq > fin[0].Seq {
+		t.Errorf("the call must close before turn.finished: %+v", j.events)
+	}
+}

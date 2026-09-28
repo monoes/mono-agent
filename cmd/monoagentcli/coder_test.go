@@ -256,8 +256,8 @@ func TestCoderTurnRunsWithFullAccessAndJournalsToolActivity(t *testing.T) {
 	wantNotices := []string{
 		noticeCoderWorkspace + ": Working in " + cwd,
 		noticeCoderStatus + ": Starting Claude Code… loading MCP servers (1)",
-		noticeCoderStatus + ": Ready. MCP servers not connected: monomind (failed)",
-		noticeCoderBackground + ": 1 background process still running: 4242",
+		noticeCoderStatus + ": Ready. Not available: monomind (failed)",
+		noticeCoderBackground + ": 1 process started during this turn still running: 4242",
 	}
 	if len(notices) != len(wantNotices) {
 		t.Fatalf("notices = %+v", notices)
