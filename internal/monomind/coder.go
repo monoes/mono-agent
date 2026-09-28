@@ -50,7 +50,9 @@ type WorkspaceInit struct {
 // InitWorkspace sets dir up as a monomind project without touching any file
 // already there (--if-missing), so it is safe on the user's own repos. The
 // code graph is skipped (--no-graph) so a new chat is ready in seconds;
-// monomind builds it on first use.
+// monomind builds it on first use. Only Claude Code's setup is added
+// (--target claude): coder turns run nothing else, and the folder may be
+// the user's own repo.
 func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error) {
 	if bin == "" {
 		var err error
@@ -60,7 +62,7 @@ func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, InitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--yes", "--no-watch", "--no-install")
+	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", "claude", "--yes", "--no-watch", "--no-install")
 	cmd.Dir = dir
 	cmd.Env = append(FilteredEnviron(), "CI=true")
 	var stderr bytes.Buffer
