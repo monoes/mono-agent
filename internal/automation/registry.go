@@ -27,23 +27,24 @@ type indexFile struct {
 }
 
 type indexEntry struct {
-	Name               string    `json:"name,omitempty"`
-	Version            string    `json:"version"`
-	Previous           string    `json:"previous,omitempty"`
-	Source             string    `json:"source"`
-	Trust              string    `json:"trust"`
-	Enabled            bool      `json:"enabled"`
-	Removed            bool      `json:"removed,omitempty"`
-	SeedSha256         string    `json:"seedSha256,omitempty"`
-	SeedVersion        string    `json:"seedVersion,omitempty"` // last seeded built-in version (seeds compare against it)
-	InstalledSha256    string    `json:"installedSha256,omitempty"`
-	InstalledAt        time.Time `json:"installedAt"`
-	PendingSeedVersion string    `json:"pendingSeedVersion,omitempty"`
-	DisabledReason     string    `json:"disabledReason,omitempty"`
-	ScriptsAllowed     *bool     `json:"scriptsAllowed,omitempty"`   // explicit user choice; nil = tier default
-	LiveRunConfirmed   bool      `json:"liveRunConfirmed,omitempty"` // imported: real runs confirmed once
-	PreviousSource     string    `json:"previousSource,omitempty"`   // source/trust of the Previous version
-	PreviousTrust      string    `json:"previousTrust,omitempty"`
+	Name               string         `json:"name,omitempty"`
+	Version            string         `json:"version"`
+	Previous           string         `json:"previous,omitempty"`
+	Source             string         `json:"source"`
+	Trust              string         `json:"trust"`
+	Enabled            bool           `json:"enabled"`
+	Removed            bool           `json:"removed,omitempty"`
+	SeedSha256         string         `json:"seedSha256,omitempty"`
+	SeedVersion        string         `json:"seedVersion,omitempty"` // last seeded built-in version (seeds compare against it)
+	InstalledSha256    string         `json:"installedSha256,omitempty"`
+	InstalledAt        time.Time      `json:"installedAt"`
+	PendingSeedVersion string         `json:"pendingSeedVersion,omitempty"`
+	DisabledReason     string         `json:"disabledReason,omitempty"`
+	ScriptsAllowed     *bool          `json:"scriptsAllowed,omitempty"`   // explicit user choice; nil = tier default
+	LiveRunConfirmed   bool           `json:"liveRunConfirmed,omitempty"` // imported: real runs confirmed once
+	PreviousSource     string         `json:"previousSource,omitempty"`   // source/trust of the Previous version
+	PreviousTrust      string         `json:"previousTrust,omitempty"`
+	Library            *LibraryOrigin `json:"library,omitempty"` // monoes.me provenance
 }
 
 func (e *indexEntry) trust() string {
@@ -195,6 +196,7 @@ func (r *Registry) info(id string, e *indexEntry, hash bool) InstalledInfo {
 		PreviousVersion: e.Previous, PendingUpdate: e.PendingSeedVersion,
 		ScriptsAllowed:   scriptsAllowed(e.trust(), e.ScriptsAllowed),
 		LiveRunConfirmed: liveRunConfirmed(e.trust(), e.LiveRunConfirmed),
+		Library:          e.Library,
 	}
 	info.Trust = e.trust()
 	if e.Removed {

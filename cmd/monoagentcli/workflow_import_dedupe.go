@@ -373,16 +373,16 @@ func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Wor
 		if len(remappedConns) > 0 {
 			out["remapped_connection_ids"] = remappedConns
 		}
-		return json.NewEncoder(os.Stdout).Encode(out)
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
 	switch status {
 	case importUnchanged:
-		fmt.Fprintf(os.Stdout, "Workflow %q is already imported and unchanged (id: %s)\n", wf.Name, wf.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Workflow %q is already imported and unchanged (id: %s)\n", wf.Name, wf.ID)
 	case importUpdated:
-		fmt.Fprintf(os.Stdout, "Updated workflow %q in place (id: %s, %d nodes, %d connections)\n",
+		fmt.Fprintf(cmd.OutOrStdout(), "Updated workflow %q in place (id: %s, %d nodes, %d connections)\n",
 			wf.Name, wf.ID, len(wf.Nodes), len(wf.Connections))
 	default:
-		fmt.Fprintf(os.Stdout, "Imported workflow %q as id: %s  (%d nodes, %d connections)\n",
+		fmt.Fprintf(cmd.OutOrStdout(), "Imported workflow %q as id: %s  (%d nodes, %d connections)\n",
 			wf.Name, wf.ID, len(wf.Nodes), len(wf.Connections))
 	}
 	printRemapped := func(label string, m map[string]string) {
@@ -394,16 +394,16 @@ func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Wor
 			parts = append(parts, old+" → "+newID)
 		}
 		sort.Strings(parts)
-		fmt.Fprintf(os.Stdout, "Remapped %s (already used by another workflow): %s\n", label, strings.Join(parts, ", "))
+		fmt.Fprintf(cmd.OutOrStdout(), "Remapped %s (already used by another workflow): %s\n", label, strings.Join(parts, ", "))
 	}
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "Warning:", w)
+		fmt.Fprintln(cmd.OutOrStdout(), "Warning:", w)
 	}
 	printRemapped("node ids", remapped)
 	printRemapped("connection ids", remappedConns)
-	printBundleImport(os.Stdout, bundled)
+	printBundleImport(cmd.OutOrStdout(), bundled)
 	if len(missing) > 0 {
-		fmt.Fprintf(os.Stdout, "The workflow was imported, but it needs %d automation(s) that are not installed: %s\nInstall them with: %s\n",
+		fmt.Fprintf(cmd.OutOrStdout(), "The workflow was imported, but it needs %d automation(s) that are not installed: %s\nInstall them with: %s\n",
 			len(missing), strings.Join(missing, ", "), installCmd)
 	}
 	return nil

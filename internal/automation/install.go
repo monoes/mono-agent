@@ -48,6 +48,7 @@ func (r *Registry) install(src string, opts InstallOptions, trustArchive bool) (
 		return nil, err
 	}
 	p.Trust = trust
+	p.library = opts.Library
 	files, err := readTree(fsys)
 	if err != nil {
 		return nil, err
@@ -61,7 +62,13 @@ func (r *Registry) install(src string, opts InstallOptions, trustArchive bool) (
 
 // installTrust decides the source and trust an Install records.
 func installTrust(src string, opts InstallOptions, trustArchive bool) (source, trust string, err error) {
+	if opts.Library != nil {
+		return libraryTrust(src, opts)
+	}
 	source, trust = opts.Source, opts.Trust
+	if source == SourceMonoes {
+		return "", "", errors.New("automation: monoes packages are installed by `library install`")
+	}
 	if trust != "" && !validTrust(trust) {
 		return "", "", fmt.Errorf("automation: invalid trust %q", trust)
 	}
@@ -282,7 +289,7 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 	res.Review = buildReview(p, files)
 	allowed, reason := PolicyAllows(m)
 	res.Review.PolicyBlocked, res.Review.PolicyReason = !allowed, reason
-	if !allowed && p.Source != SourceBuiltin {
+	if !allowed && !p.shipped() {
 		res.Warnings = append(res.Warnings, "installed disabled: "+reason)
 	}
 	if len(res.Review.Scripts) > 0 {
@@ -408,10 +415,13 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 		e.ScriptsAllowed, e.LiveRunConfirmed = nil, false
 	}
 	e.Name, e.Source, e.Trust = m.Name, p.Source, trust
+	if !fromSeed {
+		e.Library = p.library // a reinstall from anywhere else drops the provenance
+	}
 	e.InstalledSha256 = hash
 	allowed, reason := PolicyAllows(m)
 	switch {
-	case !allowed && p.Source != SourceBuiltin:
+	case !allowed && !p.shipped():
 		e.Enabled, e.DisabledReason = false, reason
 	case e.DisabledReason != "":
 		e.Enabled, e.DisabledReason = true, "" // was policy-disabled, now allowed

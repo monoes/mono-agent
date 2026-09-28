@@ -22,6 +22,10 @@ const (
 	SourceBuiltin  = "builtin"
 	SourceImported = "imported"
 	SourceLocal    = "local"
+	// SourceMonoes is a package installed from the monoes.me library
+	// (`library install`). Official items get built-in trust; everything
+	// else from the library is imported.
+	SourceMonoes = "monoes"
 )
 
 // Trust tiers (index "trust"; contracts §8). Only builtin and local get the
@@ -167,6 +171,20 @@ type InstalledInfo struct {
 	ScriptsAllowed    bool      `json:"scriptsAllowed"`            // page_script / http_fetch_in_page may run
 	LegacyPlatform    string    `json:"legacyPlatform,omitempty"`  // generated legacy package: old "<platform>.<action>" node prefix
 	LiveRunConfirmed  bool      `json:"liveRunConfirmed"`          // write-level actions may run for real
+	// Library is where the package came from on monoes.me, when it did
+	// (installed from the library, or a built-in adopted by an official item).
+	Library *LibraryOrigin `json:"library,omitempty"`
+}
+
+// LibraryOrigin is the provenance of a package from the monoes.me library.
+type LibraryOrigin struct {
+	Source   string `json:"source"` // always "monoes"
+	ItemID   string `json:"item_id"`
+	Slug     string `json:"slug,omitempty"`
+	Version  string `json:"version"`
+	SHA256   string `json:"sha256,omitempty"` // artifact bytes; "" for an adopted built-in
+	Official bool   `json:"official,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
 }
 
 // InstallOptions controls Install.
@@ -186,6 +204,10 @@ type InstallOptions struct {
 	// the fetched archive (or the packed directory) hashes to it. Pass the
 	// SHA256 of a dry-run result to install exactly what was reviewed.
 	ExpectSHA256 string
+	// Library installs an archive downloaded from the monoes.me library:
+	// the source is SourceMonoes and the origin is recorded. An official
+	// item gets built-in trust; ExpectSHA256 is required.
+	Library *LibraryOrigin
 }
 
 func (o InstallOptions) replaceConfirmed() bool { return o.Replace || o.ReplaceBuiltin }
