@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { ShieldAlert, ShieldOff, Clock } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
 
@@ -15,12 +15,14 @@ import { confirm } from '../ConfirmDialog.jsx'
 // Granting is human-only: only after the confirm dialog below, and the CLI
 // refuses a grant from an agent context.
 
+// The canvas card shows only "FULL": its icon, color and tooltip carry the
+// state.
 export const ACCESS_STATES = {
-  active: { label: 'Full access', short: 'FULL', color: '#f59e0b' },
-  suspended: { label: 'Full access · suspended', short: 'FULL · SUSPENDED', color: '#ef4444' },
-  'unattended-blocked': { label: 'Full access · unattended blocked', short: 'FULL · ATTENDED ONLY', color: '#fb923c' },
+  active: { label: 'Full access', color: '#f59e0b', icon: ShieldAlert },
+  suspended: { label: 'Full access · suspended', color: '#ef4444', icon: ShieldOff },
+  'unattended-blocked': { label: 'Full access · unattended blocked', color: '#fb923c', icon: Clock },
 }
-const UNKNOWN_STATE = { label: 'Full access', short: 'FULL', color: '#f59e0b' }
+const UNKNOWN_STATE = { label: 'Full access', color: '#f59e0b', icon: ShieldAlert }
 
 export function accessState(entry) {
   return ACCESS_STATES[entry?.access_state] || UNKNOWN_STATE
@@ -62,6 +64,7 @@ export function useRolesAccess(orgName, stamp = '') {
 
 export function FullAccessBadge({ entry, compact = false }) {
   const st = accessState(entry)
+  const Icon = st.icon
   const title = entry?.reason ? `${st.label}: ${entry.reason}` : st.label
   return (
     <span data-testid="full-access-badge" data-state={entry?.access_state || 'unknown'} title={title} style={{
@@ -70,7 +73,7 @@ export function FullAccessBadge({ entry, compact = false }) {
       color: st.color, background: `${st.color}14`, border: `1px solid ${st.color}66`,
       borderRadius: 4, padding: compact ? '0 4px' : '1px 5px', whiteSpace: 'nowrap',
     }}>
-      <ShieldAlert size={compact ? 8 : 9} /> {compact ? st.short : st.label.toUpperCase()}
+      <Icon size={compact ? 8 : 9} /> {compact ? 'FULL' : st.label.toUpperCase()}
     </span>
   )
 }

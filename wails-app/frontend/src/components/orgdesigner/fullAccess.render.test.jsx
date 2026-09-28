@@ -50,7 +50,8 @@ describe('FullAccessBadge', () => {
     expect(a).toHaveTextContent('FULL ACCESS')
     expect(s).toHaveTextContent('FULL ACCESS · SUSPENDED')
     expect(s).toHaveAttribute('title', `Full access · suspended: ${SUSPENDED.reason}`)
-    expect(b).toHaveTextContent('FULL · ATTENDED ONLY')
+    expect(b).toHaveTextContent(/^\s*FULL$/)
+    expect(b).toHaveAttribute('title', `Full access · unattended blocked: ${BLOCKED.reason}`)
     expect(u).toHaveAttribute('data-state', 'unknown')
   })
 

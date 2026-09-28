@@ -229,8 +229,14 @@ export const api = {
   // Full-access roles (#205): grant ('full', only after the confirm dialog)
   // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.
   orgRoleSetAccess:    (name, roleID, access) => GoApp.OrgRoleSetAccess(name, roleID, access).then(parseStreamResult),
-  // `org validate`'s report {valid, error?, warnings}, taint problems included.
-  validateOrgReport:   (name) => GoApp.ValidateOrgReport(name).then(parseStreamResult),
+  // `org validate`'s report {valid, error?, warnings}, taint problems
+  // included. An invalid org's report has "error" too, so only a reply
+  // without "valid" is a failure.
+  validateOrgReport:   (name) => GoApp.ValidateOrgReport(name).then(s => {
+    const r = JSON.parse(s)
+    if (typeof r?.valid !== 'boolean' && r?.error) throw codedError(r.error, r.code)
+    return r
+  }),
   validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
   reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
   // Org × workflow unification — grants, automations, automation roles,
