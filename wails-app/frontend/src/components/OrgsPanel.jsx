@@ -18,6 +18,8 @@ import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
 import useQueuedCount from './orgs/useQueuedCount.js'
 import { Badge, Chip } from './orgs/ui.jsx'
 import FullAccessSummary from './orgs/FullAccessSummary.jsx'
+import OrgToolActivity from './orgs/OrgToolActivity.jsx'
+import { isToolActivity } from './orgs/orgToolActivity.js'
 
 // Fold button shown atop the expanded org-list panel — mirrors
 // OrgDesigner.jsx's panelFoldBtnStyle for visual consistency between the
@@ -906,10 +908,11 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                           <Card><KVBlock obj={data.overview} /></Card>
                         </details>
                         <div>
+                          <OrgToolActivity events={events} isLive runKey="live" />
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Live events</div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
                             {events.length === 0 && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>Waiting for events…</div>}
-                            {events.map((e, i) => (
+                            {events.filter(e => !isToolActivity(e)).map((e, i) => (
                               <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 8px', overflowWrap: 'anywhere' }}>
                                 <span style={{ color: 'var(--cyan)' }}>{e.type}</span>{e.from ? ` ${e.from}→${e.to || '?'}` : ''}{e.subject ? `: ${e.subject}` : ''}{e.msg ? ` ${e.msg}` : ''}
                               </div>
@@ -933,10 +936,11 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                             <Card><KVBlock obj={runDetail.report} /></Card>
                           </details>
                           <div>
+                            <OrgToolActivity events={itemsOf(runDetail.logs)} runKey={selectedRun} />
                             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Events</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
                               {itemsOf(runDetail.logs).length === 0 && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>No events recorded.</div>}
-                              {itemsOf(runDetail.logs).map((e, i) => (
+                              {itemsOf(runDetail.logs).filter(e => !isToolActivity(e)).map((e, i) => (
                                 <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 8px', overflowWrap: 'anywhere' }}>
                                   <span style={{ color: 'var(--cyan)' }}>{e.type}</span>{e.from ? ` ${e.from}→${e.to || '?'}` : ''}{e.subject ? `: ${e.subject}` : ''}{e.msg ? ` ${e.msg}` : ''}
                                 </div>
@@ -968,11 +972,14 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 {!tabLoading && tab === 'logs' && (
                   itemsOf(data.logs).length === 0
                     ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>No log entries.</div>
-                    : itemsOf(data.logs).map((e, i) => (
+                    : <>
+                      <OrgToolActivity events={itemsOf(data.logs)} isLive={selectedRun === 'live'} runKey={`logs-${selectedRun}`} />
+                      {itemsOf(data.logs).filter(e => !isToolActivity(e)).map((e, i) => (
                       <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 8px' }}>
                         <span style={{ color: 'var(--cyan)' }}>{e.type}</span>{e.from ? ` ${e.from}→${e.to || '?'}` : ''}{e.subject ? `: ${e.subject}` : ''}
                       </div>
-                    ))
+                    ))}
+                    </>
                 )}
 
                 {!tabLoading && tab === 'costs' && (
