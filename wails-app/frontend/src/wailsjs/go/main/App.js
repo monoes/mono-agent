@@ -614,16 +614,16 @@ export function KeyringStatus() {
   return window['go']['main']['App']['KeyringStatus']();
 }
 
-export function LibraryInstall(arg1,arg2,arg3,arg4) {
-  return window['go']['main']['App']['LibraryInstall'](arg1,arg2,arg3,arg4);
+export function LibraryInstall(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LibraryInstall'](arg1, arg2, arg3, arg4);
 }
 
 export function LibraryInstalled(arg1) {
   return window['go']['main']['App']['LibraryInstalled'](arg1);
 }
 
-export function LibraryList(arg1,arg2,arg3,arg4) {
-  return window['go']['main']['App']['LibraryList'](arg1,arg2,arg3,arg4);
+export function LibraryList(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LibraryList'](arg1, arg2, arg3, arg4);
 }
 
 export function LibraryLogin() {
@@ -638,16 +638,16 @@ export function LibraryLoginEmailSend(arg1) {
   return window['go']['main']['App']['LibraryLoginEmailSend'](arg1);
 }
 
-export function LibraryLoginEmailVerify(arg1,arg2) {
-  return window['go']['main']['App']['LibraryLoginEmailVerify'](arg1,arg2);
+export function LibraryLoginEmailVerify(arg1, arg2) {
+  return window['go']['main']['App']['LibraryLoginEmailVerify'](arg1, arg2);
 }
 
 export function LibraryLogout() {
   return window['go']['main']['App']['LibraryLogout']();
 }
 
-export function LibraryPublish(arg1,arg2,arg3,arg4,arg5,arg6,arg7) {
-  return window['go']['main']['App']['LibraryPublish'](arg1,arg2,arg3,arg4,arg5,arg6,arg7);
+export function LibraryPublish(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['LibraryPublish'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function LibraryShow(arg1) {
