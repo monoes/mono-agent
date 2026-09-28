@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ShieldAlert, ShieldOff, Clock } from 'lucide-react'
+import { ShieldAlert, ShieldOff, ShieldQuestion, Clock } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
 
@@ -21,6 +21,9 @@ export const ACCESS_STATES = {
   active: { label: 'Full access', color: '#f59e0b', icon: ShieldAlert },
   suspended: { label: 'Full access · suspended', color: '#ef4444', icon: ShieldOff },
   'unattended-blocked': { label: 'Full access · unattended blocked', color: '#fb923c', icon: Clock },
+  // Not a monomind state: the role declares full access but no human grant
+  // is on file (from `org validate`'s output; see withNotGranted).
+  'not-granted': { label: 'Full access · not granted', color: '#94a3b8', icon: ShieldQuestion },
 }
 const UNKNOWN_STATE = { label: 'Full access', color: '#f59e0b', icon: ShieldAlert }
 
@@ -33,6 +36,18 @@ export function rolesAccessByRole(status) {
   const out = {}
   for (const e of Array.isArray(status?.roles_access) ? status.roles_access : []) {
     if (e?.role) out[e.role] = e
+  }
+  return out
+}
+
+// withNotGranted adds a "not-granted" entry for each role that `org
+// validate` says has no human acknowledgement and that roles_access doesn't
+// cover. An org that never ran, or is stopped, reports no roles_access at
+// all (monomind#367), so this is where an ungranted role is told apart.
+export function withNotGranted(byRole, unacknowledged = {}) {
+  const out = { ...byRole }
+  for (const [role, line] of Object.entries(unacknowledged)) {
+    if (!out[role]) out[role] = { role, access: 'full', access_state: 'not-granted', reason: line }
   }
   return out
 }

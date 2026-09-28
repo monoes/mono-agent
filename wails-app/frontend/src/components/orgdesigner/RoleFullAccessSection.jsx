@@ -13,6 +13,7 @@ const STATE_HINT = {
   active: 'This role runs with full access.',
   suspended: 'Its config changed since the grant, so it runs scoped until you grant it again.',
   'unattended-blocked': "Scheduled and unattended runs don't use full access: the org doesn't allow unattended full access.",
+  'not-granted': 'This role asks for full access, but no person has granted it, so it runs scoped.',
 }
 
 export default function RoleFullAccessSection({ orgName, roleID, entry, declared, onChanged }) {
@@ -54,6 +55,11 @@ export default function RoleFullAccessSection({ orgName, roleID, entry, declared
               {state === 'suspended' && (
                 <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => grant(true)}>
                   {busy === 'grant' ? 'Granting…' : 'Grant again…'}
+                </button>
+              )}
+              {state === 'not-granted' && (
+                <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => grant(false)}>
+                  {busy === 'grant' ? 'Granting…' : 'Grant full access…'}
                 </button>
               )}
               <button type="button" className="btn btn-secondary btn-sm" disabled={!!busy} onClick={revoke}>

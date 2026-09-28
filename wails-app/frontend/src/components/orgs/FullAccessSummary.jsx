@@ -1,24 +1,39 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ShieldAlert } from 'lucide-react'
-import { FullAccessBadge, accessState, grantFullAccess } from '../orgdesigner/fullAccess.jsx'
+import { api } from '../../services/api.js'
+import { FullAccessBadge, accessState, grantFullAccess, withNotGranted } from '../orgdesigner/fullAccess.jsx'
+import { unacknowledgedRoles } from '../orgdesigner/orgValidateReport.js'
 
 // The org overview's full-access roles (#205), from `org status`'s
 // roles_access: how many roles run with full access, each one's state, the
-// reason when it isn't active, and "Grant again" for a suspended one.
+// reason when it isn't active, and "Grant again" for a suspended one. A
+// stopped or never-run org reports no roles_access (monomind#367), so roles
+// that `org validate` says have no human grant are listed as not granted.
 // Granting and revoking otherwise live in the role editor (Design tab).
 
 const mono = 'var(--font-mono)'
 
 export default function FullAccessSummary({ orgName, status, onChanged }) {
-  const roles = Array.isArray(status?.roles_access) ? status.roles_access : []
+  const [unacknowledged, setUnacknowledged] = useState({})
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  useEffect(() => {
+    let current = true
+    if (!orgName) return
+    Promise.resolve().then(() => api.validateOrgReport(orgName))
+      .then(r => { if (current) setUnacknowledged(unacknowledgedRoles(r)) })
+      .catch(() => { if (current) setUnacknowledged({}) })
+    return () => { current = false }
+  }, [orgName, status])
+  const listed = {}
+  for (const r of Array.isArray(status?.roles_access) ? status.roles_access : []) if (r?.role) listed[r.role] = r
+  const roles = Object.values(withNotGranted(listed, unacknowledged))
   if (roles.length === 0) return null
 
-  const grantAgain = async (role) => {
+  const grant = async (role, again) => {
     setBusy(role); setErr('')
     try {
-      if (await grantFullAccess(orgName, role, { again: true })) onChanged?.()
+      if (await grantFullAccess(orgName, role, { again })) onChanged?.()
     } catch (e) {
       setErr(String(e?.message || e))
     } finally {
@@ -39,9 +54,9 @@ export default function FullAccessSummary({ orgName, status, onChanged }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontFamily: mono, fontSize: 11, color: 'var(--text)' }}>{r.role}</span>
             <FullAccessBadge entry={r} />
-            {r.access_state === 'suspended' && (
-              <button type="button" className="btn btn-secondary btn-sm" disabled={!!busy} onClick={() => grantAgain(r.role)}>
-                {busy === r.role ? 'Granting…' : 'Grant again…'}
+            {(r.access_state === 'suspended' || r.access_state === 'not-granted') && (
+              <button type="button" className="btn btn-secondary btn-sm" disabled={!!busy} onClick={() => grant(r.role, r.access_state === 'suspended')}>
+                {busy === r.role ? 'Granting…' : r.access_state === 'suspended' ? 'Grant again…' : 'Grant full access…'}
               </button>
             )}
           </div>

@@ -15,13 +15,13 @@ vi.mock('../../services/api.js', () => ({
 }))
 import { api } from '../../services/api.js'
 import ConfirmHost from '../ConfirmDialog.jsx'
-import { FullAccessBadge, rolesAccessByRole } from './fullAccess.jsx'
+import { FullAccessBadge, rolesAccessByRole, withNotGranted } from './fullAccess.jsx'
 import RoleFullAccessSection from './RoleFullAccessSection.jsx'
 import RoleInspector from './RoleInspector.jsx'
 import RoleNode from './RoleNode.jsx'
 import FullAccessSummary from '../orgs/FullAccessSummary.jsx'
 import { ValidationIssues } from './DesignerToolbar.jsx'
-import { reportProblems, mergeValidation } from './orgValidateReport.js'
+import { reportProblems, mergeValidation, unacknowledgedRoles } from './orgValidateReport.js'
 
 beforeEach(() => { vi.clearAllMocks() })
 afterEach(() => { cleanup() })
@@ -177,5 +177,51 @@ describe('org validate taint problems', () => {
     expect(screen.queryByTestId('validation-issues')).not.toBeInTheDocument()
     fireEvent.click(count)
     expect(screen.getByTestId('validation-issues')).toHaveTextContent('scraper → analyst → builder')
+  })
+})
+
+// Real monomind 2.17.0 output for a role that declares full access with no
+// grant on file; a stopped or never-run org's status has no roles_access
+// (monomind#367), so this line is the only signal.
+const UNSIGNED = {
+  org: 'growth',
+  output: 'growth: role builder: no human acknowledgement on file — run `monomind org role set-access <org> <role> full`\ngrowth: valid (1 warning(s))',
+  v: 1, valid: true, warnings: [],
+}
+const UNSIGNED_LINE = 'role builder: no human acknowledgement on file — run `monomind org role set-access <org> <role> full`'
+
+describe('not granted (no human acknowledgement on file)', () => {
+  it('reads the role from org validate\'s output text', () => {
+    expect(unacknowledgedRoles(UNSIGNED)).toEqual({ builder: UNSIGNED_LINE })
+    expect(reportProblems(UNSIGNED)).toMatchObject({ errors: [], unacknowledged: { builder: UNSIGNED_LINE } })
+    expect(unacknowledgedRoles({ v: 1, valid: true, output: 'growth: valid' })).toEqual({})
+  })
+
+  it('fills in only roles roles_access does not cover', () => {
+    const merged = withNotGranted({ ops: BLOCKED }, { builder: UNSIGNED_LINE, ops: 'role ops: no human acknowledgement on file' })
+    expect(merged.builder).toEqual({ role: 'builder', access: 'full', access_state: 'not-granted', reason: UNSIGNED_LINE })
+    expect(merged.ops).toBe(BLOCKED)
+  })
+
+  it('the role editor shows it as not granted with a grant action', async () => {
+    api.orgRoleSetAccess.mockResolvedValue({ message: 'granted' })
+    renderSection({ entry: withNotGranted({}, unacknowledgedRoles(UNSIGNED)).builder, declared: true })
+    expect(screen.getByTestId('full-access-badge')).toHaveAttribute('data-state', 'not-granted')
+    expect(screen.getByTestId('full-access-badge')).toHaveTextContent('FULL ACCESS · NOT GRANTED')
+    expect(screen.getByText(/no person has granted it/)).toBeInTheDocument()
+    expect(screen.getByTestId('full-access-reason')).toHaveTextContent('no human acknowledgement on file')
+    fireEvent.click(screen.getByRole('button', { name: 'Grant full access…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grant full access' }))
+    await waitFor(() => expect(api.orgRoleSetAccess).toHaveBeenCalledWith('growth', 'builder', 'full'))
+  })
+
+  it('the overview lists it for a never-run org whose status has no roles_access', async () => {
+    api.validateOrgReport.mockResolvedValue(UNSIGNED)
+    render(<><FullAccessSummary orgName="growth" status={{ v: 1, name: 'growth', status: 'never run' }} /><ConfirmHost /></>)
+    const row = await screen.findByTestId('full-access-row')
+    expect(row).toHaveTextContent('builder')
+    expect(within(row).getByTestId('full-access-badge')).toHaveAttribute('data-state', 'not-granted')
+    expect(within(row).getByRole('button', { name: 'Grant full access…' })).toBeInTheDocument()
+    expect(api.validateOrgReport).toHaveBeenCalledWith('growth')
   })
 })

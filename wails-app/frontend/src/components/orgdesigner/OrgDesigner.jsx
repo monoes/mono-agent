@@ -41,7 +41,7 @@ import { suggestIcon, loadIconManifest, CATEGORY_TYPE, iconUrl } from './roleIco
 import OrgCanvas from './OrgCanvas.jsx'
 import RolePalette from './RolePalette.jsx'
 import RoleInspector from './RoleInspector.jsx'
-import { useRolesAccess } from './fullAccess.jsx'
+import { useRolesAccess, withNotGranted } from './fullAccess.jsx'
 import { useOrgValidateReport, mergeValidation } from './orgValidateReport.js'
 import IconPickerModal from './IconPickerModal.jsx'
 import DeleteRoleModal from './DeleteRoleModal.jsx'
@@ -235,6 +235,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   const rolesAccess = useRolesAccess(orgName, configStamp)
   const cliValidation = useOrgValidateReport(orgName, configStamp)
   const validation = useMemo(() => mergeValidation(validateStructure(nodes), cliValidation), [nodes, cliValidation])
+  const fullAccessByRole = useMemo(() => withNotGranted(rolesAccess.byRole, cliValidation.unacknowledged), [rolesAccess.byRole, cliValidation.unacknowledged])
 
   // ── Selection / persistence helpers ──────────────────────────────────
   const refreshFromServer = useCallback(async (res) => {
@@ -709,7 +710,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               readOnly={isLive}
               engineOffline={engineOffline}
               onAutomationDrop={handleAutomationDrop}
-              fullAccessByRole={rolesAccess.byRole}
+              fullAccessByRole={fullAccessByRole}
             />
           )}
         </div>
@@ -736,8 +737,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onGrantsChanged={automationData.refresh}
                 onOpenWorkflow={onOpenWorkflow}
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
-                fullAccess={selectedId ? rolesAccess.byRole[selectedId] || null : null}
-                onAccessChanged={rolesAccess.refresh}
+                fullAccess={selectedId ? fullAccessByRole[selectedId] || null : null}
+                onAccessChanged={() => { rolesAccess.refresh(); cliValidation.refresh() }}
               />
             </div>
           </div>
