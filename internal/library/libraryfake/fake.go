@@ -72,6 +72,10 @@ type Server struct {
 	TamperArtifact bool
 	// EmailCode is the code the email flow accepts (default "123456").
 	EmailCode string
+	// AnonymousReads lets requests without a token list, show and
+	// download public and official items, as monoes.me did before it
+	// required a login for every library read. Off by default.
+	AnonymousReads bool
 	// Requests counts calls per "METHOD path" (no query).
 	Requests map[string]int
 	// Refreshes counts refresh_token grants.
@@ -141,6 +145,19 @@ func (s *Server) Get(id string) (Item, bool) {
 		return Item{}, false
 	}
 	return *it, true
+}
+
+// RevokeAll revokes every access and refresh token, so a refresh fails
+// too and only a new login helps.
+func (s *Server) RevokeAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.access {
+		g.revoked = true
+	}
+	for _, g := range s.refr {
+		g.revoked = true
+	}
 }
 
 // ExpireAccessTokens makes every issued access token expired.
@@ -246,6 +263,13 @@ func (s *Server) items_(w http.ResponseWriter, r *http.Request, rest string) {
 	u, scopes, bad := s.caller(r)
 	if bad {
 		apiErr(w, 401, "invalid_token", "token expired or unknown")
+		return
+	}
+	s.mu.Lock()
+	anon := s.AnonymousReads
+	s.mu.Unlock()
+	if u == nil && !anon {
+		apiErr(w, 401, "unauthorized", "login required")
 		return
 	}
 	switch {

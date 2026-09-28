@@ -25,7 +25,8 @@ const (
 const (
 	NoAutomationsSummary = "No web automations installed — install them from monoes.me"
 	NoAutomationsDetail  = "Web automations (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt, Gemini) are published on monoes.me. " +
-		"List them with `monoagentcli library list --kind automation`, then install one with `monoagentcli library install automation <id>`."
+		"Log in first with `monoagentcli library login`, then list them with `monoagentcli library list --kind automation` " +
+		"and install one with `monoagentcli library install automation <id>`."
 )
 
 // AutomationsInfo is what the automations checks read (all local).
@@ -59,10 +60,10 @@ func automationFixes() []Fix {
 		{FixInfo: FixInfo{ID: FixRerecordSelector, Label: "Re-record the selector by pointing at the element in the browser",
 			Safety: SafetyManual, Command: "monoagentcli automation rerecord <automation> <selector>"},
 			Apply: func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }},
-		{FixInfo: FixInfo{ID: FixInstallFromLibrary, Label: "Install web automations from monoes.me",
-			Safety: SafetyManual, Command: "monoagentcli library list --kind automation"},
+		{FixInfo: FixInfo{ID: FixInstallFromLibrary, Label: "Log in to monoes.me, then install web automations from it",
+			Safety: SafetyManual, Command: "monoagentcli library login"},
 			Apply: func(context.Context, *Env, func(string)) error {
-				return fmt.Errorf("choose the automations to install: monoagentcli library install automation <id>")
+				return fmt.Errorf("log in with `monoagentcli library login`, then choose the automations to install: monoagentcli library install automation <id>")
 			}},
 	}
 }

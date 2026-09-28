@@ -4,6 +4,7 @@
 // alternative. Logged in: the account and a Log out button. The account
 // state comes from `library status`; pass status/onStatusChange to share it
 // with a surrounding dialog, or leave them out and the button loads its own.
+// large: the library's login gate — a big button, the email code as a link.
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LogIn, LogOut, Loader, Mail } from 'lucide-react'
@@ -13,7 +14,7 @@ import { api } from '../../services/api.js'
 const mono = { fontFamily: 'var(--font-mono)', fontSize: 10.5 }
 const errStyle = { ...mono, color: 'var(--red)', maxWidth: 320 }
 
-export default function LogInToMonoesButton({ status: statusProp, onStatusChange, compact = false }) {
+export default function LogInToMonoesButton({ status: statusProp, onStatusChange, compact = false, large = false }) {
   const { t } = useTranslation()
   const [ownStatus, setOwnStatus] = useState(null)
   const controlled = statusProp !== undefined
@@ -120,6 +121,21 @@ export default function LogInToMonoesButton({ status: statusProp, onStatusChange
           <button className="btn btn-ghost btn-sm" onClick={cancel}>{t('library.cancel')}</button>
         </span>
         {onCode && <span style={{ ...mono, color: 'var(--text-muted)' }}>{t('library.codeSent', { email })}</span>}
+        {error && <span role="alert" style={errStyle}>{error}</span>}
+      </span>
+    )
+  }
+
+  if (large) {
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <button className="btn btn-primary" onClick={loginBrowser} style={{ gap: 8, fontSize: 13, padding: '10px 22px' }}>
+          <LogIn size={14} /> {t('library.loginButton')}
+        </button>
+        <button type="button" onClick={() => { setError(''); setPhase('email') }}
+          style={{ ...mono, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--cyan)', textDecoration: 'underline' }}>
+          {t('library.useEmail')}
+        </button>
         {error && <span role="alert" style={errStyle}>{error}</span>}
       </span>
     )

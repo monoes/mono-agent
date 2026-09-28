@@ -6,7 +6,7 @@ func init() {
 	cliDocs = append(cliDocs,
 		cmdDoc{
 			Name:  "library login",
-			Short: "Log in to monoes.me (browser with PKCE, or a code by email)",
+			Short: "Log in to monoes.me (browser with PKCE, or a code by email); list, show, install and update need it",
 			Usage: "monoagentcli library login [--no-browser] [--timeout 5m] | --email <addr> [--send | --code <code>]",
 			Flags: `  --no-browser        Print the sign-in URL instead of opening the browser
   --timeout duration  How long to wait for the browser (default 5m)
@@ -23,9 +23,10 @@ func init() {
 		},
 		cmdDoc{
 			Name:  "library list",
-			Short: "Browse monoes.me: official, public (community) and your own items",
+			Short: "Browse monoes.me: official, public (community) and your own items (needs a login; exit 4 without)",
 			Usage: "monoagentcli library list [--kind workflow|automation|org] [--scope public|official|mine] [--search q] [--tag t]",
 			Examples: []string{
+				"monoagentcli library login",
 				"monoagentcli library list --kind automation --scope official",
 				"monoagentcli --json library list --scope mine",
 				"monoagentcli library show automation/instagram",
@@ -34,7 +35,7 @@ func init() {
 		},
 		cmdDoc{
 			Name:  "library install",
-			Short: "Download a library item, verify its sha256 and install it",
+			Short: "Download a library item, verify its sha256 and install it (needs a login; exit 4 without)",
 			Usage: "monoagentcli library install <workflow|automation|org> <id|slug> [--yes] [--dry-run] [--replace] [--rename <name>]",
 			Examples: []string{
 				"monoagentcli library install automation hackernews",

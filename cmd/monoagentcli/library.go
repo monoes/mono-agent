@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,8 +103,43 @@ func (e *libEnv) provenance() (*library.Provenance, error) {
 	return library.OpenProvenance(reg.Home()), nil
 }
 
+// requireLogin opens the client and fails with "log in first" (exit 4)
+// when the profile has no monoes.me login. Every library read needs one,
+// official items included; this check sends nothing.
+func (e *libEnv) requireLogin(ctx context.Context) (*library.Client, error) {
+	c, err := e.open()
+	if err != nil {
+		return nil, err
+	}
+	t, err := c.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, libErr(library.ErrNotLoggedIn)
+	}
+	return c, nil
+}
+
+// loginRequiredError is exit 4 with "login_required": true in --json, so
+// the app can tell "log in" from a connection failure.
+type loginRequiredError struct{ *cliError }
+
+func (e loginRequiredError) Unwrap() error { return e.cliError }
+
+func (loginRequiredError) JSONErrorFields() map[string]any {
+	return map[string]any{"login_required": true}
+}
+
+// isLoginRequired reports whether err means "log in to monoes.me first".
+func isLoginRequired(err error) bool {
+	var lr loginRequiredError
+	return errors.Is(err, library.ErrNotLoggedIn) || errors.As(err, &lr)
+}
+
 // libErr gives a library failure the CLI's exit code: 2 not found, 3
-// rejected input, 4 login/connection.
+// rejected input, 4 login/connection. No login, or a 401 the token
+// refresh did not cure, says "Log in to monoes.me first".
 func libErr(err error) error {
 	if err == nil {
 		return nil
@@ -114,20 +150,20 @@ func libErr(err error) error {
 	}
 	var ae *library.APIError
 	switch {
+	case errors.Is(err, library.ErrNotLoggedIn):
+		return loginRequiredError{&cliError{code: 4, msg: library.ErrNotLoggedIn.Error()}}
 	case errors.As(err, &ae):
 		switch ae.Status {
 		case http.StatusNotFound:
 			return &cliError{code: 2, msg: err.Error()}
 		case http.StatusBadRequest, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 			return &cliError{code: 3, msg: err.Error()}
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+		case http.StatusForbidden, http.StatusTooManyRequests:
 			return &cliError{code: 4, msg: err.Error()}
 		}
 		if ae.Status >= 500 {
 			return &cliError{code: 4, msg: err.Error()}
 		}
-	case errors.Is(err, library.ErrNotLoggedIn):
-		return &cliError{code: 4, msg: err.Error()}
 	case errors.Is(err, library.ErrSHA256Mismatch), errors.Is(err, automation.ErrSHA256Mismatch):
 		return &cliError{code: 3, msg: err.Error() + " — nothing was installed"}
 	case strings.Contains(err.Error(), "monoes.me unreachable"):
@@ -186,7 +222,7 @@ func printStatus(cfg *globalConfig, cmd *cobra.Command, s libStatus) error {
 	return printLib(cfg, cmd, s, func(w io.Writer) {
 		switch {
 		case !s.LoggedIn:
-			fmt.Fprintf(w, "Not logged in to %s. Run `monoagentcli library login`.\n", s.BaseURL)
+			fmt.Fprintf(w, "Not logged in to %s. Run `monoagentcli library login` to browse and install from the library.\n", s.BaseURL)
 		case s.User != nil:
 			fmt.Fprintf(w, "Logged in to %s as %s (%s)\n", s.BaseURL, nonEmptyStr(s.User.Username, s.User.Name), s.User.Email)
 		default:

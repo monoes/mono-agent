@@ -156,3 +156,24 @@ exec sleep 30
 		t.Fatalf("idle cancel = %s", got)
 	}
 }
+
+// Browsing without a login is the CLI's exit 4 with login_required; the
+// bindings hand that object to the page unchanged, so it can show the
+// login gate.
+func TestLibraryBindingsPassLoginRequired(t *testing.T) {
+	const body = `{"code":"auth_or_connection","error":"Log in to monoes.me first: monoagentcli library login","login_required":true}`
+	t.Setenv("MONOAGENTCLI_BIN", fakeCLI(t, `echo '`+body+`'; exit 4
+`))
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	for name, got := range map[string]string{
+		"LibraryList":    a.LibraryList("automation", "official", "", 1),
+		"LibraryShow":    a.LibraryShow("automation/hackernews"),
+		"LibraryInstall": a.LibraryInstall("automation", "hackernews", "", false),
+		"LibraryUpdate":  a.LibraryUpdate(""),
+	} {
+		if got != body {
+			t.Errorf("%s = %s", name, got)
+		}
+	}
+}

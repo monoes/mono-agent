@@ -30,9 +30,11 @@ const item = (over = {}) => ({
   visibility: 'official', tags: ['news'], owner: { id: 'o', username: 'monoes', name: 'Monoes' }, installed: null, ...over,
 })
 
+const LOGIN_FIRST = { error: 'Log in to monoes.me first: monoagentcli library login', code: 'auth_or_connection', login_required: true }
+
 beforeEach(async () => {
   await i18n.changeLanguage('en')
-  go.LibraryStatus.mockImplementation(() => j(LOGGED_OUT))
+  go.LibraryStatus.mockImplementation(() => j(LOGGED_IN))
   go.LibraryList.mockImplementation(() => j({ items: [item()], page: 1, per_page: 20, total: 1 }))
 })
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -61,15 +63,6 @@ describe('LibraryModal', () => {
     expect(go.LibraryList).toHaveBeenLastCalledWith('automation', 'public', '', 1)
     fireEvent.change(screen.getByLabelText('Search…'), { target: { value: 'Wea' } })
     await waitFor(() => expect(go.LibraryList).toHaveBeenLastCalledWith('automation', 'public', 'Wea', 1))
-  })
-
-  it('Mine asks a logged-out person to log in instead of listing', async () => {
-    render(<LibraryModal kind="workflow" onClose={() => {}} />)
-    await screen.findByText('Hacker News')
-    go.LibraryList.mockClear()
-    fireEvent.click(screen.getByRole('tab', { name: 'Mine' }))
-    expect(await screen.findByText('Log in to see what you have published.')).toBeInTheDocument()
-    expect(go.LibraryList).not.toHaveBeenCalled()
   })
 
   it('Mine lists your items once logged in and shows the account', async () => {
@@ -145,6 +138,98 @@ describe('LibraryModal', () => {
     expect(await screen.findByText('monoes.me is unreachable')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Retry'))
     expect(await screen.findByText('Hacker News')).toBeInTheDocument()
+  })
+})
+
+describe('LibraryModal login gate', () => {
+  it.each(['workflow', 'automation', 'org'])('logged out, the %s library shows only the login gate', async (kind) => {
+    go.LibraryStatus.mockImplementation(() => j(LOGGED_OUT))
+    render(<LibraryModal kind={kind} onClose={() => {}} />)
+    expect(await screen.findByText('Log in to monoes to browse the library')).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`^${{ workflow: 'Workflow templates', automation: 'Web automations', org: 'Org templates' }[kind]} on monoes.me, the official ones included`))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Log in to monoes' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Use an email code instead' })).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Official' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Search…')).not.toBeInTheDocument()
+    expect(go.LibraryList).not.toHaveBeenCalled()
+    expect(go.LibraryStatus).toHaveBeenCalledWith(false)
+  })
+
+  it('logging in from the gate loads the tabs and the official items', async () => {
+    go.LibraryStatus.mockImplementation(() => j(LOGGED_OUT))
+    go.LibraryLogin.mockImplementation(() => j(LOGGED_IN))
+    render(<LibraryModal kind="automation" onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Log in to monoes' }))
+    expect(await screen.findByText('Hacker News')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Official' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Logged in as @ana')).toBeInTheDocument()
+    expect(screen.queryByText('Log in to monoes to browse the library')).not.toBeInTheDocument()
+    expect(go.LibraryList).toHaveBeenCalledWith('automation', 'official', '', 1)
+  })
+
+  it('the email code fallback logs in from the gate', async () => {
+    go.LibraryStatus.mockImplementation(() => j(LOGGED_OUT))
+    go.LibraryLoginEmailSend.mockImplementation(() => j({ code_sent: true, email: 'ana@x.io' }))
+    go.LibraryLoginEmailVerify.mockImplementation(() => j(LOGGED_IN))
+    render(<LibraryModal kind="workflow" onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Use an email code instead' }))
+    fireEvent.change(screen.getByLabelText('you@example.com'), { target: { value: 'ana@x.io' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send code' }))
+    fireEvent.change(await screen.findByLabelText('6-digit code'), { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
+    expect(await screen.findByText('Hacker News')).toBeInTheDocument()
+    expect(go.LibraryLoginEmailVerify).toHaveBeenCalledWith('ana@x.io', '123456')
+  })
+
+  it('a "log in first" answer while browsing returns to the gate with a note', async () => {
+    render(<LibraryModal kind="automation" onClose={() => {}} />)
+    await screen.findByText('Hacker News')
+    go.LibraryList.mockImplementation(() => j(LOGIN_FIRST))
+    fireEvent.click(screen.getByRole('tab', { name: 'Community' }))
+    expect(await screen.findByText('Log in to monoes to browse the library')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Your monoes session has expired.')
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.queryByText('Hacker News')).not.toBeInTheDocument()
+
+    // Logging in again brings the tabs back, without the note.
+    go.LibraryList.mockImplementation(() => j({ items: [item()], total: 1 }))
+    go.LibraryLogin.mockImplementation(() => j(LOGGED_IN))
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to monoes' }))
+    expect(await screen.findByRole('tablist')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('an install refused for the login returns to the gate', async () => {
+    go.LibraryInstall.mockImplementation(() => j(LOGIN_FIRST))
+    render(<LibraryModal kind="automation" onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Hacker News' }))
+    expect(await screen.findByText('Log in to monoes to browse the library')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Your monoes session has expired.')
+  })
+
+  it('a saved login monoes.me no longer accepts opens on the gate with the note', async () => {
+    go.LibraryStatus.mockImplementation(() => j({ ...LOGGED_OUT, error: 'the saved login has expired; run `monoagentcli library login`' }))
+    render(<LibraryModal kind="org" onClose={() => {}} />)
+    expect(await screen.findByRole('status')).toHaveTextContent('Your monoes session has expired.')
+    expect(go.LibraryList).not.toHaveBeenCalled()
+  })
+
+  it('logging out returns to the gate', async () => {
+    go.LibraryLogout.mockImplementation(() => j({ logged_out: true }))
+    render(<LibraryModal kind="workflow" onClose={() => {}} />)
+    await screen.findByText('Hacker News')
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }))
+    expect(await screen.findByText('Log in to monoes to browse the library')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('the gate is translated', async () => {
+    await i18n.changeLanguage('es')
+    go.LibraryStatus.mockImplementation(() => j(LOGGED_OUT))
+    render(<LibraryModal kind="automation" onClose={() => {}} />)
+    expect(await screen.findByText('Inicia sesión en monoes para explorar la biblioteca')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Iniciar sesión en monoes' })).toBeInTheDocument()
   })
 })
 

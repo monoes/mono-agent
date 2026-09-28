@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-09-28
+
+### Changed
+
+- **The monoes.me library needs a login, even for official items.**
+  monoes.me now answers only logged-in library reads, so MonoAgent asks
+  you to log in first:
+  - `monoagentcli library list`, `show`, `install` and `update` without a
+    login exit 4 with "Log in to monoes.me first: monoagentcli library
+    login", before contacting monoes.me (`--json` adds
+    `"login_required": true`). A session monoes.me refuses is refreshed
+    once; if it is still refused, you get the same message. `library
+    status`, `login`, `logout` and `installed` work as before.
+  - In the app, the library dialog (workflow Templates, Browser
+    Automations, Org templates) opens on a login gate: what the library
+    is, a large "Log in to monoes" button and the email-code option. The
+    Official, Community and Mine tabs appear once you are logged in. If
+    the session expires while you browse or add an item, the dialog goes
+    back to the gate and says so.
+  - `doctor`'s "No web automations installed" fix and `automation
+    restore` now say to run `monoagentcli library login` before `library
+    install automation <id>`.
+
 ## [0.87.0] - 2026-09-28
 
 ### Changed

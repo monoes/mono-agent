@@ -2395,7 +2395,8 @@ Or workflow:
 ──────────────────────────────────────────────────────────────
 Use this when you want to automate scraping on any site that does NOT
 have an official automation package on monoes.me (instagram, linkedin, x,
-tiktok, hackernews, producthunt, gemini — install those with
+tiktok, hackernews, producthunt, gemini — log in with
+` + "`monoagentcli library login`" + `, then install those with
 ` + "`monoagentcli library install automation <id>`" + `).
 
 Step 1 — capture the rendered page HTML (real browser, JS executed):
@@ -2548,9 +2549,10 @@ func refCrawlingCmd() *cobra.Command {
 ╚══════════════════════════════════════════════════════════════╝
 
 Official automation packages on monoes.me cover instagram, linkedin, x,
-tiktok, hackernews, producthunt and gemini (monoagentcli library list
---kind automation; install one with monoagentcli library install
-automation <id>). For any other website, use the action template
+tiktok, hackernews, producthunt and gemini (log in with monoagentcli
+library login, then monoagentcli library list --kind automation; install
+one with monoagentcli library install automation <id>). For any other
+website, use the action template
 workflow below.
 No API keys required — Claude Code's built-in reasoning does the analysis.
 

@@ -26,8 +26,8 @@
 - 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
-- 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) for managing your own accounts: their web automations are official packages on [monoes.me](https://monoes.me), added with `monoagentcli library install automation <id>` (a `-tags nosocial` build leaves the nodes out) — see [Usage Policy](docs/USAGE_POLICY.md)
-- 📚 **monoes.me library** — log in with `monoagentcli library login`, then browse, install and publish workflows, orgs and web automations (`library list | install | publish | update`); the desktop app has the same in its Templates, Browser Automations and Orgs pages
+- 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) for managing your own accounts: their web automations are official packages on [monoes.me](https://monoes.me), added with `monoagentcli library login` and `monoagentcli library install automation <id>` (a `-tags nosocial` build leaves the nodes out) — see [Usage Policy](docs/USAGE_POLICY.md)
+- 📚 **monoes.me library** — log in with `monoagentcli library login` (browsing needs a login, official items included), then browse, install and publish workflows, orgs and web automations (`library list | install | publish | update`); the desktop app has the same in its Templates, Browser Automations and Orgs pages
 
 Think of it as an honest, self-hosted n8n you can carry in a single file — with human approval gates and first-class agent access built in.
 

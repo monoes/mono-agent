@@ -47,10 +47,20 @@ describe('Browser automations and monoes.me', () => {
 })
 
 describe('Orgs page library actions', () => {
-  it('Org templates opens the library for orgs', async () => {
+  it('Org templates, logged out, opens the library on its login gate', async () => {
     render(<OrgTemplatesButton onInstalled={() => {}} />)
     fireEvent.click(screen.getByText('Org templates'))
     expect(await screen.findByText('Org templates from monoes.me')).toBeInTheDocument()
+    expect(await screen.findByText('Log in to monoes to browse the library')).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(go.LibraryList).not.toHaveBeenCalled()
+  })
+
+  it('Org templates, logged in, lists the official orgs', async () => {
+    go.LibraryStatus.mockImplementation(() => j({ logged_in: true, user: { username: 'ana' } }))
+    render(<OrgTemplatesButton onInstalled={() => {}} />)
+    fireEvent.click(screen.getByText('Org templates'))
+    expect(await screen.findByRole('tablist')).toBeInTheDocument()
     expect(go.LibraryList).toHaveBeenCalledWith('org', 'official', '', 1)
   })
 

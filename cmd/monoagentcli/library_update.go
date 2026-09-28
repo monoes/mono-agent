@@ -25,6 +25,8 @@ type libUpdate struct {
 	// Status: updated | available (dry run) | up_to_date | needs_confirmation | gone | failed
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+
+	loginRequired bool
 }
 
 func newLibraryUpdateCmd(e *libEnv) *cobra.Command {
@@ -34,14 +36,15 @@ func newLibraryUpdateCmd(e *libEnv) *cobra.Command {
 		Short: "Install newer library versions of what came from monoes.me",
 		Long: "Checks every workflow, org and automation installed from the library (or one of them) " +
 			"and installs newer versions. Built-in automations an older MonoAgent installed are matched " +
-			"to their official monoes.me items first. Replacing an org needs --yes.",
+			"to their official monoes.me items first. Replacing an org needs --yes. Needs a login " +
+			"(`monoagentcli library login`).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.open()
+			ctx := cmd.Context()
+			c, err := e.requireLogin(ctx)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
 			e.adoptOfficial(ctx, c)
 			recs, err := e.installedRecords(ctx, "")
 			if err != nil {
@@ -56,7 +59,11 @@ func newLibraryUpdateCmd(e *libEnv) *cobra.Command {
 				if only != "" && only != r.LocalID && only != r.ItemID && only != r.Slug {
 					continue
 				}
-				updates = append(updates, e.updateOne(ctx, c, r, yes, dryRun))
+				u := e.updateOne(ctx, c, r, yes, dryRun)
+				if u.loginRequired {
+					return libErr(library.ErrNotLoggedIn) // the login expired: every other item would fail the same way
+				}
+				updates = append(updates, u)
 			}
 			if only != "" && len(updates) == 0 {
 				return errNotFound("nothing installed from monoes.me matches %q (see `monoagentcli library installed`)", only)
@@ -83,7 +90,9 @@ func (e *libEnv) updateOne(ctx context.Context, c *library.Client, r library.Rec
 	it, err := c.Get(ctx, r.ItemID)
 	if err != nil {
 		var ae *library.APIError
-		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+		if isLoginRequired(err) {
+			u.loginRequired = true
+		} else if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
 			u.Status, u.Error = "gone", "the item is no longer in the library (or no longer visible to you)"
 		} else {
 			u.Status, u.Error = "failed", err.Error()
@@ -104,7 +113,7 @@ func (e *libEnv) updateOne(ctx context.Context, c *library.Client, r library.Rec
 		opts.rename = r.LocalID // update the org it was installed as
 	}
 	if _, err := e.install(ctx, c, it, opts); err != nil {
-		u.Status, u.Error = "failed", err.Error()
+		u.Status, u.Error, u.loginRequired = "failed", err.Error(), isLoginRequired(err)
 		var ce *cliError
 		if errors.As(err, &ce) && ce.code == 3 && !yes {
 			u.Status = "needs_confirmation"

@@ -100,7 +100,7 @@ func TestDoctorFreshHomePointsAtLibrary(t *testing.T) {
 		!strings.Contains(r.Detail, "monoagentcli library install automation <id>") {
 		t.Fatalf("automations.packages on a fresh home = %+v", r)
 	}
-	if r.Fix == nil || r.Fix.Command != "monoagentcli library list --kind automation" {
+	if r.Fix == nil || r.Fix.Command != "monoagentcli library login" || !strings.Contains(r.Detail, "monoagentcli library login") {
 		t.Fatalf("fix = %+v", r.Fix)
 	}
 }

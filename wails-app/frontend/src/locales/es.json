@@ -547,6 +547,15 @@
       "automation": "Automatizaciones web de monoes.me",
       "org": "Plantillas de organizaciones de monoes.me"
     },
+    "gate": {
+      "title": "Inicia sesión en monoes para explorar la biblioteca",
+      "body": {
+        "workflow": "Las plantillas de flujos de trabajo de monoes.me, incluidas las oficiales, son para quienes tienen una cuenta de monoes. Inicia sesión para verlas y añadirlas aquí.",
+        "automation": "Las automatizaciones web de monoes.me, incluidas las oficiales, son para quienes tienen una cuenta de monoes. Inicia sesión para verlas y añadirlas aquí.",
+        "org": "Las plantillas de organizaciones de monoes.me, incluidas las oficiales, son para quienes tienen una cuenta de monoes. Inicia sesión para verlas y añadirlas aquí."
+      },
+      "expired": "Tu sesión de monoes ha caducado. Vuelve a iniciar sesión para seguir explorando."
+    },
     "tabs": {
       "official": "Oficiales",
       "community": "Comunidad",
@@ -556,7 +565,6 @@
     "loading": "Cargando…",
     "empty": "Todavía no hay nada aquí.",
     "emptyMine": "Aún no has publicado nada de este tipo.",
-    "mineLoginPrompt": "Inicia sesión para ver lo que has publicado.",
     "loadMore": "Cargar más",
     "retry": "Reintentar",
     "close": "Cerrar",
@@ -582,7 +590,7 @@
     "workflowMore": "Más plantillas en monoes.me",
     "automationsEmpty": {
       "title": "No hay automatizaciones web instaladas",
-      "body": "Las automatizaciones web ahora vienen de monoes.me. Inicia sesión y añade las que necesites."
+      "body": "Las automatizaciones web ahora vienen de monoes.me. Inicia sesión en monoes para verlas y añadir las que necesites."
     },
     "publish": {
       "button": "Publicar en monoes",

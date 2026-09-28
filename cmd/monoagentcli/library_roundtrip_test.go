@@ -32,6 +32,7 @@ func TestLibraryWorkflowInstallAndUpdate(t *testing.T) {
 	f := newLibFixture(t)
 	id := f.fake.Add("monoes", "workflow", "gemimg", "Gemini image", "official", "1.0.0",
 		readRepo(t, "internal/workflow/templates/gemimg.json"), map[string]any{"required_automations": []any{"gemini"}})
+	f.login()
 
 	var res libInstallResult
 	f.must(&res, "library", "install", "workflow", "gemimg", "--dry-run")
@@ -68,6 +69,7 @@ func TestLibraryWorkflowInstallAndUpdate(t *testing.T) {
 
 	// Installing into another profile is independent.
 	f.must(nil, "profile", "create", "other")
+	f.login("--profile", "other")
 	f.must(&list, "--profile", "other", "library", "list", "--kind", "workflow")
 	if list.Items[0].Installed != nil {
 		t.Fatalf("other profile sees the install: %+v", list.Items[0].Installed)
@@ -77,6 +79,7 @@ func TestLibraryWorkflowInstallAndUpdate(t *testing.T) {
 func TestLibraryOrgInstallCollision(t *testing.T) {
 	f := newLibFixture(t)
 	f.fake.Add("monoes", "org", "research-team", "Research team", "official", "1.0.0", readRepo(t, "orgtemplates/research-team.json"), nil)
+	f.login()
 
 	var res libInstallResult
 	f.must(&res, "library", "install", "org", "research-team")
@@ -169,6 +172,7 @@ func TestLibraryPublishRoundTrips(t *testing.T) {
 
 	// Round trip: the published workflow installs into a fresh profile.
 	f.must(nil, "profile", "create", "fresh")
+	f.login("--profile", "fresh")
 	var res libInstallResult
 	f.must(&res, "--profile", "fresh", "library", "install", "workflow", wfItem)
 	if !res.Installed {
@@ -180,6 +184,7 @@ func TestLibraryAdoptsSeededBuiltins(t *testing.T) {
 	f := newLibFixture(t) // the test seed installs the built-ins, as an older release did
 	id := f.fake.Add("monoes", "automation", "hackernews", "Hacker News", "official", "1.1.0", pack(t, "hackernews", ""),
 		map[string]any{"automation_id": "hackernews"})
+	f.login()
 	var up struct{ Updates []libUpdate }
 	f.must(&up, "library", "update", "--dry-run")
 	if len(up.Updates) != 1 || up.Updates[0].LocalID != "hackernews" || up.Updates[0].Status != "up_to_date" {
@@ -209,6 +214,7 @@ func TestLibraryForkIsNotAdoptedOrSilentlyReplaced(t *testing.T) {
 	f.fake.AddUser(&libraryfake.User{ID: "u-eve", Username: "eve", Name: "Eve", Email: "eve@example.com"})
 	f.fake.Add("eve", "automation", "hackernews-2", "HN fork", "public", "1.1.0", pack(t, "hackernews", ""),
 		map[string]any{"automation_id": "hackernews"})
+	f.login()
 	var list libList
 	f.must(&list, "library", "list", "--kind", "automations")
 	if len(list.Items) != 1 || list.Items[0].Installed != nil {
