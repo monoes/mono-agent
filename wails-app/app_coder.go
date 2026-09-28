@@ -114,9 +114,10 @@ func (a *App) CoderSet(workspaceRoot string, maxTurns int, timeout string, budge
 	return a.jsonResult(coderSetArgs(workspaceRoot, maxTurns, timeout, budgetUsd)...)
 }
 
-// CoderWorkspaceNew creates and initializes a fresh random folder under the
-// workspace root: {path, created, git, init:{created, skipped}}.
-func (a *App) CoderWorkspaceNew() string { return a.jsonResult("coder", "workspace", "new") }
+// CoderWorkspaceRoot sets up the coder root itself as the chat's working
+// folder, shared by every chat that picks it: {path, created, git,
+// init:{created, skipped}}.
+func (a *App) CoderWorkspaceRoot() string { return a.jsonResult("coder", "workspace", "root") }
 
 // CoderWorkspaceList returns the folders coder conversations used, newest
 // first.

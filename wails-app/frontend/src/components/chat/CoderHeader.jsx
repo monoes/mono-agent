@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderOpen, Copy, Check, FolderPlus } from 'lucide-react'
+import { FolderOpen, Copy, Check, FolderRoot } from 'lucide-react'
 import { api, notify } from '../../services/api.js'
 import { copyToClipboard } from './toolCardUtils.js'
 
@@ -73,7 +73,7 @@ export function initSummary(created) {
   return shown.join(', ') + (more > 0 ? ` and ${more} more` : '')
 }
 
-// CoderInitNote reports the new test folder a coder chat was started in,
+// CoderInitNote reports the coder root a coder chat was started in,
 // from `coder workspace new`'s JSON.
 export function CoderInitNote({ workspace }) {
   const created = workspace?.init?.created || []
@@ -83,9 +83,9 @@ export function CoderInitNote({ workspace }) {
       background: 'rgba(0,180,216,0.05)', border: '1px solid rgba(0,180,216,0.15)',
       fontFamily: mono, fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.5, wordBreak: 'break-all',
     }}>
-      <FolderPlus size={11} color="#00b4d8" style={{ flexShrink: 0, marginTop: 1 }} />
+      <FolderRoot size={11} color="#00b4d8" style={{ flexShrink: 0, marginTop: 1 }} />
       <span>
-        {workspace?.created === false ? 'Using folder ' : 'Created test folder '}
+        {workspace?.created ? 'Created coder root ' : 'Working in '}
         <span style={{ color: '#e2e8f0' }}>{workspace?.path}</span>
         {created.length > 0 && <> · created {initSummary(created)}</>}
         {workspace?.git && <> · git repository</>}

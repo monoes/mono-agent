@@ -17,7 +17,7 @@ const m = vi.hoisted(() => ({
   stopChatTurn: vi.fn(),
   getChatTurns: vi.fn(),
   coderStatus: vi.fn(),
-  coderWorkspaceNew: vi.fn(),
+  coderWorkspaceRoot: vi.fn(),
   coderWorkspaceList: vi.fn(),
   pickCoderFolder: vi.fn(),
   openPathWithOS: vi.fn(),
@@ -42,7 +42,7 @@ const status = (over = {}) => ({
   enabled: true, workspaceRoot: '/home/u/monoagent-coder', maxTurns: 200, timeout: '60m', budgetUsd: 0,
   ready: true, missingCapabilities: [], runtime: 'claude', ...over,
 })
-const WS = '/home/u/monoagent-coder/20260927-brisk-otter'
+const WS = '/home/u/monoagent-coder'
 
 beforeEach(() => {
   for (const f of Object.values(m)) f.mockReset()
@@ -91,27 +91,28 @@ describe('AIChatPanel coder mode', () => {
     expect(screen.getByTestId('coder-not-ready')).toHaveTextContent('needs monomind update (missing: agent-exec-full-access, init-json)')
   })
 
-  it('starts a coder chat in a new test folder, without tools, and then locks the mode', async () => {
+  it('starts a coder chat in the coder root, without tools, and then locks the mode', async () => {
     m.coderStatus.mockResolvedValue(status())
-    m.coderWorkspaceNew.mockResolvedValue({ path: WS, created: true, git: true, init: { created: ['CLAUDE.md', '.claude/settings.json'], skipped: [] } })
+    m.coderWorkspaceRoot.mockResolvedValue({ path: WS, created: true, git: true, init: { created: ['CLAUDE.md', '.claude/settings.json'], skipped: [] } })
     m.createCoderConversation.mockResolvedValue({ id: 'coder-1', backend: 'agent', mode: 'coder', cwd: WS })
     await openPanel()
 
     fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
     const workspaces = screen.getByRole('radiogroup', { name: 'Coder workspace' })
-    expect(within(workspaces).getByRole('radio', { name: /New test folder/ })).toHaveAttribute('aria-checked', 'true')
+    expect(within(workspaces).getByRole('radio', { name: /Coder root/ })).toHaveAttribute('aria-checked', 'true')
+    expect(within(workspaces).getByRole('radio', { name: /Coder root/ })).toHaveTextContent('/home/u/monoagent-coder')
     expect(await within(workspaces).findByRole('radio', { name: /recent-proj/ })).toBeInTheDocument()
 
     await sendMessage('write hello.py and run it')
     await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', WS, false))
-    expect(m.coderWorkspaceNew).toHaveBeenCalledTimes(1)
+    expect(m.coderWorkspaceRoot).toHaveBeenCalledTimes(1)
     expect(m.createChatConversation).not.toHaveBeenCalled()
     await waitFor(() => expect(m.startChatTurn).toHaveBeenCalledWith('coder-1', expect.any(String), 'write hello.py and run it', false, false))
 
     // Mode locked: the picker is gone, the coder header shows the folder.
     expect(screen.queryByTestId('coder-mode-picker')).not.toBeInTheDocument()
     expect(screen.getByTestId('coder-cwd')).toHaveTextContent(WS)
-    expect(screen.getByTestId('coder-init-note')).toHaveTextContent(`Created test folder ${WS} · created CLAUDE.md, .claude/settings.json · git repository`)
+    expect(screen.getByTestId('coder-init-note')).toHaveTextContent(`Created coder root ${WS} · created CLAUDE.md, .claude/settings.json · git repository`)
     fireEvent.click(screen.getByRole('button', { name: /Open folder/ }))
     expect(m.openPathWithOS).toHaveBeenCalledWith(WS)
 
@@ -129,7 +130,7 @@ describe('AIChatPanel coder mode', () => {
     fireEvent.click(await screen.findByRole('radio', { name: /recent-proj/ }))
     await sendMessage('go')
     await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '/w/recent-proj', false))
-    expect(m.coderWorkspaceNew).not.toHaveBeenCalled()
+    expect(m.coderWorkspaceRoot).not.toHaveBeenCalled()
     await screen.findByRole('button', { name: 'Stop generating' })
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(m.stopChatTurn).toHaveBeenCalledWith('coder-2', expect.any(String)))
@@ -177,7 +178,7 @@ describe('AIChatPanel coder mode', () => {
     fireEvent.click(screen.getByTitle('Past sessions'))
     const rows = await screen.findAllByRole('option')
     expect(within(rows[0]).getByTestId('coder-badge')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('20260927-brisk-otter')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('monoagent-coder')).toBeInTheDocument()
     expect(within(rows[1]).queryByTestId('coder-badge')).not.toBeInTheDocument()
   })
 

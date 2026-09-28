@@ -1,13 +1,13 @@
-import { Bot, Code2, FolderPlus, FolderOpen, History } from 'lucide-react'
+import { Bot, Code2, FolderRoot, FolderOpen, History } from 'lucide-react'
 import { folderName, missingText } from './useCoderMode.js'
 
 // CoderModePicker is the new-chat choice between the Assistant and Coder
-// modes (#203), plus Coder's workspace: a new test folder (default), a
+// modes (#203), plus Coder's workspace: the coder root (default), a
 // folder picked with the native dialog, or a recent one. Shown only before
 // a conversation exists, since its mode can't change once it starts. Renders
 // nothing while coder mode is off in Settings.
 //
-// workspace is { kind: 'new' } or { kind: 'folder', path }.
+// workspace is { kind: 'root' } or { kind: 'folder', path }.
 
 const mono = 'var(--font-mono)'
 const CYAN = '#00b4d8'
@@ -64,11 +64,11 @@ export function CoderModePicker({ status, mode, onModeChange, workspace, onWorks
       {mode === 'coder' && ready && (
         <div role="radiogroup" aria-label="Coder workspace" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <button type="button" role="radio" aria-checked={workspace?.kind !== 'folder'} disabled={disabled}
-            onClick={() => onWorkspaceChange({ kind: 'new' })} style={optionStyle(workspace?.kind !== 'folder')}>
-            <FolderPlus size={12} color={CYAN} style={{ marginTop: 1, flexShrink: 0 }} />
+            onClick={() => onWorkspaceChange({ kind: 'root' })} style={optionStyle(workspace?.kind !== 'folder')}>
+            <FolderRoot size={12} color={CYAN} style={{ marginTop: 1, flexShrink: 0 }} />
             <span style={{ minWidth: 0 }}>
-              <div style={optTitle}>New test folder</div>
-              <div style={optHint}>A fresh folder in {status.workspaceRoot || 'the workspace root'}</div>
+              <div style={optTitle}>Coder root</div>
+              <div style={optHint}>{status.workspaceRoot || 'The coder root folder'}</div>
             </span>
           </button>
           <button type="button" role="radio" aria-checked={!!pickedPath && !pickedIsRecent} disabled={disabled}

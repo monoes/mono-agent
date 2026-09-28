@@ -17,7 +17,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 		fakeChatReply{match: "coder enable", stdout: coderStatusJSON + "\n"},
 		fakeChatReply{match: "coder disable", stdout: coderStatusJSON + "\n"},
 		fakeChatReply{match: "coder set", stdout: coderStatusJSON + "\n"},
-		fakeChatReply{match: "coder workspace new", stdout: `{"path":"/home/u/monoagent-coder/20260927-brisk-otter","created":true,"git":true,"init":{"created":["CLAUDE.md"],"skipped":[]}}`},
+		fakeChatReply{match: "coder workspace root", stdout: `{"path":"/home/u/monoagent-coder","created":true,"git":true,"init":{"created":["CLAUDE.md"],"skipped":[]}}`},
 		fakeChatReply{match: "coder workspace list", stdout: `[{"path":"/w/a","lastUsed":"2026-09-27T10:00:00Z","conversations":3,"exists":true}]`},
 	)
 	a, _ := newCLIChatApp(t, bin)
@@ -33,8 +33,8 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 			t.Errorf("%s = %s, want the status JSON verbatim", name, got)
 		}
 	}
-	if got := a.CoderWorkspaceNew(); !strings.Contains(got, `"path":"/home/u/monoagent-coder/20260927-brisk-otter"`) {
-		t.Errorf("CoderWorkspaceNew = %s", got)
+	if got := a.CoderWorkspaceRoot(); !strings.Contains(got, `"path":"/home/u/monoagent-coder"`) {
+		t.Errorf("CoderWorkspaceRoot = %s", got)
 	}
 	if got := a.CoderWorkspaceList(); !strings.HasPrefix(got, `[{"path":"/w/a"`) {
 		t.Errorf("CoderWorkspaceList = %s", got)
@@ -49,7 +49,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 		"coder enable --yes-i-understand",
 		"coder disable",
 		"coder set --workspace-root /w --max-turns 50 --timeout 30m --budget-usd 2.5",
-		"coder workspace new",
+		"coder workspace root",
 		"coder workspace list",
 	}
 	// Map iteration above runs the four status calls in any order.
