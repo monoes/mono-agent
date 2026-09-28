@@ -57,6 +57,20 @@ export function ChooseWorkflowFile():Promise<string>;
 
 export function ClearLogs():Promise<void>;
 
+export function CoderDisable():Promise<string>;
+
+export function CoderEnable():Promise<string>;
+
+export function CoderSet(arg1:string,arg2:number,arg3:string,arg4:number):Promise<string>;
+
+export function CoderStatus():Promise<string>;
+
+export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
+
+export function CoderWorkspaceList():Promise<string>;
+
+export function CoderWorkspaceNew():Promise<string>;
+
 export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<storage.PersonMessage>;
 
 export function ConfirmSocialLogin(arg1:string):Promise<string>;
@@ -64,6 +78,8 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
 export function CreateChatConversation(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
 
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
@@ -359,7 +375,11 @@ export function OpenVaultImportFilePicker():Promise<string>;
 
 export function OrgGroupStatus(arg1:string):Promise<string>;
 
+export function OrgRoleSetAccess(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function PauseOrgAutonomy(arg1:string,arg2:string):Promise<string>;
+
+export function PickCoderFolder():Promise<string>;
 
 export function PromoteRoleToRoot(arg1:string,arg2:string):Promise<string>;
 
@@ -488,5 +508,7 @@ export function UploadProfileDocument(arg1:string,arg2:string):Promise<main.Uplo
 export function ValidateAutomation(arg1:string):Promise<string>;
 
 export function ValidateOrgDesign(arg1:string):Promise<string>;
+
+export function ValidateOrgReport(arg1:string):Promise<string>;
 
 export function VerifyDraft(arg1:string,arg2:boolean,arg3:string):Promise<string>;

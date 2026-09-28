@@ -6,6 +6,8 @@ import { KVBlock } from '../KVBlock.jsx'
 import StringListField from '../StringListField.jsx'
 import { api } from '../../services/api.js'
 import RoleAutomationsSection, { EffectiveTools } from './RoleAutomationsSection.jsx'
+import RoleFullAccessSection from './RoleFullAccessSection.jsx'
+import { declaresFull } from './fullAccess.jsx'
 
 const RUNTIME_OPTIONS = [
   'claude', 'kimicode', 'opencode', 'vercel', 'codex', 'antigravity',
@@ -93,6 +95,8 @@ export default function RoleInspector({
   node, allNodes, onPatch, onSetReportsTo, onPromoteToRoot, onOpenIconPicker, onDelete,
   // Automation props (optional — the inspector still works without them):
   orgName, grants, automations, engineOffline, grantsVersion, onGrantsChanged, onOpenWorkflow, onEditGrant,
+  // Full access (#205): this role's `org status` roles_access entry, if any.
+  fullAccess = null, onAccessChanged,
 }) {
   const [title, setTitle] = useState(node?.title || '')
   const [label, setLabel] = useState('')
@@ -432,6 +436,14 @@ export default function RoleInspector({
       {/* An automation role has no session, so no runtime, model, or policy
           (monomind validation rejects them on endpoint roles). */}
       {!isEndpoint && (<>
+      <RoleFullAccessSection
+        orgName={orgName}
+        roleID={node.id}
+        entry={fullAccess}
+        declared={declaresFull(node)}
+        onChanged={onAccessChanged}
+      />
+
       {/* Runtime */}
       <section>
         <div className="form-label">Runtime</div>

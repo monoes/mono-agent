@@ -206,3 +206,36 @@ func mustMarshalString(s string) []byte {
 	}
 	return b
 }
+
+// MaxToolFieldBytes caps each string field of a native tool's input, so a
+// large Edit or Write keeps its object shape (file_path and all) instead of
+// collapsing into one truncated string the way RedactAndBoundJSON would.
+const MaxToolFieldBytes = 6 * 1024
+
+// RedactAndBoundFields is RedactAndBoundJSON for tool input objects: it
+// redacts, then bounds each top-level string field on its own. truncated
+// reports whether any field was cut. Input that still does not fit, or is
+// not an object, falls back to RedactAndBoundJSON.
+func RedactAndBoundFields(raw json.RawMessage) (out json.RawMessage, truncated bool) {
+	if len(raw) == 0 {
+		return raw, false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return RedactAndBoundJSON(raw), len(raw) > MaxToolPreviewBytes
+	}
+	redacted := workflow.RedactItems([]map[string]any{obj})[0]
+	for k, v := range redacted {
+		if str, ok := v.(string); ok {
+			if bounded, cut, _ := BoundText(str, MaxToolFieldBytes); cut {
+				redacted[k] = bounded
+				truncated = true
+			}
+		}
+	}
+	b, err := json.Marshal(redacted)
+	if err != nil || len(b) > MaxToolPreviewBytes {
+		return RedactAndBoundJSON(raw), true
+	}
+	return b, truncated
+}

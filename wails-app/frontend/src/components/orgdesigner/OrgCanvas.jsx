@@ -118,6 +118,7 @@ import {
 } from './orgGraph'
 import RoleNode from './RoleNode'
 import { roleActivity, RECENT_EDGE_MS } from './orgActivity.js'
+import { declaresFull } from './fullAccess.jsx'
 
 /** Curved message edge between two card centres, bowed so A→B and B→A separate. */
 export function messageEdgePath(a, b) {
@@ -171,6 +172,7 @@ export default function OrgCanvas({
   engineOffline = false,
   onAutomationDrop,
   onViewportResize,
+  fullAccessByRole = {}, // role id -> `org status` roles_access entry (#205)
 }) {
   const wrapperRef = useRef(null)
   const [measured, setMeasured] = useState({ width: 0, height: 0 })
@@ -506,6 +508,7 @@ export default function OrgCanvas({
                     live={liveState ? roleActivity(liveState, node.id) : null}
                     engineOffline={engineOffline}
                     readOnly={readOnly}
+                    fullAccess={fullAccessByRole[node.id] || (declaresFull(node) ? {} : null)}
                     onStartEdgeDrag={(id, e) => {
                       const n = nodesRef.current.find(x => x.id === id)
                       if (!n) return

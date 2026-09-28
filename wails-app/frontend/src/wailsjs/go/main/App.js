@@ -106,6 +106,34 @@ export function ClearLogs() {
   return window['go']['main']['App']['ClearLogs']();
 }
 
+export function CoderDisable() {
+  return window['go']['main']['App']['CoderDisable']();
+}
+
+export function CoderEnable() {
+  return window['go']['main']['App']['CoderEnable']();
+}
+
+export function CoderSet(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CoderSet'](arg1, arg2, arg3, arg4);
+}
+
+export function CoderStatus() {
+  return window['go']['main']['App']['CoderStatus']();
+}
+
+export function CoderStopBackground(arg1, arg2) {
+  return window['go']['main']['App']['CoderStopBackground'](arg1, arg2);
+}
+
+export function CoderWorkspaceList() {
+  return window['go']['main']['App']['CoderWorkspaceList']();
+}
+
+export function CoderWorkspaceNew() {
+  return window['go']['main']['App']['CoderWorkspaceNew']();
+}
+
 export function ComposePersonMessage(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ComposePersonMessage'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -120,6 +148,10 @@ export function ConnectPlatformOAuth(arg1) {
 
 export function CreateChatConversation(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateChatConversation'](arg1, arg2, arg3);
+}
+
+export function CreateCoderConversation(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CreateCoderConversation'](arg1, arg2, arg3, arg4);
 }
 
 export function CreateOrgDesign(arg1) {
@@ -710,8 +742,16 @@ export function OrgGroupStatus(arg1) {
   return window['go']['main']['App']['OrgGroupStatus'](arg1);
 }
 
+export function OrgRoleSetAccess(arg1, arg2, arg3) {
+  return window['go']['main']['App']['OrgRoleSetAccess'](arg1, arg2, arg3);
+}
+
 export function PauseOrgAutonomy(arg1, arg2) {
   return window['go']['main']['App']['PauseOrgAutonomy'](arg1, arg2);
+}
+
+export function PickCoderFolder() {
+  return window['go']['main']['App']['PickCoderFolder']();
 }
 
 export function PromoteRoleToRoot(arg1, arg2) {
@@ -968,6 +1008,10 @@ export function ValidateAutomation(arg1) {
 
 export function ValidateOrgDesign(arg1) {
   return window['go']['main']['App']['ValidateOrgDesign'](arg1);
+}
+
+export function ValidateOrgReport(arg1) {
+  return window['go']['main']['App']['ValidateOrgReport'](arg1);
 }
 
 export function VerifyDraft(arg1, arg2, arg3) {

@@ -50,9 +50,14 @@ type Conversation struct {
 	ProviderID      string `json:"providerId,omitempty"`
 	Model           string `json:"model,omitempty"`
 	SessionID       string `json:"sessionId,omitempty"`
-	HistoryKey      string `json:"-"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	// Mode is "assistant" or "coder". A coder conversation runs every turn
+	// with full access inside Cwd, fixed at creation: Claude Code keys its
+	// sessions by folder, so resuming needs the same one.
+	Mode       string `json:"mode"`
+	Cwd        string `json:"cwd"`
+	HistoryKey string `json:"-"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
 }
 
 // Turn is one client-registered turn within a conversation — the mutable
@@ -142,6 +147,14 @@ func (s *AIStore) initChatEventTables() error {
 	if _, err := s.db.Exec(eventsSQL); err != nil {
 		return fmt.Errorf("create ai_chat_events: %w", err)
 	}
+	for _, alter := range []string{
+		`ALTER TABLE ai_chat_conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'assistant'`,
+		`ALTER TABLE ai_chat_conversations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''`,
+	} {
+		if err := addColumnIfMissing(s.db, alter); err != nil {
+			return err
+		}
+	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_ai_chat_conversations_profile ON ai_chat_conversations(profile_id, updated_at DESC)`); err != nil {
 		return fmt.Errorf("create idx_ai_chat_conversations_profile: %w", err)
 	}
@@ -158,6 +171,28 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // when unused by an agent-backend conversation) so provider conversations
 // always have an opaque model-context bucket distinct from workflowContext.
 func (s *AIStore) CreateConversation(profileID, backend, workflowContext, runtimeID, providerID, model string) (Conversation, error) {
+	return s.CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "")
+}
+
+// Conversation modes.
+const (
+	ModeAssistant = "assistant"
+	ModeCoder     = "coder"
+)
+
+// CreateConversationMode is CreateConversation with an explicit mode and
+// working folder (coder conversations need one).
+func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd string) (Conversation, error) {
+	switch mode {
+	case ModeAssistant:
+		cwd = ""
+	case ModeCoder:
+		if cwd == "" {
+			return Conversation{}, fmt.Errorf("create conversation: coder mode needs a folder")
+		}
+	default:
+		return Conversation{}, fmt.Errorf("create conversation: unknown mode %q", mode)
+	}
 	if profileID == "" {
 		profileID = "default"
 	}
@@ -170,14 +205,16 @@ func (s *AIStore) CreateConversation(profileID, backend, workflowContext, runtim
 		RuntimeID:       runtimeID,
 		ProviderID:      providerID,
 		Model:           model,
+		Mode:            mode,
+		Cwd:             cwd,
 		HistoryKey:      uuid.NewString(),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	const q = `INSERT INTO ai_chat_conversations
-		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, history_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`
-	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.HistoryKey, c.CreatedAt, c.UpdatedAt); err != nil {
+		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`
+	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.Mode, c.Cwd, c.HistoryKey, c.CreatedAt, c.UpdatedAt); err != nil {
 		return Conversation{}, fmt.Errorf("create conversation: %w", err)
 	}
 	return c, nil
@@ -191,11 +228,11 @@ func (s *AIStore) GetConversation(id, profileID string) (Conversation, error) {
 	if profileID == "" {
 		profileID = "default"
 	}
-	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, history_key, created_at, updated_at
+	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
 		FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`
 	var c Conversation
 	err := s.db.QueryRow(q, id, profileID).Scan(
-		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Conversation{}, ErrConversationNotFound
@@ -217,7 +254,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 		limit = 50
 	}
 	args := []any{profileID}
-	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, history_key, created_at, updated_at
+	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
 		FROM ai_chat_conversations WHERE profile_id = ?`
 	if cursor != "" {
 		q += ` AND updated_at || '|' || id < ?`
@@ -235,7 +272,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, "", fmt.Errorf("scan conversation: %w", err)
 		}
 		out = append(out, c)
@@ -771,6 +808,8 @@ type ConversationRecord struct {
 	ProviderID      string `json:"provider_id"`
 	Model           string `json:"model"`
 	SessionID       string `json:"session_id"`
+	Mode            string `json:"mode"`
+	Cwd             string `json:"cwd"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 }
@@ -780,7 +819,7 @@ func (c Conversation) Record() ConversationRecord {
 	return ConversationRecord{
 		ID: c.ID, ProfileID: c.ProfileID, Backend: c.Backend, WorkflowContext: c.WorkflowContext,
 		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, SessionID: c.SessionID,
-		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		Mode: c.Mode, Cwd: c.Cwd, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
 
@@ -789,7 +828,7 @@ func (r ConversationRecord) Conversation() Conversation {
 	return Conversation{
 		ID: r.ID, ProfileID: r.ProfileID, Backend: r.Backend, WorkflowContext: r.WorkflowContext,
 		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, SessionID: r.SessionID,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Mode: r.Mode, Cwd: r.Cwd, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
 

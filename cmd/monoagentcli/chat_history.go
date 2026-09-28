@@ -198,16 +198,33 @@ func printConversation(cfg *globalConfig, c ai.ConversationRecord) error {
 }
 
 func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
-	var runtimeID, model, workflowID string
+	var runtimeID, model, workflowID, mode, cwd string
+	var newWorkspace bool
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create an agent conversation",
 		Long: "Create an agent conversation. --workflow is the tool and ownership context: " +
-			`"general" (the default), "draft", or a workflow id.`,
+			`"general" (the default), "draft", or a workflow id.` + "\n\n" +
+			"--mode coder creates a full-access conversation (see `coder`) that works in --cwd, or in a " +
+			"fresh test folder with --new-workspace. The folder is fixed for the conversation's life.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runtimeID == "" {
 				return errInvalidInput("--runtime is required (see `agent scan --installed`)")
+			}
+			switch mode {
+			case ai.ModeCoder:
+				conv, err := createCoderConversation(cmd, cfg, runtimeID, model, workflowID, cwd, newWorkspace)
+				if err != nil {
+					return err
+				}
+				return printConversation(cfg, conv.Record())
+			case ai.ModeAssistant:
+				if cwd != "" || newWorkspace {
+					return errInvalidInput("--cwd and --new-workspace only apply to --mode coder")
+				}
+			default:
+				return errInvalidInput("unknown --mode %q (assistant or coder)", mode)
 			}
 			store, profileID, closeDB, err := openChatHistory(cfg)
 			if err != nil {
@@ -224,6 +241,10 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …)")
 	cmd.Flags().StringVar(&model, "model", "", "Model for the runtime")
 	cmd.Flags().StringVar(&workflowID, "workflow", "general", "Workflow context")
+	cmd.Flags().StringVar(&mode, "mode", ai.ModeAssistant, "assistant, or coder for a full-access conversation")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "Coder mode: the folder the agent works in (any existing folder)")
+	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
+	withJSONErrors(cfg, cmd)
 	return cmd
 }
 

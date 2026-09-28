@@ -172,6 +172,25 @@ export const api = {
     GoApp.GetChatEvents(conversationID, turnID, afterSeq, limit).then(parseStreamResult),
   deleteChatConversation: (conversationID) =>
     GoApp.DeleteChatConversation(conversationID).then(parseStreamResult),
+  // Coder mode (#203): `monoagentcli coder …` and coder conversations. Same
+  // parseStreamResult contract, so a refusal rejects with the CLI's code
+  // (coder_disabled, needs_monomind_update) on err.code.
+  coderStatus:        () => GoApp.CoderStatus().then(parseStreamResult),
+  coderEnable:        () => GoApp.CoderEnable().then(parseStreamResult),
+  coderDisable:       () => GoApp.CoderDisable().then(parseStreamResult),
+  // budgetUsd 0 clears the per-turn budget; see coderSetArgs (app_coder.go).
+  coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
+    GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
+  // {stopped, gone, refused} pids of a turn's leftover background processes.
+  coderStopBackground: (conversationID, turnID) =>
+    GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
+  coderWorkspaceNew:  () => GoApp.CoderWorkspaceNew().then(parseStreamResult),
+  coderWorkspaceList: () => GoApp.CoderWorkspaceList().then(parseStreamResult),
+  createCoderConversation: (runtimeID, model, cwd, newWorkspace = false) =>
+    GoApp.CreateCoderConversation(runtimeID, model, cwd, newWorkspace).then(parseStreamResult),
+  // Native folder picker; resolves '' when cancelled.
+  pickCoderFolder:    () => GoApp.PickCoderFolder(),
+  openPathWithOS:     (path) => GoApp.OpenPathWithOS(path),
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
@@ -207,6 +226,17 @@ export const api = {
   chooseInstructionsFile: () => GoApp.ChooseInstructionsFile(),
   saveOrgLayout:       (name, layout) => GoApp.SaveOrgLayout(name, JSON.stringify(layout)).then(s => JSON.parse(s)),
   saveOrgDesign:       (name, doc) => GoApp.SaveOrgDesign(name, JSON.stringify(doc)).then(s => JSON.parse(s)),
+  // Full-access roles (#205): grant ('full', only after the confirm dialog)
+  // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.
+  orgRoleSetAccess:    (name, roleID, access) => GoApp.OrgRoleSetAccess(name, roleID, access).then(parseStreamResult),
+  // `org validate`'s report {valid, error?, warnings}, taint problems
+  // included. An invalid org's report has "error" too, so only a reply
+  // without "valid" is a failure.
+  validateOrgReport:   (name) => GoApp.ValidateOrgReport(name).then(s => {
+    const r = JSON.parse(s)
+    if (typeof r?.valid !== 'boolean' && r?.error) throw codedError(r.error, r.code)
+    return r
+  }),
   validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
   reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
   // Org × workflow unification — grants, automations, automation roles,
