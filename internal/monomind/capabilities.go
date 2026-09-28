@@ -16,6 +16,12 @@ const (
 	CapOrgEndpointRoles       = "org-endpoint-roles"       // M2: automation roles
 	CapOrgFederation          = "org-federation"           // M4: cross-root restrictions enforced
 	CapOrgDecisionAttribution = "org-decision-attribution" // M5: --by, request-scoped approvals
+
+	// Coder mode (monomind#355-#358): a full-access chat turn needs all four.
+	CapAgentExecFullAccess   = "agent-exec-full-access"
+	CapAgentExecSettings     = "agent-exec-settings"
+	CapAgentExecToolActivity = "agent-exec-tool-activity"
+	CapInitJSON              = "init-json"
 )
 
 // ErrFeatureNeedsMonomind reports that the installed monomind lacks a
@@ -42,6 +48,16 @@ type CapabilitySet struct {
 }
 
 // Has reports whether cap was advertised.
+// NewCapabilitySet builds a set directly, for callers that stand in for a
+// handshake (tests).
+func NewCapabilitySet(version string, caps ...string) *CapabilitySet {
+	set := &CapabilitySet{Version: version, caps: map[string]bool{}}
+	for _, c := range caps {
+		set.caps[c] = true
+	}
+	return set
+}
+
 func (c *CapabilitySet) Has(cap string) bool { return c != nil && c.caps[cap] }
 
 // List returns the advertised capabilities.
@@ -106,14 +122,4 @@ func ResetCapabilityCache() {
 	capCache.Lock()
 	capCache.set = nil
 	capCache.Unlock()
-}
-
-// NewCapabilitySet builds a set directly (tests and callers that already
-// hold a VersionInfo).
-func NewCapabilitySet(version string, caps ...string) *CapabilitySet {
-	set := &CapabilitySet{Version: version, caps: map[string]bool{}}
-	for _, c := range caps {
-		set.caps[c] = true
-	}
-	return set
 }

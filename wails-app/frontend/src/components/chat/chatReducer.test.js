@@ -198,4 +198,33 @@ describe('chatReducer', () => {
     expect(state.usage.inputTokens).toBe(0)
     expect(state.usage.outputTokens).toBeNull()
   })
+
+  it('keeps a coder turn\'s native-tool fields, and leaves other calls\' shape alone', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'task', name: 'Task', arguments: { description: 'x' }, native: true }, 1),
+      ev('tool.started', { callId: 'b1', name: 'Bash', arguments: { command: 'ls' }, native: true, parentCallId: 'task' }, 2),
+      ev('tool.completed', { callId: 'b1', ok: false, result: 'x', truncated: true, durationMs: 1200, denied: true }, 3),
+      ev('tool.completed', { callId: 'orphan', ok: null, result: '', cancelled: true }, 4),
+      ev('tool.started', { callId: 'plain', name: 'workflow_list', arguments: null }, 5),
+    )
+    expect(state.calls.b1).toMatchObject({ native: true, parentCallId: 'task', truncated: true, durationMs: 1200, denied: true, status: 'completed' })
+    expect(state.calls.task.parentCallId).toBeUndefined()
+    expect(state.calls.orphan.cancelled).toBe(true)
+    expect(Object.keys(state.calls.plain).sort()).toEqual(['arguments', 'callId', 'name', 'ok', 'result', 'startedAt', 'status'])
+  })
+
+  it('keeps fileExisted, exitCode and a coder.background notice\'s pids and turn', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'w', name: 'Write', arguments: {}, native: true, fileExisted: false }, 1),
+      ev('tool.started', { callId: 'b', name: 'Bash', arguments: {}, native: true }, 2),
+      ev('tool.completed', { callId: 'b', ok: false, result: 'Exit code 2', exitCode: 2 }, 3),
+      ev('notice', { code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8] }, 4),
+      ev('notice', { code: 'other', message: 'n', severity: 'info' }, 5),
+    )
+    expect(state.calls.w.fileExisted).toBe(false)
+    expect(state.calls.b.fileExisted).toBeUndefined()
+    expect(state.calls.b.exitCode).toBe(2)
+    expect(state.notices[0]).toEqual({ code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8], processes: [], conversationId: 'conv-1', turnId: 'turn-1' })
+    expect(state.notices[1]).toEqual({ code: 'other', message: 'n', severity: 'info' })
+  })
 })

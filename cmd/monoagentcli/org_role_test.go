@@ -1,0 +1,79 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/monoes/mono-agent/internal/monomind"
+)
+
+func runOrgRole(t *testing.T, root string, args ...string) (string, error) {
+	t.Helper()
+	cmd := newOrgRoleCmd(func() string { return root })
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs(args)
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestOrgRoleSetAccessIsHumanOnly(t *testing.T) {
+	dir := t.TempDir()
+	argsLog := filepath.Join(dir, "args.log")
+	bin := filepath.Join(dir, "monomind")
+	os.WriteFile(bin, []byte("#!/bin/sh\n"+
+		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi`+"\n"+
+		`echo "$(pwd) $*" >> '`+argsLog+"'\necho 'granted'\n"), 0o755)
+	t.Setenv(monomind.EnvOverride, bin)
+	for _, k := range agentMarkersForTest {
+		t.Setenv(k, "")
+	}
+	root := t.TempDir()
+	logged := func() string { b, _ := os.ReadFile(argsLog); return string(b) }
+
+	withCoderCaps(t, monomind.CapOrgRoleFullAccess)
+	for _, marker := range []string{"CLAUDECODE", "MONOMIND_AGENT_EXEC", "MONOMIND_ORG_ROLE"} {
+		t.Setenv(marker, "1")
+		if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "full", "--yes-i-understand"); err == nil || !strings.Contains(err.Error(), marker) {
+			t.Errorf("%s set: grant not refused: %v", marker, err)
+		}
+		t.Setenv(marker, "")
+	}
+	if logged() != "" {
+		t.Fatalf("monomind was called from an agent context:\n%s", logged())
+	}
+
+	if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "full"); exitCodeFor(err) != 3 {
+		t.Errorf("grant without --yes-i-understand: %v", err)
+	}
+	withCoderCaps(t)
+	if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "full", "--yes-i-understand"); err == nil || !strings.Contains(err.Error(), "org-role-full-access") {
+		t.Errorf("old monomind: %v", err)
+	}
+	withCoderCaps(t, monomind.CapOrgRoleFullAccess)
+	if out, err := runOrgRole(t, root, "set-access", "growth", "builder", "full", "--yes-i-understand"); err != nil || !strings.Contains(out, `"access":"full"`) {
+		t.Fatalf("grant: %v %s", err, out)
+	}
+	real, _ := filepath.EvalSymlinks(root)
+	if want := real + " org role set-access growth builder full --yes-i-understand"; !strings.Contains(logged(), want) {
+		t.Errorf("monomind argv: %q, want %q", logged(), want)
+	}
+
+	// A revoke stays allowed anywhere, even from an agent.
+	t.Setenv("CLAUDECODE", "1")
+	if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "scoped"); err != nil {
+		t.Errorf("revoke from an agent context: %v", err)
+	}
+	if !strings.Contains(logged(), "org role set-access growth builder scoped\n") {
+		t.Errorf("revoke argv: %q", logged())
+	}
+	if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "admin"); exitCodeFor(err) != 3 {
+		t.Errorf("bad access value: %v", err)
+	}
+}
+
+var agentMarkersForTest = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC"}

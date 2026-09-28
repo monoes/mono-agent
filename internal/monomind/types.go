@@ -87,6 +87,42 @@ type Event struct {
 
 	// done
 	ExitCode int `json:"exit_code,omitempty"`
+
+	CoderFields
+}
+
+// CoderFields are the events and fields full-access ("coder") turns add to
+// the protocol (monomind#355/#356/#357/#359). Every one is additive: older
+// monomind never sends them and older callers ignore them.
+type CoderFields struct {
+	// start: "scoped" or "full"
+	Access string `json:"access,omitempty"`
+
+	// tool_activity: one of the runner's own tools (Bash, Edit, …), not a
+	// caller tool. Phase is "start" or "end"; status reuses Phase for
+	// "initializing"/"ready".
+	Phase           string          `json:"phase,omitempty"`
+	Input           json.RawMessage `json:"input,omitempty"`
+	InputTruncated  bool            `json:"input_truncated,omitempty"`
+	Output          string          `json:"output,omitempty"`
+	OutputTruncated bool            `json:"output_truncated,omitempty"`
+	DurationMs      int64           `json:"duration_ms,omitempty"`
+	Denied          bool            `json:"denied,omitempty"`
+	Cancelled       bool            `json:"cancelled,omitempty"`
+	ParentToolUseID string          `json:"parent_tool_use_id,omitempty"`
+
+	// status
+	MCPServers []MCPServerStatus `json:"mcp_servers,omitempty"`
+
+	// done: processes the turn started that were still running when it
+	// ended normally.
+	BackgroundPids []int `json:"background_pids,omitempty"`
+}
+
+// MCPServerStatus is one entry of a status event's mcp_servers list.
+type MCPServerStatus struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // eventJSON mirrors Event's wire shape exactly, except the three optional
@@ -130,6 +166,8 @@ type eventJSON struct {
 	Fatal      bool   `json:"fatal,omitempty"`
 
 	ExitCode int `json:"exit_code,omitempty"`
+
+	CoderFields
 }
 
 // UnmarshalJSON decodes the wire event and records, in HasInputTokens/
@@ -151,7 +189,8 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		ID:                   w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
 		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
 		Code: w.Code, ErrMessage: w.ErrMessage, Fatal: w.Fatal,
-		ExitCode: w.ExitCode,
+		ExitCode:    w.ExitCode,
+		CoderFields: w.CoderFields,
 	}
 	if w.InputTokens != nil {
 		e.InputTokens = *w.InputTokens
@@ -185,7 +224,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		ID:                   e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
 		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
 		Code: e.Code, ErrMessage: e.ErrMessage, Fatal: e.Fatal,
-		ExitCode: e.ExitCode,
+		ExitCode:    e.ExitCode,
+		CoderFields: e.CoderFields,
 	}
 	if e.HasInputTokens {
 		w.InputTokens = &e.InputTokens
@@ -210,6 +250,9 @@ const (
 	EventResult     = "result"
 	EventError      = "error"
 	EventDone       = "done"
+
+	EventToolActivity = "tool_activity" // runner-native tool call (monomind#357)
+	EventStatus       = "status"        // runner startup progress (monomind#356)
 )
 
 // Error codes (protocol §3.4). Unknown codes must be treated as non-fatal.

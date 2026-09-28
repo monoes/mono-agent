@@ -98,6 +98,7 @@ func newRootCmd() *cobra.Command {
 		newHILCmd(cfg),
 		newAgentCmd(cfg),
 		newChatCmd(cfg),
+		newCoderCmd(cfg),
 		newOrgCmd(cfg),
 		newMCPCmd(cfg),
 		newHTTPAPICmd(cfg),

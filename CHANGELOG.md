@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-09-28
+
+### Added
+
+- **Coder mode: chats with full access to this computer.** A coder chat runs
+  as a full Claude Code session inside a folder. It can run any command and
+  read or change any file your user can, with no approval prompts, and it
+  loads your normal Claude Code setup (CLAUDE.md, skills, hooks, MCP
+  servers) plus the folder's own. Needs monomind 2.17.0 or later.
+  - Off until you turn it on in Settings › Coder mode (or `monoagentcli
+    coder enable --yes-i-understand`). The CLI enforces this for every
+    conversation and every turn.
+  - Start a chat as Assistant or Coder. A coder chat works in a fresh,
+    randomly named test folder (`~/monoagent-coder/<date>-<words>`,
+    git-initialized) or any folder you pick. The folder is set up with
+    `monomind init --if-missing --target claude`, which only adds missing
+    Claude Code files and never changes existing ones. It stays fixed for
+    the conversation, so resuming always works.
+  - Every command, edit and file write shows live in the chat: Bash
+    commands with output and exit code, edits as diffs, writes marked
+    "new file" or "overwrite", subagent calls nested, and web content
+    flagged as external.
+  - Stop ends the turn gracefully: the agent and everything it started are
+    stopped. Processes a finished turn left running are listed by command,
+    and "Stop all" (`monoagentcli coder stop-background`) stops them. It
+    only touches a process that is still the one the turn started.
+  - Coder chats never get mono-agent's own tools, so synced messages and
+    people data can't reach a turn that has a shell.
+  - CLI: `coder status|enable|disable|set|workspace new|workspace
+    list|stop-background`, and `chat history create --mode coder --cwd DIR
+    | --new-workspace`.
+- **Full access for chosen org roles.** A role can run with coder-mode
+  access (`policy.access: "full"`, monomind 2.17.0). Granting it is
+  human-only: the Orgs tab's role editor asks for confirmation, and
+  `monoagentcli org role set-access <org> <role> full --yes-i-understand`
+  refuses when an agent runs it. Roles show a FULL badge with their state
+  (active, suspended after a config change, blocked for unattended runs,
+  or not granted), with a "Grant again" action. Taint problems from
+  `org validate` appear with the editor's other issues, and each role's
+  tool activity appears in the org's activity view.
+
+### Changed
+
+- Stopping a chat turn in the app sends SIGTERM and waits up to 15s
+  before killing it, so the turn can stop its agent cleanly and record
+  itself as stopped.
+
 ## [0.84.0] - 2026-09-27
 
 ### Added

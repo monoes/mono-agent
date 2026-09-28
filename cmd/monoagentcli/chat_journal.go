@@ -72,6 +72,10 @@ type turnJournal struct {
 	partSeq       int
 	currentPartID string
 	finished      bool
+
+	// coder turns: the folder, and each open native tool call by id.
+	cwd       string
+	nativeRun map[string]nativeCall
 }
 
 func newTurnJournal(store *ai.AIStore, profileID, conversationID, turnID, runtimeID string, out io.Writer) *turnJournal {
@@ -114,11 +118,13 @@ func (j *turnJournal) commitText(partID, text string) {
 	}
 }
 
+// forceFlushLocked commits pending text and ends the current text part, so
+// text after a tool call or notice starts a new one.
 func (j *turnJournal) forceFlushLocked() {
 	if partID, text, ok := j.coalescer.ForceFlush(); ok {
 		j.commitText(partID, text)
-		j.currentPartID = ""
 	}
+	j.currentPartID = ""
 }
 
 // tick flushes text that has waited out the coalescing window.
@@ -128,9 +134,11 @@ func (j *turnJournal) tick() {
 	if j.finished {
 		return
 	}
+	// A timed flush only publishes what has arrived so far: the part goes
+	// on until a tool call (forceFlushLocked) ends it, so a streamed reply
+	// stays one text block instead of splitting mid-word.
 	if partID, text, ok := j.coalescer.Flush(time.Now()); ok {
 		j.commitText(partID, text)
-		j.currentPartID = ""
 	}
 }
 
@@ -178,7 +186,6 @@ func (j *turnJournal) handle(ev monomind.Event) {
 			}
 			if partID, text, flushed := j.coalescer.Push(j.currentPartID, ev.Text, time.Now()); flushed {
 				j.commitText(partID, text)
-				j.currentPartID = ""
 			} else {
 				time.AfterFunc(chatevents.CoalesceWindow+10*time.Millisecond, j.tick)
 			}
@@ -195,6 +202,17 @@ func (j *turnJournal) handle(ev monomind.Event) {
 		}
 		bounded, _, _ := chatevents.BoundText(resultText, chatevents.MaxToolPreviewBytes)
 		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: ev.ID, OK: ev.OK, Result: bounded})
+	case monomind.EventToolActivity:
+		j.toolActivityLocked(ev)
+	case monomind.EventStatus:
+		if msg := coderStatusMessage(ev); msg != "" {
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderStatus, Message: msg, Severity: chatevents.SeverityInfo})
+		}
+	case monomind.EventDone:
+		if len(ev.BackgroundPids) > 0 {
+			j.forceFlushLocked()
+			_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(ev.BackgroundPids))
+		}
 	case monomind.EventUsage:
 		j.usageLocked("usage")
 	case monomind.EventResult:
@@ -227,6 +245,7 @@ func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, c
 		return
 	}
 	j.forceFlushLocked()
+	j.closeOpenNativeCallsLocked()
 	j.finished = true
 
 	status, reason := chatevents.ComputeTurnStatus(stopRequested, res)

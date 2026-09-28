@@ -9,6 +9,7 @@ import HealthSection from '../components/settings/HealthSection.jsx'
 import BrowserBindingsSection from '../components/settings/BrowserBindingsSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
 import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
+import CoderModeSection from '../components/settings/CoderModeSection.jsx'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -408,6 +409,16 @@ export default function Settings({ onNavigate, navData }) {
         </div>
 
         <AssistantToolsSection />
+
+        {/* Coder mode (#203) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
+            Coder Mode
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+
+        <CoderModeSection />
 
         <div ref={sectionRefs.jev} data-section="jev">
           <JevSection collapsible defaultExpanded={section === 'jev'} />

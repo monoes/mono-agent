@@ -1,6 +1,7 @@
-import { AlertTriangle, Info, AlertCircle } from 'lucide-react'
+import { AlertTriangle, Info, AlertCircle, Loader, FolderOpen } from 'lucide-react'
 import { ChatMarkdown } from './ChatMarkdown.jsx'
 import { ToolActivityCard } from './ToolActivityCard.jsx'
+import { CoderBackgroundBanner } from './CoderBackgroundBanner.jsx'
 
 const NOTICE_ICON = {
   info: Info,
@@ -33,23 +34,79 @@ function NoticeBanner({ notice }) {
 // turnId/isLive are passed straight through to each ToolActivityCard — see
 // its own doc comment. Defaults (isLive=true) match the pre-existing
 // behavior for callers that only ever render a still-streaming turn.
+//
+// Coder turns (#202) add two things. A call with a parentCallId was made
+// inside that subagent call: it renders nested in the parent's card, not
+// at the top level. And three notice codes get their own treatment:
+// coder.status (startup progress) is a transient line shown only while the
+// live turn has produced nothing yet, coder.workspace a compact folder
+// line, and coder.background a warning banner with "Stop all".
 export function ChatTimeline({ state, turnId = '', isLive = true }) {
-  const { parts, calls, notices } = state
-  if (parts.length === 0 && (!notices || notices.length === 0)) return null
+  const { parts, calls } = state
+  const notices = state.notices || []
+  if (parts.length === 0 && notices.length === 0) return null
+
+  const childrenOf = {}
+  for (const part of parts) {
+    const call = part.kind === 'tool' ? calls[part.callId] : null
+    if (call?.parentCallId && calls[call.parentCallId]) {
+      (childrenOf[call.parentCallId] ||= []).push(call)
+    }
+  }
+  const renderCall = (call) => (
+    <ToolActivityCard
+      key={`tool-${call.callId}`}
+      call={call}
+      turnId={turnId}
+      isLive={isLive}
+      childCalls={childrenOf[call.callId] || []}
+      renderChild={renderCall}
+    />
+  )
+
+  // A coder turn's cards take the turn's full width (commands and paths
+  // are long); other turns keep sizing to their content.
+  const hasNative = Object.values(calls).some(c => c.native)
+  const statusNotices = notices.filter(n => n.code === 'coder.status')
+  const lastStatus = statusNotices[statusNotices.length - 1]?.message || ''
+  // "Ready. Still connecting: X. Not available: Y (needs-auth)" is worth
+  // keeping after startup; a plain "Ready" is not.
+  const readyNote = /^Ready\b/.test(lastStatus) && !/^Ready\.?$/.test(lastStatus.trim()) ? lastStatus : ''
+  const showStatus = isLive && !state.terminal && parts.length === 0 && !!lastStatus && !/^Ready\b/.test(lastStatus)
 
   return (
-    <div data-testid="chat-timeline">
+    <div data-testid="chat-timeline" style={hasNative ? { alignSelf: 'stretch' } : undefined}>
+      {notices.filter(n => n.code === 'coder.workspace').slice(-1).map((notice, i) => (
+        <div key={`ws-${i}`} data-testid="coder-workspace-line" style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+          <FolderOpen size={10} style={{ flexShrink: 0 }} />
+          {notice.message}
+        </div>
+      ))}
+      {readyNote && (
+        <div data-testid="coder-ready-note" style={{ display: 'flex', alignItems: 'flex-start', gap: 5, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)' }}>
+          <Info size={10} style={{ flexShrink: 0, marginTop: 1 }} />
+          {readyNote}
+        </div>
+      )}
       {parts.map((part, i) => {
         if (part.kind === 'text') {
           return part.text ? <ChatMarkdown key={`text-${part.partId}-${i}`} content={part.text} /> : null
         }
         const call = calls[part.callId]
-        if (!call) return null
-        return <ToolActivityCard key={`tool-${part.callId}`} call={call} turnId={turnId} isLive={isLive} />
+        if (!call || childrenOf[call.parentCallId]) return null
+        return renderCall(call)
       })}
-      {(notices || []).map((notice, i) => (
-        <NoticeBanner key={i} notice={notice} />
-      ))}
+      {showStatus && (
+        <div data-testid="coder-status-line" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+          <Loader size={10} className="chat-spin" style={{ color: '#00b4d8' }} />
+          {lastStatus}
+        </div>
+      )}
+      {notices.map((notice, i) => {
+        if (notice.code === 'coder.status' || notice.code === 'coder.workspace') return null
+        if (notice.code === 'coder.background') return <CoderBackgroundBanner key={i} notice={notice} />
+        return <NoticeBanner key={i} notice={notice} />
+      })}
     </div>
   )
 }

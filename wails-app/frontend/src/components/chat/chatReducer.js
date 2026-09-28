@@ -28,6 +28,17 @@ function upsertTextPart(parts, partId, text) {
   return next
 }
 
+// The optional tool.completed fields a coder turn adds, kept only when set.
+function completionFlags(payload) {
+  const flags = {}
+  if (payload.truncated) flags.truncated = true
+  if (payload.denied) flags.denied = true
+  if (payload.cancelled) flags.cancelled = true
+  if (typeof payload.durationMs === 'number' && payload.durationMs > 0) flags.durationMs = payload.durationMs
+  if (typeof payload.exitCode === 'number') flags.exitCode = payload.exitCode // Bash, when known
+  return flags
+}
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
   switch (ev.type) {
@@ -51,6 +62,15 @@ function eventPatch(state, ev) {
           ok: null,
           result: null,
           startedAt: ev.at,
+          // Coder turns (#202): native marks one of Claude Code's own tools
+          // (Bash, Edit, …); parentCallId nests a call made inside a
+          // subagent (Task/Agent) call. Only set when present, so other
+          // calls keep their exact shape.
+          ...(payload.native ? { native: true } : {}),
+          ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
+          // Write/Edit: whether file_path existed when the call started
+          // ("new file" vs "overwrite"); absent when unknown.
+          ...(typeof payload.fileExisted === 'boolean' ? { fileExisted: payload.fileExisted } : {}),
         },
       }
       return { calls, parts: [...state.parts, { kind: 'tool', callId: payload.callId }] }
@@ -58,6 +78,7 @@ function eventPatch(state, ev) {
 
     case 'tool.completed': {
       const existing = state.calls[payload.callId]
+      const flags = completionFlags(payload)
       const calls = {
         ...state.calls,
         // No startedAt/finishedAt on the unmatched-completion fallback below:
@@ -66,7 +87,7 @@ function eventPatch(state, ev) {
         // keeps "both timestamps present" the one signal ToolActivityCard
         // needs to decide whether elapsed time can be shown at all.
         [payload.callId]: existing
-          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at }
+          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at, ...flags }
           : {
               callId: payload.callId,
               name: 'unknown',
@@ -74,6 +95,7 @@ function eventPatch(state, ev) {
               status: 'completed',
               ok: payload.ok,
               result: payload.result,
+              ...flags,
             },
       }
       // Retain an unmatched result as its own step (plan: "retain unmatched
@@ -94,8 +116,22 @@ function eventPatch(state, ev) {
         },
       }
 
-    case 'notice':
-      return { notices: [...state.notices, { code: payload.code, message: payload.message, severity: payload.severity }] }
+    case 'notice': {
+      const notice = { code: payload.code, message: payload.message, severity: payload.severity }
+      // A coder turn's leftover background processes: keep the pids and the
+      // turn they belong to, which "Stop all" needs.
+      if (payload.code === 'coder.background') {
+        Object.assign(notice, {
+          pids: Array.isArray(payload.pids) ? payload.pids : [],
+          // [{pid, command}]: many are the folder's own setup daemons, not
+          // the agent's work, so the banner names each one.
+          processes: Array.isArray(payload.processes) ? payload.processes.map(p => ({ pid: p.pid, command: p.command || '' })) : [],
+          conversationId: ev.conversationId,
+          turnId: ev.turnId,
+        })
+      }
+      return { notices: [...state.notices, notice] }
+    }
 
     case 'turn.finished':
       return {
