@@ -36,7 +36,8 @@ desktop GUI (`wails-app/`).
 - **Web automations come from monoes.me.** The app no longer ships the
   browser automation packages (gemini, hackernews, instagram, linkedin,
   producthunt, tiktok, x). Their node types exist once the package is
-  installed: `monoagentcli library install automation <id>` (see
+  installed: `monoagentcli library login`, then
+  `monoagentcli library install automation <id>` (see
   [monoes.me library](#monoesme-library)). Packages an older release
   installed keep working. The compiled bots they call stay in the binary.
 
@@ -222,7 +223,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
   - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
   - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
-- **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
+- **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). All reads need a login: without one they exit 4 with `"login_required": true`. `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
 - **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
 
@@ -232,7 +233,9 @@ monoes.me keeps workflows, orgs and web automations: **official** ones
 published by monoes (the web automations the app used to ship, the workflow
 templates, starter orgs), **public** ones from the community, and each
 user's **private** ones. The `library` commands log in, browse, install and
-publish; the desktop app calls the same commands.
+publish; the desktop app calls the same commands. **Everything but
+`status`, `login`, `logout` and `installed` needs a login**, official items
+included: monoes.me answers 401 to anonymous reads.
 
 ```bash
 monoagentcli library login                        # browser sign-in (OAuth 2.1 + PKCE, loopback redirect on 127.0.0.1)
@@ -248,6 +251,14 @@ monoagentcli library installed                    # what this profile installed 
 monoagentcli library logout
 ```
 
+- Login required: `list`, `show`, `install`, `update` and `publish`
+  without a login exit 4 with `Log in to monoes.me first: monoagentcli
+  library login` before any network call (`--json`: `{"error", "code":
+  "auth_or_connection", "login_required": true}`). A 401 on a call
+  refreshes the token once and retries; a 401 after that gives the same
+  message. `installed` only reads local records. The app's library dialog
+  shows a login gate until `library status` says logged in, and returns to
+  it on `login_required`.
 - Host: `https://monoes.me`, or `MONOES_BASE_URL` (plain `http` only for a
   loopback dev server). The login is stored per profile in the encrypted
   vault (entry `monoes-library`, one per host) and refreshed
@@ -279,7 +290,8 @@ monoagentcli library logout
   manifest's and must grow.
 - Exit codes: 2 not found (or a private item you can't see), 3 rejected
   (bad input, sha256 mismatch, name collision, 409/413), 4 login or
-  connection (401/403/429, unreachable, login timeout).
+  connection (not logged in, 401 after a refresh, 403/429, unreachable,
+  login timeout).
 - Official artifacts are built from the repo with `make library-official`
   (packages under `automations/`, workflow templates, `orgtemplates/`).
 
