@@ -6,8 +6,9 @@
 #
 # Never touches the real HOME, port 9222, or the user's browsers: a scratch
 # HOME, a private bridge on 9232 and a headless Chromium with the working
-# tree's extension. monomind is whatever is first on PATH (MONOMIND_PATH
-# puts a branch build first, for this run only).
+# tree's extension. The page URL has a query string, which monomind
+# before 2.18.3 could not index. monomind is whatever is first on PATH
+# (MONOMIND_PATH puts a branch build first, for this run only).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -52,7 +53,7 @@ TOKEN=$(cat "$H/.monoagent/extension.token")
 "$CHROMIUM" --user-data-dir="$W/ud" --no-first-run --no-default-browser-check \
   --load-extension="$REPO/chrome-extension" --remote-debugging-port="$DEBUG" --remote-allow-origins='*' \
   ${HEADLESS:---headless=new} --disable-features=DisableLoadExtensionCommandLineSwitch \
-  "http://127.0.0.1:9312/lighthouse.html" >"$W/chromium.log" 2>&1 & echo $! > "$W/chromium.pid"
+  "http://127.0.0.1:9312/lighthouse.html?edition=1887&lang=en" >"$W/chromium.log" 2>&1 & echo $! > "$W/chromium.pid"
 
 node "$REPO/scripts/e2e/set-extension-storage.mjs" "$DEBUG" \
   "{\"wsUrl\":\"ws://127.0.0.1:$PORT/monoagent\",\"pairingToken\":\"$TOKEN\",\"captureProfile\":\"$WORK\"}"
@@ -79,7 +80,9 @@ echo "PASS: the capture was indexed by the bridge, no Index button"
 
 # 2. Ask in Work: a cited passage from the page.
 drive ask "$Q" | tee "$W/ask-work.json"
-jq -e '.answers | map(select(.quote | test("ninety seconds|fog signal|two long blasts"; "i"))) | length > 0' "$W/ask-work.json" >/dev/null \
+# The quote is the passage's opening; the cite URL's text fragment spans
+# the passage, so between them the fog-signal sentence must be cited.
+jq -e '.answers | map(select((.quote + " " + (.url | gsub("%20"; " "))) | test("ninety seconds|fog signal|two long blasts"; "i"))) | length > 0' "$W/ask-work.json" >/dev/null \
   || { echo "FAIL: Ask in Work did not cite the page"; exit 1; }
 jq -e '.answers[0].url | test("lighthouse.html")' "$W/ask-work.json" >/dev/null || { echo "FAIL: citation has no source URL"; exit 1; }
 echo "PASS: Ask in Work cites the saved page"
