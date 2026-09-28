@@ -168,3 +168,64 @@ func TestNeedsBrowserSession(t *testing.T) {
 		}
 	}
 }
+
+// TestNodePalette_InstalledAutomationGetsItsOwnSection: a web automation
+// installed after the fact lands in the palette's web-automation section,
+// under its own name, and the built-in nodes stay in the other section.
+func TestNodePalette_InstalledAutomationGetsItsOwnSection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	skipAutomationBoot = false
+	t.Cleanup(func() { skipAutomationBoot = true; action.SetDefSource(nil) })
+
+	reg, err := automation.Open(filepath.Join(home, ".monoagent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "acme-crm")
+	writeTestFile(t, filepath.Join(src, "automation.json"), `{
+	  "schema": "monoagent.automation/v1",
+	  "id": "acme-crm", "name": "Acme CRM", "version": "1.0.0",
+	  "site": {"startUrl": "https://app.acme-crm.com/", "domains": ["app.acme-crm.com"]},
+	  "permissions": {"steps": ["navigate"], "scripts": [], "downloads": false},
+	  "actions": ["list_deals"],
+	  "policy": {"tier": "standard"}
+	}`)
+	writeTestFile(t, filepath.Join(src, "actions", "list_deals.json"), `{
+	  "actionType": "list_deals", "automation": "acme-crm", "sideEffects": "read",
+	  "steps": [{"id": "open", "type": "navigate", "url": "https://app.acme-crm.com/deals"}]
+	}`)
+	if res, err := reg.Install(src, automation.InstallOptions{Source: automation.SourceLocal}); err != nil || !res.Installed {
+		t.Fatalf("Install: %v %+v", err, res)
+	}
+	// Boot this home under its own key first: the default-home boot is
+	// cached per process, so an earlier test's HOME would otherwise answer.
+	if _, err := nodes.BootAutomations(filepath.Join(home, ".monoagent")); err != nil {
+		t.Fatal(err)
+	}
+	action.SetDefSource(nil) // the CLI must boot it itself
+
+	out, err := runRoot(t, "--db-path", filepath.Join(home, "t.db"), "node", "palette")
+	if err != nil {
+		t.Fatalf("node palette: %v\n%s", err, out)
+	}
+	var got map[string][]paletteNode
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("palette is not JSON: %v\n%s", err, out)
+	}
+	acme := got["acme-crm"]
+	if len(acme) != 1 {
+		t.Fatalf("acme-crm = %+v", acme)
+	}
+	if n := acme[0]; n.Type != "acme-crm.list_deals" || n.Section != paletteSectionWebAutomation ||
+		n.CategoryLabel != "Acme CRM" || n.Label != "List Deals" {
+		t.Errorf("acme-crm.list_deals = %+v", n)
+	}
+	for _, group := range []string{"triggers", "control", "data", "http"} {
+		for _, n := range got[group] {
+			if n.Section != paletteSectionNodes || n.CategoryLabel != "" {
+				t.Errorf("%s (%s) is in section %q (%q), want %q", n.Type, group, n.Section, n.CategoryLabel, paletteSectionNodes)
+			}
+		}
+	}
+}
