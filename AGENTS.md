@@ -217,6 +217,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `profile list|get|current|switch|create [--root-dir] [--icon]`
   - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
   - `profile documents list|get|capture|index|rm`, and `profile documents sync`, which scans the profile folder and reconciles documents
+  - Browser captures saved into a profile are indexed automatically by the extension bridge (the daemon's or `extension serve`) within seconds, into that profile's own monomind store (scope `profile:<id>`), and the row records Indexed or the error. `profile documents index --all [--all-profiles]` is the backfill: every capture that is not indexed, has changed, or failed before. "Ask your brain" in the extension and chat knowledge search read the same store, so a capture is searchable only from its own profile.
 - **Chat:**
   - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
   - `chat history create --runtime R [--model M] [--workflow W] [--mode coder --cwd DIR|--coder-root|--new-workspace]` makes a conversation (coder mode: see "Coder mode" below), `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.

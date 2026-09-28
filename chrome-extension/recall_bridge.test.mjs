@@ -61,6 +61,18 @@ function chromeStub() {
   };
 }
 
+/** sentFrame waits for the worker to send a request: it reads the
+ *  "Saving into" profile from storage first, so the frame goes out a few
+ *  microtasks after the message arrives. */
+async function sentFrame(sent, method) {
+  for (let i = 0; i < 50; i++) {
+    const frame = sent.find((f) => f.method === method);
+    if (frame) return frame;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  throw new Error(`no ${method} request went out`);
+}
+
 /** installed brings up the whole recall group against a fake socket. */
 function installed(answers = {}) {
   const chrome = chromeStub();
@@ -222,7 +234,7 @@ test("asking the brain relays the backend's progress to the popup", async () => 
     }
   });
 
-  const id = sent.find((f) => f.method === "doc.ask").id;
+  const id = (await sentFrame(sent, "doc.ask")).id;
   sandbox.MonoAsk.handleFrame({ kind: "reply", id, progress: { stage: "searching", detail: "12 documents" } });
   sandbox.MonoAsk.handleFrame({
     kind: "reply",
@@ -255,6 +267,9 @@ test("the socket closing settles a question the popup is waiting on", async () =
   const h = installed(); // no scripted answer: nothing ever comes back
 
   const answering = h.send({ type: "ask_brain", q: "the ledger" });
+  // The question is in flight (the worker reads the profile first), then
+  // the socket goes.
+  await sentFrame(h.sent, "doc.ask");
   h.MonoRecall.disconnected("the bridge disconnected");
 
   const reply = await answering;
@@ -305,3 +320,62 @@ function captureCtx(extra) {
     extra
   );
 }
+
+// ── which profile a question is about ────────────────────────────────
+
+test("an ask names the profile the side panel is saving into", async () => {
+  const h = installed({ "doc.ask": { query: "q", answers: [] } });
+  await h.send({ type: "ask_brain", q: "q", profile: "work" });
+  assert.equal(h.sent.find((f) => f.method === "doc.ask").params.profile, "work");
+});
+
+test("an ask for the shared inbox names no profile", async () => {
+  const h = installed({ "doc.ask": { query: "q", answers: [] } });
+  await h.chrome.storage.local.set({ captureProfile: "work" });
+  await h.send({ type: "ask_brain", q: "q", profile: "" });
+  assert.equal("profile" in h.sent.find((f) => f.method === "doc.ask").params, false);
+});
+
+test("an ask that names nothing uses the stored choice", async () => {
+  const h = installed({ "doc.ask": { query: "q", answers: [] }, "doc.related": [] });
+  await h.chrome.storage.local.set({ captureProfile: "work" });
+  await h.send({ type: "ask_brain", q: "q" });
+  assert.equal(h.sent.find((f) => f.method === "doc.ask").params.profile, "work");
+  await h.send({ type: "ask_related", url: PAGE_URL });
+  assert.equal(h.sent.find((f) => f.method === "doc.related").params.profile, "work");
+});
+
+test("a hostile profile id is never sent", async () => {
+  const h = installed({ "doc.ask": { query: "q", answers: [] } });
+  await h.send({ type: "ask_brain", q: "q", profile: "../other" });
+  assert.equal("profile" in h.sent.find((f) => f.method === "doc.ask").params, false);
+});
+
+test("the saved lookup asks about the stored profile, and a new choice re-asks", async () => {
+  const listeners = [];
+  const chrome = chromeStub();
+  chrome.storage.onChanged = { addListener: (fn) => listeners.push(fn) };
+  const sandbox = loadExtensionScripts(["ask.js", "saved.js", "highlights.js", "recall_bridge.js"], { chrome });
+  const sent = [];
+  sandbox.MonoRecall.install({
+    send: (frame) => {
+      sent.push(frame);
+      queueMicrotask(() =>
+        sandbox.MonoAsk.handleFrame({ kind: "reply", id: frame.id, ok: true, data: { saved: true, url: PAGE_URL } })
+      );
+    },
+    isConnected: () => true,
+    storage: chrome.storage.local,
+  });
+  await chrome.storage.local.set({ captureProfile: "work" });
+  const reply = await new Promise((resolve) => {
+    for (const fn of chrome.listeners.message) if (fn({ type: "saved_get", tabId: 7 }, {}, resolve) === true) return;
+  });
+  assert.equal(reply.record.saved, true);
+  assert.equal(sent.filter((f) => f.method === "doc.lookup").pop().params.profile, "work");
+  assert.equal(sandbox.MonoSaved.cacheSize(), 1);
+
+  // Switching "Saving into" empties the cache: its answers were work's.
+  for (const fn of listeners) fn({ captureProfile: { newValue: "personal" } }, "local");
+  assert.equal(sandbox.MonoSaved.cacheSize(), 0);
+});

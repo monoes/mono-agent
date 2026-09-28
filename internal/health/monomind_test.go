@@ -94,6 +94,11 @@ func TestMonomindHandshakeAndCapabilities(t *testing.T) {
 	for _, oc := range optionalCapabilities {
 		vi.Capabilities = append(vi.Capabilities, oc.cap)
 	}
+	// Every capability, but a monomind too old to index browser captures.
+	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusWarn || !strings.Contains(res.Detail, "pages saved from the browser") {
+		t.Errorf("old monomind, capture indexing: %+v", res)
+	}
+	vi.Version = monomind.CaptureCompanionsVersion
 	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusOK {
 		t.Errorf("all caps: %+v", res)
 	}

@@ -268,13 +268,20 @@ func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
 			missing = append(missing, fmt.Sprintf("%s — %s", oc.cap, oc.feature))
 		}
 	}
+	// Not a capability but a version: older releases fail to index most
+	// pages saved from the browser, so "Ask your brain" finds nothing.
+	if !monomind.CaptureIndexingSupported(vi.Version) {
+		missing = append(missing, fmt.Sprintf("monomind %s or later — indexing pages saved from the browser "+
+			"(any page with a ? in its URL, e.g. every YouTube video) and their transcripts and summaries, "+
+			"so \"Ask your brain\" and chat can find them", monomind.CaptureCompanionsVersion))
+	}
 	if len(missing) > 0 {
 		res := Result{Status: StatusWarn, Summary: fmt.Sprintf("%d feature(s) disabled until monomind is updated", len(missing)),
 			Detail: strings.Join(missing, "\n")}
 		offerUpdate(env, &res)
 		return res
 	}
-	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities))}
+	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities)+1)}
 }
 
 func checkMonomindProfileInit(_ context.Context, env *Env) Result {
