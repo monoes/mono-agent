@@ -154,7 +154,7 @@ func TestCoderConversationFolders(t *testing.T) {
 		}
 	}
 	logged, _ := os.ReadFile(argsLog)
-	if !strings.Contains(string(logged), "init --project "+rec.Cwd+" --if-missing --json") {
+	if !strings.Contains(string(logged), "init --project "+rec.Cwd+" --if-missing --json --no-graph") {
 		t.Errorf("init not run with --if-missing on the folder:\n%s", logged)
 	}
 

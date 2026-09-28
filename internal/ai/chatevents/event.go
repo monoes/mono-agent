@@ -133,6 +133,9 @@ type ToolStartedPayload struct {
 	// turn; ParentCallID nests a call made inside a subagent call.
 	Native       bool   `json:"native,omitempty"`
 	ParentCallID string `json:"parentCallId,omitempty"`
+	// FileExisted says, for a file-writing tool, whether its target existed
+	// when the call started (a Write that creates vs. overwrites).
+	FileExisted *bool `json:"fileExisted,omitempty"`
 }
 
 // ToolCompletedPayload is tool.completed's payload. OK is nullable (some
@@ -147,6 +150,8 @@ type ToolCompletedPayload struct {
 	DurationMs int64  `json:"durationMs,omitempty"`
 	Denied     bool   `json:"denied,omitempty"`
 	Cancelled  bool   `json:"cancelled,omitempty"`
+	// ExitCode is a shell command's exit status, when known.
+	ExitCode *int `json:"exitCode,omitempty"`
 }
 
 // UsageUpdatedPayload is usage.updated's payload. Every metric is nullable
@@ -179,6 +184,17 @@ type NoticePayload struct {
 	Code     string         `json:"code"`
 	Message  string         `json:"message"`
 	Severity NoticeSeverity `json:"severity"`
+	// Pids and Processes list the processes a coder turn left running
+	// (coder.background): Processes adds each one's identity at the time,
+	// so a later stop never hits a reused pid.
+	Pids      []int        `json:"pids,omitempty"`
+	Processes []ProcessRef `json:"processes,omitempty"`
+}
+
+// ProcessRef is a pid plus what identified that process when recorded.
+type ProcessRef struct {
+	Pid      int    `json:"pid"`
+	Identity string `json:"identity,omitempty"`
 }
 
 // TurnStatus is turn.finished's terminal classification — see the

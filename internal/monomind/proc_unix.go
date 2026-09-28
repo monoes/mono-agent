@@ -29,6 +29,14 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
+// terminateProcessGroup sends SIGTERM alone to the child's group, leaving
+// the SIGKILL escalation to the caller's grace timer.
+func terminateProcessGroup(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+}
+
 // startProcessGroup starts a child this process will kill with
 // killProcessGroup. Setpgid already makes the group at fork, so it is a
 // plain Start on unix; the returned release is a no-op.

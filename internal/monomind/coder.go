@@ -48,7 +48,9 @@ type WorkspaceInit struct {
 }
 
 // InitWorkspace sets dir up as a monomind project without touching any file
-// already there (--if-missing), so it is safe on the user's own repos.
+// already there (--if-missing), so it is safe on the user's own repos. The
+// code graph is skipped (--no-graph) so a new chat is ready in seconds;
+// monomind builds it on first use.
 func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error) {
 	if bin == "" {
 		var err error
@@ -58,13 +60,20 @@ func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, InitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--yes", "--no-watch", "--no-install")
+	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--yes", "--no-watch", "--no-install")
 	cmd.Dir = dir
 	cmd.Env = append(FilteredEnviron(), "CI=true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		// --json reports a failure as {"success":false,"error":…} on stdout.
+		var failed struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(lastJSONLine(out), &failed) == nil && failed.Error != "" {
+			return nil, fmt.Errorf("monomind init %s: %s", dir, failed.Error)
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()

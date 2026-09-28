@@ -170,6 +170,10 @@ func killProcessGroup(cmd *exec.Cmd, pid int) {
 // descendant whose own parent already exited, which taskkill cannot link
 // back. OrgServeStart deliberately gives the daemon no job to close that
 // gap: a job this process holds would kill the daemon when we exit.
+// terminateProcessGroup has no graceful form on Windows; the grace timer's
+// killProcessGroup does the work.
+func terminateProcessGroup(*exec.Cmd) {}
+
 func signalServe(pid int, _ bool) error {
 	proctree.TaskkillTree(pid)
 	p, err := os.FindProcess(pid)

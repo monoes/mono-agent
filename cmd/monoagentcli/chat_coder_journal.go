@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -16,6 +20,19 @@ const (
 	noticeCoderBackground = "coder.background"
 )
 
+// nativeCall is what the journal remembers about an open native tool call.
+type nativeCall struct {
+	name       string
+	background bool // a Bash call started with run_in_background
+}
+
+// fileTools are the native tools that write a file_path (NotebookEdit's
+// target is notebook_path).
+var fileTools = map[string]string{"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+// bashExitCode matches Claude Code's Bash failure output ("Exit code 2").
+var bashExitCode = regexp.MustCompile(`(?m)^Exit code (-?\d+)`)
+
 // toolActivityLocked journals one of the agent's own tool calls as the same
 // tool.started / tool.completed pair a caller tool produces, marked native.
 func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
@@ -23,8 +40,16 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 	case "start":
 		j.forceFlushLocked()
 		args, _ := chatevents.RedactAndBoundFields(ev.Input)
+		var input map[string]any
+		_ = json.Unmarshal(ev.Input, &input)
+		if j.nativeRun == nil {
+			j.nativeRun = map[string]nativeCall{}
+		}
+		background, _ := input["run_in_background"].(bool)
+		j.nativeRun[ev.ID] = nativeCall{name: ev.Name, background: background}
 		_ = j.appendLocked(chatevents.EventToolStarted, chatevents.ToolStartedPayload{
 			CallID: ev.ID, Name: ev.Name, Arguments: args, Native: true, ParentCallID: ev.ParentToolUseID,
+			FileExisted: j.fileExisted(ev.Name, input),
 		})
 	case "end":
 		output, cut, _ := chatevents.BoundText(ev.Output, chatevents.MaxToolPreviewBytes)
@@ -33,11 +58,56 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 			v := !ev.Denied && !ev.Cancelled
 			ok = &v
 		}
+		call := j.nativeRun[ev.ID]
+		delete(j.nativeRun, ev.ID)
+		if call.name == "" {
+			call.name = ev.Name
+		}
+		var exitCode *int
+		if call.name == "Bash" && !call.background && !ev.Denied && !ev.Cancelled {
+			exitCode = shellExitCode(*ok, ev.Output)
+		}
 		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{
 			CallID: ev.ID, OK: ok, Result: output, Truncated: cut || ev.OutputTruncated,
-			DurationMs: ev.DurationMs, Denied: ev.Denied, Cancelled: ev.Cancelled,
+			DurationMs: ev.DurationMs, Denied: ev.Denied, Cancelled: ev.Cancelled, ExitCode: exitCode,
 		})
 	}
+}
+
+// fileExisted reports whether a file tool's target exists as the call
+// starts, i.e. before it runs; nil for other tools.
+func (j *turnJournal) fileExisted(name string, input map[string]any) *bool {
+	key, ok := fileTools[name]
+	if !ok {
+		return nil
+	}
+	p, _ := input[key].(string)
+	if p == "" {
+		return nil
+	}
+	if !filepath.IsAbs(p) {
+		if j.cwd == "" {
+			return nil
+		}
+		p = filepath.Join(j.cwd, p)
+	}
+	_, err := os.Lstat(p)
+	existed := err == nil
+	return &existed
+}
+
+// shellExitCode is a finished Bash call's exit status: 0 on success, else
+// the code Claude Code printed, or nil when it didn't print one.
+func shellExitCode(ok bool, output string) *int {
+	code := 0
+	if !ok {
+		m := bashExitCode.FindStringSubmatch(output)
+		if m == nil {
+			return nil
+		}
+		code, _ = strconv.Atoi(m[1])
+	}
+	return &code
 }
 
 // notice journals a notice outside the event stream (e.g. the workspace
@@ -85,4 +155,17 @@ func backgroundMessage(pids []int) string {
 		noun = "process"
 	}
 	return fmt.Sprintf("%d background %s still running: %s", len(pids), noun, strings.Join(ids, ", "))
+}
+
+// backgroundNotice is the coder.background notice for processes a turn left
+// running, with each one's identity recorded for `coder stop-background`.
+func backgroundNotice(pids []int) chatevents.NoticePayload {
+	refs := make([]chatevents.ProcessRef, len(pids))
+	for i, pid := range pids {
+		refs[i] = chatevents.ProcessRef{Pid: pid, Identity: processIdentity(pid)}
+	}
+	return chatevents.NoticePayload{
+		Code: noticeCoderBackground, Message: backgroundMessage(pids), Severity: chatevents.SeverityWarning,
+		Pids: pids, Processes: refs,
+	}
 }

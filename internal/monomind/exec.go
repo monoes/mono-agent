@@ -254,6 +254,12 @@ type toolResultFrame struct {
 // for tests.
 var KillGrace = 5 * time.Second
 
+// FullAccessKillGrace is KillGrace for an --access full turn. monomind runs
+// that agent in its own process group and kills the whole tree itself on
+// SIGTERM (SIGTERM, then SIGKILL after 5s), so it needs more than 6s; a
+// group kill of monomind alone never reaches the agent (protocol §3).
+var FullAccessKillGrace = 12 * time.Second
+
 // Exec runs one agent turn and invokes onEvent for every protocol event in
 // arrival order. It returns the turn's terminal state: a *ProtocolError for
 // error turns (also mirrored in the error event the handler received).
@@ -536,7 +542,15 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		// Graceful first (cancel frame + EOF), bounded by a group kill.
 		writeLine([]byte(`{"v":1,"type":"cancel"}`))
 		closeStdin()
-		killTimer := time.AfterFunc(KillGrace, func() { killProcessGroup(cmd, cmd.Process.Pid) })
+		grace := KillGrace
+		if opts.Access == AccessFull {
+			// Under --tools none monomind doesn't read the cancel frame; a
+			// full-access turn is stopped by SIGTERM, which monomind turns
+			// into a kill of the agent's whole process tree.
+			terminateProcessGroup(cmd)
+			grace = max(grace, FullAccessKillGrace)
+		}
+		killTimer := time.AfterFunc(grace, func() { killProcessGroup(cmd, cmd.Process.Pid) })
 		defer killTimer.Stop()
 		<-loopDone
 		<-waitCh

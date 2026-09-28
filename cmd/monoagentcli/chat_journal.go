@@ -72,6 +72,10 @@ type turnJournal struct {
 	partSeq       int
 	currentPartID string
 	finished      bool
+
+	// coder turns: the folder, and each open native tool call by id.
+	cwd       string
+	nativeRun map[string]nativeCall
 }
 
 func newTurnJournal(store *ai.AIStore, profileID, conversationID, turnID, runtimeID string, out io.Writer) *turnJournal {
@@ -204,7 +208,7 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	case monomind.EventDone:
 		if len(ev.BackgroundPids) > 0 {
 			j.forceFlushLocked()
-			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderBackground, Message: backgroundMessage(ev.BackgroundPids), Severity: chatevents.SeverityWarning})
+			_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(ev.BackgroundPids))
 		}
 	case monomind.EventUsage:
 		j.usageLocked("usage")

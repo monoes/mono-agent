@@ -69,6 +69,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		fmt.Fprintln(cmd.OutOrStdout(), string(b))
 	}
 	if journal != nil {
+		journal.cwd = t.cwd
 		journal.notice(noticeCoderWorkspace, "Working in "+t.cwd, chatevents.SeverityInfo)
 		onEvent = journal.handle
 	}
