@@ -23,13 +23,21 @@ type RuntimeModel struct {
 // recognized subcommand, and since `claude [prompt]` treats any unrecognized
 // first argument as a prompt to run, it silently launches a real chat turn
 // asking the model to describe itself instead of failing, which is exactly
-// the surprising/costly behavior this static list avoids triggering. Update
-// this when new models ship.
+// the surprising/costly behavior this static list avoids triggering. The
+// Agent SDK's supportedModels() is the real list (what Claude Code's /model
+// picker shows); this mirrors it as of 2026-09-28, concrete ids in its
+// order, until monomind exposes that list to callers.
 var claudeModels = []RuntimeModel{
-	{ID: "claude-opus-5", Label: "Opus 5"},
+	{ID: "claude-opus-5-5", Label: "Opus 5.5"},
+	{ID: "claude-fable-5-1", Label: "Fable 5.1"},
 	{ID: "claude-sonnet-5", Label: "Sonnet 5"},
 	{ID: "claude-haiku-4-5-20251001", Label: "Haiku 4.5"},
-	{ID: "claude-fable-5-1", Label: "Fable 5.1"},
+	{ID: "claude-opus-5", Label: "Opus 5"},
+	{ID: "claude-fable-5", Label: "Fable 5"},
+	{ID: "claude-opus-4-8", Label: "Opus 4.8"},
+	{ID: "claude-opus-4-7", Label: "Opus 4.7"},
+	{ID: "claude-opus-4-6", Label: "Opus 4.6"},
+	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6"},
 }
 
 // ListModels returns the models selectable for runtimeID's --model flag.

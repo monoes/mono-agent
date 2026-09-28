@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-09-28
+
+### Changed
+
+- **Coder chats work in the coder root.** The coder chat picker's "New test
+  folder" is now **Coder root**: the chat works directly in the folder set
+  in Settings › Coder mode › Coder root (`~/monoagent-coder` by default),
+  shared by every chat that picks it, instead of a fresh random folder per
+  chat. The root is created if missing, git-initialized unless it is
+  already in a repository, and gets any missing Claude Code setup; nothing
+  already there is changed. CLI: `coder workspace root` and
+  `chat history create --mode coder --coder-root` (`--new-workspace` still
+  works for scripts).
+- **Claude models match Claude Code.** The Claude model list now offers what
+  Claude Code's own model picker does today: Opus 5.5, Fable 5.1, Sonnet 5,
+  Haiku 4.5, then the older Opus, Fable and Sonnet models.
+
 ## [0.86.0] - 2026-09-28
 
 ### Added

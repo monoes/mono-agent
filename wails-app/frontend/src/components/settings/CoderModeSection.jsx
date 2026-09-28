@@ -117,7 +117,7 @@ export default function CoderModeSection() {
           </span>
           <span style={hint}>
             Adds a Coder choice when you start a chat: Claude Code runs with full access to your computer inside
-            one folder, a new test folder by default. Off unless you turn it on.
+            one folder, the coder root by default. Off unless you turn it on.
           </span>
         </span>
       </label>
@@ -137,16 +137,16 @@ export default function CoderModeSection() {
       {status && (
         <form onSubmit={e => { e.preventDefault(); save() }} style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: enabled ? 1 : 0.6 }}>
           <div style={fieldRow}>
-            <span style={label}>Workspace root</span>
+            <span style={label}>Coder root</span>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input aria-label="Workspace root" value={form.workspaceRoot} onChange={set('workspaceRoot')} disabled={!!busy}
+              <input aria-label="Coder root" value={form.workspaceRoot} onChange={set('workspaceRoot')} disabled={!!busy}
                 placeholder="~/monoagent-coder" spellCheck={false} style={{ ...input, flex: 1 }} />
               <button type="button" className="btn btn-secondary btn-sm" onClick={browse} disabled={!!busy}
                 style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <FolderOpen size={12} /> Browse…
               </button>
             </div>
-            <span style={hint}>New test folders are created here.</span>
+            <span style={hint}>Coder chats work in this folder unless you choose another.</span>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ ...fieldRow, flex: '1 1 120px' }}>

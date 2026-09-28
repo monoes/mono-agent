@@ -224,7 +224,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // {kind:'folder', path}). Only the general assistant offers coder mode.
   const [chatMode, setChatMode]             = useState('assistant')
   const [coderCwd, setCoderCwd]             = useState('')
-  const [coderWorkspace, setCoderWorkspace] = useState({ kind: 'new' })
+  const [coderWorkspace, setCoderWorkspace] = useState({ kind: 'root' })
   const coderAvailable = workflowID === 'general'
   const { status: coderStatus } = useCoderStatus(isOpen && coderAvailable)
   const isCoder = chatMode === 'coder'
@@ -436,7 +436,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     setConversationId('')
     setConversationBackend('')
     setCoderCwd('')
-    setCoderWorkspace({ kind: 'new' })
+    setCoderWorkspace({ kind: 'root' })
     setActiveTurnId('')
     setMessages([])
   }, [])
@@ -671,13 +671,13 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const agentNotSetup = runtimeUninitialized || (!runtimesLoading && runtimes.length === 0)
 
   // ── Create a coder conversation for the first message ──────────────────
-  // A new test folder is created first (`coder workspace new`) so its path
-  // and init result show in the transcript; the conversation then runs in
-  // that folder, or in the one the user chose.
+  // The coder root is set up first (`coder workspace root`) so its path and
+  // init result show in the transcript; the conversation then runs in the
+  // root, or in the folder the user chose.
   const createCoderConversation = useCallback(async () => {
     let cwd = coderWorkspace.kind === 'folder' ? coderWorkspace.path : ''
     if (!cwd) {
-      const ws = await api.coderWorkspaceNew()
+      const ws = await api.coderWorkspaceRoot()
       cwd = ws.path
       setMessages(msgs => [...msgs.slice(0, -1), { role: 'coder-init', workspace: ws }, ...msgs.slice(-1)])
     }

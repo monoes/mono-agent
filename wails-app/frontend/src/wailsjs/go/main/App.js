@@ -130,8 +130,8 @@ export function CoderWorkspaceList() {
   return window['go']['main']['App']['CoderWorkspaceList']();
 }
 
-export function CoderWorkspaceNew() {
-  return window['go']['main']['App']['CoderWorkspaceNew']();
+export function CoderWorkspaceRoot() {
+  return window['go']['main']['App']['CoderWorkspaceRoot']();
 }
 
 export function ComposePersonMessage(arg1, arg2, arg3, arg4, arg5) {

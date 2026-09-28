@@ -89,14 +89,33 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	return nil
 }
 
-// coderFolder resolves the folder for a new coder conversation or plain
-// coder turn: --cwd, or a fresh test workspace with --new-workspace.
-func coderFolder(cmd *cobra.Command, cfg *globalConfig, cwd string, newWorkspace bool) (string, error) {
-	switch {
-	case cwd != "" && newWorkspace:
-		return "", errInvalidInput("--cwd and --new-workspace are alternatives; pass one")
-	case cwd == "" && !newWorkspace:
-		return "", errInvalidInput("coder mode needs a folder: pass --cwd <dir> or --new-workspace")
+// coderFolderChoice is where a new coder conversation or plain coder turn
+// works: a folder the user picked (--cwd), the coder root itself
+// (--coder-root), or a fresh test folder inside it (--new-workspace).
+type coderFolderChoice struct {
+	cwd          string
+	root         bool
+	newWorkspace bool
+}
+
+func (c coderFolderChoice) set() int {
+	n := 0
+	for _, on := range []bool{c.cwd != "", c.root, c.newWorkspace} {
+		if on {
+			n++
+		}
+	}
+	return n
+}
+
+// coderFolder resolves c to a ready folder.
+func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice) (string, error) {
+	switch c.set() {
+	case 0:
+		return "", errInvalidInput("coder mode needs a folder: pass --cwd <dir>, --coder-root or --new-workspace")
+	case 1:
+	default:
+		return "", errInvalidInput("--cwd, --coder-root and --new-workspace are alternatives; pass one")
 	}
 	db, err := initDB(cfg)
 	if err != nil {
@@ -107,14 +126,18 @@ func coderFolder(cmd *cobra.Command, cfg *globalConfig, cwd string, newWorkspace
 	if err != nil {
 		return "", err
 	}
-	if newWorkspace {
-		ws, err := newCoderWorkspace(cmd.Context(), expandHome(settings.WorkspaceRoot))
+	if c.newWorkspace || c.root {
+		setUp := newCoderWorkspace
+		if c.root {
+			setUp = rootCoderWorkspace
+		}
+		ws, err := setUp(cmd.Context(), expandHome(settings.WorkspaceRoot))
 		if err != nil {
 			return "", err
 		}
 		return ws.Path, nil
 	}
-	dir, err := resolveCoderCwd(cwd)
+	dir, err := resolveCoderCwd(c.cwd)
 	if err != nil {
 		return "", err
 	}
@@ -127,11 +150,11 @@ func coderFolder(cmd *cobra.Command, cfg *globalConfig, cwd string, newWorkspace
 }
 
 // createCoderConversation is `chat history create --mode coder`.
-func createCoderConversation(cmd *cobra.Command, cfg *globalConfig, runtimeID, model, workflowID, cwd string, newWorkspace bool) (ai.Conversation, error) {
+func createCoderConversation(cmd *cobra.Command, cfg *globalConfig, runtimeID, model, workflowID string, folder coderFolderChoice) (ai.Conversation, error) {
 	if runtimeID != coderRuntime {
 		return ai.Conversation{}, errInvalidInput("coder mode runs on the %s runtime only (got %q)", coderRuntime, runtimeID)
 	}
-	dir, err := coderFolder(cmd, cfg, cwd, newWorkspace)
+	dir, err := coderFolder(cmd, cfg, folder)
 	if err != nil {
 		return ai.Conversation{}, err
 	}

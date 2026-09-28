@@ -83,6 +83,38 @@ func newCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error
 	return ws, nil
 }
 
+// rootCoderWorkspace sets the coder root itself up as a working folder,
+// shared by every chat that picks it: created if missing, git-initialized
+// unless it already sits in a repository, and initialized as a monomind
+// project with --if-missing (nothing already there is touched).
+func rootCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error) {
+	created := false
+	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, fmt.Errorf("creating coder root: %w", err)
+		}
+		created = true
+	}
+	dir, err := resolveCoderCwd(root)
+	if err != nil {
+		return nil, err
+	}
+	ws := &coderWorkspace{Path: dir, Created: created}
+	if git, err := exec.LookPath("git"); err == nil {
+		if exec.CommandContext(ctx, git, "-C", dir, "rev-parse", "--is-inside-work-tree").Run() == nil {
+			ws.Git = true
+		} else {
+			ws.Git = exec.CommandContext(ctx, git, "init", "-q", dir).Run() == nil
+		}
+	}
+	res, err := initWorkspace(ctx, "", dir)
+	if err != nil {
+		return ws, fmt.Errorf("coder root %s not initialized: %w", dir, err)
+	}
+	ws.Init = res
+	return ws, nil
+}
+
 // resolveCoderCwd validates a user-picked folder: any existing directory,
 // made absolute with symlinks resolved, so resuming always finds the same
 // Claude Code session folder.
@@ -175,6 +207,36 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 	listCmd.Flags().IntVar(&limit, "limit", 20, "Maximum folders to list")
 	withJSONErrors(cfg, listCmd)
 
-	cmd.AddCommand(newCmd, listCmd)
+	rootCmd := &cobra.Command{
+		Use:   "root",
+		Short: "Set up the coder root itself as a working folder and print its path",
+		Long: "Chats that pick the coder root work directly in it, sharing the folder. This creates it " +
+			"if missing, git-initializes it unless it is already in a repository, and adds any missing " +
+			"monomind/Claude Code setup files. Nothing already there is changed.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing database: %w", err)
+			}
+			defer db.Close()
+			s, err := requireCoderReady(cmd, db.DB)
+			if err != nil {
+				return err
+			}
+			ws, err := rootCoderWorkspace(cmd.Context(), expandHome(s.WorkspaceRoot))
+			if err != nil {
+				return err
+			}
+			if cfg.JSONOutput {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(ws)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), ws.Path)
+			return nil
+		},
+	}
+	withJSONErrors(cfg, rootCmd)
+
+	cmd.AddCommand(newCmd, rootCmd, listCmd)
 	return cmd
 }
