@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
   AlertCircle, CheckCircle, Clock, Loader, Plus,
   Save, FolderOpen, ToggleLeft, ToggleRight, List,
-  Braces, LayoutDashboard, Upload,
+  Braces, LayoutDashboard, Upload, UploadCloud,
 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { api, notify, subscribeEvent } from '../services/api.js'
@@ -18,6 +18,7 @@ import {
 } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
 import WorkflowImportDialog from './WorkflowImportDialog.jsx'
+import PublishToMonoesDialog from '../components/library/PublishToMonoesDialog.jsx'
 import { derivePlatformId, isSessionPicker, isMediaField, automationIdsFrom } from './nodeInspectorRules.js'
 import { onAutomationsChanged } from '../lib/appEvents.js'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
@@ -1013,6 +1014,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
   const [saveMsg,       setSaveMsg]       = useState(null) // { ok: bool, text: string }
   const [showWfModal,   setShowWfModal]   = useState(false)
   const [showImport,    setShowImport]    = useState(false)
+  const [showPublish,   setShowPublish]   = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
   // { asked, fields, value } — asked flips once the modal has been answered
   // for this run, so a re-run doesn't re-prompt mid-flight.
@@ -1898,6 +1900,15 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
         {/* Import a workflow file (CLI `workflow import`) */}
         <button style={tbBtn} onClick={() => setShowImport(true)} title="Import workflow" aria-label="Import workflow"><Upload size={13} /></button>
 
+        {/* Publish the saved workflow to monoes.me (CLI `library publish`) */}
+        <button
+          style={{ ...tbBtn, opacity: wfId ? 1 : 0.4 }}
+          onClick={() => setShowPublish(true)}
+          disabled={!wfId}
+          title={wfId ? 'Publish to monoes' : 'Save the workflow first'}
+          aria-label="Publish to monoes"
+        ><UploadCloud size={13} /></button>
+
         {/* Refresh: reload the open workflow fresh from the backend, discarding unsaved canvas edits */}
         <button
           style={{ ...tbBtn, opacity: wfId ? 1 : 0.4 }}
@@ -2009,6 +2020,10 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
         />
       )}
 
+      {showPublish && wfId && (
+        <PublishToMonoesDialog kind="workflow" localId={wfId} defaultName={wfName} onClose={() => setShowPublish(false)} />
+      )}
+
       {/* ── WORKFLOWS MODAL ── */}
       {showImport && (
         <WorkflowImportDialog
@@ -2023,6 +2038,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
         <WorkflowsModal
           currentId={wfId}
           onLoad={handleLoad}
+          onLibraryInstalled={() => { onWorkflowsChanged?.(); loadCatalog() }}
           onDelete={async (id) => {
             if (!(await confirm('Delete this workflow? This cannot be undone.', { title: 'Delete Workflow', confirmLabel: 'Delete' }))) return false
             await DeleteWorkflow(id)

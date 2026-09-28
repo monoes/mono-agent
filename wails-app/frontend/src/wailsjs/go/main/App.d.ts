@@ -295,6 +295,30 @@ export function KeyringSetPassphrase(arg1:string):Promise<main.KeyringPassphrase
 
 export function KeyringStatus():Promise<main.KeyringStatusInfo>;
 
+export function LibraryInstall(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
+
+export function LibraryInstalled(arg1:string):Promise<string>;
+
+export function LibraryList(arg1:string,arg2:string,arg3:string,arg4:number):Promise<string>;
+
+export function LibraryLogin():Promise<string>;
+
+export function LibraryLoginCancel():Promise<string>;
+
+export function LibraryLoginEmailSend(arg1:string):Promise<string>;
+
+export function LibraryLoginEmailVerify(arg1:string,arg2:string):Promise<string>;
+
+export function LibraryLogout():Promise<string>;
+
+export function LibraryPublish(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:string,arg6:string,arg7:string):Promise<string>;
+
+export function LibraryShow(arg1:string):Promise<string>;
+
+export function LibraryStatus(arg1:boolean):Promise<string>;
+
+export function LibraryUpdate(arg1:string):Promise<string>;
+
 export function ListAllProfilesWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function ListAutomations():Promise<string>;

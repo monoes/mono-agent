@@ -2,7 +2,8 @@
 // Health / Recordings, and a footer with the package lifecycle commands.
 // Everything shown comes from `automation show <id> --json` and friends.
 import { useCallback, useEffect, useState } from 'react'
-import { X, Download, RotateCcw, Power, Trash2, Undo2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { X, Download, RotateCcw, Power, Trash2, Undo2, UploadCloud } from 'lucide-react'
 import { api, notify } from '../../services/api.js'
 import { confirm } from '../../components/ConfirmDialog.jsx'
 import { Chip, ErrorBox, OkBox, Busy, SOURCE_LABELS, mono, muted, body, useDialog } from './ui.jsx'
@@ -11,6 +12,7 @@ import SessionTab from './SessionTab.jsx'
 import ActionsTab from './ActionsTab.jsx'
 import HealthTab from './HealthTab.jsx'
 import RecordingsTab from './RecordingsTab.jsx'
+import PublishToMonoesDialog from '../../components/library/PublishToMonoesDialog.jsx'
 
 const TABS = ['Overview', 'Session', 'Actions', 'Health', 'Recordings']
 
@@ -71,6 +73,8 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState(null) // footer result {ok, text}
+  const [publishing, setPublishing] = useState(false)
+  const { t } = useTranslation()
 
   const load = useCallback(async () => {
     setError('')
@@ -154,6 +158,9 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
           <button className="btn btn-secondary btn-sm" onClick={exportPackage} disabled={!!busy || removed} style={{ gap: 5 }}>
             <Download size={11} /> {busy === 'export' ? 'Exporting…' : 'Export package'}
           </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => setPublishing(true)} disabled={!!busy || removed} style={{ gap: 5 }}>
+            <UploadCloud size={11} /> {t('library.publish.button')}
+          </button>
           {!removed && info.previousVersion && (
             <button className="btn btn-ghost btn-sm" disabled={!!busy} style={{ gap: 5 }}
               onClick={() => lifecycle('rollback', api.rollbackAutomation, `Switch ${info.name || id} from ${info.version} to ${info.previousVersion}?`)}>
@@ -182,6 +189,10 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
           )}
         </footer>
       </aside>
+      {publishing && (
+        <PublishToMonoesDialog kind="automation" localId={id} defaultName={info.name || id}
+          defaultDescription={info.description || ''} onClose={() => setPublishing(false)} />
+      )}
     </div>
   )
 }
