@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  ChevronDown, ChevronRight, Loader, Check, X, Ban, Copy, Terminal, FilePen, FilePlus,
+  ChevronDown, ChevronRight, Loader, Check, X, Ban, Square, Copy, Terminal, FilePen, FilePlus,
   FileText, Search, Globe, Bot, ListChecks, Plug, Wrench,
 } from 'lucide-react'
 import { useTicker, formatDuration, copyToClipboard } from './toolCardUtils.js'
@@ -42,7 +42,8 @@ function callStatus(call, isLive) {
       : { key: 'interrupted', icon: <X size={11} color="var(--text-muted)" />, text: 'Interrupted' }
   }
   if (call.denied) return { key: 'denied', icon: <Ban size={11} color="#f59e0b" />, text: 'Denied' }
-  if (call.cancelled) return { key: 'cancelled', icon: <Ban size={11} color="var(--text-muted)" />, text: 'Cancelled' }
+  // A stopped turn closes its still-open calls as cancelled.
+  if (call.cancelled) return { key: 'cancelled', icon: <Square size={10} color="var(--text-muted)" />, text: 'Stopped' }
   if (call.ok === false) return { key: 'failed', icon: <X size={11} color="#ef4444" />, text: 'Failed' }
   if (call.ok === true) return { key: 'done', icon: <Check size={11} color="#10b981" />, text: 'Done' }
   return { key: 'completed', icon: <Check size={11} color="#94a3b8" />, text: 'Completed' }

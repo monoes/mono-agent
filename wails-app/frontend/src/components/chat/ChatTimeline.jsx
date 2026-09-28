@@ -68,7 +68,11 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
   // are long); other turns keep sizing to their content.
   const hasNative = Object.values(calls).some(c => c.native)
   const statusNotices = notices.filter(n => n.code === 'coder.status')
-  const showStatus = isLive && !state.terminal && parts.length === 0 && statusNotices.length > 0
+  const lastStatus = statusNotices[statusNotices.length - 1]?.message || ''
+  // "Ready. Still connecting: X. Not available: Y (needs-auth)" is worth
+  // keeping after startup; a plain "Ready" is not.
+  const readyNote = /^Ready\b/.test(lastStatus) && !/^Ready\.?$/.test(lastStatus.trim()) ? lastStatus : ''
+  const showStatus = isLive && !state.terminal && parts.length === 0 && !!lastStatus && !/^Ready\b/.test(lastStatus)
 
   return (
     <div data-testid="chat-timeline" style={hasNative ? { alignSelf: 'stretch' } : undefined}>
@@ -78,6 +82,12 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
           {notice.message}
         </div>
       ))}
+      {readyNote && (
+        <div data-testid="coder-ready-note" style={{ display: 'flex', alignItems: 'flex-start', gap: 5, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)' }}>
+          <Info size={10} style={{ flexShrink: 0, marginTop: 1 }} />
+          {readyNote}
+        </div>
+      )}
       {parts.map((part, i) => {
         if (part.kind === 'text') {
           return part.text ? <ChatMarkdown key={`text-${part.partId}-${i}`} content={part.text} /> : null
@@ -89,7 +99,7 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
       {showStatus && (
         <div data-testid="coder-status-line" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
           <Loader size={10} className="chat-spin" style={{ color: '#00b4d8' }} />
-          {statusNotices[statusNotices.length - 1].message}
+          {lastStatus}
         </div>
       )}
       {notices.map((notice, i) => {

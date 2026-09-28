@@ -169,7 +169,19 @@ describe('native tool cards', () => {
     expect(b2).toHaveAttribute('data-status', 'denied')
     expect(within(b2).getByText('Denied')).toBeInTheDocument()
     expect(b3).toHaveAttribute('data-status', 'cancelled')
-    expect(within(b3).getByText('Cancelled')).toBeInTheDocument()
+    expect(within(b3).getByText('Stopped')).toBeInTheDocument()
+  })
+
+  it('a stopped turn\'s Bash (closed as cancelled) reads Stopped and no longer spins', () => {
+    const running = () => [started('b1', 'Bash', { command: 'sleep 60' })]
+    const { rerender } = renderEvents(running)
+    expect(card('Bash').querySelector('.chat-spin')).not.toBeNull()
+    const stopped = reduce([...running(), completed('b1', { ok: false, cancelled: true, result: '' }),
+      ev('turn.finished', { status: 'cancelled', historySaved: true })])
+    rerender(<ChatTimeline state={stopped} turnId="t1" isLive={true} />)
+    expect(card('Bash')).toHaveAttribute('data-status', 'cancelled')
+    expect(within(card('Bash')).getByText('Stopped')).toBeInTheDocument()
+    expect(card('Bash').querySelector('.chat-spin')).toBeNull()
   })
 
   it('a started call of a finished turn reads Interrupted, not Running', () => {
@@ -203,6 +215,19 @@ describe('coder notices', () => {
     expect(screen.queryByTestId('coder-status-line')).not.toBeInTheDocument()
   })
 
+  it('keeps a "Ready" line that reports connection problems; a plain Ready is dropped', () => {
+    const { rerender } = renderEvents(() => [
+      notice('coder.status', 'Starting Claude Code…'),
+      notice('coder.status', 'Ready. Still connecting: github. Not available: linear (needs-auth)'),
+      ev('assistant.delta', { partId: 'p1', text: 'Hi' }),
+    ])
+    expect(screen.getByTestId('coder-ready-note')).toHaveTextContent('Not available: linear (needs-auth)')
+    expect(screen.queryByTestId('coder-status-line')).not.toBeInTheDocument()
+    rerender(<ChatTimeline state={reduce([notice('coder.status', 'Ready.')])} turnId="t1" isLive={true} />)
+    expect(screen.queryByTestId('coder-ready-note')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('coder-status-line')).not.toBeInTheDocument()
+  })
+
   it('shows coder.background as a warning banner and coder.workspace as a folder line', () => {
     renderEvents(() => [
       notice('coder.workspace', 'Working in /w/20260927-brisk-otter'),
@@ -220,6 +245,18 @@ describe('coder notices', () => {
     expect(await screen.findByTestId('coder-background-result')).toHaveTextContent('Stopped 1 process · 1 had already exited')
     expect(api.coderStopBackground).toHaveBeenCalledWith('c1', 't1')
     expect(screen.queryByRole('button', { name: /Stop all/ })).not.toBeInTheDocument()
+  })
+
+  it('lists each background process with its command', () => {
+    renderEvents(() => [ev('notice', {
+      code: 'coder.background', severity: 'warning', pids: [4242, 5151],
+      message: '2 processes started during this turn still running: 4242 (monomind ui --port 4242), 5151 (python3 -m http.server)',
+      processes: [{ pid: 4242, identity: 'x', command: 'monomind ui --port 4242' }, { pid: 5151, command: 'python3 -m http.server' }],
+    })])
+    const banner = screen.getByTestId('coder-background-banner')
+    expect(banner).toHaveTextContent('2 processes started during this turn are still running:')
+    const rows = within(screen.getByTestId('coder-background-processes')).getAllByRole('listitem').map(li => li.textContent)
+    expect(rows).toEqual(['4242monomind ui --port 4242', '5151python3 -m http.server'])
   })
 
   it('"Stop all" reports refused pids and errors', async () => {

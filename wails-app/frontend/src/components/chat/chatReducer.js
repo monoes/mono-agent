@@ -121,7 +121,14 @@ function eventPatch(state, ev) {
       // A coder turn's leftover background processes: keep the pids and the
       // turn they belong to, which "Stop all" needs.
       if (payload.code === 'coder.background') {
-        Object.assign(notice, { pids: Array.isArray(payload.pids) ? payload.pids : [], conversationId: ev.conversationId, turnId: ev.turnId })
+        Object.assign(notice, {
+          pids: Array.isArray(payload.pids) ? payload.pids : [],
+          // [{pid, command}]: many are the folder's own setup daemons, not
+          // the agent's work, so the banner names each one.
+          processes: Array.isArray(payload.processes) ? payload.processes.map(p => ({ pid: p.pid, command: p.command || '' })) : [],
+          conversationId: ev.conversationId,
+          turnId: ev.turnId,
+        })
       }
       return { notices: [...state.notices, notice] }
     }

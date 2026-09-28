@@ -224,7 +224,7 @@ describe('chatReducer', () => {
     expect(state.calls.w.fileExisted).toBe(false)
     expect(state.calls.b.fileExisted).toBeUndefined()
     expect(state.calls.b.exitCode).toBe(2)
-    expect(state.notices[0]).toEqual({ code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8], conversationId: 'conv-1', turnId: 'turn-1' })
+    expect(state.notices[0]).toEqual({ code: 'coder.background', message: 'm', severity: 'warning', pids: [7, 8], processes: [], conversationId: 'conv-1', turnId: 'turn-1' })
     expect(state.notices[1]).toEqual({ code: 'other', message: 'n', severity: 'info' })
   })
 })

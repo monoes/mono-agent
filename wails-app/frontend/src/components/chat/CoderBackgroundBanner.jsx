@@ -5,7 +5,9 @@ import { api } from '../../services/api.js'
 // The warning a coder turn leaves when it ends with background processes
 // still running (notice coder.background, #203), with "Stop all": `coder
 // stop-background` stops only the pids that turn reported, and only while
-// they still belong to it, then says what happened to each.
+// they still belong to it, then says what happened to each. Each process is
+// listed with its command: many are the folder's own setup daemons (e.g.
+// `monomind ui`), not the agent's work.
 
 const mono = 'var(--font-mono)'
 const AMBER = '#fbbf24'
@@ -36,6 +38,8 @@ export function CoderBackgroundBanner({ notice }) {
     }
   }
   const done = !!state?.result
+  const processes = notice.processes || []
+  const n = processes.length
   return (
     <div data-testid="coder-background-banner" style={{
       display: 'flex', flexDirection: 'column', gap: 5, padding: '6px 8px', marginTop: 6, borderRadius: 6,
@@ -43,7 +47,9 @@ export function CoderBackgroundBanner({ notice }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
         <AlertTriangle size={11} color={done ? '#94a3b8' : AMBER} style={{ marginTop: 1, flexShrink: 0 }} />
-        <span style={{ flex: 1, fontFamily: mono, fontSize: 10, color: done ? '#94a3b8' : AMBER }}>{notice.message}</span>
+        <span style={{ flex: 1, fontFamily: mono, fontSize: 10, color: done ? '#94a3b8' : AMBER }}>
+          {n > 0 ? `${n} ${n === 1 ? 'process' : 'processes'} started during this turn ${n === 1 ? 'is' : 'are'} still running:` : notice.message}
+        </span>
         {canStop && !done && (
           <button type="button" onClick={stopAll} disabled={!!state?.busy} style={{
             display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, cursor: state?.busy ? 'default' : 'pointer',
@@ -54,6 +60,16 @@ export function CoderBackgroundBanner({ notice }) {
           </button>
         )}
       </div>
+      {n > 0 && (
+        <ul data-testid="coder-background-processes" style={{ margin: 0, padding: '0 0 0 17px', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {processes.map(p => (
+            <li key={p.pid} style={{ display: 'flex', gap: 8, fontFamily: mono, fontSize: 9.5, minWidth: 0 }}>
+              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{p.pid}</span>
+              <span title={p.command} style={{ color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.command || '(unknown command)'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {done && <div data-testid="coder-background-result" role="status" style={{ fontFamily: mono, fontSize: 9.5, color: '#e2e8f0', paddingLeft: 17 }}>{stopSummary(state.result)}</div>}
       {state?.error && <div role="alert" style={{ fontFamily: mono, fontSize: 9.5, color: '#fca5a5', paddingLeft: 17 }}>Could not stop them: {state.error}</div>}
     </div>
