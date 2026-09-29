@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dynamic org for coder chats** (#226, phase 1 of #224).
+  - **Turning it on:** `chat history create --mode coder --org dynamic`, or `chat history set-org <conversation> dynamic`.
+  - **What the agent can do:** the chat's agent gets `org_roster`, `org_spawn`, `org_wait`, `org_message` and `org_stop`, to bring in worker agents. Each worker has its own role, skills, model, effort and access profile (`coding`, `qa`, `automation`, `research`). The lead chooses or leaves them open; monomind `pick` and Jev fill the gaps from the validated roster.
+  - **How workers run:** one worker edits at a time, and a model that can't run is swapped for the next ready one.
+  - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
+  - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
+  - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+
 ### Fixed
 - The Windows app build failed after #239 (`undefined: chatKillGrace` in `app.go`), which blocked every release from master. The shutdown grace period is now defined for Windows too.
 - **Agent turns failed on monomind 2.19.0 for every runtime without a sandbox of its own, claude included.** With monomind's `agent-exec-sandbox` capability, MonoAgent passed `--sandbox workspace-write` to every runtime, and monomind 2.19.0 refuses a mode the runtime doesn't list in `agent scan --json` `sandbox_modes` with a fatal "not supported by runtime" error: claude, copilot, antigravity, opencode, crush, pi and hermes all list only `full`. MonoAgent now reads each runtime's `sandbox_modes` (from `agent scan`, cached for 10 minutes) and passes `--sandbox` only for a mode the runtime lists. Otherwise the turn runs as before and says so: claude keeps `--access scoped`, the others report `unsupported`. When the scan fails no flag is passed and codex and grok keep the `MONOMIND_GIT_LEVEL` path.
