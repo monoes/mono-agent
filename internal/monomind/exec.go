@@ -24,8 +24,10 @@ type ExecOptions struct {
 	Runtime string
 	Prompt  string
 	Model   string
-	Cwd     string
-	Resume  string
+	// Effort sets the reasoning effort level (e.g. "low", "medium", "high", "xhigh", "max").
+	Effort string
+	Cwd    string
+	Resume string
 	// SystemPrompt, when set, is written to a temp file and passed via
 	// --system-file (avoids argv limits).
 	SystemPrompt string
@@ -289,6 +291,12 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
+	if opts.Effort != "" {
+		switch opts.Runtime {
+		case "claude":
+			args = append(args, "--env", "CLAUDE_EFFORT="+opts.Effort)
+		}
+	}
 	if opts.Cwd != "" {
 		args = append(args, "--cwd", opts.Cwd)
 	}
@@ -396,7 +404,11 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// user's own Keychain-stored credentials are perfectly valid. Stripping
 	// them here means every chat/agent turn gets a clean environment
 	// regardless of what launched monoagentcli.
-	cmd.Env = append(FilteredEnviron(), envSlice(opts.Env)...)
+	envOverrides := envSlice(opts.Env)
+	if opts.Effort != "" && opts.Runtime == "claude" {
+		envOverrides = append(envOverrides, "CLAUDE_EFFORT="+opts.Effort)
+	}
+	cmd.Env = append(FilteredEnviron(), envOverrides...)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()

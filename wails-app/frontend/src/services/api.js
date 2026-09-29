@@ -158,8 +158,8 @@ export const api = {
   // remember to check. A business-status reply (e.g. StartChatTurn's
   // {ok:false,status:"busy"}) is NOT that shape, so it passes through as a
   // normal value for the caller to branch on.
-  createChatConversation: (workflowID, runtimeID, model) =>
-    GoApp.CreateChatConversation(workflowID, runtimeID, model).then(parseStreamResult),
+  createChatConversation: (workflowID, runtimeID, model, effort = '') =>
+    GoApp.CreateChatConversation(workflowID, runtimeID, model, effort).then(parseStreamResult),
   startChatTurn: (conversationID, turnID, message, tools, allowRuns) =>
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>

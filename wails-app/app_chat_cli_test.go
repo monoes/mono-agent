@@ -315,17 +315,17 @@ func TestApp_StopAll_KillsRunningTurnsAndWaitsForTheirFinish(t *testing.T) {
 // --- history bindings ---
 
 func TestApp_CreateChatConversation_ShellsOutAndKeepsTheShape(t *testing.T) {
-	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","session_id":"","mode":"assistant","cwd":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","effort":"high","session_id":"","mode":"assistant","cwd":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
 	a, _ := newCLIChatApp(t, bin)
-	out := a.CreateChatConversation("general", "fake-runtime", "m1")
-	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","mode":"assistant","cwd":"","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
+	out := a.CreateChatConversation("general", "fake-runtime", "m1", "high")
+	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","effort":"high","mode":"assistant","cwd":"","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
 	if out != want {
 		t.Errorf("CreateChatConversation = %s\nwant %s", out, want)
 	}
-	a.CreateChatConversation("draft", "codex", "")
+	a.CreateChatConversation("draft", "codex", "", "")
 	got := readArgsLog(t, argsLog)
 	wantArgs := []string{
-		"--profile default --json chat history create --runtime fake-runtime --workflow general --model m1",
+		"--profile default --json chat history create --runtime fake-runtime --workflow general --model m1 --effort high",
 		"--profile default --json chat history create --runtime codex --workflow draft",
 	}
 	if strings.Join(got, "|") != strings.Join(wantArgs, "|") {

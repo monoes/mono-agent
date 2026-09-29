@@ -17,6 +17,7 @@ import (
 type coderTurn struct {
 	prompt string
 	model  string
+	effort string
 	resume string
 	cwd    string
 }
@@ -55,6 +56,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		Runtime:      coderRuntime,
 		Prompt:       t.prompt,
 		Model:        t.model,
+		Effort:       t.effort,
 		Resume:       t.resume,
 		Cwd:          t.cwd,
 		Access:       monomind.AccessFull,

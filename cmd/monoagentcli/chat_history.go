@@ -192,13 +192,13 @@ func printConversation(cfg *globalConfig, c ai.ConversationRecord) error {
 	if cfg.JSONOutput {
 		return printJSON(c)
 	}
-	fmt.Printf("id:        %s\nbackend:   %s\nruntime:   %s\nmodel:     %s\nworkflow:  %s\nsession:   %s\ncreated:   %s\nupdated:   %s\n",
-		c.ID, c.Backend, c.RuntimeID, c.Model, c.WorkflowContext, c.SessionID, c.CreatedAt, c.UpdatedAt)
+	fmt.Printf("id:        %s\nbackend:   %s\nruntime:   %s\nmodel:     %s\neffort:    %s\nworkflow:  %s\nsession:   %s\ncreated:   %s\nupdated:   %s\n",
+		c.ID, c.Backend, c.RuntimeID, c.Model, c.Effort, c.WorkflowContext, c.SessionID, c.CreatedAt, c.UpdatedAt)
 	return nil
 }
 
 func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
-	var runtimeID, model, workflowID, mode, cwd string
+	var runtimeID, model, effort, workflowID, mode, cwd string
 	var newWorkspace, coderRoot bool
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -232,7 +232,7 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			defer closeDB()
-			conv, err := store.CreateConversation(profileID, "agent", workflowID, runtimeID, "", model)
+			conv, err := store.CreateConversationEffort(profileID, "agent", workflowID, runtimeID, "", model, effort)
 			if err != nil {
 				return err
 			}
@@ -241,6 +241,7 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …)")
 	cmd.Flags().StringVar(&model, "model", "", "Model for the runtime")
+	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort level for the model (e.g. low, medium, high, max)")
 	cmd.Flags().StringVar(&workflowID, "workflow", "general", "Workflow context")
 	cmd.Flags().StringVar(&mode, "mode", ai.ModeAssistant, "assistant, or coder for a full-access conversation")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Coder mode: the folder the agent works in (any existing folder)")

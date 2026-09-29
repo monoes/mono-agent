@@ -58,7 +58,7 @@ exit 2
 		Backend   string `json:"backend"`
 		RuntimeID string `json:"runtimeId"`
 	}
-	out := a.CreateChatConversation("general", "fake", "")
+	out := a.CreateChatConversation("general", "fake", "", "")
 	if err := json.Unmarshal([]byte(out), &conv); err != nil || conv.Backend != "agent" || conv.RuntimeID != "fake" {
 		t.Fatalf("CreateChatConversation = %s", out)
 	}

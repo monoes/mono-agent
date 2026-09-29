@@ -48,6 +48,41 @@ func TestChatEvents_TwoProfilesDoNotSeeEachOthersGeneralConversation(t *testing.
 	}
 }
 
+func TestChatEvents_ConversationRecordsEffort(t *testing.T) {
+	s, _ := newChatEventStore(t)
+	conv, err := s.CreateConversationEffort("p1", "agent", "general", "claude", "", "opus", "high")
+	if err != nil {
+		t.Fatalf("CreateConversationEffort: %v", err)
+	}
+	if conv.Effort != "high" {
+		t.Errorf("conv.Effort = %q, want %q", conv.Effort, "high")
+	}
+
+	got, err := s.GetConversation(conv.ID, "p1")
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if got.Effort != "high" {
+		t.Errorf("got.Effort = %q, want %q", got.Effort, "high")
+	}
+
+	rec := got.Record()
+	if rec.Effort != "high" {
+		t.Errorf("rec.Effort = %q, want %q", rec.Effort, "high")
+	}
+	if rec.Conversation().Effort != "high" {
+		t.Errorf("rec.Conversation().Effort = %q, want %q", rec.Conversation().Effort, "high")
+	}
+
+	list, _, err := s.ListConversations("p1", "", 10)
+	if err != nil {
+		t.Fatalf("ListConversations: %v", err)
+	}
+	if len(list) != 1 || list[0].Effort != "high" {
+		t.Errorf("list[0].Effort = %q, want %q", list[0].Effort, "high")
+	}
+}
+
 func TestChatEvents_CreateTurnIsIdempotentByID(t *testing.T) {
 	s, _ := newChatEventStore(t)
 	conv, _ := s.CreateConversation("p1", "agent", "general", "claude", "", "")
