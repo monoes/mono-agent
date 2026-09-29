@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - App: the coder header names cline's, aider's, dsh's and pi's setup files. Runtime pickers and lists show `dsh` as "DeepSeek Harness", and the org designer's runtime list includes cline, aider and dsh. Tool cards show cline's multi-file reads and multi-page fetches, and aider's file-only edits without an empty diff.
 - App: coder mode's runtime picker lists every ready runtime instead of locking to claude, and says why the others are not ready (not installed, or no full access in this monomind). The chosen runtime's own model and effort are used, and the chat notes when a runtime shows commands but not every result. Tool cards render by `kind` (shell with exit code, edit, write, read, search, web, patch, mcp, task, todo). Settings hide the budget when no ready runtime reports cost. An org role's full-access grant is enabled only when the role's runtime supports full access.
 
+### Fixed
+- **Leaked `monomind org events --follow` processes** (#235). Quitting the app no longer leaves the Orgs panel's live event tail running for days.
+  - The app now stops its `monoagentcli` children on quit with SIGTERM and waits up to the kill grace for them, so each one stops what it started. Before, it SIGKILLed them.
+  - On Linux, a monomind child that `monoagentcli` stops itself (`org events`, `org run`, `org serve`, agent turns) now gets SIGTERM when `monoagentcli` dies for any reason.
+  - `monoagentcli` cancels on SIGHUP. `org events` stops when its reader goes away (a write fails with EPIPE) instead of dying of SIGPIPE.
+  - The panel's stop and start of a tail no longer race: each tail has an id, and a stop that arrives before its tail is registered ends that tail as soon as it starts.
+
 ## [0.91.1] - 2026-09-29
 
 ### Removed

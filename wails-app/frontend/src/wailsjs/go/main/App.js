@@ -1018,16 +1018,16 @@ export function StopNodeRun(arg1) {
   return window['go']['main']['App']['StopNodeRun'](arg1);
 }
 
-export function StopOrgEvents(arg1) {
-  return window['go']['main']['App']['StopOrgEvents'](arg1);
+export function StopOrgEvents(arg1, arg2) {
+  return window['go']['main']['App']['StopOrgEvents'](arg1, arg2);
 }
 
 export function StopOrgGroup(arg1) {
   return window['go']['main']['App']['StopOrgGroup'](arg1);
 }
 
-export function StreamOrgEvents(arg1) {
-  return window['go']['main']['App']['StreamOrgEvents'](arg1);
+export function StreamOrgEvents(arg1, arg2) {
+  return window['go']['main']['App']['StreamOrgEvents'](arg1, arg2);
 }
 
 export function SwitchProfile(arg1) {

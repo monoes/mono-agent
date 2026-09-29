@@ -216,8 +216,10 @@ export const api = {
   denyOrgAction:      (name, role, action) => GoApp.DenyOrgAction(name, role, action).then(s => JSON.parse(s)),
   gateApproveOrgAction: (name, gateID, resolution = '') => GoApp.GateApproveOrgAction(name, gateID, resolution).then(s => JSON.parse(s)),
   gateRejectOrgAction:  (name, gateID, resolution = '') => GoApp.GateRejectOrgAction(name, gateID, resolution).then(s => JSON.parse(s)),
-  streamOrgEvents:    (orgName) => GoApp.StreamOrgEvents(orgName).then(s => JSON.parse(s)),
-  stopOrgEvents:      (orgName) => GoApp.StopOrgEvents(orgName).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
+  // streamId (newOrgEventsStreamId) names one tail, so the stop that ends it
+  // can't be lost to a race with the start or end a newer tail by mistake.
+  streamOrgEvents:    (orgName, streamId) => GoApp.StreamOrgEvents(orgName, streamId).then(s => JSON.parse(s)),
+  stopOrgEvents:      (orgName, streamId) => GoApp.StopOrgEvents(orgName, streamId).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
   runOrg:             (orgName, task = '') => GoApp.RunOrg(orgName, task).then(s => JSON.parse(s)),
   // Org Designer — direct config-file read/write, distinct from the org
   // observe/action surface above (which proxies `monoagentcli org <sub>`,
@@ -411,6 +413,14 @@ export function onAgentValidate(callback) {
 
 export function onAgentValidateClosed(callback) {
   return subscribeEvent('agents:validateClosed', callback)
+}
+
+// newOrgEventsStreamId returns an id for api.streamOrgEvents that is unique
+// across page reloads too (the Go side outlives them).
+let orgEventsStreamSeq = 0
+export function newOrgEventsStreamId() {
+  orgEventsStreamSeq += 1
+  return `${Date.now().toString(36)}-${orgEventsStreamSeq}`
 }
 
 export function onOrgEventsClosed(callback) {
