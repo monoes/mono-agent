@@ -69,7 +69,7 @@ export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
 
 export function CoderWorkspaceList():Promise<string>;
 
-export function CoderWorkspaceRoot():Promise<string>;
+export function CoderWorkspaceRoot(arg1:string):Promise<string>;
 
 export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<storage.PersonMessage>;
 

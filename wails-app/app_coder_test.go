@@ -33,7 +33,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 			t.Errorf("%s = %s, want the status JSON verbatim", name, got)
 		}
 	}
-	if got := a.CoderWorkspaceRoot(); !strings.Contains(got, `"path":"/home/u/monoagent-coder"`) {
+	if got := a.CoderWorkspaceRoot("codex"); !strings.Contains(got, `"path":"/home/u/monoagent-coder"`) {
 		t.Errorf("CoderWorkspaceRoot = %s", got)
 	}
 	if got := a.CoderWorkspaceList(); !strings.HasPrefix(got, `[{"path":"/w/a"`) {
@@ -49,7 +49,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 		"coder enable --yes-i-understand",
 		"coder disable",
 		"coder set --workspace-root /w --max-turns 50 --timeout 30m --budget-usd 2.5",
-		"coder workspace root",
+		"coder workspace root --runtime codex",
 		"coder workspace list",
 	}
 	// Map iteration above runs the four status calls in any order.

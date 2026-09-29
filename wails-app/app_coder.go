@@ -115,9 +115,16 @@ func (a *App) CoderSet(workspaceRoot string, maxTurns int, timeout string, budge
 }
 
 // CoderWorkspaceRoot sets up the coder root itself as the chat's working
-// folder, shared by every chat that picks it: {path, created, git,
+// folder, shared by every chat that picks it, with runtimeID's setup files
+// (the CLI's default runtime when empty): {path, created, git,
 // init:{created, skipped}}.
-func (a *App) CoderWorkspaceRoot() string { return a.jsonResult("coder", "workspace", "root") }
+func (a *App) CoderWorkspaceRoot(runtimeID string) string {
+	args := []string{"coder", "workspace", "root"}
+	if runtimeID != "" {
+		args = append(args, "--runtime", runtimeID)
+	}
+	return a.jsonResult(args...)
+}
 
 // CoderWorkspaceList returns the folders coder conversations used, newest
 // first.

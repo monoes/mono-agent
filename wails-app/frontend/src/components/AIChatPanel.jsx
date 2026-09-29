@@ -693,7 +693,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     }
     let cwd = coderWorkspace.kind === 'folder' ? coderWorkspace.path : ''
     if (!cwd) {
-      const ws = await api.coderWorkspaceRoot()
+      const ws = await api.coderWorkspaceRoot(selectedRuntime)
       cwd = ws.path
       setMessages(msgs => [...msgs.slice(0, -1), { role: 'coder-init', workspace: ws, runtime: selectedRuntime }, ...msgs.slice(-1)])
     }

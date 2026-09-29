@@ -106,6 +106,7 @@ describe('AIChatPanel coder mode', () => {
     await sendMessage('write hello.py and run it')
     await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '', WS, false))
     expect(m.coderWorkspaceRoot).toHaveBeenCalledTimes(1)
+    expect(m.coderWorkspaceRoot).toHaveBeenCalledWith('claude')
     expect(m.createChatConversation).not.toHaveBeenCalled()
     await waitFor(() => expect(m.startChatTurn).toHaveBeenCalledWith('coder-1', expect.any(String), 'write hello.py and run it', false, false))
 
@@ -196,6 +197,7 @@ describe('AIChatPanel coder mode', () => {
 
     await sendMessage('build it')
     await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('codex', 'gpt-5-codex', 'high', WS, false))
+    expect(m.coderWorkspaceRoot).toHaveBeenCalledWith('codex')
     expect(screen.getByTestId('coder-init-note')).toHaveTextContent('created AGENTS.md, .codex/config.toml and 2 more')
     api.getAgentRuntimeModels.mockResolvedValue([{ id: 'sonnet' }])
   })

@@ -184,7 +184,7 @@ export const api = {
   // {stopped, gone, refused} pids of a turn's leftover background processes.
   coderStopBackground: (conversationID, turnID) =>
     GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
-  coderWorkspaceRoot: () => GoApp.CoderWorkspaceRoot().then(parseStreamResult),
+  coderWorkspaceRoot: (runtimeID = '') => GoApp.CoderWorkspaceRoot(runtimeID).then(parseStreamResult),
   coderWorkspaceList: () => GoApp.CoderWorkspaceList().then(parseStreamResult),
   createCoderConversation: (runtimeID, model, effort, cwd, newWorkspace = false) =>
     GoApp.CreateCoderConversation(runtimeID, model, effort || '', cwd, newWorkspace).then(parseStreamResult),
