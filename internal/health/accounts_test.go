@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,13 +94,24 @@ func TestConnectionsTestedInParallelWithinLimits(t *testing.T) {
 	accountParallel, accountItemTimeout, accountMargin = 2, 150*time.Millisecond, 20*time.Millisecond
 
 	var running, peak int32
-	hang := make(chan struct{})
-	defer close(hang)
+	// The slow test outlives checkConnections, which abandons it. Release
+	// it and wait for it to return before the assertions, so nothing still
+	// writes running or peak while they are read.
+	hang, slowDone := make(chan struct{}), make(chan struct{})
+	var releaseSlow, slowReturned sync.Once
+	release := func() {
+		releaseSlow.Do(func() { close(hang) })
+		<-slowDone
+	}
+	defer releaseSlow.Do(func() { close(hang) })
 	env := &Env{
 		Connections: func(context.Context) ([]ConnectionInfo, error) {
 			return []ConnectionInfo{{ID: "slow"}, {ID: "a"}, {ID: "b"}, {ID: "c"}}, nil
 		},
 		TestConnection: func(_ context.Context, id string) error {
+			if id == "slow" {
+				defer slowReturned.Do(func() { close(slowDone) }) // runs last
+			}
 			n := atomic.AddInt32(&running, 1)
 			defer atomic.AddInt32(&running, -1)
 			for {
@@ -117,10 +129,12 @@ func TestConnectionsTestedInParallelWithinLimits(t *testing.T) {
 	}
 	start := time.Now()
 	res := checkConnections(context.Background(), env)
-	if took := time.Since(start); took > time.Second {
+	took := time.Since(start)
+	release()
+	if took > time.Second {
 		t.Fatalf("took %s", took)
 	}
-	if peak > 2 {
+	if peak := atomic.LoadInt32(&peak); peak > 2 {
 		t.Errorf("%d tests ran at once, limit 2", peak)
 	}
 	if len(res.Children) != 4 || res.Children[0].Status != StatusWarn || !strings.Contains(res.Children[0].Detail, "no answer within") {
