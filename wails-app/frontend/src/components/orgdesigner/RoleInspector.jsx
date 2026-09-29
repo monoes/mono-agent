@@ -96,7 +96,9 @@ export default function RoleInspector({
   // Automation props (optional — the inspector still works without them):
   orgName, grants, automations, engineOffline, grantsVersion, onGrantsChanged, onOpenWorkflow, onEditGrant,
   // Full access (#205): this role's `org status` roles_access entry, if any.
-  fullAccess = null, onAccessChanged,
+  // orgRuntime is the org's default runtime, which a role without its own
+  // runs on.
+  fullAccess = null, onAccessChanged, orgRuntime = '',
 }) {
   const [title, setTitle] = useState(node?.title || '')
   const [label, setLabel] = useState('')
@@ -441,6 +443,7 @@ export default function RoleInspector({
         roleID={node.id}
         entry={fullAccess}
         declared={declaresFull(node)}
+        runtime={node.rest?.runtime || orgRuntime || 'claude'}
         onChanged={onAccessChanged}
       />
 

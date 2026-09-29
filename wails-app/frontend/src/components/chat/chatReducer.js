@@ -35,7 +35,10 @@ function completionFlags(payload) {
   if (payload.denied) flags.denied = true
   if (payload.cancelled) flags.cancelled = true
   if (typeof payload.durationMs === 'number' && payload.durationMs > 0) flags.durationMs = payload.durationMs
-  if (typeof payload.exitCode === 'number') flags.exitCode = payload.exitCode // Bash, when known
+  // A shell call's exit code, when known (exit_code from runners that
+  // pass monomind's field name through).
+  const exitCode = typeof payload.exitCode === 'number' ? payload.exitCode : payload.exit_code
+  if (typeof exitCode === 'number') flags.exitCode = exitCode
   return flags
 }
 
@@ -62,12 +65,15 @@ function eventPatch(state, ev) {
           ok: null,
           result: null,
           startedAt: ev.at,
-          // Coder turns (#202): native marks one of Claude Code's own tools
+          // Coder turns (#202): native marks one of the coding agent's own tools
           // (Bash, Edit, …); parentCallId nests a call made inside a
           // subagent (Task/Agent) call. Only set when present, so other
           // calls keep their exact shape.
           ...(payload.native ? { native: true } : {}),
           ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
+          // The normalized tool kind (shell, edit, patch, mcp, …) every
+          // coder runtime reports; NativeToolCard renders by it.
+          ...(payload.kind ? { kind: payload.kind } : {}),
           // Write/Edit: whether file_path existed when the call started
           // ("new file" vs "overwrite"); absent when unknown.
           ...(typeof payload.fileExisted === 'boolean' ? { fileExisted: payload.fileExisted } : {}),

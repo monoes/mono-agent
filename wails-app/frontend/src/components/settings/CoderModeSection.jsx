@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Code2, FolderOpen } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
-import { missingText } from '../chat/useCoderMode.js'
+import { missingText, coderReady, coderRuntimes, runtimeReadiness } from '../chat/useCoderMode.js'
 
-// Coder mode (#203): a chat mode in which Claude Code runs with full access
-// inside one folder. Off by default; turning it on asks for an explicit
+// Coder mode (#203): a chat mode in which a coding agent (claude, codex,
+// opencode, …) runs with full access inside one folder. Off by default; turning it on asks for an explicit
 // risk confirmation, which `coder enable --yes-i-understand` records. The
 // workspace root and per-turn defaults are `coder set`. Everything goes
 // through the CLI (app_coder.go).
@@ -33,11 +33,11 @@ export const CODER_RISK_TITLE = 'Turn on Coder mode?'
 export function CoderRiskText() {
   return (
     <div data-testid="coder-risk-text">
-      <p style={{ margin: '0 0 8px' }}>In a Coder chat, Claude Code works on your computer with no approval prompts:</p>
+      <p style={{ margin: '0 0 8px' }}>In a Coder chat, the coding agent you pick (Claude Code, Codex, OpenCode, …) works on your computer with no approval prompts:</p>
       <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <li>It can run any command, read and change any file your user account can, and install software.</li>
         <li>Web pages and files in the chosen folder can contain instructions that steer it. Only point it at folders and repos you trust.</li>
-        <li>It loads your normal Claude Code setup: CLAUDE.md, skills, hooks and MCP servers.</li>
+        <li>It loads that agent&apos;s normal setup: instructions files (CLAUDE.md, AGENTS.md, GEMINI.md), skills, hooks and MCP servers.</li>
       </ul>
     </div>
   )
@@ -100,6 +100,13 @@ export default function CoderModeSection() {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
   const enabled = !!status?.enabled
   const disabled = !!busy || !status
+  const ready = coderReady(status)
+  // Per-runtime status (a monoagentcli with per-runtime coder mode): max
+  // turns and the budget only bind on runtimes that report turns / cost,
+  // and the budget field is hidden when none does.
+  const perRuntime = Array.isArray(status?.runtimes) ? coderRuntimes(status) : null
+  const limitNames = (key) => (perRuntime || []).filter(r => r.ready && r[key]).map(r => r.id)
+  const showBudget = !perRuntime || limitNames('reportsCost').length > 0
 
   return (
     <div id="settings-coder-mode" data-testid="coder-mode-section" style={card}>
@@ -116,21 +123,32 @@ export default function CoderModeSection() {
             {busy === 'disable' && <span style={{ color: 'var(--text-muted)' }}>· turning off…</span>}
           </span>
           <span style={hint}>
-            Adds a Coder choice when you start a chat: Claude Code runs with full access to your computer inside
+            Adds a Coder choice when you start a chat: a coding agent runs with full access to your computer inside
             one folder, the coder root by default. Off unless you turn it on.
           </span>
         </span>
       </label>
 
       {loadErr && <div role="alert" style={errText}>Coder mode is unavailable: {loadErr}</div>}
-      {status && status.ready !== false && (
+      {status && ready && (
         <div data-testid="coder-ready" style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--green-neon)' }}>
-          Ready{status.monomindVersion ? ` · monomind ${status.monomindVersion}` : ''}{status.runtime ? ` · ${status.runtime}` : ''}
+          Ready{status.monomindVersion ? ` · monomind ${status.monomindVersion}` : ''}
+          {perRuntime ? ` · ${perRuntime.filter(r => r.ready).map(r => r.id).join(', ')}` : status.runtime ? ` · ${status.runtime}` : ''}
         </div>
       )}
-      {status && status.ready === false && (
+      {perRuntime && perRuntime.length > 0 && (
+        <ul data-testid="coder-runtimes" aria-label="Coding runtimes" style={{ margin: 0, paddingLeft: 16, fontFamily: mono, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          {perRuntime.map(r => (
+            <li key={r.id} style={{ color: r.ready ? 'var(--text-secondary)' : undefined }}>
+              {r.id} · {runtimeReadiness(r)}
+              {r.ready && r.toolActivity && r.toolActivity !== 'full' ? ` · tool calls: ${r.toolActivity}` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+      {status && !ready && (
         <div data-testid="coder-needs-update" style={warnText}>
-          Coder mode {missingText(status)}. You can turn it on now; Coder chats start once monomind is updated.
+          Coder mode {missingText(status)}. You can turn it on now; Coder chats start once {status.missingCapabilities?.length || !perRuntime ? 'monomind is updated' : 'a runtime is ready'}.
         </div>
       )}
 
@@ -157,11 +175,19 @@ export default function CoderModeSection() {
               <span style={label}>Timeout</span>
               <input aria-label="Timeout" value={form.timeout} onChange={set('timeout')} disabled={!!busy} placeholder="60m" style={input} />
             </div>
-            <div style={{ ...fieldRow, flex: '1 1 120px' }}>
-              <span style={label}>Budget per turn (USD)</span>
-              <input aria-label="Budget per turn" inputMode="decimal" value={form.budgetUsd} onChange={set('budgetUsd')} disabled={!!busy} placeholder="none" style={input} />
-            </div>
+            {showBudget && (
+              <div style={{ ...fieldRow, flex: '1 1 120px' }}>
+                <span style={label}>Budget per turn (USD)</span>
+                <input aria-label="Budget per turn" inputMode="decimal" value={form.budgetUsd} onChange={set('budgetUsd')} disabled={!!busy} placeholder="none" style={input} />
+              </div>
+            )}
           </div>
+          {perRuntime && (
+            <span data-testid="coder-limits-hint" style={hint}>
+              The timeout applies to every runtime. Max turns applies on {limitNames('maxTurns').join(', ') || 'no ready runtime'}
+              {showBudget ? `; the budget on ${limitNames('reportsCost').join(', ')}` : '; no ready runtime reports cost, so there is no budget'}.
+            </span>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button type="submit" className="btn btn-primary btn-sm" disabled={!!busy}>
               {busy === 'save' ? 'Saving…' : 'Save'}

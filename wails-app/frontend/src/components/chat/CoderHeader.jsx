@@ -61,21 +61,33 @@ export function CoderHeader({ cwd }) {
   )
 }
 
-// The init files worth naming; `monomind init` creates a few hundred more
-// (skills, helpers, …), which stay behind a "show all".
-const KEY_INIT_FILES = ['CLAUDE.md', '.claude/settings.json', '.mcp.json']
+// The init files worth naming per runtime; `monomind init` creates a few
+// hundred more (skills, helpers, …), which stay behind a "show all".
+const KEY_INIT_FILES = {
+  claude: ['CLAUDE.md', '.claude/settings.json', '.mcp.json'],
+  codex: ['AGENTS.md', '.codex/config.toml'],
+  opencode: ['AGENTS.md', 'opencode.json'],
+  kimicode: ['AGENTS.md', '.kimi-code/mcp.json'],
+  antigravity: ['GEMINI.md', '.gemini/settings.json'],
+}
+
+// keyInitFiles is a runtime's key init files; claude's for a runtime
+// without its own list.
+export function keyInitFiles(runtime) {
+  return KEY_INIT_FILES[runtime] || KEY_INIT_FILES.claude
+}
 
 // initSummary names the key files created and counts the rest.
-export function initSummary(created) {
-  const key = KEY_INIT_FILES.filter(f => created.includes(f))
+export function initSummary(created, runtime = 'claude') {
+  const key = keyInitFiles(runtime).filter(f => created.includes(f))
   const shown = key.length ? key : created.slice(0, 3)
   const more = created.length - shown.length
   return shown.join(', ') + (more > 0 ? ` and ${more} more` : '')
 }
 
 // CoderInitNote reports the coder root a coder chat was started in,
-// from `coder workspace new`'s JSON.
-export function CoderInitNote({ workspace }) {
+// from `coder workspace root`'s JSON; runtime picks the files to name.
+export function CoderInitNote({ workspace, runtime = 'claude' }) {
   const created = workspace?.init?.created || []
   return (
     <div data-testid="coder-init-note" style={{
@@ -87,9 +99,9 @@ export function CoderInitNote({ workspace }) {
       <span>
         {workspace?.created ? 'Created coder root ' : 'Working in '}
         <span style={{ color: '#e2e8f0' }}>{workspace?.path}</span>
-        {created.length > 0 && <> · created {initSummary(created)}</>}
+        {created.length > 0 && <> · created {initSummary(created, runtime)}</>}
         {workspace?.git && <> · git repository</>}
-        {created.length > KEY_INIT_FILES.length && (
+        {created.length > keyInitFiles(runtime).length && (
           <details style={{ marginTop: 3 }}>
             <summary style={{ cursor: 'pointer' }}>show all {created.length}</summary>
             <div data-testid="coder-init-all" style={{ maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{created.join('\n')}</div>

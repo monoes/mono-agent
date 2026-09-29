@@ -10,10 +10,11 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 vi.mock('../../services/api.js', () => ({
   api: {
     orgRoleSetAccess: vi.fn(), getOrgStatus: vi.fn(), validateOrgReport: vi.fn(), chooseInstructionsFile: vi.fn(),
-    getEffectiveTools: vi.fn().mockResolvedValue(null),
+    getEffectiveTools: vi.fn().mockResolvedValue(null), scanAgentRuntimes: vi.fn(),
   },
 }))
 import { api } from '../../services/api.js'
+import { invalidateAgentScan } from '../../lib/agentRuntimes.js'
 import ConfirmHost from '../ConfirmDialog.jsx'
 import { FullAccessBadge, rolesAccessByRole, withNotGranted } from './fullAccess.jsx'
 import RoleFullAccessSection from './RoleFullAccessSection.jsx'
@@ -23,13 +24,32 @@ import FullAccessSummary from '../orgs/FullAccessSummary.jsx'
 import { ValidationIssues } from './DesignerToolbar.jsx'
 import { reportProblems, mergeValidation, unacknowledgedRoles } from './orgValidateReport.js'
 
-beforeEach(() => { vi.clearAllMocks() })
+// agent scan's full_access says which runtimes a role can be granted on.
+const SCAN = { agents: [
+  { id: 'claude', installed: true, full_access: true },
+  { id: 'codex', installed: true, full_access: true },
+  { id: 'vercel', installed: true, full_access: false },
+] }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  invalidateAgentScan()
+  api.scanAgentRuntimes.mockResolvedValue(SCAN)
+})
 afterEach(() => { cleanup() })
 
 const ACTIVE = { role: 'builder', access: 'full', access_state: 'active' }
 const SUSPENDED = { role: 'builder', access: 'full', access_state: 'suspended', reason: 'config changed since the grant: prompt, reports_to' }
 const BLOCKED = { role: 'ops', access: 'full', access_state: 'unattended-blocked', reason: 'run_config.allow_unattended_full_access is false' }
 const REFUSAL = 'granting full access is human-only and this looks like an agent (CLAUDECODE is set); run it yourself from a terminal or the app'
+
+// The grant buttons wait for the scan to say the runtime can run with
+// full access.
+async function enabledButton(name) {
+  const b = await screen.findByRole('button', { name })
+  await waitFor(() => expect(b).not.toBeDisabled())
+  return b
+}
 
 function renderSection(props) {
   const onChanged = vi.fn()
@@ -65,7 +85,7 @@ describe('FullAccessBadge', () => {
 describe('RoleFullAccessSection', () => {
   it('grants only after the risk confirmation; cancelling calls nothing', async () => {
     const onChanged = renderSection({ entry: null, declared: false })
-    fireEvent.click(screen.getByRole('button', { name: 'Grant full access…' }))
+    fireEvent.click(await enabledButton('Grant full access…'))
     const dialog = await screen.findByRole('dialog', { name: 'Give builder full access?' })
     expect(dialog).toHaveTextContent('run any command, read and change any file your user account can, and install software')
     expect(dialog).toHaveTextContent("other roles' messages, reach it")
@@ -76,7 +96,7 @@ describe('RoleFullAccessSection', () => {
     expect(api.orgRoleSetAccess).not.toHaveBeenCalled()
 
     api.orgRoleSetAccess.mockResolvedValue({ org: 'growth', role: 'builder', access: 'full', message: 'builder now has full access' })
-    fireEvent.click(screen.getByRole('button', { name: 'Grant full access…' }))
+    fireEvent.click(await enabledButton('Grant full access…'))
     fireEvent.click(await screen.findByRole('button', { name: 'Grant full access' }))
     await waitFor(() => expect(api.orgRoleSetAccess).toHaveBeenCalledWith('growth', 'builder', 'full'))
     expect(await screen.findByText('builder now has full access')).toBeInTheDocument()
@@ -99,7 +119,7 @@ describe('RoleFullAccessSection', () => {
     api.orgRoleSetAccess.mockResolvedValue({ org: 'growth', role: 'builder', access: 'full', message: 'granted' })
     renderSection({ entry: SUSPENDED, declared: true })
     expect(screen.getByTestId('full-access-reason')).toHaveTextContent(SUSPENDED.reason)
-    fireEvent.click(screen.getByRole('button', { name: 'Grant again…' }))
+    fireEvent.click(await enabledButton('Grant again…'))
     await screen.findByRole('dialog', { name: 'Grant builder full access again?' })
     fireEvent.click(screen.getByRole('button', { name: 'Grant again' }))
     await waitFor(() => expect(api.orgRoleSetAccess).toHaveBeenCalledWith('growth', 'builder', 'full'))
@@ -108,10 +128,49 @@ describe('RoleFullAccessSection', () => {
   it('shows a refused grant verbatim', async () => {
     api.orgRoleSetAccess.mockRejectedValue(new Error(REFUSAL))
     const onChanged = renderSection({ entry: null, declared: false })
-    fireEvent.click(screen.getByRole('button', { name: 'Grant full access…' }))
+    fireEvent.click(await enabledButton('Grant full access…'))
     fireEvent.click(await screen.findByRole('button', { name: 'Grant full access' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(REFUSAL)
     expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('a role on another full-access runtime (codex) can be granted', async () => {
+    api.orgRoleSetAccess.mockResolvedValue({ message: 'granted' })
+    renderSection({ entry: null, declared: false, runtime: 'codex' })
+    fireEvent.click(await enabledButton('Grant full access…'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grant full access' }))
+    await waitFor(() => expect(api.orgRoleSetAccess).toHaveBeenCalledWith('growth', 'builder', 'full'))
+    expect(screen.queryByTestId('full-access-runtime-note')).not.toBeInTheDocument()
+  })
+
+  it('a runtime without full access disables the grant with a note, but still allows revoking', async () => {
+    renderSection({ entry: null, declared: false, runtime: 'vercel' })
+    expect(await screen.findByTestId('full-access-runtime-note')).toHaveTextContent("vercel can't run with full access")
+    expect(screen.getByRole('button', { name: 'Grant full access…' })).toBeDisabled()
+    cleanup()
+    renderSection({ entry: SUSPENDED, declared: true, runtime: 'vercel' })
+    expect(await screen.findByTestId('full-access-runtime-note')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Grant again…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Revoke' })).not.toBeDisabled()
+  })
+
+  it('a scan from before full_access keeps claude as the only full-access runtime', async () => {
+    api.scanAgentRuntimes.mockResolvedValue({ agents: [{ id: 'claude', installed: true }, { id: 'codex', installed: true }] })
+    renderSection({ entry: null, declared: false, runtime: 'codex' })
+    expect(await screen.findByTestId('full-access-runtime-note')).toHaveTextContent("codex can't run with full access")
+    cleanup()
+    renderSection({ entry: null, declared: false, runtime: 'claude' })
+    await enabledButton('Grant full access…')
+  })
+
+  it('the role editor gates it on the role\'s own runtime, else the org\'s', async () => {
+    const node = { id: 'builder', title: 'Builder', type: 'specialist', parentId: 'root', responsibilities: [], icon: '', rest: {} }
+    const { unmount } = render(<RoleInspector node={node} allNodes={[node]} onPatch={() => {}} orgName="growth" orgRuntime="vercel" />)
+    expect(await screen.findByTestId('full-access-runtime-note')).toHaveTextContent('vercel')
+    unmount()
+    const own = { ...node, rest: { runtime: 'codex' } }
+    render(<RoleInspector node={own} allNodes={[own]} onPatch={() => {}} orgName="growth" orgRuntime="vercel" />)
+    await enabledButton('Grant full access…')
   })
 
   it('the role editor shows it for a session role, not for an automation role', () => {
@@ -210,7 +269,7 @@ describe('not granted (no human acknowledgement on file)', () => {
     expect(screen.getByTestId('full-access-badge')).toHaveTextContent('FULL ACCESS · NOT GRANTED')
     expect(screen.getByText(/no person has granted it/)).toBeInTheDocument()
     expect(screen.getByTestId('full-access-reason')).toHaveTextContent('no human acknowledgement on file')
-    fireEvent.click(screen.getByRole('button', { name: 'Grant full access…' }))
+    fireEvent.click(await enabledButton('Grant full access…'))
     fireEvent.click(await screen.findByRole('button', { name: 'Grant full access' }))
     await waitFor(() => expect(api.orgRoleSetAccess).toHaveBeenCalledWith('growth', 'builder', 'full'))
   })

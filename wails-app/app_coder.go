@@ -16,8 +16,8 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Coder mode (issue #203): a chat conversation in which Claude Code runs with
-// full access inside one folder. Everything here shells out to
+// Coder mode (issue #203): a chat conversation in which a coding runtime
+// (claude, codex, opencode, …) runs with full access inside one folder. Everything here shells out to
 // `monoagentcli coder …` / `chat history create --mode coder` (#202) and
 // returns the CLI's stdout JSON verbatim; the only logic is building args.
 // A coder conversation's turns go through StartChatTurn like any other,
@@ -132,8 +132,9 @@ func (a *App) CoderStopBackground(conversationID, turnID string) string {
 
 // coderConversationArgs builds `chat history create` for a coder
 // conversation: either in cwd, or (newWorkspace) in a folder the CLI
-// creates. Coder chats belong to the general assistant's history.
-func coderConversationArgs(runtimeID, model, cwd string, newWorkspace bool) []string {
+// creates. Coder chats belong to the general assistant's history. An empty
+// model or effort leaves the runtime's default.
+func coderConversationArgs(runtimeID, model, effort, cwd string, newWorkspace bool) []string {
 	args := []string{"chat", "history", "create", "--runtime", runtimeID, "--workflow", "general", "--mode", "coder"}
 	if newWorkspace {
 		args = append(args, "--new-workspace")
@@ -143,16 +144,19 @@ func coderConversationArgs(runtimeID, model, cwd string, newWorkspace bool) []st
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
 	return args
 }
 
 // CreateCoderConversation creates a coder conversation and returns it in
 // CreateChatConversation's shape (mode "coder", cwd its folder).
-func (a *App) CreateCoderConversation(runtimeID, model, cwd string, newWorkspace bool) string {
+func (a *App) CreateCoderConversation(runtimeID, model, effort, cwd string, newWorkspace bool) string {
 	if !newWorkspace && cwd == "" {
 		return aiError(fmt.Errorf("choose a folder for the coder conversation"))
 	}
-	out, err := a.jsonCLI(coderConversationArgs(runtimeID, model, cwd, newWorkspace)...)
+	out, err := a.jsonCLI(coderConversationArgs(runtimeID, model, effort, cwd, newWorkspace)...)
 	if err != nil {
 		return aiError(err)
 	}
