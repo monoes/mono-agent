@@ -664,6 +664,11 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
+- A waiting granted call (`wait`, mode `run`) returns as soon as the run
+  is final. It stops waiting at the tool's timeout, or `postEOFGrace` (3 s)
+  after the client closes stdin. It then reads the run once more and, if
+  the run is still going, says how long it waited and why; the role checks
+  it later with `automation_status`.
 - A granted tool's arguments reach the workflow as `input`, and each field
   is also copied to the top level of the trigger item, so a workflow
   written for `workflow run --input '{"keywords":…}'` (`{{ $json.keywords }}`)

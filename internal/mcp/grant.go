@@ -314,23 +314,52 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 	if !tool.Wait || tool.Mode != "run" {
 		return map[string]interface{}{"execution_id": exec.ID, "status": "queued"}, nil
 	}
+	return waitForGrantRun(ctx, rt, exec.ID, tool)
+}
+
+// grantFinalReadTimeout bounds the last read of a run whose wait ended.
+var grantFinalReadTimeout = 5 * time.Second
+
+// waitForGrantRun polls the run until it is final or the wait ends. The
+// wait ends at the tool's timeout, or earlier when ctx is cancelled: Serve
+// cancels in-flight calls postEOFGrace after the client closes stdin. Either
+// way the run is read once more on a fresh context, so a run that finished
+// meanwhile still returns its output, and the note says how long the call
+// actually waited and why it stopped. It used to report "still running
+// after 600s" for a call a closed stdin cut off after 3 seconds (#244).
+func waitForGrantRun(ctx context.Context, rt *runtime, id string, tool *orggrant.Tool) (map[string]interface{}, error) {
+	start := time.Now()
 	wctx, cancel := context.WithTimeout(ctx, time.Duration(tool.Timeout)*time.Second)
 	defer cancel()
-	for {
-		view, final, err := executionView(wctx, rt, exec.ID, tool.MaxOutputBytes)
-		if err != nil {
+	for wctx.Err() == nil {
+		view, final, err := executionView(wctx, rt, id, tool.MaxOutputBytes)
+		if err != nil && wctx.Err() == nil {
 			return nil, err
 		}
-		if final {
+		if err == nil && final {
 			return view, nil
 		}
 		select {
 		case <-wctx.Done():
-			view["note"] = fmt.Sprintf("still running after %ds; check it with automation_status", tool.Timeout)
-			return view, nil
 		case <-time.After(grantPollInterval):
 		}
 	}
+	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), grantFinalReadTimeout)
+	defer rcancel()
+	view, final, err := executionView(rctx, rt, id, tool.MaxOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+	if final {
+		return view, nil
+	}
+	waited := time.Since(start).Round(time.Second)
+	if ctx.Err() != nil {
+		view["note"] = fmt.Sprintf("still running after %s; the call stopped waiting because the client closed the connection; check it with automation_status", waited)
+	} else {
+		view["note"] = fmt.Sprintf("still running after %s (the tool waits up to %ds); check it with automation_status", waited, tool.Timeout)
+	}
+	return view, nil
 }
 
 func orgLimitsFor(db *sql.DB, b *orggrant.Bundle) orgbridge.Limits {
