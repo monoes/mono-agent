@@ -27,6 +27,14 @@ const (
 	// scan entry has full_access, and `agent exec --effort`.
 	CapAgentExecFullAccessAny = "agent-exec-full-access-any"
 	CapAgentExecEffort        = "agent-exec-effort"
+
+	// Dynamic org (monoes/mono-agent#226): stdio caller tools alongside
+	// --access full (the lead's org_* tools, monomind#389), --access read
+	// (research workers, monomind#388), and Claude's subagent lifecycle
+	// events (monomind#387).
+	CapAgentExecFullAccessTools = "agent-exec-full-access-tools"
+	CapAgentExecAccessRead      = "agent-exec-access-read"
+	CapAgentExecSubagentEvents  = "agent-exec-subagent-events"
 )
 
 // ErrFeatureNeedsMonomind reports that the installed monomind lacks a
