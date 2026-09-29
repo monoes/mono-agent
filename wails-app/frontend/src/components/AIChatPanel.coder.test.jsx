@@ -204,3 +204,33 @@ describe('AIChatPanel coder mode', () => {
     expect(initSummary(['a', 'b'])).toBe('a, b')
   })
 })
+
+// With coder bubbles on (#227), the panel hands coder chats to them.
+describe('AIChatPanel with coder bubbles', () => {
+  it('opens a new coder bubble instead of switching the panel to Coder', async () => {
+    m.coderStatus.mockResolvedValue(status())
+    const onOpenCoderChat = vi.fn()
+    await openPanel({ onOpenCoderChat })
+    fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
+    expect(onOpenCoderChat).toHaveBeenCalledWith(null)
+    expect(screen.getByRole('radio', { name: /Assistant/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.queryByRole('radiogroup', { name: 'Coder workspace' })).not.toBeInTheDocument()
+  })
+
+  it('opens a past coder session as its bubble and does not auto-continue it here', async () => {
+    m.coderStatus.mockResolvedValue(status())
+    const coderConv = { id: 'coder-9', backend: 'agent', mode: 'coder', cwd: '/w/proj', workflowContext: 'general', runtimeId: 'claude', updatedAt: '2026-09-29T10:00:00Z' }
+    const plainConv = { id: 'plain-1', backend: 'agent', mode: 'assistant', workflowContext: 'general', runtimeId: 'claude', updatedAt: '2026-09-28T10:00:00Z' }
+    m.listChatConversations.mockResolvedValue({ items: [coderConv, plainConv] })
+    const onOpenCoderChat = vi.fn()
+    await openPanel({ onOpenCoderChat })
+    // The newest non-coder conversation is the one continued here.
+    await waitFor(() => expect(m.getChatTurns).toHaveBeenCalledWith('plain-1', '', 50))
+    expect(m.getChatTurns).not.toHaveBeenCalledWith('coder-9', '', 50)
+
+    fireEvent.click(screen.getByTitle('Past sessions'))
+    const options = await screen.findAllByRole('option')
+    fireEvent.click(options.find(o => o.textContent.includes('proj')))
+    expect(onOpenCoderChat).toHaveBeenCalledWith(coderConv)
+  })
+})
