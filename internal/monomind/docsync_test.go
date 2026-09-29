@@ -179,3 +179,21 @@ func TestCaptureScope(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureIndexingSupported(t *testing.T) {
+	cases := []struct {
+		version string
+		cap     bool
+		want    bool
+	}{
+		{"2.18.2", false, false},
+		{"2.18.3", false, true},
+		{"2.19.0", false, true},
+		{"2.18.2", true, true}, // a build advertising the capability
+	}
+	for _, c := range cases {
+		if got := monomind.CaptureIndexingSupported(c.version, c.cap); got != c.want {
+			t.Errorf("CaptureIndexingSupported(%q, %v) = %v, want %v", c.version, c.cap, got, c.want)
+		}
+	}
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.1] - 2026-09-29
+
+### Changed
+- Capture indexing also turns on transcript and summary ingest when monomind advertises the `knowledge-profile-captures` capability, besides the monomind 2.18.3-or-newer version check. The capability is never required on its own. `doctor` and a capture's row error say "monomind 2.18.3 or newer" (#214).
+- Frontend dependency updates: lucide-react 1.48.0, vite 8.3.1, jsdom 30.1.1 (#206).
+
+### Fixed
+- `library login`: the browser that completes the sign-in could get a connection error instead of the "you can close this tab" page, because the local callback server was closed while still answering. It now shuts down gracefully. This was also the intermittent `TestLoginPKCELoopback` failure on CI.
+
 ## [0.90.0] - 2026-09-28
 
 ### Fixed
