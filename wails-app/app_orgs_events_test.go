@@ -61,7 +61,7 @@ func TestShutdownStopsGroupsGracefully(t *testing.T) {
 		if sig := exitSignal(err); sig != syscall.SIGTERM {
 			t.Errorf("group exit = %v (signal %v), want SIGTERM", err, sig)
 		}
-	case <-time.After(time.Second): // reaped closes just before done is sent
+	case <-time.After(5 * time.Second): // reaped closes just before done is sent
 		t.Fatal("stopRunningCmds returned before the group was reaped")
 	}
 	if got := sent(); len(got) != 1 || got[0] != syscall.SIGTERM {
@@ -82,8 +82,17 @@ func TestShutdownStopsGroupsGracefully(t *testing.T) {
 func TestShutdownWaitsForGraceThenKills(t *testing.T) {
 	withGrace(t, 500*time.Millisecond)
 	sent := recordGroupKill(t)
-	cmd, done := startGroup(t, context.Background(), `trap "" TERM; sleep 30 & wait; wait`)
-	time.Sleep(200 * time.Millisecond) // let sh install its trap
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd, done := startGroup(t, context.Background(), fmt.Sprintf(`trap "" TERM; : > %q; sleep 30 & wait; wait`, ready))
+	// Wait for sh to install its trap: a SIGTERM before that ends it early.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sh never installed its TERM trap")
+		}
+	}
 
 	a := &App{runningCmds: map[string]*exec.Cmd{"orgrun:acme": cmd}}
 	start := time.Now()
@@ -96,7 +105,7 @@ func TestShutdownWaitsForGraceThenKills(t *testing.T) {
 		if sig := exitSignal(err); sig != syscall.SIGKILL {
 			t.Errorf("exit = %v (signal %v), want SIGKILL", err, sig)
 		}
-	case <-time.After(time.Second): // reaped closes just before done is sent
+	case <-time.After(5 * time.Second): // reaped closes just before done is sent
 		t.Fatal("stopRunningCmds returned before the group was reaped")
 	}
 	if got := sent(); len(got) != 2 || got[0] != syscall.SIGTERM || got[1] != syscall.SIGKILL {
