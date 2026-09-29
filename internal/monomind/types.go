@@ -268,8 +268,11 @@ const (
 
 // Error codes (protocol §3.4). Unknown codes must be treated as non-fatal.
 const (
-	ErrAuth          = "auth"
-	ErrQuota         = "quota"
+	ErrAuth  = "auth"
+	ErrQuota = "quota"
+	// ErrRateLimited is a transient 429 that agent exec already retried
+	// (rev 20, up to 3 attempts); quota is used-up credits and never retried.
+	ErrRateLimited   = "rate-limited"
 	ErrMissingBinary = "missing-binary"
 	ErrNoRunner      = "no-runner"
 	ErrBudget        = "budget"
