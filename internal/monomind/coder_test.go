@@ -69,6 +69,14 @@ func TestExecFullAccessCancelWaitsForMonomindsOwnTreeKill(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("signals are unix-only in this build")
 	}
+	// A read-access turn (a dynamic-org research worker) is stopped the
+	// same way.
+	for _, access := range []string{AccessFull, AccessRead} {
+		t.Run(access, func(t *testing.T) { testCancelWaitsForTreeKill(t, access) })
+	}
+}
+
+func testCancelWaitsForTreeKill(t *testing.T, access string) {
 	oldGrace, oldFull := KillGrace, FullAccessKillGrace
 	KillGrace, FullAccessKillGrace = 100*time.Millisecond, 5*time.Second
 	defer func() { KillGrace, FullAccessKillGrace = oldGrace, oldFull }()
@@ -90,7 +98,7 @@ func TestExecFullAccessCancelWaitsForMonomindsOwnTreeKill(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		Exec(ctx, ExecOptions{Bin: bin, Runtime: "claude", Prompt: "p", Cwd: dir, Access: AccessFull}, nil)
+		Exec(ctx, ExecOptions{Bin: bin, Runtime: "claude", Prompt: "p", Cwd: dir, Access: access}, nil)
 		close(done)
 	}()
 	for i := 0; i < 50; i++ {

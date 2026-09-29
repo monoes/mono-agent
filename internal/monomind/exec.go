@@ -282,7 +282,7 @@ type toolResultFrame struct {
 // for tests.
 var KillGrace = 5 * time.Second
 
-// FullAccessKillGrace is KillGrace for an --access full turn. monomind runs
+// FullAccessKillGrace is KillGrace for an --access full (or read) turn. monomind runs
 // that agent in its own process group and kills the whole tree itself on
 // SIGTERM (SIGTERM, then SIGKILL after 5s), so it needs more than 6s; a
 // group kill of monomind alone never reaches the agent (protocol §3).
@@ -601,10 +601,11 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		writeLine([]byte(`{"v":1,"type":"cancel"}`))
 		closeStdin()
 		grace := KillGrace
-		if opts.Access == AccessFull {
+		if opts.Access == AccessFull || opts.Access == AccessRead {
 			// Under --tools none monomind doesn't read the cancel frame; a
-			// full-access turn is stopped by SIGTERM, which monomind turns
-			// into a kill of the agent's whole process tree.
+			// full- or read-access turn (a dynamic-org worker) is stopped by
+			// SIGTERM, which monomind turns into a kill of the agent's whole
+			// process tree.
 			terminateProcessGroup(cmd)
 			grace = max(grace, FullAccessKillGrace)
 		}
