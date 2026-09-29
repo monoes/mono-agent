@@ -271,6 +271,11 @@ A running Org Runtime v2 org can be opened as a bubble too, which gives one surf
 4. Optionally, `agent test --model` with a `--json` result, so validation could shell out to monomind instead of building
    the "ok" turn itself. Mono-agent can build it on `Exec` today, so this is nice to have only.
 
+**Notes on #387 from its implementer** (protocol rev 17, not merged yet):
+- Subagent `usage` is `{total_tokens, tool_uses, duration_ms}` (SDK 0.3.226), not an input/output/cost split.
+- Subagent text arrives as `assistant {text, parent_tool_use_id}` and is kept out of `result.text`. The leak was real.
+- `task_started` also fires for non-agent background tasks such as background Bash. Filter on `subagent_type` to get agents only.
+
 The mono-agent side feature-detects each of these and degrades cleanly:
 - without (1), native subagents show as tool cards only;
 - without (2), readers run with full access, under the one-writer lease;
