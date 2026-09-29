@@ -3,7 +3,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 
 const go = vi.hoisted(() => ({
   LibraryStatus: vi.fn(),
@@ -61,7 +61,8 @@ describe('Orgs page library actions', () => {
     render(<OrgTemplatesButton onInstalled={() => {}} />)
     fireEvent.click(screen.getByText('Org templates'))
     expect(await screen.findByRole('tablist')).toBeInTheDocument()
-    expect(go.LibraryList).toHaveBeenCalledWith('org', 'official', '', 1)
+    // The tab bar renders before the list request fires: wait for the call.
+    await waitFor(() => expect(go.LibraryList).toHaveBeenCalledWith('org', 'official', '', 1))
   })
 
   it('Publish to monoes opens the publish dialog for the org', async () => {

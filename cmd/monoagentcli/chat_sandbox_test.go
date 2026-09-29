@@ -31,6 +31,14 @@ func writeSandboxMonomind(t *testing.T, version string, advertise bool, transcri
 	argsLog = filepath.Join(dir, "exec-args.log")
 	script := "#!/bin/sh\n" +
 		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":` + string(capsJSON) + `}'; exit 0; fi` + "\n" +
+		// agent scan answers like monomind 2.19.0: only codex and grok
+		// have a sandbox of their own; every other runtime lists "full".
+		`if [ "$1" = "agent" ] && [ "$2" = "scan" ]; then echo '{"v":1,"agents":[` +
+		`{"id":"codex","installed":true,"sandbox_modes":["read-only","workspace-write","full"]},` +
+		`{"id":"grok","installed":true,"sandbox_modes":["read-only","workspace-write","full"]},` +
+		`{"id":"claude","installed":true,"sandbox_modes":["full"]},` +
+		`{"id":"copilot","installed":true,"sandbox_modes":["full"]},` +
+		`{"id":"qwen","installed":true,"sandbox_modes":["full"]}]}'; exit 0; fi` + "\n" +
 		`if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then` + "\n" +
 		`  echo "$*" >> '` + argsLog + "'\n" + transcript + "\n  exit 0\nfi\n" +
 		`echo "unsupported: $*" >&2` + "\nexit 2\n"
@@ -86,8 +94,10 @@ func TestChatTurnSandbox(t *testing.T) {
 		{name: "monomind 396", version: "9.0.0", advertise: true, runtime: "codex", startExtra: `,"sandbox":"workspace-write"`,
 			wantArgs: []string{"--sandbox workspace-write"}, neverArgs: []string{"MONOMIND_GIT_LEVEL"}, chatCwd: true,
 			wantStatus: monomind.SandboxStatusSandboxed},
-		{name: "monomind 396, runtime unsupported", version: "9.0.0", advertise: true, runtime: "copilot", startExtra: `,"sandbox":"full","sandbox_unsupported":true`,
-			wantArgs: []string{"--sandbox workspace-write"}, chatCwd: true,
+		// copilot lists only "full": monomind 2.19.0 would refuse the flag,
+		// fatally, so it isn't passed and the turn runs as before.
+		{name: "monomind 396, runtime unsupported", version: "9.0.0", advertise: true, runtime: "copilot",
+			neverArgs:  []string{"--sandbox", "MONOMIND_GIT_LEVEL"},
 			wantStatus: monomind.SandboxStatusUnsupported},
 		{name: "env workaround", version: "2.18.5", runtime: "codex",
 			wantArgs: []string{"--env MONOMIND_GIT_LEVEL=read"}, neverArgs: []string{"--sandbox"}, chatCwd: true,
@@ -149,7 +159,8 @@ func TestChatTurnSandboxClaudeKeepsFolder(t *testing.T) {
 		wantFlag   bool
 		wantStatus string
 	}{
-		{"9.0.0", true, true, monomind.SandboxStatusSandboxed},
+		// claude lists only "full": no flag, --access scoped as before.
+		{"9.0.0", true, false, monomind.SandboxStatusScoped},
 		{"2.18.5", false, false, monomind.SandboxStatusScoped},
 	} {
 		dbPath := newChatCLITestDB(t)

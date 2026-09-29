@@ -373,6 +373,10 @@ type ScanEntry struct {
 	// InitTarget is the `monomind init --target` value for the runtime's
 	// setup files; nil when it has none.
 	InitTarget *string `json:"init_target"`
+	// SandboxModes are the agent exec --sandbox modes the runtime accepts
+	// (agent-exec-sandbox, monomind 2.19.0); nil from an older monomind.
+	// monomind refuses any other mode, so SandboxArgs checks this first.
+	SandboxModes []string `json:"sandbox_modes,omitempty"`
 }
 
 // ScanResult is the `agent scan --json` payload (§6).
