@@ -560,8 +560,14 @@ login (and its bill) is what the turn uses.
   --json`, so statuses match monomind's classification and a runtime that
   reports no cost gets a pricing-table estimate (`cost_estimated`, shown with
   "≈"). `agent test` has no sandbox option, so a
-  runtime whose turns run sandboxed (codex and grok today) keeps the
-  sandboxed test turn, like an older monomind; mono-agent classifies it. The plan
+  runtime whose exec turns run sandboxed keeps the sandboxed test turn, like
+  an older monomind; mono-agent classifies it. `monomind.SandboxArgs` decides
+  that with the runtime's `agent scan` `sandbox_modes`: codex and grok (env
+  path, or `--sandbox` on 2.19.0 since they list the mode) go through exec;
+  claude, copilot and the other runtimes that list only `full` get no sandbox
+  from exec either and use `agent test`. When `agent test` fails fast without
+  JSON (the command itself isn't supported) the exec test runs instead; any
+  other failure is the result, never a second model call. The plan
   line's `checker` says which one ran.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
@@ -589,7 +595,11 @@ login (and its bill) is what the turn uses.
   generation and the org `model` decider. `monomind.SandboxArgs` is the one
   place that decides what that means:
   - monomind advertises `agent-exec-sandbox` (monomind#396): `agent exec
-    --sandbox workspace-write`, for every runtime;
+    --sandbox workspace-write`, only for a runtime whose `agent scan --json`
+    `sandbox_modes` lists the mode (codex, grok on 2.19.0; monomind refuses
+    any other mode as fatal). A runtime listing only `full` gets no flag:
+    claude reports `scoped`, the others `unsupported`. With the scan failed,
+    no flag is passed and the env path below applies;
   - otherwise, monomind >= 2.11.1 and runtime `codex` or `grok`:
     `--env MONOMIND_GIT_LEVEL=read`. The runner reads that level from the
     turn's env (never the caller's process env) and starts codex with
