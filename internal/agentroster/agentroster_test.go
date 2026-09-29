@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -286,5 +287,111 @@ func TestRunCancelStoresNothingForUnrun(t *testing.T) {
 		RunOptions{Exec: exec, Save: func(Result) error { saved++; return nil }}, func(Line) {})
 	if sum.Cancelled != 2 || saved != 0 {
 		t.Errorf("summary %+v, saved %d; want 2 cancelled, 0 saved", sum, saved)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+func i64(n int64) *int64      { return &n }
+func f64(f float64) *float64  { return &f }
+
+func TestRunUsesAgentTestJSONAndFallsBack(t *testing.T) {
+	var execCalls, testCalls atomic.Int32
+	exec := func(ctx context.Context, o monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
+		execCalls.Add(1)
+		return done("ok"), nil
+	}
+	test := func(ctx context.Context, runtime, model string, timeout time.Duration) (*monomind.AgentTestResult, error) {
+		testCalls.Add(1)
+		switch model {
+		case "":
+			t.Errorf("runtime %s: the \"default\" model must be passed as \"\"", runtime)
+		case "broken":
+			return nil, errors.New("unparseable output")
+		case "gone":
+			return &monomind.AgentTestResult{Status: "model_unavailable", LatencyMs: 300,
+				Error: &struct {
+					Code      string `json:"code"`
+					Message   string `json:"message"`
+					LoginHint string `json:"login_hint,omitempty"`
+				}{Code: "model-unavailable", Message: "issue with the selected model"}}, nil
+		case "nokey":
+			return &monomind.AgentTestResult{Status: "error", LatencyMs: 400,
+				Error: &struct {
+					Code      string `json:"code"`
+					Message   string `json:"message"`
+					LoginHint string `json:"login_hint,omitempty"`
+				}{Code: "runner-error", Message: "PiAgentRunner: pi failed (exit 1)\nstderr: No API key found for the selected model."}}, nil
+		case "future":
+			return &monomind.AgentTestResult{Status: "sandbox_denied", LatencyMs: 10}, nil
+		}
+		if timeout != 30*time.Second {
+			t.Errorf("timeout = %v", timeout)
+		}
+		return &monomind.AgentTestResult{Status: "ok", Reply: strPtr("ok"), LatencyMs: 1430, LatencyFirstMs: i64(812),
+			InputTokens: i64(12), OutputTokens: i64(1), CostUSD: f64(0.0001), CostEstimated: true, RuntimeVersion: strPtr("0.52.0")}, nil
+	}
+	targets := []Target{{Runtime: "a", Model: "m"}, {Runtime: "a", Model: "gone"}, {Runtime: "b", Model: "broken"}, {Runtime: "c", Model: "future"}, {Runtime: "d", Model: "nokey"}}
+	got := map[string]Result{}
+	var mu sync.Mutex
+	sum := Run(context.Background(), targets, RunOptions{Exec: exec, Test: test, Timeout: 30 * time.Second,
+		Save: func(r Result) error { mu.Lock(); got[r.Model] = r; mu.Unlock(); return nil }}, func(Line) {})
+
+	if testCalls.Load() != 5 || execCalls.Load() != 1 {
+		t.Errorf("test calls %d, exec calls %d; want 5 and 1 (only the unreadable one falls back)", testCalls.Load(), execCalls.Load())
+	}
+	if r := got["m"]; r.Status != StatusOK || r.LatencyMs != 1430 || r.LatencyFirstMs != 812 || r.TokensIn != 12 ||
+		!r.HasCost || !r.CostEstimated || r.RuntimeVersion != "0.52.0" {
+		t.Errorf("mapped result = %+v", r)
+	}
+	if r := got["gone"]; r.Status != StatusModelUnavailable || r.Detail != "issue with the selected model" {
+		t.Errorf("model_unavailable = %+v", r)
+	}
+	if r := got["broken"]; r.Status != StatusOK {
+		t.Errorf("fallback result = %+v", r)
+	}
+	if r := got["future"]; r.Status != StatusError || !strings.Contains(r.Detail, "sandbox_denied") {
+		t.Errorf("unknown status = %+v", r)
+	}
+	if r := got["nokey"]; r.Status != StatusAuth {
+		t.Errorf("a sign-in message monomind calls error must still be auth, got %+v", r)
+	}
+	if sum.OK != 2 || sum.Failed != 3 {
+		t.Errorf("summary = %+v", sum)
+	}
+}
+
+func TestSaveKeepsCostEstimated(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	if err := Save(ctx, db, Result{Runtime: "a", Model: "m", Status: StatusOK, CostUSD: 0.01, HasCost: true, CostEstimated: true, ValidatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := List(ctx, db)
+	if len(got) != 1 || !got[0].CostEstimated {
+		t.Errorf("cost_estimated lost: %+v", got)
+	}
+}
+
+func TestAgentTestFuncKeepsSandboxedRuntimesOnExec(t *testing.T) {
+	if AgentTestFunc(monomind.NewCapabilitySet("2.18.4", "agent-exec"), "") != nil {
+		t.Error("without agent-test-json there must be no TestFunc")
+	}
+	test := AgentTestFunc(monomind.NewCapabilitySet("2.18.5", monomind.CapAgentTestJSON), "/nonexistent/monomind")
+	if test == nil {
+		t.Fatal("agent-test-json must give a TestFunc")
+	}
+	// codex is sandboxed through the env path on this monomind: exec it.
+	if _, err := test(context.Background(), "codex", "", time.Second); !errors.Is(err, ErrUseExec) {
+		t.Errorf("codex: err = %v, want ErrUseExec", err)
+	}
+	// claude has no monomind sandbox yet: agent test (which fails here on
+	// the fake binary path, proving it was tried).
+	if _, err := test(context.Background(), "claude", "", time.Second); err == nil || errors.Is(err, ErrUseExec) {
+		t.Errorf("claude: err = %v, want an agent test error", err)
+	}
+	// Once agent exec has --sandbox, every runtime tests through exec.
+	all := AgentTestFunc(monomind.NewCapabilitySet("2.19.0", monomind.CapAgentTestJSON, monomind.CapAgentExecSandbox), "")
+	if _, err := all(context.Background(), "claude", "", time.Second); !errors.Is(err, ErrUseExec) {
+		t.Errorf("with agent-exec-sandbox: err = %v, want ErrUseExec", err)
 	}
 }
