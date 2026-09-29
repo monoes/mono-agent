@@ -439,24 +439,25 @@ event.
 
 ### Coder mode (full access)
 
-Coder mode is a chat where the agent runs as a full Claude Code session in
-a folder: it can run any command and read or change any file the user can,
-with no approval prompts, and it loads the user's normal Claude Code setup
-(CLAUDE.md, skills, hooks, MCP servers) plus the folder's own.
+Coder mode is a chat where the agent runs as a full session of a coding
+CLI (Claude Code, Codex, OpenCode, …) in a folder: it can run any command
+and read or change any file the user can, with no approval prompts, and it
+loads the user's normal setup for that CLI (its instructions files, skills,
+hooks, MCP servers) plus the folder's own.
 
 ```bash
-monoagentcli coder status --json                          # settings + whether monomind supports it
+monoagentcli coder status --json                          # settings, monomind support, and each runtime's readiness
 monoagentcli coder enable --yes-i-understand              # off until enabled; the CLI enforces it
 monoagentcli coder set --workspace-root ~/monoagent-coder --max-turns 200 --timeout 60m --budget-usd 5
 monoagentcli coder workspace root --json                  # the coder root itself, set up as a shared working folder
 monoagentcli coder workspace new --json                   # or a fresh random test folder inside it
-monoagentcli chat history create --runtime claude --mode coder --coder-root   # or --cwd <any folder>, --new-workspace
+monoagentcli chat history create --runtime codex --mode coder --effort high --coder-root   # or --cwd <any folder>, --new-workspace; runtime defaults to claude
 monoagentcli chat --conversation <conv> --turn <id> -- "make the tests pass"
 monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled turn
 ```
 
-- The mode and folder are fixed when the conversation is created. Claude
-  Code keys its sessions by folder, so a conversation always resumes in the
+- The mode and folder are fixed when the conversation is created. The
+  CLIs key their sessions by folder, so a conversation always resumes in the
   same one.
 - A picked folder is initialized with `monomind init --if-missing`, which
   adds missing setup files and never touches existing ones.
@@ -466,11 +467,37 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 - Every tool call is journaled (`tool.started` with `native: true` /
   `tool.completed`); startup progress and background processes left running
   arrive as `coder.status` / `coder.background` notices.
-- It runs on the `claude` runtime only, refuses to run as root, and needs
-  monomind's `agent-exec-full-access`, `agent-exec-settings`,
-  `agent-exec-tool-activity` and `init-json` capabilities. Without them it
-  fails with code `needs_monomind_update`. When disabled, the code is
-  `coder_disabled`.
+- It refuses to run as root, and needs monomind's `agent-exec-full-access`,
+  `agent-exec-settings`, `agent-exec-tool-activity` and `init-json`
+  capabilities. Without them it fails with code `needs_monomind_update`.
+  When disabled, the code is `coder_disabled`.
+- **Runtimes.** `coder status --json` keeps `runtime: "claude"` for older
+  apps and adds `runtimes: [{id, installed, fullAccess, ready, toolActivity,
+  resume, effort, maxTurns, reportsCost, initTarget}]`, one per scanned
+  runtime, from `agent scan`'s `full_access`, `tool_activity_fidelity`,
+  `resume`, `effort`, `max_turns`, `reports_cost` and `init_target`. A runtime
+  is ready when it is installed, monomind runs it with full access, and the
+  capabilities above are present. A monomind without
+  `agent-exec-full-access-any` runs only claude. A runtime monomind won't run
+  with full access fails with code `coder_runtime_unsupported`. An uninstalled
+  one is not refused up front, so the turn reports it as not set up. A new
+  folder gets that runtime's setup files (`monomind init --target
+  <initTarget>`, claude when it has none).
+- The conversation keeps its runtime and effort. Effort goes to monomind as
+  `--effort` when it has `agent-exec-effort` (mapped per runtime). An older
+  monomind gets it only for claude, as `CLAUDE_EFFORT`.
+- Native tool calls carry monomind's normalized `kind` (`shell`, `edit`,
+  `write`, `read`, `search`, `web`, `mcp`, `task`, `todo`, `patch`, `other`)
+  on `tool.started`, with canonical input keys. `fileExisted` comes from
+  `file_path` for edit/write, and a shell call's `exitCode` from the end
+  event's `exit_code`. Claude tool names are the fallback for an older
+  monomind. On a `start-only` runtime no call reports an end, so calls still
+  open when the turn finishes close with `ok: null` (outcome unknown), not
+  as cancelled.
+- Granting an org role full access is refused inside any agent. The
+  markers are `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `MONOMIND_ORG_ROLE`,
+  `MONOMIND_SDK_AGENT`, `MONOMIND_AGENT_EXEC`, `CODEX_SANDBOX`,
+  `CODEX_SANDBOX_NETWORK_DISABLED`, `OPENCODE`, `GEMINI_CLI` and `QWEN_CODE`.
 
 ## How AI works in mono-agent
 

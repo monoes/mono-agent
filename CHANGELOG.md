@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Coder mode runs on every runtime monomind gives full access, not only claude. `coder status --json` adds a `runtimes` list with each runtime's readiness and what it supports: tool-activity fidelity, resume, effort, max turns, cost, and init target. `runtime: "claude"` stays for older apps. `chat --mode coder --runtime X` and `chat history create --mode coder --runtime X` take any ready runtime and default to claude. A monomind without `agent-exec-full-access-any` still runs claude only, and other runtimes fail with `coder_runtime_unsupported`. Coder conversations keep their `--effort`. New folders get the runtime's own setup files. `coder workspace new|root` take `--runtime`.
+
+### Changed
+- Effort goes to monomind as `agent exec --effort` when it advertises `agent-exec-effort`. An older monomind still gets `CLAUDE_EFFORT` for claude, now through one path instead of two.
+- Coder tool calls carry the normalized `kind` on `tool.started` (Claude names are the fallback). File-existed and shell exit codes come from the canonical keys and the end event's `exit_code`. On `start-only` runtimes, calls left open at turn end close with an unknown outcome instead of as cancelled. Startup status names the runtime ("Starting Codex…").
+- Granting an org role full access is also refused inside Codex, OpenCode, Gemini CLI and Qwen Code shells.
+
 ## [0.90.1] - 2026-09-29
 
 ### Changed
