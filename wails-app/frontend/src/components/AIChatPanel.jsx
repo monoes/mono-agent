@@ -340,6 +340,10 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     if (!selectedRuntime) { setRuntimeModels([]); return }
     const runtime = runtimes.find(r => r.id === selectedRuntime)
     let current = true
+    // Drop the previous runtime's list now: until this one's arrives, its
+    // model and effort ids must not read as this runtime's (send() also
+    // waits for the list).
+    setRuntimeModels([])
     setRuntimeModelsLoading(true)
     api.getAgentRuntimeModels(selectedRuntime, runtime?.binary || '').then(models => {
       if (!current) return
@@ -721,7 +725,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const send = useCallback(async () => {
     const text = input.trim()
     if (!text || activeTurnId || !workflowID || readOnly) return
-    if (!selectedRuntime || runtimeUninitialized) return
+    if (!selectedRuntime || runtimeUninitialized || runtimeModelsLoading) return
 
     setMessages(msgs => [...msgs, { role: 'user', content: text }])
     setInput('')
@@ -766,7 +770,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         { role: 'error', content: String(err), code: err?.code || '' },
       ])
     }
-  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, selectedEffort, runtimeModels, conversationId, isCoder, createCoderConversation])
+  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, runtimeModelsLoading, selectedModel, selectedEffort, runtimeModels, conversationId, isCoder, createCoderConversation])
 
   // Whether an agent runtime is selected — gates the input, matching
   // send()'s own guard.
