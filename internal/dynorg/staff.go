@@ -70,7 +70,11 @@ func (s *Staffer) Staff(ctx context.Context, req SpawnRequest) (Staff, error) {
 	if req.NeedsWrite != nil && *req.NeedsWrite && st.Access == ProfileResearch {
 		st.Access = ProfileCoding
 	}
-	st.Skills = s.staffSkills(ctx, req)
+	skills, err := s.staffSkills(ctx, req)
+	if err != nil {
+		return st, err
+	}
+	st.Skills = skills
 	if err := s.staffModel(ctx, req, &st); err != nil {
 		return st, err
 	}
@@ -127,9 +131,10 @@ func (s *Staffer) staffRole(ctx context.Context, req SpawnRequest, st *Staff) er
 }
 
 // staffSkills is the lead's skills, else pick's when it is confident (at
-// most three).
-func (s *Staffer) staffSkills(ctx context.Context, req SpawnRequest) []Skill {
+// most three). A skill the lead names must exist.
+func (s *Staffer) staffSkills(ctx context.Context, req SpawnRequest) ([]Skill, error) {
 	names := req.Skills
+	fromLead := len(names) > 0
 	if len(names) == 0 && s.Picker != nil {
 		if list, confident, err := s.Picker.Skills(ctx, req.Brief); err == nil && confident {
 			for _, c := range list {
@@ -143,12 +148,19 @@ func (s *Staffer) staffSkills(ctx context.Context, req SpawnRequest) []Skill {
 	out := make([]Skill, 0, len(names))
 	for _, n := range names {
 		sk := Skill{Name: n}
+		if fromLead && !ValidName(n) {
+			return nil, fmt.Errorf("invalid skill name %q", n)
+		}
 		if s.Library != nil {
-			sk.Text, _ = s.Library.SkillText(ctx, n)
+			text, err := s.Library.SkillText(ctx, n)
+			if err != nil && fromLead {
+				return nil, fmt.Errorf("unknown skill %q; leave skills empty to have them picked", n)
+			}
+			sk.Text = text
 		}
 		out = append(out, sk)
 	}
-	return out
+	return out, nil
 }
 
 func (s *Staffer) staffModel(ctx context.Context, req SpawnRequest, st *Staff) error {

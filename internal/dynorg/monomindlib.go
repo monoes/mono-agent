@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,17 @@ type registryAgent struct {
 }
 
 const monomindCallTimeout = 60 * time.Second
+
+// safeName matches agent and skill ids that are safe to put in a path, a
+// glob and a monomind argv: no separators, glob characters, "..", or a
+// leading "-" that would read as a flag.
+var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidName reports whether an agent or skill id from the lead is safe to
+// look up.
+func ValidName(name string) bool {
+	return safeName.MatchString(name) && !strings.Contains(name, "..")
+}
 
 func (l *MonomindLibrary) run(ctx context.Context, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, monomindCallTimeout)
@@ -122,13 +134,17 @@ func (l *MonomindLibrary) loadRegistry() {
 // folder (the chat folder's, then the user's).
 func (l *MonomindLibrary) AgentBody(_ context.Context, id string) (string, string, string, error) {
 	l.once.Do(l.loadRegistry)
+	if a, ok := l.registry[strings.ToLower(id)]; ok && a.FilePath != "" && !ValidName(id) {
+		// A registry name with spaces ("Code Reviewer") is fine to look up
+		// in the map; only the file lookups below need a safe id.
+		return l.registryBody(a, id)
+	}
+	if !ValidName(id) {
+		return "", "", "", fmt.Errorf("invalid agent id %q", id)
+	}
 	if a, ok := l.registry[strings.ToLower(id)]; ok && a.FilePath != "" {
-		p := a.FilePath
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(l.Cwd, p)
-		}
-		if b, err := os.ReadFile(p); err == nil {
-			return stripFrontMatter(string(b)), orElse(a.Name, id), a.Category, nil
+		if body, title, cat, err := l.registryBody(a, id); err == nil {
+			return body, title, cat, nil
 		}
 	}
 	home, _ := os.UserHomeDir()
@@ -146,9 +162,29 @@ func (l *MonomindLibrary) AgentBody(_ context.Context, id string) (string, strin
 	return "", "", "", fmt.Errorf("no agent %q", id)
 }
 
+// registryBody reads a registry agent's file, which must lie inside the
+// chat folder when its path is relative.
+func (l *MonomindLibrary) registryBody(a registryAgent, id string) (string, string, string, error) {
+	p := a.FilePath
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(l.Cwd, p)
+		if rel, err := filepath.Rel(l.Cwd, p); err != nil || strings.HasPrefix(rel, "..") {
+			return "", "", "", fmt.Errorf("agent %q's file is outside the folder", id)
+		}
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", "", "", err
+	}
+	return stripFrontMatter(string(b)), orElse(a.Name, id), a.Category, nil
+}
+
 // SkillText implements Library: `monomind org skills show`, else the
 // skill's SKILL.md in the chat folder or the user's skills.
 func (l *MonomindLibrary) SkillText(ctx context.Context, name string) (string, error) {
+	if !ValidName(name) {
+		return "", fmt.Errorf("invalid skill name %q", name)
+	}
 	if out, err := l.run(ctx, "org", "skills", "show", name); err == nil && len(bytes.TrimSpace(out)) > 0 {
 		return string(out), nil
 	}
