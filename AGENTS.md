@@ -490,6 +490,20 @@ login (and its bill) is what the turn uses.
   `pi-rpc` transports). `monoagentcli agent install <runtime>` installs one
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
+- **Validated roster.** `monoagentcli agent validate` sends the one-word test
+  turn to every listed model of every installed runtime (or only
+  `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
+  `auth`, `quota`, `model_unavailable`, `timeout`, `missing_binary` or `error`,
+  with latency and cost. Each test is a real model call, so `--dry-run` prints
+  the call count and estimated cost first, and `--stale-only` skips models
+  that are already ready. `--json` streams NDJSON progress (`validate.plan`,
+  `validate.started`, `validate.result`, `validate.done`).
+  `monoagentcli agent roster [--ready-only] --json` reads the stored results
+  without calling any model. A model is **ready** when it answered within
+  `--max-age` (7 days) on the current runtime version, **stale** when older
+  or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
+  adds a model id that the runtime doesn't list. The roster is machine-wide,
+  not per profile, and the AI agents page shows it with live validation.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
   else the first installed runtime in a fixed order starting with `claude`
