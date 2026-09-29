@@ -7,6 +7,8 @@ import Toasts from './components/Toasts.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfirmHost from './components/ConfirmDialog.jsx'
 import AIChatPanel from './components/AIChatPanel.jsx'
+import CoderBubbles from './components/bubbles/CoderBubbles.jsx'
+import { useCoderBubbles } from './components/bubbles/useCoderBubbles.js'
 import HumanInLoop from './pages/HumanInLoop.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import People from './pages/People.jsx'
@@ -63,6 +65,14 @@ export default function App() {
   // may not even be mounted yet (persistentPages only mounts a page once
   // visited) and this must work regardless of which page is active.
   const [viewingArtifactDoc, setViewingArtifactDoc] = useState(null)
+
+  // Coder chats open as floating bubbles (#227), not in the assistant panel.
+  const coderBubbles = useCoderBubbles()
+  const { openConversation: openCoderBubble, openDraft: openCoderDraft } = coderBubbles
+  const openCoderChat = useCallback((conv) => {
+    if (conv) openCoderBubble(conv)
+    else openCoderDraft()
+  }, [openCoderBubble, openCoderDraft])
 
   const openGlobalChat = useCallback((runtimeId) => {
     if (runtimeId) setGlobalChatRuntime(runtimeId)
@@ -332,6 +342,7 @@ export default function App() {
           onClose={() => setGlobalChatOpen(false)}
           onOpenArtifact={onOpenArtifact}
           onNavigate={navigate}
+          onOpenCoderChat={openCoderChat}
         />
       </div>
 
@@ -348,6 +359,7 @@ export default function App() {
         onToggleHil={() => setGlobalHilOpen(v => !v)}
         onOpenHealth={() => navigate('settings')}
       />
+      <CoderBubbles store={coderBubbles} onNavigate={navigate} />
       <Toasts onNavigate={navigate} />
       <ConfirmHost />
       {viewingArtifactDoc && (

@@ -169,7 +169,11 @@ export function MessageBubble({ role, content, isError, code, onNavigate }) {
 }
 
 // ── Main panel ─────────────────────────────────────────────────────────────────
-export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifact, initialRuntime, canvasMode = true, onNavigate }) {
+// onOpenCoderChat, when given, moves coder chats out of this panel into
+// the coder bubbles (#227): picking Coder opens a new coder bubble
+// (onOpenCoderChat(null)) and a past coder session opens as its bubble
+// (onOpenCoderChat(conversation)). Without it, coder chats run in the panel.
+export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifact, initialRuntime, canvasMode = true, onNavigate, onOpenCoderChat }) {
   const { t } = useTranslation()
   const [messages, setMessages]             = useState([])
   const [input, setInput]                   = useState('')
@@ -484,7 +488,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         .filter(c => isListedConversation(c, workflowID))
       setPastConversations(items)
       // Read-only provider conversations are never auto-continued.
-      const latest = items.find(c => c.backend === 'agent')
+      // Coder chats live in their bubbles when bubbles are on.
+      const latest = items.find(c => c.backend === 'agent' && !(onOpenCoderChatRef.current && c.mode === 'coder'))
       if (latest) {
         loadConversation(latest)
       } else {
@@ -714,7 +719,25 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     return conv.id
   }, [coderWorkspace, selectedRuntime, selectedModel, selectedEffort, runtimeModels, coderChoice])
 
-  const chooseMode = useCallback((mode) => { setChatMode(mode) }, [])
+  const onOpenCoderChatRef = useRef(onOpenCoderChat)
+  onOpenCoderChatRef.current = onOpenCoderChat
+  const chooseMode = useCallback((mode) => {
+    if (mode === 'coder' && onOpenCoderChatRef.current) {
+      onOpenCoderChatRef.current(null)
+      return
+    }
+    setChatMode(mode)
+  }, [])
+  // openPastConversation: a coder session goes to its bubble when bubbles
+  // are on; anything else loads here.
+  const openPastConversation = useCallback((c) => {
+    if (c?.mode === 'coder' && onOpenCoderChatRef.current) {
+      setShowSessions(false)
+      onOpenCoderChatRef.current(c)
+      return
+    }
+    loadConversation(c)
+  }, [loadConversation])
 
   const pickCoderFolder = useCallback(async () => {
     const dir = await Promise.resolve(api.pickCoderFolder()).catch(() => '')
@@ -1026,11 +1049,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                   role="option"
                   tabIndex={0}
                   aria-selected={c.id === conversationId}
-                  onClick={() => loadConversation(c)}
+                  onClick={() => openPastConversation(c)}
                   onKeyDown={(e) => {
                     if (e.key !== 'Enter' && e.key !== ' ') return
                     e.preventDefault()
-                    loadConversation(c)
+                    openPastConversation(c)
                   }}
                   style={{
                     padding: '7px 9px', borderRadius: 6, cursor: 'pointer',

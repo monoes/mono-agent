@@ -10,7 +10,9 @@ import { runtimeLabel } from '../../lib/runtimeLabels.js'
 // runtime the chat will run on (picked in the runtime selector); the list
 // under the workspaces says which runtimes are ready.
 //
-// workspace is { kind: 'root' } or { kind: 'folder', path }.
+// workspace is { kind: 'root' } or { kind: 'folder', path }. workspaceOnly
+// hides the mode switch, for a chat that is already a coder chat (a new
+// coder bubble, #227).
 
 const mono = 'var(--font-mono)'
 const CYAN = '#00b4d8'
@@ -39,7 +41,7 @@ function optionStyle(active) {
 const optTitle = { fontFamily: mono, fontSize: 10.5, color: '#e2e8f0' }
 const optHint = { fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', wordBreak: 'break-all', marginTop: 1 }
 
-export function CoderModePicker({ status, mode, onModeChange, workspace, onWorkspaceChange, recent = [], onPickFolder, runtimeId = '', disabled = false }) {
+export function CoderModePicker({ status, mode, onModeChange, workspace, onWorkspaceChange, recent = [], onPickFolder, runtimeId = '', disabled = false, workspaceOnly = false }) {
   if (!status?.enabled) return null
   const ready = coderReady(status)
   const agent = runtimeId ? runtimeLabel(runtimeId) : 'The agent'
@@ -48,7 +50,7 @@ export function CoderModePicker({ status, mode, onModeChange, workspace, onWorks
 
   return (
     <div data-testid="coder-mode-picker" style={{ padding: '8px 12px', borderBottom: '1px solid rgba(0,180,216,0.06)', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-      <div role="radiogroup" aria-label="Chat mode" style={{ display: 'flex', gap: 6 }}>
+      {!workspaceOnly && <div role="radiogroup" aria-label="Chat mode" style={{ display: 'flex', gap: 6 }}>
         <button type="button" role="radio" aria-checked={mode === 'assistant'} disabled={disabled}
           onClick={() => onModeChange('assistant')} style={segStyle(mode === 'assistant', disabled)}>
           <Bot size={11} /> Assistant
@@ -58,7 +60,7 @@ export function CoderModePicker({ status, mode, onModeChange, workspace, onWorks
           onClick={() => onModeChange('coder')} style={segStyle(mode === 'coder', disabled || !ready)}>
           <Code2 size={11} /> Coder
         </button>
-      </div>
+      </div>}
       {!ready && (
         <div data-testid="coder-not-ready" style={{ fontFamily: mono, fontSize: 9.5, color: '#fbbf24', lineHeight: 1.5 }}>
           Coder mode {missingText(status)}.
