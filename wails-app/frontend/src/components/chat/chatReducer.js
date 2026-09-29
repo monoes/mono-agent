@@ -15,6 +15,7 @@ export function initialChatState() {
     session: null,          // { runtime, sessionId } once session.bound fires
     terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
     sandbox: null,           // the CLI's monomind.SandboxStatus* verdict ('sandboxed', 'scoped', …); null = none asked for
+    agents: {},              // dynamic org (#226): agentId -> { role, runtime, model, access, status, brief, report, tools, lastTool, … }
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
     lastSeq: 0,
@@ -43,8 +44,41 @@ function completionFlags(payload) {
   return flags
 }
 
+// agentPatch folds a dynamic-org worker's events (#226) into state.agents.
+// A worker's own tool calls carry agentId and stay out of the lead's
+// timeline; the worker shows as one row (a part of kind 'agent').
+function agentPatch(state, ev) {
+  const p = ev.payload || {}
+  const id = p.agentId
+  const agents = state.agents || {}
+  const cur = agents[id] || { agentId: id, tools: 0, status: 'queued' }
+  const put = (next) => ({ agents: { ...agents, [id]: { ...cur, ...next } } })
+  switch (ev.type) {
+    case 'agent.spawned':
+      return {
+        ...put({ role: p.role, agentType: p.agentType, runtime: p.runtime, model: p.model, effort: p.effort, access: p.access, skills: p.skills || [], brief: p.brief, why: p.why, startedAt: ev.at }),
+        parts: state.parts.some(x => x.kind === 'agent' && x.agentId === id) ? state.parts : [...state.parts, { kind: 'agent', agentId: id }],
+      }
+    case 'agent.status':
+      return put({ status: p.to, statusDetail: p.detail || '' })
+    case 'agent.reassigned':
+      return put({ runtime: p.toRuntime, model: p.toModel, reassigned: `${p.fromRuntime}/${p.fromModel || 'default'}: ${p.reason}` })
+    case 'agent.message':
+      return p.direction === 'result' ? put({ report: p.text }) : {}
+    case 'agent.finished':
+      return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
+    case 'tool.started':
+      return put({ tools: cur.tools + 1, lastTool: p.name })
+    default:
+      return {}
+  }
+}
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
+  if (payload.agentId && (ev.type.startsWith('agent.') || ev.type === 'tool.started' || ev.type === 'tool.completed')) {
+    return agentPatch(state, ev)
+  }
   switch (ev.type) {
     case 'turn.started':
       return { startedAt: ev.at }

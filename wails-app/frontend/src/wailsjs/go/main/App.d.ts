@@ -548,3 +548,5 @@ export function ValidateOrgDesign(arg1:string):Promise<string>;
 export function ValidateOrgReport(arg1:string):Promise<string>;
 
 export function VerifyDraft(arg1:string,arg2:boolean,arg3:string):Promise<string>;
+
+export function SetChatOrgMode(arg1:string,arg2:string):Promise<string>;
