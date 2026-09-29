@@ -11,8 +11,18 @@ const CapOrgRoleFullAccess = "org-role-full-access"
 
 // agentContextMarkers are the variables monomind treats as "an agent is
 // running this" (its agent-context.ts): Claude Code sets the first two on
-// every process a turn spawns, and org roles and agent exec set the rest.
-var agentContextMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC"}
+// every process a turn spawns, and org roles and agent exec set the three
+// MONOMIND_* ones (agent exec on every runtime's child). The rest are what
+// the other coding CLIs set on the commands their own shell tool runs, so a
+// grant is refused inside them even when they were started outside
+// monomind: Codex (CODEX_SANDBOX*), OpenCode (OPENCODE), Gemini CLI
+// (GEMINI_CLI) and Qwen Code (QWEN_CODE).
+var agentContextMarkers = []string{
+	"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+	"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC",
+	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+	"OPENCODE", "GEMINI_CLI", "QWEN_CODE",
+}
 
 // AgentContextMarker returns the first agent-context variable set in this
 // process's environment, "" when none is.

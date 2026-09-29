@@ -17,8 +17,85 @@ const (
 )
 
 // CoderSettings is the setting sources a coder turn loads: the user's own
-// Claude Code setup plus the working folder's (monomind#356).
+// setup plus the working folder's (monomind#356). On a runtime other than
+// claude it means "don't isolate the CLI's own config".
 var CoderSettings = []string{"user", "project", "local"}
+
+// DefaultCoderRuntime is the runtime a coder chat uses when none is named,
+// and the only one an older monomind (without CapAgentExecFullAccessAny)
+// runs with full access.
+const DefaultCoderRuntime = "claude"
+
+// CoderRuntime is one runtime's coder-mode support, as `coder status`
+// reports it. Ready means a coder chat can run on it now: installed, full
+// access supported, and monomind has every CoderCapabilities entry.
+type CoderRuntime struct {
+	ID           string `json:"id"`
+	Installed    bool   `json:"installed"`
+	FullAccess   bool   `json:"fullAccess"`
+	Ready        bool   `json:"ready"`
+	ToolActivity string `json:"toolActivity"` // full | start-only | none
+	Resume       bool   `json:"resume"`
+	Effort       bool   `json:"effort"`
+	MaxTurns     bool   `json:"maxTurns"`
+	ReportsCost  bool   `json:"reportsCost"`
+	InitTarget   string `json:"initTarget"` // "" when the runtime has none
+}
+
+// CoderRuntimes derives each scanned runtime's coder support. Without
+// CapAgentExecFullAccessAny monomind runs only claude with full access, and
+// its scan predates the resume/effort/max_turns/reports_cost/init_target
+// fields, so claude's are filled in with what that monomind did support.
+// A nil or empty scan yields claude alone, not installed.
+func CoderRuntimes(scan *ScanResult, caps *CapabilitySet) []CoderRuntime {
+	capsReady := len(MissingCoderCapabilities(caps)) == 0
+	anyRuntime := caps.Has(CapAgentExecFullAccessAny)
+	var entries []ScanEntry
+	if scan != nil {
+		entries = scan.Agents
+	}
+	if len(entries) == 0 {
+		// Nothing scanned: assume only what every coder-capable monomind
+		// supports, claude with full access.
+		entries, anyRuntime = []ScanEntry{{ID: DefaultCoderRuntime}}, false
+	}
+	out := make([]CoderRuntime, 0, len(entries))
+	for _, e := range entries {
+		r := CoderRuntime{
+			ID: e.ID, Installed: e.Installed, FullAccess: e.FullAccess,
+			ToolActivity: e.ToolActivityFidelity, Resume: e.Resume, Effort: e.Effort,
+			MaxTurns: e.MaxTurns, ReportsCost: e.ReportsCost,
+		}
+		if e.InitTarget != nil {
+			r.InitTarget = *e.InitTarget
+		}
+		if !anyRuntime {
+			r.FullAccess = e.ID == DefaultCoderRuntime
+			if r.FullAccess {
+				r.Resume, r.Effort, r.MaxTurns, r.ReportsCost, r.InitTarget = true, true, true, true, DefaultCoderRuntime
+				if r.ToolActivity == "" {
+					r.ToolActivity = "full"
+				}
+			}
+		}
+		if r.ToolActivity == "" {
+			r.ToolActivity = "none"
+		}
+		r.Ready = r.Installed && r.FullAccess && capsReady
+		out = append(out, r)
+	}
+	return out
+}
+
+// FindCoderRuntime returns id's entry in list, nil when absent.
+func FindCoderRuntime(list []CoderRuntime, id string) *CoderRuntime {
+	for i := range list {
+		if list[i].ID == id {
+			return &list[i]
+		}
+	}
+	return nil
+}
 
 // CoderCapabilities is what coder mode needs from monomind.
 var CoderCapabilities = []string{
@@ -50,10 +127,13 @@ type WorkspaceInit struct {
 // InitWorkspace sets dir up as a monomind project without touching any file
 // already there (--if-missing), so it is safe on the user's own repos. The
 // code graph is skipped (--no-graph) so a new chat is ready in seconds;
-// monomind builds it on first use. Only Claude Code's setup is added
-// (--target claude): coder turns run nothing else, and the folder may be
-// the user's own repo.
-func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error) {
+// monomind builds it on first use. Only the chat runtime's setup is added
+// (--target, its CoderRuntime.InitTarget; "" means claude): the folder may
+// be the user's own repo.
+func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit, error) {
+	if target == "" {
+		target = DefaultCoderRuntime
+	}
 	if bin == "" {
 		var err error
 		if bin, err = Find(); err != nil {
@@ -62,7 +142,7 @@ func InitWorkspace(ctx context.Context, bin, dir string) (*WorkspaceInit, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, InitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", "claude", "--yes", "--no-watch", "--no-install")
+	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", target, "--yes", "--no-watch", "--no-install")
 	cmd.Dir = dir
 	cmd.Env = append(FilteredEnviron(), "CI=true")
 	var stderr bytes.Buffer

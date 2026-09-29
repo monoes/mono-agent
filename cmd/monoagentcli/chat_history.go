@@ -210,16 +210,17 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 			"The folder is fixed for the conversation's life.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if runtimeID == "" {
-				return errInvalidInput("--runtime is required (see `agent scan --installed`)")
-			}
-			switch mode {
-			case ai.ModeCoder:
-				conv, err := createCoderConversation(cmd, cfg, runtimeID, model, workflowID, coderFolderChoice{cwd: cwd, root: coderRoot, newWorkspace: newWorkspace})
+			if mode == ai.ModeCoder {
+				conv, err := createCoderConversation(cmd, cfg, runtimeID, model, effort, workflowID, coderFolderChoice{cwd: cwd, root: coderRoot, newWorkspace: newWorkspace})
 				if err != nil {
 					return err
 				}
 				return printConversation(cfg, conv.Record())
+			}
+			if runtimeID == "" {
+				return errInvalidInput("--runtime is required (see `agent scan --installed`)")
+			}
+			switch mode {
 			case ai.ModeAssistant:
 				if cwd != "" || newWorkspace || coderRoot {
 					return errInvalidInput("--cwd, --coder-root and --new-workspace only apply to --mode coder")
@@ -239,7 +240,7 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 			return printConversation(cfg, conv.Record())
 		},
 	}
-	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …)")
+	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …); --mode coder defaults to claude (see `coder status` for the ready ones)")
 	cmd.Flags().StringVar(&model, "model", "", "Model for the runtime")
 	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort level for the model (e.g. low, medium, high, max)")
 	cmd.Flags().StringVar(&workflowID, "workflow", "general", "Workflow context")

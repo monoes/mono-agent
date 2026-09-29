@@ -136,6 +136,10 @@ type ToolStartedPayload struct {
 	// FileExisted says, for a file-writing tool, whether its target existed
 	// when the call started (a Write that creates vs. overwrites).
 	FileExisted *bool `json:"fileExisted,omitempty"`
+	// Kind is a native call's normalized tool kind (shell, edit, write,
+	// read, search, web, mcp, task, todo, patch, other); Arguments then use
+	// that kind's canonical keys. "" when unknown.
+	Kind string `json:"kind,omitempty"`
 }
 
 // ToolCompletedPayload is tool.completed's payload. OK is nullable (some

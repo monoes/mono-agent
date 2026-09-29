@@ -79,17 +79,19 @@ func saveCoderSettings(db *sql.DB, s coderSettings) error {
 	return nil
 }
 
-// coderStatus is `coder status --json`.
+// coderStatus is `coder status --json`. Ready and MissingCapabilities are
+// monomind's global coder support; Runtimes is each runtime's, and Runtime
+// stays "claude" for app versions that only know that one.
 type coderStatus struct {
 	coderSettings
-	Ready               bool     `json:"ready"`
-	MissingCapabilities []string `json:"missingCapabilities"`
-	MonomindVersion     string   `json:"monomindVersion"`
-	Runtime             string   `json:"runtime"`
-}
+	Ready               bool                    `json:"ready"`
+	MissingCapabilities []string                `json:"missingCapabilities"`
+	MonomindVersion     string                  `json:"monomindVersion"`
+	Runtime             string                  `json:"runtime"`
+	Runtimes            []monomind.CoderRuntime `json:"runtimes"`
 
-// coderRuntime is the only runtime with full access (monomind#355).
-const coderRuntime = "claude"
+	caps *monomind.CapabilitySet
+}
 
 // capabilityProbe is monomind's capability handshake; a var so tests can
 // stand in for a monomind that has (or lacks) the coder capabilities.
@@ -97,17 +99,28 @@ var capabilityProbe = func(cmd *cobra.Command) (*monomind.CapabilitySet, error) 
 	return monomind.Capabilities(cmd.Context())
 }
 
+// runtimeScan is `monomind agent scan`; a var so tests can stand in for
+// the installed runtimes.
+var runtimeScan = monomind.Scan
+
 func currentCoderStatus(cmd *cobra.Command, s coderSettings) coderStatus {
-	st := coderStatus{coderSettings: s, Runtime: coderRuntime}
+	st := coderStatus{coderSettings: s, Runtime: monomind.DefaultCoderRuntime}
 	set, err := capabilityProbe(cmd)
 	if err == nil && set != nil {
 		st.MonomindVersion = set.Version
+		st.caps = set
 	}
 	st.MissingCapabilities = monomind.MissingCoderCapabilities(set)
 	if st.MissingCapabilities == nil {
 		st.MissingCapabilities = []string{}
 	}
 	st.Ready = len(st.MissingCapabilities) == 0
+	var scan *monomind.ScanResult
+	if err == nil {
+		// A failed scan leaves claude alone, as before per-runtime support.
+		scan, _ = runtimeScan(cmd.Context())
+	}
+	st.Runtimes = monomind.CoderRuntimes(scan, st.caps)
 	return st
 }
 
@@ -131,32 +144,57 @@ func errNeedsMonomindUpdate(missing []string) error {
 		msg: fmt.Sprintf("coder mode needs a newer monomind (missing capabilities: %v) — update monomind: `npm install -g @monoes/monomindcli@latest`", missing)}}
 }
 
+// errCoderRuntime refuses a runtime monomind won't run with full access:
+// unknown to it, left out by an older monomind (claude only), or not a
+// coding agent at all.
+func errCoderRuntime(runtime string, known, olderMonomind bool) error {
+	msg := fmt.Sprintf("coder mode can't run on %s: monomind doesn't run it with full access (see `monoagentcli coder status`)", runtime)
+	switch {
+	case !known:
+		msg = fmt.Sprintf("coder mode can't run on %q: monomind doesn't know that runtime (see `monoagentcli coder status`)", runtime)
+	case olderMonomind:
+		msg = fmt.Sprintf("coder mode runs on %s only with a newer monomind (the installed one runs claude only) — update monomind: `npm install -g @monoes/monomindcli@latest`", runtime)
+	}
+	return &coderError{code: "coder_runtime_unsupported", err: &cliError{code: 3, msg: msg}}
+}
+
 // requireCoderReady refuses unless coder mode is enabled, monomind supports
-// it, and this process is not root.
-func requireCoderReady(cmd *cobra.Command, db *sql.DB) (coderSettings, error) {
+// it and runs runtime ("" = claude) with full access, and this process is
+// not root. An uninstalled runtime is not refused here: the turn itself
+// reports it as not set up, which the app knows how to offer to fix.
+func requireCoderReady(cmd *cobra.Command, db *sql.DB, runtime string) (coderSettings, coderStatus, monomind.CoderRuntime, error) {
 	s, err := loadCoderSettings(db)
 	if err != nil {
-		return s, err
+		return s, coderStatus{}, monomind.CoderRuntime{}, err
 	}
 	if !s.Enabled {
-		return s, errCoderDisabled()
+		return s, coderStatus{}, monomind.CoderRuntime{}, errCoderDisabled()
 	}
 	if monomind.IsRoot() {
-		return s, errInvalidInput("coder mode refuses to run as root")
+		return s, coderStatus{}, monomind.CoderRuntime{}, errInvalidInput("coder mode refuses to run as root")
 	}
-	if st := currentCoderStatus(cmd, s); !st.Ready {
-		return s, errNeedsMonomindUpdate(st.MissingCapabilities)
+	st := currentCoderStatus(cmd, s)
+	if !st.Ready {
+		return s, st, monomind.CoderRuntime{}, errNeedsMonomindUpdate(st.MissingCapabilities)
 	}
-	return s, nil
+	if runtime == "" {
+		runtime = monomind.DefaultCoderRuntime
+	}
+	r := monomind.FindCoderRuntime(st.Runtimes, runtime)
+	if r == nil || !r.FullAccess {
+		return s, st, monomind.CoderRuntime{}, errCoderRuntime(runtime, r != nil, !st.caps.Has(monomind.CapAgentExecFullAccessAny))
+	}
+	return s, st, *r, nil
 }
 
 func newCoderCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coder",
 		Short: "Coder mode: chats where the agent has full access to this computer",
-		Long: "Coder mode runs a chat as a full Claude Code session inside a folder: it can run any " +
-			"command and read or change any file your user can, with no approval prompts, and it loads " +
-			"your normal Claude Code setup (CLAUDE.md, skills, hooks, MCP servers). It is off until " +
+		Long: "Coder mode runs a chat as a full coding-agent session (Claude Code, Codex, OpenCode, … — " +
+			"see `coder status` for which runtimes are ready) inside a folder: it can run any command and " +
+			"read or change any file your user can, with no approval prompts, and it loads your normal " +
+			"setup for that agent (its instructions files, skills, hooks, MCP servers). It is off until " +
 			"enabled here. Web pages and files in the folder can carry instructions that steer it, so " +
 			"only point it at folders you trust.",
 	}
@@ -197,6 +235,11 @@ func coderSettingsCmd(cfg *globalConfig, use, short string, change func(cmd *cob
 				st.Enabled, st.WorkspaceRoot, st.MaxTurns, st.Timeout, st.BudgetUSD, st.Ready)
 			if !st.Ready {
 				fmt.Fprintf(cmd.OutOrStdout(), "missing monomind capabilities: %v\n", st.MissingCapabilities)
+			}
+			for _, r := range st.Runtimes {
+				if r.FullAccess {
+					fmt.Fprintf(cmd.OutOrStdout(), "runtime %s: installed %v, ready %v, tool activity %s\n", r.ID, r.Installed, r.Ready, r.ToolActivity)
+				}
 			}
 			return nil
 		},

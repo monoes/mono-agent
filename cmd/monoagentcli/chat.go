@@ -148,21 +148,18 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 					if tools != "" {
 						return errInvalidInput("--tools does not apply to a coder conversation: it has full access")
 					}
-					return runCoderTurn(cmd, cfg, journal, coderTurn{prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd})
+					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd})
 				}
 			}
 			if mode == ai.ModeCoder {
 				if tools != "" || canvasID != "" || historyID != "" {
 					return errInvalidInput("--tools, --canvas and --history-id don't apply to --mode coder")
 				}
-				if runtime != "" && runtime != coderRuntime {
-					return errInvalidInput("coder mode runs on the %s runtime only (got %q)", coderRuntime, runtime)
-				}
-				dir, err := coderFolder(cmd, cfg, coderFolderChoice{cwd: coderCwd, root: coderRoot, newWorkspace: newWorkspace})
+				dir, err := coderFolder(cmd, cfg, coderFolderChoice{cwd: coderCwd, root: coderRoot, newWorkspace: newWorkspace}, runtime)
 				if err != nil {
 					return err
 				}
-				return runCoderTurn(cmd, cfg, nil, coderTurn{prompt: prompt, model: model, effort: effort, resume: resume, cwd: dir})
+				return runCoderTurn(cmd, cfg, nil, coderTurn{runtime: runtime, prompt: prompt, model: model, effort: effort, resume: resume, cwd: dir})
 			}
 			if mode != "" && mode != ai.ModeAssistant {
 				return errInvalidInput("unknown --mode %q (assistant or coder)", mode)
@@ -296,6 +293,10 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				Resume:    resume,
 				Timeout:   timeout,
 				BudgetUSD: budget,
+			}
+			if effort != "" {
+				set, _ := capabilityProbe(cmd)
+				opts.EffortFlag = set.Has(monomind.CapAgentExecEffort)
 			}
 
 			var toolSpecs []monomind.ToolSpec

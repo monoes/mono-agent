@@ -25,9 +25,13 @@ type ExecOptions struct {
 	Prompt  string
 	Model   string
 	// Effort sets the reasoning effort level (e.g. "low", "medium", "high", "xhigh", "max").
-	Effort  string
-	Cwd     string
-	Resume  string
+	Effort string
+	// EffortFlag passes Effort as `--effort` (monomind has
+	// CapAgentExecEffort, which maps it per runtime); otherwise only claude
+	// gets it, through the CLAUDE_EFFORT env.
+	EffortFlag bool
+	Cwd        string
+	Resume     string
 	// SystemPrompt, when set, is written to a temp file and passed via
 	// --system-file (avoids argv limits).
 	SystemPrompt string
@@ -292,8 +296,10 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		args = append(args, "--model", opts.Model)
 	}
 	if opts.Effort != "" {
-		switch opts.Runtime {
-		case "claude":
+		switch {
+		case opts.EffortFlag:
+			args = append(args, "--effort", opts.Effort)
+		case opts.Runtime == "claude":
 			args = append(args, "--env", "CLAUDE_EFFORT="+opts.Effort)
 		}
 	}
@@ -404,11 +410,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// user's own Keychain-stored credentials are perfectly valid. Stripping
 	// them here means every chat/agent turn gets a clean environment
 	// regardless of what launched monoagentcli.
-	envOverrides := envSlice(opts.Env)
-	if opts.Effort != "" && opts.Runtime == "claude" {
-		envOverrides = append(envOverrides, "CLAUDE_EFFORT="+opts.Effort)
-	}
-	cmd.Env = append(FilteredEnviron(), envOverrides...)
+	cmd.Env = append(FilteredEnviron(), envSlice(opts.Env)...)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
