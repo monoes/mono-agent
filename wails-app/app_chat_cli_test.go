@@ -356,7 +356,7 @@ func TestApp_ListChatConversations_ShellsOut(t *testing.T) {
 func TestApp_ListChatConversations_EmptyIsAnArray(t *testing.T) {
 	bin, _ := chatFakeCLI(t, fakeChatReply{match: "chat history list", stdout: `{"items":[],"next_cursor":""}`})
 	a, _ := newCLIChatApp(t, bin)
-	if out := a.ListChatConversations("", 10); out != `{"items":[],"nextCursor":"","notFound":true}` {
+	if out := a.ListChatConversations("", 10); out != `{"items":[],"nextCursor":""}` {
 		t.Errorf("empty list = %s", out)
 	}
 }
