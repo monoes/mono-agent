@@ -308,10 +308,6 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 	return out, nextCursor, nil
 }
 
-// BindConversationSession records a runtime-reported resumable session id
-// on session.bound. A new backend/runtime/model always creates a fresh
-// conversation (see the plan's "Conversation and model context" section) —
-// this only ever updates an existing conversation's own binding.
 // Org modes of a coder conversation.
 const (
 	OrgModeSolo    = "solo"
@@ -338,6 +334,10 @@ func (s *AIStore) SetConversationOrgMode(id, profileID, mode string) error {
 	return nil
 }
 
+// BindConversationSession records a runtime-reported resumable session id
+// on session.bound. A new backend/runtime/model always creates a fresh
+// conversation (see the plan's "Conversation and model context" section) —
+// this only ever updates an existing conversation's own binding.
 func (s *AIStore) BindConversationSession(id, profileID, runtimeID, sessionID string) error {
 	if profileID == "" {
 		profileID = "default"

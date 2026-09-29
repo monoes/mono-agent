@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Users, ChevronRight, ChevronDown, Loader, Check, X, Lock } from 'lucide-react'
 import { ChatMarkdown } from './ChatMarkdown.jsx'
 
@@ -7,10 +8,7 @@ import { ChatMarkdown } from './ChatMarkdown.jsx'
 // report. The live org stage (#228) shows the same workers graphically.
 
 const mono = 'var(--font-mono)'
-const statusText = {
-  queued: 'queued', starting: 'starting', working: 'working', waiting_lease: 'waiting its turn',
-  done: 'done', failed: 'failed', cancelled: 'stopped', idle: 'idle',
-}
+const STATUSES = ['queued', 'starting', 'working', 'waiting_lease', 'done', 'failed', 'cancelled', 'idle']
 
 function StatusIcon({ status }) {
   if (status === 'done') return <Check size={10} color="var(--green-neon)" />
@@ -21,9 +19,11 @@ function StatusIcon({ status }) {
 }
 
 export function AgentRow({ agent }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   if (!agent) return null
   const model = [agent.runtime, agent.model].filter(Boolean).join(' · ')
+  const status = STATUSES.includes(agent.status) ? t(`agentRow.status.${agent.status}`) : agent.status
   return (
     <div data-testid="agent-row" data-agent={agent.agentId} data-status={agent.status}
       style={{ margin: '4px 0', border: '1px solid rgba(0,180,216,0.15)', borderRadius: 6, background: 'rgba(0,180,216,0.03)' }}>
@@ -37,19 +37,24 @@ export function AgentRow({ agent }) {
         <span style={{ flex: 1 }} />
         {agent.lastTool && agent.status === 'working' && <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)' }}>{agent.lastTool}</span>}
         <StatusIcon status={agent.status} />
-        <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)' }}>{statusText[agent.status] || agent.status}</span>
+        <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)' }}>{status}</span>
       </button>
       {!open && agent.summary && (
         <div style={{ padding: '0 8px 5px 30px', fontFamily: mono, fontSize: 9.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.summary}</div>
       )}
       {open && (
         <div data-testid="agent-row-details" style={{ padding: '2px 10px 8px 30px', fontFamily: mono, fontSize: 9.5, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {agent.brief && <div><b>Brief:</b> {agent.brief}</div>}
-          {agent.why && <div style={{ color: 'var(--text-muted)' }}>Staffing: {agent.why}</div>}
-          {agent.reassigned && <div style={{ color: 'var(--yellow)' }}>Switched from {agent.reassigned}</div>}
-          {agent.skills?.length > 0 && <div>Skills: {agent.skills.join(', ')}</div>}
-          {agent.filesChanged?.length > 0 && <div>Files: {agent.filesChanged.join(', ')}</div>}
-          {agent.tools > 0 && <div>{agent.tools} tool call{agent.tools === 1 ? '' : 's'}{agent.costUsd != null ? ` · $${agent.costUsd.toFixed(4)}` : ''}</div>}
+          {agent.brief && <div><b>{t('agentRow.brief')}</b> {agent.brief}</div>}
+          {agent.why && <div style={{ color: 'var(--text-muted)' }}>{t('agentRow.staffing', { why: agent.why })}</div>}
+          {agent.reassigned && <div style={{ color: 'var(--yellow)' }}>{t('agentRow.switchedFrom', { from: agent.reassigned })}</div>}
+          {agent.skills?.length > 0 && <div>{t('agentRow.skills', { skills: agent.skills.join(', ') })}</div>}
+          {agent.filesChanged?.length > 0 && <div>{t('agentRow.files', { files: agent.filesChanged.join(', ') })}</div>}
+          {agent.tools > 0 && (
+            <div>
+              {t('agentRow.toolCalls', { count: agent.tools })}
+              {agent.costUsd != null ? ` · $${agent.costUsd.toFixed(4)}` : ''}
+            </div>
+          )}
           {agent.report && <ChatMarkdown content={agent.report} />}
         </div>
       )}
