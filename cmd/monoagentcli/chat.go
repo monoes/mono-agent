@@ -299,7 +299,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				// A canvas-only or plain turn keeps its empty --cwd unless it
 				// is sandboxed; then it runs in an empty chat workspace (no
 				// guidance files, so none of the overhead described above).
-				Sandbox:          monomind.SandboxWorkspace,
+				Sandbox:          monomind.TurnSandboxMode,
 				WorkspacePurpose: monomind.WorkspaceChat,
 			}
 

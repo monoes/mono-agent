@@ -9,61 +9,114 @@ import (
 	"time"
 )
 
-// Agent turn sandboxing. The names below follow the contract proposed to
-// monomind (`agent exec --sandbox off|workspace`, capability
-// agent-exec-sandbox, start event `sandbox` / `sandbox_unsupported`). They
-// live only here so a rename on the monomind side is a one-file change.
+// Agent turn sandboxing. Every name monomind defines is kept here, so a
+// rename on the monomind side is a one-file change.
+//
+// Two paths exist. The real one is `agent exec --sandbox <mode>`, which
+// monomind is adding (monomind#396) and advertises as CapAgentExecSandbox.
+// Until then, monomind >= SandboxEnvMinVersion (2.11.1) sandboxes codex and
+// grok when the turn's own env carries MONOMIND_GIT_LEVEL below "push": it
+// is how orgs confine a role, read by the runner from `agent exec --env`
+// (the caller's process env is not passed through). codex then runs with
+// `--sandbox workspace-write` plus network, grok with `--sandbox
+// workspace`. Other runtimes (copilot, qwen, antigravity, …) have no such
+// path and stay unsandboxed until #396.
 const (
 	// CapAgentExecSandbox is advertised by a monomind whose agent exec
 	// accepts SandboxFlag.
 	CapAgentExecSandbox = "agent-exec-sandbox"
 	// SandboxFlag is the agent exec flag that picks the sandbox mode.
 	SandboxFlag = "--sandbox"
-	// SandboxOff is monomind's default: approvals and sandbox off.
-	SandboxOff = "off"
-	// SandboxWorkspace runs the turn in the runtime's own sandbox: it
-	// writes the --cwd and the temp dir, reads elsewhere, network on.
-	SandboxWorkspace = "workspace"
+
+	// Sandbox modes (monomind#396).
+	SandboxReadOnly       = "read-only"       // reads anywhere, writes nothing but temp
+	SandboxWorkspaceWrite = "workspace-write" // writes the --cwd and temp dir, network on
+	SandboxFull           = "full"            // no sandbox: today's default
+
+	// SandboxEnvMinVersion is the first monomind whose codex and grok
+	// runners read MONOMIND_GIT_LEVEL from the turn env (monomind 31ec5b2).
+	SandboxEnvMinVersion = "2.11.1"
+	// sandboxEnvLevel is the MONOMIND_GIT_LEVEL that sandboxes codex and
+	// grok. "read" also keeps the runner's git guard at read-only.
+	sandboxEnvLevel = "MONOMIND_GIT_LEVEL=read"
 )
 
-// The sandbox a finished (or running) turn actually had, as
-// TurnResult.SandboxStatus and the start event's sandbox_status report it.
-// "" means the turn never asked for one (coder mode).
+// TurnSandboxMode is the sandbox every agent turn except coder mode asks
+// for (ExecOptions.Sandbox at each call site). Change it here to change
+// them all.
+var TurnSandboxMode = SandboxWorkspaceWrite
+
+// sandboxEnvRuntimes are the runtimes the MONOMIND_GIT_LEVEL path covers.
+var sandboxEnvRuntimes = map[string]bool{"codex": true, "grok": true}
+
+// The sandbox a turn actually had, as TurnResult.SandboxStatus and the
+// start event's sandbox_status report it. "" means the turn asked for none
+// (coder mode).
 const (
-	SandboxStatusSandboxed     = "sandboxed"      // monomind ran it in the runtime's sandbox
-	SandboxStatusUnsupported   = "unsupported"    // the runtime has no sandbox; it ran without one
-	SandboxStatusNeedsMonomind = "needs-monomind" // monomind lacks CapAgentExecSandbox; ran as before
-	SandboxStatusOff           = "off"            // asked for, but monomind reported it off
+	SandboxStatusSandboxed        = "sandboxed"         // ran in the runtime's sandbox
+	SandboxStatusScoped           = "scoped"            // claude: --access scoped restricts it (no monomind sandbox yet)
+	SandboxStatusUnsupported      = "unsupported"       // monomind has --sandbox, but this runtime can't honour it
+	SandboxStatusAwaitingMonomind = "awaiting-monomind" // this runtime needs monomind#396; ran without a sandbox
+	SandboxStatusNeedsMonomind    = "needs-monomind"    // monomind older than SandboxEnvMinVersion; ran as before
+	SandboxStatusOff              = "off"               // the mode was full, or monomind reported it off
 )
 
 // SandboxFields are the start event's sandbox report. Sandbox and
-// SandboxUnsupported come from monomind; SandboxStatus is added by Exec
-// (never by monomind) so that every reader of the stream — the chat
-// journal, `chat` stdout, the desktop app — sees the same verdict,
-// including "needs-monomind", which no monomind event can carry.
+// SandboxUnsupported come from monomind (after #396); SandboxStatus is
+// added by Exec (never by monomind) so that every reader of the stream —
+// the chat journal, `chat` stdout, the desktop app — sees the same
+// verdict, including the ones no monomind event can carry.
 type SandboxFields struct {
 	Sandbox            string `json:"sandbox,omitempty"`
 	SandboxUnsupported bool   `json:"sandbox_unsupported,omitempty"`
 	SandboxStatus      string `json:"sandbox_status,omitempty"`
 }
 
-// sandboxStatus derives the verdict for a turn that requested a sandbox.
-func sandboxStatus(requested string, supported bool, start SandboxFields) string {
+// SandboxArgs is the single place that decides how a turn on runtime gets
+// sandbox mode. It returns the agent exec args to add and the effective
+// status. caps is the handshake (nil when it failed). An empty mode asks
+// for nothing: no args, status "".
+func SandboxArgs(caps *CapabilitySet, runtime, mode string) (args []string, effective string) {
 	switch {
-	case requested == "":
+	case mode == "":
+		return nil, ""
+	case caps.Has(CapAgentExecSandbox):
+		// Passed for every runtime, claude included; the start event
+		// reports what each actually did.
+		effective = SandboxStatusSandboxed
+		if mode == SandboxFull {
+			effective = SandboxStatusOff
+		}
+		return []string{SandboxFlag, mode}, effective
+	case mode == SandboxFull:
+		return nil, SandboxStatusOff
+	case runtime == "claude":
+		return nil, SandboxStatusScoped
+	case !sandboxEnvRuntimes[runtime]:
+		return nil, SandboxStatusAwaitingMonomind
+	case caps == nil || !versionAtLeast(caps.Version, SandboxEnvMinVersion):
+		return nil, SandboxStatusNeedsMonomind
+	case mode != SandboxWorkspaceWrite:
+		// The env path has one level; read-only needs #396.
+		return nil, SandboxStatusAwaitingMonomind
+	}
+	return []string{"--env", sandboxEnvLevel}, SandboxStatusSandboxed
+}
+
+// sandboxStatus refines the adapter's verdict with the start event: once
+// monomind reports the sandbox itself (#396), its report wins.
+func sandboxStatus(effective string, start SandboxFields) string {
+	switch {
+	case effective == "":
 		return ""
-	case !supported:
-		return SandboxStatusNeedsMonomind
 	case start.SandboxUnsupported:
 		return SandboxStatusUnsupported
-	case start.Sandbox != "" && start.Sandbox != SandboxOff:
-		return SandboxStatusSandboxed
-	case start.Sandbox == SandboxOff:
+	case start.Sandbox == SandboxFull || start.Sandbox == "off":
 		return SandboxStatusOff
+	case start.Sandbox != "":
+		return SandboxStatusSandboxed
 	}
-	// The capability was advertised but the start event said nothing:
-	// report what was passed rather than guess the runtime ignored it.
-	return SandboxStatusSandboxed
+	return effective
 }
 
 // SandboxWorkspaceDir returns ~/.monoagent/workspaces/<purpose>, creating
@@ -95,14 +148,6 @@ const (
 	WorkspaceMatching     = "matching"
 	WorkspaceAgentTest    = "agent-test"
 )
-
-// sandboxSupported reports whether the monomind at bin (discovery when
-// "") advertises CapAgentExecSandbox. Any failure reads as "no": the turn
-// then runs exactly as it did before sandboxing existed.
-func sandboxSupported(ctx context.Context, bin string) bool {
-	set, err := capabilitiesFor(ctx, bin)
-	return err == nil && set.Has(CapAgentExecSandbox)
-}
 
 // binCaps caches handshakes by binary path, for callers that already hold
 // a path (most Exec callers got theirs from Ensure, which fills it).

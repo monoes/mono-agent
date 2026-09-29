@@ -61,7 +61,7 @@ func TestEvaluateCreatesEvaluationAndTag(t *testing.T) {
 	db, applicationID := setupEvaluateTest(t)
 	origExec := ExecFunc
 	ExecFunc = func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		if opts.Sandbox != monomind.SandboxWorkspace || opts.WorkspacePurpose != monomind.WorkspaceMatching {
+		if opts.Sandbox != monomind.TurnSandboxMode || opts.WorkspacePurpose != monomind.WorkspaceMatching {
 			t.Errorf("evaluation turn sandbox = %q in %q", opts.Sandbox, opts.WorkspacePurpose)
 		}
 		return fakeGoodResponse(ctx, opts, onEvent)

@@ -9,14 +9,14 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind/sandboxtest"
 )
 
-// Recording analysis turns are sandboxed in their own workspace only when
-// monomind advertises it.
+// Recording analysis turns are sandboxed in their own workspace through
+// whichever path monomind offers.
 func TestExecRunnerSandbox(t *testing.T) {
-	for _, advertise := range []bool{true, false} {
-		argsLog := sandboxtest.Install(t, advertise, "{}")
+	for _, m := range sandboxtest.Kinds {
+		argsLog := sandboxtest.Install(t, m, "{}")
 		if _, err := (ExecRunner{Runtime: "codex"}).run(context.Background(), "analyze", io.Discard); err != nil {
-			t.Fatalf("advertise=%v: %v", advertise, err)
+			t.Fatalf("%s monomind: %v", m, err)
 		}
-		sandboxtest.Check(t, argsLog, advertise, sandboxtest.Workspace(monomind.WorkspaceRecordReview))
+		sandboxtest.Check(t, argsLog, m, sandboxtest.Workspace(monomind.WorkspaceRecordReview))
 	}
 }

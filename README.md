@@ -273,7 +273,7 @@ monoagentcli agent test claude       # smoke turn; also proves the login works
 monoagentcli doctor --group monomind # Node.js, the monomind binary, version and features
 ```
 
-When monomind supports it (capability `agent-exec-sandbox`), every agent turn except coder mode runs in the agent CLI's own sandbox: it can write only its working folder and the temp dir. Each chat turn shows a badge saying whether it was sandboxed, and `doctor` says whether your monomind can do it. Details: [AGENTS.md](AGENTS.md#how-ai-works-in-mono-agent).
+Agent turns (except coder mode) run in the agent CLI's own sandbox where monomind can do it: they can write only their working folder and the temp dir. Today that covers codex and grok (monomind 2.11.1 or newer). Other runtimes follow once monomind ships `agent exec --sandbox` (monomind#396), and claude keeps its scoped access. Each chat turn shows a badge saying which applies, and `doctor` has a matching row. Details: [AGENTS.md](AGENTS.md#how-ai-works-in-mono-agent).
 
 monomind is a separate Node.js tool: `npm install -g @monoes/monomindcli`, or let `monoagentcli doctor --fix` install it. If you have no Node.js >= 22.12, `monoagentcli nodejs install` downloads a private copy. Set `MONOMIND_BIN` to use a specific binary. Without monomind, AI steps fail with an install hint and everything else keeps working.
 

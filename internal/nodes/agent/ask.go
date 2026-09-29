@@ -76,7 +76,7 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 			Timeout:      time.Duration(timeoutSec) * time.Second,
 			// The item travels in the prompt; one shared empty folder
 			// for every agent.ask turn, whichever workflow runs it.
-			Sandbox:          monomind.SandboxWorkspace,
+			Sandbox:          monomind.TurnSandboxMode,
 			WorkspacePurpose: monomind.WorkspaceAgentAsk,
 		}, nil)
 		if err != nil {

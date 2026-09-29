@@ -5,7 +5,9 @@ import { ShieldCheck, ShieldOff } from 'lucide-react'
 // agentSandbox. The CLI decides; this only renders.
 const KEYS = {
   sandboxed: 'sandboxed',
+  scoped: 'scoped',
   unsupported: 'unsupported',
+  'awaiting-monomind': 'awaitingMonomind',
   'needs-monomind': 'needsMonomind',
   off: 'off',
 }
@@ -16,7 +18,7 @@ export function SandboxBadge({ status }) {
   const { t } = useTranslation()
   const key = KEYS[status]
   if (!key) return null
-  const safe = status === 'sandboxed'
+  const safe = status === 'sandboxed' || status === 'scoped'
   const Icon = safe ? ShieldCheck : ShieldOff
   const color = safe ? '#22c55e' : 'var(--text-muted)'
   return (

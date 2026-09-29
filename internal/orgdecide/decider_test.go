@@ -47,8 +47,8 @@ func TestModelDeciderRunsInAnEmptyFolder(t *testing.T) {
 	var dirs []string
 	d := &ModelDecider{Runtime: "claude", Model: "m", Exec: func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		dirs = append(dirs, opts.Cwd)
-		if opts.Sandbox != monomind.SandboxWorkspace {
-			t.Errorf("decider turn Sandbox = %q, want %q", opts.Sandbox, monomind.SandboxWorkspace)
+		if opts.Sandbox != monomind.TurnSandboxMode {
+			t.Errorf("decider turn Sandbox = %q, want %q", opts.Sandbox, monomind.TurnSandboxMode)
 		}
 		entries, err := os.ReadDir(opts.Cwd)
 		if err != nil || len(entries) != 0 {

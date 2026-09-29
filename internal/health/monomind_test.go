@@ -226,15 +226,20 @@ func TestCheckMonomindAgentSandbox(t *testing.T) {
 	if res := checkMonomindAgentSandbox(ctx, &Env{}); res.Status != StatusSkip {
 		t.Errorf("no handshake: %+v", res)
 	}
-	vi := &monomind.VersionInfo{V: 1, Version: "2.18.5"}
+	vi := &monomind.VersionInfo{V: 1}
 	env := &Env{MonomindHandshake: func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }}
-	res := checkMonomindAgentSandbox(ctx, env)
-	if res.Status != StatusInfo || res.Summary != "agent turns run without a sandbox until monomind supports agent exec --sandbox" {
-		t.Errorf("without the capability: %+v", res)
-	}
-	vi.Capabilities = []string{monomind.CapAgentExecSandbox}
-	res = checkMonomindAgentSandbox(ctx, env)
-	if res.Status != StatusInfo || res.Summary != "agent turns run in the runtime's sandbox" {
-		t.Errorf("with the capability: %+v", res)
+	for _, tc := range []struct {
+		version string
+		caps    []string
+		summary string
+	}{
+		{"2.10.0", nil, "agent turns run without a sandbox until monomind supports agent exec --sandbox"},
+		{"2.18.5", nil, "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec --sandbox"},
+		{"9.0.0", []string{monomind.CapAgentExecSandbox}, "agent turns run in the runtime's sandbox"},
+	} {
+		vi.Version, vi.Capabilities = tc.version, tc.caps
+		if res := checkMonomindAgentSandbox(ctx, env); res.Status != StatusInfo || res.Summary != tc.summary {
+			t.Errorf("monomind %s: %+v", tc.version, res)
+		}
 	}
 }

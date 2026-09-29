@@ -10,23 +10,20 @@ import (
 )
 
 // agent.ask turns ask for the sandbox, in the shared agent-ask workspace,
-// only when monomind advertises it; the item records the verdict.
+// through whichever path monomind offers; the item records the verdict.
 func TestAskNodeSandbox(t *testing.T) {
-	for _, advertise := range []bool{true, false} {
-		argsLog := sandboxtest.Install(t, advertise, "hello")
+	for _, m := range sandboxtest.Kinds {
+		argsLog := sandboxtest.Install(t, m, "hello")
 		out, err := (&AskNode{}).Execute(context.Background(), workflow.NodeInput{
 			Items: []workflow.Item{{JSON: map[string]interface{}{}}},
 		}, map[string]interface{}{"runtime": "codex", "prompt": "say hi"})
 		if err != nil {
-			t.Fatalf("advertise=%v: %v", advertise, err)
+			t.Fatalf("%s monomind: %v", m, err)
 		}
-		sandboxtest.Check(t, argsLog, advertise, sandboxtest.Workspace(monomind.WorkspaceAgentAsk))
-		want := monomind.SandboxStatusNeedsMonomind
-		if advertise {
-			want = monomind.SandboxStatusSandboxed
-		}
+		sandboxtest.Check(t, argsLog, m, sandboxtest.Workspace(monomind.WorkspaceAgentAsk))
+		want := sandboxtest.Status(m)
 		if got := out[0].Items[0].JSON["_agent_sandbox"]; got != want {
-			t.Errorf("advertise=%v: _agent_sandbox = %v, want %s", advertise, got, want)
+			t.Errorf("%s monomind: _agent_sandbox = %v, want %s", m, got, want)
 		}
 	}
 }

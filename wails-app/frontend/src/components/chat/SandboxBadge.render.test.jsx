@@ -25,7 +25,9 @@ afterEach(cleanup)
 describe('SandboxBadge', () => {
   it.each([
     ['sandboxed', 'sandboxed'],
+    ['scoped', 'scoped access'],
     ['unsupported', 'no sandbox (runtime unsupported)'],
+    ['awaiting-monomind', 'no sandbox (this runtime needs monomind #396)'],
     ['needs-monomind', 'no sandbox (update monomind)'],
   ])('renders %s in English', (status, text) => {
     render(<SandboxBadge status={status} />)
@@ -37,8 +39,8 @@ describe('SandboxBadge', () => {
 
   it('renders Spanish strings', async () => {
     await i18n.changeLanguage('es')
-    render(<SandboxBadge status="needs-monomind" />)
-    expect(screen.getByTestId('sandbox-badge')).toHaveTextContent('sin sandbox (actualiza monomind)')
+    render(<SandboxBadge status="awaiting-monomind" />)
+    expect(screen.getByTestId('sandbox-badge')).toHaveTextContent('sin sandbox (este entorno necesita monomind #396)')
   })
 
   it('renders nothing for no status or an unknown one', () => {

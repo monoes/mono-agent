@@ -112,14 +112,15 @@ func TestJournaledTurnWritesItsOwnHistory(t *testing.T) {
 		t.Errorf("assistant text = %q", text)
 	}
 	// The first notice is the sandbox badge: this fake monomind predates
-	// agent-exec-sandbox (see chat_sandbox_test.go).
+	// agent-exec-sandbox, and its runtime has no --env sandbox path (see
+	// chat_sandbox_test.go).
 	notices := j.byType(chatevents.EventNotice)
 	if len(notices) != 2 {
 		t.Fatalf("notices = %+v", notices)
 	}
 	var notice chatevents.NoticePayload
 	json.Unmarshal(notices[0].Payload, &notice)
-	if notice.Code != noticeAgentSandbox || notice.Message != monomind.SandboxStatusNeedsMonomind {
+	if notice.Code != noticeAgentSandbox || notice.Message != monomind.SandboxStatusAwaitingMonomind {
 		t.Errorf("first notice = %+v, want the sandbox badge", notice)
 	}
 	json.Unmarshal(notices[1].Payload, &notice)

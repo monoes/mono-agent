@@ -9,14 +9,14 @@ import (
 )
 
 // The TYPE_TEXT helper's turns are sandboxed in the text-helper workspace
-// only when monomind advertises it.
+// through whichever path monomind offers.
 func TestTextHelperSandbox(t *testing.T) {
-	for _, advertise := range []bool{true, false} {
-		argsLog := sandboxtest.Install(t, advertise, `{"text":"Ada"}`)
+	for _, m := range sandboxtest.Kinds {
+		argsLog := sandboxtest.Install(t, m, `{"text":"Ada"}`)
 		got, err := monomindWriter("codex", "")(context.Background(), map[string]any{"goal": "name"})
 		if err != nil || got != "Ada" {
-			t.Fatalf("advertise=%v: %q, %v", advertise, got, err)
+			t.Fatalf("%s monomind: %q, %v", m, got, err)
 		}
-		sandboxtest.Check(t, argsLog, advertise, sandboxtest.Workspace(monomind.WorkspaceTextHelper))
+		sandboxtest.Check(t, argsLog, m, sandboxtest.Workspace(monomind.WorkspaceTextHelper))
 	}
 }

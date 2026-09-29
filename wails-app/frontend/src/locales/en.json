@@ -666,6 +666,10 @@
     "sandboxedTitle": "This turn ran in the agent runtime's sandbox: it could write only its working folder.",
     "unsupportedTitle": "This agent runtime has no sandbox mode, so the turn ran without one.",
     "needsMonomindTitle": "The installed monomind can't sandbox agent turns yet, so the turn ran without one. Update monomind to turn it on.",
-    "offTitle": "monomind ran this turn without a sandbox."
+    "offTitle": "monomind ran this turn without a sandbox.",
+    "scoped": "scoped access",
+    "awaitingMonomind": "no sandbox (this runtime needs monomind #396)",
+    "scopedTitle": "Claude ran with monomind's scoped access: its own tools are limited to what this turn allows. It has no separate sandbox yet.",
+    "awaitingMonomindTitle": "monomind can't sandbox this agent runtime yet (monomind issue #396), so the turn ran without one. Codex and Grok turns are sandboxed today."
   }
 }

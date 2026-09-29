@@ -14,7 +14,7 @@ export function initialChatState() {
     usage: null,          // latest { inputTokens, outputTokens, costUsd, source } snapshot, never summed
     session: null,          // { runtime, sessionId } once session.bound fires
     terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
-    sandbox: null,           // 'sandboxed' | 'unsupported' | 'needs-monomind' | 'off', from the CLI; null = none asked for
+    sandbox: null,           // the CLI's monomind.SandboxStatus* verdict ('sandboxed', 'scoped', …); null = none asked for
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
     lastSeq: 0,

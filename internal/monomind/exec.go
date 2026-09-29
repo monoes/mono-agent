@@ -61,14 +61,14 @@ type ExecOptions struct {
 	Settings []string
 	// MaxTurns caps agent turns (--max-turns); zero keeps monomind's default.
 	MaxTurns int
-	// Sandbox asks for a sandbox mode (SandboxWorkspace) via SandboxFlag.
-	// It is passed only when monomind advertises CapAgentExecSandbox;
-	// otherwise the turn runs exactly as it would without it. "" never
-	// passes the flag (coder mode, which has its own full-access contract).
+	// Sandbox asks for a sandbox mode (TurnSandboxMode); SandboxArgs
+	// decides what that means for this runtime and monomind. A monomind
+	// that can do neither runs the turn exactly as without it. "" asks for
+	// nothing (coder mode, which has its own full-access contract).
 	Sandbox string
 	// WorkspacePurpose names the SandboxWorkspaceDir a sandboxed turn with
 	// no Cwd runs in, so workspace-write has a real folder. Ignored when
-	// the flag is not passed, when Cwd is set, and for the claude runtime:
+	// no sandbox args are passed, when Cwd is set, and for the claude runtime:
 	// claude is restricted by --access scoped rather than a folder, and
 	// keys its resumable sessions by folder, so moving it would orphan
 	// every existing conversation.
@@ -320,11 +320,13 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		}
 	}
 	cwd := opts.Cwd
-	sandboxOK := false
+	var sandboxArgs []string
+	sandboxEffective := ""
 	if opts.Sandbox != "" {
-		sandboxOK = sandboxSupported(ctx, bin)
+		caps, _ := capabilitiesFor(ctx, bin) // a failed handshake: no sandbox, as before
+		sandboxArgs, sandboxEffective = SandboxArgs(caps, opts.Runtime, opts.Sandbox)
 	}
-	if sandboxOK && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
+	if len(sandboxArgs) > 0 && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
 		dir, err := SandboxWorkspaceDir(opts.WorkspacePurpose)
 		if err != nil {
 			return nil, fmt.Errorf("sandbox workspace: %w", err)
@@ -334,9 +336,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	if cwd != "" {
 		args = append(args, "--cwd", cwd)
 	}
-	if sandboxOK {
-		args = append(args, SandboxFlag, opts.Sandbox)
-	}
+	args = append(args, sandboxArgs...)
 	if opts.Resume != "" {
 		args = append(args, "--resume", opts.Resume)
 	}
@@ -467,7 +467,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 	defer release()
 
-	res := &TurnResult{SandboxStatus: sandboxStatus(opts.Sandbox, sandboxOK, SandboxFields{})}
+	res := &TurnResult{SandboxStatus: sandboxEffective}
 	events := make(chan Event, 64)
 	var stdinMu sync.Mutex
 	var stdinOnce sync.Once
@@ -517,8 +517,8 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	go func() {
 		defer close(loopDone)
 		for ev := range events {
-			if ev.Type == EventStart && opts.Sandbox != "" {
-				ev.SandboxStatus = sandboxStatus(opts.Sandbox, sandboxOK, ev.SandboxFields)
+			if ev.Type == EventStart && sandboxEffective != "" {
+				ev.SandboxStatus = sandboxStatus(sandboxEffective, ev.SandboxFields)
 			}
 			if onEvent != nil {
 				onEvent(ev)

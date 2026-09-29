@@ -37,7 +37,7 @@ func ExecRunner(budgetUSD float64) RunFunc {
 			Prompt:    prompt,
 			BudgetUSD: budgetUSD,
 			// The prompt carries the page text; the agent needs no files.
-			Sandbox:          monomind.SandboxWorkspace,
+			Sandbox:          monomind.TurnSandboxMode,
 			WorkspacePurpose: monomind.WorkspaceSummary,
 		}
 		if deadline, ok := ctx.Deadline(); ok {

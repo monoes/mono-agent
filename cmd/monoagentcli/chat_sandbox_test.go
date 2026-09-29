@@ -13,10 +13,10 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
-// writeSandboxMonomind writes a fake monomind that advertises (or not)
-// agent-exec-sandbox on top of caps, logs every agent exec argv, and
-// streams transcript for it.
-func writeSandboxMonomind(t *testing.T, advertise bool, transcript string, caps ...string) (bin, argsLog string) {
+// writeSandboxMonomind writes a fake monomind of version that advertises
+// (or not) agent-exec-sandbox on top of caps, logs every agent exec argv,
+// and streams transcript for it.
+func writeSandboxMonomind(t *testing.T, version string, advertise bool, transcript string, caps ...string) (bin, argsLog string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
@@ -30,7 +30,7 @@ func writeSandboxMonomind(t *testing.T, advertise bool, transcript string, caps 
 	bin = filepath.Join(dir, "monomind")
 	argsLog = filepath.Join(dir, "exec-args.log")
 	script := "#!/bin/sh\n" +
-		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":` + string(capsJSON) + `}'; exit 0; fi` + "\n" +
+		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":` + string(capsJSON) + `}'; exit 0; fi` + "\n" +
 		`if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then` + "\n" +
 		`  echo "$*" >> '` + argsLog + "'\n" + transcript + "\n  exit 0\nfi\n" +
 		`echo "unsupported: $*" >&2` + "\nexit 2\n"
@@ -74,30 +74,39 @@ func sandboxNotices(j journaledTurn) []string {
 func TestChatTurnSandbox(t *testing.T) {
 	cases := []struct {
 		name       string
+		version    string
 		advertise  bool
+		runtime    string
 		startExtra string
 		wantArgs   []string
 		neverArgs  []string
+		chatCwd    bool // runs in the chat workspace
 		wantStatus string
 	}{
-		{name: "sandboxed", advertise: true, startExtra: `,"sandbox":"workspace"`,
-			wantArgs:   []string{"--sandbox workspace", "--cwd "}, // cwd checked below
+		{name: "monomind 396", version: "9.0.0", advertise: true, runtime: "codex", startExtra: `,"sandbox":"workspace-write"`,
+			wantArgs: []string{"--sandbox workspace-write"}, neverArgs: []string{"MONOMIND_GIT_LEVEL"}, chatCwd: true,
 			wantStatus: monomind.SandboxStatusSandboxed},
-		{name: "runtime unsupported", advertise: true, startExtra: `,"sandbox":"off","sandbox_unsupported":true`,
-			wantArgs:   []string{"--sandbox workspace"},
+		{name: "monomind 396, runtime unsupported", version: "9.0.0", advertise: true, runtime: "copilot", startExtra: `,"sandbox":"full","sandbox_unsupported":true`,
+			wantArgs: []string{"--sandbox workspace-write"}, chatCwd: true,
 			wantStatus: monomind.SandboxStatusUnsupported},
-		{name: "older monomind", advertise: false,
-			neverArgs:  []string{"--sandbox", "--cwd"},
+		{name: "env workaround", version: "2.18.5", runtime: "codex",
+			wantArgs: []string{"--env MONOMIND_GIT_LEVEL=read"}, neverArgs: []string{"--sandbox"}, chatCwd: true,
+			wantStatus: monomind.SandboxStatusSandboxed},
+		{name: "runtime awaiting monomind 396", version: "2.18.5", runtime: "qwen",
+			neverArgs:  []string{"--sandbox", "--env", "--cwd"},
+			wantStatus: monomind.SandboxStatusAwaitingMonomind},
+		{name: "older monomind", version: "2.10.0", runtime: "codex",
+			neverArgs:  []string{"--sandbox", "--env", "--cwd"},
 			wantStatus: monomind.SandboxStatusNeedsMonomind},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dbPath := newChatCLITestDB(t)
-			conv, err := openTestChatStore(t, dbPath).CreateConversation("default", "agent", "general", "codex", "", "")
+			conv, err := openTestChatStore(t, dbPath).CreateConversation("default", "agent", "general", tc.runtime, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			bin, argsLog := writeSandboxMonomind(t, tc.advertise, sandboxTranscript(tc.startExtra))
+			bin, argsLog := writeSandboxMonomind(t, tc.version, tc.advertise, sandboxTranscript(tc.startExtra))
 			out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "hi")
 			if err != nil {
 				t.Fatalf("turn: %v\n%s", err, out)
@@ -113,7 +122,7 @@ func TestChatTurnSandbox(t *testing.T) {
 					t.Errorf("exec argv has %q: %s", never, line)
 				}
 			}
-			if tc.advertise {
+			if tc.chatCwd {
 				want := "--cwd " + filepath.Join(os.Getenv("HOME"), ".monoagent", "workspaces", monomind.WorkspaceChat)
 				if !strings.Contains(line, want) {
 					t.Errorf("a plain chat turn should run in the chat workspace (%s): %s", want, line)
@@ -130,18 +139,33 @@ func TestChatTurnSandbox(t *testing.T) {
 	}
 }
 
-// A claude chat turn is sandboxed too, but keeps its (empty) folder:
-// claude's sessions are keyed by folder.
+// A claude chat turn keeps its (empty) folder, since claude's sessions are
+// keyed by folder. It gets the #396 flag once monomind has it; until then
+// it is "scoped" (--access scoped), with no extra args.
 func TestChatTurnSandboxClaudeKeepsFolder(t *testing.T) {
-	dbPath := newChatCLITestDB(t)
-	conv, _ := openTestChatStore(t, dbPath).CreateConversation("default", "agent", "general", "claude", "", "")
-	bin, argsLog := writeSandboxMonomind(t, true, sandboxTranscript(`,"sandbox":"workspace"`))
-	if out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "hi"); err != nil {
-		t.Fatalf("turn: %v\n%s", err, out)
-	}
-	line := lastExecLine(t, argsLog)
-	if !strings.Contains(line, "--sandbox workspace") || strings.Contains(line, "--cwd") {
-		t.Errorf("claude turn argv: %s", line)
+	for _, tc := range []struct {
+		version    string
+		advertise  bool
+		wantFlag   bool
+		wantStatus string
+	}{
+		{"9.0.0", true, true, monomind.SandboxStatusSandboxed},
+		{"2.18.5", false, false, monomind.SandboxStatusScoped},
+	} {
+		dbPath := newChatCLITestDB(t)
+		conv, _ := openTestChatStore(t, dbPath).CreateConversation("default", "agent", "general", "claude", "", "")
+		bin, argsLog := writeSandboxMonomind(t, tc.version, tc.advertise, sandboxTranscript(""))
+		out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "hi")
+		if err != nil {
+			t.Fatalf("turn: %v\n%s", err, out)
+		}
+		line := lastExecLine(t, argsLog)
+		if strings.Contains(line, "--sandbox workspace-write") != tc.wantFlag || strings.Contains(line, "--cwd") || strings.Contains(line, "MONOMIND_GIT_LEVEL") {
+			t.Errorf("monomind %s: claude turn argv: %s", tc.version, line)
+		}
+		if p := parseJournaledTurn(t, out).finished(t); p.Sandbox != tc.wantStatus {
+			t.Errorf("monomind %s: turn.finished sandbox = %q, want %q", tc.version, p.Sandbox, tc.wantStatus)
+		}
 	}
 }
 
@@ -149,7 +173,7 @@ func TestChatTurnSandboxClaudeKeepsFolder(t *testing.T) {
 // event carries the verdict for --json readers.
 func TestChatPlainTurnPrintsSandboxOnStart(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
-	bin, _ := writeSandboxMonomind(t, true, sandboxTranscript(`,"sandbox":"workspace"`))
+	bin, _ := writeSandboxMonomind(t, "9.0.0", true, sandboxTranscript(`,"sandbox":"workspace-write"`))
 	out, err := runChatCmd(t, dbPath, bin, "--runtime", "codex", "--no-history", "--", "hi")
 	if err != nil {
 		t.Fatalf("turn: %v\n%s", err, out)
@@ -160,7 +184,7 @@ func TestChatPlainTurnPrintsSandboxOnStart(t *testing.T) {
 			json.Unmarshal([]byte(l), &start)
 		}
 	}
-	if start["sandbox"] != "workspace" || start["sandbox_status"] != monomind.SandboxStatusSandboxed {
+	if start["sandbox"] != "workspace-write" || start["sandbox_status"] != monomind.SandboxStatusSandboxed {
 		t.Errorf("start event = %v", start)
 	}
 }
@@ -168,7 +192,7 @@ func TestChatPlainTurnPrintsSandboxOnStart(t *testing.T) {
 // Coder mode is never sandboxed, even when monomind could.
 func TestCoderTurnNeverSandboxed(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
-	bin, argsLog := writeSandboxMonomind(t, true, coderTranscript, monomind.CoderCapabilities...)
+	bin, argsLog := writeSandboxMonomind(t, "9.0.0", true, coderTranscript, monomind.CoderCapabilities...)
 	withCoderCaps(t, append([]string{monomind.CapAgentExecSandbox}, monomind.CoderCapabilities...)...)
 	setCoderSettings(t, dbPath, coderSettings{Enabled: true, BudgetUSD: 3})
 	cwd := t.TempDir()
@@ -181,7 +205,7 @@ func TestCoderTurnNeverSandboxed(t *testing.T) {
 		t.Fatalf("coder turn: %v\n%s", err, out)
 	}
 	line := lastExecLine(t, argsLog)
-	if strings.Contains(line, monomind.SandboxFlag) || !strings.Contains(line, "--access full") {
+	if strings.Contains(line, monomind.SandboxFlag) || strings.Contains(line, "MONOMIND_GIT_LEVEL") || !strings.Contains(line, "--access full") {
 		t.Errorf("coder exec argv: %s", line)
 	}
 	j := parseJournaledTurn(t, out)
@@ -195,7 +219,7 @@ func TestCoderTurnNeverSandboxed(t *testing.T) {
 
 func TestAgentTestIsSandboxed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	_, argsLog := writeSandboxMonomind(t, true, sandboxTranscript(`,"sandbox":"workspace"`))
+	_, argsLog := writeSandboxMonomind(t, "2.18.5", false, sandboxTranscript(""))
 	cmd := newAgentTestCmd(&globalConfig{})
 	cmd.SetArgs([]string{"codex"})
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
@@ -204,7 +228,7 @@ func TestAgentTestIsSandboxed(t *testing.T) {
 	}
 	line := lastExecLine(t, argsLog)
 	want := "--cwd " + filepath.Join(os.Getenv("HOME"), ".monoagent", "workspaces", monomind.WorkspaceAgentTest)
-	if !strings.Contains(line, "--sandbox workspace") || !strings.Contains(line, want) {
+	if !strings.Contains(line, "--env MONOMIND_GIT_LEVEL=read") || !strings.Contains(line, want) {
 		t.Errorf("agent test argv: %s", line)
 	}
 }

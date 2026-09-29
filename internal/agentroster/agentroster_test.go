@@ -230,7 +230,7 @@ func TestRunSerialPerRuntimeAndSaves(t *testing.T) {
 		}
 		defer atomic.AddInt32(n, -1)
 		// Validated the way chat runs it: sandboxed (when monomind can).
-		if o.MaxTurns != 1 || o.Prompt != TestPrompt || o.Cwd == "" || len(o.Tools) != 0 || o.Sandbox != monomind.SandboxWorkspace {
+		if o.MaxTurns != 1 || o.Prompt != TestPrompt || o.Cwd == "" || len(o.Tools) != 0 || o.Sandbox != monomind.TurnSandboxMode {
 			t.Errorf("unexpected exec options %+v", o)
 		}
 		if o.Runtime == "b" && o.Model == "" {
