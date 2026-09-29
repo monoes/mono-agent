@@ -157,7 +157,7 @@ func (s *Server) grantToolDefinitions(ctx context.Context) []map[string]interfac
 		if len(fields) > 0 {
 			props := make(map[string]interface{}, len(fields))
 			for _, f := range fields {
-				props[f] = map[string]interface{}{"description": fmt.Sprintf("Workflow input field %q (the workflow reads input.%s).", f, f)}
+				props[f] = map[string]interface{}{"description": fmt.Sprintf("Workflow input field %q (the workflow reads it as input.%s or as %s).", f, f, f)}
 			}
 			schema["properties"] = props
 		}
@@ -292,14 +292,18 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 	// It sits under org, which the role's arguments (under input) cannot set.
 	orgTrigger := map[string]interface{}{"name": b.OrgName, "role": b.RoleID, "grant": grant.ID, "run": runID,
 		"automation": tool.Alias, "workdir": grantWorkdir(rt.db.DB, b)}
+	trigger := map[string]interface{}{
+		"trigger_type": workflow.TriggerTypeOrgTool,
+		"org":          orgTrigger,
+		"input":        input,
+		"trace":        map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
+	}
+	// The arguments also sit at the top level, for workflows that read
+	// {{ $json.<field> }} as a manual --input run delivers them.
+	orggrant.LiftInput(trigger, input)
 	exec, err := workflow.CreateUnownedExecution(ctx, rt.store, workflow.UnownedExecutionOptions{
 		WorkflowID: tool.WorkflowID, ProfileID: b.ProfileID, TriggerType: workflow.TriggerTypeOrgTool, AllowInactive: true,
-		TriggerData: map[string]interface{}{
-			"trigger_type": workflow.TriggerTypeOrgTool,
-			"org":          orgTrigger,
-			"input":        input,
-			"trace":        map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
-		},
+		TriggerData: trigger,
 	})
 	if err != nil {
 		_ = ledger.SetStatus(ctx, adm.ID, orgbridge.StatusError)
