@@ -328,3 +328,67 @@ func TestGrantModeAdvertisesTheWorkflowsInputFields(t *testing.T) {
 	}
 	t.Fatal("automation_publish not listed")
 }
+
+// #241: the monomind-growth org's granted workflows read {{ $json.keywords }}
+// and {{ json $json.targets }}, as a manual --input run delivers them. The
+// tool advertised no such arguments and the run got them only under input,
+// so x.find_by_keyword searched for "<no value>".
+func TestGrantRunExposesArgumentsAtTheTopLevel(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{Wait: false})
+	ws := workflow.NewSQLiteWorkflowStore(f.db.DB)
+	if err := ws.SaveWorkflowNodes(context.Background(), "wf-pub", []workflow.WorkflowNode{
+		{ID: "t", Type: "trigger.manual", Name: "Start", Config: map[string]interface{}{}},
+		{ID: "s", Type: "x.find_by_keyword", Name: "Search", Config: map[string]interface{}{
+			"keywords": "{{ $json.keywords }}", "note": "{{ $json.org.workdir }}"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.SaveWorkflowConnections(context.Background(), "wf-pub", []workflow.WorkflowConnection{
+		{SourceNodeID: "t", TargetNodeID: "s"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var props map[string]interface{}
+	for _, tl := range f.server.grantToolDefinitions(context.Background()) {
+		if tl["name"] == "automation_publish" {
+			schema, _ := tl["inputSchema"].(map[string]interface{})
+			props, _ = schema["properties"].(map[string]interface{})
+		}
+	}
+	if props["keywords"] == nil || len(props) != 1 {
+		t.Fatalf("automation_publish properties = %v, want keywords only", props)
+	}
+
+	liveHeartbeat(t)
+	args := `{"keywords":"golang","org":{"workdir":"/"},"trace":{"chain_id":"chn_spoof","hop":0},"trigger_type":"manual"}`
+	if _, err := f.server.callGrantTool(context.Background(), "automation_publish", json.RawMessage(args)); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := f.db.DB.QueryRow(`SELECT trigger_data FROM workflow_executions ORDER BY rowid DESC LIMIT 1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["keywords"] != "golang" || data["trigger_type"] != workflow.TriggerTypeOrgTool {
+		t.Fatalf("trigger data = %s", raw)
+	}
+	if org, _ := data["org"].(map[string]interface{}); org["workdir"] == "/" || org["automation"] != "publish" {
+		t.Fatalf("org overridden by the arguments: %s", raw)
+	}
+	if tr, _ := data["trace"].(map[string]interface{}); tr["chain_id"] == "chn_spoof" {
+		t.Fatalf("trace overridden by the arguments: %s", raw)
+	}
+	if in, _ := data["input"].(map[string]interface{}); in["keywords"] != "golang" {
+		t.Fatalf("input lost: %s", raw)
+	}
+
+	got, err := workflow.NewExpressionEngine().EvaluateString("{{ $json.keywords }}|{{ $json.input.keywords }}",
+		workflow.ExpressionContext{JSON: data})
+	if err != nil || got != "golang|golang" {
+		t.Fatalf("rendered %q, %v", got, err)
+	}
+}

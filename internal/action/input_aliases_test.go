@@ -83,3 +83,16 @@ func TestListUserPostsTargetAliases(t *testing.T) {
 		t.Errorf("no profile: err = %v, want missing target_url", err)
 	}
 }
+
+// #241: x.scrape_profile_info's required list is defined as
+// selectedListItems, but a node sets it as targets; the error named the
+// definition's key, which no workflow config sets.
+func TestMissingTargetsErrorNamesTargets(t *testing.T) {
+	for _, platform := range []string{"x", "instagram", "linkedin", "tiktok"} {
+		err := ValidateActionInputs(platform, "scrape_profile_info", &StorageAction{},
+			map[string]interface{}{"selectedListItems": []interface{}(nil), "targets": []interface{}(nil)})
+		if err == nil || !strings.Contains(err.Error(), "missing required input 'targets'") || strings.Contains(err.Error(), "selectedListItems") {
+			t.Fatalf("%s.scrape_profile_info error = %v, want missing required input 'targets'", platform, err)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"text/template/parse"
 	"time"
 )
 
@@ -57,6 +58,7 @@ func NewExpressionEngine() *ExpressionEngine {
 // buildFuncMap returns the safe function set exposed to all templates.
 func (e *ExpressionEngine) buildFuncMap() template.FuncMap {
 	return template.FuncMap{
+		noValueFunc: blankNoValue,
 		// Encoding
 		"json": func(v interface{}) (string, error) {
 			b, err := json.Marshal(v)
@@ -269,8 +271,61 @@ func (e *ExpressionEngine) parse(src string) (*template.Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("expression: parse error in %q: %w", src, err)
 	}
+	for _, tt := range t.Templates() {
+		if tt.Tree != nil {
+			blankMissingValues(tt.Tree, tt.Tree.Root)
+		}
+	}
 	e.cache.Store(src, t)
 	return t, nil
+}
+
+// noValueFunc is the function blankMissingValues appends to every printed
+// pipeline. The leading underscore keeps it out of the documented set.
+const noValueFunc = "_blankNoValue"
+
+// blankNoValue turns a missing value into the empty string. text/template
+// prints a nil interface — a key missing from a map, even with
+// missingkey=zero, or a JSON null — as the literal "<no value>", which then
+// passed required-input checks as if it were real data: a search node ran
+// with the keyword "<no value>" and reported success.
+func blankNoValue(v interface{}) interface{} {
+	if v == nil {
+		return ""
+	}
+	return v
+}
+
+// blankMissingValues appends noValueFunc to the pipeline of every action
+// that prints, so a missing value renders as "". Conditions ({{ if }},
+// {{ with }}, {{ range }}) and variable declarations are left alone: they
+// still see the missing value as absent, so `{{ if $json.limit }}` keeps
+// falling through to its else branch.
+func blankMissingValues(tree *parse.Tree, n parse.Node) {
+	switch x := n.(type) {
+	case *parse.ListNode:
+		if x == nil {
+			return
+		}
+		for _, c := range x.Nodes {
+			blankMissingValues(tree, c)
+		}
+	case *parse.ActionNode:
+		if x.Pipe == nil || len(x.Pipe.Decl) > 0 {
+			return
+		}
+		ident := parse.NewIdentifier(noValueFunc).SetTree(tree).SetPos(x.Pos)
+		x.Pipe.Cmds = append(x.Pipe.Cmds, &parse.CommandNode{NodeType: parse.NodeCommand, Pos: x.Pos, Args: []parse.Node{ident}})
+	case *parse.IfNode:
+		blankMissingValues(tree, x.List)
+		blankMissingValues(tree, x.ElseList)
+	case *parse.RangeNode:
+		blankMissingValues(tree, x.List)
+		blankMissingValues(tree, x.ElseList)
+	case *parse.WithNode:
+		blankMissingValues(tree, x.List)
+		blankMissingValues(tree, x.ElseList)
+	}
 }
 
 // buildData converts an ExpressionContext into the map passed as dot to templates.
