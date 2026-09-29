@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -80,7 +81,7 @@ func TestListModelsAntigravityRequiresBinary(t *testing.T) {
 func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 	script := "#!/bin/sh\ncat <<'EOF'\n" +
 		`{"models":[` +
-		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},` +
+		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"ultra"}]},` +
 		`{"slug":"gpt-reserve","display_name":"GPT-Reserve","visibility":"hide"},` +
 		`{"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide"},` +
 		`{"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list"}` +
@@ -109,5 +110,38 @@ func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 func TestListModelsCodexRequiresBinary(t *testing.T) {
 	if _, err := builtinModels(context.Background(), "codex", ""); err == nil {
 		t.Fatal("expected an error when codex's binary path is empty, got nil")
+	}
+}
+
+func TestCuratedModelsForUnlistedRuntimes(t *testing.T) {
+	effort := map[string]bool{"off": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+	prefix := map[string]string{"cline": "", "aider": "openrouter/", "pi": "openrouter/"}
+	for _, rt := range []string{"cline", "aider", "pi", "dsh"} {
+		models, err := builtinModels(context.Background(), rt, "")
+		if err != nil || len(models) == 0 {
+			t.Fatalf("%s: %v, %v; want a curated list", rt, models, err)
+		}
+		free := 0
+		seen := map[string]bool{}
+		for _, m := range models {
+			if m.ID == "" || m.Label == "" || seen[m.ID] {
+				t.Errorf("%s: bad or duplicate entry %+v", rt, m)
+			}
+			seen[m.ID] = true
+			for _, e := range m.EffortLevels {
+				if !effort[e] {
+					t.Errorf("%s %s: effort %q is not a monomind --effort level", rt, m.ID, e)
+				}
+			}
+			if strings.HasSuffix(m.ID, ":free") {
+				free++
+			}
+		}
+		if free < len(freeOpenRouterModels) {
+			t.Errorf("%s: %d free OpenRouter models, want all %d", rt, free, len(freeOpenRouterModels))
+		}
+		if p, ok := prefix[rt]; ok && models[0].ID != p+freeOpenRouterModels[0].id {
+			t.Errorf("%s: first id %q, want %q", rt, models[0].ID, p+freeOpenRouterModels[0].id)
+		}
 	}
 }

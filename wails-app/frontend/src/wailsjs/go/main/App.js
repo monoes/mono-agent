@@ -146,8 +146,8 @@ export function CoderWorkspaceList() {
   return window['go']['main']['App']['CoderWorkspaceList']();
 }
 
-export function CoderWorkspaceRoot() {
-  return window['go']['main']['App']['CoderWorkspaceRoot']();
+export function CoderWorkspaceRoot(arg1) {
+  return window['go']['main']['App']['CoderWorkspaceRoot'](arg1);
 }
 
 export function ComposePersonMessage(arg1, arg2, arg3, arg4, arg5) {
@@ -166,8 +166,8 @@ export function CreateChatConversation(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CreateChatConversation'](arg1, arg2, arg3, arg4);
 }
 
-export function CreateCoderConversation(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['CreateCoderConversation'](arg1, arg2, arg3, arg4);
+export function CreateCoderConversation(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['CreateCoderConversation'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function CreateOrgDesign(arg1) {

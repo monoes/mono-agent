@@ -24,7 +24,9 @@ func fakeAgentModelsMonomind(t *testing.T, withCap bool) {
 		`{"id":"default","resolved_id":"claude-opus-5-5","label":"Default (recommended)","description":"Opus 5.5 · Best for everyday, complex tasks","default":true,"effort_levels":["low","medium","high","xhigh","max"]},` +
 		`{"id":"opus","resolved_id":"claude-opus-5-5","label":"Opus","description":"Opus 5.5 · Most capable","effort_levels":["low","medium","high","xhigh","max"]},` +
 		`{"id":"claude-sonnet-4-6","label":"Sonnet 4.6","description":"Efficient for routine tasks"}]}` + "\nJSON\nexit 0\nfi\n" +
+		`if [ "$1 $2 $3 $4" = "agent models --runtime dsh" ]; then echo '{"v":1,"runtime":"dsh","supported":true,"models":[{"id":"kimi","label":"Kimi","effort_levels":["off","minimal","low","ultra"]},{"id":"odd","label":"Odd","effort_levels":["minimal"]}]}'; exit 0; fi` + "\n" +
 		`if [ "$1 $2 $3 $4" = "agent models --runtime zed" ]; then echo '{"v":1,"runtime":"zed","supported":false,"models":[]}'; exit 0; fi` + "\n" +
+		`if [ "$1 $2 $3 $4" = "agent models --runtime pi" ]; then echo '{"v":1,"runtime":"pi","supported":false,"models":[]}'; exit 0; fi` + "\n" +
 		`if [ "$1 $2 $3 $4" = "agent models --runtime codex" ]; then echo '{"v":1,"runtime":"codex","supported":true,"models":[],"error":{"code":"list-failed","message":"timed out"}}'; exit 1; fi` + "\n" +
 		"exit 2\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -56,6 +58,11 @@ func TestListModelsUsesAgentModels(t *testing.T) {
 		t.Errorf("unsupported runtime = %v, %v; want nil, nil (free-text model)", got, err)
 	}
 
+	// A runtime with no listing command gets its curated list.
+	if got, err := ListModels(ctx, "pi", ""); err != nil || !reflect.DeepEqual(got, curatedModels["pi"]) {
+		t.Errorf("unsupported pi = %v, %v; want the curated list", got, err)
+	}
+
 	// A failed listing falls back to the built-in source (codex needs its
 	// binary for that).
 	if _, err := ListModels(ctx, "codex", ""); err == nil {
@@ -68,5 +75,22 @@ func TestListModelsFallsBackWithoutTheCapability(t *testing.T) {
 	got, err := ListModels(context.Background(), "claude", "")
 	if err != nil || !reflect.DeepEqual(got, claudeModels) {
 		t.Errorf("old monomind: %v, %v; want the built-in claude list", got, err)
+	}
+}
+
+// An effort name outside monomind's --effort set (dsh's "minimal", codex's
+// "ultra") would fail the turn with a usage error, so it is never offered.
+func TestListModelsDropsEffortNamesAgentExecRejects(t *testing.T) {
+	fakeAgentModelsMonomind(t, true)
+	got, err := ListModels(context.Background(), "dsh", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []RuntimeModel{
+		{ID: "kimi", Label: "Kimi", EffortLevels: []string{"off", "low"}},
+		{ID: "odd", Label: "Odd"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("dsh = %+v, want %+v", got, want)
 	}
 }
