@@ -101,7 +101,11 @@ func TestConnectionsTestedInParallelWithinLimits(t *testing.T) {
 	var releaseSlow, slowReturned sync.Once
 	release := func() {
 		releaseSlow.Do(func() { close(hang) })
-		<-slowDone
+		select {
+		case <-slowDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the slow connection test never returned (was it started?)")
+		}
 	}
 	defer releaseSlow.Do(func() { close(hang) })
 	env := &Env{
