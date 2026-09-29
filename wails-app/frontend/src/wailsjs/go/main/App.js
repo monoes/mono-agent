@@ -38,6 +38,22 @@ export function AddVaultImage(arg1, arg2) {
   return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
 }
 
+export function AgentRoster() {
+  return window['go']['main']['App']['AgentRoster']();
+}
+
+export function AgentRosterAdd(arg1, arg2) {
+  return window['go']['main']['App']['AgentRosterAdd'](arg1, arg2);
+}
+
+export function AgentRosterRemove(arg1, arg2) {
+  return window['go']['main']['App']['AgentRosterRemove'](arg1, arg2);
+}
+
+export function AgentValidatePlan(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AgentValidatePlan'](arg1, arg2, arg3);
+}
+
 export function AnalyzeRecording(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2, arg3);
 }
@@ -978,12 +994,20 @@ export function ShowRecording(arg1) {
   return window['go']['main']['App']['ShowRecording'](arg1);
 }
 
+export function StartAgentValidation(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartAgentValidation'](arg1, arg2, arg3);
+}
+
 export function StartChatTurn(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['StartChatTurn'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function StartOrgGroup(arg1) {
   return window['go']['main']['App']['StartOrgGroup'](arg1);
+}
+
+export function StopAgentValidation() {
+  return window['go']['main']['App']['StopAgentValidation']();
 }
 
 export function StopChatTurn(arg1, arg2) {
