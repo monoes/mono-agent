@@ -18,7 +18,10 @@ const CapOrgRoleFullAccess = "org-role-full-access"
 // other coding CLIs set on the commands their own shell tool runs, so a
 // grant is refused inside them even when they were started outside
 // monomind: Codex, OpenCode, Antigravity, Gemini CLI, Grok, Copilot, Crush,
-// pi and Qwen Code.
+// pi (PI_SESSION_ID on its bash tool's commands), Qwen Code and DeepSeek
+// Harness (DSH_SHELL, DSH_SESSION_ID on its shell calls). Cline and aider
+// set none of their own, so monomind's runners set MONOMIND_CLINE_TURN and
+// MONOMIND_AIDER on them.
 var agentContextMarkers = []string{
 	"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
 	"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC",
@@ -27,7 +30,8 @@ var agentContextMarkers = []string{
 	"OPENCODE", "OPENCODE_PID", "ANTIGRAVITY_AGENT", "GEMINI_CLI",
 	"GROK_SESSION_ID", "GROK_MANAGED_BY_NPM",
 	"COPILOT_CLI_BINARY_VERSION", "COPILOT_AGENT_SESSION_ID",
-	"CRUSH", "PI_CODING_AGENT", "QWEN_CODE",
+	"CRUSH", "PI_CODING_AGENT", "PI_SESSION_ID", "QWEN_CODE",
+	"DSH_SHELL", "DSH_SESSION_ID", "MONOMIND_CLINE_TURN", "MONOMIND_AIDER",
 }
 
 // AgentContextMarker returns the first agent-context variable set in this
