@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.91.1] - 2026-09-29
+
+### Removed
+- The sidebar's list of logged-in web automation accounts. It showed each platform's first two letters and a stored account name, which for most sites is not readable ("unknown", and a blank row for a session without a platform). Accounts are listed on the dashboard and under Connections.
+
 ## [0.91.0] - 2026-09-29
 
 ### Changed
