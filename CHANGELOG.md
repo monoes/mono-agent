@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-09-29
+
+### Changed
+- The workflow editor's node palette lists web automation nodes in their own **Web automations** section, one group per installed automation named after it, above the built-in **Nodes**. `node palette` tags each node with a `section` and an automation's categories with a `category_label`, read from the installed automations, so an automation installed later shows up there with no code change (#219).
+
+### Fixed
+- Web automation accounts no longer show "unknown" as their name. The placeholder a session stores when its account name can't be read is blank in `login status`, `automation list` and the dashboard, so the app says "Logged in". X and TikTok (1.0.1 on monoes.me) now read the handle from the profile link in the site's nav bar at login (#219).
+
 ## [0.90.1] - 2026-09-29
 
 ### Changed
