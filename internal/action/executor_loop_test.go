@@ -505,7 +505,8 @@ func TestValidateRequiredInputsRejectsJSONNullString(t *testing.T) {
 	if err == nil {
 		t.Fatal(`a required input of "null" must be treated as missing`)
 	}
-	if !strings.Contains(err.Error(), "selectedListItems") {
+	// Named as a node config sets it (targets), not as the definition does.
+	if !strings.Contains(err.Error(), "'targets'") {
 		t.Fatalf("error should name the input, got: %v", err)
 	}
 

@@ -718,8 +718,11 @@ func (a *App) GetChatTurns(conversationID, cursor string, limit int) string {
 	}
 	var page chatTurnPage
 	if err := a.chatSup.cli(a.getActiveProfileID(), &page, args...); err != nil {
-		if chatCLIExitCode(err) == 2 { // unknown conversation: no turns, as before
-			return `{"items":[],"nextCursor":""}`
+		// Unknown (or deleted) conversation: no turns, as before, plus
+		// notFound so a caller holding on to it (a restored coder bubble)
+		// can let it go.
+		if chatCLIExitCode(err) == 2 {
+			return `{"items":[],"nextCursor":"","notFound":true}`
 		}
 		return a.chatBindingError(err)
 	}
