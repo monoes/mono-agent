@@ -302,6 +302,7 @@ func accountsSection(ctx context.Context, o Options) *AccountsSection {
 			s.Error = err.Error()
 			return s
 		}
+		r.Username = automation.DisplayUsername(r.Username)
 		r.Expiry = expiry.UTC().Format(time.RFC3339)
 		switch {
 		case expiry.Before(o.Now):

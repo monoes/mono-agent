@@ -374,9 +374,6 @@ func (a *App) ConfirmSocialLogin(platform string) string {
 			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": waitErr.Error()})
 			return
 		}
-		if username == "" {
-			username = "unknown"
-		}
 		runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": true, "accountID": username})
 	}()
 

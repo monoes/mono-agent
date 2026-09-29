@@ -3,7 +3,7 @@
   "schema": "monoagent.automation/v1",
   "id": "tiktok",
   "name": "TikTok",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Read TikTok profiles, videos and comments; like, comment, follow, message and publish videos from your own account",
   "publisher": {
     "name": "Mono Agent",
@@ -25,6 +25,7 @@
       "selector": "[data-e2e='profile-icon'], [data-e2e='inbox-icon'], a[data-e2e='nav-profile'][href*='/@']:not([href='/@'])",
       "cookie": "sessionid"
     },
+    "usernameFrom": { "selector": "a[data-e2e='nav-profile'][href*='/@']:not([href='/@'])", "attribute": "href" },
     "sessionTtlDays": 30
   },
   "permissions": {
