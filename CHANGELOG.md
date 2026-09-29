@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Validated agent roster** (#225, first phase of the dynamic org epic #224):
+  - `agent validate` tests every installed runtime's models with a one-word turn and stores what answered (`ok`, `auth`, `quota`, `model_unavailable`, `timeout`, …) with latency and cost. It supports `--dry-run`, `--stale-only`, and NDJSON progress with `--json`.
+  - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.
+  - The AI agents page has a "Validated models" section that updates live as a validation runs, asks before a multi-call run, and has re-validate buttons per runtime and per model.
+
 ## [0.91.1] - 2026-09-29
 
 ### Removed

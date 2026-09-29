@@ -30,6 +30,8 @@ func newAgentCmd(cfg *globalConfig) *cobra.Command {
 		newAgentScanCmd(cfg),
 		newAgentTestCmd(cfg),
 		newAgentInstallCmd(cfg),
+		newAgentValidateCmd(cfg),
+		newAgentRosterCmd(cfg),
 	)
 	return cmd
 }
