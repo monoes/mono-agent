@@ -38,6 +38,7 @@ const selectStyle = {
   backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 6px center',
+  minWidth: 0,
 }
 
 // Client-generated turn id (plan: "Client-created turn ID: registered
@@ -183,6 +184,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // 'provider' marks a read-only conversation from the removed AI provider.
   const [conversationBackend, setConversationBackend] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
+  const [selectedEffort, setSelectedEffort] = useState('')
   const [runtimes, setRuntimes]             = useState([])
   // Seeded from isOpen, not a flat `false`: the scan effect below fires on
   // the very next tick whenever the component mounts already-open (isOpen
@@ -343,8 +345,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       // the stale id is instead made unusable — runtimeUninitialized hides it
       // behind the "Not initialized" label and blocks send — so it can never
       // reach --model as this runtime's model.
-      if (list.length > 0 && !list.some(m => m.id === selectedModel)) {
-        setSelectedModel(list[0].id)
+      if (list.length > 0) {
+        const activeM = list.find(m => m.id === selectedModel) || list[0]
+        const activeEfforts = Array.isArray(activeM?.effort_levels) ? activeM.effort_levels : []
+        setSelectedEffort(prev => (prev && activeEfforts.includes(prev) ? prev : ''))
+        if (!list.some(m => m.id === selectedModel)) {
+          setSelectedModel(list[0].id)
+        }
+      } else {
+        setSelectedEffort('')
       }
     }).finally(() => { if (current) setRuntimeModelsLoading(false) })
     return () => { current = false }
@@ -410,6 +419,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       setMessages(built)
       if (conv.runtimeId && !initialRuntime) setSelectedRuntime(conv.runtimeId)
       if (conv.model) setSelectedModel(conv.model)
+      if (conv.effort !== undefined) setSelectedEffort(conv.effort || '')
       setConversationId(conv.id)
       setConversationBackend(conv.backend || 'agent')
       setChatMode(conv.mode === 'coder' ? 'coder' : 'assistant')
@@ -675,6 +685,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // init result show in the transcript; the conversation then runs in the
   // root, or in the folder the user chose.
   const createCoderConversation = useCallback(async () => {
+    if (selectedRuntime !== CODER_RUNTIME) throw new Error(`Coder mode needs the ${CODER_RUNTIME} runtime installed`)
     let cwd = coderWorkspace.kind === 'folder' ? coderWorkspace.path : ''
     if (!cwd) {
       const ws = await api.coderWorkspaceRoot()
@@ -686,13 +697,18 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     setConversationBackend('agent')
     setCoderCwd(conv.cwd || cwd)
     return conv.id
-  }, [coderWorkspace, selectedModel])
+  }, [coderWorkspace, selectedRuntime, selectedModel])
 
-  // Picking Coder switches to the runtime coder mode runs on.
-  const chooseMode = useCallback((mode) => {
-    setChatMode(mode)
-    if (mode === 'coder' && runtimes.some(r => r.id === CODER_RUNTIME)) setSelectedRuntime(CODER_RUNTIME)
-  }, [runtimes])
+  const chooseMode = useCallback((mode) => { setChatMode(mode) }, [])
+
+  // Coder mode runs on CODER_RUNTIME only, and the runtime picker is locked
+  // to it: any other runtime would load that runtime's models, and its model
+  // id would then reach Claude Code as --model.
+  useEffect(() => {
+    if (isCoder && selectedRuntime !== CODER_RUNTIME && runtimes.some(r => r.id === CODER_RUNTIME)) {
+      setSelectedRuntime(CODER_RUNTIME)
+    }
+  }, [isCoder, selectedRuntime, runtimes])
 
   const pickCoderFolder = useCallback(async () => {
     const dir = await Promise.resolve(api.pickCoderFolder()).catch(() => '')
@@ -714,7 +730,10 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       if (!convId && isCoder) {
         convId = await createCoderConversation()
       } else if (!convId) {
-        const conv = await api.createChatConversation(workflowID, selectedRuntime, selectedModel)
+        const curM = runtimeModels.find(m => m.id === selectedModel)
+        const curEfforts = Array.isArray(curM?.effort_levels) ? curM.effort_levels : []
+        const effortToUse = curEfforts.includes(selectedEffort) ? selectedEffort : ''
+        const conv = await api.createChatConversation(workflowID, selectedRuntime, selectedModel, effortToUse)
         convId = conv.id
         setConversationId(convId)
         setConversationBackend('agent')
@@ -745,7 +764,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         { role: 'error', content: String(err), code: err?.code || '' },
       ])
     }
-  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, conversationId, isCoder, createCoderConversation])
+  }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, selectedEffort, runtimeModels, conversationId, isCoder, createCoderConversation])
 
   // Whether an agent runtime is selected — gates the input, matching
   // send()'s own guard.
@@ -860,6 +879,10 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   useEffect(() => {
     if (isCoder && !conversationId && !coderUsable) setChatMode('assistant')
   }, [isCoder, conversationId, coderStatus, coderUsable])
+
+  const currentModel = runtimeModels.find(m => m.id === selectedModel)
+  const availableEfforts = Array.isArray(currentModel?.effort_levels) ? currentModel.effort_levels : []
+
   if (!isOpen) return null
 
   return (
@@ -1093,7 +1116,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             setSelectedRuntime(e.target.value)
             startNewSession()
           }}
-          title="Locally installed AI agent (via monomind)"
+          disabled={isCoder}
+          title={isCoder ? `Coder mode runs on ${CODER_RUNTIME}` : 'Locally installed AI agent (via monomind)'}
           style={{ ...selectStyle, flex: 1 }}
         >
           {runtimes.length === 0 && (
@@ -1128,7 +1152,16 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         ) : (runtimeModels.length > 0 || runtimeModelsLoading) ? (
           <select
             value={selectedModel}
-            onChange={e => { setSelectedModel(e.target.value); startNewSession() }}
+            onChange={e => {
+              const nextId = e.target.value
+              setSelectedModel(nextId)
+              const nextM = runtimeModels.find(m => m.id === nextId)
+              const nextEfforts = Array.isArray(nextM?.effort_levels) ? nextM.effort_levels : []
+              if (selectedEffort && !nextEfforts.includes(selectedEffort)) {
+                setSelectedEffort('')
+              }
+              startNewSession()
+            }}
             disabled={runtimeModelsLoading}
             title="Model available for the selected agent runtime"
             style={{ ...selectStyle, flex: 1 }}
@@ -1157,6 +1190,23 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
               outline: 'none',
             }}
           />
+        )}
+        {!runtimeUninitialized && availableEfforts.length > 0 && (
+          <select
+            value={selectedEffort}
+            onChange={e => { setSelectedEffort(e.target.value); startNewSession() }}
+            disabled={runtimeModelsLoading}
+            title="Reasoning effort level for the selected model"
+            aria-label="Effort level"
+            style={{ ...selectStyle, flex: '0 0 auto', minWidth: 72 }}
+          >
+            <option value="">Auto</option>
+            {availableEfforts.map(eff => (
+              <option key={eff} value={eff}>
+                {eff.charAt(0).toUpperCase() + eff.slice(1)}
+              </option>
+            ))}
+          </select>
         )}
         </>
         )}

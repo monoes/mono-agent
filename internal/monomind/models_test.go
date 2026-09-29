@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -64,7 +65,7 @@ func TestListModelsAntigravityParsesTabSeparatedOutput(t *testing.T) {
 		t.Fatalf("got %d models, want %d: %+v", len(models), len(want), models)
 	}
 	for i, m := range models {
-		if m != want[i] {
+		if !reflect.DeepEqual(m, want[i]) {
 			t.Errorf("model[%d] = %+v, want %+v", i, m, want[i])
 		}
 	}
@@ -79,7 +80,7 @@ func TestListModelsAntigravityRequiresBinary(t *testing.T) {
 func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 	script := "#!/bin/sh\ncat <<'EOF'\n" +
 		`{"models":[` +
-		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},` +
+		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},` +
 		`{"slug":"gpt-reserve","display_name":"GPT-Reserve","visibility":"hide"},` +
 		`{"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide"},` +
 		`{"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list"}` +
@@ -92,14 +93,14 @@ func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 		t.Fatalf("ListModels(codex) unexpected error: %v", err)
 	}
 	want := []RuntimeModel{
-		{ID: "gpt-6-astra", Label: "GPT-6-Astra"},
+		{ID: "gpt-6-astra", Label: "GPT-6-Astra", EffortLevels: []string{"low", "medium", "high"}},
 		{ID: "gpt-5.5", Label: "GPT-5.5"},
 	}
 	if len(models) != len(want) {
 		t.Fatalf("got %d models, want %d (hidden entries should be filtered out): %+v", len(models), len(want), models)
 	}
 	for i, m := range models {
-		if m != want[i] {
+		if !reflect.DeepEqual(m, want[i]) {
 			t.Errorf("model[%d] = %+v, want %+v", i, m, want[i])
 		}
 	}

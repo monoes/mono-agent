@@ -13,9 +13,10 @@ import (
 // RuntimeModel is one selectable model for an agent runtime — an id to pass
 // as --model plus a human-readable label for the picker.
 type RuntimeModel struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Description  string   `json:"description,omitempty"`
+	EffortLevels []string `json:"effort_levels,omitempty"`
 }
 
 // claudeModels is curated by hand: unlike antigravity and codex (see
@@ -30,16 +31,16 @@ type RuntimeModel struct {
 // agent-models, see listAgentModels), and this copy of it as of 2026-09-28
 // is only the fallback for a monomind without that capability.
 var claudeModels = []RuntimeModel{
-	{ID: "claude-opus-5-5", Label: "Opus 5.5"},
-	{ID: "claude-fable-5-1", Label: "Fable 5.1"},
-	{ID: "claude-sonnet-5", Label: "Sonnet 5"},
+	{ID: "claude-opus-5-5", Label: "Opus 5.5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-fable-5-1", Label: "Fable 5.1", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-sonnet-5", Label: "Sonnet 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
 	{ID: "claude-haiku-4-5-20251001", Label: "Haiku 4.5"},
-	{ID: "claude-opus-5", Label: "Opus 5"},
-	{ID: "claude-fable-5", Label: "Fable 5"},
-	{ID: "claude-opus-4-8", Label: "Opus 4.8"},
-	{ID: "claude-opus-4-7", Label: "Opus 4.7"},
-	{ID: "claude-opus-4-6", Label: "Opus 4.6"},
-	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6"},
+	{ID: "claude-opus-5", Label: "Opus 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-fable-5", Label: "Fable 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-8", Label: "Opus 4.8", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-7", Label: "Opus 4.7", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-6", Label: "Opus 4.6", EffortLevels: []string{"low", "medium", "high", "max"}},
+	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6", EffortLevels: []string{"low", "medium", "high", "max"}},
 }
 
 // ListModels returns the models selectable for runtimeID's --model flag.
@@ -127,14 +128,15 @@ func listAntigravityModels(ctx context.Context, binary string) ([]RuntimeModel, 
 }
 
 // codexModelCatalog mirrors the fields of `codex debug models`' JSON output
-// that matter here — that command dumps far more per-model metadata (full
-// system-prompt text, reasoning-effort tiers, etc.) which is irrelevant to
-// a model picker and deliberately left unparsed.
+// that matter here: slug, display name, visibility, and supported reasoning levels.
 type codexModelCatalog struct {
 	Models []struct {
-		Slug        string `json:"slug"`
-		DisplayName string `json:"display_name"`
-		Visibility  string `json:"visibility"`
+		Slug                     string `json:"slug"`
+		DisplayName              string `json:"display_name"`
+		Visibility               string `json:"visibility"`
+		SupportedReasoningLevels []struct {
+			Effort string `json:"effort"`
+		} `json:"supported_reasoning_levels"`
 	} `json:"models"`
 }
 
@@ -165,7 +167,13 @@ func listCodexModels(ctx context.Context, binary string) ([]RuntimeModel, error)
 		if label == "" {
 			label = m.Slug
 		}
-		models = append(models, RuntimeModel{ID: m.Slug, Label: label})
+		var efforts []string
+		for _, l := range m.SupportedReasoningLevels {
+			if l.Effort != "" {
+				efforts = append(efforts, l.Effort)
+			}
+		}
+		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: efforts})
 	}
 	return models, nil
 }
@@ -177,11 +185,12 @@ const CapAgentModels = "agent-models"
 type agentModelsResult struct {
 	Supported bool `json:"supported"`
 	Models    []struct {
-		ID          string `json:"id"`
-		ResolvedID  string `json:"resolved_id"`
-		Label       string `json:"label"`
-		Description string `json:"description"`
-		Default     bool   `json:"default"`
+		ID           string   `json:"id"`
+		ResolvedID   string   `json:"resolved_id"`
+		Label        string   `json:"label"`
+		Description  string   `json:"description"`
+		Default      bool     `json:"default"`
+		EffortLevels []string `json:"effort_levels"`
 	} `json:"models"`
 	Error *struct {
 		Code    string `json:"code"`
@@ -223,7 +232,12 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 		if m.ID == "" {
 			continue
 		}
-		models = append(models, RuntimeModel{ID: m.ID, Label: modelLabel(m.Label, m.Description, m.ID, m.Default), Description: m.Description})
+		models = append(models, RuntimeModel{
+			ID:           m.ID,
+			Label:        modelLabel(m.Label, m.Description, m.ID, m.Default),
+			Description:  m.Description,
+			EffortLevels: m.EffortLevels,
+		})
 	}
 	return models, res.Supported, nil
 }

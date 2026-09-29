@@ -608,13 +608,16 @@ type chatTurnListItem struct {
 // CreateChatConversation creates a new scoped agent conversation.
 // workflowID is the tool/ownership context ("general"/"draft"/an owned
 // workflow id).
-func (a *App) CreateChatConversation(workflowID, runtimeID, model string) string {
+func (a *App) CreateChatConversation(workflowID, runtimeID, model, effort string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
 	args := []string{"chat", "history", "create", "--runtime", runtimeID, "--workflow", workflowID}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	var rec ai.ConversationRecord
 	if err := a.chatSup.cli(a.getActiveProfileID(), &rec, args...); err != nil {

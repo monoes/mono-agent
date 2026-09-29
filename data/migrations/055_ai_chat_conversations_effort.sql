@@ -1,0 +1,10 @@
+-- 055_ai_chat_conversations_effort.sql
+--
+-- Lets an agent conversation record the reasoning effort level (e.g. low,
+-- medium, high, max) requested for its model, when the model supports extended
+-- thinking. Empty (the default) means auto / runtime default.
+--
+-- ALTER TABLE ... ADD COLUMN cannot be guarded with IF NOT EXISTS in SQLite.
+-- The column addition therefore lives in internal/ai/chat_events.go
+-- (initChatEventTables via addColumnIfMissing), which runs on process start.
+-- This file reserves the migration slot and records the schema intent.

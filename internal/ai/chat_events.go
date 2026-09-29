@@ -49,6 +49,7 @@ type Conversation struct {
 	RuntimeID       string `json:"runtimeId,omitempty"`
 	ProviderID      string `json:"providerId,omitempty"`
 	Model           string `json:"model,omitempty"`
+	Effort          string `json:"effort,omitempty"`
 	SessionID       string `json:"sessionId,omitempty"`
 	// Mode is "assistant" or "coder". A coder conversation runs every turn
 	// with full access inside Cwd, fixed at creation: Claude Code keys its
@@ -150,6 +151,7 @@ func (s *AIStore) initChatEventTables() error {
 	for _, alter := range []string{
 		`ALTER TABLE ai_chat_conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'assistant'`,
 		`ALTER TABLE ai_chat_conversations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ai_chat_conversations ADD COLUMN effort TEXT NOT NULL DEFAULT ''`,
 	} {
 		if err := addColumnIfMissing(s.db, alter); err != nil {
 			return err
@@ -171,7 +173,12 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // when unused by an agent-backend conversation) so provider conversations
 // always have an opaque model-context bucket distinct from workflowContext.
 func (s *AIStore) CreateConversation(profileID, backend, workflowContext, runtimeID, providerID, model string) (Conversation, error) {
-	return s.CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "")
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "", "")
+}
+
+// CreateConversationEffort is CreateConversation with an explicit effort level.
+func (s *AIStore) CreateConversationEffort(profileID, backend, workflowContext, runtimeID, providerID, model, effort string) (Conversation, error) {
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "", effort)
 }
 
 // Conversation modes.
@@ -183,6 +190,11 @@ const (
 // CreateConversationMode is CreateConversation with an explicit mode and
 // working folder (coder conversations need one).
 func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd string) (Conversation, error) {
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd, "")
+}
+
+// CreateConversationModeEffort is CreateConversationMode with an explicit effort level.
+func (s *AIStore) CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd, effort string) (Conversation, error) {
 	switch mode {
 	case ModeAssistant:
 		cwd = ""
@@ -205,6 +217,7 @@ func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, ru
 		RuntimeID:       runtimeID,
 		ProviderID:      providerID,
 		Model:           model,
+		Effort:          effort,
 		Mode:            mode,
 		Cwd:             cwd,
 		HistoryKey:      uuid.NewString(),
@@ -212,9 +225,9 @@ func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, ru
 		UpdatedAt:       now,
 	}
 	const q = `INSERT INTO ai_chat_conversations
-		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`
-	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.Mode, c.Cwd, c.HistoryKey, c.CreatedAt, c.UpdatedAt); err != nil {
+		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`
+	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.Mode, c.Cwd, c.HistoryKey, c.CreatedAt, c.UpdatedAt, c.Effort); err != nil {
 		return Conversation{}, fmt.Errorf("create conversation: %w", err)
 	}
 	return c, nil
@@ -228,11 +241,11 @@ func (s *AIStore) GetConversation(id, profileID string) (Conversation, error) {
 	if profileID == "" {
 		profileID = "default"
 	}
-	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
+	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort
 		FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`
 	var c Conversation
 	err := s.db.QueryRow(q, id, profileID).Scan(
-		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt, &c.Effort,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Conversation{}, ErrConversationNotFound
@@ -254,7 +267,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 		limit = 50
 	}
 	args := []any{profileID}
-	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
+	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort
 		FROM ai_chat_conversations WHERE profile_id = ?`
 	if cursor != "" {
 		q += ` AND updated_at || '|' || id < ?`
@@ -272,7 +285,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt, &c.Effort); err != nil {
 			return nil, "", fmt.Errorf("scan conversation: %w", err)
 		}
 		out = append(out, c)
@@ -807,6 +820,7 @@ type ConversationRecord struct {
 	RuntimeID       string `json:"runtime_id"`
 	ProviderID      string `json:"provider_id"`
 	Model           string `json:"model"`
+	Effort          string `json:"effort,omitempty"`
 	SessionID       string `json:"session_id"`
 	Mode            string `json:"mode"`
 	Cwd             string `json:"cwd"`
@@ -818,7 +832,7 @@ type ConversationRecord struct {
 func (c Conversation) Record() ConversationRecord {
 	return ConversationRecord{
 		ID: c.ID, ProfileID: c.ProfileID, Backend: c.Backend, WorkflowContext: c.WorkflowContext,
-		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, SessionID: c.SessionID,
+		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, Effort: c.Effort, SessionID: c.SessionID,
 		Mode: c.Mode, Cwd: c.Cwd, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
@@ -827,7 +841,7 @@ func (c Conversation) Record() ConversationRecord {
 func (r ConversationRecord) Conversation() Conversation {
 	return Conversation{
 		ID: r.ID, ProfileID: r.ProfileID, Backend: r.Backend, WorkflowContext: r.WorkflowContext,
-		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, SessionID: r.SessionID,
+		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, Effort: r.Effort, SessionID: r.SessionID,
 		Mode: r.Mode, Cwd: r.Cwd, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

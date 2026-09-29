@@ -149,6 +149,22 @@ describe('AIChatPanel coder mode', () => {
     await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '/home/u/src/my-repo', false))
   })
 
+  it('locks the runtime to claude in coder mode so another runtime\'s model never reaches Claude Code', async () => {
+    m.coderStatus.mockResolvedValue(status())
+    m.coderWorkspaceRoot.mockResolvedValue({ path: WS, created: false, git: true, init: { created: [], skipped: [] } })
+    m.createCoderConversation.mockResolvedValue({ id: 'coder-4', backend: 'agent', mode: 'coder', cwd: WS })
+    const { api } = await import('../services/api.js')
+    api.getAgentRuntimeModels.mockImplementation(rt => Promise.resolve(rt === 'claude' ? [{ id: 'sonnet' }] : [{ id: 'opencode/big-pickle' }]))
+    await openPanel()
+    fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
+    const runtimeSelect = screen.getByTitle(/Locally installed AI agent|Coder mode runs on/)
+    await waitFor(() => expect(runtimeSelect).toHaveValue('claude'))
+    expect(runtimeSelect).toBeDisabled()
+    await sendMessage('who are you')
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', WS, false))
+    api.getAgentRuntimeModels.mockResolvedValue([{ id: 'sonnet' }])
+  })
+
   it('an assistant chat still creates an assistant conversation with tools', async () => {
     m.coderStatus.mockResolvedValue(status())
     m.createChatConversation.mockResolvedValue({ id: 'a-1', backend: 'agent', mode: 'assistant' })

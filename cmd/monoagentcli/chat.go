@@ -56,6 +56,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		runtime   string
 		model     string
+		effort    string
 		resume    string
 		canvasID  string
 		historyID string
@@ -113,8 +114,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				if conversationID == "" || turnID == "" {
 					return errInvalidInput("--conversation and --turn go together")
 				}
-				if runtime != "" || model != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace || coderRoot {
-					return errInvalidInput("--runtime, --model, --resume, --canvas, --history-id, --mode and --cwd come from the conversation; drop them with --conversation")
+				if runtime != "" || model != "" || effort != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace || coderRoot {
+					return errInvalidInput("--runtime, --model, --effort, --resume, --canvas, --history-id, --mode and --cwd come from the conversation; drop them with --conversation")
 				}
 				jstore, jprofile, closeJournal, err := openChatHistory(cfg)
 				if err != nil {
@@ -141,13 +142,13 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 						journal.fail(retErr)
 					}
 				}()
-				runtime, model, resume = conv.RuntimeID, conv.Model, conv.SessionID
+				runtime, model, resume, effort = conv.RuntimeID, conv.Model, conv.SessionID, conv.Effort
 				noHistory = true
 				if conv.Mode == ai.ModeCoder {
 					if tools != "" {
 						return errInvalidInput("--tools does not apply to a coder conversation: it has full access")
 					}
-					return runCoderTurn(cmd, cfg, journal, coderTurn{prompt: prompt, model: model, resume: resume, cwd: conv.Cwd})
+					return runCoderTurn(cmd, cfg, journal, coderTurn{prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd})
 				}
 			}
 			if mode == ai.ModeCoder {
@@ -161,7 +162,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runCoderTurn(cmd, cfg, nil, coderTurn{prompt: prompt, model: model, resume: resume, cwd: dir})
+				return runCoderTurn(cmd, cfg, nil, coderTurn{prompt: prompt, model: model, effort: effort, resume: resume, cwd: dir})
 			}
 			if mode != "" && mode != ai.ModeAssistant {
 				return errInvalidInput("unknown --mode %q (assistant or coder)", mode)
@@ -291,6 +292,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				Runtime:   runtime,
 				Prompt:    prompt,
 				Model:     model,
+				Effort:    effort,
 				Resume:    resume,
 				Timeout:   timeout,
 				BudgetUSD: budget,
@@ -521,6 +523,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	}
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimicode, … — see `agent scan`)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override for the runtime")
+	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort level for the model")
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")
 	cmd.Flags().StringVar(&historyID, "history-id", "", "Persistence/session bucket key (defaults to --canvas's id when unset)")

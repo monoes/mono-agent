@@ -77,7 +77,7 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
-export function CreateChatConversation(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
 

@@ -152,10 +152,17 @@ describe('new chat bindings', () => {
     eventListeners.clear()
   })
 
-  it('createChatConversation parses a successful conversation payload', async () => {
+  it('createChatConversation parses a successful conversation payload and forwards effort', async () => {
+    GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent', effort: 'high' }))
+    const conv = await api.createChatConversation('general', 'claude', 'sonnet', 'high')
+    expect(GoApp.CreateChatConversation).toHaveBeenCalledWith('general', 'claude', 'sonnet', 'high')
+    expect(conv).toEqual({ id: 'conv-1', backend: 'agent', effort: 'high' })
+  })
+
+  it('createChatConversation defaults effort to empty string', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent' }))
-    const conv = await api.createChatConversation('general', 'claude', '')
-    expect(conv).toEqual({ id: 'conv-1', backend: 'agent' })
+    await api.createChatConversation('general', 'claude', '')
+    expect(GoApp.CreateChatConversation).toHaveBeenCalledWith('general', 'claude', '', '')
   })
 
   it('createChatConversation rejects on the {error} shape instead of resolving it', async () => {

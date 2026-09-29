@@ -22,12 +22,13 @@ Element.prototype.scrollTo = Element.prototype.scrollTo || (() => {})
 
 const getAgentRuntimeModels = vi.fn()
 const startChatTurn = vi.fn()
+const createChatConversation = vi.fn().mockResolvedValue({ id: 'conv-1' })
 
 // claude has a curated model list; opencode is unknown to ListModels and so
 // comes back empty — the exact pairing that produced the stale-model bug.
 const CLAUDE_MODELS = [
-  { id: 'claude-opus-5', label: 'Opus 5' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-opus-5', label: 'Opus 5', effort_levels: ['low', 'medium', 'high', 'max'] },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
 ]
 
 vi.mock('../services/api.js', async (importOriginal) => {
@@ -44,7 +45,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
       }),
       getAgentRuntimeModels: (...args) => getAgentRuntimeModels(...args),
       listChatConversations: vi.fn().mockResolvedValue({ items: [] }),
-      createChatConversation: vi.fn().mockResolvedValue({ id: 'conv-1' }),
+      createChatConversation: (...args) => createChatConversation(...args),
       startChatTurn: (...args) => startChatTurn(...args),
       getChatTurns: vi.fn().mockResolvedValue({ items: [] }),
       getChatEvents: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
@@ -125,3 +126,56 @@ describe('AIChatPanel — an agent runtime with no available models', () => {
     expect(screen.getByPlaceholderText(/message|ask/i)).not.toBeDisabled()
   })
 })
+
+describe('AIChatPanel — model reasoning effort levels', () => {
+  it('renders the effort dropdown when the selected model supports effort tiers', async () => {
+    await mountWith('claude')
+    const effortSelect = await screen.findByTitle(/Reasoning effort level for the selected model/i)
+    expect(effortSelect).toBeInTheDocument()
+    expect(effortSelect.value).toBe('')
+
+    const options = Array.from(effortSelect.querySelectorAll('option')).map(o => o.value)
+    expect(options).toEqual(['', 'low', 'medium', 'high', 'max'])
+  })
+
+  it('hides the effort dropdown when switching to a model without effort tiers', async () => {
+    await mountWith('claude')
+    expect(await screen.findByTitle(/Reasoning effort level for the selected model/i)).toBeInTheDocument()
+
+    const modelSelect = screen.getByTitle(/Model available for the selected agent runtime/i)
+    fireEvent.change(modelSelect, { target: { value: 'claude-haiku-4-5' } })
+
+    await waitFor(() => {
+      expect(screen.queryByTitle(/Reasoning effort level for the selected model/i)).not.toBeInTheDocument()
+    })
+  })
+
+  it('forwards the selected effort to createChatConversation on message send', async () => {
+    await mountWith('claude')
+    const effortSelect = await screen.findByTitle(/Reasoning effort level for the selected model/i)
+    fireEvent.change(effortSelect, { target: { value: 'high' } })
+
+    const box = screen.getByPlaceholderText(/message|ask/i)
+    fireEvent.change(box, { target: { value: 'explain monads' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(createChatConversation).toHaveBeenCalledWith('general', 'claude', 'claude-opus-5', 'high')
+    })
+  })
+
+  it('forwards empty effort when sending with a model without effort tiers', async () => {
+    await mountWith('claude')
+    const modelSelect = screen.getByTitle(/Model available for the selected agent runtime/i)
+    fireEvent.change(modelSelect, { target: { value: 'claude-haiku-4-5' } })
+
+    const box = screen.getByPlaceholderText(/message|ask/i)
+    fireEvent.change(box, { target: { value: 'fast question' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(createChatConversation).toHaveBeenCalledWith('general', 'claude', 'claude-haiku-4-5', '')
+    })
+  })
+})
+
