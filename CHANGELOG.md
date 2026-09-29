@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sandboxed agent turns.** Chat, `agent.ask`, capture summaries, the jev text helper, recording analysis, application matching, config generation, the org `model` decider, `agent test` and `agent validate` now run sandboxed where monomind can do it. Coder mode is unchanged.
+  - With monomind 2.11.1 or newer, codex and grok turns run in their own sandbox today (`--env MONOMIND_GIT_LEVEL=read`: codex `workspace-write` with network, grok `workspace`).
+  - Once monomind advertises `agent-exec-sandbox` (monomind#396), every runtime gets `agent exec --sandbox workspace-write`.
+  - Until then, copilot, qwen, antigravity and the other runtimes run without a sandbox, and claude keeps its scoped access.
+  - Turns without a folder of their own run in an empty `~/.monoagent/workspaces/<purpose>`. The mode is one setting, `monomind.TurnSandboxMode`.
+  - The result is reported as `sandbox_status` on `chat`'s start event, as `turn.finished.sandbox` and an `agent.sandbox` notice in the chat journal, and as `_agent_sandbox` on `agent.ask` items.
+  - The chat shows a badge on each turn, for example "sandboxed", "scoped access", "no sandbox (this runtime needs monomind #396)" or "no sandbox (update monomind)".
+  - `doctor` has an info row saying which of these applies.
 - **Validated agent roster** (#225, first phase of the dynamic org epic #224):
   - `agent validate` tests every installed runtime's models with a one-word turn and stores what answered (`ok`, `auth`, `quota`, `model_unavailable`, `timeout`, …) with latency and cost. It supports `--dry-run`, `--stale-only`, and NDJSON progress with `--json`.
   - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.

@@ -219,3 +219,27 @@ func TestRuntimeInstallFixShowsWhatRuns(t *testing.T) {
 		t.Errorf("codex fix command %+v, want the npm package", f)
 	}
 }
+
+// The agent sandbox row is information either way, never a warning.
+func TestCheckMonomindAgentSandbox(t *testing.T) {
+	ctx := context.Background()
+	if res := checkMonomindAgentSandbox(ctx, &Env{}); res.Status != StatusSkip {
+		t.Errorf("no handshake: %+v", res)
+	}
+	vi := &monomind.VersionInfo{V: 1}
+	env := &Env{MonomindHandshake: func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }}
+	for _, tc := range []struct {
+		version string
+		caps    []string
+		summary string
+	}{
+		{"2.10.0", nil, "agent turns run without a sandbox until monomind supports agent exec --sandbox"},
+		{"2.18.5", nil, "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec --sandbox"},
+		{"9.0.0", []string{monomind.CapAgentExecSandbox}, "agent turns run in the runtime's sandbox"},
+	} {
+		vi.Version, vi.Capabilities = tc.version, tc.caps
+		if res := checkMonomindAgentSandbox(ctx, env); res.Status != StatusInfo || res.Summary != tc.summary {
+			t.Errorf("monomind %s: %+v", tc.version, res)
+		}
+	}
+}
