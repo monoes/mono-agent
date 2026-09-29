@@ -293,6 +293,11 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				Resume:    resume,
 				Timeout:   timeout,
 				BudgetUSD: budget,
+				// A canvas-only or plain turn keeps its empty --cwd unless it
+				// is sandboxed; then it runs in an empty chat workspace (no
+				// guidance files, so none of the overhead described above).
+				Sandbox:          monomind.TurnSandboxMode,
+				WorkspacePurpose: monomind.WorkspaceChat,
 			}
 			if effort != "" {
 				set, _ := capabilityProbe(cmd)

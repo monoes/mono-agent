@@ -115,6 +115,9 @@ func evaluateAgent(ctx context.Context, bin, runtime string, app *applications.A
 		Runtime: runtime,
 		Prompt:  buildPrompt(app, excerpts),
 		Timeout: evaluateTimeout,
+		// The excerpts travel in the prompt; the agent needs no files.
+		Sandbox:          monomind.TurnSandboxMode,
+		WorkspacePurpose: monomind.WorkspaceMatching,
 	}, func(ev monomind.Event) {})
 	if err != nil {
 		return nil, fmt.Errorf("agent exec: %w", err)

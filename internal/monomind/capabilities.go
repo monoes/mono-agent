@@ -127,4 +127,7 @@ func ResetCapabilityCache() {
 	capCache.Lock()
 	capCache.set = nil
 	capCache.Unlock()
+	binCaps.Lock()
+	binCaps.sets, binCaps.at = nil, nil
+	binCaps.Unlock()
 }

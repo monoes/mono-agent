@@ -148,7 +148,8 @@ func (r ExecRunner) run(ctx context.Context, prompt string, stderr io.Writer) (s
 	if budget <= 0 {
 		budget = DefaultBudgetUSD
 	}
-	opts := monomind.ExecOptions{Bin: bin, Runtime: runtime, Model: r.Model, Prompt: prompt, BudgetUSD: budget, Stderr: stderr}
+	opts := monomind.ExecOptions{Bin: bin, Runtime: runtime, Model: r.Model, Prompt: prompt, BudgetUSD: budget, Stderr: stderr,
+		Sandbox: monomind.TurnSandboxMode, WorkspacePurpose: monomind.WorkspaceRecordReview}
 	if deadline, ok := ctx.Deadline(); ok {
 		// Let the runtime stop itself a little before we would kill it.
 		if d := time.Until(deadline) - 5*time.Second; d > 0 {

@@ -91,6 +91,8 @@ type Event struct {
 	HasExitCode bool `json:"-"`
 
 	CoderFields
+	// start: the sandbox the turn runs in (see sandbox.go).
+	SandboxFields
 }
 
 // CoderFields are the events and fields full-access ("coder") turns add to
@@ -174,6 +176,8 @@ type eventJSON struct {
 	ExitCode *int `json:"exit_code,omitempty"`
 
 	CoderFields
+	// start: the sandbox the turn runs in (see sandbox.go).
+	SandboxFields
 }
 
 // UnmarshalJSON decodes the wire event and records, in HasInputTokens/
@@ -195,7 +199,8 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		ID:                   w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
 		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
 		Code: w.Code, ErrMessage: w.ErrMessage, Fatal: w.Fatal,
-		CoderFields: w.CoderFields,
+		CoderFields:   w.CoderFields,
+		SandboxFields: w.SandboxFields,
 	}
 	if w.ExitCode != nil {
 		e.ExitCode = *w.ExitCode
@@ -233,7 +238,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		ID:                   e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
 		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
 		Code: e.Code, ErrMessage: e.ErrMessage, Fatal: e.Fatal,
-		CoderFields: e.CoderFields,
+		CoderFields:   e.CoderFields,
+		SandboxFields: e.SandboxFields,
 	}
 	if e.HasExitCode || e.ExitCode != 0 {
 		w.ExitCode = &e.ExitCode

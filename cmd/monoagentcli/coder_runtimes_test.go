@@ -118,7 +118,7 @@ func TestCoderTurnOnCodex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex turn: %v\n%s", err, out)
 	}
-	execLine := lastExecLine(t, argsLog)
+	execLine := lastAgentExecLine(t, argsLog)
 	for _, want := range []string{"--runtime codex", "--model gpt-6", "--effort high", "--access full", "--settings user,project,local", "--cwd " + cwd} {
 		if !strings.Contains(execLine, want) {
 			t.Errorf("exec argv lacks %q: %s", want, execLine)
@@ -203,7 +203,7 @@ func TestCoderTurnEffortFallsBackToClaudeEnv(t *testing.T) {
 	if out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "go"); err != nil {
 		t.Fatalf("turn: %v\n%s", err, out)
 	}
-	execLine := lastExecLine(t, argsLog)
+	execLine := lastAgentExecLine(t, argsLog)
 	if !strings.Contains(execLine, "--env CLAUDE_EFFORT=max") || strings.Contains(execLine, "--effort") {
 		t.Errorf("exec argv: %s", execLine)
 	}
@@ -225,8 +225,8 @@ func TestCoderTurnRefusesRuntimeWithoutFullAccess(t *testing.T) {
 	}
 }
 
-// lastExecLine is the last `agent exec` argv the fake monomind logged.
-func lastExecLine(t *testing.T, argsLog string) string {
+// lastAgentExecLine is the last `agent exec` argv the fake monomind logged.
+func lastAgentExecLine(t *testing.T, argsLog string) string {
 	t.Helper()
 	logged, _ := os.ReadFile(argsLog)
 	var line string

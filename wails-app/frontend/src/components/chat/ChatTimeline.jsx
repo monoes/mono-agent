@@ -2,6 +2,7 @@ import { AlertTriangle, Info, AlertCircle, Loader, FolderOpen } from 'lucide-rea
 import { ChatMarkdown } from './ChatMarkdown.jsx'
 import { ToolActivityCard } from './ToolActivityCard.jsx'
 import { CoderBackgroundBanner } from './CoderBackgroundBanner.jsx'
+import { SandboxBadge } from './SandboxBadge.jsx'
 
 const NOTICE_ICON = {
   info: Info,
@@ -44,7 +45,7 @@ function NoticeBanner({ notice }) {
 export function ChatTimeline({ state, turnId = '', isLive = true }) {
   const { parts, calls } = state
   const notices = state.notices || []
-  if (parts.length === 0 && notices.length === 0) return null
+  if (parts.length === 0 && notices.length === 0 && !state.sandbox) return null
 
   const childrenOf = {}
   for (const part of parts) {
@@ -76,6 +77,7 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
 
   return (
     <div data-testid="chat-timeline" style={hasNative ? { alignSelf: 'stretch' } : undefined}>
+      {state.sandbox && <SandboxBadge status={state.sandbox} />}
       {notices.filter(n => n.code === 'coder.workspace').slice(-1).map((notice, i) => (
         <div key={`ws-${i}`} data-testid="coder-workspace-line" style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
           <FolderOpen size={10} style={{ flexShrink: 0 }} />

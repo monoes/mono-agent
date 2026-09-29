@@ -229,6 +229,10 @@ type TurnFinishedPayload struct {
 	Code         string `json:"code,omitempty"`
 	ExitCode     *int   `json:"exitCode"`
 	HistorySaved bool   `json:"historySaved"`
+	// Sandbox is the sandbox the turn ran in (monomind.SandboxStatus*:
+	// "sandboxed", "unsupported", "needs-monomind", "off"); empty when the
+	// turn asked for none (coder mode) or never got that far.
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 // Record is an Event as `monoagentcli chat` prints it: a snake_case

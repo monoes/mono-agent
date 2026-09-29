@@ -44,6 +44,9 @@ func TestJournaledRateLimitedTurnThenNextTurn(t *testing.T) {
 	for _, rec := range turn.byType(chatevents.EventNotice) {
 		var n chatevents.NoticePayload
 		json.Unmarshal(rec.Payload, &n)
+		if n.Code == "agent.sandbox" { // every turn's sandbox notice (#236), not a rate-limit one
+			continue
+		}
 		got = append(got, n)
 	}
 	if len(got) != 3 ||

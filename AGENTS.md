@@ -574,6 +574,43 @@ login (and its bill) is what the turn uses.
   Node.js >= 22.12; without one, `monoagentcli nodejs install` provides a
   private copy. Install monomind itself with
   `npm install -g @monoes/monomindcli` or the `monomind.install` doctor fix.
+- **Sandbox.** Every agent turn except coder mode asks for
+  `monomind.TurnSandboxMode` (`workspace-write`: the turn writes only its
+  `--cwd` and the temp dir, reads elsewhere, network on). That covers chat,
+  `agent test`, `agent validate`, `agent.ask`, the jev TYPE_TEXT helper,
+  capture summaries, recording analysis, application matching, config
+  generation and the org `model` decider. `monomind.SandboxArgs` is the one
+  place that decides what that means:
+  - monomind advertises `agent-exec-sandbox` (monomind#396): `agent exec
+    --sandbox workspace-write`, for every runtime;
+  - otherwise, monomind >= 2.11.1 and runtime `codex` or `grok`:
+    `--env MONOMIND_GIT_LEVEL=read`. The runner reads that level from the
+    turn's env (never the caller's process env) and starts codex with
+    `--sandbox workspace-write` plus network, grok with `--sandbox
+    workspace`. It also keeps monomind's git guard at read.
+  - `claude` without the capability keeps `--access scoped` (status
+    `scoped`); copilot, qwen, antigravity and every other runtime run
+    unsandboxed until #396 (status `awaiting-monomind`); monomind older
+    than 2.11.1 gets nothing (`needs-monomind`). No args means the turn
+    runs exactly as before.
+  - **Folder.** A turn with a folder keeps it (the profile root for chat
+    with monoagent tools, the decider's and validation's own empty
+    folders). One without runs in an empty `~/.monoagent/workspaces/<purpose>`
+    (`chat`, `agent-ask`, `text-helper`, `summary`, `record-analyze`,
+    `matching`, `agent-test`), created only when sandbox args are passed.
+    `claude` always keeps its folder: its sessions are keyed by folder.
+  - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
+    `scoped`, `unsupported` (after #396, a runtime that can't honour it),
+    `awaiting-monomind`, `needs-monomind` or `off`. Once monomind reports
+    `sandbox` / `sandbox_unsupported` on the start event, that report wins.
+    Exec adds the verdict to the start event as `sandbox_status`, so `chat`
+    stdout carries it. A journaled turn records it as an `agent.sandbox`
+    notice (message = the status) and in `turn.finished.sandbox`, and
+    `agent.ask` items get `_agent_sandbox`. The app shows it as a badge.
+  - **Doctor.** The `monomind.agent_sandbox` row is info either way.
+  - **Coder mode** asks for no sandbox; it has its own full-access contract.
+  - Every monomind name (flag, modes, capability, env level, start-event
+    fields) lives only in `internal/monomind/sandbox.go`.
 - **Checking it.** `monoagentcli doctor --group monomind` checks Node.js,
   the binary, the protocol handshake (version floor
   `internal/monomind.MinMonomindVersion`, currently `2.10.0`), capabilities
