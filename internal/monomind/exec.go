@@ -25,9 +25,9 @@ type ExecOptions struct {
 	Prompt  string
 	Model   string
 	// Effort sets the reasoning effort level (e.g. "low", "medium", "high", "xhigh", "max").
-	Effort  string
-	Cwd     string
-	Resume  string
+	Effort string
+	Cwd    string
+	Resume string
 	// SystemPrompt, when set, is written to a temp file and passed via
 	// --system-file (avoids argv limits).
 	SystemPrompt string
