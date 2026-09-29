@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -307,6 +308,10 @@ func TestRunUsesAgentTestJSONAndFallsBack(t *testing.T) {
 			t.Errorf("runtime %s: the \"default\" model must be passed as \"\"", runtime)
 		case "broken":
 			return nil, errors.New("unparseable output")
+		case "unsupported":
+			return nil, fmt.Errorf("%w: %w", ErrUseExec, monomind.ErrAgentTestUnsupported)
+		case "slow":
+			return nil, fmt.Errorf("no result within 45s: %w", context.DeadlineExceeded)
 		case "gone":
 			return &monomind.AgentTestResult{Status: "model_unavailable", LatencyMs: 300,
 				Error: &struct {
@@ -322,7 +327,12 @@ func TestRunUsesAgentTestJSONAndFallsBack(t *testing.T) {
 					LoginHint string `json:"login_hint,omitempty"`
 				}{Code: "runner-error", Message: "PiAgentRunner: pi failed (exit 1)\nstderr: No API key found for the selected model."}}, nil
 		case "future":
-			return &monomind.AgentTestResult{Status: "sandbox_denied", LatencyMs: 10}, nil
+			return &monomind.AgentTestResult{Status: "sandbox_denied", LatencyMs: 10,
+				Error: &struct {
+					Code      string `json:"code"`
+					Message   string `json:"message"`
+					LoginHint string `json:"login_hint,omitempty"`
+				}{Code: "sandbox", Message: "write outside the workspace"}}, nil
 		}
 		if timeout != 30*time.Second {
 			t.Errorf("timeout = %v", timeout)
@@ -330,14 +340,15 @@ func TestRunUsesAgentTestJSONAndFallsBack(t *testing.T) {
 		return &monomind.AgentTestResult{Status: "ok", Reply: strPtr("ok"), LatencyMs: 1430, LatencyFirstMs: i64(812),
 			InputTokens: i64(12), OutputTokens: i64(1), CostUSD: f64(0.0001), CostEstimated: true, RuntimeVersion: strPtr("0.52.0")}, nil
 	}
-	targets := []Target{{Runtime: "a", Model: "m"}, {Runtime: "a", Model: "gone"}, {Runtime: "b", Model: "broken"}, {Runtime: "c", Model: "future"}, {Runtime: "d", Model: "nokey"}}
+	targets := []Target{{Runtime: "a", Model: "m"}, {Runtime: "a", Model: "gone"}, {Runtime: "b", Model: "broken"},
+		{Runtime: "b", Model: "unsupported"}, {Runtime: "b", Model: "slow"}, {Runtime: "c", Model: "future"}, {Runtime: "d", Model: "nokey"}}
 	got := map[string]Result{}
 	var mu sync.Mutex
 	sum := Run(context.Background(), targets, RunOptions{Exec: exec, Test: test, Timeout: 30 * time.Second,
 		Save: func(r Result) error { mu.Lock(); got[r.Model] = r; mu.Unlock(); return nil }}, func(Line) {})
 
-	if testCalls.Load() != 5 || execCalls.Load() != 1 {
-		t.Errorf("test calls %d, exec calls %d; want 5 and 1 (only the unreadable one falls back)", testCalls.Load(), execCalls.Load())
+	if testCalls.Load() != 7 || execCalls.Load() != 1 {
+		t.Errorf("test calls %d, exec calls %d; want 7 and 1 (only ErrUseExec falls back)", testCalls.Load(), execCalls.Load())
 	}
 	if r := got["m"]; r.Status != StatusOK || r.LatencyMs != 1430 || r.LatencyFirstMs != 812 || r.TokensIn != 12 ||
 		!r.HasCost || !r.CostEstimated || r.RuntimeVersion != "0.52.0" {
@@ -346,16 +357,22 @@ func TestRunUsesAgentTestJSONAndFallsBack(t *testing.T) {
 	if r := got["gone"]; r.Status != StatusModelUnavailable || r.Detail != "issue with the selected model" {
 		t.Errorf("model_unavailable = %+v", r)
 	}
-	if r := got["broken"]; r.Status != StatusOK {
+	if r := got["broken"]; r.Status != StatusError || !strings.Contains(r.Detail, "unparseable output") {
+		t.Errorf("an agent test that ran but gave no result must not re-run through exec: %+v", r)
+	}
+	if r := got["unsupported"]; r.Status != StatusOK {
 		t.Errorf("fallback result = %+v", r)
 	}
-	if r := got["future"]; r.Status != StatusError || !strings.Contains(r.Detail, "sandbox_denied") {
-		t.Errorf("unknown status = %+v", r)
+	if r := got["slow"]; r.Status != StatusTimeout {
+		t.Errorf("deadline = %+v, want timeout", r)
+	}
+	if r := got["future"]; r.Status != StatusError || !strings.Contains(r.Detail, "sandbox_denied") || !strings.Contains(r.Detail, "write outside the workspace") {
+		t.Errorf("unknown status = %+v, want both the status and monomind's message", r)
 	}
 	if r := got["nokey"]; r.Status != StatusAuth {
 		t.Errorf("a sign-in message monomind calls error must still be auth, got %+v", r)
 	}
-	if sum.OK != 2 || sum.Failed != 3 {
+	if sum.OK != 2 || sum.Failed != 5 {
 		t.Errorf("summary = %+v", sum)
 	}
 }
@@ -373,10 +390,10 @@ func TestSaveKeepsCostEstimated(t *testing.T) {
 }
 
 func TestAgentTestFuncKeepsSandboxedRuntimesOnExec(t *testing.T) {
-	if AgentTestFunc(monomind.NewCapabilitySet("2.18.4", "agent-exec"), "") != nil {
+	if AgentTestFunc(monomind.NewCapabilitySet("2.18.4", "agent-exec"), "", nil) != nil {
 		t.Error("without agent-test-json there must be no TestFunc")
 	}
-	test := AgentTestFunc(monomind.NewCapabilitySet("2.18.5", monomind.CapAgentTestJSON), "/nonexistent/monomind")
+	test := AgentTestFunc(monomind.NewCapabilitySet("2.18.5", monomind.CapAgentTestJSON), "/nonexistent/monomind", nil)
 	if test == nil {
 		t.Fatal("agent-test-json must give a TestFunc")
 	}
@@ -384,14 +401,24 @@ func TestAgentTestFuncKeepsSandboxedRuntimesOnExec(t *testing.T) {
 	if _, err := test(context.Background(), "codex", "", time.Second); !errors.Is(err, ErrUseExec) {
 		t.Errorf("codex: err = %v, want ErrUseExec", err)
 	}
-	// claude has no monomind sandbox yet: agent test (which fails here on
-	// the fake binary path, proving it was tried).
+	// claude has no monomind sandbox: agent test (which fails here on the
+	// fake binary path, proving it was tried).
 	if _, err := test(context.Background(), "claude", "", time.Second); err == nil || errors.Is(err, ErrUseExec) {
 		t.Errorf("claude: err = %v, want an agent test error", err)
 	}
-	// Once agent exec has --sandbox, every runtime tests through exec.
-	all := AgentTestFunc(monomind.NewCapabilitySet("2.19.0", monomind.CapAgentTestJSON, monomind.CapAgentExecSandbox), "")
-	if _, err := all(context.Background(), "claude", "", time.Second); !errors.Is(err, ErrUseExec) {
-		t.Errorf("with agent-exec-sandbox: err = %v, want ErrUseExec", err)
+
+	// monomind 2.19.0 has agent exec --sandbox, but passes it only for a
+	// mode the runtime's scan lists. claude lists only "full", so exec
+	// would not sandbox it either: agent test. codex lists the mode: exec.
+	scan := &monomind.ScanResult{Agents: []monomind.ScanEntry{
+		{ID: "claude", Installed: true, SandboxModes: []string{monomind.SandboxFull}},
+		{ID: "codex", Installed: true, SandboxModes: []string{monomind.SandboxReadOnly, monomind.SandboxWorkspaceWrite, monomind.SandboxFull}},
+	}}
+	v219 := AgentTestFunc(monomind.NewCapabilitySet("2.19.0", monomind.CapAgentTestJSON, monomind.CapAgentExecSandbox), "/nonexistent/monomind", SandboxModes(scan))
+	if _, err := v219(context.Background(), "claude", "", time.Second); err == nil || errors.Is(err, ErrUseExec) {
+		t.Errorf("2.19.0 claude (modes [full]): err = %v, want an agent test error", err)
+	}
+	if _, err := v219(context.Background(), "codex", "", time.Second); !errors.Is(err, ErrUseExec) {
+		t.Errorf("2.19.0 codex (lists workspace-write): err = %v, want ErrUseExec", err)
 	}
 }

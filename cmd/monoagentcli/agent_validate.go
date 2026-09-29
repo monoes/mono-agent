@@ -71,9 +71,10 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 				Runtimes: runtimes, Models: models, StaleOnly: staleOnly, Now: time.Now(), MaxAge: maxAge,
 			})
 			// monomind's own structured check when it has one (#390); the
-			// exec-based test otherwise, and for runtimes that test sandboxed.
+			// exec-based test otherwise, and for runtimes whose turns run
+			// sandboxed (per their scanned sandbox_modes).
 			caps, _ := monomind.Capabilities(ctx)
-			test := agentroster.AgentTestFunc(caps, bin)
+			test := agentroster.AgentTestFunc(caps, bin, agentroster.SandboxModes(scan))
 			plan.Checker = agentroster.CheckerExec
 			if test != nil {
 				plan.Checker = agentroster.CheckerAgentTest
