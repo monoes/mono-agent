@@ -140,6 +140,7 @@ func (g *AgentGenerator) GenerateConfig(
 		Prompt:       prompt,
 		SystemPrompt: agentSystemPrompt,
 		Cwd:          sandbox,
+		Sandbox:      monomind.SandboxWorkspace,
 		BudgetUSD:    agentGenBudgetUSD,
 		Timeout:      170 * time.Second,
 	}, func(ev monomind.Event) {

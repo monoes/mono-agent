@@ -115,6 +115,9 @@ func newAgentTestCmd(cfg *globalConfig) *cobra.Command {
 				Runtime: runtime,
 				Prompt:  "Reply with the single word: ok",
 				Timeout: timeout,
+				// Tested the way chat runs it.
+				Sandbox:          monomind.SandboxWorkspace,
+				WorkspacePurpose: monomind.WorkspaceAgentTest,
 			}, (&turnPrinter{w: os.Stderr}).print)
 			if err != nil {
 				return err

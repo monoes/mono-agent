@@ -516,6 +516,35 @@ login (and its bill) is what the turn uses.
   Node.js >= 22.12; without one, `monoagentcli nodejs install` provides a
   private copy. Install monomind itself with
   `npm install -g @monoes/monomindcli` or the `monomind.install` doctor fix.
+- **Sandbox.** Every agent turn except coder mode asks monomind to run it
+  in the runtime's own sandbox (`agent exec --sandbox workspace`: it writes
+  only its `--cwd` and the temp dir, reads elsewhere, network on). That
+  covers chat, `agent test`, `agent validate`, `agent.ask`, the jev
+  TYPE_TEXT helper, capture summaries, recording analysis, application
+  matching, config generation and the org `model` decider. The flag is
+  passed only when monomind advertises `agent-exec-sandbox`; an older
+  monomind runs every turn exactly as before (approvals and sandbox off).
+  - **Folder.** A turn with a folder keeps it (the profile root for chat
+    with monoagent tools, the decider's and validation's own empty
+    folders). One without runs in an empty `~/.monoagent/workspaces/<purpose>`
+    (`chat`, `agent-ask`, `text-helper`, `summary`, `record-analyze`,
+    `matching`, `agent-test`), created only when the flag is passed. The
+    `claude` runtime is the exception: it keeps its folder, because
+    `--access scoped` already restricts it and its sessions are keyed by
+    folder.
+  - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
+    `unsupported` (the runtime has no sandbox mode and ran without one),
+    `needs-monomind` (no capability) or `off`. Exec adds it to the start
+    event as `sandbox_status`, next to monomind's `sandbox` and
+    `sandbox_unsupported`, so `chat` stdout carries it. A journaled turn
+    records it as an `agent.sandbox` notice (message = the status) and in
+    `turn.finished.sandbox`, and `agent.ask` items get `_agent_sandbox`. The
+    app shows it as a badge on the turn.
+  - **Doctor.** The `monomind.agent_sandbox` row is info either way.
+  - **Coder mode** never passes `--sandbox`; it has its own full-access
+    contract.
+  - The flag, values, capability and field names follow a contract proposed
+    to monomind and live only in `internal/monomind/sandbox.go`.
 - **Checking it.** `monoagentcli doctor --group monomind` checks Node.js,
   the binary, the protocol handshake (version floor
   `internal/monomind.MinMonomindVersion`, currently `2.10.0`), capabilities

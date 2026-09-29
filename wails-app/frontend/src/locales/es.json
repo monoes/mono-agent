@@ -611,5 +611,15 @@
     },
     "reinstall": "Reinstalar desde monoes.me",
     "reinstallNote": "Esta automatización integrada está desinstalada: sus nodos de flujo de trabajo no se ejecutan. Reinstálala desde monoes.me para volver a usarla."
+  },
+  "agentSandbox": {
+    "sandboxed": "en sandbox",
+    "unsupported": "sin sandbox (el entorno no lo admite)",
+    "needsMonomind": "sin sandbox (actualiza monomind)",
+    "off": "sin sandbox",
+    "sandboxedTitle": "Este turno se ejecutó en el sandbox del entorno del agente: solo podía escribir en su carpeta de trabajo.",
+    "unsupportedTitle": "Este entorno de agente no tiene modo sandbox, así que el turno se ejecutó sin él.",
+    "needsMonomindTitle": "El monomind instalado todavía no puede aislar los turnos del agente, así que el turno se ejecutó sin sandbox. Actualiza monomind para activarlo.",
+    "offTitle": "monomind ejecutó este turno sin sandbox."
   }
 }

@@ -657,5 +657,15 @@
     },
     "reinstall": "Reinstall from monoes.me",
     "reinstallNote": "This built-in is uninstalled: its workflow nodes do not run. Reinstall it from monoes.me to use it again."
+  },
+  "agentSandbox": {
+    "sandboxed": "sandboxed",
+    "unsupported": "no sandbox (runtime unsupported)",
+    "needsMonomind": "no sandbox (update monomind)",
+    "off": "no sandbox",
+    "sandboxedTitle": "This turn ran in the agent runtime's sandbox: it could write only its working folder.",
+    "unsupportedTitle": "This agent runtime has no sandbox mode, so the turn ran without one.",
+    "needsMonomindTitle": "The installed monomind can't sandbox agent turns yet, so the turn ran without one. Update monomind to turn it on.",
+    "offTitle": "monomind ran this turn without a sandbox."
   }
 }

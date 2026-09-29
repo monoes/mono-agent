@@ -14,6 +14,7 @@ export function initialChatState() {
     usage: null,          // latest { inputTokens, outputTokens, costUsd, source } snapshot, never summed
     session: null,          // { runtime, sessionId } once session.bound fires
     terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
+    sandbox: null,           // 'sandboxed' | 'unsupported' | 'needs-monomind' | 'off', from the CLI; null = none asked for
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
     lastSeq: 0,
@@ -117,6 +118,8 @@ function eventPatch(state, ev) {
       }
 
     case 'notice': {
+      // The CLI's verdict on the turn's sandbox: a badge, not a banner.
+      if (payload.code === 'agent.sandbox') return { sandbox: payload.message || null }
       const notice = { code: payload.code, message: payload.message, severity: payload.severity }
       // A coder turn's leftover background processes: keep the pids and the
       // turn they belong to, which "Stop all" needs.
@@ -144,6 +147,7 @@ function eventPatch(state, ev) {
           // logged in (the chat panel then links to the AI agents page).
           ...(payload.code ? { code: payload.code } : {}),
         },
+        ...(payload.sandbox ? { sandbox: payload.sandbox } : {}),
       }
 
     default:

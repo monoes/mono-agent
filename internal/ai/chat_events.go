@@ -729,12 +729,13 @@ func (s *AIStore) GetEvents(conversationID, turnID, profileID string, afterSeq i
 // — "commit before emit" — without a second read. ev is the zero value when
 // alreadyFinalized is true (nothing was written this call) or err != nil.
 func (s *AIStore) FinalizeTurn(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason string, exitCode *int, historySaved bool) (ev chatevents.Event, alreadyFinalized bool, err error) {
-	return s.FinalizeTurnCode(profileID, conversationID, turnID, status, reason, "", exitCode, historySaved)
+	return s.FinalizeTurnCode(profileID, conversationID, turnID, status, reason, "", exitCode, historySaved, "")
 }
 
-// FinalizeTurnCode is FinalizeTurn with a failure code for the turn.finished
-// payload (chatevents.TurnFinishedPayload.Code).
-func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason, code string, exitCode *int, historySaved bool) (ev chatevents.Event, alreadyFinalized bool, err error) {
+// FinalizeTurnCode is FinalizeTurn with a failure code and the turn's
+// sandbox for the turn.finished payload (chatevents.TurnFinishedPayload's
+// Code and Sandbox).
+func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason, code string, exitCode *int, historySaved bool, sandbox string) (ev chatevents.Event, alreadyFinalized bool, err error) {
 	if profileID == "" {
 		profileID = "default"
 	}
@@ -762,6 +763,7 @@ func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, sta
 		Code:         code,
 		ExitCode:     exitCode,
 		HistorySaved: historySaved,
+		Sandbox:      sandbox,
 	}, time.Now())
 	if err != nil {
 		return chatevents.Event{}, false, err

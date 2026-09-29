@@ -229,7 +229,8 @@ func TestRunSerialPerRuntimeAndSaves(t *testing.T) {
 			overlap.Store(true)
 		}
 		defer atomic.AddInt32(n, -1)
-		if o.MaxTurns != 1 || o.Prompt != TestPrompt || o.Cwd == "" || len(o.Tools) != 0 {
+		// Validated the way chat runs it: sandboxed (when monomind can).
+		if o.MaxTurns != 1 || o.Prompt != TestPrompt || o.Cwd == "" || len(o.Tools) != 0 || o.Sandbox != monomind.SandboxWorkspace {
 			t.Errorf("unexpected exec options %+v", o)
 		}
 		if o.Runtime == "b" && o.Model == "" {

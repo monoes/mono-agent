@@ -154,6 +154,7 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 		SystemPrompt: p.System,
 		Timeout:      d.Timeout,
 		Cwd:          sandbox,
+		Sandbox:      monomind.SandboxWorkspace,
 	}, func(ev monomind.Event) {
 		if ev.Type == monomind.EventAssistant {
 			assistant.WriteString(ev.Text)

@@ -196,6 +196,7 @@ func testOne(ctx context.Context, t Target, opts RunOptions) Result {
 		Model:    model,
 		Prompt:   TestPrompt,
 		Cwd:      dir,
+		Sandbox:  monomind.SandboxWorkspace,
 		MaxTurns: 1,
 		Timeout:  opts.Timeout,
 		Stderr:   discard{},

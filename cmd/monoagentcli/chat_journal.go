@@ -54,6 +54,10 @@ func admitJournaledTurn(store *ai.AIStore, profileID, conversationID, turnID, in
 	return conv, turn, existed, nil
 }
 
+// noticeAgentSandbox is the notice a sandboxed turn journals when its
+// runtime starts; its message is the monomind.SandboxStatus* value.
+const noticeAgentSandbox = "agent.sandbox"
+
 // turnJournal turns one runtime's protocol events into committed chat
 // events: it coalesces assistant text, bounds tool and notice text, binds
 // the session, and finalizes the turn exactly once. Calls are serialized
@@ -173,6 +177,11 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	monomind.ApplyEventToResult(&j.usage, ev)
 
 	switch ev.Type {
+	case monomind.EventStart:
+		// The badge the app shows on the turn; message is the status key.
+		if ev.SandboxStatus != "" {
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeAgentSandbox, Message: ev.SandboxStatus, Severity: chatevents.SeverityInfo})
+		}
 	case monomind.EventSession:
 		if ev.SessionID != "" {
 			_ = j.store.BindConversationSession(j.conversationID, j.profileID, j.runtimeID, ev.SessionID)
@@ -250,16 +259,18 @@ func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, c
 
 	status, reason := chatevents.ComputeTurnStatus(stopRequested, res)
 	var exitCode *int
+	sandbox := ""
 	if res != nil {
 		v := res.ExitCode
 		exitCode = &v
+		sandbox = res.SandboxStatus
 	}
-	ev, already, err := j.store.FinalizeTurnCode(j.profileID, j.conversationID, j.turnID, status, reason, code, exitCode, true)
+	ev, already, err := j.store.FinalizeTurnCode(j.profileID, j.conversationID, j.turnID, status, reason, code, exitCode, true, sandbox)
 	switch {
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "warning: finalizing turn %s: %v\n", j.turnID, err)
 		live, buildErr := chatevents.New(j.profileID, j.conversationID, j.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
-			Status: status, Reason: reason, Code: code, ExitCode: exitCode, HistorySaved: false,
+			Status: status, Reason: reason, Code: code, ExitCode: exitCode, HistorySaved: false, Sandbox: sandbox,
 		})
 		if buildErr == nil {
 			j.print(live.Record())

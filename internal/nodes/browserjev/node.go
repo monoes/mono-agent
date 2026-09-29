@@ -351,6 +351,7 @@ func monomindWriter(runtime, model string) textWriter {
 		res, err := monomind.Exec(ctx, monomind.ExecOptions{
 			Bin: bin, Runtime: runtime, Model: model, Prompt: string(prompt),
 			SystemPrompt: textValueRules, Timeout: 90 * time.Second,
+			Sandbox: monomind.SandboxWorkspace, WorkspacePurpose: monomind.WorkspaceTextHelper,
 		}, nil)
 		if err != nil {
 			return "", fmt.Errorf("text helper (%s): %w", runtime, monomind.MarkNotSetup(err))

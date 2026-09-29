@@ -24,6 +24,7 @@ const (
 	CheckMonomindHandshake    = "monomind.handshake"
 	CheckMonomindCapabilities = "monomind.capabilities"
 	CheckMonomindProfileInit  = "monomind.profile_init"
+	CheckMonomindAgentSandbox = "monomind.agent_sandbox"
 
 	FixNodeInstall         = "monomind.node.install"
 	ActionNodeUpdate       = "monomind.node.update"
@@ -57,6 +58,8 @@ func monomindChecks() []Check {
 			DependsOn: []string{CheckMonomindBinary}, Timeout: 30 * time.Second, Run: checkMonomindHandshake},
 		{ID: CheckMonomindCapabilities, Group: GroupMonomind, Title: "monomind features",
 			DependsOn: []string{CheckMonomindHandshake}, Timeout: 30 * time.Second, Run: checkMonomindCapabilities},
+		{ID: CheckMonomindAgentSandbox, Group: GroupMonomind, Title: "agent sandbox", Features: []string{"agent chat", "AI agents"},
+			DependsOn: []string{CheckMonomindHandshake}, Timeout: 30 * time.Second, Run: checkMonomindAgentSandbox},
 		{ID: CheckMonomindProfileInit, Group: GroupMonomind, Title: "monomind profile", Features: []string{"orgs", "memory", "knowledge graph"},
 			DependsOn: []string{CheckMonomindHandshake, CheckProfile}, Run: checkMonomindProfileInit},
 	}
@@ -282,6 +285,23 @@ func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
 		return res
 	}
 	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities)+1)}
+}
+
+// checkMonomindAgentSandbox says whether agent turns run in the runtime's
+// sandbox. Info either way: without the capability they run as they always
+// have, which is not a fault of this install.
+func checkMonomindAgentSandbox(ctx context.Context, env *Env) Result {
+	if env.MonomindHandshake == nil {
+		return Result{Status: StatusSkip, Summary: "not available"}
+	}
+	vi, err := env.MonomindHandshake(ctx)
+	if err != nil {
+		return Result{Status: StatusSkip, Summary: "handshake failed"}
+	}
+	if vi.HasCapability(monomind.CapAgentExecSandbox) {
+		return Result{Status: StatusInfo, Summary: "agent turns run in the runtime's sandbox"}
+	}
+	return Result{Status: StatusInfo, Summary: "agent turns run without a sandbox until monomind supports agent exec " + monomind.SandboxFlag}
 }
 
 func checkMonomindProfileInit(_ context.Context, env *Env) Result {

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sandboxed agent turns.** Chat, `agent.ask`, capture summaries, the jev text helper, recording analysis, application matching, config generation, the org `model` decider, `agent test` and `agent validate` ask monomind to run the turn in the runtime's own sandbox (`agent exec --sandbox workspace`). Turns without a folder of their own run in an empty `~/.monoagent/workspaces/<purpose>`. Coder mode is unchanged. The flag is passed only when monomind advertises `agent-exec-sandbox`. Until it does, nothing changes.
+  - The result is reported as `sandbox_status` on `chat`'s start event, as `turn.finished.sandbox` and an `agent.sandbox` notice in the chat journal, and as `_agent_sandbox` on `agent.ask` items.
+  - The chat shows a badge on each turn: "sandboxed", "no sandbox (runtime unsupported)" or "no sandbox (update monomind)".
+  - `doctor` has an info row saying which of these applies.
 - **Validated agent roster** (#225, first phase of the dynamic org epic #224):
   - `agent validate` tests every installed runtime's models with a one-word turn and stores what answered (`ok`, `auth`, `quota`, `model_unavailable`, `timeout`, …) with latency and cost. It supports `--dry-run`, `--stale-only`, and NDJSON progress with `--json`.
   - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.

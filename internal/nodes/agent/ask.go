@@ -74,6 +74,10 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 			Prompt:       prompt,
 			SystemPrompt: systemPrompt,
 			Timeout:      time.Duration(timeoutSec) * time.Second,
+			// The item travels in the prompt; one shared empty folder
+			// for every agent.ask turn, whichever workflow runs it.
+			Sandbox:          monomind.SandboxWorkspace,
+			WorkspacePurpose: monomind.WorkspaceAgentAsk,
 		}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("agent.ask (%s): %w", runtime, monomind.MarkNotSetup(err))
@@ -87,6 +91,9 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 		outJSON := copyItemJSON(item)
 		outJSON[outputKey] = answer
 		outJSON["_agent_session_id"] = res.SessionID
+		if res.SandboxStatus != "" {
+			outJSON["_agent_sandbox"] = res.SandboxStatus
+		}
 		items = append(items, workflow.Item{JSON: outJSON})
 	}
 

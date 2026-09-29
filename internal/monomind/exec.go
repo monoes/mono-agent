@@ -61,6 +61,18 @@ type ExecOptions struct {
 	Settings []string
 	// MaxTurns caps agent turns (--max-turns); zero keeps monomind's default.
 	MaxTurns int
+	// Sandbox asks for a sandbox mode (SandboxWorkspace) via SandboxFlag.
+	// It is passed only when monomind advertises CapAgentExecSandbox;
+	// otherwise the turn runs exactly as it would without it. "" never
+	// passes the flag (coder mode, which has its own full-access contract).
+	Sandbox string
+	// WorkspacePurpose names the SandboxWorkspaceDir a sandboxed turn with
+	// no Cwd runs in, so workspace-write has a real folder. Ignored when
+	// the flag is not passed, when Cwd is set, and for the claude runtime:
+	// claude is restricted by --access scoped rather than a folder, and
+	// keys its resumable sessions by folder, so moving it would orphan
+	// every existing conversation.
+	WorkspacePurpose string
 	// Stderr receives monomind's diagnostics; nil means os.Stderr.
 	Stderr io.Writer
 }
@@ -86,6 +98,10 @@ type TurnResult struct {
 	HasInputTokens  bool
 	HasOutputTokens bool
 	HasCostUSD      bool
+	// Sandbox is the start event's sandbox report, and SandboxStatus the
+	// verdict (SandboxStatus* constants); "" when the turn asked for none.
+	Sandbox       SandboxFields
+	SandboxStatus string
 	// SawDone reports whether a terminal `done` event was ever observed.
 	// false with Err == nil means the process/stream ended (EOF, ctx
 	// cancellation notwithstanding) without ever giving terminal protocol
@@ -127,6 +143,12 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 		}
 	case EventStart:
 		res.incremental = ev.StreamsIncrementally
+		if ev.Sandbox != "" || ev.SandboxUnsupported || ev.SandboxStatus != "" {
+			res.Sandbox = ev.SandboxFields
+		}
+		if ev.SandboxStatus != "" {
+			res.SandboxStatus = ev.SandboxStatus
+		}
 	case EventAssistant:
 		// Fallback source for ResultText: monomind's result event often has
 		// no text (only assistant events do), so ResultText would otherwise
@@ -297,8 +319,23 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			args = append(args, "--env", "CLAUDE_EFFORT="+opts.Effort)
 		}
 	}
-	if opts.Cwd != "" {
-		args = append(args, "--cwd", opts.Cwd)
+	cwd := opts.Cwd
+	sandboxOK := false
+	if opts.Sandbox != "" {
+		sandboxOK = sandboxSupported(ctx, bin)
+	}
+	if sandboxOK && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
+		dir, err := SandboxWorkspaceDir(opts.WorkspacePurpose)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox workspace: %w", err)
+		}
+		cwd = dir
+	}
+	if cwd != "" {
+		args = append(args, "--cwd", cwd)
+	}
+	if sandboxOK {
+		args = append(args, SandboxFlag, opts.Sandbox)
 	}
 	if opts.Resume != "" {
 		args = append(args, "--resume", opts.Resume)
@@ -430,7 +467,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 	defer release()
 
-	res := &TurnResult{}
+	res := &TurnResult{SandboxStatus: sandboxStatus(opts.Sandbox, sandboxOK, SandboxFields{})}
 	events := make(chan Event, 64)
 	var stdinMu sync.Mutex
 	var stdinOnce sync.Once
@@ -480,6 +517,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	go func() {
 		defer close(loopDone)
 		for ev := range events {
+			if ev.Type == EventStart && opts.Sandbox != "" {
+				ev.SandboxStatus = sandboxStatus(opts.Sandbox, sandboxOK, ev.SandboxFields)
+			}
 			if onEvent != nil {
 				onEvent(ev)
 			}

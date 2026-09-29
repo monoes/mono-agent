@@ -36,6 +36,9 @@ func ExecRunner(budgetUSD float64) RunFunc {
 			Model:     t.Model,
 			Prompt:    prompt,
 			BudgetUSD: budgetUSD,
+			// The prompt carries the page text; the agent needs no files.
+			Sandbox:          monomind.SandboxWorkspace,
+			WorkspacePurpose: monomind.WorkspaceSummary,
 		}
 		if deadline, ok := ctx.Deadline(); ok {
 			// Let the runtime stop itself a little before we would kill it,

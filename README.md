@@ -273,6 +273,8 @@ monoagentcli agent test claude       # smoke turn; also proves the login works
 monoagentcli doctor --group monomind # Node.js, the monomind binary, version and features
 ```
 
+When monomind supports it (capability `agent-exec-sandbox`), every agent turn except coder mode runs in the agent CLI's own sandbox: it can write only its working folder and the temp dir. Each chat turn shows a badge saying whether it was sandboxed, and `doctor` says whether your monomind can do it. Details: [AGENTS.md](AGENTS.md#how-ai-works-in-mono-agent).
+
 monomind is a separate Node.js tool: `npm install -g @monoes/monomindcli`, or let `monoagentcli doctor --fix` install it. If you have no Node.js >= 22.12, `monoagentcli nodejs install` downloads a private copy. Set `MONOMIND_BIN` to use a specific binary. Without monomind, AI steps fail with an install hint and everything else keeps working.
 
 Some features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decisions-only) makes fast typed decisions (classification, suggestions, the element picker) with its own key, and never writes text. For images there are two paths: `gemini.generate_image` drives Gemini in your own logged-in browser (no key), and `service.huggingface` calls the Hugging Face API with your Hugging Face key. The other `gemini.*` nodes also use the browser session.
