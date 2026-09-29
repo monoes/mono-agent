@@ -12,7 +12,12 @@ import (
 var promptCommand = regexp.MustCompile(`\b(?:monomind|monoagentcli) [^\s"]+`)
 
 // allowedBashCommand reports whether cmd starts with one of
-// chatBashPrefixes, as monomind's literal canUseTool match decides.
+// chatBashPrefixes. It is this test's copy of the real check, which
+// monomind makes: the prefixes reach it as --allow-bash-prefix
+// (internal/monomind/exec.go), and agent-exec's canUseTool admits a Bash
+// command only when it starts with one of its allowBashPrefixes. Keep it a
+// literal prefix match like monomind's; a looser check here would pass
+// prompt examples that monomind denies.
 func allowedBashCommand(cmd string) bool {
 	for _, p := range chatBashPrefixes {
 		if cmd == p || strings.HasPrefix(cmd, p+" ") {
