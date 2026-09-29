@@ -426,7 +426,7 @@ func TestApp_GetChatTurns_OwnedByThisInstance(t *testing.T) {
 func TestApp_GetChatTurns_UnknownConversationIsEmpty(t *testing.T) {
 	bin, _ := chatFakeCLI(t, fakeChatReply{match: "chat history turns", code: 2, stderr: "chat: conversation not found\n"})
 	a, _ := newCLIChatApp(t, bin)
-	if out := a.GetChatTurns("nope", "", 10); out != `{"items":[],"nextCursor":""}` {
+	if out := a.GetChatTurns("nope", "", 10); out != `{"items":[],"nextCursor":"","notFound":true}` {
 		t.Errorf("unknown conversation = %s", out)
 	}
 }

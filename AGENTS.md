@@ -555,7 +555,20 @@ login (and its bill) is what the turn uses.
   with latency and cost. Each test is a real model call, so `--dry-run` prints
   the call count and estimated cost first, and `--stale-only` skips models
   that are already ready. `--json` streams NDJSON progress (`validate.plan`,
-  `validate.started`, `validate.result`, `validate.done`).
+  `validate.started`, `validate.result`, `validate.done`). With monomind 2.18.5 or newer
+  (capability `agent-test-json`), each test is monomind's own `agent test
+  --json`, so statuses match monomind's classification and a runtime that
+  reports no cost gets a pricing-table estimate (`cost_estimated`, shown with
+  "≈"). `agent test` has no sandbox option, so a
+  runtime whose exec turns run sandboxed keeps the sandboxed test turn, like
+  an older monomind; mono-agent classifies it. `monomind.SandboxArgs` decides
+  that with the runtime's `agent scan` `sandbox_modes`: codex and grok (env
+  path, or `--sandbox` on 2.19.0 since they list the mode) go through exec;
+  claude, copilot and the other runtimes that list only `full` get no sandbox
+  from exec either and use `agent test`. When `agent test` fails fast without
+  JSON (the command itself isn't supported) the exec test runs instead; any
+  other failure is the result, never a second model call. The plan
+  line's `checker` says which one ran.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
@@ -582,7 +595,11 @@ login (and its bill) is what the turn uses.
   generation and the org `model` decider. `monomind.SandboxArgs` is the one
   place that decides what that means:
   - monomind advertises `agent-exec-sandbox` (monomind#396): `agent exec
-    --sandbox workspace-write`, for every runtime;
+    --sandbox workspace-write`, only for a runtime whose `agent scan --json`
+    `sandbox_modes` lists the mode (codex, grok on 2.19.0; monomind refuses
+    any other mode as fatal). A runtime listing only `full` gets no flag:
+    claude reports `scoped`, the others `unsupported`. With the scan failed,
+    no flag is passed and the env path below applies;
   - otherwise, monomind >= 2.11.1 and runtime `codex` or `grok`:
     `--env MONOMIND_GIT_LEVEL=read`. The runner reads that level from the
     turn's env (never the caller's process env) and starts codex with
@@ -664,6 +681,11 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
+- A waiting granted call (`wait`, mode `run`) returns as soon as the run
+  is final. It stops waiting at the tool's timeout, or `postEOFGrace` (3 s)
+  after the client closes stdin. It then reads the run once more and, if
+  the run is still going, says how long it waited and why; the role checks
+  it later with `automation_status`.
 - A granted tool's arguments reach the workflow as `input`, and each field
   is also copied to the top level of the trigger item, so a workflow
   written for `workflow run --input '{"keywords":…}'` (`{{ $json.keywords }}`)
