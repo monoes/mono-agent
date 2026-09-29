@@ -4,6 +4,7 @@ package monomind
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func TestAgentTestParsesOK(t *testing.T) {
 		t.Errorf("result = %+v", res)
 	}
 	got, _ := os.ReadFile(argv)
-	if want := "agent test codex --json --model gpt-5.5 --timeout 45s"; strings.TrimSpace(string(got)) != want {
+	if want := "agent test codex --json --model=gpt-5.5 --timeout 45s"; strings.TrimSpace(string(got)) != want {
 		t.Errorf("argv = %q, want %q", got, want)
 	}
 }
@@ -59,8 +60,54 @@ func TestAgentTestFailedStatusStillReturnsResult(t *testing.T) {
 
 func TestAgentTestNoJSONIsAnError(t *testing.T) {
 	bin, _ := fakeAgentTestMonomind(t, `echo "unknown runtime zed" >&2; exit 2`)
-	if _, err := AgentTest(context.Background(), bin, "zed", "", 0); err == nil || !strings.Contains(err.Error(), "unknown runtime zed") {
+	_, err := AgentTest(context.Background(), bin, "zed", "", 0)
+	if err == nil || !strings.Contains(err.Error(), "unknown runtime zed") {
 		t.Errorf("err = %v, want the stderr text", err)
+	}
+	if !errors.Is(err, ErrAgentTestUnsupported) {
+		t.Errorf("a fast failure without JSON must be ErrAgentTestUnsupported, got %v", err)
+	}
+}
+
+func TestAgentTestSlowNoJSONIsNotUnsupported(t *testing.T) {
+	prev := agentTestFastFail
+	agentTestFastFail = 100 * time.Millisecond
+	t.Cleanup(func() { agentTestFastFail = prev })
+	bin, _ := fakeAgentTestMonomind(t, `sleep 0.3; echo "runner crashed" >&2; exit 1`)
+	_, err := AgentTest(context.Background(), bin, "claude", "", 0)
+	if err == nil || errors.Is(err, ErrAgentTestUnsupported) {
+		t.Errorf("a run that took its time may have called the model; err = %v, want a plain error", err)
+	}
+}
+
+func TestAgentTestGoDeadline(t *testing.T) {
+	prev := agentTestGrace
+	agentTestGrace = 200 * time.Millisecond
+	t.Cleanup(func() { agentTestGrace = prev })
+	bin, argv := fakeAgentTestMonomind(t, `sleep 30`)
+	start := time.Now()
+	_, err := AgentTest(context.Background(), bin, "claude", "", 300*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAgentTestUnsupported) {
+		t.Errorf("err = %v, want DeadlineExceeded", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Error("the Go-side deadline did not stop monomind")
+	}
+	got, _ := os.ReadFile(argv)
+	if !strings.Contains(string(got), "--timeout 300ms") {
+		t.Errorf("a sub-second timeout must not round to 0s: %q", got)
+	}
+}
+
+func TestAgentTestRejectsDashArgs(t *testing.T) {
+	bin, argv := fakeAgentTestMonomind(t, `echo '{"status":"ok","latency_ms":1}'`)
+	for _, c := range []struct{ runtime, model string }{{"--help", ""}, {"claude", "--timeout"}, {"", ""}} {
+		if _, err := AgentTest(context.Background(), bin, c.runtime, c.model, 0); err == nil {
+			t.Errorf("runtime %q model %q: want an error", c.runtime, c.model)
+		}
+	}
+	if _, err := os.Stat(argv); err == nil {
+		t.Error("monomind must not run for a rejected argument")
 	}
 }
 
