@@ -330,7 +330,11 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	sandboxEffective := ""
 	if opts.Sandbox != "" {
 		caps, _ := capabilitiesFor(ctx, bin) // a failed handshake: no sandbox, as before
-		sandboxArgs, sandboxEffective = SandboxArgs(caps, opts.Runtime, opts.Sandbox)
+		var modes []string
+		if caps.Has(CapAgentExecSandbox) {
+			modes = SandboxModesFor(ctx, opts.Runtime)
+		}
+		sandboxArgs, sandboxEffective = SandboxArgs(caps, modes, opts.Runtime, opts.Sandbox)
 	}
 	if len(sandboxArgs) > 0 && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
 		dir, err := SandboxWorkspaceDir(opts.WorkspacePurpose)
