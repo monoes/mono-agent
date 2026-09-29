@@ -37,13 +37,6 @@ func terminateProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
-// startProcessGroup starts a child this process will kill with
-// killProcessGroup. Setpgid already makes the group at fork, so it is a
-// plain Start on unix; the returned release is a no-op.
-func startProcessGroup(cmd *exec.Cmd) (release func(), err error) {
-	return func() {}, cmd.Start()
-}
-
 // startDetached starts a child that must outlive this process in its own
 // process group, so no group kill aimed at this process reaches it.
 func startDetached(cmd *exec.Cmd) (*exec.Cmd, error) {

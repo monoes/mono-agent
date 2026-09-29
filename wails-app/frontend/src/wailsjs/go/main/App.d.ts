@@ -513,11 +513,11 @@ export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
 
-export function StopOrgEvents(arg1:string):Promise<string>;
+export function StopOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function StopOrgGroup(arg1:string):Promise<string>;
 
-export function StreamOrgEvents(arg1:string):Promise<string>;
+export function StreamOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function SwitchProfile(arg1:string):Promise<void>;
 
