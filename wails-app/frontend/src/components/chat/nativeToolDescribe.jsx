@@ -59,14 +59,17 @@ function shell(call, args) {
 }
 
 function edit(call, args) {
-  const pairs = Array.isArray(args.edits) ? args.edits : [{ old_string: args.old_string, new_string: args.new_string }]
+  // aider's edits name only the file (its shim sees the result, not the
+  // strings): no diff to show.
+  const noStrings = !Array.isArray(args.edits) && args.old_string == null && args.new_string == null
+  const pairs = Array.isArray(args.edits) ? args.edits : noStrings ? [] : [{ old_string: args.old_string, new_string: args.new_string }]
   const stats = pairs.reduce((acc, p) => {
     const s = diffStats(diffLines(p.old_string, p.new_string))
     return { added: acc.added + s.added, removed: acc.removed + s.removed }
   }, { added: 0, removed: 0 })
   return {
     icon: FilePen, title: args.file_path, titleMono: true, defaultOpen: true,
-    tags: [statsTag(stats), ...fileTags(call, 'modified'), ...(args.replace_all ? [<Tag key="ra">replace all</Tag>] : [])],
+    tags: [...(pairs.length ? [statsTag(stats)] : []), ...fileTags(call, 'modified'), ...(args.replace_all ? [<Tag key="ra">replace all</Tag>] : [])],
     body: <>{pairs.map((p, i) => <DiffView key={i} oldText={p.old_string} newText={p.new_string} />)}{errorOnFail(call)}</>,
   }
 }
@@ -86,6 +89,11 @@ function read(call, args) {
   const range = args.offset != null || args.limit != null
     ? ` (lines ${args.offset ?? 1}${args.limit != null ? `–${(args.offset ?? 1) + args.limit - 1}` : '+'})`
     : ''
+  // cline reads several files in one call: file_path is the first, file_paths all.
+  const paths = Array.isArray(args.file_paths) && args.file_paths.length > 1 ? args.file_paths : null
+  if (paths) {
+    return { icon: FileText, compact: true, title: `Read ${paths.length} files`, subtitle: paths.join(', '), body: <ResultSection call={call} /> }
+  }
   return { icon: FileText, compact: true, title: `Read ${args.file_path ?? ''}${range}`, body: <ResultSection call={call} /> }
 }
 
@@ -99,8 +107,11 @@ function search(call, args) {
 }
 
 function web(call, args) {
+  // cline fetches several pages in one call: url is the first, urls all.
+  const more = Array.isArray(args.urls) && args.urls.length > 1 ? args.urls.length - 1 : 0
   return {
-    icon: Globe, title: args.url || args.query, titleMono: true, subtitle: args.url ? args.prompt : undefined,
+    icon: Globe, title: args.url || args.query, titleMono: true,
+    subtitle: more ? `and ${more} more: ${args.urls.slice(1).join(', ')}` : args.url ? args.prompt : undefined,
     tags: [<Tag key="ext" color="#fbbf24" testId="external-content">external content</Tag>],
     body: <ResultSection call={call} label="Result" />,
   }

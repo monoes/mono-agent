@@ -8,10 +8,12 @@ import { api } from '../../services/api.js'
 import RoleAutomationsSection, { EffectiveTools } from './RoleAutomationsSection.jsx'
 import RoleFullAccessSection from './RoleFullAccessSection.jsx'
 import { declaresFull } from './fullAccess.jsx'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 
 const RUNTIME_OPTIONS = [
   'claude', 'kimicode', 'opencode', 'vercel', 'codex', 'antigravity',
   'grok', 'qwen', 'crush', 'copilot', 'pi', 'pi-rpc', 'qwen-rpc',
+  'cline', 'aider', 'dsh',
 ]
 const PROVIDER_KIND_OPTIONS = [
   'subscription', 'api-key', 'base-url', 'bedrock', 'vertex', 'vercel-api-key', 'codex', 'antigravity',
@@ -456,7 +458,7 @@ export default function RoleInspector({
           onChange={e => onPatch({ runtime: e.target.value })}
         >
           <option value="">(inherit org default)</option>
-          {RUNTIME_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+          {RUNTIME_OPTIONS.map(r => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
         </select>
       </section>
 

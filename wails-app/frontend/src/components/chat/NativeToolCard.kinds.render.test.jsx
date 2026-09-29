@@ -117,6 +117,24 @@ describe('native tool cards by kind', () => {
     expect(within(el).getByTestId('external-content')).toBeInTheDocument()
   })
 
+  it('read and web: cline\'s several files or pages in one call', () => {
+    renderEvents([
+      started('r2', 'read_files', 'read', { file_path: 'a.js', file_paths: ['a.js', 'b.js', 'c.js'] }),
+      started('w2', 'fetch_web_content', 'web', { url: 'https://a.test', urls: ['https://a.test', 'https://b.test'] }),
+    ])
+    expect(within(card('read_files')).getByText('Read 3 files')).toBeInTheDocument()
+    expect(within(card('read_files')).getByText('a.js, b.js, c.js')).toBeInTheDocument()
+    expect(within(card('fetch_web_content')).getByText('https://a.test')).toBeInTheDocument()
+    expect(within(card('fetch_web_content')).getByText('and 1 more: https://b.test')).toBeInTheDocument()
+  })
+
+  it('edit: aider\'s file-only edit shows the file without an empty diff', () => {
+    renderEvents([started('e2', 'edit_file', 'edit', { file_path: 'src/app.py' }), completed('e2')])
+    const el = card('edit_file')
+    expect(within(el).getByText('src/app.py')).toBeInTheDocument()
+    expect(within(el).queryByText(/^\+0 −0$/)).toBeNull()
+  })
+
   it('todo: items as {text, completed} from other runtimes', () => {
     renderEvents([started('t1', 'todo_list', 'todo', { items: [{ text: 'plan', completed: true }, { text: 'build', completed: false }] })])
     expect(within(card('todo_list')).getByText('Todos (1/2 done)')).toBeInTheDocument()

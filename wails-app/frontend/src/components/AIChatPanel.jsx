@@ -13,6 +13,7 @@ import { openArtifact as revalidateAndOpenArtifact } from './chat/chatArtifacts.
 import { useResolvedArtifacts } from './chat/useResolvedArtifacts.js'
 import './chat/chat.css'
 import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
+import { runtimeLabel } from '../lib/runtimeLabels.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
 import AgentSetupLink from './AgentSetupLink.jsx'
@@ -1126,7 +1127,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             </option>
           )}
           {(isCoder && !conversationId ? coderChoice.options : runtimes).map(r => (
-            <option key={r.id} value={r.id}>{r.id}</option>
+            <option key={r.id} value={r.id}>{runtimeLabel(r.id)}</option>
           ))}
         </select>
         {runtimeUninitialized ? (

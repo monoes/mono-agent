@@ -69,6 +69,10 @@ const KEY_INIT_FILES = {
   opencode: ['AGENTS.md', 'opencode.json'],
   kimicode: ['AGENTS.md', '.kimi-code/mcp.json'],
   antigravity: ['GEMINI.md', '.gemini/settings.json'],
+  cline: ['.clinerules/monomind.md', 'AGENTS.md'],
+  aider: ['CONVENTIONS.md', '.aider.conf.yml'],
+  dsh: ['AGENTS.md'],
+  pi: ['AGENTS.md'],
 }
 
 // keyInitFiles is a runtime's key init files; claude's for a runtime

@@ -3,6 +3,7 @@ import { Code2, FolderOpen } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
 import { missingText, coderReady, coderRuntimes, runtimeReadiness } from '../chat/useCoderMode.js'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 
 // Coder mode (#203): a chat mode in which a coding agent (claude, codex,
 // opencode, …) runs with full access inside one folder. Off by default; turning it on asks for an explicit
@@ -105,7 +106,7 @@ export default function CoderModeSection() {
   // turns and the budget only bind on runtimes that report turns / cost,
   // and the budget field is hidden when none does.
   const perRuntime = Array.isArray(status?.runtimes) ? coderRuntimes(status) : null
-  const limitNames = (key) => (perRuntime || []).filter(r => r.ready && r[key]).map(r => r.id)
+  const limitNames = (key) => (perRuntime || []).filter(r => r.ready && r[key]).map(r => runtimeLabel(r.id))
   const showBudget = !perRuntime || limitNames('reportsCost').length > 0
 
   return (
@@ -133,14 +134,14 @@ export default function CoderModeSection() {
       {status && ready && (
         <div data-testid="coder-ready" style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--green-neon)' }}>
           Ready{status.monomindVersion ? ` · monomind ${status.monomindVersion}` : ''}
-          {perRuntime ? ` · ${perRuntime.filter(r => r.ready).map(r => r.id).join(', ')}` : status.runtime ? ` · ${status.runtime}` : ''}
+          {perRuntime ? ` · ${perRuntime.filter(r => r.ready).map(r => runtimeLabel(r.id)).join(', ')}` : status.runtime ? ` · ${status.runtime}` : ''}
         </div>
       )}
       {perRuntime && perRuntime.length > 0 && (
         <ul data-testid="coder-runtimes" aria-label="Coding runtimes" style={{ margin: 0, paddingLeft: 16, fontFamily: mono, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
           {perRuntime.map(r => (
             <li key={r.id} style={{ color: r.ready ? 'var(--text-secondary)' : undefined }}>
-              {r.id} · {runtimeReadiness(r)}
+              {runtimeLabel(r.id)} · {runtimeReadiness(r)}
               {r.ready && r.toolActivity && r.toolActivity !== 'full' ? ` · tool calls: ${r.toolActivity}` : ''}
             </li>
           ))}

@@ -1,5 +1,6 @@
 import { Bot, Code2, FolderRoot, FolderOpen, History } from 'lucide-react'
 import { folderName, missingText, coderReady, coderRuntimes, runtimeReadiness } from './useCoderMode.js'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 
 // CoderModePicker is the new-chat choice between the Assistant and Coder
 // modes (#203), plus Coder's workspace: the coder root (default), a
@@ -41,7 +42,7 @@ const optHint = { fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', wor
 export function CoderModePicker({ status, mode, onModeChange, workspace, onWorkspaceChange, recent = [], onPickFolder, runtimeId = '', disabled = false }) {
   if (!status?.enabled) return null
   const ready = coderReady(status)
-  const agent = runtimeId || 'The agent'
+  const agent = runtimeId ? runtimeLabel(runtimeId) : 'The agent'
   const pickedPath = workspace?.kind === 'folder' ? workspace.path : ''
   const pickedIsRecent = recent.some(w => w.path === pickedPath)
 
@@ -103,7 +104,7 @@ export function CoderModePicker({ status, mode, onModeChange, workspace, onWorks
             <div data-testid="coder-runtimes" style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.5 }}>
               {coderRuntimes(status).map((r, i) => (
                 <span key={r.id} style={{ color: r.ready ? '#10b981' : undefined }}>
-                  {i > 0 && ' · '}{r.id} {runtimeReadiness(r)}
+                  {i > 0 && ' · '}{runtimeLabel(r.id)} {runtimeReadiness(r)}
                 </span>
               ))}
             </div>
