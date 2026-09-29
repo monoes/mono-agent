@@ -71,6 +71,20 @@ type worker struct {
 	cost    float64
 	hasCost bool
 	started time.Time
+	// followups counts org_message runs, capped at MaxFollowups.
+	followups int
+}
+
+// MaxFollowups caps org_message runs per worker, so follow-ups can't stand
+// in for new workers past the turn's agent cap.
+const MaxFollowups = 3
+
+// errBudgetSpent is returned when the workers' budget has run out.
+func (c *Conductor) budgetErrLocked() error {
+	if b := c.cfg.Limits.BudgetUSD; b > 0 && c.cost >= b {
+		return fmt.Errorf("the workers' budget of $%.2f for this turn is spent ($%.2f)", b, c.cost)
+	}
+	return nil
 }
 
 // New starts a conductor for one lead turn; Close ends it.
@@ -144,9 +158,9 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("this turn already has its %d workers; wait for them and use org_message for follow-ups", c.cfg.Limits.MaxAgents)
 	}
-	if b := c.cfg.Limits.BudgetUSD; b > 0 && c.cost >= b {
+	if err := c.budgetErrLocked(); err != nil {
 		c.mu.Unlock()
-		return WorkerInfo{}, fmt.Errorf("the workers' budget of $%.2f for this turn is spent ($%.2f)", b, c.cost)
+		return WorkerInfo{}, err
 	}
 	c.mu.Unlock()
 
@@ -180,7 +194,10 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 	c.emitMessage(w.id, "brief", "lead", w.id, req.Brief)
 	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, To: chatevents.AgentQueued})
 
-	c.start(w, req.Brief, "", true)
+	c.mu.Lock()
+	ctx2, cancel, done := c.prepareRunLocked(w)
+	c.mu.Unlock()
+	c.launch(w, ctx2, cancel, done, req.Brief, "", true)
 	if req.Wait {
 		infos := c.Wait(ctx, []string{w.id}, MaxWait)
 		if len(infos) == 1 {
@@ -252,6 +269,14 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("%s is still working; org_wait for it first", id)
 	}
+	if err := c.budgetErrLocked(); err != nil {
+		c.mu.Unlock()
+		return WorkerInfo{}, err
+	}
+	if w.followups >= MaxFollowups {
+		c.mu.Unlock()
+		return WorkerInfo{}, fmt.Errorf("%s already had its %d follow-ups this turn; spawn a new worker if the turn's limit allows", id, MaxFollowups)
+	}
 	prompt, resume := text, ""
 	if w.session != "" && w.model.Resume {
 		resume = w.session
@@ -259,12 +284,16 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 		prompt = "Your earlier report:\n" + w.report + "\n\nFollow-up from the lead:\n" + text
 	}
 	w.report, w.errText = "", ""
+	w.followups++
+	w.started = c.cfg.Now()
+	// Marked queued in the same critical section as the running check, so
+	// two concurrent follow-ups can't both start a run.
+	ctx2, cancel, done := c.prepareRunLocked(w)
+	info := c.infoLocked(w, false)
 	c.mu.Unlock()
 	c.emitMessage(id, "followup", "lead", id, text)
-	c.start(w, prompt, resume, false)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.infoLocked(w, false), nil
+	c.launch(w, ctx2, cancel, done, prompt, resume, false)
+	return info, nil
 }
 
 // Stop cancels one worker.
@@ -289,18 +318,21 @@ func running(status string) bool {
 	return false
 }
 
-// start runs a worker in the background: its leases, then a concurrency
+// launch runs a worker in the background: its leases, then a concurrency
 // slot, then the exec (falling over to the next model when this one
 // can't run, on a first run only).
-func (c *Conductor) start(w *worker, prompt, resume string, first bool) {
+// prepareRunLocked marks w queued and gives it a fresh cancel and done
+// for its next run. Callers hold c.mu, together with the check that w
+// isn't already running.
+func (c *Conductor) prepareRunLocked(w *worker) (context.Context, context.CancelFunc, chan struct{}) {
 	ctx, cancel := context.WithCancel(c.ctx)
 	done := make(chan struct{})
-	c.mu.Lock()
 	w.cancel, w.done = cancel, done
-	if !first {
-		c.setStatusLocked(w, chatevents.AgentQueued, "")
-	}
-	c.mu.Unlock()
+	c.setStatusLocked(w, chatevents.AgentQueued, "")
+	return ctx, cancel, done
+}
+
+func (c *Conductor) launch(w *worker, ctx context.Context, cancel context.CancelFunc, done chan struct{}, prompt, resume string, first bool) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -318,7 +350,7 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 		on   bool
 		l    *lease
 		name string
-	}{{writes(w.staff.Access), c.write, "write"}, {usesBrowser(w.staff.Access), c.browser, "browser"}} {
+	}{{c.needsWriteLease(w), c.write, "write"}, {usesBrowser(w.staff.Access), c.browser, "browser"}} {
 		if !need.on {
 			continue
 		}
@@ -341,7 +373,14 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	c.mu.Lock()
 	models := []Model{w.model}
 	if first {
-		models = append(models, w.staff.Fallbacks...)
+		for _, m := range w.staff.Fallbacks {
+			// A confined research worker runs without the write lease,
+			// so it may only fall back to models that confine it too.
+			if w.staff.Access == ProfileResearch && c.confined(w.model) && !c.confined(m) {
+				continue
+			}
+			models = append(models, m)
+		}
 	}
 	c.mu.Unlock()
 	for i, m := range models {
@@ -374,6 +413,23 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	return chatevents.AgentFailed, "", "no model could run this worker"
 }
 
+// confined reports whether a research worker on m can't edit files: it
+// runs with --access read, or in a read-only sandbox.
+func (c *Conductor) confined(m Model) bool {
+	return (c.cfg.ReadAccess && m.Read) || m.ReadOnlySandbox
+}
+
+// needsWriteLease: every editing profile, and a research worker that
+// nothing confines (only its prompt keeps it from editing).
+func (c *Conductor) needsWriteLease(w *worker) bool {
+	if writes(w.staff.Access) {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.confined(w.model)
+}
+
 // unusable statuses mean the model can't run at all, so the next one is
 // tried; any other failure is the worker's own.
 func unusable(status string) bool {
@@ -402,9 +458,30 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.Effort = w.staff.Effort
 	}
 	opts.Access = monomind.AccessFull
-	if w.staff.Access == ProfileResearch && c.cfg.ReadAccess && m.Read {
-		opts.Access = monomind.AccessRead
+	if w.staff.Access == ProfileResearch {
+		switch {
+		case c.cfg.ReadAccess && m.Read:
+			opts.Access = monomind.AccessRead
+		case m.ReadOnlySandbox:
+			// No --access read on this runtime: confine the worker with a
+			// read-only sandbox instead (Exec's SandboxArgs decides the flag).
+			opts.Sandbox = monomind.SandboxReadOnly
+		}
+		// Neither: it holds the write lease instead (needsWriteLease).
 	}
+	// The budget left for the whole org caps this exec. Runtimes that
+	// report no cost (codex, …) can't be capped by it; MaxTurns and the
+	// timeout bound them.
+	c.mu.Lock()
+	if b := c.cfg.Limits.BudgetUSD; b > 0 {
+		remaining := b - c.cost
+		if remaining <= 0 {
+			c.mu.Unlock()
+			return nil, fmt.Errorf("budget: the workers' budget of $%.2f for this turn is spent", b)
+		}
+		opts.BudgetUSD = remaining
+	}
+	c.mu.Unlock()
 	opts.Tools, opts.OnToolCall = nil, nil
 	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files)
 	var run monomind.TurnResult

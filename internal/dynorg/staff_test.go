@@ -48,6 +48,9 @@ func (l fakeLibrary) AgentBody(_ context.Context, id string) (string, string, st
 	return a[0], a[1], a[2], nil
 }
 func (l fakeLibrary) SkillText(_ context.Context, name string) (string, error) {
+	if name == "missing" {
+		return "", errors.New("no skill")
+	}
 	return "text of " + name, nil
 }
 
@@ -192,5 +195,32 @@ func TestWorkerPromptCarriesContract(t *testing.T) {
 	}
 	if !strings.Contains(workerSystemPrompt(Staff{Role: "R", Access: ProfileResearch}, "/w", nil), "Do not edit") {
 		t.Error("research prompt must forbid edits")
+	}
+}
+
+func TestStaffRefusesBadSkillsAndRoles(t *testing.T) {
+	s := &Staffer{Roster: []Model{opus}, Lead: opus, Library: lib()}
+	for _, sk := range []string{"missing", "../etc", "-rf", "a*b", "x/y"} {
+		if _, err := s.Staff(context.Background(), SpawnRequest{Brief: "x", Skills: []string{sk}}); err == nil {
+			t.Errorf("skill %q must be refused", sk)
+		}
+	}
+	for _, role := range []string{"../../agent", "-x", "a?"} {
+		if _, err := s.Staff(context.Background(), SpawnRequest{Brief: "x", Role: role}); err == nil {
+			t.Errorf("role %q must be refused", role)
+		}
+	}
+}
+
+func TestValidName(t *testing.T) {
+	for _, ok := range []string{"golang-pro", "engineering-code-reviewer", "a.b_c", "x1"} {
+		if !ValidName(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", "-flag", "..", "a..b", "a/b", "a*", "a b", ".hidden"} {
+		if ValidName(bad) {
+			t.Errorf("%q should be invalid", bad)
+		}
 	}
 }

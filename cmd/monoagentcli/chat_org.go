@@ -66,7 +66,7 @@ func orgRoster(ctx context.Context, db *sql.DB, st coderStatus, lead dynorg.Mode
 			}
 			models = append(models, dynorg.Model{
 				Runtime: rr.Runtime, Model: model, Label: m.Label, Efforts: m.EffortLevels,
-				FullAccess: e.FullAccess, Read: read, Resume: e.Resume,
+				FullAccess: e.FullAccess, Read: read, Resume: e.Resume, ReadOnlySandbox: readOnlySandbox(st, e),
 				CostUSD: m.CostUSD, LatencyMs: m.LatencyMs, Stale: m.State == agentroster.StateStale,
 			})
 		}
@@ -91,6 +91,16 @@ func orgRoster(ctx context.Context, db *sql.DB, st coderStatus, lead dynorg.Mode
 	return models
 }
 
+// readOnlySandbox reports whether agent exec can run this runtime in a
+// read-only sandbox, as SandboxArgs decides it from the scan's modes.
+func readOnlySandbox(st coderStatus, e *monomind.ScanEntry) bool {
+	if e == nil || !st.caps.Has(monomind.CapAgentExecSandbox) {
+		return false
+	}
+	_, eff := monomind.SandboxArgs(st.caps, e.SandboxModes, e.ID, monomind.SandboxReadOnly)
+	return eff == monomind.SandboxStatusSandboxed
+}
+
 // startDynamicOrg wires a conductor into a dynamic-org coder turn: the lead
 // gets the org tools and the org part of its system prompt. It returns a
 // close func that ends every worker (call it before the turn finishes), or
@@ -108,6 +118,7 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 	lead := dynorg.Model{Runtime: rt.ID, Model: t.model, FullAccess: true, Resume: rt.Resume}
 	if e := st.scan.Find(rt.ID); e != nil {
 		lead.Read = st.caps.Has(monomind.CapAgentExecAccessRead) && slices.Contains(e.AccessModes, monomind.AccessRead)
+		lead.ReadOnlySandbox = readOnlySandbox(st, e)
 	}
 	lib := &dynorg.MonomindLibrary{Bin: opts.Bin, Cwd: t.cwd}
 	staffer := &dynorg.Staffer{

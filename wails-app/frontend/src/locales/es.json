@@ -676,6 +676,25 @@
     "confirmDiscardBody": "Tiene un mensaje que aún no has enviado. Al cerrar el chat se descarta.",
     "discard": "Descartar"
   },
+  "agentRow": {
+    "brief": "Encargo:",
+    "staffing": "Asignación: {{why}}",
+    "switchedFrom": "Cambiado desde {{from}}",
+    "skills": "Habilidades: {{skills}}",
+    "files": "Archivos: {{files}}",
+    "toolCalls_one": "{{count}} llamada a herramienta",
+    "toolCalls_other": "{{count}} llamadas a herramientas",
+    "status": {
+      "queued": "en cola",
+      "starting": "iniciando",
+      "working": "trabajando",
+      "waiting_lease": "esperando su turno",
+      "done": "hecho",
+      "failed": "falló",
+      "cancelled": "detenido",
+      "idle": "inactivo"
+    }
+  },
   "stage": {
     "subagent": "Subagente",
     "status": {

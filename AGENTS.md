@@ -560,13 +560,18 @@ How the conductor staffs a worker:
   makes the lead name every model itself.
 
 Each worker's access profile is set by the lead, and none goes past the
-coder chat's own full access:
+coder chat's own full access. A `research` worker is confined, in order of
+preference, by `--access read`, else by a read-only sandbox
+(`--sandbox read-only` where the runtime's `sandbox_modes` list it). With
+neither, only its prompt keeps it from editing, so it takes the write lease
+like a writer. A confined researcher only falls back to models that confine
+it too.
 
 | Profile | Access |
 |---|---|
 | `coding` | Full access. |
 | `qa`, `automation` | Full access, plus `monoagentcli` for the browser, extension, workflows and automations. |
-| `research` | `--access read` where the runtime has it; no edits. |
+| `research` | Read-only, confined as described below. |
 
 How workers run:
 
@@ -575,8 +580,21 @@ How workers run:
 - **Leases:** one worker edits at a time (the write lease), and one uses the
   browser at a time (the browser lease). Readers run in parallel.
 - **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
-  (default 3) and `--org-budget-usd` (reported worker cost; 0 = none). A
-  limit makes `org_spawn` return an error the lead can read.
+  (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
+  3 follow-ups (`org_message`) per worker.
+  - Every spawn and follow-up checks the budget.
+  - Each worker exec gets the remaining budget as its own `--budget-usd`, so
+    concurrent workers can together overshoot by at most
+    `--org-max-concurrent` × the remainder.
+  - Runtimes that report no cost (codex, …) are bounded only by
+    `--max-turns` and the timeout.
+  - A limit makes the tool return an error the lead can read.
+- **Names:** role and skill names from the lead must match
+  `[A-Za-z0-9][A-Za-z0-9._-]*`. An unknown skill is refused.
+- **Tools and MCP servers:** workers get no caller tools. They load the
+  user's settings like the coder chat itself (`--settings
+  user,project,local`), so they see the same MCP servers the lead does. "No
+  messaging or people" is a rule in their prompt, not a tool filter.
 - **Fallback:** when a model can't run (not signed in, out of quota, unknown
   model), the next ready model takes over (`agent.reassigned`). The failure
   is also written back to the roster.

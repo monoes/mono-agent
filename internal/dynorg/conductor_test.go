@@ -313,3 +313,141 @@ func TestHandleTools(t *testing.T) {
 		t.Error("five org tools")
 	}
 }
+
+func TestFollowUpsRespectBudgetAndCap(t *testing.T) {
+	ex := &execScript{}
+	c, _ := newTestConductor(t, ex, Limits{MaxAgents: 1, MaxConcurrent: 1})
+	if _, err := c.Spawn(context.Background(), SpawnRequest{Brief: "implement", Wait: true}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < MaxFollowups; i++ {
+		if _, err := c.Message(context.Background(), "w1", "more"); err != nil {
+			t.Fatalf("follow-up %d: %v", i+1, err)
+		}
+		c.Wait(context.Background(), []string{"w1"}, 5*time.Second)
+	}
+	if _, err := c.Message(context.Background(), "w1", "again"); err == nil || !strings.Contains(err.Error(), "follow-ups") {
+		t.Errorf("past the cap: err = %v", err)
+	}
+
+	ex2 := &execScript{}
+	c2, _ := newTestConductor(t, ex2, Limits{MaxAgents: 1, MaxConcurrent: 1, BudgetUSD: 0.01})
+	if _, err := c2.Spawn(context.Background(), SpawnRequest{Brief: "implement", Wait: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.Message(context.Background(), "w1", "more"); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Errorf("follow-up past the budget: err = %v", err)
+	}
+	if len(ex2.calls) != 1 {
+		t.Errorf("execs = %d, want 1", len(ex2.calls))
+	}
+}
+
+func TestConcurrentFollowUpsStartOneRun(t *testing.T) {
+	for round := 0; round < 5; round++ {
+		ex := &execScript{hold: 30 * time.Millisecond}
+		c, _ := newTestConductor(t, ex, Limits{})
+		c.Spawn(context.Background(), SpawnRequest{Brief: "implement", Wait: true})
+		var ok int32
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := c.Message(context.Background(), "w1", "go"); err == nil {
+					atomic.AddInt32(&ok, 1)
+				}
+			}()
+		}
+		wg.Wait()
+		c.Wait(context.Background(), nil, 5*time.Second)
+		if ok != 1 || len(ex.calls) != 2 {
+			t.Fatalf("round %d: %d follow-ups accepted, %d execs; want 1 and 2", round, ok, len(ex.calls))
+		}
+	}
+}
+
+func TestExecGetsRemainingBudget(t *testing.T) {
+	ex := &execScript{}
+	c, _ := newTestConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 1, BudgetUSD: 0.05})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement", Wait: true})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement more", Wait: true})
+	if ex.calls[0].BudgetUSD != 0.05 || ex.calls[1].BudgetUSD < 0.0399 || ex.calls[1].BudgetUSD > 0.0401 {
+		t.Errorf("exec budgets = %v, %v; want 0.05 then what was left (0.04)", ex.calls[0].BudgetUSD, ex.calls[1].BudgetUSD)
+	}
+}
+
+func TestResearchConfinement(t *testing.T) {
+	sandboxed := Model{Runtime: "copilot", Model: "gpt", FullAccess: true, ReadOnlySandbox: true}
+	bare := Model{Runtime: "grok", Model: "g", FullAccess: true}
+
+	// No --access read, but a read-only sandbox: sandboxed, no write lease.
+	ex := &execScript{hold: 60 * time.Millisecond}
+	em := &recEmitter{}
+	c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{sandboxed}, Lead: sandboxed}, Exec: ex.exec, Emit: em, Limits: Limits{MaxAgents: 3, MaxConcurrent: 3}})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Access: ProfileCoding})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "investigate it", Access: ProfileResearch})
+	c.Wait(context.Background(), nil, 5*time.Second)
+	c.Close()
+	var research monomind.ExecOptions
+	for _, o := range ex.calls {
+		if strings.Contains(o.Prompt, "investigate") {
+			research = o
+		}
+	}
+	if research.Access != monomind.AccessFull || research.Sandbox != monomind.SandboxReadOnly {
+		t.Errorf("sandboxed research exec = access %q sandbox %q", research.Access, research.Sandbox)
+	}
+	if ex.maxRun != 2 {
+		t.Errorf("a confined researcher runs beside the writer: max running = %d, want 2", ex.maxRun)
+	}
+
+	// Nothing confines it: it takes the write lease like a writer.
+	ex2 := &execScript{hold: 60 * time.Millisecond}
+	c2 := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{bare}, Lead: bare}, Exec: ex2.exec, Emit: &recEmitter{}, Limits: Limits{MaxAgents: 3, MaxConcurrent: 3}})
+	c2.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Access: ProfileCoding})
+	c2.Spawn(context.Background(), SpawnRequest{Brief: "investigate it", Access: ProfileResearch})
+	c2.Wait(context.Background(), nil, 5*time.Second)
+	c2.Close()
+	if ex2.maxRun != 1 {
+		t.Errorf("an unconfined researcher must wait for the write lease: max running = %d, want 1", ex2.maxRun)
+	}
+	for _, o := range ex2.calls {
+		if o.Sandbox != "" || o.Access != monomind.AccessFull {
+			t.Errorf("unconfined exec = access %q sandbox %q", o.Access, o.Sandbox)
+		}
+	}
+}
+
+func TestConfinedResearchFallsBackOnlyToConfinedModels(t *testing.T) {
+	confinedModel := Model{Runtime: "claude", Model: "opus", FullAccess: true, Read: true}
+	bare := Model{Runtime: "grok", Model: "g", FullAccess: true}
+	ex := &execScript{answers: map[string]*monomind.TurnResult{
+		"claude/opus": {SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrAuth, Message: "Not logged in"}},
+	}}
+	c := New(context.Background(), Config{Cwd: "/w", ReadAccess: true, Staffer: &Staffer{Roster: []Model{confinedModel, bare}, Lead: confinedModel}, Exec: ex.exec, Emit: &recEmitter{}})
+	defer c.Close()
+	info, _ := c.Spawn(context.Background(), SpawnRequest{Brief: "investigate", Access: ProfileResearch, Runtime: "claude", Model: "opus", Wait: true})
+	if info.Status != chatevents.AgentFailed || len(ex.calls) != 1 {
+		t.Errorf("must not fall back to an unconfined model: status %s, execs %d", info.Status, len(ex.calls))
+	}
+}
+
+func TestWorkersGetNoCallerTools(t *testing.T) {
+	// Workers never get caller tools (no org_*, no monoagent messaging or
+	// people tools), whatever their profile; the prompt says so too.
+	ex := &execScript{}
+	c, _ := newTestConductor(t, ex, Limits{MaxAgents: 4, MaxConcurrent: 4})
+	for _, p := range Profiles {
+		c.Spawn(context.Background(), SpawnRequest{Brief: "task " + p, Access: p})
+	}
+	c.Wait(context.Background(), nil, 5*time.Second)
+	for _, o := range ex.calls {
+		if len(o.Tools) != 0 || o.OnToolCall != nil {
+			t.Errorf("a worker got caller tools: %+v", o.Tools)
+		}
+		if !strings.Contains(o.SystemPrompt, "Never read, send or change the user's messages or people records") {
+			t.Error("worker prompt misses the messaging/people rule")
+		}
+	}
+}

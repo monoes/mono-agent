@@ -722,6 +722,25 @@
     "confirmDiscardBody": "It has a message you haven't sent yet. Closing the chat discards it.",
     "discard": "Discard"
   },
+  "agentRow": {
+    "brief": "Brief:",
+    "staffing": "Staffing: {{why}}",
+    "switchedFrom": "Switched from {{from}}",
+    "skills": "Skills: {{skills}}",
+    "files": "Files: {{files}}",
+    "toolCalls_one": "{{count}} tool call",
+    "toolCalls_other": "{{count}} tool calls",
+    "status": {
+      "queued": "queued",
+      "starting": "starting",
+      "working": "working",
+      "waiting_lease": "waiting its turn",
+      "done": "done",
+      "failed": "failed",
+      "cancelled": "stopped",
+      "idle": "idle"
+    }
+  },
   "stage": {
     "subagent": "Subagent",
     "status": {
