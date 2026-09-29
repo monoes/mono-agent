@@ -7,6 +7,7 @@ import { installRuntime, runHealth } from '../lib/health.js'
 import { api } from '../services/api.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import MonomindInitPrompt from '../components/MonomindInitPrompt.jsx'
+import AgentRoster from '../components/agents/AgentRoster.jsx'
 
 function statusColor(installed) {
   return installed ? 'var(--green-neon)' : 'var(--text-muted)'
@@ -268,11 +269,14 @@ export default function Agents({ onOpenChat }) {
               <div className="empty-state-desc">{t('agents.noRuntimesDesc')}</div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
-              {agents.map(a => (
-                <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} onInstall={onInstall} job={jobs[a.id]} />
-              ))}
-            </div>
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+                {agents.map(a => (
+                  <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} onInstall={onInstall} job={jobs[a.id]} />
+                ))}
+              </div>
+              <AgentRoster />
+            </>
           )}
         </div>
       </div>

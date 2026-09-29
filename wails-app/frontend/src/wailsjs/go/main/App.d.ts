@@ -23,6 +23,14 @@ export function AddSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:s
 
 export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, any>>;
 
+export function AgentRoster():Promise<string>;
+
+export function AgentRosterAdd(arg1:string,arg2:string):Promise<string>;
+
+export function AgentRosterRemove(arg1:string,arg2:string):Promise<string>;
+
+export function AgentValidatePlan(arg1:Array<string>,arg2:Array<string>,arg3:boolean):Promise<string>;
+
 export function AnalyzeRecording(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
@@ -493,9 +501,13 @@ export function ShowAutomation(arg1:string):Promise<string>;
 
 export function ShowRecording(arg1:string):Promise<string>;
 
+export function StartAgentValidation(arg1:Array<string>,arg2:Array<string>,arg3:boolean):Promise<string>;
+
 export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<string>;
 
 export function StartOrgGroup(arg1:string):Promise<string>;
+
+export function StopAgentValidation():Promise<string>;
 
 export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 

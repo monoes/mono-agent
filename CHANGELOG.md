@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Coder mode runs on every runtime monomind gives full access, not only claude. `coder status --json` adds a `runtimes` list with each runtime's readiness and what it supports: tool-activity fidelity, resume, effort, max turns, cost, and init target. `runtime: "claude"` stays for older apps. `chat --mode coder --runtime X` and `chat history create --mode coder --runtime X` take any ready runtime and default to claude. A monomind without `agent-exec-full-access-any` still runs claude only, and other runtimes fail with `coder_runtime_unsupported`. Coder conversations keep their `--effort`. New folders get the runtime's own setup files. `coder workspace new|root` take `--runtime`.
+- **Validated agent roster** (#225, first phase of the dynamic org epic #224):
+  - `agent validate` tests every installed runtime's models with a one-word turn and stores what answered (`ok`, `auth`, `quota`, `model_unavailable`, `timeout`, …) with latency and cost. It supports `--dry-run`, `--stale-only`, and NDJSON progress with `--json`.
+  - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.
+  - The AI agents page has a "Validated models" section that updates live as a validation runs, asks before a multi-call run, and has re-validate buttons per runtime and per model.
 
 ### Changed
 - Effort goes to monomind as `agent exec --effort` when it advertises `agent-exec-effort`. An older monomind still gets `CLAUDE_EFFORT` for claude, now through one path instead of two.
@@ -17,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cline, aider, DeepSeek Harness (`dsh`) and pi get a curated model list, because none of them can list its models. The list includes free OpenRouter models (Qwen3.8 27B, Nemotron 3 Super, Gemma 4 31B, Laguna S 2.1, North Mini Code) that need only a free OpenRouter key. dsh also lists DeepSeek's own models and free NVIDIA-hosted ones. Before this, their model picker said "Not initialized" and blocked sending. Granting org full access is also refused inside pi, dsh, cline and aider shells (`PI_SESSION_ID`, `DSH_SHELL`, `DSH_SESSION_ID`, `MONOMIND_CLINE_TURN`, `MONOMIND_AIDER`). Coder status lines name them Cline, Aider and DeepSeek Harness.
 - App: the coder header names cline's, aider's, dsh's and pi's setup files. Runtime pickers and lists show `dsh` as "DeepSeek Harness", and the org designer's runtime list includes cline, aider and dsh. Tool cards show cline's multi-file reads and multi-page fetches, and aider's file-only edits without an empty diff.
 - App: coder mode's runtime picker lists every ready runtime instead of locking to claude, and says why the others are not ready (not installed, or no full access in this monomind). The chosen runtime's own model and effort are used, and the chat notes when a runtime shows commands but not every result. Tool cards render by `kind` (shell with exit code, edit, write, read, search, web, patch, mcp, task, todo). Settings hide the budget when no ready runtime reports cost. An org role's full-access grant is enabled only when the role's runtime supports full access.
+
+## [0.91.1] - 2026-09-29
+
+### Removed
+- The sidebar's list of logged-in web automation accounts. It showed each platform's first two letters and a stored account name, which for most sites is not readable ("unknown", and a blank row for a session without a platform). Accounts are listed on the dashboard and under Connections.
+
+## [0.91.0] - 2026-09-29
+
+### Changed
+- The workflow editor's node palette lists web automation nodes in their own **Web automations** section, one group per installed automation named after it, above the built-in **Nodes**. `node palette` tags each node with a `section` and an automation's categories with a `category_label`, read from the installed automations, so an automation installed later shows up there with no code change (#219).
+
+### Fixed
+- Web automation accounts no longer show "unknown" as their name. The placeholder a session stores when its account name can't be read is blank in `login status`, `automation list` and the dashboard, so the app says "Logged in". X and TikTok (1.0.1 on monoes.me) now read the handle from the profile link in the site's nav bar at login (#219).
 
 ## [0.90.1] - 2026-09-29
 
