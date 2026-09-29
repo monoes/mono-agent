@@ -47,6 +47,15 @@ export function applyChatEvent(summary, ev, expanded) {
     case 'usage.updated':
       if (p.costUsd == null || !ev.turnId) return s
       return { ...s, costByTurn: { ...s.costByTurn, [ev.turnId]: p.costUsd } }
+    // A dynamic-org agent asking the user something (#228) makes the
+    // bubble pulse until that agent moves on.
+    case 'agent.message':
+      if (p.direction !== 'question' || (s.activeTurnId && ev.turnId && ev.turnId !== s.activeTurnId)) return s
+      return { ...s, status: STATUS.needs, needsAgent: p.agentId || '' }
+    case 'agent.status':
+    case 'agent.finished':
+      if (s.status !== STATUS.needs || !s.needsAgent || p.agentId !== s.needsAgent) return s
+      return { ...s, status: STATUS.working, needsAgent: '' }
     case 'turn.finished': {
       // A turn other than the running one finishing (a late event for an
       // older turn) must not clear the running one.
