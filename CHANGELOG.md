@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.
   - The AI agents page has a "Validated models" section that updates live as a validation runs, asks before a multi-call run, and has re-validate buttons per runtime and per model.
 
+### Fixed
+- **Leaked `monomind org events --follow` processes** (#235). Quitting the app no longer leaves the Orgs panel's live event tail running for days.
+  - The app now stops its `monoagentcli` children on quit with SIGTERM and waits up to the kill grace for them, so each one stops what it started. Before, it SIGKILLed them.
+  - On Linux, a monomind child that `monoagentcli` stops itself (`org events`, `org run`, `org serve`, agent turns) now gets SIGTERM when `monoagentcli` dies for any reason.
+  - `monoagentcli` cancels on SIGHUP. `org events` stops when its reader goes away (a write fails with EPIPE) instead of dying of SIGPIPE.
+  - The panel's stop and start of a tail no longer race: each tail has an id, and a stop that arrives before its tail is registered ends that tail as soon as it starts.
+
 ## [0.91.1] - 2026-09-29
 
 ### Removed

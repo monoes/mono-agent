@@ -5,7 +5,7 @@ import {
   Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
   ChevronLeft, ChevronRight, Inbox,
 } from 'lucide-react'
-import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
+import { api, newOrgEventsStreamId, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
 import { KVBlock } from './KVBlock.jsx'
 import { OrgTemplatesButton, PublishOrgButton } from './orgs/OrgLibraryActions.jsx'
@@ -383,7 +383,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     // panel whose page isn't active) stops streaming.
     if (!selected || !effectiveOpen) return
     setEvents([])
-    api.streamOrgEvents(selected)
+    const streamId = newOrgEventsStreamId()
+    api.streamOrgEvents(selected, streamId)
     const offEvent = onOrgEvent((payload) => {
       if (payload?.orgName !== selected) return
       setEvents(prev => {
@@ -395,7 +396,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     return () => {
       offEvent()
       offClosed()
-      api.stopOrgEvents(selected)
+      api.stopOrgEvents(selected, streamId)
     }
   }, [selected, effectiveOpen, streamGeneration])
 
