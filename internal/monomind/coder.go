@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -39,7 +42,7 @@ type CoderRuntime struct {
 	Effort       bool   `json:"effort"`
 	MaxTurns     bool   `json:"maxTurns"`
 	ReportsCost  bool   `json:"reportsCost"`
-	InitTarget   string `json:"initTarget"` // "" when the runtime has none
+	InitTarget   string `json:"initTarget"` // "" when the runtime has none (AGENTS.md only)
 }
 
 // CoderRuntimes derives each scanned runtime's coder support. Without
@@ -68,6 +71,10 @@ func CoderRuntimes(scan *ScanResult, caps *CapabilitySet) []CoderRuntime {
 		}
 		if e.InitTarget != nil {
 			r.InitTarget = *e.InitTarget
+		} else if e.ID == DefaultCoderRuntime {
+			// claude's setup is claude's own; only other runtimes go
+			// without one.
+			r.InitTarget = DefaultCoderRuntime
 		}
 		if !anyRuntime {
 			r.FullAccess = e.ID == DefaultCoderRuntime
@@ -128,11 +135,13 @@ type WorkspaceInit struct {
 // already there (--if-missing), so it is safe on the user's own repos. The
 // code graph is skipped (--no-graph) so a new chat is ready in seconds;
 // monomind builds it on first use. Only the chat runtime's setup is added
-// (--target, its CoderRuntime.InitTarget; "" means claude): the folder may
-// be the user's own repo.
+// (--target, its CoderRuntime.InitTarget): the folder may be the user's own
+// repo. Target "" is a runtime monomind has no init target for (an older
+// monomind's pi, grok, …): the folder gets a minimal AGENTS.md and nothing
+// Claude-specific, without running monomind.
 func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit, error) {
 	if target == "" {
-		target = DefaultCoderRuntime
+		return writeAgentsMD(dir)
 	}
 	if bin == "" {
 		var err error
@@ -167,6 +176,41 @@ func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit
 		return nil, fmt.Errorf("monomind init %s: unreadable result: %w", dir, err)
 	}
 	return &res, nil
+}
+
+// fallbackAgentsMD is the AGENTS.md written for a runtime monomind has no
+// init target for; `monomind init --target agents` writes a fuller one.
+const fallbackAgentsMD = `# AGENTS.md
+
+Instructions for AI coding agents working in this folder.
+
+- Keep changes focused on the task you were given.
+- Never hardcode secrets or commit .env files.
+- When the monomind MCP server is available (tools named mcp__monomind__*),
+  use it for code navigation, impact analysis and persistent memory.
+`
+
+// writeAgentsMD creates dir/AGENTS.md unless one exists, reporting it the
+// way monomind init --json does.
+func writeAgentsMD(dir string) (*WorkspaceInit, error) {
+	res := &WorkspaceInit{Root: dir, Created: []string{}, Skipped: []string{}}
+	f, err := os.OpenFile(filepath.Join(dir, "AGENTS.md"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		res.Skipped = append(res.Skipped, "AGENTS.md")
+		return res, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("writing AGENTS.md in %s: %w", dir, err)
+	}
+	_, err = f.WriteString(fallbackAgentsMD)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("writing AGENTS.md in %s: %w", dir, err)
+	}
+	res.Created = append(res.Created, "AGENTS.md")
+	return res, nil
 }
 
 // lastJSONLine returns the last line of out that looks like a JSON object,

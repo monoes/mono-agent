@@ -240,3 +240,59 @@ func lastExecLine(t *testing.T, argsLog string) string {
 	}
 	return line
 }
+
+// A coder folder for a runtime without an init target of its own (pi, dsh,
+// grok, copilot, …) gets AGENTS.md alone: `monomind init --target agents`
+// when the scan names that target, mono-agent's own AGENTS.md when it names
+// none (an older monomind). Never Claude's setup.
+func TestCoderFolderForAgentsMDRuntimesHasNoClaudeSetup(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	dir := t.TempDir()
+	bin, argsLog := filepath.Join(dir, "monomind"), filepath.Join(dir, "args.log")
+	// Writes what each target would: AGENTS.md for agents, Claude's files
+	// for claude.
+	script := "#!/bin/sh\n" + `echo "$*" >> '` + argsLog + "'\n" +
+		`if [ "$1" = "init" ]; then
+  case "$*" in
+    *"--target agents"*) echo x > "$3/AGENTS.md"; echo '{"root":"x","created":["AGENTS.md"],"skipped":[]}' ;;
+    *) echo x > "$3/CLAUDE.md"; echo '{}' > "$3/.mcp.json"; mkdir -p "$3/.claude"; echo '{"root":"x","created":["CLAUDE.md"],"skipped":[]}' ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(monomind.EnvOverride, bin)
+	withCoderCaps(t, allRuntimeCaps...)
+	agents := "agents"
+	withCoderScan(t,
+		monomind.ScanEntry{ID: "pi", Installed: true, FullAccess: true, InitTarget: &agents},
+		monomind.ScanEntry{ID: "dsh", Installed: true, FullAccess: true, InitTarget: &agents},
+		monomind.ScanEntry{ID: "copilot", Installed: true, FullAccess: true, InitTarget: &agents},
+		monomind.ScanEntry{ID: "grok", Installed: true, FullAccess: true}) // older monomind: no target
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+
+	for _, rt := range []string{"pi", "dsh", "copilot", "grok"} {
+		out, code := runCoderCLI(t, dbPath, "workspace", "new", "--runtime", rt, "--root", filepath.Join(t.TempDir(), rt))
+		var ws coderWorkspace
+		decodeChatJSON(t, out, &ws)
+		if code != 0 || ws.Init == nil || len(ws.Init.Created) != 1 || ws.Init.Created[0] != "AGENTS.md" {
+			t.Fatalf("%s: exit %d %+v", rt, code, ws)
+		}
+		entries, _ := os.ReadDir(ws.Path)
+		for _, e := range entries {
+			if e.Name() != "AGENTS.md" && e.Name() != ".git" {
+				t.Errorf("%s folder has %s; want AGENTS.md alone", rt, e.Name())
+			}
+		}
+		if _, err := os.Stat(filepath.Join(ws.Path, "AGENTS.md")); err != nil {
+			t.Errorf("%s folder has no AGENTS.md", rt)
+		}
+	}
+	logged, _ := os.ReadFile(argsLog)
+	if strings.Contains(string(logged), "--target claude") || strings.Count(string(logged), "--target agents") != 3 {
+		t.Errorf("init calls:\n%s", logged)
+	}
+}

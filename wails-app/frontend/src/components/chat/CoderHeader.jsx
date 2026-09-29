@@ -71,14 +71,14 @@ const KEY_INIT_FILES = {
   antigravity: ['GEMINI.md', '.gemini/settings.json'],
   cline: ['.clinerules/monomind.md', 'AGENTS.md'],
   aider: ['CONVENTIONS.md', '.aider.conf.yml'],
-  dsh: ['AGENTS.md'],
-  pi: ['AGENTS.md'],
 }
 
-// keyInitFiles is a runtime's key init files; claude's for a runtime
-// without its own list.
+// keyInitFiles is a runtime's key init files. Every runtime without its own
+// list (pi, dsh, grok, copilot, qwen, crush, …) gets AGENTS.md alone —
+// `monomind init --target agents`, or mono-agent's own fallback — never
+// Claude's setup.
 export function keyInitFiles(runtime) {
-  return KEY_INIT_FILES[runtime] || KEY_INIT_FILES.claude
+  return KEY_INIT_FILES[runtime] || ['AGENTS.md']
 }
 
 // initSummary names the key files created and counts the rest.

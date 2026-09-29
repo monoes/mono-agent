@@ -36,7 +36,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
 })
 
 import AIChatPanel from './AIChatPanel.jsx'
-import { initSummary } from './chat/CoderHeader.jsx'
+import { initSummary, keyInitFiles, CoderInitNote } from './chat/CoderHeader.jsx'
 
 const status = (over = {}) => ({
   enabled: true, workspaceRoot: '/home/u/monoagent-coder', maxTurns: 200, timeout: '60m', budgetUsd: 0,
@@ -270,5 +270,12 @@ describe('AIChatPanel coder mode', () => {
     expect(initSummary(['CONVENTIONS.md', '.aider.conf.yml'], 'aider')).toBe('CONVENTIONS.md, .aider.conf.yml')
     expect(initSummary(['AGENTS.md'], 'dsh')).toBe('AGENTS.md')
     expect(initSummary(['AGENTS.md', 'x'], 'pi')).toBe('AGENTS.md and 1 more')
+    for (const rt of ['pi', 'pi-rpc', 'dsh', 'grok', 'copilot', 'qwen', 'crush', 'hermes']) {
+      expect(keyInitFiles(rt), rt).toEqual(['AGENTS.md'])
+    }
+    render(<CoderInitNote workspace={{ path: '/w/grok', created: true, init: { created: ['AGENTS.md'], skipped: [] } }} runtime="grok" />)
+    const note = screen.getByTestId('coder-init-note')
+    expect(note).toHaveTextContent('created AGENTS.md')
+    expect(note).not.toHaveTextContent(/CLAUDE|\.claude|\.mcp\.json|show all/)
   })
 })

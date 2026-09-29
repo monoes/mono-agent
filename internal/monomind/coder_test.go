@@ -114,7 +114,7 @@ func TestInitWorkspaceReportsJSONError(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "monomind")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho '{\"success\":false,\"error\":\"Directory does not exist: /nope\"}'\nexit 1\n"), 0o755)
-	_, err := InitWorkspace(context.Background(), bin, dir, "")
+	_, err := InitWorkspace(context.Background(), bin, dir, "claude")
 	if err == nil || !strings.Contains(err.Error(), "Directory does not exist") {
 		t.Fatalf("err = %v", err)
 	}
@@ -125,7 +125,7 @@ func TestInitWorkspaceUsesTarget(t *testing.T) {
 	bin := filepath.Join(dir, "monomind")
 	log := filepath.Join(dir, "args")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho \"$*\" > "+log+"\necho '{\"root\":\"x\",\"created\":[],\"skipped\":[]}'\n"), 0o755)
-	for target, want := range map[string]string{"": "--target claude", "codex": "--target codex"} {
+	for target, want := range map[string]string{"claude": "--target claude", "codex": "--target codex", "agents": "--target agents"} {
 		if _, err := InitWorkspace(context.Background(), bin, dir, target); err != nil {
 			t.Fatal(err)
 		}
@@ -135,13 +135,42 @@ func TestInitWorkspaceUsesTarget(t *testing.T) {
 	}
 }
 
+// A runtime without an init target (an older monomind's pi, grok, …) gets
+// a minimal AGENTS.md and nothing Claude-specific; monomind is not run, and
+// an AGENTS.md already there is kept.
+func TestInitWorkspaceWithoutTargetWritesOnlyAgentsMD(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "monomind")
+	os.WriteFile(bin, []byte("#!/bin/sh\ntouch "+filepath.Join(dir, "CLAUDE.md")+"\necho '{}'\n"), 0o755)
+	res, err := InitWorkspace(context.Background(), bin, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 1 || res.Created[0] != "AGENTS.md" || len(res.Skipped) != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != "AGENTS.md" {
+		t.Fatalf("folder has %v, want AGENTS.md alone", entries)
+	}
+	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("mine"), 0o644)
+	res, err = InitWorkspace(context.Background(), bin, dir, "")
+	if err != nil || len(res.Created) != 0 || len(res.Skipped) != 1 {
+		t.Fatalf("second run = %+v, %v", res, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md")); string(b) != "mine" {
+		t.Errorf("AGENTS.md overwritten: %q", b)
+	}
+}
+
 func TestCoderRuntimes(t *testing.T) {
-	codex := "codex"
+	codex, agents := "codex", "agents"
 	scan := &ScanResult{Agents: []ScanEntry{
 		{ID: "claude", Installed: true, FullAccess: true, ToolActivityFidelity: "full"},
 		{ID: "codex", Installed: true, FullAccess: true, ToolActivityFidelity: "full", Resume: true, Effort: true, InitTarget: &codex},
 		{ID: "grok", FullAccess: true, ToolActivityFidelity: "start-only"},
 		{ID: "vercel", Installed: true},
+		{ID: "pi", Installed: true, FullAccess: true, InitTarget: &agents},
 	}}
 	byID := func(list []CoderRuntime) map[string]CoderRuntime {
 		m := map[string]CoderRuntime{}
@@ -167,10 +196,13 @@ func TestCoderRuntimes(t *testing.T) {
 	if g := all["grok"]; !g.FullAccess || g.Ready || g.ToolActivity != "start-only" {
 		t.Errorf("grok = %+v", g)
 	}
+	if p, g := all["pi"], all["grok"]; p.InitTarget != "agents" || g.InitTarget != "" {
+		t.Errorf("pi = %+v, grok = %+v: no runtime but claude falls back to claude's setup", p, g)
+	}
 	if v := all["vercel"]; v.FullAccess || v.Ready || v.ToolActivity != "none" {
 		t.Errorf("vercel = %+v", v)
 	}
-	if c := all["claude"]; c.Resume || c.InitTarget != "" || !c.Ready {
+	if c := all["claude"]; c.Resume || c.InitTarget != "claude" || !c.Ready {
 		t.Errorf("new monomind's claude is taken as scanned: %+v", c)
 	}
 
