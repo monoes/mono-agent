@@ -61,7 +61,7 @@ func TestShutdownStopsGroupsGracefully(t *testing.T) {
 		if sig := exitSignal(err); sig != syscall.SIGTERM {
 			t.Errorf("group exit = %v (signal %v), want SIGTERM", err, sig)
 		}
-	default:
+	case <-time.After(time.Second): // reaped closes just before done is sent
 		t.Fatal("stopRunningCmds returned before the group was reaped")
 	}
 	if got := sent(); len(got) != 1 || got[0] != syscall.SIGTERM {
@@ -96,7 +96,7 @@ func TestShutdownWaitsForGraceThenKills(t *testing.T) {
 		if sig := exitSignal(err); sig != syscall.SIGKILL {
 			t.Errorf("exit = %v (signal %v), want SIGKILL", err, sig)
 		}
-	default:
+	case <-time.After(time.Second): // reaped closes just before done is sent
 		t.Fatal("stopRunningCmds returned before the group was reaped")
 	}
 	if got := sent(); len(got) != 2 || got[0] != syscall.SIGTERM || got[1] != syscall.SIGKILL {
