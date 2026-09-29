@@ -775,11 +775,22 @@ func (ae *ActionExecutor) validateRequiredInputs(def *ActionDef) error {
 	if len(missing) == 0 {
 		return nil
 	}
+	for i, name := range missing {
+		if canonical, ok := canonicalInputNames[name]; ok {
+			missing[i] = canonical
+		}
+	}
 	if len(missing) == 1 {
 		return fmt.Errorf("missing required input '%s'", missing[0])
 	}
 	return fmt.Errorf("missing required inputs '%s'", strings.Join(missing, "', '"))
 }
+
+// canonicalInputNames maps a required input's legacy definition name to
+// the name a node config sets it by, for error messages. The browser node
+// fills selectedListItems from its targets list, so reporting
+// "selectedListItems" sent readers looking for a field they never set.
+var canonicalInputNames = map[string]string{"selectedListItems": "targets"}
 
 // isEmptyRequiredValue reports whether a present value still amounts to
 // "nothing was supplied" for a required input.

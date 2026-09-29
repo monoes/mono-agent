@@ -664,11 +664,22 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
-- A granted tool's arguments reach the workflow as `input`. monomind
-  passes only the arguments the tool's schema lists, so the tool lists the
-  fields the workflow's templates read (`{{ $json.input.<field> }}`); a
-  workflow that reads its input another way needs an `input_schema` on the
-  role's `automations` entry in the org file.
+- A granted tool's arguments reach the workflow as `input`, and each field
+  is also copied to the top level of the trigger item, so a workflow
+  written for `workflow run --input '{"keywords":…}'` (`{{ $json.keywords }}`)
+  works unchanged as a granted tool. The copy never overrides the keys the
+  handler sets (`org`, `input`, `trace`, `trigger_type`, `org_message`,
+  `org_event`, `monoagent_trace`, anything starting with `_`; see
+  `orggrant.IsReservedTriggerKey`). monomind passes only the arguments the
+  tool's schema lists, so the tool lists the fields the workflow's
+  templates read: every `{{ $json.input.<field> }}`, plus the top-level
+  `{{ $json.<field> }}` of the nodes the trigger feeds directly. A workflow
+  that reads its input another way needs an `input_schema` on the role's
+  `automations` entry in the org file, which wins.
+- A missing template value (`{{ $json.missing }}`, or a JSON null) renders
+  as the empty string, never the literal `<no value>`, so a node's
+  required-input check catches it. `{{ if $json.x }}…{{ else }}…{{ end }}`
+  still sees it as absent.
 - A granted run (and an automation role's run started by a role's
   message) carries the role's workdir as `org.workdir`; file nodes refuse
   paths that resolve outside it (`path escapes org workdir`). Shell
