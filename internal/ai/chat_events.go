@@ -58,7 +58,7 @@ type Conversation struct {
 	Cwd  string `json:"cwd"`
 	// OrgMode is a coder conversation's org: "solo" (the agent works
 	// alone) or "dynamic" (it can spawn workers, #226).
-	OrgMode    string `json:"orgMode"`
+	OrgMode    string `json:"orgMode,omitempty"`
 	HistoryKey string `json:"-"`
 	CreatedAt  string `json:"createdAt"`
 	UpdatedAt  string `json:"updatedAt"`
