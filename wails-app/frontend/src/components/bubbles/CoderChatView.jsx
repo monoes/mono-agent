@@ -8,7 +8,8 @@ import { ChatComposer } from '../chat/ChatComposer.jsx'
 import { useChatScroll } from '../chat/useChatScroll.js'
 import { CoderModePicker } from '../chat/CoderModePicker.jsx'
 import { CoderInitNote } from '../chat/CoderHeader.jsx'
-import { useCoderStatus, useRecentWorkspaces, missingText, CODER_RUNTIME } from '../chat/useCoderMode.js'
+import { useCoderStatus, useRecentWorkspaces, useCoderRuntimeChoice, coderRuntimes, coderReady, fidelityNote, missingText } from '../chat/useCoderMode.js'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 import { MessageBubble } from '../AIChatPanel.jsx'
 import { isAgentNotSetup } from '../../lib/agentSetup.js'
 import AgentSetupLink from '../AgentSetupLink.jsx'
@@ -21,25 +22,33 @@ const selectStyle = {
 }
 
 // CoderSetup is a new coder bubble's choices before its first message: the
-// folder (coder root, a picked folder, or a recent one), the model and the
-// effort. The runtime is Claude Code until coder mode runs on every runtime
-// (#222).
+// folder (coder root, a picked folder, or a recent one), the runtime, the
+// model and the effort. The runtimes offered are the ones `coder status`
+// reports ready (useCoderRuntimeChoice); the models are the chosen
+// runtime's own.
 function CoderSetup({ status, setup, onChange, onNavigate }) {
   const { t } = useTranslation()
   const [models, setModels] = useState(null)
   const recent = useRecentWorkspaces(!!status?.enabled)
+  const setRuntime = useCallback(id => onChange({ runtime: id, model: '', effort: '' }), [onChange])
+  const choice = useCoderRuntimeChoice({
+    active: !!status?.enabled, status, runtimes: coderRuntimes(status), selectedRuntime: setup.runtime, setSelectedRuntime: setRuntime,
+  })
+  const runtime = choice.readyIds.includes(setup.runtime) ? setup.runtime : ''
   useEffect(() => {
+    if (!runtime) return
     let current = true
-    Promise.resolve().then(() => api.getAgentRuntimeModels(CODER_RUNTIME, '')).then(list => {
+    setModels(null)
+    Promise.resolve().then(() => api.getAgentRuntimeModels(runtime, '')).then(list => {
       if (!current) return
       const items = Array.isArray(list) ? list : []
       setModels(items)
       if (!setup.model && items.length) onChange({ model: items[0].id })
     }).catch(() => { if (current) setModels([]) })
     return () => { current = false }
-    // Loaded once per draft; onChange/setup.model only seed the default.
+    // Loaded once per runtime; onChange/setup.model only seed the default.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [runtime])
 
   if (!status) {
     return <div style={{ padding: 16, fontFamily: mono, fontSize: 10, color: 'var(--text-muted)' }}>{t('bubbles.loading')}</div>
@@ -54,11 +63,12 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
       </div>
     )
   }
-  if (status.ready === false) {
+  if (!coderReady(status)) {
     return <div style={{ padding: 16, fontFamily: mono, fontSize: 10.5, color: '#fbbf24' }}>{t('bubbles.coderNotReady', { why: missingText(status) })}</div>
   }
   const model = (models || []).find(m => m.id === setup.model)
-  const efforts = Array.isArray(model?.effort_levels) ? model.effort_levels : []
+  const efforts = choice.info?.effort !== false && Array.isArray(model?.effort_levels) ? model.effort_levels : []
+  const note = fidelityNote(choice.info)
   const pickFolder = async () => {
     const dir = await Promise.resolve(api.pickCoderFolder()).catch(() => '')
     if (dir) onChange({ workspace: { kind: 'folder', path: dir } })
@@ -67,8 +77,11 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
     <div data-testid="coder-setup">
       <CoderModePicker status={status} mode="coder" onModeChange={() => {}} workspaceOnly
         workspace={setup.workspace} onWorkspaceChange={workspace => onChange({ workspace })}
-        recent={recent} onPickFolder={pickFolder} />
+        recent={recent} onPickFolder={pickFolder} runtimeId={runtime} />
       <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid rgba(0,180,216,0.06)' }}>
+        <select aria-label={t('bubbles.runtime')} value={runtime} onChange={e => setRuntime(e.target.value)} style={{ ...selectStyle, minWidth: 90 }}>
+          {choice.options.map(r => <option key={r.id} value={r.id}>{runtimeLabel(r.id)}</option>)}
+        </select>
         {models === null ? (
           <span style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader size={11} className="chat-spin" /> {t('bubbles.loadingModels')}
@@ -85,6 +98,9 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
           </select>
         )}
       </div>
+      {note && (
+        <div style={{ padding: '0 12px 8px', fontFamily: mono, fontSize: 9, color: 'var(--text-muted)' }}>{note}</div>
+      )}
     </div>
   )
 }
@@ -110,10 +126,10 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
     if (!text.trim()) return
     onDraftChange('')
     const ok = await conv.send(text)
-    if (!ok && !conv.conversationId) onDraftChange(text)
+    if (ok === false && !conv.conversationId) onDraftChange(text)
   }, [draft, conv, onDraftChange])
 
-  const blocked = isDraft && (!status?.enabled || status?.ready === false || !setup.model)
+  const blocked = isDraft && (!status?.enabled || !coderReady(status) || !setup.runtime || !setup.model)
   const empty = conv.messages.length === 0 && !conv.streaming
 
   return (

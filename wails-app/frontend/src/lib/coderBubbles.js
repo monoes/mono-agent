@@ -110,7 +110,7 @@ export function loadState(storage = globalThis.localStorage) {
     const parsed = raw ? JSON.parse(raw) : null
     const bubbles = Array.isArray(parsed?.bubbles)
       ? parsed.bubbles.filter(b => b && typeof b.conversationId === 'string' && b.conversationId)
-        .map(b => ({ key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || '') }))
+        .map(b => ({ key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || ''), runtime: String(b.runtime || '') }))
       : []
     const side = parsed?.side === 'left' ? 'left' : 'right'
     return { bubbles, side }
@@ -122,7 +122,7 @@ export function loadState(storage = globalThis.localStorage) {
 export function saveState(state, storage = globalThis.localStorage) {
   try {
     const bubbles = state.bubbles.filter(b => b.conversationId)
-      .map(b => ({ conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '' }))
+      .map(b => ({ conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '', runtime: b.runtime || '' }))
     storage?.setItem(STORAGE_KEY, JSON.stringify({ bubbles, side: state.side === 'left' ? 'left' : 'right' }))
   } catch {
     // Storage unavailable: bubbles just won't come back after a restart.

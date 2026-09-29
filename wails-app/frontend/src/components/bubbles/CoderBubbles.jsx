@@ -29,10 +29,16 @@ export default function CoderBubbles({ store, onNavigate }) {
   // Closing a chat whose turn is running asks first, and then stops the
   // turn: a closed bubble has nowhere left to show it. Collapsing keeps a
   // chat running instead.
+  // A new chat with an unsent draft asks too: closing it loses the text.
   const closeChat = useCallback(async (key) => {
     const summary = store.summaryOf(key)
     const bubble = store.bubbles.find(b => b.key === key)
-    if (summary.activeTurnId && bubble?.conversationId) {
+    if (bubble && !bubble.conversationId && String(store.getView(key).draft || '').trim()) {
+      const ok = await confirm(t('bubbles.confirmDiscardBody'), {
+        title: t('bubbles.confirmDiscardTitle'), confirmLabel: t('bubbles.discard'), cancelLabel: t('bubbles.keepOpen'), danger: true,
+      })
+      if (!ok) return
+    } else if (summary.activeTurnId && bubble?.conversationId) {
       const ok = await confirm(t('bubbles.confirmCloseBody'), {
         title: t('bubbles.confirmCloseTitle'), confirmLabel: t('bubbles.stopAndClose'), cancelLabel: t('bubbles.keepOpen'), danger: true,
       })
@@ -40,7 +46,7 @@ export default function CoderBubbles({ store, onNavigate }) {
       try {
         await api.stopChatTurn(bubble.conversationId, summary.activeTurnId)
       } catch (err) {
-        notify('chat', `Could not stop: ${err}`)
+        notify('chat', t('bubbles.couldNotStop', { error: String(err?.message || err) }))
       }
     }
     store.close(key)

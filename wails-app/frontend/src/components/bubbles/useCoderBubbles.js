@@ -11,7 +11,7 @@ import {
 // subscription that updates every open bubble's summary, so a collapsed
 // chat costs a few fields, not a mounted transcript.
 //
-// A bubble is { key, conversationId, cwd, model }. A new coder chat is a
+// A bubble is { key, conversationId, cwd, model, runtime }. A new coder chat is a
 // draft (conversationId '') until its first message creates the
 // conversation; its key stays the same after that.
 export function useCoderBubbles() {
@@ -32,16 +32,21 @@ export function useCoderBubbles() {
 
   useEffect(() => { saveState({ bubbles, side }) }, [bubbles, side])
 
-  // Restored bubbles: whether each one's latest turn is still running.
+  // Restored bubbles: whether each one's latest turn is still running. A
+  // conversation deleted since (the CLI reports it not found) loses its
+  // bubble.
   useEffect(() => {
     for (const b of initial.bubbles) {
       Promise.resolve().then(() => api.getChatTurns(b.conversationId, '', 1))
         .then(res => {
+          if (res?.notFound) { dropBubble(b.key); return }
           const items = Array.isArray(res?.items) ? res.items : []
           setSummaries(s => ({ ...s, [b.key]: summaryFromTurns(items) }))
         })
         .catch(() => {})
     }
+    // dropBubble only uses state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial])
 
   useEffect(() => onChatEvent(ev => {
@@ -49,6 +54,13 @@ export function useCoderBubbles() {
     if (!key) return
     setSummaries(s => ({ ...s, [key]: applyChatEvent(s[key], ev, expandedRef.current === key) }))
   }), [])
+
+  const dropBubble = (key) => {
+    setBubbles(list => list.filter(b => b.key !== key))
+    setSummaries(s => { const next = { ...s }; delete next[key]; return next })
+    delete viewState.current[key]
+    setExpandedKey(k => (k === key ? '' : k))
+  }
 
   const expand = useCallback((key) => {
     setExpandedKey(key)
@@ -59,7 +71,7 @@ export function useCoderBubbles() {
 
   const openDraft = useCallback(() => {
     const key = newDraftKey()
-    setBubbles(list => [...list, { key, conversationId: '', cwd: '', model: '' }])
+    setBubbles(list => [...list, { key, conversationId: '', cwd: '', model: '', runtime: '' }])
     expand(key)
     return key
   }, [expand])
@@ -71,7 +83,7 @@ export function useCoderBubbles() {
     const existing = byConversation.current[conv.id]
     if (existing) { expand(existing); return existing }
     const key = conv.id
-    setBubbles(list => [...list, { key, conversationId: conv.id, cwd: conv.cwd || '', model: conv.model || '' }])
+    setBubbles(list => [...list, { key, conversationId: conv.id, cwd: conv.cwd || '', model: conv.model || '', runtime: conv.runtimeId || conv.runtime || '' }])
     Promise.resolve().then(() => api.getChatTurns(conv.id, '', 1))
       .then(res => setSummaries(s => ({ ...s, [key]: summaryFromTurns(Array.isArray(res?.items) ? res.items : []) })))
       .catch(() => {})
@@ -83,15 +95,12 @@ export function useCoderBubbles() {
   // message created one.
   const bindConversation = useCallback((key, conv) => {
     byConversation.current = { ...byConversation.current, [conv.id]: key }
-    setBubbles(list => list.map(b => (b.key === key ? { ...b, conversationId: conv.id, cwd: conv.cwd || b.cwd, model: conv.model || b.model } : b)))
+    setBubbles(list => list.map(b => (b.key === key ? { ...b, conversationId: conv.id, cwd: conv.cwd || b.cwd, model: conv.model || b.model, runtime: conv.runtime || b.runtime } : b)))
   }, [])
 
-  const close = useCallback((key) => {
-    setBubbles(list => list.filter(b => b.key !== key))
-    setSummaries(s => { const next = { ...s }; delete next[key]; return next })
-    delete viewState.current[key]
-    setExpandedKey(k => (k === key ? '' : k))
-  }, [])
+  // dropBubble only uses state setters and a ref.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const close = useCallback(dropBubble, [])
 
   const reorder = useCallback((fromKey, toKey) => setBubbles(list => moveBubble(list, fromKey, toKey)), [])
   const setSide = useCallback((next) => setSideState(next === 'left' ? 'left' : 'right'), [])

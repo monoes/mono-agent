@@ -87,8 +87,8 @@ describe('persistence', () => {
   }
   it('keeps real conversations and the dock side, drops drafts', () => {
     const s = memory()
-    saveState({ side: 'left', bubbles: [{ key: 'draft-1', conversationId: '' }, { key: 'c1', conversationId: 'c1', cwd: '/w', model: 'opus' }] }, s)
-    expect(loadState(s)).toEqual({ side: 'left', bubbles: [{ key: 'c1', conversationId: 'c1', cwd: '/w', model: 'opus' }] })
+    saveState({ side: 'left', bubbles: [{ key: 'draft-1', conversationId: '' }, { key: 'c1', conversationId: 'c1', cwd: '/w', model: 'opus', runtime: 'codex' }] }, s)
+    expect(loadState(s)).toEqual({ side: 'left', bubbles: [{ key: 'c1', conversationId: 'c1', cwd: '/w', model: 'opus', runtime: 'codex' }] })
   })
   it('survives throwing or corrupt storage', () => {
     const throwing = { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('denied') } }

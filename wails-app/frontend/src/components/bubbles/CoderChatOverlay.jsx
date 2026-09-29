@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Minimize2, X, ChevronUp, ChevronDown, Code2 } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { CoderHeader, CoderBadge } from '../chat/CoderHeader.jsx'
-import { folderName, CODER_RUNTIME } from '../chat/useCoderMode.js'
+import { folderName } from '../chat/useCoderMode.js'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 import { CoderChatView } from './CoderChatView.jsx'
 import { useCoderConversation } from './useCoderConversation.js'
 import { shouldCollapseOnBackdrop, nowDoing } from '../../lib/coderBubbles.js'
@@ -25,7 +26,7 @@ function prefersReducedMotion() {
 // Stage is the org at the top of an expanded coder bubble. Until the
 // dynamic org (#226, #228) staffs workers, the org is the lead alone: its
 // model, whether it is working, and what it is doing right now.
-function Stage({ bubble, conv, model }) {
+function Stage({ bubble, conv, runtime, model }) {
   const { t } = useTranslation()
   const working = conv.streaming
   const doing = working ? nowDoing(conv.liveTurn) : ''
@@ -39,7 +40,7 @@ function Stage({ bubble, conv, model }) {
           <div style={{ minWidth: 0 }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>{t('bubbles.lead')}</div>
             <div style={{ fontFamily: mono, fontSize: 9.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {CODER_RUNTIME}{model ? ` · ${model}` : ''}
+              {[runtime && runtimeLabel(runtime), model].filter(Boolean).join(' · ')}
             </div>
           </div>
           <span style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: working ? 'var(--cyan)' : 'var(--text-muted)', boxShadow: working ? '0 0 8px var(--cyan)' : 'none' }} />
@@ -69,20 +70,24 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
   const [stageRatio, setStageRatio] = useState(view.stageRatio ?? 0.35)
   const [stageCollapsed, setStageCollapsed] = useState(!!view.stageCollapsed)
   const [draft, setDraft] = useState(view.draft || '')
-  const [setup, setSetup] = useState(view.setup || { workspace: { kind: 'root' }, model: '', effort: '' })
+  const [setup, setSetup] = useState(view.setup || { workspace: { kind: 'root' }, runtime: '', model: '', effort: '' })
   const bodyRef = useRef(null)
   const pressOnBackdrop = useRef(false)
 
+  // create makes the coder conversation for a draft's first message, on the
+  // runtime, model and effort picked in its setup (CoderSetup).
   const create = useCallback(async () => {
+    const runtime = setup.runtime
     let cwd = setup.workspace?.kind === 'folder' ? setup.workspace.path : ''
     let workspace = null
     if (!cwd) {
-      workspace = await api.coderWorkspaceRoot()
+      workspace = await api.coderWorkspaceRoot(runtime)
       cwd = workspace.path
     }
-    const conv = await api.createCoderConversation(CODER_RUNTIME, setup.model, cwd, false)
-    store.bindConversation(bubble.key, { id: conv.id, cwd: conv.cwd || cwd, model: conv.model || setup.model })
-    return { id: conv.id, cwd: conv.cwd || cwd, workspace }
+    const conv = await api.createCoderConversation(runtime, setup.model, setup.effort || '', cwd, false)
+    const bound = { id: conv.id, cwd: conv.cwd || cwd, model: conv.model || setup.model, runtime: conv.runtimeId || runtime }
+    store.bindConversation(bubble.key, bound)
+    return { ...bound, workspace }
   }, [setup, store, bubble.key])
   const conv = useCoderConversation({ conversationId: bubble.conversationId, create })
 
@@ -151,6 +156,8 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
   }
 
   const title = bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
+  const runtime = bubble.conversationId ? bubble.runtime : setup.runtime
+  const model = bubble.model || setup.model
 
   return (
     <>
@@ -174,9 +181,9 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
           {/* The folder row below carries the badge once there is a folder. */}
           {!bubble.cwd && <CoderBadge />}
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
-          {(bubble.model || setup.model) && (
+          {(runtime || model) && (
             <span style={{ fontFamily: mono, fontSize: 9.5, color: 'var(--cyan)', border: '1px solid var(--border-bright)', borderRadius: 999, padding: '1px 7px' }}>
-              {CODER_RUNTIME} · {bubble.model || setup.model}
+              {[runtime && runtimeLabel(runtime), model].filter(Boolean).join(' · ')}
             </span>
           )}
           <span style={{ flex: 1 }} />
@@ -196,7 +203,7 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
           {!stageCollapsed && (
             <>
               <div style={{ height: `${Math.round(stageRatio * 100)}%`, flexShrink: 0 }}>
-                <Stage bubble={bubble} conv={conv} model={bubble.model || setup.model} />
+                <Stage bubble={bubble} conv={conv} runtime={runtime} model={model} />
               </div>
               <div className="bubble-divider" role="separator" aria-orientation="horizontal" tabIndex={0}
                 aria-label={t('bubbles.resizeOrg')} aria-valuenow={Math.round(stageRatio * 100)} aria-valuemin={15} aria-valuemax={70}

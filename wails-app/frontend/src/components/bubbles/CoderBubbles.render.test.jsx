@@ -2,7 +2,7 @@
 import React, { useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react'
+import { render, renderHook, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react'
 import '../../i18n.js'
 
 const { api, listeners, mockConfirm } = vi.hoisted(() => ({
@@ -31,6 +31,7 @@ vi.mock('../ConfirmDialog.jsx', () => ({ confirm: (...a) => mockConfirm(...a) })
 
 import CoderBubbles from './CoderBubbles.jsx'
 import { useCoderBubbles } from './useCoderBubbles.js'
+import { useCoderConversation } from './useCoderConversation.js'
 
 const emit = ev => act(() => { for (const cb of [...listeners.chat]) cb(ev) })
 
@@ -169,11 +170,66 @@ describe('coder bubbles', () => {
     await waitFor(() => expect(screen.getByLabelText('Model')).toHaveValue('opus'))
     const box = within(overlay()).getByPlaceholderText('Type a message...')
     fireEvent.change(box, { target: { value: 'add a README' } })
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } })
     fireEvent.keyDown(box, { key: 'Enter' })
-    await waitFor(() => expect(api.createCoderConversation).toHaveBeenCalledWith('claude', 'opus', '/home/u/monoagent-coder', false))
+    await waitFor(() => expect(api.createCoderConversation).toHaveBeenCalledWith('claude', 'opus', 'high', '/home/u/monoagent-coder', false))
+    expect(api.coderWorkspaceRoot).toHaveBeenCalledWith('claude')
     await waitFor(() => expect(api.startChatTurn).toHaveBeenCalledWith('c9', expect.any(String), 'add a README', false, false))
     await waitFor(() => expect(store.bubbles[0].conversationId).toBe('c9'))
     expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles[0].conversationId).toBe('c9')
+  })
+
+  it('offers the ready coder runtimes and creates the chat on the one picked, with its model and effort', async () => {
+    api.coderStatus.mockResolvedValue({
+      enabled: true, ready: true,
+      runtimes: [
+        { id: 'claude', ready: true, effort: true, toolActivity: 'full' },
+        { id: 'codex', ready: true, effort: true, toolActivity: 'commands' },
+        { id: 'gemini', ready: false, installed: true, fullAccess: false },
+      ],
+    })
+    api.getAgentRuntimeModels.mockImplementation(rt => Promise.resolve(rt === 'codex'
+      ? [{ id: 'gpt-5', label: 'GPT-5', effort_levels: ['low', 'medium'] }]
+      : [{ id: 'opus', label: 'Opus 5.5', effort_levels: ['low', 'high'] }]))
+    api.coderWorkspaceRoot.mockResolvedValue({ path: '/home/u/monoagent-coder', created: true })
+    api.createCoderConversation.mockResolvedValue({ id: 'c9', cwd: '/home/u/monoagent-coder', model: 'gpt-5', runtimeId: 'codex' })
+    render(<Harness />)
+    fireEvent.click(await screen.findByLabelText('New coder chat'))
+    const runtime = await screen.findByLabelText('Runtime')
+    await waitFor(() => expect(runtime).toHaveValue('claude'))
+    expect([...runtime.querySelectorAll('option')].map(o => o.value)).toEqual(['claude', 'codex'])
+
+    fireEvent.change(runtime, { target: { value: 'codex' } })
+    await waitFor(() => expect(screen.getByLabelText('Model')).toHaveValue('gpt-5'))
+    expect(api.getAgentRuntimeModels).toHaveBeenCalledWith('codex', '')
+    expect(screen.getByText('codex shows commands, not every result')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'medium' } })
+
+    const box = within(overlay()).getByPlaceholderText('Type a message...')
+    fireEvent.change(box, { target: { value: 'port it' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(api.createCoderConversation).toHaveBeenCalledWith('codex', 'gpt-5', 'medium', '/home/u/monoagent-coder', false))
+    expect(api.coderWorkspaceRoot).toHaveBeenCalledWith('codex')
+    await waitFor(() => expect(store.bubbles[0].runtime).toBe('codex'))
+  })
+
+  it('asks before closing a new chat that has unsent text', async () => {
+    render(<Harness />)
+    fireEvent.click(await screen.findByLabelText('New coder chat'))
+    await waitFor(() => expect(screen.getByLabelText('Model')).toHaveValue('opus'))
+    fireEvent.change(within(overlay()).getByPlaceholderText('Type a message...'), { target: { value: 'a long plan' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(overlay()).toBeNull())
+    const key = store.bubbles[0].key
+
+    mockConfirm.mockResolvedValueOnce(false)
+    fireEvent.click(screen.getByLabelText('Close New coder chat'))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    expect(bubble(key)).toBeInTheDocument()
+
+    mockConfirm.mockResolvedValueOnce(true)
+    fireEvent.click(screen.getByLabelText('Close New coder chat'))
+    await waitFor(() => expect(bubble(key)).toBeNull())
   })
 
   it('keeps the unsent draft across a collapse', async () => {
@@ -202,6 +258,48 @@ describe('coder bubbles', () => {
     await waitFor(() => expect(bubble('c1')).toHaveAttribute('data-status', 'error'))
     expect(screen.getByTestId('bubble-dock')).toHaveClass('left')
     expect(overlay()).toBeNull()
+  })
+})
+
+describe('restored bubbles', () => {
+  it('drops a bubble whose conversation was deleted', async () => {
+    localStorage.setItem('monoagent:coderBubbles:v1', JSON.stringify({ bubbles: [
+      { conversationId: 'gone', cwd: '/w/old', model: 'opus' },
+      { conversationId: 'c1', cwd: '/w/api', model: 'opus' },
+    ] }))
+    api.getChatTurns.mockImplementation(id => Promise.resolve(id === 'gone' ? { items: [], nextCursor: '', notFound: true } : { items: [] }))
+    render(<Harness />)
+    await waitFor(() => expect(bubble('gone')).toBeNull())
+    expect(bubble('c1')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1'])
+  })
+})
+
+describe('useCoderConversation', () => {
+  it('sends once when Enter is pressed twice while the conversation is being created', async () => {
+    let finish
+    const create = vi.fn(() => new Promise(res => { finish = res }))
+    const { result } = renderHook(() => useCoderConversation({ conversationId: '', create }))
+    let first, second
+    act(() => {
+      first = result.current.send('hello')
+      second = result.current.send('hello')
+    })
+    await expect(second).resolves.toBeNull()
+    await act(async () => { finish({ id: 'c9', cwd: '/w' }); await first })
+    expect(await first).toBe(true)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(api.startChatTurn).toHaveBeenCalledTimes(1)
+    expect(result.current.messages.filter(m => m.role === 'user')).toHaveLength(1)
+  })
+
+  it('reports a refused start in the transcript', async () => {
+    api.startChatTurn.mockResolvedValue({ ok: false, status: 'busy' })
+    const { result } = renderHook(() => useCoderConversation({ conversationId: '', create: () => Promise.resolve({ id: 'c9' }) }))
+    let ok
+    await act(async () => { ok = await result.current.send('hi') })
+    expect(ok).toBe(false)
+    expect(result.current.messages.at(-1)).toEqual({ role: 'error', content: 'Could not start: busy' })
   })
 })
 

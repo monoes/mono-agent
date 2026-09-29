@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, notify } from '../../services/api.js'
 import { useChatStream, loadTurnState } from '../chat/useChatStream.js'
 import { newTurnId } from '../AIChatPanel.jsx'
@@ -13,6 +14,7 @@ import { newTurnId } from '../AIChatPanel.jsx'
 // create() is called for the first message of a draft: it creates the
 // coder conversation and returns it ({ id, cwd, model }).
 export function useCoderConversation({ conversationId, create }) {
+  const { t } = useTranslation()
   const [messages, setMessages] = useState([])
   const [activeTurnId, setActiveTurnId] = useState('')
   const [convId, setConvId] = useState(conversationId || '')
@@ -22,6 +24,9 @@ export function useCoderConversation({ conversationId, create }) {
   const liveTurn = useChatStream({ conversationId: convId, turnId: activeTurnId })
   const activeRef = useRef('')
   activeRef.current = activeTurnId
+  // sending is set before send's first await, so a second Enter while the
+  // conversation is being created (or the turn started) doesn't send twice.
+  const sending = useRef(false)
 
   useEffect(() => { if (conversationId) setConvId(conversationId) }, [conversationId])
 
@@ -67,9 +72,13 @@ export function useCoderConversation({ conversationId, create }) {
     setStopRequested(false)
   }, [activeTurnId, liveTurn])
 
+  // send resolves true once the turn started, false when it failed (the
+  // error is in the transcript), and null when there was nothing to send or
+  // a turn is already starting or running.
   const send = useCallback(async (text) => {
     const prompt = String(text || '').trim()
-    if (!prompt || activeRef.current) return false
+    if (!prompt || activeRef.current || sending.current) return null
+    sending.current = true
     setMessages(msgs => [...msgs, { role: 'user', content: prompt }])
     setStopRequested(false)
     try {
@@ -86,16 +95,19 @@ export function useCoderConversation({ conversationId, create }) {
       // a coder conversation.
       const res = await api.startChatTurn(id, turnId, prompt, false, false)
       if (res?.ok === false) {
-        setMessages(msgs => [...msgs, { role: 'error', content: `Could not start: ${res.status}` }])
+        setMessages(msgs => [...msgs, { role: 'error', content: t('bubbles.couldNotStart', { status: res.status }) }])
         return false
       }
+      activeRef.current = turnId
       setActiveTurnId(turnId)
       return true
     } catch (err) {
       setMessages(msgs => [...msgs, { role: 'error', content: String(err?.message || err), code: err?.code || '' }])
       return false
+    } finally {
+      sending.current = false
     }
-  }, [convId, create])
+  }, [convId, create, t])
 
   const stop = useCallback(async () => {
     if (!convId || !activeRef.current) return
@@ -104,9 +116,9 @@ export function useCoderConversation({ conversationId, create }) {
       await api.stopChatTurn(convId, activeRef.current)
     } catch (err) {
       setStopRequested(false)
-      notify('chat', `Could not stop: ${err}`)
+      notify('chat', t('bubbles.couldNotStop', { error: String(err?.message || err) }))
     }
-  }, [convId])
+  }, [convId, t])
 
   return { messages, liveTurn, activeTurnId, streaming: !!activeTurnId, stopRequested, loading, loadError, send, stop, conversationId: convId }
 }
