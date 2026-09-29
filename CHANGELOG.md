@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.1] - 2026-09-29
+
+### Changed
+- Capture indexing also turns on transcript and summary ingest when monomind advertises the `knowledge-profile-captures` capability, besides the monomind 2.18.3-or-newer version check. The capability is never required on its own. `doctor` and a capture's row error say "monomind 2.18.3 or newer" (#214).
+- Frontend dependency updates: lucide-react 1.48.0, vite 8.3.1, jsdom 30.1.1 (#206).
+
 ## [0.90.0] - 2026-09-28
 
 ### Fixed
@@ -35,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every capture that is not indexed yet, has changed, or failed before.
   It is the backfill for pages saved before this release.
   `profile documents index <id>` on a capture uses the capture store too.
-- Needs monomind 2.18.3 or newer. Older versions cannot index pages whose
+- Needs monomind 2.18.3 or later. Older versions cannot index pages whose
   URL has a query string (every YouTube video) and do not index
   transcripts or summaries. `doctor` warns about this, and the error on
   the capture's row says to update.
