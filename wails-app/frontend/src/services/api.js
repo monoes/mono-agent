@@ -151,6 +151,14 @@ export const api = {
   // for antigravity/codex, which discover their own model catalog by shelling
   // out to themselves; harmless to omit for claude (curated list, ignores it).
   getAgentRuntimeModels: (runtimeID, binary) => GoApp.GetAgentRuntimeModels(runtimeID, binary || '').then(s => JSON.parse(s)).catch(guard('agent runtime models', [])),
+  // Validated agent roster (#225): `agent roster|validate --json`. Errors
+  // come back as {error} objects, never rejections.
+  agentRoster:          () => GoApp.AgentRoster().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentValidatePlan:    (runtimes = [], models = [], staleOnly = false) => GoApp.AgentValidatePlan(runtimes, models, staleOnly).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  startAgentValidation: (runtimes = [], models = [], staleOnly = false) => GoApp.StartAgentValidation(runtimes, models, staleOnly).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  stopAgentValidation:  () => GoApp.StopAgentValidation().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentRosterAdd:       (runtimeID, model) => GoApp.AgentRosterAdd(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentRosterRemove:    (runtimeID, model) => GoApp.AgentRosterRemove(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
   // bindings"). Every call goes through parseStreamResult: a synchronous
   // {"error":...} shape
@@ -388,6 +396,21 @@ export function onAgentSession(callback) {
 // helpers already avoid).
 export function onChatEvent(callback) {
   return subscribeEvent('chat:event', callback)
+}
+
+// parseRosterJSON parses a roster binding's reply; unparseable text becomes
+// an {error} object.
+function parseRosterJSON(s) {
+  try { return JSON.parse(s) } catch { return { error: String(s || 'empty reply') } }
+}
+
+// onAgentValidate streams `agent validate --json` progress lines.
+export function onAgentValidate(callback) {
+  return subscribeEvent('agents:validate', callback)
+}
+
+export function onAgentValidateClosed(callback) {
+  return subscribeEvent('agents:validateClosed', callback)
 }
 
 export function onOrgEventsClosed(callback) {
