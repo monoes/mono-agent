@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ShieldAlert, ShieldOff, ShieldQuestion, Clock } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
+import { cachedAgentScan } from '../../lib/agentRuntimes.js'
 
 // Full-access org roles (#205). A role with policy.access "full" runs like a
 // coder chat: any command, any file, no approval gate. Its state comes from
@@ -66,6 +67,28 @@ export function declaresFull(node) {
   return node?.rest?.policy?.access === 'full'
 }
 
+// runtimeFullAccess reports whether monomind can run a runtime with full
+// access: its `agent scan` entry's full_access. A scan from before that
+// field (or none at all) leaves claude as the only full-access runtime.
+export function runtimeFullAccess(scan, runtimeID) {
+  const entry = (Array.isArray(scan?.agents) ? scan.agents : []).find(a => a.id === runtimeID)
+  if (typeof entry?.full_access === 'boolean') return entry.full_access
+  return runtimeID === 'claude'
+}
+
+// useRuntimeFullAccess is runtimeFullAccess over the shared (cached) scan;
+// null until the scan answers.
+export function useRuntimeFullAccess(runtimeID) {
+  const [scan, setScan] = useState(undefined)
+  useEffect(() => {
+    let current = true
+    Promise.resolve().then(() => cachedAgentScan()).catch(() => null)
+      .then(res => { if (current) setScan(res && !res.error ? res : null) })
+    return () => { current = false }
+  }, [])
+  return scan === undefined ? null : runtimeFullAccess(scan, runtimeID)
+}
+
 // useRolesAccess loads the org's roles_access and reloads it whenever
 // `stamp` changes (the designer passes its role config, so an edit that
 // suspends a grant shows up), debounced so a burst of edits costs one call.
@@ -113,7 +136,7 @@ export function FullAccessRiskText({ role }) {
         <li>It can run any command, read and change any file your user account can, and install software.</li>
         <li>Web pages and files it reads, and other roles&apos; messages, reach it and can contain instructions that steer it. Only grant this when everything that reaches it is trusted.</li>
         <li>Scheduled and unattended runs use full access only when the org allows unattended full access.</li>
-        <li>It loads your normal Claude Code setup: CLAUDE.md, skills, hooks and MCP servers.</li>
+        <li>It loads its agent&apos;s normal setup: instructions files (CLAUDE.md, AGENTS.md, GEMINI.md), skills, hooks and MCP servers.</li>
       </ul>
       <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
         Editing this role or the org&apos;s run settings suspends the grant. Unattended runs and accepted taint are set with <code>{FULL_ACCESS_HELP}</code>.

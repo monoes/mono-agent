@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -74,25 +75,44 @@ type SandboxFields struct {
 
 // SandboxArgs is the single place that decides how a turn on runtime gets
 // sandbox mode. It returns the agent exec args to add and the effective
-// status. caps is the handshake (nil when it failed). An empty mode asks
-// for nothing: no args, status "".
-func SandboxArgs(caps *CapabilitySet, runtime, mode string) (args []string, effective string) {
+// status. caps is the handshake (nil when it failed). modes is the
+// runtime's `agent scan --json` sandbox_modes, nil when unknown. An empty
+// mode asks for nothing: no args, status "".
+//
+// With CapAgentExecSandbox the flag is passed ONLY for a mode the runtime
+// lists: monomind 2.19.0 refuses any other mode with a fatal
+// "--sandbox <mode> is not supported by runtime" error, so passing it
+// blindly failed every claude, copilot, antigravity, … turn. A runtime
+// that lists only "full" runs without a sandbox (claude stays on its
+// scoped access) and the turn says so. With modes unknown (the scan
+// failed) no flag is ever passed; codex and grok fall back to the env
+// path, which still works.
+func SandboxArgs(caps *CapabilitySet, modes []string, runtime, mode string) (args []string, effective string) {
 	switch {
 	case mode == "":
 		return nil, ""
-	case caps.Has(CapAgentExecSandbox):
-		// Passed for every runtime, claude included; the start event
-		// reports what each actually did.
-		effective = SandboxStatusSandboxed
-		if mode == SandboxFull {
-			effective = SandboxStatusOff
+	case caps.Has(CapAgentExecSandbox) && modes != nil:
+		switch {
+		case !slices.Contains(modes, mode):
+			if mode == SandboxFull {
+				return nil, SandboxStatusOff
+			}
+			if runtime == "claude" {
+				return nil, SandboxStatusScoped
+			}
+			return nil, SandboxStatusUnsupported
+		case mode == SandboxFull:
+			return []string{SandboxFlag, mode}, SandboxStatusOff
 		}
-		return []string{SandboxFlag, mode}, effective
+		return []string{SandboxFlag, mode}, SandboxStatusSandboxed
 	case mode == SandboxFull:
 		return nil, SandboxStatusOff
 	case runtime == "claude":
 		return nil, SandboxStatusScoped
 	case !sandboxEnvRuntimes[runtime]:
+		if caps.Has(CapAgentExecSandbox) {
+			return nil, SandboxStatusUnsupported
+		}
 		return nil, SandboxStatusAwaitingMonomind
 	case caps == nil || !versionAtLeast(caps.Version, SandboxEnvMinVersion):
 		return nil, SandboxStatusNeedsMonomind
@@ -101,6 +121,50 @@ func SandboxArgs(caps *CapabilitySet, runtime, mode string) (args []string, effe
 		return nil, SandboxStatusAwaitingMonomind
 	}
 	return []string{"--env", sandboxEnvLevel}, SandboxStatusSandboxed
+}
+
+// sandboxModesTTL bounds how long a scan's sandbox_modes are reused: a
+// runtime installed or upgraded meanwhile is picked up within it.
+const sandboxModesTTL = 10 * time.Minute
+
+// scanModes caches `agent scan --json` sandbox_modes per runtime, so a
+// long-running process (daemon, bridge) scans once, not per turn.
+var scanModes struct {
+	sync.Mutex
+	modes map[string][]string
+	at    time.Time
+}
+
+// scanForSandbox is Scan, swappable in tests.
+var scanForSandbox = Scan
+
+// SandboxModesFor returns runtime's sandbox_modes from `agent scan --json`,
+// nil when the scan fails or the runtime isn't listed (callers then pass
+// no --sandbox flag).
+func SandboxModesFor(ctx context.Context, runtime string) []string {
+	scanModes.Lock()
+	defer scanModes.Unlock()
+	if scanModes.modes == nil || time.Since(scanModes.at) > sandboxModesTTL {
+		res, err := scanForSandbox(ctx)
+		if err != nil || res == nil {
+			return nil
+		}
+		m := map[string][]string{}
+		for _, a := range res.Agents {
+			if a.SandboxModes != nil {
+				m[a.ID] = a.SandboxModes
+			}
+		}
+		scanModes.modes, scanModes.at = m, time.Now()
+	}
+	return scanModes.modes[runtime]
+}
+
+// resetSandboxModes clears the cache (tests).
+func resetSandboxModes() {
+	scanModes.Lock()
+	scanModes.modes = nil
+	scanModes.Unlock()
 }
 
 // sandboxStatus refines the adapter's verdict with the start event: once

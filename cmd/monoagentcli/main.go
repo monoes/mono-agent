@@ -80,7 +80,9 @@ func main() {
 	// docs/i18n.md.
 	i18n.SetLocale(i18n.Detect(os.Args[1:]))
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGHUP too: a CLI whose terminal or parent goes away must cancel, so
+	// commands end what they started (monoes/mono-agent#235).
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {

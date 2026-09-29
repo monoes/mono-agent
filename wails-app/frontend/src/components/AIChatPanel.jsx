@@ -13,12 +13,13 @@ import { openArtifact as revalidateAndOpenArtifact } from './chat/chatArtifacts.
 import { useResolvedArtifacts } from './chat/useResolvedArtifacts.js'
 import './chat/chat.css'
 import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
+import { runtimeLabel } from '../lib/runtimeLabels.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
 import AgentSetupLink from './AgentSetupLink.jsx'
 import { CoderModePicker } from './chat/CoderModePicker.jsx'
 import { CoderHeader, CoderBadge, CoderInitNote } from './chat/CoderHeader.jsx'
-import { useCoderStatus, useRecentWorkspaces, folderName, CODER_RUNTIME } from './chat/useCoderMode.js'
+import { useCoderStatus, useRecentWorkspaces, useCoderRuntimeChoice, folderName, coderReady, fidelityNote } from './chat/useCoderMode.js'
 
 // Shared style for the runtime/model <select>s in the selector row.
 // Without `appearance: none`, WebKitGTK draws the closed box with native
@@ -234,6 +235,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const coderAvailable = workflowID === 'general'
   const { status: coderStatus } = useCoderStatus(isOpen && coderAvailable)
   const isCoder = chatMode === 'coder'
+  // Coder mode runs on the runtimes `coder status` reports ready (claude
+  // only, from an older monoagentcli); see useCoderRuntimeChoice.
+  const coderChoice = useCoderRuntimeChoice({ active: isCoder && !conversationId, status: coderStatus, runtimes, selectedRuntime, setSelectedRuntime })
 
   const liveTurn = useChatStream({ conversationId, turnId: activeTurnId })
   const streaming = !!activeTurnId
@@ -340,6 +344,10 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     if (!selectedRuntime) { setRuntimeModels([]); return }
     const runtime = runtimes.find(r => r.id === selectedRuntime)
     let current = true
+    // Drop the previous runtime's list now: until this one's arrives, its
+    // model and effort ids must not read as this runtime's (a send before
+    // it arrives goes with the runtime's default model).
+    setRuntimeModels([])
     setRuntimeModelsLoading(true)
     api.getAgentRuntimeModels(selectedRuntime, runtime?.binary || '').then(models => {
       if (!current) return
@@ -690,19 +698,26 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // init result show in the transcript; the conversation then runs in the
   // root, or in the folder the user chose.
   const createCoderConversation = useCallback(async () => {
-    if (selectedRuntime !== CODER_RUNTIME) throw new Error(`Coder mode needs the ${CODER_RUNTIME} runtime installed`)
+    if (!coderChoice.readyIds.includes(selectedRuntime)) {
+      throw new Error(`Coder mode can't run on ${selectedRuntime}: it isn't ready for full access (see Settings → Coder mode)`)
+    }
     let cwd = coderWorkspace.kind === 'folder' ? coderWorkspace.path : ''
     if (!cwd) {
-      const ws = await api.coderWorkspaceRoot()
+      const ws = await api.coderWorkspaceRoot(selectedRuntime)
       cwd = ws.path
-      setMessages(msgs => [...msgs.slice(0, -1), { role: 'coder-init', workspace: ws }, ...msgs.slice(-1)])
+      setMessages(msgs => [...msgs.slice(0, -1), { role: 'coder-init', workspace: ws, runtime: selectedRuntime }, ...msgs.slice(-1)])
     }
-    const conv = await api.createCoderConversation(CODER_RUNTIME, selectedModel, cwd, false)
+    // Only this runtime's own model and effort: a model id still selected
+    // from another runtime (its list not loaded yet) goes as the default.
+    const curM = runtimeModels.find(m => m.id === selectedModel)
+    const curEfforts = Array.isArray(curM?.effort_levels) ? curM.effort_levels : []
+    const effort = coderChoice.info?.effort !== false && curEfforts.includes(selectedEffort) ? selectedEffort : ''
+    const conv = await api.createCoderConversation(selectedRuntime, curM ? selectedModel : '', effort, cwd, false)
     setConversationId(conv.id)
     setConversationBackend('agent')
     setCoderCwd(conv.cwd || cwd)
     return conv.id
-  }, [coderWorkspace, selectedRuntime, selectedModel])
+  }, [coderWorkspace, selectedRuntime, selectedModel, selectedEffort, runtimeModels, coderChoice])
 
   const onOpenCoderChatRef = useRef(onOpenCoderChat)
   onOpenCoderChatRef.current = onOpenCoderChat
@@ -723,15 +738,6 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     }
     loadConversation(c)
   }, [loadConversation])
-
-  // Coder mode runs on CODER_RUNTIME only, and the runtime picker is locked
-  // to it: any other runtime would load that runtime's models, and its model
-  // id would then reach Claude Code as --model.
-  useEffect(() => {
-    if (isCoder && selectedRuntime !== CODER_RUNTIME && runtimes.some(r => r.id === CODER_RUNTIME)) {
-      setSelectedRuntime(CODER_RUNTIME)
-    }
-  }, [isCoder, selectedRuntime, runtimes])
 
   const pickCoderFolder = useCallback(async () => {
     const dir = await Promise.resolve(api.pickCoderFolder()).catch(() => '')
@@ -756,14 +762,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         const curM = runtimeModels.find(m => m.id === selectedModel)
         const curEfforts = Array.isArray(curM?.effort_levels) ? curM.effort_levels : []
         const effortToUse = curEfforts.includes(selectedEffort) ? selectedEffort : ''
-        const conv = await api.createChatConversation(workflowID, selectedRuntime, selectedModel, effortToUse)
+        // Only a model from this runtime's own list (see the coder path).
+        const conv = await api.createChatConversation(workflowID, selectedRuntime, curM ? selectedModel : '', effortToUse)
         convId = conv.id
         setConversationId(convId)
         setConversationBackend('agent')
       }
       const turnId = newTurnId()
       // A coder turn runs without monoagent tools: the CLI refuses --tools
-      // for a coder conversation (Claude Code brings its own).
+      // for a coder conversation (the coding agent brings its own).
       const tools = !isCoder && getAssistantTools()
       const allowRuns = !isCoder && getAssistantAllowRuns()
       activeStreamRef.current = { workflowID, conversationId: convId, turnId }
@@ -898,7 +905,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const recentWorkspaces = useRecentWorkspaces(isOpen && showModePicker && isCoder)
   // Coder mode turned off (or not ready) while a coder chat was being set
   // up: fall back to the assistant rather than a choice that would fail.
-  const coderUsable = !!coderStatus?.enabled && coderStatus.ready !== false
+  const coderUsable = !!coderStatus?.enabled && coderReady(coderStatus)
   useEffect(() => {
     if (isCoder && !conversationId && !coderUsable) setChatMode('assistant')
   }, [isCoder, conversationId, coderStatus, coderUsable])
@@ -1139,8 +1146,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             setSelectedRuntime(e.target.value)
             startNewSession()
           }}
-          disabled={isCoder}
-          title={isCoder ? `Coder mode runs on ${CODER_RUNTIME}` : 'Locally installed AI agent (via monomind)'}
+          title={isCoder ? 'Coding agent for this Coder chat (runtimes ready for full access)' : 'Locally installed AI agent (via monomind)'}
           style={{ ...selectStyle, flex: 1 }}
         >
           {runtimes.length === 0 && (
@@ -1148,8 +1154,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
               {monomindMissing ? 'monomind missing — npm i -g @monoes/monomindcli' : scanError ? 'monomind couldn’t be used — see below' : 'No agent runtimes'}
             </option>
           )}
-          {runtimes.map(r => (
-            <option key={r.id} value={r.id}>{r.id}</option>
+          {(isCoder && !conversationId ? coderChoice.options : runtimes).map(r => (
+            <option key={r.id} value={r.id}>{runtimeLabel(r.id)}</option>
           ))}
         </select>
         {runtimeUninitialized ? (
@@ -1246,9 +1252,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           onWorkspaceChange={setCoderWorkspace}
           recent={recentWorkspaces}
           onPickFolder={pickCoderFolder}
+          runtimeId={isCoder ? selectedRuntime : ''}
         />
       )}
       {isCoder && <CoderHeader cwd={coderCwd} />}
+      {isCoder && fidelityNote(coderChoice.info) && (
+        <div data-testid="coder-fidelity-note" style={{ padding: '4px 12px', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', borderBottom: '1px solid rgba(0,180,216,0.06)', flexShrink: 0 }}>
+          {fidelityNote(coderChoice.info)}
+        </div>
+      )}
 
       {/* ── Messages area ── */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
@@ -1307,7 +1319,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
 
         {messages.map((msg, i) => (
           msg.role === 'coder-init' ? (
-            <CoderInitNote key={i} workspace={msg.workspace} />
+            <CoderInitNote key={i} workspace={msg.workspace} runtime={msg.runtime} />
           ) : msg.role === 'turn' ? (
             <div key={i} className="chat-assistant-turn">
               <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} />

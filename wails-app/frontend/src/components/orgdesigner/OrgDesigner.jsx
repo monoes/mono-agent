@@ -738,6 +738,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onOpenWorkflow={onOpenWorkflow}
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
                 fullAccess={selectedId ? fullAccessByRole[selectedId] || null : null}
+                orgRuntime={orgMeta?.runtime || ''}
                 onAccessChanged={() => { rolesAccess.refresh(); cliValidation.refresh() }}
               />
             </div>

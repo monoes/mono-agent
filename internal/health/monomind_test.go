@@ -235,7 +235,7 @@ func TestCheckMonomindAgentSandbox(t *testing.T) {
 	}{
 		{"2.10.0", nil, "agent turns run without a sandbox until monomind supports agent exec --sandbox"},
 		{"2.18.5", nil, "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec --sandbox"},
-		{"9.0.0", []string{monomind.CapAgentExecSandbox}, "agent turns run in the runtime's sandbox"},
+		{"9.0.0", []string{monomind.CapAgentExecSandbox}, "agent turns run in the runtime's sandbox where it has one (agent scan lists its sandbox_modes)"},
 	} {
 		vi.Version, vi.Capabilities = tc.version, tc.caps
 		if res := checkMonomindAgentSandbox(ctx, env); res.Status != StatusInfo || res.Summary != tc.summary {

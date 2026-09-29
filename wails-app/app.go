@@ -43,6 +43,8 @@ type App struct {
 	runningMu      sync.Mutex
 	runningCmds    map[string]*exec.Cmd // workflowID / "action:<id>" / "noderun:<id>" → running subprocess
 	nodeRunCounter atomic.Int64         // source of RunNode run ids (NodeRunResult.run_id)
+	orgEventIDs    map[string]string    // "orgevents:<org>" key → id of the stream running under it; see StreamOrgEvents
+	orgEventStops  map[string]time.Time // stream id → when a stop for it arrived before it was registered
 
 	activeProfileIDPtr atomic.Pointer[string] // currently selected profile; access via get/setActiveProfileID (read/written across Wails goroutines)
 	ready              atomic.Bool            // set once startup()'s synchronous setup has finished; see IsReady
@@ -286,17 +288,45 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	a.imgWatchMu.Unlock()
 
-	a.runningMu.Lock()
-	for _, cmd := range a.runningCmds {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-	}
-	a.runningMu.Unlock()
+	a.stopRunningCmds()
 	if a.db != nil {
 		_ = a.db.Close()
 	}
 }
+
+// stopRunningCmds ends every tracked subprocess on shutdown. A monoagentcli
+// in its own process group (setChatProcessGroup: org event tails, org runs,
+// agent validation) gets the graceful group kill and up to chatKillGrace to
+// exit, after which that kill's timer SIGKILLs it: a SIGKILLed CLI can't
+// cancel, so the monomind children it started would outlive the app
+// (monoes/mono-agent#235). The rest (workflow and node runs) are killed as
+// before, as is everything on Windows, where no group is tracked: there the
+// CLI's Job Object takes its monomind children down with it.
+func (a *App) stopRunningCmds() {
+	var reaped []chan struct{}
+	a.runningMu.Lock()
+	for _, cmd := range a.runningCmds {
+		if r := reapedChan(cmd); r != nil {
+			killChatProcessGroup(cmd)
+			reaped = append(reaped, r)
+		} else if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
+	a.runningMu.Unlock()
+	deadline := time.After(chatKillGrace + shutdownReapMargin)
+	for _, r := range reaped {
+		select {
+		case <-r:
+		case <-deadline:
+			return
+		}
+	}
+}
+
+// shutdownReapMargin is how long past chatKillGrace shutdown waits for the
+// SIGKILLed stragglers to be reaped.
+const shutdownReapMargin = 2 * time.Second
 
 // orgsDirForActiveProfile resolves the directory the org design watcher
 // should poll for the currently active profile. Mirrors orgProjectRoot's

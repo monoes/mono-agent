@@ -22,6 +22,11 @@ const (
 	CapAgentExecSettings     = "agent-exec-settings"
 	CapAgentExecToolActivity = "agent-exec-tool-activity"
 	CapInitJSON              = "init-json"
+
+	// Coder mode on every runtime: --access full for any runtime whose
+	// scan entry has full_access, and `agent exec --effort`.
+	CapAgentExecFullAccessAny = "agent-exec-full-access-any"
+	CapAgentExecEffort        = "agent-exec-effort"
 )
 
 // ErrFeatureNeedsMonomind reports that the installed monomind lacks a
