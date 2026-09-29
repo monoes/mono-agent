@@ -467,6 +467,13 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 - Every tool call is journaled (`tool.started` with `native: true` /
   `tool.completed`); startup progress and background processes left running
   arrive as `coder.status` / `coder.background` notices.
+- Provider rate limits (any chat turn): monomind retries a 429 itself (3
+  attempts, agent-exec rev 20). Each retry is an `agent.rate_limit_retry`
+  warning notice ("Rate limited (429) by X; retrying in 2s (attempt 2/3)").
+  When it gives up, error `rate-limited` becomes an `agent.rate_limited`
+  error notice with monomind's message, and the turn fails. The
+  conversation is not affected, so the next turn runs as usual. Used-up
+  quota or credits stay `quota` and are not retried.
 - It refuses to run as root, and needs monomind's `agent-exec-full-access`,
   `agent-exec-settings`, `agent-exec-tool-activity` and `init-json`
   capabilities. Without them it fails with code `needs_monomind_update`.
@@ -482,7 +489,10 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   with full access fails with code `coder_runtime_unsupported`. An uninstalled
   one is not refused up front, so the turn reports it as not set up. A new
   folder gets that runtime's setup files (`monomind init --target
-  <initTarget>`, claude when it has none).
+  <initTarget>`). pi, dsh, grok, copilot, qwen and crush report `agents`,
+  which writes AGENTS.md alone. A runtime with no init target (an older
+  monomind) gets a minimal AGENTS.md written by mono-agent. Only claude
+  folders get Claude's setup (CLAUDE.md, `.claude/`, `.mcp.json`).
 - The conversation keeps its runtime and effort. Effort goes to monomind as
   `--effort` when it has `agent-exec-effort` (mapped per runtime). An older
   monomind gets it only for claude, as `CLAUDE_EFFORT`.
