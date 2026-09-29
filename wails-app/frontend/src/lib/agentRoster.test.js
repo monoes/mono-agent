@@ -55,6 +55,7 @@ describe('formatting', () => {
     expect(formatLatency(1530)).toBe('1.5 s')
     expect(formatCost({ has_cost: false })).toBe('')
     expect(formatCost({ has_cost: true, cost_usd: 0.00231 })).toBe('$0.0023')
+    expect(formatCost({ has_cost: true, cost_usd: 0.00231, cost_estimated: true })).toBe('≈$0.0023')
     const now = Date.parse('2026-09-29T12:00:00Z')
     expect(ageParts('0001-01-01T00:00:00Z', now)).toBeNull()
     expect(ageParts('2026-09-29T11:00:00Z', now)).toEqual({ n: 1, unit: 'h' })

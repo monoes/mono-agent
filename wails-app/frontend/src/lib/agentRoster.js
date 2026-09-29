@@ -73,7 +73,10 @@ export function formatLatency(ms) {
 export function formatCost(entry) {
   if (!entry || !entry.has_cost) return ''
   const c = entry.cost_usd || 0
-  return c < 0.0001 ? '<$0.0001' : `$${c.toFixed(4)}`
+  // cost_estimated: monomind priced the turn from its table because the
+  // runtime reported no cost.
+  const approx = entry.cost_estimated ? '≈' : ''
+  return approx + (c < 0.0001 ? '<$0.0001' : `$${c.toFixed(4)}`)
 }
 
 // ageParts gives how long ago a validation ran as {n, unit} for i18n, or
