@@ -70,6 +70,15 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			plan := agentroster.BuildPlan(ctx, scan, monomind.ListModels, previous, agentroster.PlanFilter{
 				Runtimes: runtimes, Models: models, StaleOnly: staleOnly, Now: time.Now(), MaxAge: maxAge,
 			})
+			// monomind's own structured check when it has one (#390); the
+			// exec-based test otherwise, and for runtimes whose turns run
+			// sandboxed (per their scanned sandbox_modes).
+			caps, _ := monomind.Capabilities(ctx)
+			test := agentroster.AgentTestFunc(caps, bin, agentroster.SandboxModes(scan))
+			plan.Checker = agentroster.CheckerExec
+			if test != nil {
+				plan.Checker = agentroster.CheckerAgentTest
+			}
 			runID := uuid.NewString()
 			emit := validateEmitter(cfg.JSONOutput)
 			emit(agentroster.Line{Type: "validate.plan", RunID: runID, Plan: &plan})
@@ -84,7 +93,7 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			// test that finished just before the cancel is not lost.
 			saveCtx := context.WithoutCancel(ctx)
 			sum := agentroster.Run(ctx, plan.Targets, agentroster.RunOptions{
-				RunID: runID, Bin: bin, Timeout: timeout, Concurrency: concurrency,
+				RunID: runID, Bin: bin, Timeout: timeout, Concurrency: concurrency, Test: test,
 				Save: func(r agentroster.Result) error { return agentroster.Save(saveCtx, db.DB, r) },
 			}, emit)
 			if err := agentroster.FinishRun(saveCtx, db.DB, runID, sum, time.Now()); err != nil {

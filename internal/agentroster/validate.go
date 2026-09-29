@@ -2,6 +2,8 @@ package agentroster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -34,6 +36,9 @@ type Plan struct {
 	Calls       int      `json:"calls"`
 	EstCostUSD  float64  `json:"est_cost_usd"`
 	UnknownCost int      `json:"unknown_cost"`
+	// Checker is how the tests run: "agent-test-json" (monomind's own
+	// structured check) or "exec" (a test turn classified here).
+	Checker string `json:"checker,omitempty"`
 	// Skipped lists runtimes that could not be planned (not installed, model
 	// listing failed); the latter still get a "default" target.
 	Skipped []SkippedRuntime `json:"skipped,omitempty"`
@@ -83,6 +88,62 @@ type Line struct {
 // ExecFunc runs one exec turn; monomind.Exec in production.
 type ExecFunc func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error)
 
+// TestFunc runs monomind's structured check (`agent test --json`,
+// monomind#390) for one runtime and model ("" = the runtime's default).
+type TestFunc func(ctx context.Context, runtime, model string, timeout time.Duration) (*monomind.AgentTestResult, error)
+
+// ErrUseExec is what a TestFunc returns (possibly wrapped) to have a target
+// tested with the exec-based test turn instead. Any other error is the
+// test's result: it is not retried through exec, which would be a second
+// real model call.
+var ErrUseExec = errors.New("use the exec-based test")
+
+// AgentTestFunc returns the TestFunc that runs monomind's `agent test
+// --json`, or nil when monomind doesn't have it. `agent test` has no
+// sandbox option, so a runtime whose exec turn would run sandboxed keeps
+// the exec-based test: validation runs the way chat does. Which runtimes
+// that is comes from monomind.SandboxArgs with each runtime's `agent scan`
+// sandbox_modes (modes, keyed by runtime id): codex and grok today, through
+// the env path or, on monomind 2.19.0, through --sandbox because they list
+// the mode. A runtime that lists only "full" (claude, copilot, …) gets no
+// sandbox from exec either, so it uses agent test.
+func AgentTestFunc(caps *monomind.CapabilitySet, bin string, modes map[string][]string) TestFunc {
+	if caps == nil || !caps.Has(monomind.CapAgentTestJSON) {
+		return nil
+	}
+	return func(ctx context.Context, runtime, model string, timeout time.Duration) (*monomind.AgentTestResult, error) {
+		if _, eff := monomind.SandboxArgs(caps, modes[runtime], runtime, monomind.TurnSandboxMode); eff == monomind.SandboxStatusSandboxed {
+			return nil, ErrUseExec
+		}
+		res, err := monomind.AgentTest(ctx, bin, runtime, model, timeout)
+		if errors.Is(err, monomind.ErrAgentTestUnsupported) {
+			return nil, fmt.Errorf("%w: %w", ErrUseExec, err)
+		}
+		return res, err
+	}
+}
+
+// SandboxModes maps each scanned runtime to its `agent scan` sandbox_modes,
+// for AgentTestFunc. A runtime that reports none is left out (unknown).
+func SandboxModes(scan *monomind.ScanResult) map[string][]string {
+	m := map[string][]string{}
+	if scan == nil {
+		return m
+	}
+	for _, a := range scan.Agents {
+		if a.SandboxModes != nil {
+			m[a.ID] = a.SandboxModes
+		}
+	}
+	return m
+}
+
+// Checker names.
+const (
+	CheckerAgentTest = "agent-test-json"
+	CheckerExec      = "exec"
+)
+
 // RunOptions configures Run.
 type RunOptions struct {
 	RunID       string
@@ -90,7 +151,11 @@ type RunOptions struct {
 	Timeout     time.Duration
 	Concurrency int // runtimes tested at once; each runtime runs one test at a time
 	Exec        ExecFunc
-	Now         func() time.Time
+	// Test, when set, is used first: monomind's own check classifies the
+	// result the same way for every caller. The test falls back to Exec
+	// only when Test returns ErrUseExec.
+	Test TestFunc
+	Now  func() time.Time
 	// Save stores each result as it arrives; nil skips storing.
 	Save func(Result) error
 }
@@ -177,6 +242,36 @@ func testOne(ctx context.Context, t Target, opts RunOptions) Result {
 		Runtime: t.Runtime, Model: t.Model, Label: t.Label, EffortLevels: t.EffortLevels,
 		Source: orDefault(t.Source, SourceListed), RuntimeVersion: t.RuntimeVersion, RunID: opts.RunID,
 	}
+	model := t.Model
+	if model == DefaultModel {
+		model = ""
+	}
+	if opts.Test != nil {
+		start := opts.Now()
+		tr, err := opts.Test(ctx, t.Runtime, model, opts.Timeout)
+		if ctx.Err() != nil {
+			r.Status, r.Detail, r.ValidatedAt = StatusCancelled, "cancelled", opts.Now()
+			return r
+		}
+		switch {
+		case err == nil:
+			applyAgentTest(&r, tr)
+			if r.LatencyMs == 0 {
+				r.LatencyMs = opts.Now().Sub(start).Milliseconds()
+			}
+			r.ValidatedAt = opts.Now()
+			return r
+		case !errors.Is(err, ErrUseExec):
+			r.Status, r.Detail = StatusError, clip(err.Error())
+			if errors.Is(err, context.DeadlineExceeded) {
+				r.Status = StatusTimeout
+			}
+			r.LatencyMs = opts.Now().Sub(start).Milliseconds()
+			r.ValidatedAt = opts.Now()
+			return r
+		}
+	}
+
 	dir, err := os.MkdirTemp("", "monoagent-validate-")
 	if err != nil {
 		r.Status, r.Detail, r.ValidatedAt = StatusError, clip(err.Error()), opts.Now()
@@ -184,10 +279,6 @@ func testOne(ctx context.Context, t Target, opts RunOptions) Result {
 	}
 	defer os.RemoveAll(dir)
 
-	model := t.Model
-	if model == DefaultModel {
-		model = ""
-	}
 	start := opts.Now()
 	var first time.Time
 	res, execErr := opts.Exec(ctx, monomind.ExecOptions{
@@ -228,3 +319,56 @@ func testOne(ctx context.Context, t Target, opts RunOptions) Result {
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// knownStatuses are the statuses `agent test --json` may report.
+var knownStatuses = map[string]bool{
+	StatusOK: true, StatusOKUnexpected: true, StatusAuth: true, StatusQuota: true,
+	StatusModelUnavailable: true, StatusTimeout: true, StatusMissingBinary: true, StatusError: true,
+}
+
+// applyAgentTest copies monomind's structured result into r. An unknown
+// status (a newer monomind) is kept as error with the status in the detail.
+func applyAgentTest(r *Result, tr *monomind.AgentTestResult) {
+	r.Status = tr.Status
+	unknown := !knownStatuses[r.Status]
+	if unknown {
+		r.Status, r.Detail = StatusError, "unknown status "+tr.Status
+	}
+	if tr.Error != nil && tr.Error.Message != "" {
+		if unknown {
+			r.Detail = clip(r.Detail + ": " + tr.Error.Message)
+		} else {
+			r.Detail = clip(tr.Error.Message)
+		}
+		// monomind 2.18.5 reports some runtimes' sign-in messages as a
+		// plain error (crush "No providers configured", pi "No API key
+		// found", monomind#473); our own patterns still recognize them.
+		if r.Status == StatusError {
+			if s := classifyMessage(tr.Error.Message); s != StatusError {
+				r.Status = s
+			}
+		}
+	}
+	if tr.Reply != nil {
+		r.Reply = clip(*tr.Reply)
+		if r.Status == StatusOKUnexpected && r.Detail == "" {
+			r.Detail = r.Reply
+		}
+	}
+	r.LatencyMs = tr.LatencyMs
+	if tr.LatencyFirstMs != nil {
+		r.LatencyFirstMs = *tr.LatencyFirstMs
+	}
+	if tr.InputTokens != nil {
+		r.TokensIn = *tr.InputTokens
+	}
+	if tr.OutputTokens != nil {
+		r.TokensOut = *tr.OutputTokens
+	}
+	if tr.CostUSD != nil {
+		r.CostUSD, r.HasCost, r.CostEstimated = *tr.CostUSD, true, tr.CostEstimated
+	}
+	if tr.RuntimeVersion != nil && *tr.RuntimeVersion != "" {
+		r.RuntimeVersion = *tr.RuntimeVersion
+	}
+}
