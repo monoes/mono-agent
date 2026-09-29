@@ -41,6 +41,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
         agents: [
           { id: 'claude', installed: true, binary: '' },
           { id: 'opencode', installed: true, binary: '' },
+          { id: 'codex', installed: true, binary: '/bin/codex' },
         ],
       }),
       getAgentRuntimeModels: (...args) => getAgentRuntimeModels(...args),
@@ -124,6 +125,33 @@ describe('AIChatPanel — an agent runtime with no available models', () => {
     const picker = await screen.findByTitle(/Model available for the selected agent runtime/i)
     await waitFor(() => expect(picker.value).toBe('claude-opus-5'))
     expect(screen.getByPlaceholderText(/message|ask/i)).not.toBeDisabled()
+  })
+})
+
+describe('AIChatPanel — switching runtime while its models load', () => {
+  it("never sends the previous runtime's model or effort", async () => {
+    await mountWith('claude')
+    const effortSelect = await screen.findByTitle(/Reasoning effort level for the selected model/i)
+    fireEvent.change(effortSelect, { target: { value: 'high' } })
+
+    // codex's model listing is still running when the user sends.
+    getAgentRuntimeModels.mockImplementation((id) =>
+      id === 'codex' ? new Promise(() => {}) : Promise.resolve(id === 'claude' ? CLAUDE_MODELS : []),
+    )
+    const runtimeSelect = await screen.findByTitle(/Locally installed AI agent/i)
+    fireEvent.change(runtimeSelect, { target: { value: 'codex' } })
+    await waitFor(() => expect(getAgentRuntimeModels).toHaveBeenCalledWith('codex', '/bin/codex'))
+
+    const box = screen.getByPlaceholderText(/message|ask/i)
+    fireEvent.change(box, { target: { value: 'hello' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await new Promise(r => setTimeout(r, 20))
+
+    for (const call of createChatConversation.mock.calls) {
+      expect(call[2]).not.toBe('claude-opus-5')
+      expect(call[3]).not.toBe('high')
+    }
+    expect(screen.queryByText('Opus 5')).not.toBeInTheDocument()
   })
 })
 

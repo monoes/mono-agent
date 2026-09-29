@@ -51,7 +51,7 @@ var initWorkspace = monomind.InitWorkspace
 // (<yyyymmdd>-<adjective>-<noun>), git-inits it so every change the agent
 // makes can be reviewed and reverted, and initializes it as a monomind
 // project.
-func newCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error) {
+func newCoderWorkspace(ctx context.Context, root, initTarget string) (*coderWorkspace, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("creating workspace root: %w", err)
 	}
@@ -75,7 +75,7 @@ func newCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error
 	if git, err := exec.LookPath("git"); err == nil {
 		ws.Git = exec.CommandContext(ctx, git, "init", "-q", dir).Run() == nil
 	}
-	res, err := initWorkspace(ctx, "", dir)
+	res, err := initWorkspace(ctx, "", dir, initTarget)
 	if err != nil {
 		return ws, fmt.Errorf("workspace %s created but not initialized: %w", dir, err)
 	}
@@ -87,7 +87,7 @@ func newCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error
 // shared by every chat that picks it: created if missing, git-initialized
 // unless it already sits in a repository, and initialized as a monomind
 // project with --if-missing (nothing already there is touched).
-func rootCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, error) {
+func rootCoderWorkspace(ctx context.Context, root, initTarget string) (*coderWorkspace, error) {
 	created := false
 	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(root, 0o755); err != nil {
@@ -107,7 +107,7 @@ func rootCoderWorkspace(ctx context.Context, root string) (*coderWorkspace, erro
 			ws.Git = exec.CommandContext(ctx, git, "init", "-q", dir).Run() == nil
 		}
 	}
-	res, err := initWorkspace(ctx, "", dir)
+	res, err := initWorkspace(ctx, "", dir, initTarget)
 	if err != nil {
 		return ws, fmt.Errorf("coder root %s not initialized: %w", dir, err)
 	}
@@ -137,7 +137,7 @@ func resolveCoderCwd(p string) (string, error) {
 func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{Use: "workspace", Short: "Coder mode working folders"}
 
-	var root string
+	var root, newRuntime, rootRuntime string
 	newCmd := &cobra.Command{
 		Use:   "new",
 		Short: "Create a fresh, randomly named test folder and initialize it",
@@ -148,14 +148,14 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
-			s, err := requireCoderReady(cmd, db.DB)
+			s, _, rt, err := requireCoderReady(cmd, db.DB, newRuntime)
 			if err != nil {
 				return err
 			}
 			if root == "" {
 				root = s.WorkspaceRoot
 			}
-			ws, err := newCoderWorkspace(cmd.Context(), expandHome(root))
+			ws, err := newCoderWorkspace(cmd.Context(), expandHome(root), rt.InitTarget)
 			if err != nil {
 				return err
 			}
@@ -167,6 +167,7 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	newCmd.Flags().StringVar(&root, "root", "", "Create it here instead of the configured workspace root")
+	newCmd.Flags().StringVar(&newRuntime, "runtime", monomind.DefaultCoderRuntime, "Runtime whose setup files the folder gets")
 	withJSONErrors(cfg, newCmd)
 
 	var limit int
@@ -212,7 +213,7 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Set up the coder root itself as a working folder and print its path",
 		Long: "Chats that pick the coder root work directly in it, sharing the folder. This creates it " +
 			"if missing, git-initializes it unless it is already in a repository, and adds any missing " +
-			"monomind/Claude Code setup files. Nothing already there is changed.",
+			"monomind setup files for the runtime (--runtime). Nothing already there is changed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			db, err := initDB(cfg)
@@ -220,11 +221,11 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
-			s, err := requireCoderReady(cmd, db.DB)
+			s, _, rt, err := requireCoderReady(cmd, db.DB, rootRuntime)
 			if err != nil {
 				return err
 			}
-			ws, err := rootCoderWorkspace(cmd.Context(), expandHome(s.WorkspaceRoot))
+			ws, err := rootCoderWorkspace(cmd.Context(), expandHome(s.WorkspaceRoot), rt.InitTarget)
 			if err != nil {
 				return err
 			}
@@ -235,6 +236,7 @@ func newCoderWorkspaceCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	rootCmd.Flags().StringVar(&rootRuntime, "runtime", monomind.DefaultCoderRuntime, "Runtime whose setup files the folder gets")
 	withJSONErrors(cfg, rootCmd)
 
 	cmd.AddCommand(newCmd, rootCmd, listCmd)

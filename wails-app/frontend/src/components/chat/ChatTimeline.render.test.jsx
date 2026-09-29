@@ -476,3 +476,25 @@ describe('ChatTimeline', () => {
     expect(screen.getByText(/Running/i)).toBeInTheDocument()
   })
 })
+
+// ── Provider rate limits (agent-exec rev 20) ─────────────────────────────────
+
+describe('ChatTimeline rate-limit notices', () => {
+  it('keeps each retry and the final "Rate limited by …" message after tools ran and the turn failed', () => {
+    const final = 'Rate limited by openrouter/x:free (429) after 3 attempts. Free models are rate-limited; try again later or pick another model.'
+    const state = reduce([
+      ev('turn.started', { runtime: 'pi' }, 1),
+      ev('assistant.delta', { partId: 'part-1', text: 'Working on it' }, 2),
+      ev('notice', { code: 'agent.rate_limit_retry', message: 'Rate limited (429) by openrouter/x:free; retrying in 2s (attempt 2/3)', severity: 'warning' }, 3),
+      ev('notice', { code: 'agent.rate_limit_retry', message: 'Rate limited (429) by openrouter/x:free; retrying in 5s (attempt 3/3)', severity: 'warning' }, 4),
+      ev('notice', { code: 'agent.rate_limited', message: final, severity: 'error' }, 5),
+      ev('turn.finished', { status: 'failed', reason: `rate-limited: ${final}`, exitCode: 1, historySaved: true }, 6),
+    ])
+    render(<ChatTimeline state={state} turnId="t1" isLive={false} />)
+    expect(screen.getByText(/retrying in 2s \(attempt 2\/3\)/)).toBeInTheDocument()
+    expect(screen.getByText(/retrying in 5s \(attempt 3\/3\)/)).toBeInTheDocument()
+    expect(screen.getByText(final)).toBeInTheDocument()
+    render(<TurnStatus state={state} stopRequested={false} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Failed')
+  })
+})

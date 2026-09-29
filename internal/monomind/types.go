@@ -85,8 +85,10 @@ type Event struct {
 	ErrMessage string `json:"message,omitempty"`
 	Fatal      bool   `json:"fatal,omitempty"`
 
-	// done
-	ExitCode int `json:"exit_code,omitempty"`
+	// done; also a shell tool_activity end's exit status (HasExitCode
+	// says whether it was reported, as 0 is a real value there).
+	ExitCode    int  `json:"exit_code,omitempty"`
+	HasExitCode bool `json:"-"`
 
 	CoderFields
 	// start: the sandbox the turn runs in (see sandbox.go).
@@ -103,7 +105,11 @@ type CoderFields struct {
 	// tool_activity: one of the runner's own tools (Bash, Edit, …), not a
 	// caller tool. Phase is "start" or "end"; status reuses Phase for
 	// "initializing"/"ready".
-	Phase           string          `json:"phase,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// Kind (tool_activity start) is the normalized tool kind: shell, edit,
+	// write, read, search, web, mcp, task, todo, patch or other. Input then
+	// uses that kind's canonical keys; Name stays the runtime's own.
+	Kind            string          `json:"kind,omitempty"`
 	Input           json.RawMessage `json:"input,omitempty"`
 	InputTruncated  bool            `json:"input_truncated,omitempty"`
 	Output          string          `json:"output,omitempty"`
@@ -167,7 +173,7 @@ type eventJSON struct {
 	ErrMessage string `json:"message,omitempty"`
 	Fatal      bool   `json:"fatal,omitempty"`
 
-	ExitCode int `json:"exit_code,omitempty"`
+	ExitCode *int `json:"exit_code,omitempty"`
 
 	CoderFields
 	// start: the sandbox the turn runs in (see sandbox.go).
@@ -193,9 +199,12 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		ID:                   w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
 		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
 		Code: w.Code, ErrMessage: w.ErrMessage, Fatal: w.Fatal,
-		ExitCode:      w.ExitCode,
 		CoderFields:   w.CoderFields,
 		SandboxFields: w.SandboxFields,
+	}
+	if w.ExitCode != nil {
+		e.ExitCode = *w.ExitCode
+		e.HasExitCode = true
 	}
 	if w.InputTokens != nil {
 		e.InputTokens = *w.InputTokens
@@ -229,9 +238,11 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		ID:                   e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
 		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
 		Code: e.Code, ErrMessage: e.ErrMessage, Fatal: e.Fatal,
-		ExitCode:      e.ExitCode,
 		CoderFields:   e.CoderFields,
 		SandboxFields: e.SandboxFields,
+	}
+	if e.HasExitCode || e.ExitCode != 0 {
+		w.ExitCode = &e.ExitCode
 	}
 	if e.HasInputTokens {
 		w.InputTokens = &e.InputTokens
@@ -263,8 +274,11 @@ const (
 
 // Error codes (protocol §3.4). Unknown codes must be treated as non-fatal.
 const (
-	ErrAuth          = "auth"
-	ErrQuota         = "quota"
+	ErrAuth  = "auth"
+	ErrQuota = "quota"
+	// ErrRateLimited is a transient 429 that agent exec already retried
+	// (rev 20, up to 3 attempts); quota is used-up credits and never retried.
+	ErrRateLimited   = "rate-limited"
 	ErrMissingBinary = "missing-binary"
 	ErrNoRunner      = "no-runner"
 	ErrBudget        = "budget"
@@ -344,6 +358,21 @@ type ScanEntry struct {
 	// depends on probing the binary, so it's present even when
 	// Installed is false.
 	StreamsIncrementally bool `json:"streams_incrementally"`
+
+	// Coder-mode metadata (static per runtime, like StreamsIncrementally).
+	// FullAccess: the runtime accepts --access full (monomind#355).
+	// ToolActivityFidelity: "full" (start + matched end), "start-only" or
+	// "none" for its tool_activity events (monomind#357). The rest are
+	// agent-exec-full-access-any additions; an older monomind omits them.
+	FullAccess           bool   `json:"full_access"`
+	ToolActivityFidelity string `json:"tool_activity_fidelity,omitempty"`
+	Resume               bool   `json:"resume"`
+	Effort               bool   `json:"effort"`
+	MaxTurns             bool   `json:"max_turns"`
+	ReportsCost          bool   `json:"reports_cost"`
+	// InitTarget is the `monomind init --target` value for the runtime's
+	// setup files; nil when it has none.
+	InitTarget *string `json:"init_target"`
 }
 
 // ScanResult is the `agent scan --json` payload (§6).

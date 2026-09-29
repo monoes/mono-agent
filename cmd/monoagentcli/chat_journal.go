@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,9 +78,11 @@ type turnJournal struct {
 	currentPartID string
 	finished      bool
 
-	// coder turns: the folder, and each open native tool call by id.
-	cwd       string
-	nativeRun map[string]nativeCall
+	// coder turns: the folder, the runtime's coder support (its name and
+	// tool-activity fidelity), and each open native tool call by id.
+	cwd          string
+	coderRuntime monomind.CoderRuntime
+	nativeRun    map[string]nativeCall
 }
 
 func newTurnJournal(store *ai.AIStore, profileID, conversationID, turnID, runtimeID string, out io.Writer) *turnJournal {
@@ -167,6 +170,20 @@ func (j *turnJournal) usageLocked(source string) {
 	_ = j.appendLocked(chatevents.EventUsageUpdated, p)
 }
 
+// Notice codes for provider rate limits (agent-exec rev 20): each retry
+// agent exec makes, and the turn's failure once it stops retrying.
+const (
+	noticeRateLimitRetry = "agent.rate_limit_retry"
+	noticeRateLimited    = "agent.rate_limited"
+)
+
+// isRateLimitRetry reports whether ev is agent exec's notice that it is
+// waiting out a 429 before retrying: {phase:"notice", message:"Rate
+// limited (429) by <x>; retrying in <N>s (attempt <k>/3)"}.
+func isRateLimitRetry(ev monomind.Event) bool {
+	return ev.Phase == "notice" && strings.HasPrefix(ev.ErrMessage, "Rate limited (429)")
+}
+
 // handle journals one protocol event.
 func (j *turnJournal) handle(ev monomind.Event) {
 	j.mu.Lock()
@@ -214,7 +231,12 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	case monomind.EventToolActivity:
 		j.toolActivityLocked(ev)
 	case monomind.EventStatus:
-		if msg := coderStatusMessage(ev); msg != "" {
+		if isRateLimitRetry(ev) {
+			// Kept in the timeline (a coder.status line disappears once
+			// the turn has output): the wait can come after tools ran.
+			j.forceFlushLocked()
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeRateLimitRetry, Message: ev.ErrMessage, Severity: chatevents.SeverityWarning})
+		} else if msg := coderStatusMessage(ev, j.coderRuntime.ID); msg != "" {
 			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderStatus, Message: msg, Severity: chatevents.SeverityInfo})
 		}
 	case monomind.EventDone:
@@ -227,7 +249,13 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	case monomind.EventResult:
 		j.usageLocked("result")
 	case monomind.EventError:
-		if !ev.Fatal {
+		if ev.Code == monomind.ErrRateLimited {
+			// agent exec gave up retrying; its message says why and what
+			// to do ("Rate limited by <model> (429) after 3 attempts. …").
+			j.forceFlushLocked()
+			msg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeRateLimited, Message: msg, Severity: chatevents.SeverityError})
+		} else if !ev.Fatal {
 			j.forceFlushLocked()
 			msg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
 			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: ev.Code, Message: msg, Severity: chatevents.SeverityWarning})

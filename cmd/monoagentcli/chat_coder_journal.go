@@ -24,12 +24,25 @@ const (
 // nativeCall is what the journal remembers about an open native tool call.
 type nativeCall struct {
 	name       string
+	kind       string
 	background bool // a Bash call started with run_in_background
 }
 
-// fileTools are the native tools that write a file_path (NotebookEdit's
-// target is notebook_path).
-var fileTools = map[string]string{"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+// claudeToolKinds maps Claude Code's tool names to tool_activity kinds, for
+// a monomind that predates `kind`.
+var claudeToolKinds = map[string]string{
+	"Bash": "shell", "Edit": "edit", "MultiEdit": "edit", "NotebookEdit": "edit", "Write": "write",
+	"Read": "read", "Grep": "search", "Glob": "search", "WebFetch": "web", "WebSearch": "web",
+	"Task": "task", "TodoWrite": "todo",
+}
+
+// nativeKind is a call's kind: monomind's, else the one its Claude name implies.
+func nativeKind(ev monomind.Event) string {
+	if ev.Kind != "" {
+		return ev.Kind
+	}
+	return claudeToolKinds[ev.Name]
+}
 
 // bashExitCode matches Claude Code's Bash failure output ("Exit code 2").
 var bashExitCode = regexp.MustCompile(`(?m)^Exit code (-?\d+)`)
@@ -46,11 +59,12 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 		if j.nativeRun == nil {
 			j.nativeRun = map[string]nativeCall{}
 		}
+		kind := nativeKind(ev)
 		background, _ := input["run_in_background"].(bool)
-		j.nativeRun[ev.ID] = nativeCall{name: ev.Name, background: background}
+		j.nativeRun[ev.ID] = nativeCall{name: ev.Name, kind: kind, background: background}
 		_ = j.appendLocked(chatevents.EventToolStarted, chatevents.ToolStartedPayload{
 			CallID: ev.ID, Name: ev.Name, Arguments: args, Native: true, ParentCallID: ev.ParentToolUseID,
-			FileExisted: j.fileExisted(ev.Name, input),
+			FileExisted: j.fileExisted(kind, input), Kind: kind,
 		})
 	case "end":
 		output, cut, _ := chatevents.BoundText(ev.Output, chatevents.MaxToolPreviewBytes)
@@ -59,14 +73,20 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 			v := !ev.Denied && !ev.Cancelled
 			ok = &v
 		}
-		call := j.nativeRun[ev.ID]
+		call, open := j.nativeRun[ev.ID]
 		delete(j.nativeRun, ev.ID)
-		if call.name == "" {
-			call.name = ev.Name
+		if !open {
+			call = nativeCall{name: ev.Name, kind: nativeKind(ev)}
 		}
 		var exitCode *int
-		if call.name == "Bash" && !call.background && !ev.Denied && !ev.Cancelled {
-			exitCode = shellExitCode(*ok, ev.Output)
+		if call.kind == "shell" && !call.background && !ev.Denied && !ev.Cancelled {
+			switch {
+			case ev.HasExitCode:
+				code := ev.ExitCode
+				exitCode = &code
+			case call.name == "Bash":
+				exitCode = shellExitCode(*ok, ev.Output)
+			}
 		}
 		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{
 			CallID: ev.ID, OK: ok, Result: output, Truncated: cut || ev.OutputTruncated,
@@ -76,29 +96,40 @@ func (j *turnJournal) toolActivityLocked(ev monomind.Event) {
 }
 
 // closeOpenNativeCallsLocked ends every native call still open as the turn
-// finishes (a stopped or failed turn), so no tool card is left running.
-// monomind closes them itself on a cancel frame, but not on every path.
+// finishes, so no tool card is left running. On a runtime that reports
+// matched ends, an open call was cut off (a stopped or failed turn; monomind
+// closes them itself on a cancel frame, but not on every path). On a
+// start-only runtime no call ever gets an end, so each closes with an
+// unknown outcome (ok null) instead of as cancelled.
 func (j *turnJournal) closeOpenNativeCallsLocked() {
 	ids := make([]string, 0, len(j.nativeRun))
 	for id := range j.nativeRun {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	startOnly := j.coderRuntime.ToolActivity == "start-only"
 	for _, id := range ids {
-		notOK := false
-		_ = j.appendLocked(chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: id, OK: &notOK, Cancelled: true})
+		p := chatevents.ToolCompletedPayload{CallID: id}
+		if !startOnly {
+			notOK := false
+			p.OK, p.Cancelled = &notOK, true
+		}
+		_ = j.appendLocked(chatevents.EventToolCompleted, p)
 	}
 	j.nativeRun = nil
 }
 
-// fileExisted reports whether a file tool's target exists as the call
-// starts, i.e. before it runs; nil for other tools.
-func (j *turnJournal) fileExisted(name string, input map[string]any) *bool {
-	key, ok := fileTools[name]
-	if !ok {
+// fileExisted reports whether an edit or write call's target (canonical
+// file_path; Claude's NotebookEdit uses notebook_path) exists as the call
+// starts, i.e. before it runs; nil for other kinds.
+func (j *turnJournal) fileExisted(kind string, input map[string]any) *bool {
+	if kind != "edit" && kind != "write" {
 		return nil
 	}
-	p, _ := input[key].(string)
+	p, _ := input["file_path"].(string)
+	if p == "" {
+		p, _ = input["notebook_path"].(string)
+	}
 	if p == "" {
 		return nil
 	}
@@ -138,14 +169,33 @@ func (j *turnJournal) notice(code, message string, severity chatevents.NoticeSev
 	_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: code, Message: message, Severity: severity})
 }
 
-// coderStatusMessage renders a status event as a startup progress line.
-func coderStatusMessage(ev monomind.Event) string {
+// runtimeNames are the coding CLIs' own names, for status lines.
+var runtimeNames = map[string]string{
+	"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "antigravity": "Antigravity",
+	"kimicode": "Kimi Code", "grok": "Grok", "qwen": "Qwen Code", "copilot": "Copilot", "crush": "Crush", "pi": "Pi",
+	"cline": "Cline", "aider": "Aider", "dsh": "DeepSeek Harness",
+}
+
+// runtimeName is runtime's display name ("" = claude).
+func runtimeName(runtime string) string {
+	if runtime == "" {
+		runtime = monomind.DefaultCoderRuntime
+	}
+	if n, ok := runtimeNames[runtime]; ok {
+		return n
+	}
+	return runtime
+}
+
+// coderStatusMessage renders a status event from runtime's startup as a
+// progress line.
+func coderStatusMessage(ev monomind.Event, runtime string) string {
 	switch ev.Phase {
 	case "initializing":
 		if n := len(ev.MCPServers); n > 0 {
-			return fmt.Sprintf("Starting Claude Code… loading MCP servers (%d)", n)
+			return fmt.Sprintf("Starting %s… loading MCP servers (%d)", runtimeName(runtime), n)
 		}
-		return "Starting Claude Code…"
+		return "Starting " + runtimeName(runtime) + "…"
 	case "ready":
 		var failed, connecting []string
 		for _, s := range ev.MCPServers {
@@ -166,7 +216,9 @@ func coderStatusMessage(ev monomind.Event) string {
 		}
 		return msg
 	}
-	return ""
+	// Other status events (e.g. what a non-claude CLI loads with
+	// --settings, or an ignored --effort) carry their own message.
+	return ev.ErrMessage
 }
 
 // backgroundMessage describes processes a turn left running. They are
