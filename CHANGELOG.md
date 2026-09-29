@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Coder chats as floating bubbles** (#227, phase 2 of the dynamic org epic #224).
+  - **Opening:** every coder chat is a bubble in a dock at the bottom-right. Its ring shows whether it's working, finished, failed or waiting for you, with a count of new replies. Clicking a bubble opens the chat full-page: the org on top (for now, the lead agent with its model and what it's doing) and the chat below. A new coder chat can start from the dock's "+", from the assistant panel's Coder option, or from a past coder session.
+  - **Collapsing:** clicking outside, Esc, or the collapse button shrinks the chat back into its bubble. That never stops a running turn, and the unsent draft, scroll position and org/chat split are kept. A drag or text selection that ends outside, or an open dialog, doesn't count as a click outside.
+  - **Closing:** closing a working chat asks first, then stops its turn. A new chat collapsed with nothing typed is discarded.
+  - **Dock:** it keeps up to six bubbles, with a "+N" bubble for the rest. Bubbles can be dragged to reorder, and the dock can be moved to the other side. The open bubbles come back after a restart.
 - **Sandboxed agent turns.** Chat, `agent.ask`, capture summaries, the jev text helper, recording analysis, application matching, config generation, the org `model` decider, `agent test` and `agent validate` now run sandboxed where monomind can do it. Coder mode is unchanged.
   - With monomind 2.11.1 or newer, codex and grok turns run in their own sandbox today (`--env MONOMIND_GIT_LEVEL=read`: codex `workspace-write` with network, grok `workspace`).
   - Once monomind advertises `agent-exec-sandbox` (monomind#396), every runtime gets `agent exec --sandbox workspace-write`.
