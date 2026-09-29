@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Effort goes to monomind as `agent exec --effort` when it advertises `agent-exec-effort`. An older monomind still gets `CLAUDE_EFFORT` for claude, now through one path instead of two.
 - Coder tool calls carry the normalized `kind` on `tool.started` (Claude names are the fallback). File-existed and shell exit codes come from the canonical keys and the end event's `exit_code`. On `start-only` runtimes, calls left open at turn end close with an unknown outcome instead of as cancelled. Startup status names the runtime ("Starting Codex…").
-- Granting an org role full access is also refused inside Codex, OpenCode, Gemini CLI and Qwen Code shells.
+- Granting an org role full access is also refused inside Codex, OpenCode, Antigravity, Gemini CLI, Grok, Copilot, Crush, pi and Qwen Code shells, and wherever the generic `AI_AGENT` or `AGENT` marker is set (the same list as monomind's).
+- App: coder mode's runtime picker lists every ready runtime instead of locking to claude, and says why the others are not ready (not installed, or no full access in this monomind). The chosen runtime's own model and effort are used, and the chat notes when a runtime shows commands but not every result. Tool cards render by `kind` (shell with exit code, edit, write, read, search, web, patch, mcp, task, todo). Settings hide the budget when no ready runtime reports cost. An org role's full-access grant is enabled only when the role's runtime supports full access.
 
 ## [0.90.1] - 2026-09-29
 

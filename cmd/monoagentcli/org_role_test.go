@@ -36,7 +36,7 @@ func TestOrgRoleSetAccessIsHumanOnly(t *testing.T) {
 	logged := func() string { b, _ := os.ReadFile(argsLog); return string(b) }
 
 	withCoderCaps(t, monomind.CapOrgRoleFullAccess)
-	for _, marker := range []string{"CLAUDECODE", "MONOMIND_AGENT_EXEC", "MONOMIND_ORG_ROLE", "CODEX_SANDBOX", "OPENCODE", "GEMINI_CLI"} {
+	for _, marker := range []string{"CLAUDECODE", "MONOMIND_AGENT_EXEC", "MONOMIND_ORG_ROLE", "CODEX_SANDBOX", "OPENCODE", "GEMINI_CLI", "AI_AGENT", "COPILOT_AGENT_SESSION_ID", "PI_CODING_AGENT"} {
 		t.Setenv(marker, "1")
 		if _, err := runOrgRole(t, root, "set-access", "growth", "builder", "full", "--yes-i-understand"); err == nil || !strings.Contains(err.Error(), marker) {
 			t.Errorf("%s set: grant not refused: %v", marker, err)
@@ -78,5 +78,10 @@ func TestOrgRoleSetAccessIsHumanOnly(t *testing.T) {
 
 var agentMarkersForTest = []string{
 	"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC",
-	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "OPENCODE", "GEMINI_CLI", "QWEN_CODE",
+	"AI_AGENT", "AGENT",
+	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID", "CODEX_CI",
+	"OPENCODE", "OPENCODE_PID", "ANTIGRAVITY_AGENT", "GEMINI_CLI",
+	"GROK_SESSION_ID", "GROK_MANAGED_BY_NPM",
+	"COPILOT_CLI_BINARY_VERSION", "COPILOT_AGENT_SESSION_ID",
+	"CRUSH", "PI_CODING_AGENT", "QWEN_CODE",
 }

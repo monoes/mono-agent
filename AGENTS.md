@@ -495,9 +495,14 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   open when the turn finishes close with `ok: null` (outcome unknown), not
   as cancelled.
 - Granting an org role full access is refused inside any agent. The
-  markers are `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `MONOMIND_ORG_ROLE`,
-  `MONOMIND_SDK_AGENT`, `MONOMIND_AGENT_EXEC`, `CODEX_SANDBOX`,
-  `CODEX_SANDBOX_NETWORK_DISABLED`, `OPENCODE`, `GEMINI_CLI` and `QWEN_CODE`.
+  markers mirror monomind's `AGENT_CONTEXT_ENV_MARKERS`: `CLAUDECODE`,
+  `CLAUDE_CODE_ENTRYPOINT`, `MONOMIND_ORG_ROLE`, `MONOMIND_SDK_AGENT`,
+  `MONOMIND_AGENT_EXEC`, `AI_AGENT`, `AGENT`, `CODEX_SANDBOX`,
+  `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_CI`,
+  `OPENCODE`, `OPENCODE_PID`, `ANTIGRAVITY_AGENT`, `GEMINI_CLI`,
+  `GROK_SESSION_ID`, `GROK_MANAGED_BY_NPM`, `COPILOT_CLI_BINARY_VERSION`,
+  `COPILOT_AGENT_SESSION_ID`, `CRUSH`, `PI_CODING_AGENT` and `QWEN_CODE`.
+  A shell that sets the generic `AI_AGENT` or `AGENT` itself is refused too.
 
 ## How AI works in mono-agent
 

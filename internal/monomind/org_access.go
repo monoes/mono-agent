@@ -10,18 +10,24 @@ import (
 const CapOrgRoleFullAccess = "org-role-full-access"
 
 // agentContextMarkers are the variables monomind treats as "an agent is
-// running this" (its agent-context.ts): Claude Code sets the first two on
-// every process a turn spawns, and org roles and agent exec set the three
-// MONOMIND_* ones (agent exec on every runtime's child). The rest are what
-// the other coding CLIs set on the commands their own shell tool runs, so a
+// running this" (AGENT_CONTEXT_ENV_MARKERS in its agent-context.ts; keep the
+// two lists the same): Claude Code sets the first two on every process a
+// turn spawns, and org roles and agent exec set the three MONOMIND_* ones
+// (agent exec on every runtime's child). AI_AGENT and AGENT are cross-vendor
+// markers (pi, crush, Claude Code; opencode, crush). The rest are what the
+// other coding CLIs set on the commands their own shell tool runs, so a
 // grant is refused inside them even when they were started outside
-// monomind: Codex (CODEX_SANDBOX*), OpenCode (OPENCODE), Gemini CLI
-// (GEMINI_CLI) and Qwen Code (QWEN_CODE).
+// monomind: Codex, OpenCode, Antigravity, Gemini CLI, Grok, Copilot, Crush,
+// pi and Qwen Code.
 var agentContextMarkers = []string{
 	"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
 	"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC",
-	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
-	"OPENCODE", "GEMINI_CLI", "QWEN_CODE",
+	"AI_AGENT", "AGENT",
+	"CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID", "CODEX_CI",
+	"OPENCODE", "OPENCODE_PID", "ANTIGRAVITY_AGENT", "GEMINI_CLI",
+	"GROK_SESSION_ID", "GROK_MANAGED_BY_NPM",
+	"COPILOT_CLI_BINARY_VERSION", "COPILOT_AGENT_SESSION_ID",
+	"CRUSH", "PI_CODING_AGENT", "QWEN_CODE",
 }
 
 // AgentContextMarker returns the first agent-context variable set in this
