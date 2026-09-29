@@ -81,7 +81,7 @@ func TestListModelsAntigravityRequiresBinary(t *testing.T) {
 func TestListModelsCodexFiltersToListVisibilityOnly(t *testing.T) {
 	script := "#!/bin/sh\ncat <<'EOF'\n" +
 		`{"models":[` +
-		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},` +
+		`{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"ultra"}]},` +
 		`{"slug":"gpt-reserve","display_name":"GPT-Reserve","visibility":"hide"},` +
 		`{"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide"},` +
 		`{"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list"}` +

@@ -230,13 +230,28 @@ func listCodexModels(ctx context.Context, binary string) ([]RuntimeModel, error)
 		}
 		var efforts []string
 		for _, l := range m.SupportedReasoningLevels {
-			if l.Effort != "" {
-				efforts = append(efforts, l.Effort)
-			}
+			efforts = append(efforts, l.Effort)
 		}
-		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: efforts})
+		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: execEfforts(efforts)})
 	}
 	return models, nil
+}
+
+// agentExecEfforts are the names `agent exec --effort` accepts; it maps
+// each to the runtime's own levels and rejects any other with a usage error.
+var agentExecEfforts = map[string]bool{"off": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// execEfforts keeps the levels agent exec accepts: a runtime's own name
+// outside them (codex's "ultra", dsh's "minimal") would fail the turn.
+// nil when none is left.
+func execEfforts(levels []string) []string {
+	var out []string
+	for _, l := range levels {
+		if agentExecEfforts[l] {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // CapAgentModels is `monomind agent models` (monomind#369).
@@ -297,7 +312,7 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 			ID:           m.ID,
 			Label:        modelLabel(m.Label, m.Description, m.ID, m.Default),
 			Description:  m.Description,
-			EffortLevels: m.EffortLevels,
+			EffortLevels: execEfforts(m.EffortLevels),
 		})
 	}
 	return models, res.Supported, nil
