@@ -501,8 +501,24 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_CI`,
   `OPENCODE`, `OPENCODE_PID`, `ANTIGRAVITY_AGENT`, `GEMINI_CLI`,
   `GROK_SESSION_ID`, `GROK_MANAGED_BY_NPM`, `COPILOT_CLI_BINARY_VERSION`,
-  `COPILOT_AGENT_SESSION_ID`, `CRUSH`, `PI_CODING_AGENT` and `QWEN_CODE`.
-  A shell that sets the generic `AI_AGENT` or `AGENT` itself is refused too.
+  `COPILOT_AGENT_SESSION_ID`, `CRUSH`, `PI_CODING_AGENT`, `PI_SESSION_ID`,
+  `QWEN_CODE`, `DSH_SHELL`, `DSH_SESSION_ID`, and `MONOMIND_CLINE_TURN` /
+  `MONOMIND_AIDER` (set by monomind's runners, since cline and aider set
+  none of their own). A shell that sets the generic `AI_AGENT` or `AGENT`
+  itself is refused too.
+- **cline, aider, DeepSeek Harness (`dsh`) and pi** have no model-listing
+  command, so `agent models` reports them unsupported and mono-agent
+  offers a curated list. It includes free OpenRouter models
+  (`qwen/qwen3.8-27b:free`, `nvidia/nemotron-3-super-120b-a12b:free`,
+  `google/gemma-4-31b-it:free`, `poolside/laguna-s-2.1:free`,
+  `cohere/north-mini-code:free`) that need only a free
+  `OPENROUTER_API_KEY`. aider, pi and dsh name them `openrouter/<id>`.
+  cline takes the bare id and needs its OpenRouter provider (`cline auth
+  openrouter`, or `CLINE_PROVIDER=openrouter`). dsh also lists DeepSeek's
+  own models and free NVIDIA-hosted ones. The coder header names each
+  runtime's key setup files: `.clinerules/monomind.md` for cline,
+  `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
+  and pi. The app shows `dsh` as "DeepSeek Harness".
 
 ## How AI works in mono-agent
 
