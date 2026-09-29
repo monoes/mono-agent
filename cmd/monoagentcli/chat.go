@@ -148,7 +148,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 					if tools != "" {
 						return errInvalidInput("--tools does not apply to a coder conversation: it has full access")
 					}
-					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd})
+					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd, orgMode: conv.OrgMode})
 				}
 			}
 			if mode == ai.ModeCoder {
