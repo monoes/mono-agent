@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `agent validate` now uses monomind's own structured check (`agent test --json`, monomind 2.18.5 or newer) when available: `model_unavailable` and the other statuses match monomind's classification. Runtimes that report no cost get an estimated cost, shown with "≈" on the AI agents page. Runtimes whose turns run sandboxed (codex and grok today) and older monomind versions keep the previous sandboxed test turn, because `agent test` has no sandbox option. The `validate.plan` line has a `checker` field that says which check ran (#225).
+
 ### Added
 - **Sandboxed agent turns.** Chat, `agent.ask`, capture summaries, the jev text helper, recording analysis, application matching, config generation, the org `model` decider, `agent test` and `agent validate` now run sandboxed where monomind can do it. Coder mode is unchanged.
   - With monomind 2.11.1 or newer, codex and grok turns run in their own sandbox today (`--env MONOMIND_GIT_LEVEL=read`: codex `workspace-write` with network, grok `workspace`).

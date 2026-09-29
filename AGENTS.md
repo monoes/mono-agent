@@ -497,7 +497,14 @@ login (and its bill) is what the turn uses.
   with latency and cost. Each test is a real model call, so `--dry-run` prints
   the call count and estimated cost first, and `--stale-only` skips models
   that are already ready. `--json` streams NDJSON progress (`validate.plan`,
-  `validate.started`, `validate.result`, `validate.done`).
+  `validate.started`, `validate.result`, `validate.done`). With monomind 2.18.5 or newer
+  (capability `agent-test-json`), each test is monomind's own `agent test
+  --json`, so statuses match monomind's classification and a runtime that
+  reports no cost gets a pricing-table estimate (`cost_estimated`, shown with
+  "≈"). `agent test` has no sandbox option, so a
+  runtime whose turns run sandboxed (codex and grok today) keeps the
+  sandboxed test turn, like an older monomind; mono-agent classifies it. The plan
+  line's `checker` says which one ran.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
