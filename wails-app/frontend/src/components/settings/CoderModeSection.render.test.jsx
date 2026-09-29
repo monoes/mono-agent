@@ -42,7 +42,8 @@ describe('CoderModeSection', () => {
     const dialog = await screen.findByRole('dialog', { name: CODER_RISK_TITLE })
     expect(dialog).toHaveTextContent('run any command, read and change any file your user account can, and install software')
     expect(dialog).toHaveTextContent('Only point it at folders and repos you trust')
-    expect(dialog).toHaveTextContent('CLAUDE.md, skills, hooks and MCP servers')
+    expect(dialog).toHaveTextContent('the coding agent you pick (Claude Code, Codex, OpenCode, …)')
+    expect(dialog).toHaveTextContent('instructions files (CLAUDE.md, AGENTS.md, GEMINI.md), skills, hooks and MCP servers')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(App.CoderEnable).not.toHaveBeenCalled()
@@ -75,6 +76,32 @@ describe('CoderModeSection', () => {
     mount(status({ enabled: true, monomindVersion: '2.17.0' }))
     expect(await screen.findByTestId('coder-ready')).toHaveTextContent('Ready · monomind 2.17.0 · claude')
     expect(screen.queryByTestId('coder-needs-update')).not.toBeInTheDocument()
+  })
+
+  it('lists each runtime\'s readiness, and binds the budget only where cost is reported', async () => {
+    const rt = (id, over = {}) => ({ id, installed: true, fullAccess: true, ready: true, toolActivity: 'full', resume: true, effort: true, maxTurns: true, reportsCost: true, initTarget: id, ...over })
+    mount(status({ enabled: true, monomindVersion: '2.19.0', runtimes: [
+      rt('claude'), rt('codex', { toolActivity: 'start-only', maxTurns: false, reportsCost: false }), rt('kimicode', { installed: false, ready: false }),
+    ] }))
+    expect(await screen.findByTestId('coder-ready')).toHaveTextContent('Ready · monomind 2.19.0 · claude, codex')
+    const list = screen.getByTestId('coder-runtimes')
+    expect(list).toHaveTextContent('claude · ready')
+    expect(list).toHaveTextContent('codex · ready · tool calls: start-only')
+    expect(list).toHaveTextContent('kimicode · not installed')
+    expect(screen.getByLabelText('Budget per turn')).toBeInTheDocument()
+    expect(screen.getByTestId('coder-limits-hint')).toHaveTextContent('Max turns applies on claude; the budget on claude.')
+    cleanup()
+
+    mount(status({ enabled: true, runtimes: [rt('claude', { ready: false, installed: false }), rt('codex', { reportsCost: false, maxTurns: false })] }))
+    await screen.findByTestId('coder-runtimes')
+    expect(screen.queryByLabelText('Budget per turn')).not.toBeInTheDocument()
+    expect(screen.getByTestId('coder-limits-hint')).toHaveTextContent('no ready runtime reports cost, so there is no budget')
+  })
+
+  it('with no runtime ready, says which part is missing', async () => {
+    mount(status({ ready: false, runtimes: [{ id: 'claude', installed: false, fullAccess: true, ready: false }] }))
+    expect(await screen.findByTestId('coder-needs-update')).toHaveTextContent('needs a coding runtime (claude, codex, opencode, …) installed')
+    expect(screen.getByTestId('coder-needs-update')).toHaveTextContent('Coder chats start once a runtime is ready')
   })
 
   it('says monomind needs an update when not ready, and still allows turning it on', async () => {

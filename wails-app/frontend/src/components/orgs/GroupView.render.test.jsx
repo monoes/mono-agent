@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import GroupView from './GroupView.jsx'
 import { initialGroupTraffic, applyGroupEvent, recentArcs, arcPath } from './groupTraffic.js'
-import { api, notify, onOrgEvent } from '../../services/api.js'
+import { api, notify, onOrgEvent, newOrgEventsStreamId } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
 
 vi.mock('../../services/api.js', () => ({
@@ -20,6 +20,7 @@ vi.mock('../../services/api.js', () => ({
   },
   notify: vi.fn(),
   onOrgEvent: vi.fn(() => () => {}),
+  newOrgEventsStreamId: vi.fn(),
 }))
 vi.mock('../ConfirmDialog.jsx', () => ({ confirm: vi.fn(() => Promise.resolve(true)) }))
 
@@ -44,6 +45,8 @@ beforeEach(() => {
   api.startOrgGroup.mockResolvedValue(GROUP)
   api.stopOrgGroup.mockResolvedValue(GROUP)
   onOrgEvent.mockImplementation((cb) => { emit = cb; return () => { emit = null } })
+  let seq = 0
+  newOrgEventsStreamId.mockImplementation(() => `s${++seq}`)
 })
 afterEach(() => cleanup())
 
@@ -84,9 +87,9 @@ describe('GroupView', () => {
     expect(screen.getByText('spent $0.440')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
     expect(screen.getByText('with parent')).toBeInTheDocument()
-    await waitFor(() => expect(api.streamOrgEvents).toHaveBeenCalledWith('anvil'))
-    expect(api.streamOrgEvents).toHaveBeenCalledWith('forge')
-    expect(api.streamOrgEvents).not.toHaveBeenCalledWith('herald')
+    await waitFor(() => expect(api.streamOrgEvents).toHaveBeenCalledWith('anvil', expect.any(String)))
+    expect(api.streamOrgEvents).toHaveBeenCalledWith('forge', expect.any(String))
+    expect(api.streamOrgEvents).not.toHaveBeenCalledWith('herald', expect.anything())
   })
 
   it('draws one deduped arc per direction from live xorg events', async () => {
@@ -132,8 +135,11 @@ describe('GroupView', () => {
   it('stops child tails on unmount', async () => {
     const { unmount } = render(<GroupView holding="herald" />)
     await screen.findByText('anvil')
+    const started = Object.fromEntries(api.streamOrgEvents.mock.calls)
     unmount()
-    expect(api.stopOrgEvents).toHaveBeenCalledWith('anvil')
-    expect(api.stopOrgEvents).toHaveBeenCalledWith('forge')
+    // Each tail is stopped by the id it was started with (#235).
+    expect(api.stopOrgEvents).toHaveBeenCalledWith('anvil', started.anvil)
+    expect(api.stopOrgEvents).toHaveBeenCalledWith('forge', started.forge)
+    expect(started.anvil).not.toBe(started.forge)
   })
 })

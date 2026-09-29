@@ -439,24 +439,25 @@ event.
 
 ### Coder mode (full access)
 
-Coder mode is a chat where the agent runs as a full Claude Code session in
-a folder: it can run any command and read or change any file the user can,
-with no approval prompts, and it loads the user's normal Claude Code setup
-(CLAUDE.md, skills, hooks, MCP servers) plus the folder's own.
+Coder mode is a chat where the agent runs as a full session of a coding
+CLI (Claude Code, Codex, OpenCode, …) in a folder: it can run any command
+and read or change any file the user can, with no approval prompts, and it
+loads the user's normal setup for that CLI (its instructions files, skills,
+hooks, MCP servers) plus the folder's own.
 
 ```bash
-monoagentcli coder status --json                          # settings + whether monomind supports it
+monoagentcli coder status --json                          # settings, monomind support, and each runtime's readiness
 monoagentcli coder enable --yes-i-understand              # off until enabled; the CLI enforces it
 monoagentcli coder set --workspace-root ~/monoagent-coder --max-turns 200 --timeout 60m --budget-usd 5
 monoagentcli coder workspace root --json                  # the coder root itself, set up as a shared working folder
 monoagentcli coder workspace new --json                   # or a fresh random test folder inside it
-monoagentcli chat history create --runtime claude --mode coder --coder-root   # or --cwd <any folder>, --new-workspace
+monoagentcli chat history create --runtime codex --mode coder --effort high --coder-root   # or --cwd <any folder>, --new-workspace; runtime defaults to claude
 monoagentcli chat --conversation <conv> --turn <id> -- "make the tests pass"
 monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled turn
 ```
 
-- The mode and folder are fixed when the conversation is created. Claude
-  Code keys its sessions by folder, so a conversation always resumes in the
+- The mode and folder are fixed when the conversation is created. The
+  CLIs key their sessions by folder, so a conversation always resumes in the
   same one.
 - A picked folder is initialized with `monomind init --if-missing`, which
   adds missing setup files and never touches existing ones.
@@ -466,11 +467,68 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 - Every tool call is journaled (`tool.started` with `native: true` /
   `tool.completed`); startup progress and background processes left running
   arrive as `coder.status` / `coder.background` notices.
-- It runs on the `claude` runtime only, refuses to run as root, and needs
-  monomind's `agent-exec-full-access`, `agent-exec-settings`,
-  `agent-exec-tool-activity` and `init-json` capabilities. Without them it
-  fails with code `needs_monomind_update`. When disabled, the code is
-  `coder_disabled`.
+- Provider rate limits (any chat turn): monomind retries a 429 itself (3
+  attempts, agent-exec rev 20). Each retry is an `agent.rate_limit_retry`
+  warning notice ("Rate limited (429) by X; retrying in 2s (attempt 2/3)").
+  When it gives up, error `rate-limited` becomes an `agent.rate_limited`
+  error notice with monomind's message, and the turn fails. The
+  conversation is not affected, so the next turn runs as usual. Used-up
+  quota or credits stay `quota` and are not retried.
+- It refuses to run as root, and needs monomind's `agent-exec-full-access`,
+  `agent-exec-settings`, `agent-exec-tool-activity` and `init-json`
+  capabilities. Without them it fails with code `needs_monomind_update`.
+  When disabled, the code is `coder_disabled`.
+- **Runtimes.** `coder status --json` keeps `runtime: "claude"` for older
+  apps and adds `runtimes: [{id, installed, fullAccess, ready, toolActivity,
+  resume, effort, maxTurns, reportsCost, initTarget}]`, one per scanned
+  runtime, from `agent scan`'s `full_access`, `tool_activity_fidelity`,
+  `resume`, `effort`, `max_turns`, `reports_cost` and `init_target`. A runtime
+  is ready when it is installed, monomind runs it with full access, and the
+  capabilities above are present. A monomind without
+  `agent-exec-full-access-any` runs only claude. A runtime monomind won't run
+  with full access fails with code `coder_runtime_unsupported`. An uninstalled
+  one is not refused up front, so the turn reports it as not set up. A new
+  folder gets that runtime's setup files (`monomind init --target
+  <initTarget>`). pi, dsh, grok, copilot, qwen and crush report `agents`,
+  which writes AGENTS.md alone. A runtime with no init target (an older
+  monomind) gets a minimal AGENTS.md written by mono-agent. Only claude
+  folders get Claude's setup (CLAUDE.md, `.claude/`, `.mcp.json`).
+- The conversation keeps its runtime and effort. Effort goes to monomind as
+  `--effort` when it has `agent-exec-effort` (mapped per runtime). An older
+  monomind gets it only for claude, as `CLAUDE_EFFORT`.
+- Native tool calls carry monomind's normalized `kind` (`shell`, `edit`,
+  `write`, `read`, `search`, `web`, `mcp`, `task`, `todo`, `patch`, `other`)
+  on `tool.started`, with canonical input keys. `fileExisted` comes from
+  `file_path` for edit/write, and a shell call's `exitCode` from the end
+  event's `exit_code`. Claude tool names are the fallback for an older
+  monomind. On a `start-only` runtime no call reports an end, so calls still
+  open when the turn finishes close with `ok: null` (outcome unknown), not
+  as cancelled.
+- Granting an org role full access is refused inside any agent. The
+  markers mirror monomind's `AGENT_CONTEXT_ENV_MARKERS`: `CLAUDECODE`,
+  `CLAUDE_CODE_ENTRYPOINT`, `MONOMIND_ORG_ROLE`, `MONOMIND_SDK_AGENT`,
+  `MONOMIND_AGENT_EXEC`, `AI_AGENT`, `AGENT`, `CODEX_SANDBOX`,
+  `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_CI`,
+  `OPENCODE`, `OPENCODE_PID`, `ANTIGRAVITY_AGENT`, `GEMINI_CLI`,
+  `GROK_SESSION_ID`, `GROK_MANAGED_BY_NPM`, `COPILOT_CLI_BINARY_VERSION`,
+  `COPILOT_AGENT_SESSION_ID`, `CRUSH`, `PI_CODING_AGENT`, `PI_SESSION_ID`,
+  `QWEN_CODE`, `DSH_SHELL`, `DSH_SESSION_ID`, and `MONOMIND_CLINE_TURN` /
+  `MONOMIND_AIDER` (set by monomind's runners, since cline and aider set
+  none of their own). A shell that sets the generic `AI_AGENT` or `AGENT`
+  itself is refused too.
+- **cline, aider, DeepSeek Harness (`dsh`) and pi** have no model-listing
+  command, so `agent models` reports them unsupported and mono-agent
+  offers a curated list. It includes free OpenRouter models
+  (`qwen/qwen3.8-27b:free`, `nvidia/nemotron-3-super-120b-a12b:free`,
+  `google/gemma-4-31b-it:free`, `poolside/laguna-s-2.1:free`,
+  `cohere/north-mini-code:free`) that need only a free
+  `OPENROUTER_API_KEY`. aider, pi and dsh name them `openrouter/<id>`.
+  cline takes the bare id and needs its OpenRouter provider (`cline auth
+  openrouter`, or `CLINE_PROVIDER=openrouter`). dsh also lists DeepSeek's
+  own models and free NVIDIA-hosted ones. The coder header names each
+  runtime's key setup files: `.clinerules/monomind.md` for cline,
+  `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
+  and pi. The app shows `dsh` as "DeepSeek Harness".
 
 ## How AI works in mono-agent
 

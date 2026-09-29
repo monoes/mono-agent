@@ -43,6 +43,62 @@ var claudeModels = []RuntimeModel{
 	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6", EffortLevels: []string{"low", "medium", "high", "max"}},
 }
 
+// freeOpenRouterModels are zero-cost OpenRouter models that take tools and
+// reasoning (checked against openrouter.ai/api/v1/models and `pi
+// --list-models free` on 2026-09-29): each needs only a free OpenRouter key
+// (OPENROUTER_API_KEY). Free models are rate-limited.
+var freeOpenRouterModels = []struct{ id, label string }{
+	{"qwen/qwen3.8-27b:free", "Qwen3.8 27B"},
+	{"nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super"},
+	{"google/gemma-4-31b-it:free", "Gemma 4 31B"},
+	{"poolside/laguna-s-2.1:free", "Laguna S 2.1"},
+	{"cohere/north-mini-code:free", "North Mini Code"},
+}
+
+// openRouterFree lists freeOpenRouterModels for one runtime: prefix is how
+// that runtime names an OpenRouter model ("openrouter/" for aider's litellm
+// names and pi's provider/id, "" for cline, whose provider is its own
+// setting), note says how to point the runtime at OpenRouter.
+func openRouterFree(prefix, note string, efforts []string) []RuntimeModel {
+	out := make([]RuntimeModel, 0, len(freeOpenRouterModels))
+	for _, m := range freeOpenRouterModels {
+		out = append(out, RuntimeModel{
+			ID:           prefix + m.id,
+			Label:        m.label + " (free, OpenRouter)",
+			Description:  note,
+			EffortLevels: efforts,
+		})
+	}
+	return out
+}
+
+// curatedModels are the fallback lists for runtimes with no model-listing
+// command (monomind's agent models reports supported:false for them), so
+// their pickers are never empty. Effort levels are monomind's --effort
+// names each runtime maps: cline --thinking has none|low|medium|high|xhigh,
+// aider's reasoning_effort low|medium|high, pi's --thinking all six. dsh
+// mirrors monomind's DSH_MODELS (dsh-runner-models.ts) without the two
+// OpenRouter ids OpenRouter no longer lists (glm-5.2, minimax-m3), levels
+// limited to monomind's names, plus the free OpenRouter set on dsh's pi-ai
+// "openrouter/" route (Laguna S 2.1 comes from there).
+var curatedModels = map[string][]RuntimeModel{
+	"cline": openRouterFree("", "Needs cline's OpenRouter provider (cline auth openrouter, or CLINE_PROVIDER=openrouter with OPENROUTER_API_KEY)",
+		[]string{"off", "low", "medium", "high", "xhigh"}),
+	"aider": openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY",
+		[]string{"low", "medium", "high"}),
+	"pi": openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY (or pi's own openrouter login)",
+		[]string{"off", "low", "medium", "high", "xhigh", "max"}),
+	"dsh": append([]RuntimeModel{
+		{ID: "deepseek-flash", Label: "DeepSeek V4.1 Flash", Description: "Needs DEEPSEEK_API_KEY", EffortLevels: []string{"off", "low", "high", "max"}},
+		{ID: "deepseek-v4-pro", Label: "DeepSeek V4 Pro", Description: "Needs DEEPSEEK_API_KEY", EffortLevels: []string{"off", "low", "high", "max"}},
+		{ID: "nvidia/deepseek-ai/deepseek-v4-flash-0731", Label: "DeepSeek V4 Flash (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "high", "max"}},
+		{ID: "nvidia/deepseek-ai/deepseek-v4-pro-0813", Label: "DeepSeek V4 Pro (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "high", "max"}},
+		{ID: "nvidia/moonshotai/kimi-k3", Label: "Kimi K3 (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "low", "medium", "high"}},
+		{ID: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", Label: "Nemotron 3 Ultra (free, OpenRouter)", Description: "Needs OPENROUTER_API_KEY", EffortLevels: []string{"off", "medium", "high"}},
+		{ID: "openrouter/openrouter/free", Label: "OpenRouter free-models router", Description: "Needs OPENROUTER_API_KEY", EffortLevels: []string{"off", "low", "medium", "high"}},
+	}, openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY", []string{"off", "low", "medium", "high"})...),
+}
+
 // ListModels returns the models selectable for runtimeID's --model flag.
 // antigravity and codex both have a real discovery command (see
 // listAntigravityModels/listCodexModels); claude falls back to the curated
@@ -54,8 +110,10 @@ func ListModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, 
 	if set, err := Capabilities(ctx); err == nil && set.Has(CapAgentModels) {
 		models, supported, err := listAgentModels(ctx, runtimeID)
 		switch {
-		case err == nil && !supported:
-			return nil, nil
+		case err == nil && (!supported || len(models) == 0):
+			// No listing command (cline, aider, dsh, pi have none in
+			// monomind's agent models): the curated list, if any.
+			return builtinModels(ctx, runtimeID, binary)
 		case err == nil:
 			return models, nil
 		}
@@ -82,6 +140,9 @@ func builtinModels(ctx context.Context, runtimeID, binary string) ([]RuntimeMode
 	case "claude":
 		return claudeModels, nil
 	default:
+		if m, ok := curatedModels[runtimeID]; ok {
+			return m, nil
+		}
 		return nil, nil
 	}
 }
@@ -169,13 +230,28 @@ func listCodexModels(ctx context.Context, binary string) ([]RuntimeModel, error)
 		}
 		var efforts []string
 		for _, l := range m.SupportedReasoningLevels {
-			if l.Effort != "" {
-				efforts = append(efforts, l.Effort)
-			}
+			efforts = append(efforts, l.Effort)
 		}
-		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: efforts})
+		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: execEfforts(efforts)})
 	}
 	return models, nil
+}
+
+// agentExecEfforts are the names `agent exec --effort` accepts; it maps
+// each to the runtime's own levels and rejects any other with a usage error.
+var agentExecEfforts = map[string]bool{"off": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// execEfforts keeps the levels agent exec accepts: a runtime's own name
+// outside them (codex's "ultra", dsh's "minimal") would fail the turn.
+// nil when none is left.
+func execEfforts(levels []string) []string {
+	var out []string
+	for _, l := range levels {
+		if agentExecEfforts[l] {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // CapAgentModels is `monomind agent models` (monomind#369).
@@ -236,7 +312,7 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 			ID:           m.ID,
 			Label:        modelLabel(m.Label, m.Description, m.ID, m.Default),
 			Description:  m.Description,
-			EffortLevels: m.EffortLevels,
+			EffortLevels: execEfforts(m.EffortLevels),
 		})
 	}
 	return models, res.Supported, nil

@@ -70,6 +70,35 @@ func sandboxPairs(argv []string) []string {
 	return out
 }
 
+// scanModes2190 is what monomind 2.19.0's agent scan lists: only codex and
+// grok have a sandbox of their own; every other runtime lists "full".
+var scanModes2190 = map[string][]string{
+	"codex":       {SandboxReadOnly, SandboxWorkspaceWrite, SandboxFull},
+	"grok":        {SandboxReadOnly, SandboxWorkspaceWrite, SandboxFull},
+	"claude":      {SandboxFull},
+	"copilot":     {SandboxFull},
+	"qwen":        {SandboxFull},
+	"antigravity": {SandboxFull},
+}
+
+// stubSandboxScan makes SandboxModesFor answer from modes (nil: the scan fails).
+func stubSandboxScan(t *testing.T, modes map[string][]string) {
+	t.Helper()
+	prev := scanForSandbox
+	scanForSandbox = func(context.Context) (*ScanResult, error) {
+		if modes == nil {
+			return nil, fmt.Errorf("scan failed")
+		}
+		res := &ScanResult{V: 1}
+		for id, m := range modes {
+			res.Agents = append(res.Agents, ScanEntry{ID: id, Installed: true, SandboxModes: m})
+		}
+		return res, nil
+	}
+	resetSandboxModes()
+	t.Cleanup(func() { scanForSandbox = prev; resetSandboxModes() })
+}
+
 func TestSandboxArgs(t *testing.T) {
 	future := NewCapabilitySet("9.0.0", CapAgentExecSandbox)
 	today := NewCapabilitySet("2.18.5")
@@ -77,43 +106,54 @@ func TestSandboxArgs(t *testing.T) {
 	old := NewCapabilitySet("2.10.0")
 	flag := []string{SandboxFlag, SandboxWorkspaceWrite}
 	env := []string{"--env", "MONOMIND_GIT_LEVEL=read"}
+	m := scanModes2190
 	cases := []struct {
 		caps          *CapabilitySet
+		modes         []string
 		runtime, mode string
 		want          []string
 		effective     string
 	}{
-		// monomind#396: the flag, for every runtime.
-		{future, "codex", SandboxWorkspaceWrite, flag, SandboxStatusSandboxed},
-		{future, "copilot", SandboxWorkspaceWrite, flag, SandboxStatusSandboxed},
-		{future, "claude", SandboxWorkspaceWrite, flag, SandboxStatusSandboxed},
-		{future, "codex", SandboxReadOnly, []string{SandboxFlag, SandboxReadOnly}, SandboxStatusSandboxed},
-		{future, "codex", SandboxFull, []string{SandboxFlag, SandboxFull}, SandboxStatusOff},
-		// Today: the env path for codex and grok.
-		{today, "codex", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
-		{today, "grok", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
-		{floor, "codex", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
-		{today, "codex", SandboxReadOnly, nil, SandboxStatusAwaitingMonomind},
-		{today, "copilot", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
-		{today, "qwen", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
-		{today, "antigravity", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
-		{today, "claude", SandboxWorkspaceWrite, nil, SandboxStatusScoped},
-		{today, "codex", SandboxFull, nil, SandboxStatusOff},
+		// --sandbox: only for a mode the runtime lists (monomind 2.19.0
+		// refuses any other mode, fatally).
+		{future, m["codex"], "codex", SandboxWorkspaceWrite, flag, SandboxStatusSandboxed},
+		{future, m["grok"], "grok", SandboxWorkspaceWrite, flag, SandboxStatusSandboxed},
+		{future, m["codex"], "codex", SandboxReadOnly, []string{SandboxFlag, SandboxReadOnly}, SandboxStatusSandboxed},
+		{future, m["codex"], "codex", SandboxFull, []string{SandboxFlag, SandboxFull}, SandboxStatusOff},
+		{future, m["copilot"], "copilot", SandboxWorkspaceWrite, nil, SandboxStatusUnsupported},
+		{future, m["qwen"], "qwen", SandboxWorkspaceWrite, nil, SandboxStatusUnsupported},
+		{future, m["antigravity"], "antigravity", SandboxWorkspaceWrite, nil, SandboxStatusUnsupported},
+		{future, m["claude"], "claude", SandboxWorkspaceWrite, nil, SandboxStatusScoped},
+		{future, []string{}, "opencode", SandboxWorkspaceWrite, nil, SandboxStatusUnsupported},
+		// The scan failed: never a flag; codex and grok keep the env path.
+		{future, nil, "codex", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
+		{future, nil, "copilot", SandboxWorkspaceWrite, nil, SandboxStatusUnsupported},
+		{future, nil, "claude", SandboxWorkspaceWrite, nil, SandboxStatusScoped},
+		// Before the flag: the env path for codex and grok.
+		{today, nil, "codex", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
+		{today, nil, "grok", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
+		{floor, nil, "codex", SandboxWorkspaceWrite, env, SandboxStatusSandboxed},
+		{today, nil, "codex", SandboxReadOnly, nil, SandboxStatusAwaitingMonomind},
+		{today, nil, "copilot", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
+		{today, nil, "qwen", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
+		{today, nil, "antigravity", SandboxWorkspaceWrite, nil, SandboxStatusAwaitingMonomind},
+		{today, nil, "claude", SandboxWorkspaceWrite, nil, SandboxStatusScoped},
+		{today, nil, "codex", SandboxFull, nil, SandboxStatusOff},
 		// Older monomind, or no handshake: exactly as before.
-		{old, "codex", SandboxWorkspaceWrite, nil, SandboxStatusNeedsMonomind},
-		{nil, "grok", SandboxWorkspaceWrite, nil, SandboxStatusNeedsMonomind},
+		{old, nil, "codex", SandboxWorkspaceWrite, nil, SandboxStatusNeedsMonomind},
+		{nil, nil, "grok", SandboxWorkspaceWrite, nil, SandboxStatusNeedsMonomind},
 		// Coder mode asks for nothing.
-		{future, "claude", "", nil, ""},
-		{today, "codex", "", nil, ""},
+		{future, m["claude"], "claude", "", nil, ""},
+		{today, nil, "codex", "", nil, ""},
 	}
 	for _, tc := range cases {
 		v := "<nil>"
 		if tc.caps != nil {
 			v = tc.caps.Version + fmt.Sprint(tc.caps.List())
 		}
-		args, eff := SandboxArgs(tc.caps, tc.runtime, tc.mode)
+		args, eff := SandboxArgs(tc.caps, tc.modes, tc.runtime, tc.mode)
 		if !slices.Equal(args, tc.want) || eff != tc.effective {
-			t.Errorf("SandboxArgs(%s, %s, %q) = %v, %q; want %v, %q", v, tc.runtime, tc.mode, args, eff, tc.want, tc.effective)
+			t.Errorf("SandboxArgs(%s, %v, %s, %q) = %v, %q; want %v, %q", v, tc.modes, tc.runtime, tc.mode, args, eff, tc.want, tc.effective)
 		}
 	}
 }
@@ -135,9 +175,14 @@ func TestExecSandbox(t *testing.T) {
 		{name: "monomind 396 flag", version: "9.0.0", advertise: true, startExtra: `,"sandbox":"workspace-write"`,
 			opts:      ExecOptions{Runtime: "codex", Sandbox: mode, WorkspacePurpose: WorkspaceChat},
 			wantPairs: []string{"--sandbox workspace-write"}, wantCwd: ws(WorkspaceChat), wantStatus: SandboxStatusSandboxed},
-		{name: "monomind 396, runtime cannot", version: "9.0.0", advertise: true, startExtra: `,"sandbox":"full","sandbox_unsupported":true`,
-			opts:      ExecOptions{Runtime: "copilot", Sandbox: mode, WorkspacePurpose: WorkspaceAgentAsk},
-			wantPairs: []string{"--sandbox workspace-write"}, wantCwd: ws(WorkspaceAgentAsk), wantStatus: SandboxStatusUnsupported},
+		// monomind 2.19.0 refuses --sandbox workspace-write for a runtime
+		// whose sandbox_modes lack it, fatally: no flag, no workspace.
+		{name: "monomind 396, runtime lists only full", version: "9.0.0", advertise: true,
+			opts:       ExecOptions{Runtime: "copilot", Sandbox: mode, WorkspacePurpose: WorkspaceAgentAsk},
+			wantStatus: SandboxStatusUnsupported},
+		{name: "monomind 396, claude stays scoped", version: "9.0.0", advertise: true,
+			opts:       ExecOptions{Runtime: "claude", Sandbox: mode, WorkspacePurpose: WorkspaceChat},
+			wantStatus: SandboxStatusScoped},
 		{name: "env workaround: codex", version: "2.18.5",
 			opts:      ExecOptions{Runtime: "codex", Sandbox: mode, WorkspacePurpose: WorkspaceChat},
 			wantPairs: []string{"--env MONOMIND_GIT_LEVEL=read"}, wantCwd: ws(WorkspaceChat), wantStatus: SandboxStatusSandboxed},
@@ -160,6 +205,7 @@ func TestExecSandbox(t *testing.T) {
 			opts:    ExecOptions{Runtime: "codex", Cwd: "/work", Access: AccessFull},
 			wantCwd: "/work"},
 	}
+	stubSandboxScan(t, scanModes2190)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bin, record := writeSandboxFake(t, tc.version, tc.advertise, tc.startExtra)

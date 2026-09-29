@@ -59,6 +59,13 @@ func Install(t *testing.T, m Monomind, reply string) (argsLog string) {
 	}
 	script := "#!/bin/sh\n" +
 		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":[` + caps + `]}'; exit 0; fi` + "\n" +
+		// agent scan answers like monomind 2.19.0: codex and grok have a
+		// sandbox of their own, every other runtime lists only "full".
+		`if [ "$1" = "agent" ] && [ "$2" = "scan" ]; then echo '{"v":1,"agents":[` +
+		`{"id":"codex","installed":true,"sandbox_modes":["read-only","workspace-write","full"]},` +
+		`{"id":"grok","installed":true,"sandbox_modes":["read-only","workspace-write","full"]},` +
+		`{"id":"claude","installed":true,"sandbox_modes":["full"]},` +
+		`{"id":"copilot","installed":true,"sandbox_modes":["full"]}]}'; exit 0; fi` + "\n" +
 		`if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then` + "\n" +
 		`  echo "$*" >> '` + argsLog + "'\n" +
 		`  echo '{"v":1,"type":"start","runtime":"codex"` + sandbox + `}'` + "\n" +

@@ -77,7 +77,7 @@ export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
 
 export function CoderWorkspaceList():Promise<string>;
 
-export function CoderWorkspaceRoot():Promise<string>;
+export function CoderWorkspaceRoot(arg1:string):Promise<string>;
 
 export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<storage.PersonMessage>;
 
@@ -87,7 +87,7 @@ export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
 export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
-export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
+export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<string>;
 
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
@@ -513,11 +513,11 @@ export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
 
-export function StopOrgEvents(arg1:string):Promise<string>;
+export function StopOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function StopOrgGroup(arg1:string):Promise<string>;
 
-export function StreamOrgEvents(arg1:string):Promise<string>;
+export function StreamOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function SwitchProfile(arg1:string):Promise<void>;
 

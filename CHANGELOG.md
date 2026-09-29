@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- `agent validate` now uses monomind's own structured check (`agent test --json`, monomind 2.18.5 or newer) when available: `model_unavailable` and the other statuses match monomind's classification. Runtimes that report no cost get an estimated cost, shown with "≈" on the AI agents page. Runtimes whose turns run sandboxed (codex and grok today) and older monomind versions keep the previous sandboxed test turn, because `agent test` has no sandbox option. The `validate.plan` line has a `checker` field that says which check ran (#225).
+### Fixed
+- The Windows app build failed after #239 (`undefined: chatKillGrace` in `app.go`), which blocked every release from master. The shutdown grace period is now defined for Windows too.
+- **Agent turns failed on monomind 2.19.0 for every runtime without a sandbox of its own, claude included.** With monomind's `agent-exec-sandbox` capability, MonoAgent passed `--sandbox workspace-write` to every runtime, and monomind 2.19.0 refuses a mode the runtime doesn't list in `agent scan --json` `sandbox_modes` with a fatal "not supported by runtime" error: claude, copilot, antigravity, opencode, crush, pi and hermes all list only `full`. MonoAgent now reads each runtime's `sandbox_modes` (from `agent scan`, cached for 10 minutes) and passes `--sandbox` only for a mode the runtime lists. Otherwise the turn runs as before and says so: claude keeps `--access scoped`, the others report `unsupported`. When the scan fails no flag is passed and codex and grok keep the `MONOMIND_GIT_LEVEL` path.
 
 ### Added
+- Coder mode runs on every runtime monomind gives full access, not only claude. `coder status --json` adds a `runtimes` list with each runtime's readiness and what it supports: tool-activity fidelity, resume, effort, max turns, cost, and init target. `runtime: "claude"` stays for older apps. `chat --mode coder --runtime X` and `chat history create --mode coder --runtime X` take any ready runtime and default to claude. A monomind without `agent-exec-full-access-any` still runs claude only, and other runtimes fail with `coder_runtime_unsupported`. Coder conversations keep their `--effort`. New folders get the runtime's own setup files. `coder workspace new|root` take `--runtime`.
+- Chat turns show monomind's rate-limit retries: each wait on a 429 appears in the timeline ("Rate limited (429) by X; retrying in 2s (attempt 2/3)"). When monomind gives up after 3 attempts, the turn fails with its message ("Rate limited by X (429) after 3 attempts. Free models are rate-limited; try again later or pick another model."). The conversation keeps working, so the next turn runs as usual.
 - **Sandboxed agent turns.** Chat, `agent.ask`, capture summaries, the jev text helper, recording analysis, application matching, config generation, the org `model` decider, `agent test` and `agent validate` now run sandboxed where monomind can do it. Coder mode is unchanged.
   - With monomind 2.11.1 or newer, codex and grok turns run in their own sandbox today (`--env MONOMIND_GIT_LEVEL=read`: codex `workspace-write` with network, grok `workspace`).
   - Once monomind advertises `agent-exec-sandbox` (monomind#396), every runtime gets `agent exec --sandbox workspace-write`.
@@ -23,6 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `agent validate` tests every installed runtime's models with a one-word turn and stores what answered (`ok`, `auth`, `quota`, `model_unavailable`, `timeout`, …) with latency and cost. It supports `--dry-run`, `--stale-only`, and NDJSON progress with `--json`.
   - `agent roster` shows each model as ready, stale, failed or untested, and `agent roster add|remove` manages model ids a runtime doesn't list.
   - The AI agents page has a "Validated models" section that updates live as a validation runs, asks before a multi-call run, and has re-validate buttons per runtime and per model.
+
+### Changed
+- Effort goes to monomind as `agent exec --effort` when it advertises `agent-exec-effort`. An older monomind still gets `CLAUDE_EFFORT` for claude, now through one path instead of two.
+- Coder tool calls carry the normalized `kind` on `tool.started` (Claude names are the fallback). File-existed and shell exit codes come from the canonical keys and the end event's `exit_code`. On `start-only` runtimes, calls left open at turn end close with an unknown outcome instead of as cancelled. Startup status names the runtime ("Starting Codex…").
+- Granting an org role full access is also refused inside Codex, OpenCode, Antigravity, Gemini CLI, Grok, Copilot, Crush, pi and Qwen Code shells, and wherever the generic `AI_AGENT` or `AGENT` marker is set (the same list as monomind's).
+- cline, aider, DeepSeek Harness (`dsh`) and pi get a curated model list, because none of them can list its models. The list includes free OpenRouter models (Qwen3.8 27B, Nemotron 3 Super, Gemma 4 31B, Laguna S 2.1, North Mini Code) that need only a free OpenRouter key. dsh also lists DeepSeek's own models and free NVIDIA-hosted ones. Before this, their model picker said "Not initialized" and blocked sending. Granting org full access is also refused inside pi, dsh, cline and aider shells (`PI_SESSION_ID`, `DSH_SHELL`, `DSH_SESSION_ID`, `MONOMIND_CLINE_TURN`, `MONOMIND_AIDER`). Coder status lines name them Cline, Aider and DeepSeek Harness.
+- Coder folders for pi, dsh, grok, copilot, qwen and crush get AGENTS.md only (`monomind init --target agents`), never Claude's CLAUDE.md, `.claude/` or `.mcp.json`. With an older monomind that has no init target for them, mono-agent writes a minimal AGENTS.md itself instead of falling back to Claude's setup.
+- App: the coder header names cline's, aider's, dsh's and pi's setup files. Runtime pickers and lists show `dsh` as "DeepSeek Harness", and the org designer's runtime list includes cline, aider and dsh. Tool cards show cline's multi-file reads and multi-page fetches, and aider's file-only edits without an empty diff.
+- App: coder mode's runtime picker lists every ready runtime instead of locking to claude, and says why the others are not ready (not installed, or no full access in this monomind). The chosen runtime's own model and effort are used, and the chat notes when a runtime shows commands but not every result. Tool cards render by `kind` (shell with exit code, edit, write, read, search, web, patch, mcp, task, todo). Settings hide the budget when no ready runtime reports cost. An org role's full-access grant is enabled only when the role's runtime supports full access.
+
+### Fixed
+- **Leaked `monomind org events --follow` processes** (#235). Quitting the app no longer leaves the Orgs panel's live event tail running for days.
+  - The app now stops its `monoagentcli` children on quit with SIGTERM and waits up to the kill grace for them, so each one stops what it started. Before, it SIGKILLed them.
+  - On Linux, a monomind child that `monoagentcli` stops itself (`org events`, `org run`, `org serve`, agent turns) now gets SIGTERM when `monoagentcli` dies for any reason.
+  - `monoagentcli` cancels on SIGHUP. `org events` stops when its reader goes away (a write fails with EPIPE) instead of dying of SIGPIPE.
+  - The panel's stop and start of a tail no longer race: each tail has an id, and a stop that arrives before its tail is registered ends that tail as soon as it starts.
 
 ## [0.91.1] - 2026-09-29
 

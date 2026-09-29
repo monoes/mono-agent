@@ -299,13 +299,16 @@ func checkMonomindAgentSandbox(ctx context.Context, env *Env) Result {
 		return Result{Status: StatusSkip, Summary: "handshake failed"}
 	}
 	caps := monomind.NewCapabilitySet(vi.Version, vi.Capabilities...)
-	if _, eff := monomind.SandboxArgs(caps, "codex", monomind.TurnSandboxMode); eff != monomind.SandboxStatusSandboxed {
+	// The env path decides this row: codex is sandboxed from monomind
+	// 2.11.1 on, with or without the --sandbox flag (whose per-runtime
+	// modes only a scan can tell; doctor doesn't run one).
+	if _, eff := monomind.SandboxArgs(caps, nil, "codex", monomind.TurnSandboxMode); eff != monomind.SandboxStatusSandboxed {
 		return Result{Status: StatusInfo, Summary: "agent turns run without a sandbox until monomind supports agent exec " + monomind.SandboxFlag,
 			Detail: fmt.Sprintf("monomind %s or newer sandboxes codex and grok turns; update monomind", monomind.SandboxEnvMinVersion)}
 	}
 	if caps.Has(monomind.CapAgentExecSandbox) {
-		return Result{Status: StatusInfo, Summary: "agent turns run in the runtime's sandbox",
-			Detail: "claude keeps --access scoped; a runtime without a sandbox mode still runs, and its turns say so"}
+		return Result{Status: StatusInfo, Summary: "agent turns run in the runtime's sandbox where it has one (agent scan lists its sandbox_modes)",
+			Detail: "claude keeps --access scoped; a runtime without a sandbox mode runs without one, and its turns say so"}
 	}
 	return Result{Status: StatusInfo, Summary: "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec " + monomind.SandboxFlag,
 		Detail: "claude keeps --access scoped; copilot, qwen, antigravity and the rest wait for monomind#396"}
