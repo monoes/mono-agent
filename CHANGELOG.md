@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The Windows app build failed after #239 (`undefined: chatKillGrace` in `app.go`), which blocked every release from master. The shutdown grace period is now defined for Windows too.
 - **Agent turns failed on monomind 2.19.0 for every runtime without a sandbox of its own, claude included.** With monomind's `agent-exec-sandbox` capability, MonoAgent passed `--sandbox workspace-write` to every runtime, and monomind 2.19.0 refuses a mode the runtime doesn't list in `agent scan --json` `sandbox_modes` with a fatal "not supported by runtime" error: claude, copilot, antigravity, opencode, crush, pi and hermes all list only `full`. MonoAgent now reads each runtime's `sandbox_modes` (from `agent scan`, cached for 10 minutes) and passes `--sandbox` only for a mode the runtime lists. Otherwise the turn runs as before and says so: claude keeps `--access scoped`, the others report `unsupported`. When the scan fails no flag is passed and codex and grok keep the `MONOMIND_GIT_LEVEL` path.
 
 ### Added
