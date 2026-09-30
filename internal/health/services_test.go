@@ -69,6 +69,82 @@ func TestCheckExtensionTrustsLiveConnectionOverProfileScan(t *testing.T) {
 	}
 }
 
+// TestCheckBridgeSkewOffersRestartOnlyWhenDaemonOwned covers the two shapes
+// checkBridge's skew warning takes: a daemon-owned stale bridge gets a
+// FixCommand doctor can run itself, while a bridge owned by anything else
+// (a bare `extension serve`) gets the same FixID but a FixCommand that
+// points the user at fixing it themselves — see fixBridgeRestart, which
+// makes exactly that same distinction before touching anything.
+func TestCheckBridgeSkewOffersRestartOnlyWhenDaemonOwned(t *testing.T) {
+	ctx := context.Background()
+	bridge := BridgeInfo{Addr: "127.0.0.1:9222", PID: 42, Version: "v1.0.0", Owner: "`monoagentcli extension serve` (pid 42)"}
+
+	env := &Env{Version: "v2.0.0", Bridge: func(context.Context) (BridgeInfo, bool) { return bridge, true }}
+	res := checkBridge(ctx, env)
+	if res.Status != StatusWarn || res.FixID != FixBridgeRestart {
+		t.Fatalf("skewed version must warn with the restart fix: %+v", res)
+	}
+	if strings.Contains(res.FixCommand, "doctor fix") {
+		t.Errorf("a non-daemon bridge must not offer doctor's own fix command: %q", res.FixCommand)
+	}
+
+	env.Daemon = func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: bridge.PID} }
+	res = checkBridge(ctx, env)
+	if res.FixID != FixBridgeRestart || !strings.Contains(res.FixCommand, "doctor fix "+FixBridgeRestart) {
+		t.Errorf("a daemon-owned bridge must offer doctor's own fix command: %+v", res)
+	}
+}
+
+func TestFixBridgeRestartRefusesANonDaemonBridge(t *testing.T) {
+	stopped, started := false, false
+	env := &Env{
+		Bridge: func(context.Context) (BridgeInfo, bool) {
+			return BridgeInfo{PID: 42, Owner: "`monoagentcli extension serve` (pid 42)"}, true
+		},
+		Daemon:      func(context.Context) DaemonInfo { return DaemonInfo{Running: false} },
+		StopDaemon:  func(context.Context, int, func(string)) error { stopped = true; return nil },
+		StartDaemon: func(context.Context, func(string)) error { started = true; return nil },
+	}
+	err := fixBridgeRestart(context.Background(), env, noop)
+	if err == nil || !strings.Contains(err.Error(), "extension serve") {
+		t.Fatalf("want a clear refusal naming the real owner, got: %v", err)
+	}
+	if stopped || started {
+		t.Error("must not touch the daemon when the bridge isn't the daemon's")
+	}
+}
+
+func TestFixBridgeRestartStopsAndRestartsADaemonOwnedBridge(t *testing.T) {
+	running := true
+	var calls []string
+	env := &Env{
+		Version: "v2.0.0",
+		Bridge: func(context.Context) (BridgeInfo, bool) {
+			return BridgeInfo{PID: 42, Version: "v1.0.0"}, true
+		},
+		Daemon: func(context.Context) DaemonInfo { return DaemonInfo{Running: running, PID: 42} },
+		StopDaemon: func(_ context.Context, pid int, _ func(string)) error {
+			calls = append(calls, "stop")
+			if pid != 42 {
+				t.Errorf("StopDaemon pid = %d, want 42", pid)
+			}
+			running = false
+			return nil
+		},
+		StartDaemon: func(context.Context, func(string)) error {
+			calls = append(calls, "start")
+			running = true
+			return nil
+		},
+	}
+	if err := fixBridgeRestart(context.Background(), env, noop); err != nil {
+		t.Fatalf("fixBridgeRestart: %v", err)
+	}
+	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "start" {
+		t.Errorf("calls = %v, want [stop start]", calls)
+	}
+}
+
 func TestDaemonCheckAndStart(t *testing.T) {
 	ctx := context.Background()
 	running := false

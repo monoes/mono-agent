@@ -21,6 +21,7 @@ const (
 	FixExtensionInstall    = "browser.extension.install"
 	FixExtensionPair       = "browser.extension.pair"
 	FixExtensionPermission = "browser.extension.permission"
+	FixBridgeRestart       = "browser.bridge.restart"
 )
 
 var browserFeatures = []string{"crawling", "page capture", "platform logins"}
@@ -47,6 +48,8 @@ func browserFixes() []Fix {
 			Command: "monoagentcli extension pair"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixExtensionPermission, Label: "Grant Full Disk Access", Safety: SafetyManual,
 			Command: "System Settings → Privacy & Security → Full Disk Access → enable your terminal app, then re-run doctor"}, Apply: manual},
+		{FixInfo: FixInfo{ID: FixBridgeRestart, Label: "Restart the extension bridge", Safety: SafetyConfirm,
+			Command: "monoagentcli doctor fix " + FixBridgeRestart}, Apply: fixBridgeRestart},
 	}
 }
 
@@ -106,10 +109,65 @@ func checkBridge(ctx context.Context, env *Env) Result {
 		summary += " — run by " + b.Owner
 	}
 	if skewed(b.Version, env.Version) {
-		return Result{Status: StatusWarn, Summary: summary,
-			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version)}
+		res := Result{Status: StatusWarn, Summary: summary,
+			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version),
+			FixID:  FixBridgeRestart}
+		if isDaemonOwned(ctx, env, b) {
+			res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
+		} else {
+			owner := b.Owner
+			if owner == "" {
+				owner = "whatever started it"
+			}
+			res.FixCommand = "restart it yourself — it's run by " + owner + ", not this machine's daemon, so doctor can't restart it for you"
+		}
+		return res
 	}
 	return Result{Status: StatusOK, Summary: summary}
+}
+
+// isDaemonOwned reports whether b is the bridge this machine's own daemon
+// serves, as opposed to a bare `extension serve` or someone else's process —
+// the one case fixBridgeRestart can safely restart on its own.
+func isDaemonOwned(ctx context.Context, env *Env, b BridgeInfo) bool {
+	if env.Daemon == nil {
+		return false
+	}
+	d := env.Daemon(ctx)
+	return d.Running && d.PID == b.PID
+}
+
+// fixBridgeRestart restarts a stale, daemon-owned bridge so it picks up the
+// routing (and everything else) the running CLI already has: stop the old
+// daemon, then start a fresh one the same way fixDaemonStart does. A bridge
+// owned by anything else (a bare `extension serve`, someone's own service)
+// is not this fix's to touch — it returns the same instruction checkBridge
+// already showed instead of guessing at how to reach that process.
+func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) error {
+	if env.Bridge == nil {
+		return fmt.Errorf("restarting the bridge is not available here")
+	}
+	b, ok := env.Bridge(ctx)
+	if !ok {
+		return fmt.Errorf("no bridge is running to restart")
+	}
+	if !isDaemonOwned(ctx, env, b) {
+		owner := b.Owner
+		if owner == "" {
+			owner = "whatever started it"
+		}
+		return fmt.Errorf("the bridge on %s is run by %s, not this machine's daemon — restart that yourself "+
+			"(e.g. Ctrl+C the terminal running `extension serve`, then run it again)", b.Addr, owner)
+	}
+	if env.StopDaemon == nil || env.StartDaemon == nil || env.Daemon == nil {
+		return fmt.Errorf("restarting the daemon is not available here")
+	}
+	d := env.Daemon(ctx)
+	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge v%s)", d.PID, b.Version))
+	if err := env.StopDaemon(ctx, d.PID, progress); err != nil {
+		return fmt.Errorf("stopping the old daemon: %w", err)
+	}
+	return fixDaemonStart(ctx, env, progress)
 }
 
 // bridgeDown reports a bridge that isn't running. Starting the daemon
