@@ -63,7 +63,12 @@ type Model struct {
 	// ReadOnlySandbox: the runtime can run sandboxed read-only (agent exec
 	// --sandbox read-only), the fallback confinement for a research worker
 	// when --access read isn't available.
-	ReadOnlySandbox bool    `json:"read_only_sandbox,omitempty"`
+	ReadOnlySandbox bool `json:"read_only_sandbox,omitempty"`
+	// CallerTools / CallerToolsFull: the runtime gives stdio caller tools
+	// to the model, and also under --access full. A worker gets ask_user
+	// (#256) only when its exec can take it.
+	CallerTools     bool    `json:"caller_tools,omitempty"`
+	CallerToolsFull bool    `json:"caller_tools_full,omitempty"`
 	Resume          bool    `json:"resume"`
 	CostUSD         float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
 	LatencyMs       int64   `json:"latency_ms,omitempty"`

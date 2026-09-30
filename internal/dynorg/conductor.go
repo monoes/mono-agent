@@ -33,6 +33,9 @@ type Config struct {
 	Emit       Emitter
 	Outcome    Outcome // nil = don't record
 	Now        func() time.Time
+	// Answers brings the user's answers to workers' questions (#256); nil
+	// gives workers no ask_user tool.
+	Answers AnswerSource
 }
 
 // Conductor runs one lead turn's workers.
@@ -73,6 +76,10 @@ type worker struct {
 	started time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
+	// questions counts this run's ask_user calls (#256); leases are the
+	// leases it holds right now (let go while it waits for an answer).
+	questions int
+	leases    []*lease
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -285,6 +292,7 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	}
 	w.report, w.errText = "", ""
 	w.followups++
+	w.questions = 0
 	w.started = c.cfg.Now()
 	// Marked queued in the same critical section as the running check, so
 	// two concurrent follow-ups can't both start a run.
@@ -312,7 +320,7 @@ func (c *Conductor) Stop(id string) (WorkerInfo, error) {
 
 func running(status string) bool {
 	switch status {
-	case chatevents.AgentQueued, chatevents.AgentStarting, chatevents.AgentWorking, chatevents.AgentWaitingLease:
+	case chatevents.AgentQueued, chatevents.AgentStarting, chatevents.AgentWorking, chatevents.AgentWaitingLease, chatevents.AgentWaitingUser:
 		return true
 	}
 	return false
@@ -360,7 +368,10 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 				return chatevents.AgentCancelled, "", "cancelled while waiting for the " + need.name + " lease"
 			}
 		}
-		defer need.l.release()
+		c.mu.Lock()
+		w.leases = append(w.leases, need.l)
+		c.mu.Unlock()
+		defer c.dropLease(w, need.l)
 	}
 	select {
 	case c.slots <- struct{}{}:
@@ -430,6 +441,20 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 	return !c.confined(w.model)
 }
 
+// dropLease releases l if w still holds it (a worker waiting on the user
+// has already let go of its leases).
+func (c *Conductor) dropLease(w *worker, l *lease) {
+	c.mu.Lock()
+	i := slices.Index(w.leases, l)
+	if i >= 0 {
+		w.leases = slices.Delete(w.leases, i, i+1)
+	}
+	c.mu.Unlock()
+	if i >= 0 {
+		l.release()
+	}
+}
+
 // unusable statuses mean the model can't run at all, so the next one is
 // tried; any other failure is the worker's own.
 func unusable(status string) bool {
@@ -482,8 +507,8 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.BudgetUSD = remaining
 	}
 	c.mu.Unlock()
-	opts.Tools, opts.OnToolCall = nil, nil
 	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files)
+	c.workerTools(w, m, &opts)
 	var run monomind.TurnResult
 	res, err := c.cfg.Exec(ctx, opts, func(ev monomind.Event) {
 		monomind.ApplyEventToResult(&run, ev)
