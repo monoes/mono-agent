@@ -127,20 +127,12 @@ func (c *Conductor) AddVeterans(vets []Veteran) {
 	}
 }
 
-// veteranWorktree gives a writing veteran its own worktree the first time
-// it is messaged in a turn with isolated writers, as a new writer gets one
-// at spawn; it then re-briefs, since its session ran elsewhere.
-func (c *Conductor) veteranWorktree(id string) {
-	c.mu.Lock()
-	w := c.workers[id]
-	need := w != nil && w.veteran && !w.treeDone && c.iso != nil && !running(w.status) && c.veteranBlockedLocked(w) == nil
-	if need {
-		w.treeDone = true
-	}
-	c.mu.Unlock()
-	if need {
-		c.addWorktree(w)
-	}
+// needsVeteranTreeLocked: a writing veteran gets its own worktree the
+// first time it is messaged in a turn with isolated writers, as a new
+// writer gets one at spawn (addWorktree skips non-writers); it is then
+// re-briefed, since its session ran elsewhere.
+func (c *Conductor) needsVeteranTreeLocked(w *worker) bool {
+	return w.veteran && !w.treeDone && c.iso != nil && writes(w.staff.Access)
 }
 
 // veteranModel is the ready roster entry (or the lead's own model) a

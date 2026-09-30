@@ -206,7 +206,7 @@ func TestResearchVeteranSubWorkerStaysConfined(t *testing.T) {
 			c.mu.Unlock()
 			c.launch(w2, ctx, cancel, done, "more", "s2", false)
 			<-done
-			if info := c.Wait(context.Background(), []string{"w2"}, 0)[0]; info.Status != chatevents.AgentFailed {
+			if info := c.Wait(context.Background(), []string{"w2"}, 0)[0]; info.Status != chatevents.AgentFailed || !strings.Contains(info.Error, "can't run confined on codex/") {
 				t.Errorf("w2 = %+v", info)
 			}
 			if len(ex.calls) != 0 {
@@ -302,4 +302,44 @@ func TestConfinedVeteranSubWorkerReportsAccessRead(t *testing.T) {
 		t.Error("w2 never reported access-read confinement")
 	}
 	assertClean(t, c)
+}
+
+// A follow-up that is refused (scope, budget) creates no worktree for a
+// writing veteran.
+func TestRefusedFollowUpCreatesNoWorktree(t *testing.T) {
+	needGit(t)
+	repo := newRepo(t)
+	em := &recEmitter{}
+	c := New(context.Background(), Config{
+		Cwd: repo, Limits: Limits{MaxAgents: 4, MaxConcurrent: 3, BudgetUSD: 0.01}, Staffer: &Staffer{Roster: []Model{opus}, Lead: opus},
+		ReadAccess: true, Emit: em, Writers: WritersIsolated, TurnID: "t3", Exec: (&fileExec{}).exec,
+	})
+	defer c.Close()
+	c.AddVeterans([]Veteran{
+		{ID: "w1", Role: "Coder", Access: ProfileCoding, Runtime: "claude", Model: "opus", Session: "s1", Cwd: repo, Report: "r1", AllowSpawn: true},
+		{ID: "w2", ParentID: "w1", Role: "Coder", Access: ProfileCoding, Runtime: "claude", Model: "opus", Session: "s2", Cwd: repo, Report: "r2"},
+	})
+	// The lead can't message w1's sub-worker.
+	if _, err := c.Message(context.Background(), "w2", "more"); err == nil {
+		t.Fatal("the lead messaged a veteran sub-worker")
+	}
+	// The budget is spent.
+	c.mu.Lock()
+	c.cost = 0.02
+	c.mu.Unlock()
+	if _, err := c.Message(context.Background(), "w1", "more"); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("message with the budget spent = %v", err)
+	}
+	for _, id := range []string{"w1", "w2"} {
+		if branchExists(t, repo, branchName("t3", id)) {
+			t.Errorf("a refused follow-up created %s's branch", id)
+		}
+		c.mu.Lock()
+		w := c.workers[id]
+		tried, tree := w.treeDone, w.worktree
+		c.mu.Unlock()
+		if tried || tree != "" {
+			t.Errorf("%s: treeDone %v, worktree %q", id, tried, tree)
+		}
+	}
 }

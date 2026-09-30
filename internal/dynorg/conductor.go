@@ -399,36 +399,23 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 	if strings.TrimSpace(text) == "" {
 		return WorkerInfo{}, fmt.Errorf("text is required")
 	}
-	c.veteranWorktree(id)
 	c.mu.Lock()
-	w := c.workers[id]
-	if w == nil {
+	var w *worker
+	for {
+		var err error
+		if w, err = c.followupCheckLocked(from, id); err != nil {
+			c.mu.Unlock()
+			return WorkerInfo{}, err
+		}
+		if !c.needsVeteranTreeLocked(w) {
+			break
+		}
+		// A writing veteran gets its worktree only once the follow-up is
+		// allowed; the checks run again after the git call.
+		w.treeDone = true
 		c.mu.Unlock()
-		return WorkerInfo{}, fmt.Errorf("no worker %q", id)
-	}
-	if err := messageScope(from, w); err != nil {
-		c.mu.Unlock()
-		return WorkerInfo{}, err
-	}
-	if err := c.veteranBlockedLocked(w); err != nil {
-		c.mu.Unlock()
-		return WorkerInfo{}, err
-	}
-	if running(w.status) {
-		c.mu.Unlock()
-		return WorkerInfo{}, fmt.Errorf("%s is still working; org_wait for it first", id)
-	}
-	if w.merging {
-		c.mu.Unlock()
-		return WorkerInfo{}, fmt.Errorf("%s's branch is being merged; send the follow-up once org_merge returns", id)
-	}
-	if err := c.budgetErrLocked(); err != nil {
-		c.mu.Unlock()
-		return WorkerInfo{}, err
-	}
-	if w.followups >= MaxFollowups {
-		c.mu.Unlock()
-		return WorkerInfo{}, fmt.Errorf("%s already had its %d follow-ups this turn; spawn a new worker if the turn's limit allows", id, MaxFollowups)
+		c.addWorktree(w)
+		c.mu.Lock()
 	}
 	prompt, resume := text, ""
 	// A session resumes only in the folder it ran in (a veteran's, or an
@@ -450,6 +437,34 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 	c.emitMessage(id, "followup", orLead(from), id, text)
 	c.launch(w, ctx2, cancel, done, prompt, resume, false)
 	return info, nil
+}
+
+// followupCheckLocked finds the worker id and checks a follow-up to it
+// from the lead (from nil) or its parent may start now.
+func (c *Conductor) followupCheckLocked(from *worker, id string) (*worker, error) {
+	w := c.workers[id]
+	if w == nil {
+		return nil, fmt.Errorf("no worker %q", id)
+	}
+	if err := messageScope(from, w); err != nil {
+		return nil, err
+	}
+	if err := c.veteranBlockedLocked(w); err != nil {
+		return nil, err
+	}
+	if running(w.status) {
+		return nil, fmt.Errorf("%s is still working; org_wait for it first", id)
+	}
+	if w.merging {
+		return nil, fmt.Errorf("%s's branch is being merged; send the follow-up once org_merge returns", id)
+	}
+	if err := c.budgetErrLocked(); err != nil {
+		return nil, err
+	}
+	if w.followups >= MaxFollowups {
+		return nil, fmt.Errorf("%s already had its %d follow-ups this turn; spawn a new worker if the turn's limit allows", id, MaxFollowups)
+	}
+	return w, nil
 }
 
 // Stop cancels one worker.
@@ -515,6 +530,12 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	if w.mustConfine {
 		// A research worker's sub-worker never runs unconfined: its access
 		// can't exceed its parent's.
+		c.mu.Lock()
+		m := w.model
+		c.mu.Unlock()
+		if !c.confined(m) {
+			return chatevents.AgentFailed, "", "can't run confined on " + m.Key() + "; a research worker's sub-worker must"
+		}
 		return chatevents.AgentFailed, "", errUnconfined.Error() + "; a research worker's sub-worker can't run without it"
 	}
 	// The read-only sandbox this research worker was staffed for was not
