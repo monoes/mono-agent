@@ -25,6 +25,10 @@ function call(fn) {
   }
 }
 
+// start runs a new tail for entry. Its id joins every earlier one: the Go
+// side registers tails in whatever order their calls land, so an older
+// one can register after (and kill) a newer one, and only stopping every
+// id on the last release is sure to end whichever runs.
 function start(org, entry) {
   const id = newOrgEventsStreamId()
   entry.ids.push(id)

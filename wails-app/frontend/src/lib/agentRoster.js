@@ -98,13 +98,24 @@ export function ageParts(iso, now = Date.now()) {
   return { n: Math.round(s / 86400), unit: 'd' }
 }
 
-// planSummary counts a dry-run plan for the confirmation dialog.
+// planSummary counts a dry-run plan for the confirmation dialog. table:
+// calls priced from the CLI's built-in price table (no earlier cost);
+// signIn: runtimes not signed in, whose model lists may be incomplete.
 export function planSummary(plan) {
   const p = plan || {}
   return {
     calls: p.calls || 0,
     cost: p.est_cost_usd || 0,
     unknown: p.unknown_cost || 0,
+    table: p.table_estimated || 0,
+    signIn: p.sign_in || [],
     runtimes: new Set((p.targets || []).map(t => t.runtime)).size,
   }
+}
+
+// loginHintFor is a runtime card's sign-in command: the one monomind
+// reported with an auth failure, else the scan's.
+export function loginHintFor(rr) {
+  const failed = (rr?.models || []).find(m => m.status === 'auth' && m.login_hint)
+  return failed?.login_hint || rr?.login_hint || ''
 }

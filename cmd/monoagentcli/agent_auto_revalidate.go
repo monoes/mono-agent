@@ -387,12 +387,19 @@ func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.D
 			fmt.Println(line)
 		}
 	}
+	var cost string
+	if next != nil {
+		cost = usd(next.EstCostUSD, next.UnknownCost)
+		if next.TableEstimated > 0 {
+			cost += fmt.Sprintf(" (%d priced from the built-in table)", next.TableEstimated)
+		}
+	}
 	if next != nil && out.NextUnchecked {
 		fmt.Printf("Next run would test up to %d stale model(s): %s per run (installs not checked; run without --no-scan to see the runtime)\n",
-			len(next.Targets), usd(next.EstCostUSD, next.UnknownCost))
+			len(next.Targets), cost)
 	} else if next != nil {
 		fmt.Printf("Next run would test %d stale model(s) of %s: %s per run, up to %d run(s) a day\n",
-			len(next.Targets), next.Runtime, usd(next.EstCostUSD, next.UnknownCost), c.MaxRuntimesPerDay)
+			len(next.Targets), next.Runtime, cost, c.MaxRuntimesPerDay)
 	} else {
 		fmt.Println("Nothing is stale right now.")
 	}

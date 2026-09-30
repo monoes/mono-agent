@@ -471,6 +471,9 @@
     "noRuntimesTitle": "No se detectaron entornos de agentes",
     "noRuntimesDesc": "monomind está instalado pero no encontró ninguna CLI de agente conocida en este equipo.",
     "roster": {
+      "costFromTable": "({{count}} con precio de una tabla de precios integrada; la primera prueba de un modelo aún no tiene coste propio.)",
+      "signInNote": "{{runtime}} no tiene la sesión iniciada, así que su lista de modelos puede estar incompleta: puede mostrar más modelos cuando inicies sesión.",
+      "signInNoteHint": "{{runtime}} no tiene la sesión iniciada, así que su lista de modelos puede estar incompleta: puede mostrar más modelos cuando inicies sesión con {{hint}}.",
       "auto": {
         "label": "Volver a comprobar automáticamente los modelos caducados",
         "on": "activado",
@@ -483,6 +486,7 @@
         "lastRun": "Última ejecución {{at}} ({{runtime}})",
         "nextEligible": "Próxima ejecución no antes de {{at}}",
         "noDaemon": "El daemon no está en marcha, así que no se ejecuta nada hasta que arranque.",
+        "fromTable": "({{count}} con precio de la tabla de precios integrada)",
         "unknownCost": "(+ {{count}} con coste desconocido)",
         "confirmTitle": "¿Volver a comprobar automáticamente los modelos caducados?",
         "confirmBody": "El daemon hará llamadas reales y de pago a modelos sin preguntar: hasta {{perDay}} runtime(s) al día, {{models}} modelo(s) cada uno.",

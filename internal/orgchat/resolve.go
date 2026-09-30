@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 )
@@ -238,22 +238,27 @@ const (
 // lockOrg serializes resolving within one org folder across processes, so
 // two clicks racing can't both see an item pending and both send. The lock
 // lives in the folder's own .monomind directory (the person's, never a
-// shared temp dir), and the wait is bounded and ends with ctx.
+// shared temp dir). It is an OS file lock (flock, or LockFileEx on
+// Windows) the kernel drops if its holder dies, so nothing is ever stale;
+// the wait is bounded and ends with ctx.
 func lockOrg(ctx context.Context, root, org string) (func(), error) {
-	dir := filepath.Join(root, ".monomind", "locks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+	path := filepath.Join(root, ".monomind", "locks", "orgchat-"+org+".lock")
+	deadline := time.Now().Add(lockWaitTimeout)
+	for {
+		release, err := daemonhb.LockFile(path)
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, daemonhb.ErrHeld) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another process has held %s for %s", filepath.Base(path), lockWaitTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(lockPollInterval):
+		}
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "orgchat-"+org+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockFile(ctx, f); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() {
-		_ = unlockFile(f)
-		f.Close()
-	}, nil
 }

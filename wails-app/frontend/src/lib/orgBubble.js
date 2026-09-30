@@ -28,14 +28,12 @@
 //   question from a role            → agent.message question (amber)
 //   org started / org stopped       → turn.started / turn.finished
 
-import { stageReducer, initialStage, LEAD_ID } from './orgStage.js'
+import { stageReducer, initialStage, ownerOf, LEAD_ID, MAX_CALLS } from './orgStage.js'
 import {
   initialState as activityInitial, applyEvent as activityApply, parseAddress, pendingGates,
 } from '../components/orgdesigner/orgActivity.js'
 
 const MAX_SEEN = 300
-// Tool calls kept for the node drawer, oldest dropped first.
-const MAX_CALLS = 400
 // Addresses on the bus that are never roles of the org.
 const NOT_ROLES = new Set(['dag', 'human', 'autonomy', 'system'])
 
@@ -76,8 +74,11 @@ export function initialOrgBubble({ org, boss = '', roles = [] } = {}) {
     openCall: {},   // role → its plain `tool` call still in flight
     // Non-lead roles' tool calls, callId → call: the stage keeps only
     // their order, and the drawer reads them from here (as a coder
-    // bubble's drawer reads chatReducer's agentCalls).
+    // bubble's drawer reads chatReducer's agentCalls). Like the stage, each
+    // node keeps its latest MAX_CALLS (callIds: node → their ids, oldest
+    // first).
     calls: {},
+    callIds: {},
   }
 }
 
@@ -121,15 +122,21 @@ function emitter(s, ev) {
     emit(type, payload) {
       seq += 1
       stage = stageReducer(stage, { seq, at, type, payload })
-      if (payload.agentId && (type === 'tool.started' || type === 'tool.completed')) s.calls = recordCall(s.calls, type, payload, at)
+      if (type === 'tool.started' || type === 'tool.completed') recordCall(s, stage, type, payload, at)
     },
     done() { return { stage, seq } },
   }
 }
 
-// recordCall keeps a role's tool call in the shape ChatTimeline renders.
-function recordCall(calls, type, p, at) {
-  const prev = calls[p.callId]
+// recordCall keeps a call in the shape ChatTimeline renders, under the node
+// the stage files it under (its own ownerOf), dropping that node's oldest once it has more
+// than MAX_CALLS, exactly as the stage caps the node's callOrder. The
+// lead's own calls aren't kept (the stage keeps no order for them).
+function recordCall(s, stage, type, p, at) {
+  const owner = ownerOf(stage, p)
+  if (owner === LEAD_ID) return
+  const prev = s.calls[p.callId]
+  if (type === 'tool.completed' && !prev) return // dropped already, or never seen
   let call
   if (type === 'tool.started') {
     call = {
@@ -138,15 +145,17 @@ function recordCall(calls, type, p, at) {
     }
   } else {
     call = {
-      ...(prev || { callId: p.callId, name: 'unknown', arguments: null }),
-      status: 'completed', ok: p.ok ?? null, result: p.result ?? '', ...(prev ? { finishedAt: at } : {}),
+      ...prev, status: 'completed', ok: p.ok ?? null, result: p.result ?? '', finishedAt: at,
       ...(p.denied ? { denied: true } : {}), ...(p.cancelled ? { cancelled: true } : {}),
     }
   }
-  const next = { ...calls, [p.callId]: call }
-  const ids = Object.keys(next)
-  if (ids.length > MAX_CALLS) delete next[ids[0]]
-  return next
+  const calls = { ...s.calls, [p.callId]: call }
+  if (type === 'tool.started' && !prev) {
+    const ids = [...(s.callIds[owner] || []), p.callId]
+    while (ids.length > MAX_CALLS) delete calls[ids.shift()]
+    s.callIds = { ...s.callIds, [owner]: ids }
+  }
+  s.calls = calls
 }
 
 function join(s, out, role) {
@@ -312,7 +321,7 @@ export function applyOrgBusEvent(state, ev) {
   }
   // A new run on the same bus starts a fresh stage (the roles stay).
   if (ev.run && s.run && ev.run !== s.run) {
-    s = { ...s, stage: initialStage(), seq: 0, joined: {}, briefed: {}, openCall: {}, calls: {} }
+    s = { ...s, stage: initialStage(), seq: 0, joined: {}, briefed: {}, openCall: {}, calls: {}, callIds: {} }
   }
   if (ev.run) s.run = ev.run
   s.activity = activityApply(s.activity, ev)
