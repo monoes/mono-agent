@@ -100,3 +100,29 @@ func TestReconcileRaisesGrantTier(t *testing.T) {
 		t.Fatalf("display tier lowered to %q", lead.Automations[0].Tier)
 	}
 }
+
+// A change to the grant made after the caller listed it (a concurrent
+// `org grant` limits update) is kept: the raise re-reads the row and
+// updates it with a compare-and-set.
+func TestRaiseTiersKeepsAConcurrentGrantChange(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	in := GrantInput{ProfileID: "default", OrgName: "growth", RoleID: "lead",
+		Tool: Tool{Alias: "publish_post", WorkflowID: "wf-publish", Tier: orgdesign.TierConsequential}}
+	if _, err := s.UpsertGrant(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := s.ListGrants(ctx, "default", "growth", "")
+	in.Tool.MaxCallsPerRun = 7
+	if _, err := s.UpsertGrant(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	raised, err := s.RaiseTiers(ctx, stale, wfLoader("comm.slack"))
+	if err != nil || len(raised) != 1 {
+		t.Fatalf("raised %v, %v", raised, err)
+	}
+	gs, _ := s.ListGrants(ctx, "default", "growth", "lead")
+	if tool := gs[0].Automation(); tool.Tier != orgdesign.TierIrreversible || tool.MaxCallsPerRun != 7 {
+		t.Fatalf("after the raise: %+v (want irreversible with the concurrent limit 7)", tool)
+	}
+}

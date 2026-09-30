@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
@@ -12,14 +13,14 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-// grantWorkflowLoader reads a granted workflow as it is now, for
-// orggrant.RaiseTiers. The store is opened on first use.
+// grantWorkflowLoader reads a granted workflow as it is now (file first,
+// as execution does), for orggrant.RaiseTiers and the decision service. The
+// store is opened on first use; the loader is safe for concurrent use.
 func grantWorkflowLoader(db *storage.Database) orggrant.WorkflowLoader {
+	var once sync.Once
 	var store *workflow.HybridWorkflowStore
 	return func(ctx context.Context, id string) (*workflow.Workflow, error) {
-		if store == nil {
-			store = newHybridStore(db)
-		}
+		once.Do(func() { store = newHybridStore(db) })
 		return store.GetWorkflow(ctx, id)
 	}
 }

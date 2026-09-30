@@ -117,6 +117,7 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 		return profileRoots(s.db.DB)
 	})
 	svc.Logf = s.logf
+	svc.LoadWorkflow = grantWorkflowLoader(s.db)
 	svc.WorkflowFacts = func(ctx context.Context, profileID, workflowID string) string {
 		return workflowFacts(ctx, s.db, workflowID)
 	}
