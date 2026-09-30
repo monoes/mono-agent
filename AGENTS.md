@@ -596,8 +596,9 @@ How the conductor staffs a worker:
   each score and the plain counts in its state and in the option text
   ("engineering score 38% (0 of 4 succeeded)"). The lead's own choice of
   model still wins. A bad fit recovers only as its failures decay (about
-  18 days for 3 fresh failures), or through new results when Jev or the
-  lead still picks it. `agent roster` shows the scores
+  18 days for 3 fresh failures, about 54–65 days when the lead also rated
+  2–3 of them bad), or through new results when Jev or the lead still
+  picks it. `agent roster` shows the scores
   (`track_record` in `--json`).
 
 Each worker's access profile is set by the lead, and none goes past the
@@ -709,9 +710,12 @@ login (and its bill) is what the turn uses.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
-  or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
+  or when the runtime has been updated or its last test was rate-limited
+  (`rate_limited`, a transient 429; `stale_reason` says which), and
+  **failed** otherwise. A worker's rate limit never demotes a validated
+  model; only auth, quota and model-unavailable failures do. `agent roster add <runtime> <model>`
   adds a model id that the runtime doesn't list. Each model's **track
-  record** column (`track_record` in JSON) is its success rate per role
+  record** column (`track_record` in JSON) is its score per role
   category from real dynamic-org workers (see "Dynamic org"). The roster is machine-wide,
   not per profile, and the AI agents page shows it with live validation.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime

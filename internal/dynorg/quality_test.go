@@ -123,6 +123,7 @@ func TestCountsAsQuality(t *testing.T) {
 		{chatevents.AgentFailed, "error: budget exceeded", false}, // monomind's own budget stop
 		{chatevents.AgentFailed, "auth: not logged in", false},
 		{chatevents.AgentFailed, "quota: rate limited", false},
+		{chatevents.AgentFailed, "rate_limited: slow down", false},
 		{chatevents.AgentFailed, "no model could run this worker", false},
 		{chatevents.AgentCancelled, "cancelled", false},
 	}

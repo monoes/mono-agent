@@ -513,7 +513,7 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 // tried; any other failure is the worker's own.
 func unusable(status string) bool {
 	switch status {
-	case agentroster.StatusAuth, agentroster.StatusQuota, agentroster.StatusModelUnavailable, agentroster.StatusMissingBinary:
+	case agentroster.StatusAuth, agentroster.StatusQuota, agentroster.StatusRateLimited, agentroster.StatusModelUnavailable, agentroster.StatusMissingBinary:
 		return true
 	}
 	return false

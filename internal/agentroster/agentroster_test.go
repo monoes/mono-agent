@@ -57,8 +57,9 @@ func TestClassify(t *testing.T) {
 		{"crush no provider", failed(monomind.ErrRunnerError, "CrushAgentRunner: crush run failed (exit 1)\nstderr: ERROR No providers configured - please run 'crush' to set up a provider interactively."), nil, StatusAuth},
 		{"pi no api key", failed(monomind.ErrRunnerError, "PiAgentRunner: pi failed (exit 1)\nstderr: No API key found for the selected model.\n\nUse /login to log into a provider"), nil, StatusAuth},
 		{"quota code", failed(monomind.ErrQuota, "x"), nil, StatusQuota},
-		{"rate-limited code", failed(monomind.ErrRateLimited, "slow down"), nil, StatusQuota},
-		{"rate limit text", failed(monomind.ErrRunnerError, "429 Too Many Requests"), nil, StatusQuota},
+		{"rate-limited code", failed(monomind.ErrRateLimited, "slow down"), nil, StatusRateLimited},
+		{"rate limit text", failed(monomind.ErrRunnerError, "429 Too Many Requests"), nil, StatusRateLimited},
+		{"credits text", failed(monomind.ErrRunnerError, "credit balance is too low"), nil, StatusQuota},
 		{"unknown model", failed(monomind.ErrRunnerError, "The model `gpt-9` does not exist or you do not have access to it"), nil, StatusModelUnavailable},
 		{"model not found", failed(monomind.ErrRunnerError, "model_not_found"), nil, StatusModelUnavailable},
 		{"missing binary", failed(monomind.ErrMissingBinary, "grok not on PATH"), nil, StatusMissingBinary},
@@ -106,6 +107,13 @@ func TestStoreRoundTripManualAndOutcome(t *testing.T) {
 		t.Errorf("round trip lost fields: %+v", g)
 	}
 
+	// A worker's transient 429 is counted but never demotes the row.
+	if err := RecordOutcome(ctx, db, "codex", "gpt-x", StatusRateLimited, "429 Too Many Requests", at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = List(ctx, db); got[0].Status != StatusOK {
+		t.Errorf("a rate limit must not demote the validated row, got %q", got[0].Status)
+	}
 	if err := RecordOutcome(ctx, db, "codex", "gpt-x", StatusQuota, "usage limit", at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +128,8 @@ func TestStoreRoundTripManualAndOutcome(t *testing.T) {
 	if err := db.QueryRow(`SELECT successes, failures FROM agent_model_outcomes WHERE runtime='codex'`).Scan(&s, &f); err != nil {
 		t.Fatal(err)
 	}
-	if s != 1 || f != 1 {
-		t.Errorf("outcomes = %d/%d, want 1/1", s, f)
+	if s != 1 || f != 2 {
+		t.Errorf("outcomes = %d/%d, want 1/2", s, f)
 	}
 }
 
@@ -146,11 +154,13 @@ func TestBuildStates(t *testing.T) {
 		{Runtime: "codex", Model: "upgraded", Status: StatusOKUnexpected, RuntimeVersion: "0.59", ValidatedAt: now},
 		{Runtime: "codex", Model: "typed", Status: StatusUntested, Source: SourceManual},
 		{Runtime: "grok", Model: "gone", Status: StatusOK, ValidatedAt: now},
+		{Runtime: "claude", Model: "busy", Status: StatusRateLimited, RuntimeVersion: "2.0", ValidatedAt: now},
 	}
 	rs := Build(results, scan, now, 0)
 	want := map[string]string{
 		"claude/fresh": StateReady, "claude/old": StateStale, "claude/bad": StateFailed,
 		"codex/upgraded": StateStale, "codex/typed": StateUntested, "grok/gone": StateFailed,
+		"claude/busy": StateStale, // rate-limited: transient, re-checked
 	}
 	seen := map[string]bool{}
 	for _, rr := range rs {
@@ -162,6 +172,11 @@ func TestBuildStates(t *testing.T) {
 		}
 		if rr.Runtime == "claude" && (rr.Ready != 1 || rr.LoginHint == "") {
 			t.Errorf("claude roster = %+v", rr)
+		}
+		for _, e := range rr.Models {
+			if e.Model == "busy" && e.StaleReason != StatusRateLimited {
+				t.Errorf("rate-limited stale reason = %q", e.StaleReason)
+			}
 		}
 	}
 	if !seen["qwen"] {
@@ -247,11 +262,14 @@ func TestRunSerialPerRuntimeAndSaves(t *testing.T) {
 		if o.Model == "broken" {
 			return failed(monomind.ErrAuth, "login"), nil
 		}
+		if o.Model == "busy" {
+			return failed(monomind.ErrRateLimited, "slow down"), nil
+		}
 		return done("ok"), nil
 	}
 	targets := []Target{
 		{Runtime: "a", Model: DefaultModel},
-		{Runtime: "b", Model: "m1"}, {Runtime: "b", Model: "m2"}, {Runtime: "b", Model: "broken"},
+		{Runtime: "b", Model: "m1"}, {Runtime: "b", Model: "m2"}, {Runtime: "b", Model: "broken"}, {Runtime: "b", Model: "busy"},
 	}
 	var saved []Result
 	var lines []Line
@@ -261,11 +279,16 @@ func TestRunSerialPerRuntimeAndSaves(t *testing.T) {
 	if overlap.Load() {
 		t.Error("two tests of one runtime ran at the same time")
 	}
-	if sum.OK != 3 || sum.Failed != 1 || sum.Planned != 4 {
+	if sum.OK != 3 || sum.Failed != 2 || sum.Planned != 5 {
 		t.Errorf("summary = %+v", sum)
 	}
-	if len(saved) != 4 {
-		t.Errorf("saved %d results, want 4", len(saved))
+	if len(saved) != 5 {
+		t.Errorf("saved %d results, want 5", len(saved))
+	}
+	for _, r := range saved {
+		if r.Model == "busy" && r.Status != StatusRateLimited {
+			t.Errorf("validate stored a rate limit as %q, want %q", r.Status, StatusRateLimited)
+		}
 	}
 	if last := lines[len(lines)-1]; last.Type != "validate.done" || last.Summary == nil {
 		t.Errorf("last line = %+v", last)
@@ -421,5 +444,13 @@ func TestAgentTestFuncKeepsSandboxedRuntimesOnExec(t *testing.T) {
 	}
 	if _, err := v219(context.Background(), "codex", "", time.Second); !errors.Is(err, ErrUseExec) {
 		t.Errorf("2.19.0 codex (lists workspace-write): err = %v, want ErrUseExec", err)
+	}
+}
+
+func TestApplyAgentTestRateLimited(t *testing.T) {
+	var r Result
+	applyAgentTest(&r, &monomind.AgentTestResult{Status: monomind.ErrRateLimited})
+	if r.Status != StatusRateLimited {
+		t.Errorf("status = %q, want %q", r.Status, StatusRateLimited)
 	}
 }
