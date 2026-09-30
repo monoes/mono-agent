@@ -509,6 +509,8 @@ export function StartOrgGroup(arg1:string):Promise<string>;
 
 export function StopAgentValidation():Promise<string>;
 
+export function StopChatAgent(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
