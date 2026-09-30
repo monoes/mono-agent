@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
   - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
   - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+- **Dynamic org: worker text, live usage and fidelity in the journal** (#257, #258, #259).
+  - A worker's own text is journaled as `assistant.delta` with its `agentId` (part ids `w1:p1`, …; at most 64 KB per worker), and the app shows it in the org stage's node drawer, not in the lead's timeline.
+  - A worker's tokens and cost are journaled live as `usage.updated` with its `agentId`, so the stage's meters move while it works. The lead's own usage stays separate; the bubble's cost adds the workers' in explicitly.
+  - `agent.spawned` and `agent.reassigned` carry the runtime's tool-activity `fidelity`, so the stage shows "limited activity" from the start instead of guessing at the end.
+  - `chat history events --agent <id|lead>` and `chat history transcript --by-agent <conversation> <turn>`.
 
 ### Fixed
 - **Chat with monoagent tools lost a turn to a denied workflow command (#247).** The system prompt showed `monoagentcli --profile <id> workflow create <name>`, but Bash in a tools turn only runs commands that start with `monomind org`, `monoagentcli org` or `monoagentcli workflow`, so that form was always denied. The prompt now puts `--profile` after the subcommand (`monoagentcli workflow create <name> --profile <id>`), and a test checks that every command the prompt shows is allowed.

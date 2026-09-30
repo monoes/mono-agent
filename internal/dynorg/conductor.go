@@ -73,6 +73,7 @@ type worker struct {
 	started time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
+	stream    workerStream // its text and live usage (workerstream.go)
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -188,7 +189,7 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 	}
 	c.cfg.Emit.Emit(chatevents.EventAgentSpawned, chatevents.AgentSpawnedPayload{
 		AgentID: w.id, Role: st.Role, AgentType: st.AgentType, Skills: skills,
-		Runtime: st.Model.Runtime, Model: st.Model.Model, Effort: st.Effort, Access: st.Access,
+		Runtime: st.Model.Runtime, Model: st.Model.Model, Fidelity: st.Model.Fidelity, Effort: st.Effort, Access: st.Access,
 		Brief: boundText(req.Brief, 2000), Why: strings.Join(st.Why, "; "), PickConfidence: st.PickConf, JevConfidence: st.JevConf,
 	})
 	c.emitMessage(w.id, "brief", "lead", w.id, req.Brief)
@@ -399,7 +400,7 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 			w.model = next
 			c.mu.Unlock()
 			c.cfg.Emit.Emit(chatevents.EventAgentReassigned, chatevents.AgentReassignedPayload{
-				AgentID: w.id, FromRuntime: m.Runtime, FromModel: m.Model, ToRuntime: next.Runtime, ToModel: next.Model,
+				AgentID: w.id, FromRuntime: m.Runtime, FromModel: m.Model, ToRuntime: next.Runtime, ToModel: next.Model, Fidelity: next.Fidelity,
 				Reason: status + ": " + boundText(detail, 300),
 			})
 			continue
@@ -487,8 +488,10 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	var run monomind.TurnResult
 	res, err := c.cfg.Exec(ctx, opts, func(ev monomind.Event) {
 		monomind.ApplyEventToResult(&run, ev)
+		c.stream(w, ev, &run)
 		c.workerEvent(w, ev)
 	})
+	c.flushText(w, true)
 	// Exec's result is the turn's final accounting; the events are the
 	// fallback when it returned none.
 	if res != nil {

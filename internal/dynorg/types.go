@@ -63,11 +63,14 @@ type Model struct {
 	// ReadOnlySandbox: the runtime can run sandboxed read-only (agent exec
 	// --sandbox read-only), the fallback confinement for a research worker
 	// when --access read isn't available.
-	ReadOnlySandbox bool    `json:"read_only_sandbox,omitempty"`
-	Resume          bool    `json:"resume"`
-	CostUSD         float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
-	LatencyMs       int64   `json:"latency_ms,omitempty"`
-	Stale           bool    `json:"stale,omitempty"`
+	ReadOnlySandbox bool `json:"read_only_sandbox,omitempty"`
+	// Fidelity is the runtime's tool-activity fidelity from the scan
+	// ("full", "start-only" or "none"); "" when unknown.
+	Fidelity  string  `json:"tool_activity_fidelity,omitempty"`
+	Resume    bool    `json:"resume"`
+	CostUSD   float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
+	LatencyMs int64   `json:"latency_ms,omitempty"`
+	Stale     bool    `json:"stale,omitempty"`
 }
 
 // Key names a model as "runtime/model".
