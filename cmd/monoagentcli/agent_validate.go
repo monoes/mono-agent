@@ -22,6 +22,7 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		runtimes, models []string
 		staleOnly, dry   bool
+		all              bool
 		concurrency      int
 		timeoutRaw       string
 		maxAge           time.Duration
@@ -30,16 +31,19 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "validate",
 		Short: "Test every installed runtime's models with a one-word turn and store the roster",
 		Long: "Sends \"Reply with the single word: ok\" to each model of each installed agent runtime " +
-			"(or only the --runtime/--model given) and stores what answered: ok, auth, quota, " +
+			"(or only the --runtime/--model given; --all says so explicitly) and stores what answered: ok, auth, quota, " +
 			"model_unavailable, timeout, … with latency and cost. Each test is a real model call. " +
 			"Tests of one runtime run one at a time; up to --concurrency runtimes run at once. " +
 			"--dry-run lists the calls and the estimated cost without running them. " +
 			"With --json, progress is NDJSON: validate.plan, validate.started, validate.result, validate.done.",
 		Example: `  monoagentcli agent validate --dry-run --json
-  monoagentcli agent validate
+  monoagentcli agent validate --all
   monoagentcli agent validate --runtime codex --model gpt-5.5
   monoagentcli agent validate --stale-only --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && (len(runtimes) > 0 || len(models) > 0) {
+				return errInvalidInput("--all tests every installed runtime; drop --runtime/--model or --all")
+			}
 			if len(models) > 0 && len(runtimes) != 1 {
 				return errInvalidInput("--model needs exactly one --runtime")
 			}
@@ -85,6 +89,11 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			if dry || len(plan.Targets) == 0 {
 				return nil
 			}
+			release, err := lockValidation()
+			if err != nil {
+				return err
+			}
+			defer release()
 
 			if err := agentroster.StartRun(ctx, db.DB, runID, len(plan.Targets), time.Now()); err != nil {
 				return err
@@ -105,6 +114,7 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Every installed runtime and its models (the default without --runtime)")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only these runtimes (repeatable)")
 	cmd.Flags().StringSliceVar(&models, "model", nil, "Only these model ids of the one --runtime; ids it doesn't list are added as manual")
 	cmd.Flags().BoolVar(&staleOnly, "stale-only", false, "Skip models that are already ready")
@@ -214,7 +224,7 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&noScan, "no-scan", false, "Skip `agent scan` (no version or install checks)")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only these runtimes")
 	cmd.Flags().DurationVar(&maxAge, "max-age", agentroster.DefaultMaxAge, "How long a passing result counts as ready")
-	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg))
+	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg), newAgentRosterAutoCmd(cfg))
 	return cmd
 }
 

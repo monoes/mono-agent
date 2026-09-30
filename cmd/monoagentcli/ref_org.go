@@ -105,6 +105,16 @@ MESSAGES AND LIFECYCLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   org send <org> --to <role> [--from org:role] --subject S --body B
+  org chat send <org> -- <text>     message the boss as human:operator
+  org chat history <org> [--run R] [--limit N]
+                                    the boss thread: your messages, the boss's
+                                    replies, questions, approvals, gates
+                                    (pending or how they ended), team rows
+  org chat answer <org> <questionId> -- <answer>
+  org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]
+                                    idempotent ("already": true when resolved
+                                    before); refused (exit 3) while the org is
+                                    not running, and nothing is sent
   org queued <org>                  messages waiting for the org's next start
                                     (read-only view of monomind's inbox.jsonl)
   org stop|pause|resume <org>

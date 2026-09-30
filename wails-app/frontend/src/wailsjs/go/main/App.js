@@ -46,6 +46,10 @@ export function AgentRosterAdd(arg1, arg2) {
   return window['go']['main']['App']['AgentRosterAdd'](arg1, arg2);
 }
 
+export function AgentRosterAutoRevalidate() {
+  return window['go']['main']['App']['AgentRosterAutoRevalidate']();
+}
+
 export function AgentRosterRemove(arg1, arg2) {
   return window['go']['main']['App']['AgentRosterRemove'](arg1, arg2);
 }
@@ -56,6 +60,10 @@ export function AgentValidatePlan(arg1, arg2, arg3) {
 
 export function AnalyzeRecording(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2, arg3);
+}
+
+export function AnswerOrgChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AnswerOrgChat'](arg1, arg2, arg3);
 }
 
 export function AnswerOrgQuestion(arg1, arg2, arg3) {
@@ -160,6 +168,10 @@ export function ConfirmSocialLogin(arg1) {
 
 export function ConnectPlatformOAuth(arg1) {
   return window['go']['main']['App']['ConnectPlatformOAuth'](arg1);
+}
+
+export function ControlOrg(arg1, arg2) {
+  return window['go']['main']['App']['ControlOrg'](arg1, arg2);
 }
 
 export function CreateChatConversation(arg1, arg2, arg3, arg4) {
@@ -372,6 +384,10 @@ export function GetOrgApprovals(arg1) {
 
 export function GetOrgAutonomy(arg1) {
   return window['go']['main']['App']['GetOrgAutonomy'](arg1);
+}
+
+export function GetOrgChatHistory(arg1, arg2) {
+  return window['go']['main']['App']['GetOrgChatHistory'](arg1, arg2);
 }
 
 export function GetOrgCosts(arg1, arg2) {
@@ -870,6 +886,10 @@ export function RerecordSelector(arg1, arg2) {
   return window['go']['main']['App']['RerecordSelector'](arg1, arg2);
 }
 
+export function ResolveOrgChat(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ResolveOrgChat'](arg1, arg2, arg3, arg4);
+}
+
 export function RestoreAutomation(arg1) {
   return window['go']['main']['App']['RestoreAutomation'](arg1);
 }
@@ -954,8 +974,16 @@ export function SendDraftPersonMessage(arg1) {
   return window['go']['main']['App']['SendDraftPersonMessage'](arg1);
 }
 
+export function SendOrgChat(arg1, arg2) {
+  return window['go']['main']['App']['SendOrgChat'](arg1, arg2);
+}
+
 export function SendOrgMessage(arg1, arg2) {
   return window['go']['main']['App']['SendOrgMessage'](arg1, arg2);
+}
+
+export function SetAgentRosterAutoRevalidate(arg1) {
+  return window['go']['main']['App']['SetAgentRosterAutoRevalidate'](arg1);
 }
 
 export function SetApplicationStatus(arg1, arg2, arg3) {

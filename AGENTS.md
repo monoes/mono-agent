@@ -227,6 +227,11 @@ The desktop app does everything through these commands; they are equally usable 
 - **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). All reads need a login: without one they exit 4 with `"login_required": true`. `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
 - **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
+- **Org bubbles (chat with a running org's boss):**
+  - `org chat send <org> -- <text>` messages the boss as `human:operator` (live, or queued for the org's next start).
+  - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
+  - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
+  - `org stop|pause|resume <org>` are the bubble's controls.
 
 ## monoes.me library
 
@@ -662,8 +667,8 @@ login (and its bill) is what the turn uses.
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
 - **Validated roster.** `monoagentcli agent validate` sends the one-word test
-  turn to every listed model of every installed runtime (or only
-  `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
+  turn to every listed model of every installed runtime (`--all`, the
+  default, or only `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
   `auth`, `quota`, `model_unavailable`, `timeout`, `missing_binary` or `error`,
   with latency and cost. Each test is a real model call, so `--dry-run` prints
   the call count and estimated cost first, and `--stale-only` skips models
@@ -688,6 +693,29 @@ login (and its bill) is what the turn uses.
   or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
   adds a model id that the runtime doesn't list. The roster is machine-wide,
   not per profile, and the AI agents page shows it with live validation.
+- **Automatic re-validation (off by default; it spends money).**
+  `monoagentcli agent roster auto-revalidate on|off|status` (#230). When on,
+  the daemon re-checks **stale** roster models (never failed or untested
+  ones) in the background: one runtime at a time, its oldest stale models
+  first, only while no chat turn (`ai_chat_turns` active in the last 2h),
+  workflow run (RUNNING with a live pid) or org run (`org serve` heartbeat
+  lists one) is active and after a quiet period, never at startup. A run
+  in progress re-checks that and the setting every 5s and is cancelled when
+  the app gets busy or it is turned off (the run still counts). The roster
+  scan runs before the lock is taken, and after "nothing stale" planning
+  waits an hour. Limits:
+  `on --per-day N` runtimes a day (default 1, max 24), `--max-models N` per
+  run (default 3, max 20), `--quiet 15m`. The daily count is persisted in
+  `settings` (`agent_roster.auto_revalidate[.state]`) per local day (the
+  daemon's time zone) and counts a run before its calls are made; a state
+  that can't be read stops runs instead of resetting the count. Every validation, manual or automatic, takes
+  `~/.monoagent/agent-validate.lock`, so a second `agent validate` fails
+  with "another validation is running" instead of overlapping. `status
+  --json` has the setting, today's runs and spend, the last run and the next
+  run's targets with their estimated cost (the same estimate as `validate
+  --dry-run`) and the daily ceiling (`daily_max_usd`: runs × models ×
+  the priciest model with a known cost). The roster section of the AI agents page has the toggle,
+  which asks first and shows that estimate.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
   else the first installed runtime in a fixed order starting with `claude`

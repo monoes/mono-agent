@@ -58,6 +58,22 @@
 .bubble[data-status="needs"] .bubble-ring { --ring: var(--yellow); animation: bubblePulse 1.2s ease-in-out infinite; }
 .bubble[data-status="idle"] .bubble-ring { --ring: rgba(0, 180, 216, 0.35); }
 
+/* An org bubble's corner mark (#229), so it reads apart from a coder chat. */
+.bubble-kind {
+  position: absolute;
+  bottom: -2px;
+  left: -2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--elevated);
+  border: 1px solid var(--border-bright);
+  color: var(--cyan);
+}
+
 .bubble-badge {
   position: absolute;
   top: -4px;
