@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ShieldCheck, RefreshCw, Square, Loader2, Plus, X, ChevronDown, ChevronRight } from 'lucide-react'
 import { api, onAgentValidate, onAgentValidateClosed } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
+import AutoRevalidate from './AutoRevalidate.jsx'
 import {
   emptyRun, applyValidateLine, withLiveResults, rowKey, chipFor,
   formatLatency, formatCost, ageParts, planSummary,
@@ -225,6 +226,7 @@ export default function AgentRoster() {
         )}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('agents.roster.subtitle')}</div>
+      <AutoRevalidate refreshKey={roster} />
       {busy && planned > 0 && (
         <div role="progressbar" aria-valuemin={0} aria-valuemax={planned} aria-valuenow={finished}
           style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>

@@ -27,6 +27,8 @@ export function AgentRoster():Promise<string>;
 
 export function AgentRosterAdd(arg1:string,arg2:string):Promise<string>;
 
+export function AgentRosterAutoRevalidate():Promise<string>;
+
 export function AgentRosterRemove(arg1:string,arg2:string):Promise<string>;
 
 export function AgentValidatePlan(arg1:Array<string>,arg2:Array<string>,arg3:boolean):Promise<string>;
@@ -482,6 +484,8 @@ export function SendApplication(arg1:string,arg2:string):Promise<void>;
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
 
 export function SendOrgMessage(arg1:string,arg2:string):Promise<string>;
+
+export function SetAgentRosterAutoRevalidate(arg1:boolean):Promise<string>;
 
 export function SetApplicationStatus(arg1:string,arg2:string,arg3:string):Promise<void>;
 

@@ -514,6 +514,27 @@
         "timeout": "✗ timed out",
         "missing_binary": "✗ not installed",
         "error": "✗ error"
+      },
+      "auto": {
+        "label": "Re-check stale models automatically",
+        "on": "on",
+        "off": "off",
+        "help": "When on, the daemon re-checks stale models in the background while no chat, workflow or org is running (after {{quiet}} of quiet, never at startup): at most {{perDay}} runtime(s) a day, {{models}} model(s) each.",
+        "money": "Each re-check is a real model call and costs money.",
+        "next": "Next run: {{count}} model(s) of {{runtime}}, {{cost}}",
+        "nothingStale": "Nothing is stale right now",
+        "today": "Today: {{count}} run(s), spent {{spent}}",
+        "lastRun": "Last run {{at}} ({{runtime}})",
+        "nextEligible": "Next run {{at}} at the earliest",
+        "noDaemon": "The daemon isn't running, so nothing runs until it starts.",
+        "unknownCost": "(+ {{count}} with unknown cost)",
+        "confirmTitle": "Re-check stale models automatically?",
+        "confirmBody": "The daemon will make real, paid model calls without asking: up to {{perDay}} runtime(s) a day, {{models}} model(s) each.",
+        "confirmNext": "The next run tests {{count}} model(s) of {{runtime}}, {{cost}}.",
+        "confirmNothing": "Nothing is stale right now, so nothing runs until a model goes stale.",
+        "turnOn": "Turn on",
+        "ceiling": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s), {{cost}}/day at most (priciest known model {{priciest}}).",
+        "ceilingUnknown": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s); no model has reported a cost yet."
       }
     }
   },

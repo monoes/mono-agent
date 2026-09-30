@@ -14,6 +14,8 @@ const { listeners, api } = vi.hoisted(() => ({
     stopAgentValidation: vi.fn(),
     agentRosterAdd: vi.fn(),
     agentRosterRemove: vi.fn(),
+    agentRosterAutoRevalidate: vi.fn(),
+    setAgentRosterAutoRevalidate: vi.fn(),
   },
 }))
 vi.mock('../../services/api.js', () => ({
@@ -38,12 +40,19 @@ const roster = {
     ] },
   ],
 }
+const autoOff = {
+  enabled: false, max_runtimes_per_day: 1, max_models_per_run: 3, quiet_period: '15m0s', daemon_running: true,
+  daily_max_usd: 0.15, priciest_model_usd: 0.05, cost_known: true,
+  state: { runtimes_today: 0, spent_today_usd: 0, last_run_at: '0001-01-01T00:00:00Z', next_eligible_at: '0001-01-01T00:00:00Z' },
+  next: { runtime: 'codex', targets: [{ model: 'a' }, { model: 'b' }], est_cost_usd: 0.0021, unknown_cost: 1 },
+}
 const row = id => document.querySelector(`[data-row="${id}"]`)
 
 beforeEach(() => {
   vi.clearAllMocks()
   api.agentRoster.mockResolvedValue(roster)
   api.startAgentValidation.mockResolvedValue({ ok: true })
+  api.agentRosterAutoRevalidate.mockResolvedValue(autoOff)
 })
 afterEach(cleanup)
 
@@ -111,5 +120,38 @@ describe('AgentRoster', () => {
     api.agentRoster.mockResolvedValue({ error: 'monomind not found' })
     render(<AgentRoster />)
     expect(await screen.findByText('monomind not found')).toBeInTheDocument()
+  })
+
+  it('shows automatic re-validation off by default with the next run\'s cost', async () => {
+    render(<AgentRoster />)
+    const box = await screen.findByLabelText(/Re-check stale models automatically/)
+    expect(box).not.toBeChecked()
+    const panel = screen.getByTestId('auto-revalidate')
+    expect(within(panel).getByText(/costs money/)).toBeInTheDocument()
+    expect(within(panel).getByText('Next run: 2 model(s) of codex, ≈ $0.0021 (+ 1 with unknown cost)')).toBeInTheDocument()
+    expect(within(panel).getByText('Daily ceiling: up to 1 run(s) × 3 model(s), ≈ $0.1500/day at most (priciest known model ≈ $0.0500).')).toBeInTheDocument()
+  })
+
+  it('asks before turning automatic re-validation on, and stays off when declined', async () => {
+    mockConfirm.mockResolvedValue(false)
+    render(<AgentRoster />)
+    fireEvent.click(await screen.findByLabelText(/Re-check stale models automatically/))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    render(mockConfirm.mock.calls[0][0])
+    expect(screen.getAllByText(/≈ \$0\.1500\/day at most/).length).toBeGreaterThan(1)
+    expect(api.setAgentRosterAutoRevalidate).not.toHaveBeenCalled()
+  })
+
+  it('turns automatic re-validation on after confirming, and off without asking', async () => {
+    mockConfirm.mockResolvedValue(true)
+    api.setAgentRosterAutoRevalidate.mockImplementation(async on => ({ ...autoOff, enabled: on }))
+    render(<AgentRoster />)
+    const box = await screen.findByLabelText(/Re-check stale models automatically/)
+    fireEvent.click(box)
+    await waitFor(() => expect(api.setAgentRosterAutoRevalidate).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(box).toBeChecked())
+    fireEvent.click(box)
+    await waitFor(() => expect(api.setAgentRosterAutoRevalidate).toHaveBeenCalledWith(false))
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
   })
 })

@@ -469,7 +469,30 @@
     "installWith": "Instálalo con",
     "updateWith": "Actualízalo con",
     "noRuntimesTitle": "No se detectaron entornos de agentes",
-    "noRuntimesDesc": "monomind está instalado pero no encontró ninguna CLI de agente conocida en este equipo."
+    "noRuntimesDesc": "monomind está instalado pero no encontró ninguna CLI de agente conocida en este equipo.",
+    "roster": {
+      "auto": {
+        "label": "Volver a comprobar automáticamente los modelos caducados",
+        "on": "activado",
+        "off": "desactivado",
+        "help": "Si está activado, el daemon vuelve a comprobar en segundo plano los modelos caducados mientras no se ejecuta ningún chat, flujo de trabajo ni organización (tras {{quiet}} de inactividad, nunca al arrancar): como máximo {{perDay}} runtime(s) al día, {{models}} modelo(s) cada uno.",
+        "money": "Cada comprobación es una llamada real a un modelo y cuesta dinero.",
+        "next": "Próxima ejecución: {{count}} modelo(s) de {{runtime}}, {{cost}}",
+        "nothingStale": "Ahora no hay nada caducado",
+        "today": "Hoy: {{count}} ejecución(es), gastado {{spent}}",
+        "lastRun": "Última ejecución {{at}} ({{runtime}})",
+        "nextEligible": "Próxima ejecución no antes de {{at}}",
+        "noDaemon": "El daemon no está en marcha, así que no se ejecuta nada hasta que arranque.",
+        "unknownCost": "(+ {{count}} con coste desconocido)",
+        "confirmTitle": "¿Volver a comprobar automáticamente los modelos caducados?",
+        "confirmBody": "El daemon hará llamadas reales y de pago a modelos sin preguntar: hasta {{perDay}} runtime(s) al día, {{models}} modelo(s) cada uno.",
+        "confirmNext": "La próxima ejecución prueba {{count}} modelo(s) de {{runtime}}, {{cost}}.",
+        "confirmNothing": "Ahora no hay nada caducado, así que no se ejecuta nada hasta que un modelo caduque.",
+        "turnOn": "Activar",
+        "ceiling": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s), {{cost}}/día como máximo (modelo conocido más caro {{priciest}}).",
+        "ceilingUnknown": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s); ningún modelo ha informado todavía de su coste."
+      }
+    }
   },
   "aiConnections": {
     "title": "Conexiones de IA (heredadas)",

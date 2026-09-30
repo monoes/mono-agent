@@ -85,6 +85,11 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			if dry || len(plan.Targets) == 0 {
 				return nil
 			}
+			release, err := lockValidation()
+			if err != nil {
+				return err
+			}
+			defer release()
 
 			if err := agentroster.StartRun(ctx, db.DB, runID, len(plan.Targets), time.Now()); err != nil {
 				return err
@@ -214,7 +219,7 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&noScan, "no-scan", false, "Skip `agent scan` (no version or install checks)")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only these runtimes")
 	cmd.Flags().DurationVar(&maxAge, "max-age", agentroster.DefaultMaxAge, "How long a passing result counts as ready")
-	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg))
+	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg), newAgentRosterAutoCmd(cfg))
 	return cmd
 }
 

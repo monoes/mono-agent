@@ -159,6 +159,9 @@ export const api = {
   stopAgentValidation:  () => GoApp.StopAgentValidation().then(parseRosterJSON).catch(e => ({ error: String(e) })),
   agentRosterAdd:       (runtimeID, model) => GoApp.AgentRosterAdd(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   agentRosterRemove:    (runtimeID, model) => GoApp.AgentRosterRemove(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  // Automatic re-validation (#230): `agent roster auto-revalidate status|on|off --json`.
+  agentRosterAutoRevalidate:    () => GoApp.AgentRosterAutoRevalidate().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  setAgentRosterAutoRevalidate: on => GoApp.SetAgentRosterAutoRevalidate(!!on).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
   // bindings"). Every call goes through parseStreamResult: a synchronous
   // {"error":...} shape

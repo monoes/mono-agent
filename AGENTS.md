@@ -688,6 +688,29 @@ login (and its bill) is what the turn uses.
   or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
   adds a model id that the runtime doesn't list. The roster is machine-wide,
   not per profile, and the AI agents page shows it with live validation.
+- **Automatic re-validation (off by default; it spends money).**
+  `monoagentcli agent roster auto-revalidate on|off|status` (#230). When on,
+  the daemon re-checks **stale** roster models (never failed or untested
+  ones) in the background: one runtime at a time, its oldest stale models
+  first, only while no chat turn (`ai_chat_turns` active in the last 2h),
+  workflow run (RUNNING with a live pid) or org run (`org serve` heartbeat
+  lists one) is active and after a quiet period, never at startup. A run
+  in progress re-checks that and the setting every 5s and is cancelled when
+  the app gets busy or it is turned off (the run still counts). The roster
+  scan runs before the lock is taken, and after "nothing stale" planning
+  waits an hour. Limits:
+  `on --per-day N` runtimes a day (default 1, max 24), `--max-models N` per
+  run (default 3, max 20), `--quiet 15m`. The daily count is persisted in
+  `settings` (`agent_roster.auto_revalidate[.state]`) per local day (the
+  daemon's time zone) and counts a run before its calls are made; a state
+  that can't be read stops runs instead of resetting the count. Every validation, manual or automatic, takes
+  `~/.monoagent/agent-validate.lock`, so a second `agent validate` fails
+  with "another validation is running" instead of overlapping. `status
+  --json` has the setting, today's runs and spend, the last run and the next
+  run's targets with their estimated cost (the same estimate as `validate
+  --dry-run`) and the daily ceiling (`daily_max_usd`: runs × models ×
+  the priciest model with a known cost). The roster section of the AI agents page has the toggle,
+  which asks first and shows that estimate.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
   else the first installed runtime in a fixed order starting with `claude`
