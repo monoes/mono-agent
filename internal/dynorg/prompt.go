@@ -72,6 +72,8 @@ func LeadPrompt(l Limits) string {
 		"(coding, qa, automation, research); leave any of them out and they are picked for you. " +
 		"Only one worker edits files at a time (the others queue), so run research and review workers in parallel and " +
 		"give writers separate files. Workers can't spawn workers. " +
+		"Your own file edits take the same write lease: writers wait while you edit, and you must not edit files " +
+		"while a writing worker runs; org_wait for it first. " +
 		fmt.Sprintf("This turn allows %d workers, %d running at once%s. ", l.MaxAgents, l.MaxConcurrent, budget) +
 		"Prefer org_spawn over your runtime's own subagent tool: org workers can use other models and the user sees them. " +
 		"Always org_wait for the workers you started before you finish, then tell the user what the team did."

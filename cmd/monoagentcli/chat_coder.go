@@ -82,7 +82,15 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	}
 	var closeOrg func()
 	if journal != nil && t.orgMode == ai.OrgModeDynamic {
-		closeOrg = startDynamicOrg(ctx, cfg, journal, settings, st, rt, t, &opts)
+		var leadEvent func(monomind.Event)
+		closeOrg, leadEvent = startDynamicOrg(ctx, cfg, journal, settings, st, rt, t, &opts)
+		if leadEvent != nil {
+			journalEvent := onEvent
+			onEvent = func(ev monomind.Event) {
+				leadEvent(ev)
+				journalEvent(ev)
+			}
+		}
 	}
 	res, err := monomind.Exec(ctx, opts, onEvent)
 	if closeOrg != nil {

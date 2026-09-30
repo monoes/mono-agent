@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,6 +71,13 @@ type ExecOptions struct {
 	// that can do neither runs the turn exactly as without it. "" asks for
 	// nothing (coder mode, which has its own full-access contract).
 	Sandbox string
+	// RequireSandbox fails closed: when Sandbox is set but this runtime and
+	// monomind can't apply it now (SandboxArgs' verdict isn't
+	// SandboxStatusSandboxed), Exec starts nothing and returns
+	// ErrSandboxRequired instead of running the turn unconfined. A caller
+	// that decided from an older scan (a dynamic-org research worker) relies
+	// on it.
+	RequireSandbox bool
 	// WorkspacePurpose names the SandboxWorkspaceDir a sandboxed turn with
 	// no Cwd runs in, so workspace-write has a real folder. Ignored when
 	// no sandbox args are passed, when Cwd is set, and for the claude runtime:
@@ -288,6 +296,10 @@ var KillGrace = 5 * time.Second
 // group kill of monomind alone never reaches the agent (protocol §3).
 var FullAccessKillGrace = 12 * time.Second
 
+// ErrSandboxRequired is returned, wrapped, when ExecOptions.RequireSandbox
+// is set and the sandbox can't be applied.
+var ErrSandboxRequired = errors.New("the required sandbox is not available")
+
 // Exec runs one agent turn and invokes onEvent for every protocol event in
 // arrival order. It returns the turn's terminal state: a *ProtocolError for
 // error turns (also mirrored in the error event the handler received).
@@ -335,6 +347,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			modes = SandboxModesFor(ctx, opts.Runtime)
 		}
 		sandboxArgs, sandboxEffective = SandboxArgs(caps, modes, opts.Runtime, opts.Sandbox)
+		if opts.RequireSandbox && sandboxEffective != SandboxStatusSandboxed {
+			return nil, fmt.Errorf("%w: %s sandbox for %s is %s", ErrSandboxRequired, opts.Sandbox, opts.Runtime, sandboxEffective)
+		}
 	}
 	if len(sandboxArgs) > 0 && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
 		dir, err := SandboxWorkspaceDir(opts.WorkspacePurpose)
