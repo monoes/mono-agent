@@ -155,6 +155,10 @@ func untrusted(st fs.FileInfo, what string, dir bool) string {
 	return ""
 }
 
+// keyUnreadable prefixes loadKey's problem when the key exists and is
+// trusted but this process can't read it.
+const keyUnreadable = "\x00unreadable:"
+
 // loadKey reads the operator key the way loadOperatorKey does (never
 // creating it). The operator dir's own mode is not checked: monomind
 // tightens a dir of ours to 0700 before trusting it, and the key and every
@@ -175,7 +179,7 @@ func loadKey(dir string) ([]byte, string) {
 	}
 	key, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Sprintf("operator key %s is unreadable (%v)", path, err)
+		return nil, fmt.Sprintf("%soperator key %s is unreadable (%v)", keyUnreadable, path, err)
 	}
 	if len(key) == 0 {
 		return nil, fmt.Sprintf("operator key %s is empty", path)
@@ -232,6 +236,10 @@ func Verify(root, org string, raw []byte) Status {
 	}
 	dir := OperatorDir()
 	key, problem := loadKey(dir)
+	if detail, ok := strings.CutPrefix(problem, keyUnreadable); ok {
+		// This process can't read the key (monomind can): no verdict here.
+		return Status{State: StateUnknown, Detail: detail}
+	}
 	if problem != "" {
 		return Status{State: StateInvalid, Detail: problem}
 	}

@@ -2,6 +2,7 @@ package monomind
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -16,6 +17,10 @@ import (
 // advertises no capability for it, so it is gated on the version.
 const orgSigningMinVersion = "2.21.0"
 
+// orgSignCheckMinVersion adds `org sign <org> --check --format json`: a
+// read-only verdict from monomind itself (2.22).
+const orgSignCheckMinVersion = "2.22.0"
+
 // OrgSigning reports whether this monomind enforces signed org definitions.
 func (c *CapabilitySet) OrgSigning() bool {
 	return c != nil && versionAtLeast(c.Version, orgSigningMinVersion)
@@ -27,6 +32,48 @@ func (c *CapabilitySet) OrgSigning() bool {
 func OrgSigningEnforced(ctx context.Context) bool {
 	set, err := Capabilities(ctx)
 	return err == nil && set.OrgSigning()
+}
+
+// OrgSignCheck asks monomind whether org's definition in projectRoot
+// verifies (`org sign <org> --check --format json`, 2.22+; read-only, no
+// prompt). ok is false when the installed monomind has no --check or its
+// answer can't be used; callers then check in Go (internal/orgsign).
+func OrgSignCheck(ctx context.Context, projectRoot, name string) (st orgsign.Status, ok bool) {
+	set, err := Capabilities(ctx)
+	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
+		return st, false
+	}
+	bin, _, err := Ensure(ctx)
+	if err != nil {
+		return st, false
+	}
+	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, "org", "sign", name, "--check", "--format", "json")
+	cmd.Dir = projectRoot
+	out, _ := cmd.Output() // exit 1 means "not signed", with the same JSON
+	var res struct {
+		Orgs []struct {
+			Org     string `json:"org"`
+			State   string `json:"state"`
+			Message string `json:"message"`
+		} `json:"orgs"`
+	}
+	if json.Unmarshal(lastJSONDocument(out), &res) != nil {
+		return st, false
+	}
+	for _, o := range res.Orgs {
+		if o.Org != name {
+			continue
+		}
+		switch o.State {
+		case orgsign.StateSigned, orgsign.StateChanged, orgsign.StateUnsigned, orgsign.StateForbiddenKey:
+			return orgsign.Status{State: o.State, Detail: o.Message}, true
+		case "invalid":
+			return orgsign.Status{State: orgsign.StateInvalid, Detail: o.Message}, true
+		}
+	}
+	return st, false // not-found, or a state this client doesn't know
 }
 
 // OrgSign signs an org definition as the operator: `monomind org sign
@@ -112,8 +159,14 @@ func checkOrgSigned(ctx context.Context, projectRoot, name string) error {
 	if !OrgSigningEnforced(ctx) {
 		return nil
 	}
-	st, _, err := orgsign.VerifyFile(projectRoot, name)
-	if err != nil || !st.Refused() {
+	st, ok := OrgSignCheck(ctx, projectRoot, name)
+	if !ok {
+		var err error
+		if st, _, err = orgsign.VerifyFile(projectRoot, name); err != nil {
+			return nil
+		}
+	}
+	if !st.Refused() {
 		return nil
 	}
 	return &OrgSignatureError{Org: name, Status: st}

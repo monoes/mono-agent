@@ -13,6 +13,29 @@ type Signer interface {
 	Sign(ctx context.Context, root, org string) error
 }
 
+// Checker is a Signer that can also ask monomind itself whether the
+// definition on disk verifies (2.22+ `org sign <org> --check --format
+// json`). ok is false when monomind can't answer; this package's own Go
+// check is used then.
+type Checker interface {
+	Check(ctx context.Context, root, org string) (st Status, ok bool)
+}
+
+// verifyNow is org's state for raw, the bytes (sha256 sha) just read from
+// its file: monomind's own check when s offers one and the file still held
+// those bytes after it ran, else this package's Verify.
+func verifyNow(ctx context.Context, s Signer, root, org string, raw []byte, sha string) Status {
+	if c, ok := s.(Checker); ok {
+		if st, ok := c.Check(ctx, root, org); ok {
+			if _, again, err := ReadFile(root, org); err != nil || again != sha {
+				return Status{State: StateUnknown, Detail: "the file changed while monomind checked it"}
+			}
+			return st
+		}
+	}
+	return Verify(root, org, raw)
+}
+
 // roleContextMarkers are the env vars monomind sets on an org role's or an
 // `agent exec` turn's process tree (org-signature.ts ROLE_CONTEXT_MARKERS).
 // monomind refuses to sign under any of them; mono-agent does not even ask.
@@ -47,7 +70,9 @@ func (p Pre) Eligible() bool { return p.eligible }
 // — then the only change a signature approves is mono-agent's own. A
 // missing file is eligible only when signNew says the new definition is
 // mono-agent's own content (a user's `org create`), not an import.
-func Before(root, org, loadedSHA string, signNew bool) Pre {
+// s is the signer the write will use (its Checker, if any, decides); nil
+// means this package's own check.
+func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew bool) Pre {
 	p := Pre{root: root, org: org}
 	if m := RoleContextMarker(); m != "" {
 		p.why = fmt.Sprintf("%s is set: an org role or agent turn made this change, and only the operator signs", m)
@@ -65,7 +90,7 @@ func Before(root, org, loadedSHA string, signNew bool) Pre {
 		p.why = err.Error()
 		return p
 	}
-	st := Verify(root, org, raw)
+	st := verifyNow(ctx, s, root, org, raw, sha)
 	switch {
 	case !st.OK():
 		p.why = st.Describe()
@@ -92,8 +117,8 @@ type Outcome struct {
 func (p Pre) After(ctx context.Context, s Signer, org, sha string) Outcome {
 	if !p.eligible {
 		st := Status{State: StateUnknown}
-		if raw, _, err := ReadFile(p.root, org); err == nil {
-			st = Verify(p.root, org, raw)
+		if raw, sha, err := ReadFile(p.root, org); err == nil {
+			st = verifyNow(ctx, s, p.root, org, raw, sha)
 		}
 		out := Outcome{Signed: st.OK(), State: st.State}
 		if !st.OK() {
@@ -123,20 +148,29 @@ func SignExact(ctx context.Context, s Signer, root, org, sha string) Outcome {
 	if got != sha {
 		return notice(Verify(root, org, raw).State, "the file changed after it was written or reviewed")
 	}
-	if st := Verify(root, org, raw); st.OK() {
+	if st := verifyNow(ctx, s, root, org, raw, sha); st.OK() {
 		return Outcome{Signed: true, State: StateSigned}
 	} else if st.State == StateForbiddenKey {
 		return notice(st.State, Message(org, st))
 	}
-	want, err := Hash(root, raw)
-	if err != nil {
-		return notice(StateUnknown, err.Error())
+	// What monomind is about to sign must be confirmable afterwards: by the
+	// hash in its sidecar, or else by monomind's own check.
+	want, hashErr := Hash(root, raw)
+	_, canCheck := s.(Checker)
+	if hashErr != nil && !canCheck {
+		return notice(StateUnknown, hashErr.Error())
 	}
 	if err := s.Sign(ctx, root, org); err != nil {
-		st := Verify(root, org, raw)
-		return notice(st.State, "monomind did not sign it: "+err.Error())
+		return notice(verifyNow(ctx, s, root, org, raw, sha).State, "monomind did not sign it: "+err.Error())
 	}
-	if signed, ok := SignedHash(root, org); !ok || signed != want {
+	confirmed := false
+	if hashErr == nil {
+		signed, ok := SignedHash(root, org)
+		confirmed = ok && signed == want
+	} else {
+		confirmed = verifyNow(ctx, s, root, org, raw, sha).OK()
+	}
+	if !confirmed {
 		_ = Withdraw(root, org)
 		return notice(StateUnsigned, "the file changed while it was being signed, so the signature was withdrawn")
 	}

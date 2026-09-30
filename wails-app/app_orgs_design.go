@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -300,7 +301,7 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 		return aiError(fmt.Errorf("invalid layout: %w", err))
 	}
 	_ = d.SetLayout(pos)
-	sig := orgsign.Before(root, orgName, d.LoadedSHA(), false)
+	sig := orgsign.Before(context.Background(), nil, root, orgName, d.LoadedSHA(), false)
 	sha, err := orgdesign.Save(root, d)
 	if err != nil {
 		return aiError(err)
@@ -396,7 +397,7 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 	}
 	// Decided before the first write: whether this save may be re-signed
 	// (a new org drawn on the canvas is the user's own).
-	sig := orgsign.Before(root, d.Name, d.LoadedSHA(), true)
+	sig := orgsign.Before(context.Background(), nil, root, d.Name, d.LoadedSHA(), true)
 
 	if _, err := a.writeOrgDoc(root, d); err != nil {
 		return "", err

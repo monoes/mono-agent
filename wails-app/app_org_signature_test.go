@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func TestKeepOrgSignature_LayoutNeedsNoSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig := orgsign.Before(root, "growth", d.LoadedSHA(), false)
+	sig := orgsign.Before(context.Background(), nil, root, "growth", d.LoadedSHA(), false)
 	if !sig.Eligible() {
 		t.Fatal("a signed org loaded as is must be eligible")
 	}

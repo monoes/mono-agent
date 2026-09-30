@@ -35,8 +35,12 @@ if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
   exit 0
 fi
 if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
+  if [ "$4" = "--check" ]; then
+    echo '{"orgs":[{"org":"'"$3"'","state":"'"${FAKE_CHECK_STATE:-changed}"'","message":"from monomind"}]}'
+    exit 1
+  fi
   if [ "$4" = "--yes" ]; then echo "org $3: signed"; exit 0; fi
-  printf '\033[1m\norg %s (changed):\033[0m\n  lead: runtime claude \302\267 git push \302\267 access scoped\n  Changed since the last signature:\n    roles.lead.policy.git: read -> push\nNot signed. Review the above, then sign it yourself in a terminal: monomind org sign <org> (or pass --yes).\n[ERROR] confirmation required (--yes)\n' "$3"
+  printf '\033[1m\norg %s (changed):\033[0m\n  lead: runtime claude \302\267 git push \302\267 access scoped\n  Changed since the last signature:\n    roles.lead.policy.git: read -> push\n  1 protected path(s) would be quarantined as possible plants: .claude/settings.json \342\200\224 if they are yours, approve them with monomind org approve-paths <path>\nNot signed. Review the above, then sign it yourself in a terminal: monomind org sign <org> (or pass --yes).\n[ERROR] confirmation required (--yes)\n' "$3"
   exit 1
 fi
 if [ "$1" = "org" ] && [ "$2" = "run" ]; then
@@ -70,6 +74,11 @@ func (s *recordingSigner) Sign(ctx context.Context, root, org string) error {
 	s.calls = append(s.calls, org)
 	orgsigntest.Sign(s.t, root, org)
 	return nil
+}
+
+// Check uses monomind's own --check, as the production signer does.
+func (s *recordingSigner) Check(ctx context.Context, root, org string) (orgsign.Status, bool) {
+	return monomindOrgSigner{}.Check(ctx, root, org)
 }
 
 // newSigningFixture is newOrgCLIFixture on a fake monomind 2.21 with a
@@ -207,7 +216,10 @@ func TestOrgSignCommand(t *testing.T) {
 	// Without --yes (and not on a terminal): the review, nothing signed.
 	rev := f.mustRun(t, "sign", "growth")
 	review, _ := rev["review"].(string)
-	if !strings.Contains(review, "git push") || strings.Contains(review, "confirmation required") || strings.Contains(review, "\x1b[") {
+	// Everything monomind reports stays in the review, including paths
+	// waiting for `org approve-paths` (signing approves none of them).
+	if !strings.Contains(review, "git push") || !strings.Contains(review, "org approve-paths") ||
+		strings.Contains(review, "confirmation required") || strings.Contains(review, "\x1b[") {
 		t.Fatalf("review = %q", review)
 	}
 	if rev["signed"] != nil || len(s.calls) != 0 || rev["sha256"] == "" {
@@ -317,4 +329,54 @@ func captureStderr(t *testing.T, fn func()) string {
 	w.Close()
 	b, _ := io.ReadAll(r)
 	return string(b)
+}
+
+// On monomind 2.22 the state comes from monomind's own read-only check
+// (`org sign --check --format json`), run in the project root; on 2.21
+// that command does not exist and is never run.
+func TestOrgSignUsesMonomindCheck(t *testing.T) {
+	f, _, logPath := newSigningFixture(t, "2.22.0")
+	t.Setenv("FAKE_CHECK_STATE", "signed") // no sidecar: the Go check alone says unsigned
+	st := f.mustRun(t, "sign", "growth", "--status")
+	if st["state"] != "signed" {
+		t.Fatalf("status = %v, want monomind's verdict", st)
+	}
+	calls, _ := os.ReadFile(logPath)
+	root, _ := filepath.EvalSymlinks(f.root)
+	if !strings.Contains(string(calls), root+" org sign growth --check --format json") {
+		t.Fatalf("--check not run in the project root:\n%s", calls)
+	}
+
+	f21, _, log21 := newSigningFixture(t, "2.21.0")
+	if st := f21.mustRun(t, "sign", "growth", "--status"); st["state"] != "unsigned" {
+		t.Fatalf("2.21 status = %v", st)
+	}
+	if calls, _ := os.ReadFile(log21); strings.Contains(string(calls), "--check") {
+		t.Fatalf("ran --check on 2.21:\n%s", calls)
+	}
+}
+
+// No mono-agent path signs from inside an org role's or agent turn's
+// process tree (monomind's own markers): the write happens, unsigned,
+// with a notice naming the marker, and monomind is never asked to sign.
+func TestNoSigningFromRoleContext(t *testing.T) {
+	for _, marker := range []string{"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC", "MONOMIND_CLINE_TURN", "MONOMIND_AIDER"} {
+		t.Run(marker, func(t *testing.T) {
+			f, s, logPath := newSigningFixture(t, "2.21.0")
+			orgsigntest.Sign(t, f.root, "growth")
+			t.Setenv(marker, "1")
+			stderr := captureStderr(t, func() {
+				f.mustRun(t, "automation", "add", "growth", "--workflow", f.outboundWF, "--alias", "publish_post")
+			})
+			if len(s.calls) != 0 || !strings.Contains(stderr, marker) {
+				t.Fatalf("calls %v, stderr %q", s.calls, stderr)
+			}
+			if _, err := f.run(t, "sign", "growth", "--yes"); err == nil {
+				t.Fatal("org sign --yes ran in a role context")
+			}
+			if calls, _ := os.ReadFile(logPath); strings.Contains(string(calls), "--yes") {
+				t.Fatalf("monomind asked to sign:\n%s", calls)
+			}
+		})
+	}
 }

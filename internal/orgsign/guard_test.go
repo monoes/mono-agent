@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -58,7 +59,7 @@ func TestVerifiedBeforeWriteIsSignedAfter(t *testing.T) {
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
 
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	if !pre.Eligible() {
 		t.Fatalf("a verified file loaded as is must be eligible: %+v", pre)
 	}
@@ -82,7 +83,7 @@ func TestTamperedBeforeWriteIsNotSigned(t *testing.T) {
 	// the file (with that edit) and makes its own change.
 	loaded := writeOrg(t, root, "growth", evilBody)
 
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	if pre.Eligible() {
 		t.Fatal("a changed file must not be eligible")
 	}
@@ -107,10 +108,10 @@ func TestDocLoadedFromOtherBytesIsNotSigned(t *testing.T) {
 	loadedEvil := writeOrg(t, root, "growth", evilBody) // mono-agent loads this
 	writeOrg(t, root, "growth", signedBody)             // then it is reverted
 
-	if pre := Before(root, "growth", loadedEvil, false); pre.Eligible() {
+	if pre := Before(context.Background(), nil, root, "growth", loadedEvil, false); pre.Eligible() {
 		t.Fatal("eligible although the document came from other bytes")
 	}
-	if pre := Before(root, "growth", "", false); pre.Eligible() {
+	if pre := Before(context.Background(), nil, root, "growth", "", false); pre.Eligible() {
 		t.Fatal("eligible for a document not loaded from the file")
 	}
 }
@@ -118,10 +119,10 @@ func TestDocLoadedFromOtherBytesIsNotSigned(t *testing.T) {
 func TestNewOrgSignedOnlyWhenOwnContent(t *testing.T) {
 	operatorDirForTest(t)
 	root := t.TempDir()
-	if Before(root, "growth", "", false).Eligible() {
+	if Before(context.Background(), nil, root, "growth", "", false).Eligible() {
 		t.Fatal("an imported new org must not be signed")
 	}
-	pre := Before(root, "growth", "", true)
+	pre := Before(context.Background(), nil, root, "growth", "", true)
 	if !pre.Eligible() {
 		t.Fatal("a new org mono-agent wrote itself should be signed")
 	}
@@ -136,7 +137,7 @@ func TestRaceDuringSignWithdrawsSignature(t *testing.T) {
 	root := t.TempDir()
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	sha := writeOrg(t, root, "growth", ownBody)
 	s := &fakeSigner{t: t, before: func() { writeOrg(t, root, "growth", evilBody) }}
 	out := pre.After(context.Background(), s, "growth", sha)
@@ -153,7 +154,7 @@ func TestFileChangedAfterWriteIsNotSigned(t *testing.T) {
 	root := t.TempDir()
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	sha := writeOrg(t, root, "growth", ownBody)
 	writeOrg(t, root, "growth", evilBody)
 	s := &fakeSigner{t: t}
@@ -167,7 +168,7 @@ func TestSignFailureAndRoleContext(t *testing.T) {
 	root := t.TempDir()
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	sha := writeOrg(t, root, "growth", ownBody)
 	out := pre.After(context.Background(), &fakeSigner{t: t, err: errors.New("refused")}, "growth", sha)
 	if out.Signed || !strings.Contains(out.Notice, "refused") {
@@ -176,7 +177,7 @@ func TestSignFailureAndRoleContext(t *testing.T) {
 
 	t.Setenv("MONOMIND_AGENT_EXEC", "1")
 	s := &fakeSigner{t: t}
-	if Before(root, "growth", sha, false).Eligible() {
+	if Before(context.Background(), nil, root, "growth", sha, false).Eligible() {
 		t.Fatal("eligible inside an agent turn")
 	}
 	if out := SignExact(context.Background(), s, root, "growth", sha); out.Signed || s.calls != 0 {
@@ -189,10 +190,79 @@ func TestCosmeticWriteNeedsNoSignature(t *testing.T) {
 	root := t.TempDir()
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
-	pre := Before(root, "growth", loaded, false)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
 	sha := writeOrg(t, root, "growth", `{"name":"growth","goal":"new goal","roles":[{"id":"lead","ui":{"x":5},"policy":{"git":"read"}}]}`)
 	s := &fakeSigner{t: t}
 	if out := pre.After(context.Background(), s, "growth", sha); !out.Signed || s.calls != 0 {
 		t.Fatalf("outcome %+v (calls %d)", out, s.calls)
+	}
+}
+
+// checkingSigner is fakeSigner with monomind 2.22's --check.
+type checkingSigner struct {
+	fakeSigner
+	st     Status
+	ok     bool
+	checks int
+	during func()
+}
+
+func (c *checkingSigner) Check(context.Context, string, string) (Status, bool) {
+	c.checks++
+	if c.during != nil {
+		c.during()
+	}
+	return c.st, c.ok
+}
+
+// monomind's own verdict (2.22 --check) wins over the Go check; without
+// one, the Go check decides.
+func TestBeforePrefersMonomindCheck(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	loaded := writeOrg(t, root, "growth", signedBody) // no sidecar: Go says unsigned
+
+	c := &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateSigned}, ok: true}
+	if !Before(context.Background(), c, root, "growth", loaded, false).Eligible() || c.checks != 1 {
+		t.Fatalf("monomind said signed; checks %d", c.checks)
+	}
+	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateChanged}, ok: true}
+	signFixture(t, root, "growth", []byte(signedBody)) // Go now says signed
+	if Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+		t.Fatal("monomind said changed")
+	}
+	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, ok: false}
+	if !Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+		t.Fatal("without monomind's answer the Go check should decide")
+	}
+	// A file that changes while monomind checks it gets no verdict.
+	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateSigned}, ok: true,
+		during: func() { writeOrg(t, root, "growth", evilBody) }}
+	if Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+		t.Fatal("eligible although the file changed during the check")
+	}
+}
+
+// An operator key this process can't read gives no verdict (unknown), so
+// nothing is signed on its strength and nothing is refused on it either.
+func TestUnreadableKeyIsUnknown(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	operatorDirForTest(t)
+	root := t.TempDir()
+	loaded := writeOrg(t, root, "growth", signedBody)
+	signFixture(t, root, "growth", []byte(signedBody))
+	key := filepath.Join(OperatorDir(), "full-access-grant.key")
+	if err := os.Chmod(key, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(key, 0o600) })
+	st := Verify(root, "growth", []byte(signedBody))
+	if st.State != StateUnknown || st.Refused() {
+		t.Fatalf("state %+v, want unknown", st)
+	}
+	if Before(context.Background(), nil, root, "growth", loaded, false).Eligible() {
+		t.Fatal("eligible without a verdict")
 	}
 }

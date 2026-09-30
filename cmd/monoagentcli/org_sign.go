@@ -36,6 +36,22 @@ func (monomindOrgSigner) Sign(ctx context.Context, root, org string) error {
 	return err
 }
 
+// Check is monomind's own verdict where it has one (2.22 --check).
+func (monomindOrgSigner) Check(ctx context.Context, root, org string) (orgsign.Status, bool) {
+	return monomind.OrgSignCheck(ctx, root, org)
+}
+
+// orgSignStatus is org's signature state: monomind's own check where it
+// has one, else the Go check.
+func orgSignStatus(ctx context.Context, root, org string, raw []byte) orgsign.Status {
+	if c, ok := orgSigner.(orgsign.Checker); ok {
+		if st, ok := c.Check(ctx, root, org); ok {
+			return st
+		}
+	}
+	return orgsign.Verify(root, org, raw)
+}
+
 // orgSigner signs through monomind; a var so tests can stand one in.
 var orgSigner orgsign.Signer = monomindOrgSigner{}
 
@@ -48,7 +64,7 @@ func saveOrgSigned(ctx context.Context, root, from string, doc *orgdesign.Doc, s
 		sha, err := orgdesign.Save(root, doc)
 		return sha, nil, err
 	}
-	pre := orgsign.Before(root, from, doc.LoadedSHA(), signNew)
+	pre := orgsign.Before(ctx, orgSigner, root, from, doc.LoadedSHA(), signNew)
 	sha, err := orgdesign.Save(root, doc)
 	if err != nil {
 		return "", nil, err
@@ -119,7 +135,7 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				return errOrgSigningUnsupported
 			}
 			res.Supported = true
-			st := orgsign.Verify(root, name, raw)
+			st := orgSignStatus(ctx, root, name, raw)
 			res.State, res.Detail = st.State, st.Detail
 			if statusOnly {
 				if !st.OK() {
@@ -212,8 +228,8 @@ func withOrgSignature(ctx context.Context, root string, payload json.RawMessage)
 		if !orgdesign.ValidOrgName(name) {
 			return
 		}
-		if st, _, err := orgsign.VerifyFile(root, name); err == nil {
-			item["signature"] = st
+		if raw, _, err := orgsign.ReadFile(root, name); err == nil {
+			item["signature"] = orgSignStatus(ctx, root, name, raw)
 		}
 	}
 	var obj map[string]interface{}
