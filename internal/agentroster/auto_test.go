@@ -407,3 +407,53 @@ func TestDailyCeiling(t *testing.T) {
 		t.Fatalf("ceiling = %v/day, priciest %v, known %v", perDay, priciest, known)
 	}
 }
+
+// Planning again under the lock: models a manual validation just checked
+// are not tested twice, and an empty second plan runs nothing.
+func TestAutoRepicksUnderLock(t *testing.T) {
+	db := openDB(t)
+	enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+	f := newFakeAuto(t, db, localNoon())
+	repicks := 0
+	f.s.Repick = func(context.Context, int) (*AutoPlan, error) {
+		repicks++
+		if repicks == 1 {
+			return nil, nil // a manual validate re-checked everything meanwhile
+		}
+		return &AutoPlan{Runtime: "codex", Targets: []Target{{Runtime: "codex", Model: "mb"}}}, nil
+	}
+	ctx := context.Background()
+	f.s.Step(ctx)
+	f.advance(time.Minute)
+	if got := f.s.Step(ctx); got != AutoCheckNothing {
+		t.Fatalf("empty repick = %q, want nothing stale", got)
+	}
+	st, _ := LoadAutoState(ctx, db, f.now)
+	if len(f.runs) != 0 || st.RuntimesToday != 0 {
+		t.Fatalf("ran %d / counted %d after an empty repick", len(f.runs), st.RuntimesToday)
+	}
+	f.advance(time.Minute)
+	if got := f.s.Step(ctx); got != AutoCheckRan {
+		t.Fatalf("second = %q", got)
+	}
+	if len(f.runs) != 1 || len(f.runs[0].Targets) != 1 || f.runs[0].Targets[0].Model != "mb" {
+		t.Fatalf("ran %+v, want the repicked plan", f.runs)
+	}
+}
+
+// Calls cancelled mid-flight still count: their cost, or as unknown.
+func TestAutoRunResultCountsCancelledCalls(t *testing.T) {
+	var r AutoRunResult
+	for _, l := range []Line{
+		{Type: "validate.started"},
+		{Type: "validate.result", Result: &Result{Status: StatusOK, HasCost: true, CostUSD: 0.01}},
+		{Type: "validate.result", Result: &Result{Status: StatusCancelled, HasCost: true, CostUSD: 0.02}},
+		{Type: "validate.result", Result: &Result{Status: StatusCancelled}},
+		{Type: "validate.done", Summary: &Summary{}},
+	} {
+		r.Add(l)
+	}
+	if r.SpentUSD < 0.0299 || r.SpentUSD > 0.0301 || r.UnknownCost != 1 {
+		t.Fatalf("spent %v, unknown %d; want 0.03 and 1", r.SpentUSD, r.UnknownCost)
+	}
+}

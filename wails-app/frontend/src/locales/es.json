@@ -489,8 +489,11 @@
         "confirmNext": "La próxima ejecución prueba {{count}} modelo(s) de {{runtime}}, {{cost}}.",
         "confirmNothing": "Ahora no hay nada caducado, así que no se ejecuta nada hasta que un modelo caduque.",
         "turnOn": "Activar",
-        "ceiling": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s), {{cost}}/día como máximo (modelo conocido más caro {{priciest}}).",
-        "ceilingUnknown": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s); ningún modelo ha informado todavía de su coste."
+        "ceiling": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s), {{cost}}/día al coste más alto visto hasta ahora ({{priciest}} por modelo); no incluye los modelos con coste desconocido.",
+        "ceilingUnknown": "Tope diario: hasta {{perDay}} ejecución(es) × {{models}} modelo(s); ningún modelo ha informado todavía de su coste.",
+        "nextUnchecked": "Próxima ejecución: hasta {{count}} modelo(s) caducado(s), {{cost}} (instalaciones sin comprobar)",
+        "confirmNextUnchecked": "La próxima ejecución prueba hasta {{count}} modelo(s) caducado(s), {{cost}}.",
+        "stateUnreadable": "No se puede leer el recuento de hoy, así que no se ejecuta nada; al volver a activarlo se restablece."
       }
     }
   },

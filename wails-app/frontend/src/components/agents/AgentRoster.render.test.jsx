@@ -211,7 +211,7 @@ describe('AgentRoster', () => {
     const panel = screen.getByTestId('auto-revalidate')
     expect(within(panel).getByText(/costs money/)).toBeInTheDocument()
     expect(within(panel).getByText('Next run: 2 model(s) of codex, ≈ $0.0021 (+ 1 with unknown cost)')).toBeInTheDocument()
-    expect(within(panel).getByText('Daily ceiling: up to 1 run(s) × 3 model(s), ≈ $0.1500/day at most (priciest known model ≈ $0.0500).')).toBeInTheDocument()
+    expect(within(panel).getByText('Daily ceiling: up to 1 run(s) × 3 model(s), ≈ $0.1500/day at the priciest cost seen so far (≈ $0.0500 a model); models with unknown cost not included.')).toBeInTheDocument()
   })
 
   it('asks before turning automatic re-validation on, and stays off when declined', async () => {
@@ -220,7 +220,7 @@ describe('AgentRoster', () => {
     fireEvent.click(await screen.findByLabelText(/Re-check stale models automatically/))
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
     render(mockConfirm.mock.calls[0][0])
-    expect(screen.getAllByText(/≈ \$0\.1500\/day at most/).length).toBeGreaterThan(1)
+    expect(screen.getAllByText(/≈ \$0\.1500\/day at the priciest cost/).length).toBeGreaterThan(1)
     expect(api.setAgentRosterAutoRevalidate).not.toHaveBeenCalled()
   })
 
@@ -235,5 +235,13 @@ describe('AgentRoster', () => {
     fireEvent.click(box)
     await waitFor(() => expect(api.setAgentRosterAutoRevalidate).toHaveBeenCalledWith(false))
     expect(mockConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('names no runtime when installs were not checked, and flags an unreadable state', async () => {
+    api.agentRosterAutoRevalidate.mockResolvedValue({ ...autoOff, next_unchecked: true, next: { ...autoOff.next, runtime: '' }, state_error: 'bad json' })
+    render(<AgentRoster />)
+    const panel = await screen.findByTestId('auto-revalidate')
+    expect(within(panel).getByText('Next run: up to 2 stale model(s), ≈ $0.0021 (+ 1 with unknown cost) (installs not checked)')).toBeInTheDocument()
+    expect(within(panel).getByText(/count can't be read/)).toBeInTheDocument()
   })
 })

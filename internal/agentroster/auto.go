@@ -227,6 +227,20 @@ type AutoRunResult struct {
 	UnknownCost int     // calls that reported no cost
 }
 
+// Add counts one progress line's cost. A call cancelled mid-flight (the
+// app got busy, the setting was turned off, shutdown) was still made and
+// may still be billed: its reported cost counts, or it counts as unknown.
+func (r *AutoRunResult) Add(l Line) {
+	if l.Type != "validate.result" || l.Result == nil {
+		return
+	}
+	if l.Result.HasCost {
+		r.SpentUSD += l.Result.CostUSD
+	} else {
+		r.UnknownCost++
+	}
+}
+
 // AutoScheduler runs automatic re-validation. Every dependency is a func so
 // tests run it with a fake clock and a fake validator.
 type AutoScheduler struct {
@@ -238,6 +252,10 @@ type AutoScheduler struct {
 	// Pick returns the next run (nil when nothing is stale). It runs
 	// before the lock is taken: a scan must not block a manual validate.
 	Pick func(ctx context.Context, maxModels int) (*AutoPlan, error)
+	// Repick, when set, plans again once the lock is held, without a new
+	// scan: a manual validation that just finished may have re-checked
+	// some of the models. Nil keeps the first plan.
+	Repick func(ctx context.Context, maxModels int) (*AutoPlan, error)
 	// Validate runs the plan's tests, one at a time. Its ctx is cancelled
 	// when the app gets busy or the setting is turned off mid-run.
 	Validate func(ctx context.Context, p AutoPlan) (AutoRunResult, error)
@@ -386,6 +404,16 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 		return s.record(ctx, now, AutoCheckLocked, time.Time{})
 	}
 	defer release()
+	if s.Repick != nil {
+		if plan, err = s.Repick(runCtx, cfg.MaxModelsPerRun); err != nil {
+			s.logf("auto re-validation: planning: %v", err)
+			s.markBusy(now)
+			return s.record(ctx, now, withReason(AutoCheckFailed, err.Error()), time.Time{})
+		}
+		if plan == nil || len(plan.Targets) == 0 {
+			return s.record(ctx, now, AutoCheckNothing, time.Time{})
+		}
+	}
 
 	// The runtime counts against today's cap before the calls are made, so
 	// a crash mid-run can never lead to more runs than the cap.

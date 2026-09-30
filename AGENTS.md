@@ -738,13 +738,18 @@ login (and its bill) is what the turn uses.
   run (default 3, max 20), `--quiet 15m`. The daily count is persisted in
   `settings` (`agent_roster.auto_revalidate[.state]`) per local day (the
   daemon's time zone) and counts a run before its calls are made; a state
-  that can't be read stops runs instead of resetting the count. Every validation, manual or automatic, takes
+  that can't be read stops runs instead of resetting the count (`status`
+  reports `state_error`; `on` resets it). The plan is made again under the
+  lock from the cached scan, so models a manual validate just re-checked
+  aren't tested twice, and calls cancelled mid-flight still count in the
+  day's spend (or as unknown cost). Every validation, manual or automatic, takes
   `~/.monoagent/agent-validate.lock`, so a second `agent validate` fails
   with "another validation is running" instead of overlapping. `status
   --json` has the setting, today's runs and spend, the last run and the next
   run's targets with their estimated cost (the same estimate as `validate
   --dry-run`) and the daily ceiling (`daily_max_usd`: runs × models ×
-  the priciest model with a known cost). The roster section of the AI agents page has the toggle,
+  the priciest cost seen so far; models with unknown cost not included).
+  With `--no-scan`, `next` names no runtime (`next_unchecked`). The roster section of the AI agents page has the toggle,
   which asks first and shows that estimate.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
