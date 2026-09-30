@@ -76,6 +76,7 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 		// The profile as doctor resolved it: --profile may be a name.
 		return startDaemon(ctx, daemonArgs(cfg, env.ProfileID), autostart.New(), progress)
 	}
+	env.StopDaemon = stopDaemon
 
 	env.ClaudeSkills = claudeSkillsState
 	env.InstallClaudeSkills = func() error { return installClaudeSkill(false) }
@@ -129,6 +130,53 @@ func startDaemon(ctx context.Context, args []string, as autostart.Installer, pro
 	}
 	progress(fmt.Sprintf("started `%s %s` in the background (pid %d, log %s)", filepath.Base(exe), strings.Join(args, " "), cmd.Process.Pid, logPath))
 	return cmd.Process.Release()
+}
+
+// daemonStopPollInterval is how often stopDaemon re-checks the daemon's
+// single-instance lock while waiting for it to clear.
+const daemonStopPollInterval = 300 * time.Millisecond
+
+// daemonStopGrace is how long stopDaemon waits for a SIGTERM'd daemon to
+// finish its own graceful shutdown (draining in-flight workflow executions,
+// see daemon.go) before it escalates to a forced kill.
+const daemonStopGrace = 15 * time.Second
+
+// stopDaemon stops the daemon at pid so a caller can start a fresh one on
+// the current binary without racing its own shutdown: SIGTERM, then poll
+// daemonhb.Locked() — the OS releases that lock on exit even after a crash,
+// so it is the one race-free signal that nothing still holds the bridge
+// port or the schedule lock — escalating to SIGKILL if it hasn't cleared
+// within daemonStopGrace.
+func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
+	if !daemonhb.Locked() {
+		return nil // already stopped
+	}
+	if err := terminateProcess(pid); err != nil && daemonhb.Locked() {
+		return fmt.Errorf("signaling pid %d: %w", pid, err)
+	}
+	deadline := time.Now().Add(daemonStopGrace)
+	forced := false
+	for daemonhb.Locked() {
+		if time.Now().After(deadline) {
+			if forced {
+				return fmt.Errorf("pid %d would not stop even after SIGKILL", pid)
+			}
+			progress(fmt.Sprintf("pid %d did not stop within %s — forcing it", pid, daemonStopGrace))
+			if err := killProcess(pid); err != nil {
+				return fmt.Errorf("force-stopping pid %d: %w", pid, err)
+			}
+			forced = true
+			deadline = time.Now().Add(5 * time.Second)
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(daemonStopPollInterval):
+		}
+	}
+	progress(fmt.Sprintf("stopped pid %d", pid))
+	return nil
 }
 
 // daemonArgs is `daemon` plus the --db-path and --profile doctor runs

@@ -195,6 +195,10 @@ type Env struct {
 	AutostartStatus  func(ctx context.Context) (installed bool, where string)
 	InstallAutostart func(ctx context.Context, progress func(string)) error
 	StartDaemon      func(ctx context.Context, progress func(string)) error
+	// StopDaemon gracefully stops the daemon at pid (SIGTERM, then a forced
+	// kill if it doesn't clear its single-instance lock in time), used to
+	// restart a daemon-owned bridge that predates the running CLI.
+	StopDaemon func(ctx context.Context, pid int, progress func(string)) error
 
 	// Agent-tool integrations (Claude Code).
 	ClaudeSkills        func() (claudeFound bool, missing, stale []string)
