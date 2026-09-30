@@ -286,20 +286,6 @@ function LanguageSection() {
       <select
         value={i18n.resolvedLanguage || i18n.language}
         onChange={e => i18n.changeLanguage(e.target.value)}
-        style={{
-          // backgroundColor, not the `background` shorthand: a shorthand here
-          // would reset backgroundImage below to none regardless of order.
-          backgroundColor: 'var(--elevated)', color: 'var(--text)',
-          border: '1px solid var(--border)', borderRadius: 6,
-          padding: '6px 28px 6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
-          outline: 'none', cursor: 'pointer',
-          // WebKitGTK draws <select> with native GTK chrome (light bg, dark
-          // text) unless appearance is explicitly reset — see AIChatPanel.jsx.
-          appearance: 'none',
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 10px center',
-        }}
       >
         <option value="en">English</option>
         <option value="es">Español</option>

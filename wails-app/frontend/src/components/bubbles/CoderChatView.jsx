@@ -16,9 +16,12 @@ import AgentSetupLink from '../AgentSetupLink.jsx'
 import '../chat/chat.css'
 
 const mono = 'var(--font-mono)'
-const selectStyle = {
+// Box style for the loading placeholder in the selector row. The
+// <select>s themselves use the global `select` rule plus `.select-compact`
+// (index.css); inline chrome here would override it.
+const placeholderStyle = {
   background: '#020509', border: '1px solid rgba(0,180,216,0.15)', borderRadius: 6,
-  padding: '4px 8px', color: '#e2e8f0', fontFamily: mono, fontSize: 10, outline: 'none', minWidth: 0,
+  padding: '4px 8px', color: '#e2e8f0', fontFamily: mono, fontSize: 10, minWidth: 0,
 }
 
 // CoderSetup is a new coder bubble's choices before its first message: the
@@ -79,20 +82,20 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
         workspace={setup.workspace} onWorkspaceChange={workspace => onChange({ workspace })}
         recent={recent} onPickFolder={pickFolder} runtimeId={runtime} />
       <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid rgba(0,180,216,0.06)' }}>
-        <select aria-label={t('bubbles.runtime')} value={runtime} onChange={e => setRuntime(e.target.value)} style={{ ...selectStyle, minWidth: 90 }}>
+        <select aria-label={t('bubbles.runtime')} value={runtime} onChange={e => setRuntime(e.target.value)} className="select-compact" style={{ minWidth: 90 }}>
           {choice.options.map(r => <option key={r.id} value={r.id}>{runtimeLabel(r.id)}</option>)}
         </select>
         {models === null ? (
-          <span style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...placeholderStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader size={11} className="chat-spin" /> {t('bubbles.loadingModels')}
           </span>
         ) : (
-          <select aria-label={t('bubbles.model')} value={setup.model} onChange={e => onChange({ model: e.target.value, effort: '' })} style={{ ...selectStyle, flex: 1 }}>
+          <select aria-label={t('bubbles.model')} value={setup.model} onChange={e => onChange({ model: e.target.value, effort: '' })} className="select-compact" style={{ flex: 1, minWidth: 0 }}>
             {models.map(m => <option key={m.id} value={m.id}>{m.label || m.id}</option>)}
           </select>
         )}
         {efforts.length > 0 && (
-          <select aria-label={t('bubbles.effort')} value={setup.effort} onChange={e => onChange({ effort: e.target.value })} style={{ ...selectStyle, minWidth: 72 }}>
+          <select aria-label={t('bubbles.effort')} value={setup.effort} onChange={e => onChange({ effort: e.target.value })} className="select-compact" style={{ minWidth: 72 }}>
             <option value="">{t('bubbles.effortAuto')}</option>
             {efforts.map(eff => <option key={eff} value={eff}>{eff}</option>)}
           </select>
