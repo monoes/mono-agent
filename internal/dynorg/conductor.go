@@ -77,6 +77,8 @@ type Conductor struct {
 	// mergeMu runs org_merge calls one at a time.
 	iso     *isolation
 	mergeMu sync.Mutex
+	// subagents journals the workers' native subagents (monomind#387).
+	subagents Subagents
 }
 
 type worker struct {
@@ -114,6 +116,8 @@ type worker struct {
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
+	// confinement is what confines its current run (chatevents.Confinement*).
+	confinement string
 	// unusable holds the models (runtime/model) that couldn't run this
 	// worker (auth, quota, …), so a retry doesn't try them again.
 	unusable map[string]bool
@@ -608,10 +612,12 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	unconfined := w.unconfined
 	c.mu.Unlock()
 	requireSandbox := false
+	confinement := ""
 	if w.staff.Access == ProfileResearch {
 		switch {
 		case c.cfg.ReadAccess && m.Read:
 			opts.Access = monomind.AccessRead
+			confinement = chatevents.ConfinementAccessRead
 		case m.ReadOnlySandbox && !unconfined:
 			// No --access read on this runtime: confine the worker with a
 			// read-only sandbox instead (Exec's SandboxArgs decides the flag).
@@ -620,9 +626,17 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 			opts.Sandbox = monomind.SandboxReadOnly
 			opts.RequireSandbox = true
 			requireSandbox = true
+			confinement = chatevents.ConfinementSandbox
+		default:
+			// Neither (an older monomind, or a runtime without read
+			// access): full access, told to stay read-only, and it holds
+			// the write lease (needsWriteLease).
+			confinement = chatevents.ConfinementWriteLease
 		}
-		// Neither: it holds the write lease instead (needsWriteLease).
 	}
+	c.mu.Lock()
+	w.confinement = confinement
+	c.mu.Unlock()
 	// The budget left for the whole org caps this exec. Runtimes that
 	// report no cost (codex, …) are capped by their estimated cost
 	// (estimate.go); with no tokens either, MaxTurns and the timeout bound
@@ -655,6 +669,9 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		monomind.ApplyEventToResult(&run, ev)
 		if overEstimate(m, &run, opts.BudgetUSD) && overBudget.CompareAndSwap(false, true) {
 			ecancel()
+		}
+		if c.subagents.Handle(c.cfg.Emit, ev, w.id+":", w.id) {
+			return
 		}
 		c.stream(w, ev, &run)
 		c.workerEvent(w, ev)
@@ -785,7 +802,7 @@ func (c *Conductor) setStatusLocked(w *worker, to, detail string) {
 	}
 	from := w.status
 	w.status = to
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: leaseNames(w.leases), Branch: w.branch})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: leaseNames(w.leases), Branch: w.branch, Confinement: w.confinement})
 }
 
 func (c *Conductor) finish(w *worker, outcome, report, errText string) {

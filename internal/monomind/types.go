@@ -93,6 +93,7 @@ type Event struct {
 	CoderFields
 	// start: the sandbox the turn runs in (see sandbox.go).
 	SandboxFields
+	SubagentFields
 }
 
 // CoderFields are the events and fields full-access ("coder") turns add to
@@ -125,6 +126,32 @@ type CoderFields struct {
 	// done: processes the turn started that were still running when it
 	// ended normally.
 	BackgroundPids []int `json:"background_pids,omitempty"`
+}
+
+// SubagentFields are a `subagent` event's fields (monomind#387, protocol
+// §3.2.1, capability agent-exec-subagent-events): one lifecycle step of a
+// native subagent (claude's Task/Agent tool; synthesized from a task-kind
+// call on other runtimes). Phase is "started", "progress" or "finished"
+// and ID the subagent's own id; ToolUseID joins it to the tool_activity
+// call that started it. A subagent's own text is an assistant event whose
+// ParentToolUseID is that call's id.
+type SubagentFields struct {
+	ToolUseID    string         `json:"tool_use_id,omitempty"`
+	SubagentType string         `json:"subagent_type,omitempty"` // started
+	Description  string         `json:"description,omitempty"`   // started
+	Prompt       string         `json:"prompt,omitempty"`        // started
+	Summary      string         `json:"summary,omitempty"`       // progress, finished
+	LastTool     string         `json:"last_tool,omitempty"`     // progress
+	Status       string         `json:"status,omitempty"`        // finished: completed, failed, stopped (denied when synthesized)
+	Usage        *SubagentUsage `json:"usage,omitempty"`         // progress, finished; claude only
+}
+
+// SubagentUsage is a subagent's cumulative usage as the Agent SDK reports
+// it: a token total, no input/output split and no cost.
+type SubagentUsage struct {
+	TotalTokens int64 `json:"total_tokens"`
+	ToolUses    int   `json:"tool_uses"`
+	DurationMs  int64 `json:"duration_ms"`
 }
 
 // MCPServerStatus is one entry of a status event's mcp_servers list.
@@ -178,6 +205,7 @@ type eventJSON struct {
 	CoderFields
 	// start: the sandbox the turn runs in (see sandbox.go).
 	SandboxFields
+	SubagentFields
 }
 
 // UnmarshalJSON decodes the wire event and records, in HasInputTokens/
@@ -199,8 +227,9 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		ID:                   w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
 		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
 		Code: w.Code, ErrMessage: w.ErrMessage, Fatal: w.Fatal,
-		CoderFields:   w.CoderFields,
-		SandboxFields: w.SandboxFields,
+		CoderFields:    w.CoderFields,
+		SandboxFields:  w.SandboxFields,
+		SubagentFields: w.SubagentFields,
 	}
 	if w.ExitCode != nil {
 		e.ExitCode = *w.ExitCode
@@ -238,8 +267,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		ID:                   e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
 		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
 		Code: e.Code, ErrMessage: e.ErrMessage, Fatal: e.Fatal,
-		CoderFields:   e.CoderFields,
-		SandboxFields: e.SandboxFields,
+		CoderFields:    e.CoderFields,
+		SandboxFields:  e.SandboxFields,
+		SubagentFields: e.SubagentFields,
 	}
 	if e.HasExitCode || e.ExitCode != 0 {
 		w.ExitCode = &e.ExitCode
@@ -270,6 +300,7 @@ const (
 
 	EventToolActivity = "tool_activity" // runner-native tool call (monomind#357)
 	EventStatus       = "status"        // runner startup progress (monomind#356)
+	EventSubagent     = "subagent"      // native subagent lifecycle (monomind#387)
 )
 
 // Error codes (protocol §3.4). Unknown codes must be treated as non-fatal.

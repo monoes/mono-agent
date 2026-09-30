@@ -167,8 +167,10 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 		// come back empty. An incremental runtime (start's
 		// streams_incrementally) sends the reply as deltas, so they are
 		// joined; otherwise each event is a whole message and the latest one
-		// is the answer. A result event with its own text still wins.
-		if ev.Text == "" || res.resultText {
+		// is the answer. A result event with its own text still wins. A
+		// native subagent's text (parent_tool_use_id, monomind#387) is not
+		// the agent's answer.
+		if ev.Text == "" || res.resultText || ev.ParentToolUseID != "" {
 			break
 		}
 		if res.incremental {

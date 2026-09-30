@@ -234,8 +234,10 @@ func (s *Staffer) staffModel(ctx context.Context, req SpawnRequest, st *Staff) e
 }
 
 // ruleModel is the model choice without Jev: research goes to the cheapest,
-// fastest ready model; writing work to the lead's own model when it can,
-// else the priciest (a stand-in for the strongest).
+// fastest ready model that runs read-only (--access read or a read-only
+// sandbox; one that doesn't must hold the write lease), else the cheapest;
+// writing work to the lead's own model when it can, else the priciest (a
+// stand-in for the strongest).
 func ruleModel(eligible []Model, lead Model, access string) Model {
 	sorted := slices.Clone(eligible)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -245,6 +247,9 @@ func ruleModel(eligible []Model, lead Model, access string) Model {
 		return sorted[i].LatencyMs < sorted[j].LatencyMs
 	})
 	if access == ProfileResearch {
+		if i := slices.IndexFunc(sorted, func(m Model) bool { return m.Read || m.ReadOnlySandbox }); i >= 0 {
+			return sorted[i]
+		}
 		return sorted[0]
 	}
 	if i := slices.IndexFunc(eligible, func(m Model) bool { return m.Key() == lead.Key() }); i >= 0 {

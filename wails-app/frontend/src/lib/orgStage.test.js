@@ -368,3 +368,56 @@ describe('selectors', () => {
     expect(hasTeam(replayStage(journal))).toBe(true)
   })
 })
+
+// monomind#387 (#230): the CLI journals a native subagent's lifecycle and
+// text as agent.* events for the node its Task call made.
+describe('reported native subagents', () => {
+  const at = (s) => `2026-09-30T10:00:${String(s).padStart(2, '0')}.000Z`
+  const base = [
+    { seq: 1, at: at(1), type: 'agent.spawned', payload: { agentId: 'w1', role: 'Researcher', runtime: 'claude', model: 'haiku' } },
+    { seq: 2, at: at(2), type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:t1', name: 'Task', native: true, kind: 'task', arguments: { subagent_type: 'Explore', prompt: 'Find the loader.' } } },
+  ]
+  const reported = [
+    ...base,
+    { seq: 3, at: at(3), type: 'agent.spawned', payload: { agentId: 'native:w1:t1', parentId: 'w1', agentType: 'native', role: 'Explore', brief: 'Find the loader.' } },
+    { seq: 4, at: at(4), type: 'agent.status', payload: { agentId: 'native:w1:t1', to: 'working' } },
+    { seq: 5, at: at(5), type: 'assistant.delta', payload: { agentId: 'native:w1:t1', partId: 'native:w1:t1:p1', text: 'Searching.' } },
+    { seq: 6, at: at(6), type: 'agent.status', payload: { agentId: 'native:w1:t1', from: 'working', to: 'working', detail: 'Found loadConfig' } },
+    { seq: 7, at: at(7), type: 'agent.message', payload: { agentId: 'native:w1:t1', direction: 'result', from: 'native:w1:t1', to: 'w1', text: 'It is loadConfig.' } },
+    { seq: 8, at: at(8), type: 'agent.finished', payload: { agentId: 'native:w1:t1', outcome: 'failed', summary: 'It is loadConfig.', durationMs: 3050 } },
+    { seq: 9, at: at(9), type: 'tool.completed', payload: { agentId: 'w1', callId: 'w1:t1', ok: true, result: 'the Task tool output' } },
+  ]
+
+  it('fills in the one node the Task call made, with its live text and progress', () => {
+    const live = replayStage(reported.slice(0, 6))
+    expect(live.order).toEqual([LEAD_ID, 'w1', 'native:w1:t1'])
+    const n = live.nodes['native:w1:t1']
+    expect(n).toMatchObject({ native: true, reported: true, parentId: 'w1', role: 'Explore', status: 'working', statusDetail: 'Found loadConfig', runtime: 'claude', model: 'haiku' })
+    expect(n.parts).toEqual([{ kind: 'text', partId: 'native:w1:t1:p1', text: 'Searching.' }])
+    expect(live.feed.filter(f => f.type === 'spawned' && f.agentId === 'native:w1:t1')).toHaveLength(1)
+    expect(live.edges.filter(e => e.to === 'native:w1:t1')).toHaveLength(1)
+  })
+
+  it('keeps the node under the caller its Task call put it under', () => {
+    const events = [...base, { seq: 3, type: 'agent.spawned', payload: { agentId: 'native:w1:t1', agentType: 'native', role: 'Explore' } }]
+    const s = replayStage(events)
+    expect(s.nodes['native:w1:t1'].parentId).toBe('w1')
+    expect(s.edges.filter(e => e.to === 'native:w1:t1').map(e => e.from)).toEqual(['w1'])
+  })
+
+  it('lets the reported finish decide, not the Task call\'s end', () => {
+    const n = replayStage(reported).nodes['native:w1:t1']
+    expect(n).toMatchObject({ status: 'failed', outcome: 'failed', summary: 'It is loadConfig.', durationMs: 3050 })
+    expect(replayStage(reported).feed.filter(f => f.type === 'finished' && f.agentId === 'native:w1:t1')).toHaveLength(1)
+  })
+
+  it('still infers the subagent from its Task call without the events (older monomind)', () => {
+    const n = replayStage([...base, { seq: 3, at: at(5), type: 'tool.completed', payload: { agentId: 'w1', callId: 'w1:t1', ok: true, result: 'the Task tool output' } }]).nodes['native:w1:t1']
+    expect(n).toMatchObject({ native: true, reported: false, status: 'done', summary: 'the Task tool output' })
+  })
+
+  it('closes a reported subagent from its Task call when no finish came', () => {
+    const cut = [...reported.slice(0, 6), { seq: 9, at: at(9), type: 'tool.completed', payload: { agentId: 'w1', callId: 'w1:t1', cancelled: true, result: '' } }]
+    expect(replayStage(cut).nodes['native:w1:t1'].status).toBe('cancelled')
+  })
+})
