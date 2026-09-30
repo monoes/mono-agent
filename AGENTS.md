@@ -650,22 +650,41 @@ How workers run:
   writers run in parallel. The folder sits inside the chat folder (writable,
   same disk, inside what the runtimes already allow) and is added to the
   repository's `.git/info/exclude`, never to the tracked `.gitignore`.
-  After each run the worker's changes are committed on its branch (hooks
-  skipped: it is a checkpoint). The lead gets `org_merge <agent_id>`, which
-  merges the branch into the chat folder (`--no-ff`) under the write lease.
-  A conflict aborts the merge, leaves the tree as it was, and returns a
-  tool error listing the conflicting files. `agent.spawned`, `agent.status`
-  and `org_wait` carry the `branch`, and the stage drawer shows it. At turn
-  end each worktree is removed, and its branch too once `HEAD` contains it;
-  a branch with unmerged commits is kept with an `org_branch_kept` notice.
-  Worktrees of turns no longer active are cleaned the same way by `chat
-  history reconcile` (app start; `worktrees` in its `--json`) and at the
-  start of the next isolated turn in that folder. Every removal is checked
-  to be inside the worktree folder (no symlinks out), and a folder in it
-  that isn't a worktree is left unless empty. A chat folder outside git, or
-  a repository with no commit, keeps the lease with an
-  `org_writers_shared` notice. Research workers and the lead's own edits
-  keep the lease rules above.
+  After each run the worker's changes are committed on its branch as a
+  checkpoint, with `--no-verify` and signing off: **merged work never
+  passed the repository's pre-commit hooks**, so the lead is told to run
+  the project's checks after merging. A checkpoint is only made in a
+  folder that is the top of a worktree whose `HEAD` is the worker's own
+  branch; a worktree that lost its `.git` or a worker that checked out
+  another branch gets an `org_checkpoint_failed` notice instead, so git
+  can never fall through to the chat folder's repository and commit the
+  user's own work. The lead gets `org_merge <agent_id>`, which merges the
+  branch into the chat folder (`--no-ff`) under the write lease, one merge
+  at a time; a worker being merged can't take a follow-up. A failed
+  checkpoint fails the merge. A conflict aborts the merge, leaves the tree
+  as it was, and returns a tool error listing the conflicting files.
+  `agent.spawned`, `agent.status` and `org_wait` carry the `branch`, and
+  the stage drawer shows it.
+  - **Cleanup:** at turn end each worktree is removed. A worktree with
+    changes that can't be committed, or whose `git status` fails, is kept.
+    Files git ignores in it (build output, `*.local` config) are removed
+    with it and listed in an `org_ignored_removed` notice. Its branch is
+    deleted only once another local branch contains it (a detached `HEAD`
+    doesn't count); otherwise it is kept with an `org_branch_kept` notice.
+    Worktrees of turns no longer running are cleaned the same way by
+    `chat history reconcile` (app start; `worktrees` in its `--json`) and
+    at the start of the next isolated turn in that folder. A running turn
+    holds a lock file (`<turn>/.lock`) and is skipped even when the
+    database already calls it finished. Every removal is checked to be
+    inside the worktree folder (no symlinks out), and a folder in it that
+    isn't a worktree is left unless empty.
+  - **Visible to some tools:** git ignores the worktrees, but tools that
+    don't read git's excludes (jest's haste map, some globs, file
+    watchers) see duplicate files under `.monoagent-worktrees/` while a
+    turn runs; the lead's prompt says so.
+  - A chat folder outside git, or a repository with no commit, keeps the
+    lease with an `org_writers_shared` notice. Research workers and the
+    lead's own edits keep the lease rules above.
 - **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
   (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
   3 follow-ups (`org_message`) per worker.

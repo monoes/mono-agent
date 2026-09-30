@@ -71,8 +71,10 @@ type Conductor struct {
 	leadEdits    map[string]bool
 	leadHolds    bool
 	leadWarnings []string
-	// iso is set when writers get their own worktrees (worktree.go).
-	iso *isolation
+	// iso is set when writers get their own worktrees (worktree.go);
+	// mergeMu runs org_merge calls one at a time.
+	iso     *isolation
+	mergeMu sync.Mutex
 }
 
 type worker struct {
@@ -115,7 +117,9 @@ type worker struct {
 	leases   []heldLease  // the leases it holds, for agent.status (lease.go)
 	// worktree, branch and workDir are set for an isolated writer
 	// (worktree.go): it runs in workDir, inside worktree, on branch.
+	// merging is set while org_merge commits and merges its branch.
 	worktree, branch, workDir string
+	merging                   bool
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -334,6 +338,10 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	if running(w.status) {
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("%s is still working; org_wait for it first", id)
+	}
+	if w.merging {
+		c.mu.Unlock()
+		return WorkerInfo{}, fmt.Errorf("%s's branch is being merged; send the follow-up once org_merge returns", id)
 	}
 	if err := c.budgetErrLocked(); err != nil {
 		c.mu.Unlock()

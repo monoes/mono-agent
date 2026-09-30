@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -27,18 +28,28 @@ import (
 // allow), not a sibling folder the chat may not be able to create. The
 // folder is listed in the repository's own .git/info/exclude, so it never
 // shows in `git status` or gets added, and the user's tracked .gitignore
-// is left alone. Everything removed is checked to be inside that folder.
+// is left alone. Tools that don't read git's excludes (jest's haste map,
+// some globs and file watchers) do see the worktrees while they exist.
+// Everything removed is checked to be inside that folder.
 //
 // Branches are monoagent/<turn>/<worker>, cut from the chat folder's HEAD
 // when the worker is spawned: the lead's uncommitted edits are not in
 // them. After each run the worker's changes are committed on its branch
-// (hooks skipped: it is a checkpoint, not the user's commit).
+// as a checkpoint: hooks are skipped (--no-verify) and so is signing, so
+// merged work never passed the repository's pre-commit hooks. A commit is
+// only ever made in a folder that is the top of a worktree on the worker's
+// own branch, so git can never fall through to the chat folder's
+// repository and commit the user's own work.
 //
 // Cleanup: at the end of the turn, and when a turn that is no longer
-// active left worktrees behind (`chat history reconcile`, and the start of
-// the next isolated turn in the same folder), each worktree is removed. Its
-// branch goes too once it is merged; a branch with unmerged commits is kept
-// and journaled (a notice, or the reconcile result), never deleted.
+// running left worktrees behind (`chat history reconcile`, and the start
+// of the next isolated turn in the same folder), each worktree is removed.
+// A running turn holds a lock file in its folder, and cleanup skips a
+// locked folder. A worktree with changes that can't be committed is kept.
+// Its branch goes too only once another branch contains it; otherwise it
+// is kept and journaled (a notice, or the reconcile result), never
+// deleted. Files the repository ignores (build output, local config) go
+// with the worktree; they are journaled first.
 //
 // A folder that is not in a git repository (or one with no commit yet)
 // keeps the write lease, with a notice.
@@ -56,6 +67,9 @@ const WorktreeDirName = ".monoagent-worktrees"
 // BranchPrefix starts every worker branch.
 const BranchPrefix = "monoagent/"
 
+// turnLockName is the lock file a running turn holds in its folder.
+const turnLockName = ".lock"
+
 // Notice codes.
 const (
 	// NoticeWritersShared: isolated writers were asked for but this turn (or
@@ -64,6 +78,11 @@ const (
 	// NoticeBranchKept: a worker's branch has commits that were never
 	// merged, so it outlives its worktree.
 	NoticeBranchKept = "org_branch_kept"
+	// NoticeIgnoredRemoved: files git ignores were removed with a worktree.
+	NoticeIgnoredRemoved = "org_ignored_removed"
+	// NoticeCheckpointFailed: a worker's changes could not be committed on
+	// its branch.
+	NoticeCheckpointFailed = "org_checkpoint_failed"
 )
 
 // ToolMerge is the lead's merge tool, given only with isolated writers.
@@ -76,6 +95,9 @@ var gitTimeout = 2 * time.Minute
 // a branch component: no dots or slashes, so never "..", ".lock" or a path.
 var treeID = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$`)
 
+// maxIgnoredListed caps the ignored paths a notice names.
+const maxIgnoredListed = 10
+
 // isolation is a turn's worktree setup.
 type isolation struct {
 	cwd     string // the chat folder, where merges happen
@@ -83,6 +105,7 @@ type isolation struct {
 	base    string // <cwd>/.monoagent-worktrees
 	turnDir string // <base>/<turn>
 	turn    string
+	unlock  func() // releases the turn's lock file
 }
 
 // MergeToolSpec is org_merge's spec.
@@ -90,7 +113,8 @@ func MergeToolSpec() monomind.ToolSpec {
 	return monomind.ToolSpec{
 		Name: ToolMerge,
 		Description: "Merge a finished writer's branch into your working tree. On a conflict the merge is aborted, " +
-			"your tree is left as it was, and the error lists the conflicting files.",
+			"your tree is left as it was, and the error lists the conflicting files. The writer's commits skipped the " +
+			"repository's hooks, so run its checks after merging.",
 		Schema: obj(map[string]any{"agent_id": str("The writing worker.")}, "agent_id"),
 	}
 }
@@ -102,7 +126,10 @@ const IsolatedLeadPrompt = " Writers are isolated this turn: each writing worker
 	"and don't wait for a lease. After you read a writer's report, org_merge it to bring its branch into your working " +
 	"tree. A conflict aborts the merge, leaves your tree as it was and lists the files: resolve it with an org_message " +
 	"follow-up to the worker or by editing yourself. Commit your own edits first if a writer needs them or a merge " +
-	"touches them. Branches you don't merge are kept after the turn."
+	"touches them. The writers' commits skip the repository's hooks, so run the project's checks after merging. " +
+	"The worktrees sit in " + WorktreeDirName + "/ inside this folder until the turn ends: git ignores them, but " +
+	"tools that don't read git's excludes (jest, some globs, file watchers) may see duplicate files there, so point " +
+	"such tools away from it. Branches you don't merge are kept after the turn."
 
 // initWriters sets up isolated writers when the setting asks for them, or
 // journals why this turn keeps the write lease.
@@ -125,7 +152,8 @@ func (c *Conductor) initWriters() {
 func (c *Conductor) Isolated() bool { return c.iso != nil }
 
 // newIsolation checks that cwd is in a git repository with a commit to
-// branch from, and makes sure the worktree folder is excluded.
+// branch from, makes sure the worktree folder is excluded, and takes the
+// turn's lock.
 func newIsolation(ctx context.Context, cwd, turn string) (*isolation, error) {
 	if !treeID.MatchString(turn) {
 		return nil, fmt.Errorf("the turn id %q can't name a branch", turn)
@@ -147,7 +175,12 @@ func newIsolation(ctx context.Context, cwd, turn string) (*isolation, error) {
 	if err := excludeWorktrees(ctx, cwd); err != nil {
 		return nil, err
 	}
-	return &isolation{cwd: cwd, prefix: strings.TrimSpace(prefix), base: base, turnDir: filepath.Join(base, turn), turn: turn}, nil
+	turnDir := filepath.Join(base, turn)
+	unlock, err := daemonhb.LockFile(filepath.Join(turnDir, turnLockName))
+	if err != nil {
+		return nil, fmt.Errorf("can't lock %s: %v", turnDir, err)
+	}
+	return &isolation{cwd: cwd, prefix: strings.TrimSpace(prefix), base: base, turnDir: turnDir, turn: turn, unlock: unlock}, nil
 }
 
 // safeBase is cwd's worktree folder, refused when it is anything but a
@@ -212,11 +245,7 @@ func (c *Conductor) addWorktree(w *worker) {
 	}
 	path := filepath.Join(c.iso.turnDir, w.id)
 	branch := branchName(c.iso.turn, w.id)
-	err := os.MkdirAll(c.iso.turnDir, 0o755)
-	if err == nil {
-		_, err = gitRun(c.ctx, c.iso.cwd, "worktree", "add", "--quiet", "-b", branch, path, "HEAD")
-	}
-	if err != nil {
+	if _, err := gitRun(c.ctx, c.iso.cwd, "worktree", "add", "--quiet", "-b", branch, path, "HEAD"); err != nil {
 		c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
 			Code: NoticeWritersShared, Severity: chatevents.SeverityWarning,
 			Message: fmt.Sprintf("%s works in the chat folder under the write lease: its worktree could not be created (%v).", w.id, err),
@@ -251,22 +280,25 @@ func (c *Conductor) worktreeRule(w *worker) string {
 		"finish, and the lead merges your branch.\n"
 }
 
-// commitWorktree commits whatever w changed in its worktree during its run.
-func (c *Conductor) commitWorktree(w *worker) {
+// commitWorktree commits whatever w changed in its worktree during its
+// run, and journals a failure.
+func (c *Conductor) commitWorktree(w *worker) error {
 	c.mu.Lock()
-	dir, role, brief := w.worktree, w.staff.Role, w.brief
+	dir, branch, role, brief := w.worktree, w.branch, w.staff.Role, w.brief
 	c.mu.Unlock()
 	if dir == "" {
-		return
+		return nil
 	}
 	ctx := context.WithoutCancel(c.ctx)
 	subject, _, _ := strings.Cut(strings.TrimSpace(brief), "\n")
-	if err := commitAll(ctx, dir, fmt.Sprintf("%s (%s): %s", w.id, role, clipText(subject, 60))); err != nil {
+	err := commitAll(ctx, dir, branch, fmt.Sprintf("%s (%s): %s", w.id, role, clipText(subject, 60)))
+	if err != nil {
 		c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
-			Code: NoticeWritersShared, Severity: chatevents.SeverityWarning,
-			Message: fmt.Sprintf("%s's changes could not be committed on %s: %v", w.id, filepath.Base(dir), err),
+			Code: NoticeCheckpointFailed, Severity: chatevents.SeverityWarning,
+			Message: fmt.Sprintf("%s's changes could not be committed on %s: %v", w.id, branch, err),
 		})
 	}
+	return err
 }
 
 // MergeResult is org_merge's result.
@@ -281,11 +313,14 @@ type MergeResult struct {
 
 // Merge merges a finished writer's branch into the chat folder. A conflict
 // aborts the merge (the tree is left as it was) and is returned as an
-// error listing the conflicting files.
+// error listing the conflicting files. Merges run one at a time, and a
+// worker being merged can't take a follow-up.
 func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 	if c.iso == nil {
 		return MergeResult{}, errors.New("writers are not isolated this turn, so there is nothing to merge: they edit the chat folder directly")
 	}
+	c.mergeMu.Lock()
+	defer c.mergeMu.Unlock()
 	c.mu.Lock()
 	w := c.workers[id]
 	switch {
@@ -300,10 +335,16 @@ func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 		return MergeResult{}, fmt.Errorf("%s is still working; org_wait for it first", id)
 	}
 	branch := w.branch
+	w.merging = true // claimed with the running check: no follow-up starts now
 	// The merge writes the chat folder, so it takes the write lease like any
 	// edit there (the lead's own edits, an unconfined researcher).
 	holds := c.leadHolds
 	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		w.merging = false
+		c.mu.Unlock()
+	}()
 	if !holds {
 		if !c.write.tryAcquire() {
 			c.mu.Lock()
@@ -313,15 +354,18 @@ func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 		}
 		defer c.write.release()
 	}
-	c.commitWorktree(w)
 	res := MergeResult{AgentID: id, Branch: branch}
+	if err := c.commitWorktree(w); err != nil {
+		return res, fmt.Errorf("%s's latest changes could not be committed on %s, so nothing was merged: %v", id, branch, err)
+	}
 	before, _ := gitRun(ctx, c.iso.cwd, "rev-parse", "HEAD")
 	msg := fmt.Sprintf("Merge %s (%s)", branch, id)
-	if _, err := gitRun(ctx, c.iso.cwd, withIdentity(ctx, c.iso.cwd, "merge", "--no-ff", "--no-edit", "-m", msg, branch)...); err != nil {
-		out, _ := gitRun(context.WithoutCancel(ctx), c.iso.cwd, "diff", "--name-only", "--diff-filter=U")
+	if _, err := gitRun(ctx, c.iso.cwd, withIdentity(ctx, c.iso.cwd, "merge", "--no-ff", "--no-edit", "-m", msg, "refs/heads/"+branch)...); err != nil {
+		bg := context.WithoutCancel(ctx)
+		out, _ := gitRun(bg, c.iso.cwd, "diff", "--name-only", "--diff-filter=U")
 		conflicts := strings.Fields(out)
-		if _, merging := gitRun(context.WithoutCancel(ctx), c.iso.cwd, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); merging == nil {
-			if _, aerr := gitRun(context.WithoutCancel(ctx), c.iso.cwd, "merge", "--abort"); aerr != nil {
+		if _, merging := gitRun(bg, c.iso.cwd, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); merging == nil {
+			if _, aerr := gitRun(bg, c.iso.cwd, "merge", "--abort"); aerr != nil {
 				return res, fmt.Errorf("merging %s failed and the merge could not be aborted (%v); run `git merge --abort` in the chat folder", branch, aerr)
 			}
 		}
@@ -340,11 +384,12 @@ func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 	res.Commit = strings.TrimSpace(after)
 	files, _ := gitRun(ctx, c.iso.cwd, "diff", "--name-only", strings.TrimSpace(before), res.Commit)
 	res.Files = strings.Fields(files)
+	res.Note = "the worker's commits skipped the repository's hooks; run the project's checks"
 	return res, nil
 }
 
 // cleanupWorktrees removes the turn's worktrees at its end, keeping the
-// branches that hold unmerged work.
+// branches that hold unmerged work, then lets go of the turn's lock.
 func (c *Conductor) cleanupWorktrees() {
 	if c.iso == nil {
 		return
@@ -361,21 +406,33 @@ func (c *Conductor) cleanupWorktrees() {
 	c.mu.Unlock()
 	for _, w := range trees {
 		r := removeTree(ctx, c.iso.cwd, c.iso.base, w.path, w.branch)
-		switch {
-		case r.Error != "":
-			c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
-				Code: NoticeBranchKept, Severity: chatevents.SeverityWarning,
-				Message: fmt.Sprintf("%s's worktree %s was left in place: %s", w.id, w.path, r.Error),
-			})
-		case r.BranchKept:
-			c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
-				Code: NoticeBranchKept, Severity: chatevents.SeverityInfo,
-				Message: fmt.Sprintf("%s's work was not merged; it is kept on branch %s (git merge %s to take it, git branch -D %s to drop it).", w.id, w.branch, w.branch, w.branch),
-			})
-		}
+		c.reportCleanup(w.id, r)
 	}
-	removeEmptyDir(c.iso.base, c.iso.turnDir)
+	c.iso.unlock()
+	releaseTurnDir(c.iso.base, c.iso.turnDir)
 	_, _ = gitRun(ctx, c.iso.cwd, "worktree", "prune")
+}
+
+// reportCleanup journals what removing a worker's worktree left behind.
+func (c *Conductor) reportCleanup(id string, r TreeCleanup) {
+	if len(r.Ignored) > 0 {
+		c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
+			Code: NoticeIgnoredRemoved, Severity: chatevents.SeverityInfo,
+			Message: fmt.Sprintf("%s's worktree held files git ignores, removed with it: %s", id, strings.Join(r.Ignored, ", ")),
+		})
+	}
+	switch {
+	case r.Error != "":
+		c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
+			Code: NoticeBranchKept, Severity: chatevents.SeverityWarning,
+			Message: fmt.Sprintf("%s's worktree %s was left in place: %s", id, r.Path, r.Error),
+		})
+	case r.BranchKept:
+		c.cfg.Emit.Emit(chatevents.EventNotice, chatevents.NoticePayload{
+			Code: NoticeBranchKept, Severity: chatevents.SeverityInfo,
+			Message: fmt.Sprintf("%s's work was not merged into a branch; it is kept on branch %s (git merge %s to take it, git branch -D %s to drop it).", id, r.Branch, r.Branch, r.Branch),
+		})
+	}
 }
 
 // TreeCleanup is what cleaning one worker's worktree did.
@@ -386,13 +443,22 @@ type TreeCleanup struct {
 	Branch     string `json:"branch"`
 	Removed    bool   `json:"removed"`
 	BranchKept bool   `json:"branch_kept"`
-	Error      string `json:"error,omitempty"`
+	// Ignored lists files git ignores that were removed with the worktree
+	// (at most maxIgnoredListed, then "…").
+	Ignored []string `json:"ignored_removed,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
+
+// statusPorcelain is `git status --porcelain` in dir; a var so a test can
+// make it fail.
+var statusPorcelain = func(ctx context.Context, dir string) (string, error) {
+	return gitRun(ctx, dir, "status", "--porcelain")
 }
 
 // removeTree removes one worktree (after committing anything left in it)
-// and its branch when the chat folder's HEAD already has the branch's
-// commits. A branch with unmerged commits is kept. Nothing outside base
-// is touched.
+// and its branch once another branch contains it. A worktree whose changes
+// can't be committed, or whose state can't be read, is kept. Nothing
+// outside base is touched.
 func removeTree(ctx context.Context, repo, base, path, branch string) TreeCleanup {
 	r := TreeCleanup{Path: path, Branch: branch}
 	if !within(base, path) {
@@ -410,14 +476,25 @@ func removeTree(ctx context.Context, repo, base, path, branch string) TreeCleanu
 			r.Removed = true
 			return r
 		}
-		if err := commitAll(ctx, path, "mono-agent: work left in the worktree"); err != nil {
-			// Uncommitted work that can't be committed stays where it is.
-			if dirty, _ := gitRun(ctx, path, "status", "--porcelain"); strings.TrimSpace(dirty) != "" {
+		if err := commitAll(ctx, path, branch, "mono-agent: work left in the worktree"); err != nil {
+			// Changes that can't be committed stay where they are, and so
+			// does everything when their state can't even be read.
+			dirty, serr := statusPorcelain(ctx, path)
+			if serr != nil {
+				r.Error = "its state could not be read: " + serr.Error()
+				return r
+			}
+			if strings.TrimSpace(dirty) != "" {
 				r.Error = "it has changes that could not be committed: " + err.Error()
 				return r
 			}
 		}
+		r.Ignored = ignoredFiles(ctx, path)
 		if _, err := gitRun(ctx, repo, "worktree", "remove", "--force", path); err != nil {
+			if !within(base, path) {
+				r.Error = "refused: the path is outside " + base
+				return r
+			}
 			if err := os.RemoveAll(path); err != nil {
 				r.Error = err.Error()
 				return r
@@ -429,7 +506,7 @@ func removeTree(ctx context.Context, repo, base, path, branch string) TreeCleanu
 	if _, err := gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
 		return r // no branch (never created, or already gone)
 	}
-	if _, err := gitRun(ctx, repo, "merge-base", "--is-ancestor", "refs/heads/"+branch, "HEAD"); err != nil {
+	if !containedElsewhere(ctx, repo, branch) {
 		r.BranchKept = true
 		return r
 	}
@@ -439,10 +516,47 @@ func removeTree(ctx context.Context, repo, base, path, branch string) TreeCleanu
 	return r
 }
 
+// containedElsewhere reports whether another local branch holds every
+// commit of branch, so deleting it loses nothing. A detached HEAD doesn't
+// count: its commits are lost once it moves.
+func containedElsewhere(ctx context.Context, repo, branch string) bool {
+	out, err := gitRun(ctx, repo, "for-each-ref", "--format=%(refname)", "--contains", "refs/heads/"+branch, "refs/heads/")
+	if err != nil {
+		return false
+	}
+	for _, ref := range strings.Fields(out) {
+		if ref != "refs/heads/"+branch {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoredFiles lists what git ignores in a worktree (folders collapsed),
+// capped for a notice.
+func ignoredFiles(ctx context.Context, dir string) []string {
+	out, err := gitRun(ctx, dir, "status", "--porcelain", "--ignored")
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, l := range strings.Split(out, "\n") {
+		if p, ok := strings.CutPrefix(l, "!! "); ok {
+			if len(files) == maxIgnoredListed {
+				files = append(files, "…")
+				break
+			}
+			files = append(files, p)
+		}
+	}
+	return files
+}
+
 // ReconcileWorktrees removes the worktrees under cwd that belong to turns
-// no longer active (active reports whether a turn id is still running),
-// keeping their unmerged branches. The app's startup reconcile and the
-// start of each isolated turn call it.
+// no longer running, keeping their unmerged branches. A turn counts as
+// running when active says so (not finalized) or when its process still
+// holds its lock. The app's startup reconcile and the start of each
+// isolated turn call it.
 func ReconcileWorktrees(ctx context.Context, cwd string, active func(turnID string) bool) []TreeCleanup {
 	base, err := safeBase(cwd)
 	if err != nil {
@@ -462,6 +576,10 @@ func ReconcileWorktrees(ctx context.Context, cwd string, active func(turnID stri
 			continue
 		}
 		turnDir := filepath.Join(base, t.Name())
+		unlock, err := daemonhb.LockFile(filepath.Join(turnDir, turnLockName))
+		if err != nil {
+			continue // its turn is still running in some process
+		}
 		trees, _ := os.ReadDir(turnDir)
 		for _, w := range trees {
 			if !w.IsDir() || !treeID.MatchString(w.Name()) {
@@ -471,108 +589,9 @@ func ReconcileWorktrees(ctx context.Context, cwd string, active func(turnID stri
 			r.Turn, r.Agent = t.Name(), w.Name()
 			out = append(out, r)
 		}
-		removeEmptyDir(base, turnDir)
+		unlock()
+		releaseTurnDir(base, turnDir)
 	}
 	_, _ = gitRun(ctx, cwd, "worktree", "prune")
 	return out
-}
-
-// within reports whether p lies strictly inside base, with symlinks in
-// both resolved as far as they exist: the guard before anything under the
-// worktree folder is removed.
-func within(base, p string) bool {
-	if base == "" || p == "" || filepath.Base(base) != WorktreeDirName {
-		return false
-	}
-	b, err := filepath.Abs(base)
-	if err != nil {
-		return false
-	}
-	if rb, err := filepath.EvalSymlinks(b); err == nil {
-		b = rb
-	}
-	a, err := filepath.Abs(p)
-	if err != nil {
-		return false
-	}
-	// Resolve the parent, not p itself: removing a symlink removes the link.
-	if rp, err := filepath.EvalSymlinks(filepath.Dir(a)); err == nil {
-		a = filepath.Join(rp, filepath.Base(a))
-	}
-	rel, err := filepath.Rel(b, a)
-	if err != nil || rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return true
-}
-
-// isWorktreeRoot reports whether dir is the top of a git worktree (not
-// just a folder inside the chat folder's repository).
-func isWorktreeRoot(ctx context.Context, dir string) bool {
-	top, err := gitRun(ctx, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return false
-	}
-	a, err1 := filepath.EvalSymlinks(strings.TrimSpace(top))
-	b, err2 := filepath.EvalSymlinks(dir)
-	return err1 == nil && err2 == nil && a == b
-}
-
-// removeEmptyDir removes dir if it is empty and inside base.
-func removeEmptyDir(base, dir string) {
-	if within(base, dir) {
-		_ = os.Remove(dir)
-	}
-	if entries, err := os.ReadDir(base); err == nil && len(entries) == 0 {
-		_ = os.Remove(base)
-	}
-}
-
-// commitAll commits every change in dir, if there is any.
-func commitAll(ctx context.Context, dir, msg string) error {
-	if _, err := gitRun(ctx, dir, "add", "--all"); err != nil {
-		return err
-	}
-	if _, err := gitRun(ctx, dir, "diff", "--cached", "--quiet"); err == nil {
-		return nil // nothing staged
-	}
-	_, err := gitRun(ctx, dir, withIdentity(ctx, dir, "commit", "--quiet", "--no-verify", "-m", msg)...)
-	return err
-}
-
-// withIdentity prefixes args with a stand-in committer when the repository
-// has none configured, so a checkpoint commit or a merge never fails for
-// the lack of one. A configured identity is always used as it is.
-func withIdentity(ctx context.Context, dir string, args ...string) []string {
-	name, _ := gitRun(ctx, dir, "config", "user.name")
-	email, _ := gitRun(ctx, dir, "config", "user.email")
-	var pre []string
-	if strings.TrimSpace(name) == "" {
-		pre = append(pre, "-c", "user.name=mono-agent")
-	}
-	if strings.TrimSpace(email) == "" {
-		pre = append(pre, "-c", "user.email=mono-agent@localhost")
-	}
-	return append(pre, args...)
-}
-
-// gitRun runs git in dir and returns its stdout; an error carries stderr.
-func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_MERGE_AUTOEDIT=no", "LC_ALL=C")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		if msg == "" {
-			msg = err.Error()
-		}
-		return stdout.String(), errors.New(boundText(msg, 600))
-	}
-	return stdout.String(), nil
 }

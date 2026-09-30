@@ -379,7 +379,7 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().IntVar(&orgConc, "org-max-concurrent", 0, "Dynamic org: workers running at once (default 3)")
 	c.Flags().Float64Var(&orgBudg, "org-budget-usd", 0, "Dynamic org: reported worker cost cap per message in USD (0 = none)")
 	c.Flags().StringVar(&picker, "org-model-picker", "", "Dynamic org: who picks a worker's model when the lead doesn't: lead-then-jev (default) or lead")
-	c.Flags().StringVar(&writers, "org-writers", "", "Dynamic org: shared (default; one writer at a time under the write lease) or isolated (each writer gets its own git worktree and branch, merged by the lead)")
+	c.Flags().StringVar(&writers, "org-writers", "", "Dynamic org: shared (default; one writer at a time under the write lease) or isolated (each writer gets its own git worktree and branch, merged by the lead; its checkpoint commits skip git hooks, so merged work never passed pre-commit, and the worktrees under .monoagent-worktrees/ are visible to tools that ignore git excludes)")
 	return c
 }
 

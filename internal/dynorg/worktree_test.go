@@ -77,7 +77,15 @@ func (e *fileExec) exec(ctx context.Context, o monomind.ExecOptions, on func(mon
 		}
 	}
 	on(monomind.Event{Type: monomind.EventStart})
-	if f := strings.Fields(o.Prompt); len(f) == 3 && f[0] == "write" {
+	f := strings.Fields(o.Prompt)
+	if len(f) == 3 && f[0] == "checkout" {
+		// A worker that leaves its branch, then writes.
+		if _, err := gitRun(ctx, o.Cwd, "checkout", "--quiet", "-b", "elsewhere"); err != nil {
+			return nil, err
+		}
+		f[0] = "write"
+	}
+	if len(f) == 3 && f[0] == "write" {
 		if err := os.WriteFile(filepath.Join(o.Cwd, f[1]), []byte(f[2]+"\n"), 0o644); err != nil {
 			return nil, err
 		}
@@ -506,5 +514,304 @@ func TestWorkerPromptNamesItsWorktree(t *testing.T) {
 	c.Wait(context.Background(), nil, 10*time.Second)
 	if len(prompts) != 1 || !strings.Contains(prompts[0], "monoagent/t8/w1") || !strings.Contains(prompts[0], filepath.Join(WorktreeDirName, "t8", "w1")) {
 		t.Errorf("prompt = %q", prompts)
+	}
+}
+
+// userWIP leaves the user's own uncommitted work in the chat folder: a
+// modified tracked file and an untracked secret.
+func userWIP(t *testing.T, repo string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("user wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "secret.env"), []byte("TOKEN=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertWIPUntouched checks the user's work is still uncommitted and HEAD
+// didn't move.
+func assertWIPUntouched(t *testing.T, repo, head string) {
+	t.Helper()
+	if got := gitT(t, repo, "rev-parse", "HEAD"); got != head {
+		t.Errorf("HEAD moved: %s", gitT(t, repo, "log", "--stat", "-1"))
+	}
+	st := gitT(t, repo, "status", "--porcelain")
+	if !strings.Contains(st, "M b.txt") || !strings.Contains(st, "?? secret.env") {
+		t.Errorf("the user's work isn't left as it was:\n%s", st)
+	}
+}
+
+func TestLostGitFileNeverCommitsTheUsersWork(t *testing.T) {
+	repo := newRepo(t)
+	c, em := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m1")
+	spawnWriter(t, c, "write one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	userWIP(t, repo)
+	head := gitT(t, repo, "rev-parse", "HEAD")
+	// The worktree loses its .git (the worker removed it, or a sweep did and
+	// the worker's next write recreated the folder), and has new work.
+	wt := filepath.Join(realPath(t, repo), WorktreeDirName, "m1", "w1")
+	if err := os.Remove(filepath.Join(wt, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "more.txt"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := c.Merge(context.Background(), "w1"); err == nil || res.Merged || !strings.Contains(err.Error(), "nothing was merged") {
+		t.Errorf("merge = %+v, %v; want a refusal", res, err)
+	}
+	assertWIPUntouched(t, repo, head)
+	c.Close()
+	assertWIPUntouched(t, repo, head)
+	if _, err := os.Stat(filepath.Join(wt, "more.txt")); err != nil {
+		t.Errorf("the worktree's own files were removed: %v", err)
+	}
+	if len(notices(em, NoticeCheckpointFailed)) == 0 || len(notices(em, NoticeBranchKept)) == 0 {
+		t.Errorf("the failure and the kept folder must be journaled: %v", em.find(chatevents.EventNotice))
+	}
+}
+
+func TestWorkerOnAnotherBranchIsNeverCommittedFor(t *testing.T) {
+	repo := newRepo(t)
+	c, em := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m2")
+	spawnWriter(t, c, "checkout one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	if n := notices(em, NoticeCheckpointFailed); len(n) != 1 || !strings.Contains(n[0], "elsewhere") {
+		t.Errorf("checkpoint notices = %q", n)
+	}
+	if _, err := c.Merge(context.Background(), "w1"); err == nil {
+		t.Error("a worker off its branch must not be merged")
+	}
+	c.Close()
+	// Nothing was committed on either branch, and the dirty worktree stays.
+	for _, br := range []string{"elsewhere", "monoagent/m2/w1"} {
+		if n := gitT(t, repo, "rev-list", "--count", "HEAD.."+br); n != "0" {
+			t.Errorf("%s got %s commit(s)", br, n)
+		}
+	}
+	wt := filepath.Join(realPath(t, repo), WorktreeDirName, "m2", "w1")
+	if _, err := os.Stat(filepath.Join(wt, "one.txt")); err != nil {
+		t.Errorf("the uncommitted work was removed: %v", err)
+	}
+}
+
+func TestRemoveTreeKeepsAWorktreeWhoseStateCantBeRead(t *testing.T) {
+	repo := newRepo(t)
+	base := filepath.Join(realPath(t, repo), WorktreeDirName)
+	wt := filepath.Join(base, "m3", "w1")
+	gitT(t, repo, "worktree", "add", "--quiet", "-b", "monoagent/m3/w1", wt, "HEAD")
+	gitT(t, wt, "checkout", "--quiet", "-b", "off") // so the checkpoint commit is refused
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := statusPorcelain
+	statusPorcelain = func(context.Context, string) (string, error) { return "", os.ErrDeadlineExceeded }
+	defer func() { statusPorcelain = orig }()
+	r := removeTree(context.Background(), repo, base, wt, "monoagent/m3/w1")
+	if r.Removed || !strings.Contains(r.Error, "could not be read") {
+		t.Errorf("removeTree = %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "wip.txt")); err != nil {
+		t.Errorf("uncommitted work was deleted: %v", err)
+	}
+}
+
+func TestRemoveTreeKeepsADirtyWorktreeWhoseCommitFails(t *testing.T) {
+	repo := newRepo(t)
+	base := filepath.Join(realPath(t, repo), WorktreeDirName)
+	wt := filepath.Join(base, "m4", "w1")
+	gitT(t, repo, "worktree", "add", "--quiet", "-b", "monoagent/m4/w1", wt, "HEAD")
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A stale index lock makes `git add` fail.
+	gitDir := gitT(t, wt, "rev-parse", "--absolute-git-dir")
+	if err := os.WriteFile(filepath.Join(gitDir, "index.lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := removeTree(context.Background(), repo, base, wt, "monoagent/m4/w1")
+	if r.Removed || !strings.Contains(r.Error, "could not be committed") {
+		t.Errorf("removeTree = %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "wip.txt")); err != nil {
+		t.Errorf("uncommitted work was deleted: %v", err)
+	}
+}
+
+func TestReconcileSkipsATurnStillRunningElsewhere(t *testing.T) {
+	repo := newRepo(t)
+	c, _ := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "live2")
+	spawnWriter(t, c, "write one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	// The DB says the turn is over (a reconcile finalized it), but its
+	// process still runs and holds the lock.
+	if res := ReconcileWorktrees(context.Background(), repo, func(string) bool { return false }); len(res) != 0 {
+		t.Errorf("reconcile touched a running turn: %+v", res)
+	}
+	wt := filepath.Join(realPath(t, repo), WorktreeDirName, "live2", "w1")
+	if !isWorktreeRoot(context.Background(), wt) {
+		t.Fatal("the running turn's worktree is gone")
+	}
+	c.Close()
+	if _, err := os.Stat(filepath.Join(repo, WorktreeDirName)); !os.IsNotExist(err) {
+		t.Errorf("the turn's own cleanup left %v", err)
+	}
+}
+
+func TestCheckpointIgnoresSigningConfig(t *testing.T) {
+	repo := newRepo(t)
+	gitT(t, repo, "config", "commit.gpgsign", "true")
+	gitT(t, repo, "config", "gpg.program", "false") // signing would fail (or wait on a pinentry)
+	c, em := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m5")
+	defer c.Close()
+	spawnWriter(t, c, "write one.txt signed")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	if n := notices(em, NoticeCheckpointFailed); len(n) != 0 {
+		t.Fatalf("checkpoint failed: %q", n)
+	}
+	if got := gitT(t, repo, "show", "monoagent/m5/w1:one.txt"); got != "signed" {
+		t.Errorf("branch has %q", got)
+	}
+}
+
+func TestDetachedHeadKeepsTheMergedBranch(t *testing.T) {
+	repo := newRepo(t)
+	gitT(t, repo, "checkout", "--quiet", "--detach")
+	c, em := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m6")
+	spawnWriter(t, c, "write one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	if _, err := c.Merge(context.Background(), "w1"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	// The merge lives only on the detached HEAD: the branch is what keeps it.
+	if !branchExists(t, repo, "monoagent/m6/w1") {
+		t.Error("the branch was deleted though only a detached HEAD has its work")
+	}
+	if len(notices(em, NoticeBranchKept)) != 1 {
+		t.Errorf("kept notices = %q", notices(em, NoticeBranchKept))
+	}
+}
+
+func TestIgnoredFilesRemovedWithTheWorktreeAreJournaled(t *testing.T) {
+	repo := newRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, repo, "add", ".gitignore")
+	gitT(t, repo, "commit", "--quiet", "-m", "ignore")
+	c, em := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m7")
+	spawnWriter(t, c, "write config.local secret")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	c.Close()
+	if n := notices(em, NoticeIgnoredRemoved); len(n) != 1 || !strings.Contains(n[0], "config.local") {
+		t.Errorf("ignored notices = %q", n)
+	}
+}
+
+func TestMergesAreSerializedAndBlockFollowUps(t *testing.T) {
+	repo := newRepo(t)
+	c, _ := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m8")
+	defer c.Close()
+	spawnWriter(t, c, "write one.txt x")
+	spawnWriter(t, c, "write two.txt y")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	// The lead holds the write lease (it is mid-edit), so the lease alone
+	// wouldn't keep the two merges apart.
+	c.LeadEvent(leadEdit("start", "e1"))
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, id := range []string{"w1", "w2"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = c.Merge(context.Background(), id)
+		}()
+	}
+	wg.Wait()
+	c.LeadEvent(leadEdit("end", "e1"))
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("merges = %v", errs)
+	}
+	for _, f := range []string{"one.txt", "two.txt"} {
+		if _, err := os.Stat(filepath.Join(repo, f)); err != nil {
+			t.Errorf("%s not merged: %v", f, err)
+		}
+	}
+	c.mu.Lock()
+	c.workers["w1"].merging = true
+	c.mu.Unlock()
+	if _, err := c.Message(context.Background(), "w1", "more"); err == nil || !strings.Contains(err.Error(), "being merged") {
+		t.Errorf("follow-up during a merge: %v", err)
+	}
+}
+
+func TestMergeKeepsTheLeadsUncommittedWork(t *testing.T) {
+	repo := newRepo(t)
+	c, _ := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m9")
+	defer c.Close()
+	spawnWriter(t, c, "write one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	userWIP(t, repo)
+	res, err := c.Merge(context.Background(), "w1")
+	if err != nil || !res.Merged {
+		t.Fatalf("merge = %+v, %v", res, err)
+	}
+	st := gitT(t, repo, "status", "--porcelain")
+	if !strings.Contains(st, "M b.txt") || !strings.Contains(st, "?? secret.env") {
+		t.Errorf("the lead's work changed:\n%s", st)
+	}
+	if files := gitT(t, repo, "show", "--name-only", "--format=", "HEAD^2"); strings.Contains(files, "secret.env") || strings.Contains(files, "b.txt") {
+		t.Errorf("the lead's work was committed: %s", files)
+	}
+}
+
+func TestGitIgnoresARedirectingEnvironment(t *testing.T) {
+	repo := newRepo(t)
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "elsewhere"))
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	if top := gitT(t, repo, "rev-parse", "--show-toplevel"); top != realPath(t, repo) {
+		t.Errorf("git ran against %s", top)
+	}
+}
+
+func TestWithinRefusesASymlinkedBase(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(filepath.Join(real, "t"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(root, WorktreeDirName)
+	if err := os.Symlink(real, base); err != nil {
+		t.Fatal(err)
+	}
+	if within(base, filepath.Join(base, "t")) {
+		t.Error("a symlinked worktree folder must be refused")
+	}
+}
+
+func TestWithIdentityRespectsTheEnvironment(t *testing.T) {
+	dir := t.TempDir() // no repository: no config
+	needGit(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "none"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for k, want := range map[string]string{"": "user.name=mono-agent user.email=mono-agent@localhost", "EMAIL": "user.name=mono-agent"} {
+		for _, v := range []string{"EMAIL", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+			t.Setenv(v, "")
+		}
+		if k != "" {
+			t.Setenv(k, "me@example.com")
+		}
+		var got []string
+		args := withIdentity(context.Background(), dir, "commit")
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-c" {
+				got = append(got, args[i+1])
+			}
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("%q set: identity = %q, want %q", k, got, want)
+		}
 	}
 }
