@@ -83,8 +83,18 @@ func (a *App) chatLogWriter() *chatLogPipe {
 }
 
 type chatLogPipe struct {
-	app *App
-	buf []byte
+	app  *App
+	buf  []byte
+	last string // the last non-empty line written, for an exit message
+}
+
+// lastLine is the last non-empty line written, counting a final line that
+// has no newline. Read it only after the writer is done (cmd.Wait).
+func (p *chatLogPipe) lastLine() string {
+	if s := strings.TrimSpace(string(p.buf)); s != "" {
+		return s
+	}
+	return p.last
 }
 
 func (p *chatLogPipe) Write(b []byte) (int, error) {
@@ -97,6 +107,7 @@ func (p *chatLogPipe) Write(b []byte) (int, error) {
 		line := strings.TrimSpace(string(p.buf[:i]))
 		p.buf = p.buf[i+1:]
 		if line != "" {
+			p.last = line
 			p.app.emitLog("AI", "INFO", line)
 		}
 	}

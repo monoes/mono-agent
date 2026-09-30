@@ -86,6 +86,9 @@ type turnJournal struct {
 	nativeRun    map[string]nativeCall
 	// subagents journals the agent's native subagents (monomind#387).
 	subagents dynorg.Subagents
+	// backgroundPids are what the done event said the turn left running;
+	// the notice is written at finish, for those still alive then (#294).
+	backgroundPids []int
 }
 
 // lockedEmitter journals through a turnJournal whose mu the caller holds.
@@ -257,10 +260,7 @@ func (j *turnJournal) handle(ev monomind.Event) {
 			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderStatus, Message: msg, Severity: chatevents.SeverityInfo})
 		}
 	case monomind.EventDone:
-		if len(ev.BackgroundPids) > 0 {
-			j.forceFlushLocked()
-			_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(ev.BackgroundPids))
-		}
+		j.backgroundPids = ev.BackgroundPids
 	case monomind.EventUsage:
 		j.usageLocked("usage")
 	case monomind.EventResult:
@@ -301,6 +301,12 @@ func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, c
 	j.forceFlushLocked()
 	j.closeOpenNativeCallsLocked()
 	j.finished = true
+	// The runtime's own helpers (e.g. the MCP servers opencode starts) are
+	// still alive when it reports done and exit with it; only processes
+	// that outlive the runtime are worth a warning.
+	if pids := stillRunning(j.backgroundPids, backgroundSettle); len(pids) > 0 {
+		_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(pids))
+	}
 
 	status, reason := chatevents.ComputeTurnStatus(stopRequested, res)
 	var exitCode *int

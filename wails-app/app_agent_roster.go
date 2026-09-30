@@ -39,6 +39,12 @@ func (a *App) StartAgentValidation(runtimes, models []string, staleOnly bool) st
 		return aiError(err)
 	}
 	args := append([]string{"--json"}, validateArgs(runtimes, models, staleOnly, false)...)
+	return a.startAgentValidation(cliBin, args, func(name string, data interface{}) {
+		runtime.EventsEmit(a.ctx, name, data)
+	})
+}
+
+func (a *App) startAgentValidation(cliBin string, args []string, emit func(string, interface{})) string {
 	a.emitLog("AI", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.Command(cliBin, args...)
 	setChatProcessGroup(cmd)
@@ -47,7 +53,8 @@ func (a *App) StartAgentValidation(runtimes, models []string, staleOnly bool) st
 	if err != nil {
 		return aiError(err)
 	}
-	cmd.Stderr = a.chatLogWriter()
+	stderr := a.chatLogWriter()
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return aiError(fmt.Errorf("start agent validate: %w", err))
 	}
@@ -67,7 +74,7 @@ func (a *App) StartAgentValidation(runtimes, models []string, staleOnly bool) st
 			if len(line) == 0 || line[0] != '{' {
 				continue
 			}
-			runtime.EventsEmit(a.ctx, "agents:validate", json.RawMessage(append([]byte(nil), line...)))
+			emit("agents:validate", json.RawMessage(append([]byte(nil), line...)))
 		}
 		err := waitChatProcess(cmd)
 		a.runningMu.Lock()
@@ -75,13 +82,24 @@ func (a *App) StartAgentValidation(runtimes, models []string, staleOnly bool) st
 			delete(a.runningCmds, agentValidateKey)
 		}
 		a.runningMu.Unlock()
-		closed := map[string]interface{}{"ok": err == nil}
-		if err != nil {
-			closed["error"] = err.Error()
-		}
-		runtime.EventsEmit(a.ctx, "agents:validateClosed", closed)
+		emit("agents:validateClosed", validateClosed(err, stderr.lastLine()))
 	}()
 	return `{"ok":true}`
+}
+
+// validateClosed is the "agents:validateClosed" payload. A failed run
+// carries the CLI's own error, its last stderr line (e.g. "validation
+// cancelled after 2 of 6 tests" after Stop), not the bare "exit status 1".
+func validateClosed(err error, lastStderr string) map[string]interface{} {
+	closed := map[string]interface{}{"ok": err == nil}
+	if err != nil {
+		msg := err.Error()
+		if lastStderr != "" {
+			msg = lastStderr
+		}
+		closed["error"] = msg
+	}
+	return closed
 }
 
 // StopAgentValidation cancels a running validation. Results already stored

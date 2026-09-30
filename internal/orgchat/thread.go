@@ -117,6 +117,10 @@ type builder struct {
 	byRef     map[string]int // kind+ref → index
 	approval  map[string]int // role:action → index of its latest approval item
 	seen      map[string]bool
+	// open is the boss item the next boss chat event continues, or -1. A
+	// streaming runtime (e.g. vercel/openrouter) puts every text delta on
+	// the bus as its own chat event (#294); consecutive ones are one reply.
+	open int
 }
 
 func (b *builder) add(it Item) int {
@@ -142,6 +146,13 @@ func (b *builder) event(e Event) {
 			return
 		}
 		b.seen[e.ID] = true
+	}
+	// Only more boss text, or a role's working/idle state flipping mid
+	// stream, keeps the boss reply open; anything else (a tool call, a
+	// question, a gate, a message, usage at the end of the turn) ends it.
+	bossChat := e.Type == "chat" && b.boss != "" && e.From == b.boss
+	if !bossChat && !(e.Type == "status" && e.Reason == "state-change") {
+		b.open = -1
 	}
 	d := e.Data
 	switch e.Type {
@@ -172,8 +183,15 @@ func (b *builder) event(e Event) {
 		}
 		b.add(it)
 	case "chat":
-		if b.boss != "" && e.From == b.boss && strings.TrimSpace(e.Msg) != "" {
-			b.add(Item{ID: e.ID, TS: e.TS, Kind: ItemBoss, Role: e.From, Text: e.Msg})
+		if !bossChat {
+			return
+		}
+		if b.open >= 0 {
+			b.items[b.open].Text += e.Msg
+			return
+		}
+		if strings.TrimSpace(e.Msg) != "" {
+			b.open = b.add(Item{ID: e.ID, TS: e.TS, Kind: ItemBoss, Role: e.From, Text: e.Msg})
 		}
 	case "question":
 		if qid := str(d, "questionId"); qid != "" {
@@ -321,7 +339,7 @@ func (b *builder) merge(h HumanItems) {
 // stopping, in bus order. It is a pure function of its inputs. limit keeps
 // the newest items (0 = all); pending items are always kept.
 func BuildThread(org, boss string, events []Event, human HumanItems, limit int) []Item {
-	b := &builder{org: org, boss: boss, items: []Item{}, byRef: map[string]int{}, approval: map[string]int{}, seen: map[string]bool{}}
+	b := &builder{org: org, boss: boss, items: []Item{}, byRef: map[string]int{}, approval: map[string]int{}, seen: map[string]bool{}, open: -1}
 	for _, e := range events {
 		b.event(e)
 	}
