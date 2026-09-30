@@ -67,7 +67,7 @@ func orgRoster(ctx context.Context, db *sql.DB, st coderStatus, lead dynorg.Mode
 			models = append(models, dynorg.Model{
 				Runtime: rr.Runtime, Model: model, Label: m.Label, Efforts: m.EffortLevels,
 				FullAccess: e.FullAccess, Read: read, Resume: e.Resume, ReadOnlySandbox: readOnlySandbox(st, e), Fidelity: e.ToolActivityFidelity,
-				CallerTools: e.CallerTools, CallerToolsFull: e.CallerToolsWithFullAccess,
+				CallerTools: e.CallerTools, CallerToolsFull: e.CallerToolsWithFullAccess, ReportsCost: e.ReportsCost,
 				CostUSD: m.CostUSD, LatencyMs: m.LatencyMs, Stale: m.State == agentroster.StateStale,
 			})
 		}
@@ -123,6 +123,7 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		lead.ReadOnlySandbox = readOnlySandbox(st, e)
 		lead.CallerTools, lead.CallerToolsFull = e.CallerTools, e.CallerToolsWithFullAccess
 		lead.Fidelity = e.ToolActivityFidelity
+		lead.ReportsCost = e.ReportsCost
 	}
 	lib := &dynorg.MonomindLibrary{Bin: opts.Bin, Cwd: t.cwd}
 	staffer := &dynorg.Staffer{

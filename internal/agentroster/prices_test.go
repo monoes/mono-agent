@@ -82,3 +82,26 @@ func TestRateLimitedResultIsNotAPriceOrASignInFailure(t *testing.T) {
 		t.Errorf("sign-in notes = %+v, want none: a rate-limited call got past sign-in", p.SignIn)
 	}
 }
+
+func TestTokenCost(t *testing.T) {
+	cases := []struct {
+		runtime, model string
+		in, out        int64
+		want           float64
+		ok             bool
+	}{
+		{"codex", "gpt-5", 100_000, 10_000, 0.35, true}, // 100k × $2.5/M + 10k × $10/M
+		{"codex", DefaultModel, 1_000_000, 0, 2.5, true},
+		{"claude", "haiku", 0, 1_000_000, 5, true},
+		{"codex", "gpt-5-pro", 1000, 1000, 0, false},
+		{"opencode", "mystery-9", 1000, 1000, 0, false},
+		{"opencode", DefaultModel, 1000, 1000, 0, false},
+		{"codex", "openrouter/google/gemini-2.5-pro:free", 1000, 1000, 0, false}, // free: its $0 is real
+	}
+	for _, c := range cases {
+		got, ok := TokenCost(c.runtime, c.model, c.in, c.out)
+		if ok != c.ok || math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("TokenCost(%s, %s, %d, %d) = %v, %v; want %v, %v", c.runtime, c.model, c.in, c.out, got, ok, c.want, c.ok)
+		}
+	}
+}

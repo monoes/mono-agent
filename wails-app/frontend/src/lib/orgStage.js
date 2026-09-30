@@ -431,7 +431,9 @@ function stageApply(d, ev) {
     case 'usage.updated': {
       const usage = { tokensIn: num(p.inputTokens), tokensOut: num(p.outputTokens), costUsd: num(p.costUsd) }
       if (p.agentId && p.agentId !== LEAD_ID) {
-        Object.assign(d.node(p.agentId), usage)
+        // A worker's cost is estimated from its tokens when its runtime
+        // reports none (#230): the stage shows it with "≈".
+        Object.assign(d.node(p.agentId), usage, { costEstimated: !!p.costEstimated })
       } else {
         d.leadUsage = usage
         Object.assign(d.node(LEAD_ID), usage)

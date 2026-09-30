@@ -55,8 +55,8 @@ func (l fakeLibrary) SkillText(_ context.Context, name string) (string, error) {
 }
 
 var (
-	opus   = Model{Runtime: "claude", Model: "opus", FullAccess: true, Read: true, Efforts: []string{"low", "high"}, CostUSD: 0.02, LatencyMs: 1500, Resume: true}
-	haiku  = Model{Runtime: "claude", Model: "haiku", FullAccess: true, Read: true, CostUSD: 0.001, LatencyMs: 700, Resume: true}
+	opus   = Model{Runtime: "claude", Model: "opus", FullAccess: true, Read: true, Efforts: []string{"low", "high"}, CostUSD: 0.02, LatencyMs: 1500, Resume: true, ReportsCost: true}
+	haiku  = Model{Runtime: "claude", Model: "haiku", FullAccess: true, Read: true, CostUSD: 0.001, LatencyMs: 700, Resume: true, ReportsCost: true}
 	gpt    = Model{Runtime: "codex", Model: "gpt-5.5", FullAccess: true, Read: true, Efforts: []string{"low", "medium"}, CostUSD: 0.01, LatencyMs: 1200}
 	readOK = Model{Runtime: "pi", Model: "", Read: true, CostUSD: 0.0005}
 )

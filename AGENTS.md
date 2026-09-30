@@ -642,14 +642,28 @@ How workers run:
   that edits through the shell (`sed -i`, `cat >`, a codex exec command)
   takes no lease and gets no warning.
 - **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
-  (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
+  (default 3) and `--org-budget-usd` (worker cost; 0 = none, the default), plus
   3 follow-ups (`org_message`) per worker.
   - Every spawn and follow-up checks the budget.
   - Each worker exec gets the remaining budget as its own `--budget-usd`, so
     concurrent workers can together overshoot by at most
     `--org-max-concurrent` × the remainder.
-  - Runtimes that report no cost (codex, …) are bounded only by
-    `--max-turns` and the timeout.
+  - Runtimes that report no cost (codex, copilot, …; the scan's
+    `reports_cost`, monomind 2.19+) are priced from the tokens their exec
+    reports with the built-in price table (`agentroster.TokenCost`,
+    `internal/dynorg/estimate.go`). The estimate is journaled as
+    `costEstimated` on `usage.updated` and `agent.finished`, and the stage,
+    bubbles and chat show it with "≈".
+  - Estimates run high: exec reports no cache split, so all input is priced
+    as uncached. A subscription plan (codex on ChatGPT, copilot) has no
+    per-token bill at all. So estimates count toward the budget only when
+    the user set `--org-budget-usd`. There is no default budget, so without
+    one they are only shown. With one set, a worker's estimate can refuse
+    the next spawn or exec, and it stops a running worker once it reaches
+    that exec's budget. A run that completes anyway stays done.
+  - A run with neither a cost nor tokens, or on a model the table can't
+    price, counts nothing, and is bounded only by `--max-turns` and the
+    timeout.
   - A limit makes the tool return an error the lead can read.
 - **Names:** role and skill names from the lead must match
   `[A-Za-z0-9][A-Za-z0-9._-]*`. An unknown skill is refused.

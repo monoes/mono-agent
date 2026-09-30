@@ -59,6 +59,8 @@ type Conductor struct {
 	order   []string
 	spawned int
 	cost    float64
+	// costEstimated: some of cost is estimated from tokens (estimate.go).
+	costEstimated bool
 	// The lead's own file edits (#260): the call ids of its edit tool
 	// calls in flight, whether it holds the write lease for them, and the
 	// warnings for edits it made while a writer held the lease.
@@ -85,7 +87,9 @@ type worker struct {
 	hasTok  bool
 	cost    float64
 	hasCost bool
-	started time.Time
+	// costEstimated: some of cost is estimated from tokens (estimate.go).
+	costEstimated bool
+	started       time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
 	// askedThisRun counts this run's ask_user calls (capped at
@@ -123,6 +127,9 @@ var errUnconfined = errors.New("the read-only sandbox was not applied")
 // errBudgetSpent is returned when the workers' budget has run out.
 func (c *Conductor) budgetErrLocked() error {
 	if b := c.cfg.Limits.BudgetUSD; b > 0 && c.cost >= b {
+		if c.costEstimated {
+			return fmt.Errorf("the workers' budget of $%.2f for this turn is spent (≈$%.2f, partly estimated from token counts)", b, c.cost)
+		}
 		return fmt.Errorf("the workers' budget of $%.2f for this turn is spent ($%.2f)", b, c.cost)
 	}
 	return nil
@@ -589,8 +596,9 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		// Neither: it holds the write lease instead (needsWriteLease).
 	}
 	// The budget left for the whole org caps this exec. Runtimes that
-	// report no cost (codex, …) can't be capped by it; MaxTurns and the
-	// timeout bound them.
+	// report no cost (codex, …) are capped by their estimated cost
+	// (estimate.go); with no tokens either, MaxTurns and the timeout bound
+	// them.
 	c.mu.Lock()
 	if b := c.cfg.Limits.BudgetUSD; b > 0 {
 		remaining := b - c.cost
@@ -608,7 +616,7 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	defer ecancel()
 	// refused is set when the start event says the confined run isn't
 	// sandboxed, and the run is cancelled.
-	var refused atomic.Bool
+	var refused, overBudget atomic.Bool
 	res, err := c.cfg.Exec(ectx, opts, func(ev monomind.Event) {
 		if requireSandbox && ev.Type == monomind.EventStart {
 			if ev.SandboxStatus != monomind.SandboxStatusSandboxed {
@@ -617,27 +625,29 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 			}
 		}
 		monomind.ApplyEventToResult(&run, ev)
+		if overEstimate(m, &run, opts.BudgetUSD) && overBudget.CompareAndSwap(false, true) {
+			ecancel()
+		}
 		c.stream(w, ev, &run)
 		c.workerEvent(w, ev)
 	})
 	c.flushText(w, true)
 	// Exec's result is the turn's final accounting; the events are the
 	// fallback when it returned none.
-	if res != nil {
-		run = *res
-	}
+	run = finalRun(res, run)
 	c.mu.Lock()
 	if run.HasInputTokens || run.HasOutputTokens {
 		w.inTok += run.InputTokens
 		w.outTok += run.OutputTokens
 		w.hasTok = true
 	}
-	if run.HasCostUSD {
-		w.cost += run.CostUSD
-		w.hasCost = true
-		c.cost += run.CostUSD
-	}
+	c.addRunCostLocked(w, m, &run)
 	c.mu.Unlock()
+	// A run that completed anyway stays done; budgetErrLocked refuses
+	// what comes next.
+	if overBudget.Load() && cutShort(&run) {
+		return res, fmt.Errorf("%w: the workers' budget of $%.2f for this turn is spent (≈$%.2f, partly estimated from token counts)", errBudgetRefused, c.cfg.Limits.BudgetUSD, c.spent())
+	}
 	if requireSandbox {
 		// Refused: Exec couldn't apply the sandbox, the start event said it
 		// wasn't applied (the run was cancelled), or the turn's own report
@@ -763,7 +773,7 @@ func (c *Conductor) finish(w *worker, outcome, report, errText string) {
 	}
 	if w.hasCost {
 		cost := w.cost
-		payload.CostUSD = &cost
+		payload.CostUSD, payload.CostEstimated = &cost, w.costEstimated
 	}
 	c.setStatusLocked(w, outcome, "")
 	c.mu.Unlock()

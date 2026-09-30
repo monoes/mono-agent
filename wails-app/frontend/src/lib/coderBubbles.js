@@ -35,6 +35,12 @@ export function totalCost(summary) {
   return Object.values(summary?.costByTurn || {}).reduce((n, c) => n + (Number(c) || 0), 0)
 }
 
+// costEstimated reports whether any of totalCost is a worker's estimate
+// from its tokens (#230), shown as "≈".
+export function costEstimated(summary) {
+  return Object.values(summary?.estimatedByTurn || {}).some(Boolean)
+}
+
 // applyChatEvent folds one chat:event envelope into a bubble's summary.
 // expanded says whether the user is looking at that chat right now: a turn
 // that finishes while collapsed counts as unread.
@@ -49,7 +55,7 @@ export function applyChatEvent(summary, ev, expanded) {
       // A dynamic-org worker's running total (#257) is kept under its own
       // key, so the chat's cost adds it to the lead's instead of replacing it.
       const key = p.agentId ? `${ev.turnId}:${p.agentId}` : ev.turnId
-      return { ...s, costByTurn: { ...s.costByTurn, [key]: p.costUsd } }
+      return { ...s, costByTurn: { ...s.costByTurn, [key]: p.costUsd }, estimatedByTurn: { ...s.estimatedByTurn, [key]: !!p.costEstimated } }
     }
     // A dynamic-org agent asking the user something (#228) makes the
     // bubble pulse until that agent moves on.
