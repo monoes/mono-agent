@@ -52,6 +52,12 @@ SIGNED DEFINITIONS (monomind 2.21+)
   code org_not_signed, and
   org status shows each org's "signature".
 
+  Orgs under a symlinked .monomind (or with a symlink on the way to an
+  instructions file), on a network or FUSE/FAT filesystem, or on Windows
+  are never re-signed automatically, and their review hands over no hash
+  unless monomind 2.22 reviews and signs them itself: sign those with
+  "monomind org sign <org>" in a terminal.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATIONS AND GRANTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -530,3 +530,109 @@ func TestStampSeesADirectorySwap(t *testing.T) {
 		t.Error("a new file in the project root changed the stamps")
 	}
 }
+
+// enforcingSigner is fakeSigner on a monomind that enforces --expect-hash.
+type enforcingSigner struct{ fakeSigner }
+
+func (enforcingSigner) EnforcesHash(context.Context) bool { return true }
+
+// MUST (#295, fifth review): a symlinked .monomind — target inside or
+// outside the project — or a symlink on the way to an instructions file
+// lets its target be swapped without touching the stamped path. No review
+// hash and no automatic re-sign then, unless monomind enforces the hash.
+func TestSymlinkOnThePathIsUntrusted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks and stamps are POSIX here")
+	}
+	for _, where := range []string{"inside", "outside"} {
+		t.Run(where, func(t *testing.T) {
+			operatorDirForTest(t)
+			root := t.TempDir()
+			target := filepath.Join(root, "cfg", "mm")
+			if where == "outside" {
+				target = filepath.Join(t.TempDir(), "mm")
+			}
+			if err := os.MkdirAll(filepath.Join(target, "orgs"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(root, ".monomind")); err != nil {
+				t.Fatal(err)
+			}
+			loaded := writeOrg(t, root, "growth", signedBody)
+			signFixture(t, root, "growth", []byte(signedBody))
+			if reason := Untrusted(root, "growth"); !strings.Contains(reason, "symlink") {
+				t.Fatalf("Untrusted = %q", reason)
+			}
+			if Before(context.Background(), nil, root, "growth", loaded, false).Eligible() {
+				t.Fatal("auto re-sign under a symlinked .monomind")
+			}
+			if !Before(context.Background(), &enforcingSigner{fakeSigner{t: t}}, root, "growth", loaded, false).Eligible() {
+				t.Fatal("a monomind that enforces the hash should still re-sign")
+			}
+		})
+	}
+	t.Run("instructions folder", func(t *testing.T) {
+		operatorDirForTest(t)
+		root := t.TempDir()
+		real := filepath.Join(root, "real-prompts")
+		if err := os.MkdirAll(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(real, "lead.md"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, filepath.Join(root, "prompts")); err != nil {
+			t.Fatal(err)
+		}
+		writeOrg(t, root, "growth", `{"name":"growth","roles":[{"id":"lead","instructions_file":"prompts/lead.md"}]}`)
+		if reason := Untrusted(root, "growth"); !strings.Contains(reason, "symlink") {
+			t.Fatalf("Untrusted = %q", reason)
+		}
+	})
+	t.Run("plain folders", func(t *testing.T) {
+		root := t.TempDir()
+		writeOrg(t, root, "growth", signedBody)
+		if reason := Untrusted(root, "growth"); reason != "" {
+			t.Fatalf("Untrusted = %q", reason)
+		}
+	})
+}
+
+// Network, FUSE and FAT filesystems: their identities and times can't be
+// trusted, so they fail closed (statfs stood in for).
+func TestUntrustedFilesystems(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows is untrusted as a whole")
+	}
+	root := t.TempDir()
+	writeOrg(t, root, "growth", signedBody)
+	prev := fsTypeOf
+	t.Cleanup(func() { fsTypeOf = prev })
+	for fs, bad := range map[string]bool{"nfs": true, "smb2": true, "cifs": true, "fuse": true, "vfat": true, "exfat": true,
+		"smbfs": true, "msdos": true, "macfuse": true, "": false, "ext4": false, "apfs": false, "tmpfs": false} {
+		fsTypeOf = func(string) string { return fs }
+		if got := Untrusted(root, "growth") != ""; got != bad {
+			t.Errorf("%q: untrusted = %v, want %v", fs, got, bad)
+		}
+	}
+}
+
+// Only directory times moving is what a busy .monomind looks like; the
+// review may run again then, never when a file or a folder's identity
+// changed.
+func TestOnlyDirTimesMoved(t *testing.T) {
+	root, _ := instructionsOrg(t)
+	a, _ := StampDefinition(root, "growth")
+	if err := os.WriteFile(filepath.Join(root, ".monomind", "orgs", "busy.json.tmp"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := StampDefinition(root, "growth")
+	if a.Same(b) || !a.OnlyDirTimesMoved(b) {
+		t.Fatal("a file written into .monomind/orgs should move only directory times")
+	}
+	_ = os.WriteFile(filepath.Join(root, "instr.md"), []byte("changed\n"), 0o644)
+	c, _ := StampDefinition(root, "growth")
+	if b.OnlyDirTimesMoved(c) {
+		t.Fatal("a changed instructions file is not a busy folder")
+	}
+}

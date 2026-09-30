@@ -122,6 +122,13 @@ func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew 
 		p.why = fmt.Sprintf("%s is set: an agent or org role made this change, and only the operator signs", m)
 		return p
 	}
+	// Where the stamps can't vouch for the files (a symlink on the way, an
+	// untrusted filesystem, Windows), only a monomind that enforces the
+	// hash itself (--expect-hash) may re-sign.
+	if reason := Untrusted(root, org); reason != "" && !enforcesHash(ctx, s) {
+		p.why = reason
+		return p
+	}
 	raw, sha, err := ReadFile(root, org)
 	if errors.Is(err, os.ErrNotExist) {
 		p.eligible = signNew

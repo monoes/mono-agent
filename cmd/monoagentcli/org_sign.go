@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -164,15 +165,16 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				}
 				return printJSONValue(res)
 			}
+			var note string
 			if !yes {
-				res.Hash, res.Review, err = reviewOrg(ctx, root, name)
+				res.Hash, res.Review, note, err = reviewOrg(ctx, root, name)
 				if err != nil {
 					return err
 				}
 				if env.cfg.JSONOutput || !stdinIsTerminal() {
 					res.Message = "not signed: review the above, then run `monoagentcli org sign " + name + " --yes --expect-hash " + res.Hash + "`"
 					if res.Hash == "" {
-						res.Message = "not signed: the definition changed during the review, or its hash can't be computed here — review it again"
+						res.Message = "not signed: " + note
 					}
 					return printJSONValue(res)
 				}
@@ -181,7 +183,7 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 					return printJSONValue(res)
 				}
 				if res.Hash == "" {
-					return errInvalidInput("org %s changed during the review, or its hash can't be computed here: review it again, or sign with `monomind org sign %s` in a terminal", name, name)
+					return errInvalidInput("org %s: not signed: %s", name, note)
 				}
 				expect = res.Hash // sign exactly what was just reviewed
 			}
@@ -217,43 +219,78 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 }
 
 // reviewOrg is monomind's review of org and the hash of exactly the
-// definition it reviewed — or "" when that can't be told (#295 review).
+// definition it reviewed — or "" with a note saying why that can't be told
+// (#295 review).
 //   - monomind 2.22 reports that hash itself, from the same read as the
 //     review; it is the signing target (its --expect-hash refuses anything
 //     else).
 //   - On 2.21 it is this package's hash, taken around monomind's read.
 //
-// Either way the org JSON, every instructions file and the directories
-// above them are stamped before and after the review and must not have
-// moved: a file or folder swapped in for monomind's read and put back
-// after would otherwise show one definition and sign another.
-func reviewOrg(ctx context.Context, root, name string) (hash, review string, err error) {
-	before, stampErr := orgsign.StampDefinition(root, name)
-	raw, _, readErr := orgsign.ReadFile(root, name)
-	h, hashErr := orgsign.Hash(root, raw)
-	rv, err := monomind.OrgSignReview(ctx, root, name)
-	if err != nil {
-		return "", "", err
-	}
-	after, stampErr2 := orgsign.StampDefinition(root, name)
-	raw2, _, readErr2 := orgsign.ReadFile(root, name)
-	h2, hashErr2 := orgsign.Hash(root, raw2)
-	if stampErr != nil || stampErr2 != nil || readErr != nil || readErr2 != nil || !before.Same(after) {
-		return "", rv.Text, nil
-	}
-	if rv.Hash != "" {
-		// monomind's reviewed hash. Where Go can hash it too, the two must
-		// agree (and not have changed), or nothing is signed from it.
-		if (hashErr == nil) != (hashErr2 == nil) || (hashErr == nil && (h != rv.Hash || h2 != rv.Hash)) {
-			return "", rv.Text, nil
+// The org JSON, every instructions file and the directories above them
+// are stamped before and after the review and must not have moved: a file
+// or folder swapped in for monomind's read and put back after would
+// otherwise show one definition and sign another. Where the stamps can't
+// vouch for the files (orgsign.Untrusted) only monomind's own reviewed
+// hash, enforced by its --expect-hash, counts. A review during which only
+// directory times moved (something writing into .monomind) is run again,
+// up to twice; it counts only once it comes back unchanged.
+func reviewOrg(ctx context.Context, root, name string) (hash, review, note string, err error) {
+	const changed = "the definition changed during the review — review it again"
+	untrusted := orgsign.Untrusted(root, name)
+	for attempt := 0; ; attempt++ {
+		before, stampErr := orgsign.StampDefinition(root, name)
+		raw, _, readErr := orgsign.ReadFile(root, name)
+		h, hashErr := orgsign.Hash(root, raw)
+		rv, err := monomind.OrgSignReview(ctx, root, name)
+		if err != nil {
+			return "", "", "", err
 		}
-		return rv.Hash, rv.Text, nil
+		after, stampErr2 := orgsign.StampDefinition(root, name)
+		raw2, _, readErr2 := orgsign.ReadFile(root, name)
+		h2, hashErr2 := orgsign.Hash(root, raw2)
+		goAgrees := func(want string) bool {
+			// Where Go can hash the definition, it must equal want at both
+			// ends of the read.
+			return (hashErr == nil) == (hashErr2 == nil) && (hashErr != nil || (h == want && h2 == want))
+		}
+		if untrusted != "" {
+			if rv.Hash != "" && monomind.OrgSignExpectsHash(ctx) && goAgrees(rv.Hash) {
+				return rv.Hash, rv.Text, "", nil
+			}
+			return "", rv.Text, untrusted, nil
+		}
+		if stampErr != nil || stampErr2 != nil || readErr != nil || readErr2 != nil || !before.Same(after) {
+			busy := stampErr == nil && stampErr2 == nil && before.OnlyDirTimesMoved(after) &&
+				hashErr == nil && hashErr2 == nil && h == h2
+			if busy && attempt < reviewRetries {
+				time.Sleep(time.Duration(attempt+1) * reviewRetryBackoff)
+				continue
+			}
+			return "", rv.Text, changed, nil
+		}
+		if rv.Hash != "" {
+			if !goAgrees(rv.Hash) {
+				return "", rv.Text, changed, nil
+			}
+			return rv.Hash, rv.Text, "", nil
+		}
+		if hashErr != nil || hashErr2 != nil {
+			return "", rv.Text, "its hash can't be computed here — sign it with `monomind org sign " + name + "` in a terminal", nil
+		}
+		if h != h2 {
+			return "", rv.Text, changed, nil
+		}
+		return h, rv.Text, "", nil
 	}
-	if hashErr != nil || hashErr2 != nil || h != h2 {
-		return "", rv.Text, nil
-	}
-	return h, rv.Text, nil
 }
+
+// reviewRetries and reviewRetryBackoff: a review whose only change was a
+// directory time (a running org writing into .monomind) is run again up to
+// reviewRetries times, waiting a little longer each time. vars for tests.
+var (
+	reviewRetries      = 2
+	reviewRetryBackoff = 250 * time.Millisecond
+)
 
 // errOrgSigningUnsupported: the installed monomind predates signed org
 // definitions, so there is nothing to sign (the GUI ignores this code).

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdesign"
@@ -42,6 +43,11 @@ if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
     exit 1
   fi
   if [ "$4" = "--yes" ]; then echo "org $3: signed"; exit 0; fi
+  if [ -n "$FAKE_REVIEW_BUSY" ]; then
+    # Something else writes into .monomind/orgs during the first N reviews.
+    n=$(cat .monomind/busy-count 2>/dev/null || echo 0); n=$((n+1)); echo $n > .monomind/busy-count
+    if [ "$n" -le "$FAKE_REVIEW_BUSY" ]; then : > ".monomind/orgs/busy-$$-$n.tmp"; fi
+  fi
   if [ -n "$FAKE_REVIEW_DIRSWAP" ]; then
     # A role moves a whole folder away, puts a copy there for the read, and
     # moves the real one back (the copy is moved aside, not deleted).
@@ -590,5 +596,58 @@ func TestReviewHashDisagreementSignsNothing(t *testing.T) {
 	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+goHash+`","review":{},"reviewText":"org growth (unsigned):"}`)
 	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != goHash {
 		t.Fatalf("agreeing review = %v", rev)
+	}
+}
+
+// A review during which something else wrote into .monomind (only
+// directory times moved) runs again, up to twice; one that stays busy asks
+// for a new review. The count file sits in .monomind itself, which is
+// stamped by identity and ctime too, so every attempt looks busy until N.
+func TestBusyMonomindReviewIsRetried(t *testing.T) {
+	f, _, _ := newSigningFixture(t, "2.21.0")
+	prev := reviewRetryBackoff
+	reviewRetryBackoff = time.Millisecond
+	t.Cleanup(func() { reviewRetryBackoff = prev })
+	count := filepath.Join(f.root, ".monomind", "busy-count")
+
+	_ = os.WriteFile(count, []byte("0"), 0o644)
+	t.Setenv("FAKE_REVIEW_BUSY", "1")
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] == nil || rev["hash"] == "" {
+		t.Fatalf("one busy review then a clean one should give a hash: %v", rev)
+	}
+	_ = os.WriteFile(count, []byte("0"), 0o644)
+	t.Setenv("FAKE_REVIEW_BUSY", "5")
+	rev := f.mustRun(t, "sign", "growth")
+	if h, _ := rev["hash"].(string); h != "" || !strings.Contains(rev["message"].(string), "review it again") {
+		t.Fatalf("a review busy every time = %v", rev)
+	}
+	if b, _ := os.ReadFile(count); strings.TrimSpace(string(b)) != "3" {
+		t.Fatalf("reviews run: %s, want 3 (one plus two retries)", b)
+	}
+}
+
+// Under a symlinked .monomind the review hands over no hash on 2.21; on
+// 2.22, monomind's own reviewed hash (enforced by --expect-hash) does.
+func TestReviewUnderSymlinkedMonomind(t *testing.T) {
+	f, _, _ := newSigningFixture(t, "2.21.0")
+	mm := filepath.Join(f.root, ".monomind")
+	target := filepath.Join(f.root, "cfg-mm")
+	if err := os.Rename(mm, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, mm); err != nil {
+		t.Fatal(err)
+	}
+	rev := f.mustRun(t, "sign", "growth")
+	if h, _ := rev["hash"].(string); h != "" || !strings.Contains(rev["message"].(string), "symlink") {
+		t.Fatalf("2.21 review under a symlink = %v", rev)
+	}
+
+	fakeSigningMonomind(t, "2.22.0")
+	t.Setenv("FAKE_SIGN_HELP", "  --expect-hash <hex>")
+	goHash, _ := orgsign.Hash(f.root, mustRead(t, f.root, "growth"))
+	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+goHash+`","review":{},"reviewText":"org growth (unsigned):"}`)
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != goHash {
+		t.Fatalf("2.22 review under a symlink = %v", rev)
 	}
 }
