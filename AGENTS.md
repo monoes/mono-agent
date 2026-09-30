@@ -722,6 +722,13 @@ with `veteran: true`, then `agent.status` `idle`. Code:
   workers until it runs; each run counts as a follow-up (3 per turn).
 - A veteran sub-worker comes back only with its parent, and only its
   parent may message it.
+- A veteran runs only on a model that is still ready (in the validated
+  roster, or the lead's own); otherwise `org_message` is refused and
+  org_roster shows why, so the lead spawns a new worker. A research
+  worker's veteran sub-worker also needs a model that still confines it.
+  Any sub-worker of a research worker fails closed on a model that can't
+  confine it: no exec, and it never takes the write lease.
+- A run that ends with no report or session keeps the stored ones.
 - The stage greys out idle veterans until they run.
 
 **Questions for the user** (#256): a worker whose exec can take caller

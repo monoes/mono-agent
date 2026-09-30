@@ -29,6 +29,16 @@ func TestOrgWorkersRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A run that ended with no report (or no session) keeps the stored one.
+	if err := s.SaveOrgWorker("default", conv.ID, OrgWorker{AgentID: "w2", TurnID: "t2", Runtime: "codex", SessionID: "sess-w2", Report: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveOrgWorker("default", conv.ID, OrgWorker{AgentID: "w2", TurnID: "t3", Runtime: "codex", Outcome: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveOrgWorker("default", conv.ID, w1); err != nil { // w1 latest again
+		t.Fatal(err)
+	}
 	all, err := s.ListOrgWorkers("default", conv.ID, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +47,7 @@ func TestOrgWorkersRoundTrip(t *testing.T) {
 	for _, w := range all {
 		ids = append(ids, w.AgentID)
 	}
-	if !slices.Equal(ids, []string{"w2", "w3", "w1"}) {
+	if !slices.Equal(ids, []string{"w3", "w2", "w1"}) {
 		t.Fatalf("workers oldest first = %v", ids)
 	}
 	got := all[2]
@@ -51,8 +61,11 @@ func TestOrgWorkersRoundTrip(t *testing.T) {
 		got.Effort != "high" || got.Category != "research" || got.AgentType != "researcher" || got.Outcome != "done" {
 		t.Errorf("w1 read back = %+v", got)
 	}
-	if all[1].ParentID != "w1" {
-		t.Errorf("w3 parent = %q", all[1].ParentID)
+	if w2 := all[1]; w2.AgentID != "w2" || w2.Report != "first" || w2.SessionID != "sess-w2" || w2.TurnID != "t3" || w2.Outcome != "failed" {
+		t.Errorf("w2 after an empty run = %+v", w2)
+	}
+	if all[0].ParentID != "w1" {
+		t.Errorf("w3 parent = %q", all[0].ParentID)
 	}
 	if latest, _ := s.ListOrgWorkers("default", conv.ID, 2); len(latest) != 2 || latest[1].AgentID != "w1" {
 		t.Errorf("latest 2 = %+v", latest)

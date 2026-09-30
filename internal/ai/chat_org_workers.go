@@ -36,7 +36,9 @@ type OrgWorker struct {
 // workers of one turn keep their order.
 const orgWorkerTime = "2006-01-02T15:04:05.000000000Z"
 
-// SaveOrgWorker stores (or replaces) a conversation's worker.
+// SaveOrgWorker stores (or replaces) a conversation's worker. An empty
+// report or session keeps the stored one: a run that failed before it
+// reported still leaves the worker something to continue from.
 func (s *AIStore) SaveOrgWorker(profileID, conversationID string, w OrgWorker) error {
 	if profileID == "" {
 		profileID = "default"
@@ -53,8 +55,10 @@ func (s *AIStore) SaveOrgWorker(profileID, conversationID string, w OrgWorker) e
 		ON CONFLICT(conversation_id, agent_id) DO UPDATE SET
 		parent_id = excluded.parent_id, turn_id = excluded.turn_id, role = excluded.role, agent_type = excluded.agent_type,
 		category = excluded.category, access = excluded.access, skills = excluded.skills, runtime = excluded.runtime,
-		model = excluded.model, effort = excluded.effort, session_id = excluded.session_id, cwd = excluded.cwd,
-		report = excluded.report, outcome = excluded.outcome, allow_spawn = excluded.allow_spawn, updated_at = excluded.updated_at
+		model = excluded.model, effort = excluded.effort,
+		session_id = CASE WHEN excluded.session_id = '' THEN ai_chat_org_workers.session_id ELSE excluded.session_id END,
+		cwd = excluded.cwd,
+		report = CASE WHEN excluded.report = '' THEN ai_chat_org_workers.report ELSE excluded.report END, outcome = excluded.outcome, allow_spawn = excluded.allow_spawn, updated_at = excluded.updated_at
 		WHERE profile_id = excluded.profile_id`,
 		profileID, conversationID, w.AgentID, w.ParentID, w.TurnID, w.Role, w.AgentType, w.Category, w.Access, string(skills),
 		w.Runtime, w.Model, w.Effort, w.SessionID, w.Cwd, w.Report, w.Outcome, allow,

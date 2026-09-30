@@ -1,6 +1,7 @@
 package dynorg
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -90,7 +91,8 @@ func (c *Conductor) AddVeterans(vets []Veteran) {
 				continue
 			}
 		}
-		st := Staff{Role: v.Role, AgentType: v.AgentType, Category: v.Category, Access: v.Access, Effort: v.Effort, Model: c.veteranModel(v)}
+		model, ready := c.veteranModel(v)
+		st := Staff{Role: v.Role, AgentType: v.AgentType, Category: v.Category, Access: v.Access, Effort: v.Effort, Model: model}
 		for _, s := range v.Skills {
 			st.Skills = append(st.Skills, Skill{Name: s})
 		}
@@ -98,6 +100,10 @@ func (c *Conductor) AddVeterans(vets []Veteran) {
 			id: v.ID, staff: st, model: st.Model, status: chatevents.AgentIdle, report: v.Report, session: v.Session,
 			changed: map[string]bool{}, started: c.cfg.Now(), parent: parent, allowSpawn: v.AllowSpawn && parent == nil,
 			mustConfine: parent != nil && parent.staff.Access == ProfileResearch, veteran: true, cwd: v.Cwd,
+			notReady: !ready,
+		}
+		if err := c.veteranBlockedLocked(w); err != nil {
+			w.errText = err.Error()
 		}
 		c.workers[w.id] = w
 		c.order = append(c.order, w.id)
@@ -121,24 +127,30 @@ func (c *Conductor) AddVeterans(vets []Veteran) {
 	}
 }
 
-// veteranModel is the roster entry a veteran ran on; when the roster no
-// longer lists that model, the runtime's abilities come from another of
-// its models (they are the runtime's), else it is taken as it was.
-func (c *Conductor) veteranModel(v Veteran) Model {
-	m := Model{Runtime: v.Runtime, Model: v.Model, FullAccess: true}
-	if c.cfg.Staffer == nil {
-		return m
-	}
-	for _, r := range c.cfg.Staffer.Roster {
-		if r.Runtime == v.Runtime && r.Model == v.Model {
-			return r
+// veteranModel is the ready roster entry (or the lead's own model) a
+// veteran ran on. ready is false when it is neither any more (not ready,
+// failed validation, uninstalled): like a model the lead names, it must be
+// ready to run, so the veteran can't be messaged (veteranBlockedLocked).
+func (c *Conductor) veteranModel(v Veteran) (m Model, ready bool) {
+	if c.cfg.Staffer != nil {
+		for _, r := range append(slices.Clone(c.cfg.Staffer.Roster), c.cfg.Staffer.Lead) {
+			if r.Runtime == v.Runtime && r.Model == v.Model {
+				return r, true
+			}
 		}
 	}
-	for _, r := range append([]Model{c.cfg.Staffer.Lead}, c.cfg.Staffer.Roster...) {
-		if r.Runtime == v.Runtime {
-			r.Model, r.Label, r.Efforts, r.CostUSD, r.LatencyMs = v.Model, "", nil, 0, 0
-			return r
-		}
+	return Model{Runtime: v.Runtime, Model: v.Model}, false
+}
+
+// veteranBlockedLocked says why w can't run again: its model is no longer
+// ready, or it is a research worker's sub-worker whose model no longer
+// confines it.
+func (c *Conductor) veteranBlockedLocked(w *worker) error {
+	switch {
+	case w.notReady:
+		return fmt.Errorf("%s's model %s is no longer ready; spawn a new worker", w.id, w.model.Key())
+	case w.mustConfine && !c.confined(w.model):
+		return fmt.Errorf("%s can't run confined any more (%s); spawn a new sub-worker", w.id, w.model.Key())
 	}
-	return m
+	return nil
 }

@@ -148,7 +148,7 @@ func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string
 	default:
 		c.emitAnswer(w.id, qid, "system", fmt.Sprintf("No answer within %s; the worker went on without one.", AskTimeout))
 	}
-	if err := c.unsuspend(ctx, w); err != nil {
+	if _, err := c.unsuspend(ctx, w); err != nil {
 		return "", err
 	}
 	c.setStatus(w, chatevents.AgentWorking, "")

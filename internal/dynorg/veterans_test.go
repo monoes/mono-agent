@@ -149,3 +149,74 @@ func TestVeteranInAnotherFolderIsReBriefed(t *testing.T) {
 		t.Errorf("new worker id = %s, want w3", info.ID)
 	}
 }
+
+func TestVeteranWhoseModelIsNotReadyIsRefused(t *testing.T) {
+	ex := &treeExec{}
+	c, _ := newVeteranConductor(t, ex, "/w", treeLimits, &keptWorkers{})
+	c.AddVeterans([]Veteran{{ID: "w1", Role: "Coder", Access: ProfileCoding, Runtime: "gone", Model: "m", Session: "s", Cwd: "/w", Report: "r"}})
+	if r := c.Roster(); len(r.Workers) != 1 || !strings.Contains(r.Workers[0].Error, "no longer ready") {
+		t.Errorf("roster = %+v", r.Workers)
+	}
+	if _, err := c.Message(context.Background(), "w1", "more"); err == nil || !strings.Contains(err.Error(), "no longer ready") {
+		t.Errorf("a veteran on a model that isn't ready was messaged: %v", err)
+	}
+	if len(ex.calls) != 0 {
+		t.Errorf("it ran: %+v", ex.calls)
+	}
+}
+
+// A research worker's veteran sub-worker never runs unconfined: not when
+// its model left the roster, not when its model no longer confines it,
+// and not even if a run of it were started anyway.
+func TestResearchVeteranSubWorkerStaysConfined(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		child Veteran
+		want  string
+	}{
+		{"model gone", Veteran{Runtime: "codex", Model: "gone"}, "no longer ready"},
+		{"model no longer confines", Veteran{Runtime: "codex", Model: "x"}, "can't run confined any more"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ex := &treeExec{}
+			em := &recEmitter{}
+			c := New(context.Background(), Config{Cwd: "/w", Limits: treeLimits, Staffer: &Staffer{Roster: []Model{treeModel, openModel}, Lead: treeModel},
+				ReadAccess: true, Exec: ex.exec, Emit: em})
+			t.Cleanup(c.Close)
+			child := tc.child
+			child.ID, child.ParentID, child.Role, child.Access, child.Session, child.Cwd, child.Report = "w2", "w1", "Researcher", ProfileResearch, "s2", "/w", "r2"
+			c.AddVeterans([]Veteran{
+				{ID: "w1", Role: "Researcher", Access: ProfileResearch, Runtime: "claude", Model: "opus", Session: "s1", Cwd: "/w", AllowSpawn: true},
+				child,
+			})
+			c.mu.Lock()
+			w1, w2 := c.workers["w1"], c.workers["w2"]
+			c.mu.Unlock()
+			if !w2.mustConfine {
+				t.Fatal("the veteran sub-worker of a research worker must be confined")
+			}
+			if _, err := c.message(context.Background(), w1, "w2", "more"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("message = %v, want %q", err, tc.want)
+			}
+			// Fail closed even past the check: the run is refused before
+			// any exec, and it never takes the write lease.
+			c.mu.Lock()
+			ctx, cancel, done := c.prepareRunLocked(w2)
+			c.mu.Unlock()
+			c.launch(w2, ctx, cancel, done, "more", "s2", false)
+			<-done
+			if info := c.Wait(context.Background(), []string{"w2"}, 0)[0]; info.Status != chatevents.AgentFailed {
+				t.Errorf("w2 = %+v", info)
+			}
+			if len(ex.calls) != 0 {
+				t.Errorf("an unconfined exec ran: access %q", ex.calls[0].Access)
+			}
+			for _, p := range em.find(chatevents.EventAgentStatus) {
+				if s := p.(chatevents.AgentStatusPayload); s.AgentID == "w2" && (slices.Contains(s.Leases, "write") || s.To == chatevents.AgentWaitingLease) {
+					t.Errorf("w2 went for the write lease: %+v", s)
+				}
+			}
+			assertClean(t, c)
+		})
+	}
+}

@@ -146,7 +146,9 @@ func (c *Conductor) waitFor(ctx context.Context, parent *worker, ids []string, t
 	}
 	c.suspend(parent)
 	out := c.wait(ctx, mine, timeout)
-	if err := c.unsuspend(ctx, parent); err == nil {
+	// Back to working only once it holds its slot again: a question it
+	// asked meanwhile may still be waiting (waiting_user).
+	if retook, err := c.unsuspend(ctx, parent); retook && err == nil {
 		c.setStatus(parent, chatevents.AgentWorking, "")
 	}
 	return append(out, foreign...)
@@ -186,7 +188,8 @@ func (c *Conductor) suspend(w *worker) {
 	c.mu.Unlock()
 }
 
-func (c *Conductor) unsuspend(ctx context.Context, w *worker) error {
+// retook reports that this was the last wait, so it took them back.
+func (c *Conductor) unsuspend(ctx context.Context, w *worker) (retook bool, err error) {
 	c.mu.Lock()
 	w.suspended--
 	last := w.suspended == 0
@@ -196,7 +199,7 @@ func (c *Conductor) unsuspend(ctx context.Context, w *worker) error {
 	}
 	c.mu.Unlock()
 	if !last {
-		return nil
+		return false, nil
 	}
-	return c.retakeHeld(ctx, w, held)
+	return true, c.retakeHeld(ctx, w, held)
 }

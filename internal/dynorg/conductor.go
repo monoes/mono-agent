@@ -120,8 +120,9 @@ type worker struct {
 	held      []heldLease
 	// veteran: loaded from an earlier turn of the conversation, and cwd
 	// the folder its session ran in (veterans.go).
-	veteran bool
-	cwd     string
+	veteran  bool
+	cwd      string
+	notReady bool // a veteran whose model is no longer ready
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
@@ -381,6 +382,10 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 		c.mu.Unlock()
 		return WorkerInfo{}, err
 	}
+	if err := c.veteranBlockedLocked(w); err != nil {
+		c.mu.Unlock()
+		return WorkerInfo{}, err
+	}
 	if running(w.status) {
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("%s is still working; org_wait for it first", id)
@@ -606,6 +611,10 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 	if writes(w.staff.Access) {
 		return true
 	}
+	if w.mustConfine {
+		// Never: it runs confined or not at all (execOnce).
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return w.unconfined || !c.confined(w.model)
@@ -643,6 +652,11 @@ func (c *Conductor) recordOutcome(m Model, status, detail string) {
 }
 
 func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, resume string) (*monomind.TurnResult, error) {
+	if w.mustConfine && !c.confined(m) {
+		// A research worker's sub-worker fails closed on a model that
+		// can't confine it (a veteran's model may have changed).
+		return nil, errUnconfined
+	}
 	opts := c.cfg.Base
 	opts.Runtime, opts.Model, opts.Cwd, opts.Prompt, opts.Resume = m.Runtime, m.Model, c.cfg.Cwd, prompt, resume
 	opts.Effort = ""
