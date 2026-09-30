@@ -82,7 +82,7 @@ func (r *cliRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 
 	cctx, cancel := context.WithTimeout(ctx, monomindLookupTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, args...)
+	cmd := monomind.CommandContext(cctx, bin, args...)
 	// Cancelling the context kills monomind; it does not close monomind's
 	// stdout, and Output() waits on the PIPE, not on the process. monomind
 	// is node, node spawns workers, and any grandchild that inherited the

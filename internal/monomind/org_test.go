@@ -17,7 +17,7 @@ func TestOrgListAgainstFake(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	out, err := OrgList(context.Background(), ".")
+	out, err := OrgList(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("OrgList: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestOrgStatusAgainstFake(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	out, err := OrgStatus(context.Background(), ".", "growth")
+	out, err := OrgStatus(context.Background(), t.TempDir(), "growth")
 	if err != nil {
 		t.Fatalf("OrgStatus: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestOrgStatusErrorSurfacesStderr(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	_, err := OrgStatus(context.Background(), ".", "missing-org")
+	_, err := OrgStatus(context.Background(), t.TempDir(), "missing-org")
 	if err == nil {
 		t.Fatal("OrgStatus() = nil error, want an error for a nonexistent org")
 	}
@@ -57,7 +57,7 @@ func TestOrgEventsStreamsLines(t *testing.T) {
 	defer os.Unsetenv(EnvOverride)
 
 	var lines [][]byte
-	err := OrgEvents(context.Background(), ".", "growth", OrgEventsOptions{}, func(line []byte) {
+	err := OrgEvents(context.Background(), t.TempDir(), "growth", OrgEventsOptions{}, func(line []byte) {
 		cp := make([]byte, len(line))
 		copy(cp, line)
 		lines = append(lines, cp)
@@ -100,7 +100,7 @@ func TestOrgRunCancelGroupKill(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := OrgRun(ctx, ".", "growth", "", false)
+		_, err := OrgRun(ctx, t.TempDir(), "growth", "", false)
 		errCh <- err
 	}()
 
@@ -150,7 +150,7 @@ func TestOrgEventsAbortsPromptlyOnCancelDuringHandshake(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- OrgEvents(ctx, ".", "growth", OrgEventsOptions{Follow: true}, func([]byte) {})
+		done <- OrgEvents(ctx, t.TempDir(), "growth", OrgEventsOptions{Follow: true}, func([]byte) {})
 	}()
 	select {
 	case err := <-done:

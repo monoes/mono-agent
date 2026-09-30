@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -169,7 +168,7 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 	if hb, live := ReadServeHeartbeat(projectRoot); live {
 		return hb.PID, true, nil
 	}
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return 0, false, err
 	}
@@ -181,8 +180,8 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 		return 0, false, err
 	}
 	defer logf.Close()
-	cmd := exec.Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	cmd := Command(bin, "org", "serve", "--cross-process")
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	// Detached: the daemon must outlive this process, so it gets no job or
@@ -197,12 +196,12 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 
 // OrgServeRun runs `monomind org serve` in the foreground until ctx ends.
 func OrgServeRun(ctx context.Context, projectRoot string) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	cmd := Command(bin, "org", "serve", "--cross-process")
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)

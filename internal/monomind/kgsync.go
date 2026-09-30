@@ -112,7 +112,7 @@ func SyncToKnowledgeGraph(ctx context.Context, db *sql.DB, profileID string, nod
 	// that guard so dbPath is actually honored. FilteredEnviron() strips any
 	// ambient MONOMIND_* first so the explicit value below is the only one
 	// the child sees (a duplicate inherited entry could otherwise shadow it).
-	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+profileDir)
+	cmd.Env = PinEnv(append(FilteredEnviron(), "MONOMIND_CWD="+profileDir), bin)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("kgsync: memory_kg_ingest: %w", err)
 	}

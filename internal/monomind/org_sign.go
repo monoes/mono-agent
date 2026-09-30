@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -24,10 +23,8 @@ func (c *CapabilitySet) OrgSigning() bool {
 
 // OrgSigningEnforced reports whether the monomind that runs in
 // projectRoot enforces signed org definitions (2.21+). Its handshake runs
-// in the root through the binary pinned there (signToolFor: a mise/asdf
-// shim resolved in the root), cached per (binary, root), so a project on
-// 2.21 behind a global 2.20 is still signed. False when monomind is
-// missing.
+// in the root through the pinned binary (signToolFor), cached per
+// (binary, root). False when monomind is missing or can't be pinned.
 func OrgSigningEnforced(ctx context.Context, projectRoot string) bool {
 	tool, err := signToolFor(ctx, projectRoot)
 	return err == nil && versionAtLeast(tool.version, orgSigningMinVersion)
@@ -57,9 +54,9 @@ func checkState(state, message string) (orgsign.Status, bool) {
 
 // runOrgCheck runs `monomind org sign <args> --check --format json`
 // through the monomind pinned for projectRoot, when it advertises
-// org-sign-check. Anything else — no capability, a usage error, JSON this
-// client doesn't expect — gives ok=false, never an error: callers fall
-// back to the Go check.
+// org-sign-check. Anything else — no capability, a usage error (exit 2,
+// "unknown option"), JSON this client doesn't expect — gives ok=false,
+// never an error: callers fall back to the Go check.
 func runOrgCheck(ctx context.Context, projectRoot string, args ...string) (orgCheckResult, bool) {
 	var res orgCheckResult
 	tool, err := signToolFor(ctx, projectRoot)
@@ -69,9 +66,12 @@ func runOrgCheck(ctx context.Context, projectRoot string, args ...string) (orgCh
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	full := append(append([]string{"org", "sign"}, args...), "--check", "--format", "json")
-	cmd := exec.CommandContext(cctx, tool.path, full...)
-	cmd.Dir = projectRoot
-	out, _ := cmd.Output() // exit 1 means "not all signed", with the same JSON
+	cmd := CommandContext(cctx, tool.path, full...)
+	inRoot(cmd, projectRoot)
+	out, err := cmd.Output() // exit 1 means "not all signed", with the same JSON
+	if unknownOption(err, out) {
+		return res, false
+	}
 	if json.Unmarshal(lastJSONDocument(out), &res) != nil || res.Orgs == nil {
 		return res, false
 	}
@@ -116,17 +116,25 @@ func OrgSignCheckAll(ctx context.Context, projectRoot string) (map[string]orgsig
 // it. monomind itself refuses inside an org role or agent turn. hash is
 // the projection hash the signature must cover; when that monomind
 // enforces --expect-hash it is passed, so it signs nothing else. A binary
-// that can't be pinned (an unresolvable shim) signs nothing.
+// that can't be pinned (an unresolvable shim) signs nothing, and neither
+// does one that rejects --expect-hash as an unknown option.
 func OrgSign(ctx context.Context, projectRoot, name, hash string) (string, error) {
 	tool, err := signToolFor(ctx, projectRoot)
 	if err != nil {
 		return "", fmt.Errorf("monomind org sign %s: %w", name, err)
 	}
 	args := []string{"sign", name, "--yes"}
-	if hash != "" && tool.enforcesHash(ctx, projectRoot) {
-		args = append(args, "--expect-hash", hash)
+	if hash == "" || !tool.enforcesHash(ctx, projectRoot) {
+		return runOrgTextWith(ctx, tool.path, projectRoot, args...)
 	}
-	return runOrgTextWith(ctx, tool.path, projectRoot, args...)
+	args = append(args, "--expect-hash", hash)
+	out, err := orgTextOutput(ctx, tool.path, projectRoot, args...)
+	if unknownOption(err, out) {
+		// Advertised but refused: it can't promise to sign only hash, so
+		// it signs nothing.
+		return "", fmt.Errorf("monomind org sign %s: this monomind does not support --expect-hash; not signing", name)
+	}
+	return orgTextResult(args, out, err)
 }
 
 // OrgSignExpectsHash reports whether the monomind pinned for projectRoot
@@ -185,9 +193,12 @@ func orgSignReviewJSON(ctx context.Context, tool *signTool, projectRoot, name st
 	}
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, tool.path, "org", "sign", name, "--format", "json")
-	cmd.Dir = projectRoot
-	out, _ := cmd.Output()
+	cmd := CommandContext(cctx, tool.path, "org", "sign", name, "--format", "json")
+	inRoot(cmd, projectRoot)
+	out, err := cmd.Output()
+	if unknownOption(err, out) {
+		return OrgReview{}, false, nil
+	}
 	var res struct {
 		Org        string          `json:"org"`
 		Hash       string          `json:"hash"`
@@ -213,8 +224,8 @@ func orgSignReviewJSON(ctx context.Context, tool *signTool, projectRoot, name st
 func orgSignReviewText(ctx context.Context, bin, projectRoot, name string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, "org", "sign", name)
-	cmd.Dir = projectRoot
+	cmd := CommandContext(cctx, bin, "org", "sign", name)
+	inRoot(cmd, projectRoot)
 	out, runErr := cmd.CombinedOutput()
 	var kept []string
 	for _, line := range strings.Split(ansiRe.ReplaceAllString(string(out), ""), "\n") {

@@ -22,7 +22,7 @@ import (
 func TestOrgEventsStopsFollowerOnBrokenStdout(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
-	bin := filepath.Join(dir, "follow-monomind.sh")
+	bin := filepath.Join(t.TempDir(), "follow-monomind.sh") // outside the project: a project-local one is refused
 	script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
   echo '{"v":1,"version":"2.10.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'
