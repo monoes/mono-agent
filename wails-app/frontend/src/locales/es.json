@@ -740,7 +740,7 @@
     "drawerLabel": "Detalles del agente: {{name}}",
     "stop": "Detener",
     "stopAgent": "Detener este agente",
-    "stopUnavailable": "Aún no se puede detener un solo agente. Detener en el chat detiene todo el turno.",
+    "stopUnavailable": "Solo se puede detener un agente del turno en curso.",
     "closeDrawer": "Cerrar los detalles del agente",
     "access": "acceso: {{access}}",
     "effort": "esfuerzo: {{effort}}",
