@@ -197,7 +197,7 @@ describe('StageDrawer', () => {
     const onStop = vi.fn()
     const { rerender } = render(<StageDrawer node={stage.nodes.w1} calls={agentCalls} turnId="t" onClose={onClose} />)
     expect(screen.getByTestId('stage-stop')).toBeDisabled()
-    expect(screen.getByTestId('stage-stop')).toHaveAttribute('title', expect.stringContaining("isn't available yet"))
+    expect(screen.getByTestId('stage-stop')).toHaveAttribute('title', expect.stringContaining('running turn'))
     fireEvent.click(screen.getByLabelText('Close the agent details'))
     expect(onClose).toHaveBeenCalled()
 

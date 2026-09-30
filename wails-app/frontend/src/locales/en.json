@@ -812,7 +812,7 @@
     "drawerLabel": "Agent details: {{name}}",
     "stop": "Stop",
     "stopAgent": "Stop this agent",
-    "stopUnavailable": "Stopping a single agent isn't available yet. Stop in the chat stops the whole turn.",
+    "stopUnavailable": "Only an agent of the running turn can be stopped.",
     "closeDrawer": "Close the agent details",
     "access": "access: {{access}}",
     "effort": "effort: {{effort}}",
