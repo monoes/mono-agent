@@ -319,6 +319,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			return nil, err
 		}
 	}
+	if err := CheckOutside(bin, opts.Cwd); err != nil {
+		return nil, err
+	}
 
 	if opts.Prompt == "" {
 		return nil, fmt.Errorf("ExecOptions.Prompt is required")
@@ -468,7 +471,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// user's own Keychain-stored credentials are perfectly valid. Stripping
 	// them here means every chat/agent turn gets a clean environment
 	// regardless of what launched monoagentcli.
-	cmd.Env = append(FilteredEnviron(), envSlice(opts.Env)...)
+	cmd.Env = PinEnv(append(FilteredEnviron(), envSlice(opts.Env)...), bin)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
@@ -733,7 +736,7 @@ func Scan(ctx context.Context) (*ScanResult, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, bin, "agent", "scan", "--json").Output()
+	out, err := CommandContext(cctx, bin, "agent", "scan", "--json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("agent scan failed: %w", err)
 	}

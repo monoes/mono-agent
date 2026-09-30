@@ -152,11 +152,14 @@ func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit
 			return nil, err
 		}
 	}
+	if err := CheckOutside(bin, dir); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, InitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", target, "--yes", "--no-watch", "--no-install")
 	cmd.Dir = dir
-	cmd.Env = append(FilteredEnviron(), "CI=true")
+	cmd.Env = PinEnv(append(FilteredEnviron(), "CI=true"), bin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

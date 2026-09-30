@@ -18,7 +18,7 @@ func TestOrgAnswerAndGateTextAfterDashDash(t *testing.T) {
 	}
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	bin := filepath.Join(dir, "monomind")
+	bin := filepath.Join(t.TempDir(), "monomind") // outside the project: a project-local one is refused
 	script := "#!/bin/sh\n" +
 		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","` + CapOrgDecisionAttribution + `"]}'; exit 0; fi` + "\n" +
 		`for a in "$@"; do printf '%s\n' "$a"; done > '` + argsFile + "'\necho '{\"ok\":true}'\n"

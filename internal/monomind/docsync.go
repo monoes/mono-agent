@@ -102,7 +102,7 @@ func IngestCapture(ctx context.Context, profileID, path string) error {
 // runIngest runs one knowledge_ingest call in dir with MONOMIND_CWD set to
 // monomindDir, and decides success from the tool's own payload.
 func runIngest(ctx context.Context, dir, monomindDir string, params map[string]string) error {
-	bin, err := Find()
+	bin, err := findIn(dir)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func runIngest(ctx context.Context, dir, monomindDir string, params map[string]s
 
 	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(raw), "--format", "json")
 	cmd.Dir = dir
-	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir)
+	cmd.Env = PinEnv(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin)
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("knowledge_ingest: %w", err)
@@ -321,7 +321,7 @@ func runKnowledgeSearch(ctx context.Context, bin, monomindDir string, params map
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_search", "-p", string(raw), "--format", "json")
-	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir)
+	cmd.Env = PinEnv(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("knowledge_search: %w", err)

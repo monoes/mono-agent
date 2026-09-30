@@ -101,7 +101,11 @@ func nvmCandidates(root string) []string {
 }
 
 // Find locates an executable monomind binary. The returned path is absolute
-// and verified executable.
+// and verified executable. A version-manager shim (mise, asdf, Volta) is
+// never returned: it is resolved once, from a neutral directory, to the
+// installed binary it stands for (pin.go), so no project's version files
+// can pick what runs. Run it with Command/CommandContext (or PinEnv) so
+// its node is pinned too.
 //
 // The binary's directory is also put on this process's PATH: monomind is a
 // `#!/usr/bin/env node` script, and for nvm/Homebrew installs `node` sits
@@ -116,8 +120,12 @@ func Find() (string, error) {
 			if err != nil {
 				abs = path
 			}
-			shellpath.Prepend(filepath.Dir(abs))
-			return abs, nil
+			p, err := pin(abs)
+			if err != nil {
+				return "", err
+			}
+			shellpath.Prepend(filepath.Dir(p.bin))
+			return p.bin, nil
 		}
 	}
 	return "", &ErrNotFound{Tried: tried}
@@ -140,6 +148,9 @@ func FindAll() []string {
 		if err != nil {
 			abs = path
 		}
+		if p, err := pin(abs); err == nil {
+			abs = p.bin
+		}
 		key := abs
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			key = real
@@ -157,7 +168,7 @@ func FindAll() []string {
 func Handshake(ctx context.Context, bin string) (*VersionInfo, error) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, bin, "--version", "--json").Output()
+	out, err := CommandContext(cctx, bin, "--version", "--json").Output()
 	if err != nil {
 		return nil, unusable("handshake with %s failed: %w", bin, err)
 	}

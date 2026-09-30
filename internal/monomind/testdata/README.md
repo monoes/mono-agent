@@ -9,3 +9,8 @@ monomind protocol revision bump.
 `fake-monomind.sh` is a scripted monomind stand-in for subprocess tests: it
 speaks the handshake, scan, and a tool-bridged exec turn; `fake-monolith.sh`
 spawns a child and ignores cancellation, for the process-group kill test.
+
+`fake-mise.sh` and `make-shim-fixture.sh` reproduce #301: a mise-style shim
+that lets a project's `.tool-versions` pick the binary it runs, and a
+project with a planted node and monomind. `pin_test.go` and the CLI's org
+tests use them to prove the planted binaries never run.

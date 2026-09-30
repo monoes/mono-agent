@@ -50,7 +50,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	if fi, err := os.Stat(t.cwd); err != nil || !fi.IsDir() {
 		return errInvalidInput("this coder conversation's folder %s no longer exists; start a new conversation", t.cwd)
 	}
-	bin, _, err := monomind.Ensure(ctx)
+	bin, err := monomind.EnsureIn(ctx, t.cwd)
 	if err != nil {
 		return err
 	}

@@ -40,7 +40,7 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 	if progress == nil {
 		progress = func(string) {}
 	}
-	bin, err := Find()
+	bin, err := findIn(opts.Root)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 		opts.Prepare(cmd)
 	}
 	cmd.Dir = opts.Root // init has no --project flag and ignores MONOMIND_CWD
-	cmd.Env = append(os.Environ(), "CI=true")
+	cmd.Env = PinEnv(append(os.Environ(), "CI=true"), bin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -67,6 +67,9 @@ var ErrDoctorFormat = errors.New("unknown monomind doctor report format")
 // monomind exit 1 but still print the report, so the report is parsed
 // whatever the exit status.
 func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport, error) {
+	if err := CheckOutside(bin, opts.Dir); err != nil {
+		return nil, err
+	}
 	args := []string{"doctor", "--json"}
 	if opts.Component != "" {
 		args = append(args, "-c", opts.Component)
@@ -81,7 +84,7 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = opts.Dir
-	cmd.Env = append(os.Environ(), "CI=true") // never prompt
+	cmd.Env = PinEnv(append(os.Environ(), "CI=true"), bin) // never prompt
 	// On the deadline, end everything monomind started (git, npm), and
 	// don't let a child that still holds the output pipe keep Output()
 	// waiting.

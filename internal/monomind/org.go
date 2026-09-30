@@ -45,14 +45,14 @@ func runOrgJSONText(ctx context.Context, projectRoot string, cmd []string, value
 
 // runOrgJSONFull runs `monomind <full...>`; args names the command in errors.
 func runOrgJSONFull(ctx context.Context, projectRoot string, args, full []string) (json.RawMessage, error) {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return nil, err
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, full...)
+	cmd := CommandContext(cctx, bin, full...)
 	cmd.Dir = projectRoot
 
 	out, err := cmd.Output()
@@ -90,7 +90,7 @@ func orgCommandError(args []string, err error) error {
 // using orgCommandError's stderr-extraction pattern already established for
 // runOrgJSON.
 func runOrgText(ctx context.Context, projectRoot string, args ...string) (string, error) {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +98,7 @@ func runOrgText(ctx context.Context, projectRoot string, args ...string) (string
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, full...)
+	cmd := CommandContext(cctx, bin, full...)
 	cmd.Dir = projectRoot
 
 	out, err := cmd.CombinedOutput()
@@ -200,7 +200,7 @@ func dropUnnamableOrgs(raw json.RawMessage) json.RawMessage {
 // the only deadline that should apply here. Callers that need a bounded
 // wait should poll OrgStatus instead of waiting on this call to return.
 func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (json.RawMessage, error) {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	// above, so cancellation is the only way most callers ever stop it).
 	// setProcessGroup + a manual ctx.Done()/killProcessGroup select mirrors
 	// OrgEvents below, the most similar long-running case.
-	cmd := exec.Command(bin, full...)
+	cmd := Command(bin, full...)
 	cmd.Dir = projectRoot
 	setProcessGroup(cmd)
 
@@ -269,7 +269,7 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 // here kills it: OrgStop (`monomind org stop`) ends it cooperatively, the
 // same on every platform, so startDetached keeps it out of our jobs.
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	if task != "" {
 		args = append(args, "--task", task)
 	}
-	cmd := exec.Command(bin, args...)
+	cmd := Command(bin, args...)
 	cmd.Dir = projectRoot
 	cmd, err = startDetached(cmd)
 	if err != nil {
@@ -507,7 +507,7 @@ type OrgEventsOptions struct {
 // process group is killed so no `monomind` or agent-CLI grandchild survives
 // the caller, matching Exec's cancellation contract).
 func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOptions, onLine func(line []byte)) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -522,7 +522,7 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 		args = append(args, "--since", opts.Since)
 	}
 
-	cmd := exec.Command(bin, args...)
+	cmd := Command(bin, args...)
 	cmd.Dir = projectRoot
 	setProcessGroup(cmd)
 

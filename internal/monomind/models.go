@@ -289,7 +289,7 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 	cctx, cancel := context.WithTimeout(ctx, agentModelsTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, bin, "agent", "models", "--runtime", runtimeID, "--json")
-	cmd.Env = FilteredEnviron()
+	cmd.Env = PinEnv(FilteredEnviron(), bin)
 	out, runErr := cmd.Output()
 	var res agentModelsResult
 	if err := json.Unmarshal(lastJSONDocument(out), &res); err != nil {

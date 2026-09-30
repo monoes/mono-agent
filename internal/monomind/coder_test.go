@@ -84,7 +84,7 @@ func testCancelWaitsForTreeKill(t *testing.T, access string) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "cleaned-up")
 	ready := filepath.Join(dir, "ready")
-	bin := filepath.Join(dir, "monomind")
+	bin := filepath.Join(t.TempDir(), "monomind") // outside Cwd: a project-local one is refused
 	// Stands in for monomind: on SIGTERM it "kills the agent tree" (takes
 	// 1s), records that it finished, and exits.
 	script := "#!/bin/sh\n" +
@@ -120,7 +120,7 @@ func testCancelWaitsForTreeKill(t *testing.T, access string) {
 
 func TestInitWorkspaceReportsJSONError(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "monomind")
+	bin := filepath.Join(t.TempDir(), "monomind")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho '{\"success\":false,\"error\":\"Directory does not exist: /nope\"}'\nexit 1\n"), 0o755)
 	_, err := InitWorkspace(context.Background(), bin, dir, "claude")
 	if err == nil || !strings.Contains(err.Error(), "Directory does not exist") {
@@ -130,7 +130,7 @@ func TestInitWorkspaceReportsJSONError(t *testing.T) {
 
 func TestInitWorkspaceUsesTarget(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "monomind")
+	bin := filepath.Join(t.TempDir(), "monomind")
 	log := filepath.Join(dir, "args")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho \"$*\" > "+log+"\necho '{\"root\":\"x\",\"created\":[],\"skipped\":[]}'\n"), 0o755)
 	for target, want := range map[string]string{"claude": "--target claude", "codex": "--target codex", "agents": "--target agents"} {
@@ -267,7 +267,7 @@ func TestExecEffort(t *testing.T) {
 		t.Skip("fake monomind is a shell script")
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "monomind")
+	bin := filepath.Join(t.TempDir(), "monomind")
 	record := filepath.Join(dir, "argv")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho \"$*\" > "+record+"\n"+
 		`echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok"}'`+"\n"+
