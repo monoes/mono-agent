@@ -120,4 +120,17 @@ func TestFetchOutlookMailDoesNotMarkSeen(t *testing.T) {
 		items[1]["body"] != "first body" || items[1]["read"] != false {
 		t.Fatalf("items = %v", items)
 	}
+	// The envelope fills date, subject, from and message_id.
+	for i, want := range []map[string]interface{}{
+		{"subject": "Subject 2", "message_id": "<m2@example.com>"},
+		{"subject": "Subject 1", "message_id": "<m1@example.com>"},
+	} {
+		want["date"] = "Mon, 1 Sep 2026 10:00:00 +0000"
+		want["from"] = "Ann <ann@example.com>"
+		for k, v := range want {
+			if items[i][k] != v {
+				t.Errorf("item %d %s = %q, want %q", i, k, items[i][k], v)
+			}
+		}
+	}
 }

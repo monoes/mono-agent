@@ -243,7 +243,7 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 
 		// ENVELOPE: (date subject from sender reply-to to cc bcc in-reply-to message-id)
 		if strings.Contains(line, "ENVELOPE (") {
-			ei := strings.Index(line, "ENVELOPE (") + 10
+			ei := strings.Index(line, "ENVELOPE (") + len("ENVELOPE ") // at the "("
 			env := extractParenContent(line[ei:])
 			parts := parseEnvelopeParts(env)
 			if len(parts) >= 10 {
