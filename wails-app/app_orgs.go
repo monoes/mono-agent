@@ -238,7 +238,7 @@ func (a *App) StreamOrgEvents(orgName, streamID string) string {
 		eventsArgs = append(eventsArgs, "--project", projectRoot)
 		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
 	}
-	eventsArgs = append(eventsArgs, "events", orgName, "--follow")
+	eventsArgs = append(eventsArgs, "events", "--follow", "--", orgName)
 	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(eventsArgs, " "), logSuffix))
 	cmd := exec.Command(cliBin, eventsArgs...)
 	setChatProcessGroup(cmd)

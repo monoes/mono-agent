@@ -218,3 +218,40 @@ func TestLockWaitEndsWithTheContext(t *testing.T) {
 		t.Fatalf("lock dir: %v %v", info, err)
 	}
 }
+
+// Never two holders at once, however many contend (the claim file this
+// replaced let two waiters both break a stale claim).
+func TestLockHasOneHolderAtATime(t *testing.T) {
+	root := t.TempDir()
+	var mu sync.Mutex
+	holders, most := 0, 0
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				release, err := lockOrg(context.Background(), root, "acme")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				holders++
+				if holders > most {
+					most = holders
+				}
+				mu.Unlock()
+				time.Sleep(time.Millisecond)
+				mu.Lock()
+				holders--
+				mu.Unlock()
+				release()
+			}
+		}()
+	}
+	wg.Wait()
+	if most != 1 {
+		t.Fatalf("%d holders at once", most)
+	}
+}
