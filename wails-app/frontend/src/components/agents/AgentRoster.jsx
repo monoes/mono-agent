@@ -6,7 +6,7 @@ import { confirm } from '../ConfirmDialog.jsx'
 import AutoRevalidate from './AutoRevalidate.jsx'
 import {
   emptyRun, applyValidateLine, withLiveResults, rowKey, chipFor,
-  formatLatency, formatCost, ageParts, planSummary, loginHintFor,
+  formatLatency, formatCost, ageParts, planSummary, loginHintFor, trackRecord,
 } from '../../lib/agentRoster.js'
 
 // AgentRoster is the "Validated models" section of the AI agents page
@@ -47,9 +47,10 @@ function StatusChip({ entry, testing }) {
 function ModelRow({ runtime, entry, testing, busy, onValidate, onRemove }) {
   const { t } = useTranslation()
   const age = ageParts(entry.validated_at)
+  const track = trackRecord(entry)
   return (
     <div data-row={`${runtime}/${entry.model}`} style={{
-      display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto auto auto', alignItems: 'center',
+      display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto auto auto auto', alignItems: 'center',
       gap: 10, padding: '6px 10px', borderTop: '1px solid var(--border)',
     }}>
       <div style={{ minWidth: 0 }}>
@@ -64,6 +65,14 @@ function ModelRow({ runtime, entry, testing, busy, onValidate, onRemove }) {
         </div>
       </div>
       <StatusChip entry={entry} testing={testing} />
+      <span data-testid="track-record" style={{ ...mono, fontSize: 9.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
+        title={track.length ? t('agents.roster.trackRecord', { entries: track.map(r => t('agents.roster.trackEntry', r)).join(', ') }) : undefined}>
+        {track.map((r, i) => (
+          <span key={r.category} style={r.low ? { color: 'var(--red, #ef4444)' } : undefined}>
+            {i > 0 && ' · '}{r.category} {r.pct}%{r.low && ` ${t('agents.roster.trackLow')}`}
+          </span>
+        ))}
+      </span>
       <span style={{ ...mono, fontSize: 10, color: 'var(--text-secondary)', minWidth: 52, textAlign: 'right' }}>
         {formatLatency(entry.latency_ms)}
         {formatCost(entry) && <span style={{ color: 'var(--text-muted)' }}> · {formatCost(entry)}</span>}
@@ -157,7 +166,9 @@ export default function AgentRoster() {
     const offLine = onAgentValidate(line => setRun(r => applyValidateLine(r, line)))
     const offClosed = onAgentValidateClosed(res => {
       setRun(r => ({ ...r, running: false, active: {}, error: res?.ok === false ? (res.error || '') : '' }))
-      load()
+      // The reloaded roster is the truth: a row cancelled by Stop keeps its
+      // stored state instead of the live "cancelled" result (#294).
+      load().then(() => setRun(r => (r.running ? r : { ...r, results: {} })))
     })
     return () => { offLine(); offClosed() }
   }, [load])

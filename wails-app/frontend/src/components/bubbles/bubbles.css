@@ -197,6 +197,11 @@
 .bubble-overlay.closing { animation: bubbleShrink 170ms ease-in forwards; }
 .bubble-backdrop.closing { animation: fade-in 170ms ease-in reverse forwards; }
 .bubble-overlay.narrow { top: 0; bottom: 0; left: 0; width: 100vw; transform: none; border-radius: 0; }
+/* Full screen, but not under the dock (#294): the dock keeps a column on
+   the right (moved there from the left at this width), so the overlay's
+   selector row and composer stay clear of the bubbles. */
+body:has(.bubble-dock) .bubble-overlay.narrow { width: calc(100vw - 76px); }
+body:has(.bubble-overlay.narrow) .bubble-dock.left { left: auto; right: 18px; }
 
 .bubble-divider {
   height: 7px;

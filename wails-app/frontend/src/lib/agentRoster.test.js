@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { emptyRun, applyValidateLine, withLiveResults, chipFor, rowKey, ageParts, formatLatency, formatCost, planSummary, loginHintFor } from './agentRoster.js'
+import { emptyRun, applyValidateLine, withLiveResults, chipFor, rowKey, ageParts, formatLatency, formatCost, planSummary, loginHintFor, trackRecord } from './agentRoster.js'
 
 describe('applyValidateLine', () => {
   it('tracks a run from plan to done', () => {
@@ -64,6 +64,8 @@ describe('formatting', () => {
     expect(formatCost({ has_cost: false })).toBe('')
     expect(formatCost({ has_cost: true, cost_usd: 0.00231 })).toBe('$0.0023')
     expect(formatCost({ has_cost: true, cost_usd: 0.00231, cost_estimated: true })).toBe('≈$0.0023')
+    expect(formatCost({ has_cost: true, cost_usd: 0 })).toBe('$0')
+    expect(formatCost({ has_cost: true, cost_usd: 0.00004 })).toBe('<$0.0001')
     const now = Date.parse('2026-09-29T12:00:00Z')
     expect(ageParts('0001-01-01T00:00:00Z', now)).toBeNull()
     expect(ageParts('2026-09-29T11:00:00Z', now)).toEqual({ n: 1, unit: 'h' })
@@ -80,5 +82,19 @@ describe('loginHintFor', () => {
     expect(loginHintFor({ login_hint: 'scan', models: [{ status: 'auth', login_hint: 'claude /login' }] })).toBe('claude /login')
     expect(loginHintFor({ login_hint: 'scan', models: [{ status: 'auth' }] })).toBe('scan')
     expect(loginHintFor({ models: [{ status: 'ok', login_hint: 'stale' }] })).toBe('')
+  })
+})
+
+describe('trackRecord', () => {
+  it('keeps the known rates, as percentages, and flags a poor fit', () => {
+    expect(trackRecord({})).toEqual([])
+    expect(trackRecord({ track_record: [
+      { category: 'engineering', score: 0.823, known: true, succeeded: 9, results: 11 },
+      { category: 'testing', score: 0.4, known: true, succeeded: 1, results: 5 },
+      { category: 'research', score: 0.9, known: false, succeeded: 1, results: 1 },
+    ] })).toEqual([
+      { category: 'engineering', pct: 82, low: false, succeeded: 9, results: 11 },
+      { category: 'testing', pct: 40, low: true, succeeded: 1, results: 5 },
+    ])
   })
 })

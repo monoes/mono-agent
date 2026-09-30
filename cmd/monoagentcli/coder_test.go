@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -244,7 +245,11 @@ const coderTranscript = `  echo '{"v":1,"type":"start","runtime":"claude","cwd":
 func TestCoderTurnRunsWithFullAccessAndJournalsToolActivity(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
 	big := strings.Repeat("y", chatevents.MaxToolPreviewBytes)
-	bin, argsLog := writeCoderMonomind(t, strings.Replace(coderTranscript, "BIG", big, 1))
+	// A process the turn left running, still alive when the turn ends.
+	left := startBackground(t, "sleep", "60")
+	transcript := strings.Replace(coderTranscript, "BIG", big, 1)
+	transcript = strings.Replace(transcript, `"background_pids":[4242]`, `"background_pids":[`+strconv.Itoa(left)+`]`, 1)
+	bin, argsLog := writeCoderMonomind(t, transcript)
 	withCoderCaps(t, monomind.CoderCapabilities...)
 	setCoderSettings(t, dbPath, coderSettings{Enabled: true, BudgetUSD: 3})
 	cwd := t.TempDir()
@@ -290,7 +295,7 @@ func TestCoderTurnRunsWithFullAccessAndJournalsToolActivity(t *testing.T) {
 		noticeCoderWorkspace + ": Working in " + cwd,
 		noticeCoderStatus + ": Starting Claude Code… loading MCP servers (1)",
 		noticeCoderStatus + ": Ready. Not available: monomind (failed)",
-		noticeCoderBackground + ": 1 process started during this turn still running: 4242",
+		noticeCoderBackground + ": 1 process started during this turn still running: " + strconv.Itoa(left) + " (sleep 60)",
 	}
 	if len(notices) != len(wantNotices) {
 		t.Fatalf("notices = %+v", notices)
@@ -391,4 +396,18 @@ func TestCoderRootIsOneSharedFolder(t *testing.T) {
 	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "claude", "--mode", "coder", "--coder-root", "--new-workspace"); code != 3 {
 		t.Errorf("--coder-root with --new-workspace: exit %d %s", code, out)
 	}
+}
+
+// startBackground starts a process as a turn would leave one behind and
+// returns its pid; cleanup kills and reaps it.
+func startBackground(t *testing.T, name string, args ...string) int {
+	t.Helper()
+	c := exec.Command(name, args...)
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := make(chan struct{})
+	go func() { c.Wait(); close(reaped) }()
+	t.Cleanup(func() { c.Process.Kill(); <-reaped })
+	return c.Process.Pid
 }

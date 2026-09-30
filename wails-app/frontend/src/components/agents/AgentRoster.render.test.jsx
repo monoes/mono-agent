@@ -222,6 +222,36 @@ describe('AgentRoster', () => {
     expect(screen.getByText('Validate all')).toBeInTheDocument()
   })
 
+  it('drops the live result of a row cancelled by Stop once the roster reloads (#294)', async () => {
+    api.agentValidatePlan.mockResolvedValue({ type: 'validate.plan', plan: { calls: 1, targets: [{ runtime: 'claude', model: 'haiku' }] } })
+    render(<AgentRoster />)
+    await waitFor(() => expect(row('claude/haiku')).toBeTruthy())
+    fireEvent.click(within(row('claude/haiku')).getByLabelText('Validate this model again'))
+    await waitFor(() => expect(api.startAgentValidation).toHaveBeenCalled())
+    act(() => listeners.line({ type: 'validate.started', target: { runtime: 'claude', model: 'haiku' } }))
+    act(() => listeners.line({ type: 'validate.result', result: { runtime: 'claude', model: 'haiku', status: 'cancelled', detail: 'cancelled' } }))
+    expect(within(row('claude/haiku')).getByText(/cancelled/)).toBeInTheDocument()
+    act(() => listeners.closed({ ok: false, error: 'validation cancelled after 0 of 1 tests' }))
+    await waitFor(() => expect(within(row('claude/haiku')).queryByText(/cancelled/)).toBeNull())
+    expect(row('claude/haiku').querySelector('[data-testid="chip"]').dataset.tone).toBe('ok')
+    expect(screen.getByText('validation cancelled after 0 of 1 tests')).toBeInTheDocument()
+  })
+
+  it('shows a model\'s known track record compactly, with the counts on hover', async () => {
+    const withTrack = structuredClone(roster)
+    withTrack.runtimes[0].models[0].track_record = [
+      { category: 'engineering', score: 0.82, known: true, succeeded: 9, results: 11 },
+      { category: 'testing', score: 0.4, known: true, succeeded: 1, results: 5 },
+    ]
+    api.agentRoster.mockResolvedValue(withTrack)
+    render(<AgentRoster />)
+    await waitFor(() => expect(row('claude/haiku')).toBeTruthy())
+    const cell = within(row('claude/haiku')).getByTestId('track-record')
+    expect(cell).toHaveTextContent('engineering 82% · testing 40% low')
+    expect(cell.title).toBe('Track record from real org work: engineering score 82% (9 of 11 succeeded), testing score 40% (1 of 5 succeeded)')
+    expect(within(row('claude/opus')).getByTestId('track-record')).toHaveTextContent('')
+  })
+
   it('shows a roster error', async () => {
     api.agentRoster.mockResolvedValue({ error: 'monomind not found' })
     render(<AgentRoster />)

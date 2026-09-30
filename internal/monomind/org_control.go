@@ -126,6 +126,26 @@ func ReadServeHeartbeat(projectRoot string) (*ServeHeartbeat, bool) {
 	return &hb, daemonhb.ProcessAlive(hb.PID)
 }
 
+// OrgRunLive reports whether a standalone `monomind org run` (no serve
+// daemon) is running the org: <root>/.monomind/orgs/<name>/runtime.json says
+// "running" and its pid is alive. Same rule as monomind's own `org status`
+// (isOrgRunning in org-manage.ts), so an org started from the GUI's Run
+// button counts as running without `org serve` (#294).
+func OrgRunLive(projectRoot, name string) bool {
+	b, err := os.ReadFile(filepath.Join(projectRoot, ".monomind", "orgs", name, "runtime.json"))
+	if err != nil {
+		return false
+	}
+	var rt struct {
+		Status string `json:"status"`
+		PID    int    `json:"pid"`
+	}
+	if json.Unmarshal(b, &rt) != nil || rt.Status != "running" {
+		return false
+	}
+	return daemonhb.ProcessAlive(rt.PID)
+}
+
 // OrgServeStart starts `monomind org serve` for projectRoot as a detached
 // process group writing to <root>/.monomind/serve.log, unless a live serve
 // daemon already owns the root. Returns the pid and whether it was already
