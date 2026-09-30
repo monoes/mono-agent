@@ -15,7 +15,9 @@ import (
 // TestOrgCommandsNeverRunProjectPlantedMonomind is #301 end to end through
 // the CLI: monomind is reached through a mise shim, and the project's
 // .tool-versions points node at a planted .cache/n with its own node and
-// monomind. `org status` and `org run` run the installed ones.
+// monomind, codex and opencode. `org status` and `org run` run the
+// installed monomind and node, and the codex the org's sessions start is
+// the installed one; opencode, not installed, doesn't start at all.
 func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell shims are unix-only")
@@ -50,11 +52,19 @@ func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 	if err := os.MkdirAll(shims, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"monomind", "node"} {
+	for _, name := range []string{"monomind", "node", "codex", "opencode"} {
 		if err := os.Symlink(filepath.Join(tools, "mise"), filepath.Join(shims, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
+	codex := filepath.Join(data, "installs", "npm-openai-codex", "1.0.0", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(codex), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\necho \"codex $0\" >>\"$PIN_LOG\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_RUNTIMES", "codex opencode")
 	t.Setenv("PATH", shims+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 	monomind.ResetCapabilityCache()
 	t.Cleanup(monomind.ResetCapabilityCache)
@@ -69,7 +79,8 @@ func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 			t.Fatalf("org %v: %v", args, runErr)
 		}
 		b, _ := os.ReadFile(log)
-		if strings.Contains(string(b), "PLANTED") || !strings.Contains(string(b), "monomind "+filepath.Join(node, "monomind")) {
+		if strings.Contains(string(b), "PLANTED") || !strings.Contains(string(b), "monomind "+filepath.Join(node, "monomind")) ||
+			!strings.Contains(string(b), "codex "+codex) {
 			t.Fatalf("org %v ran:\n%s", args, b)
 		}
 		os.Remove(log)

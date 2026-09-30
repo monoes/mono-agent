@@ -59,7 +59,7 @@ func newShimFixture(t *testing.T, monoInstall string) *shimFixture {
 	if err := os.MkdirAll(f.shims, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"monomind", "node"} {
+	for _, name := range []string{"monomind", "node", "codex", "opencode"} {
 		if err := os.Symlink(filepath.Join(tools, "mise"), filepath.Join(f.shims, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -305,6 +305,63 @@ func TestFindResolvesVoltaShim(t *testing.T) {
 	}
 }
 
+// The agent CLIs monomind starts by name in the project root (codex here)
+// are passed pinned, and the shims dir is dropped from its PATH, so a CLI
+// that can't be pinned (opencode, not installed) fails to start rather
+// than running the project's. rev278 reproduced a planted codex run with
+// --sandbox danger-full-access through `agent exec --runtime codex`.
+func TestAgentRuntimesPinnedAndShimsDropped(t *testing.T) {
+	f := newShimFixture(t, "node/22.0.0")
+	codex := filepath.Join(f.data, "installs", "npm-openai-codex", "1.0.0", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(codex), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\necho \"codex $0\" >>\"$PIN_LOG\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_RUNTIMES", "codex opencode")
+	ctx := context.Background()
+	for name, run := range map[string]func() error{
+		"org status": func() error { _, err := OrgStatus(ctx, f.project, "growth"); return err },
+		"agent exec": func() error {
+			_, err := Exec(ctx, ExecOptions{Runtime: "codex", Prompt: "p", Cwd: f.project, Access: AccessFull}, nil)
+			return err
+		},
+	} {
+		if err := run(); err != nil && name == "org status" {
+			t.Fatalf("%s: %v", name, err)
+		}
+		log := f.readLog(t)
+		if strings.Contains(log, "PLANTED") || !strings.Contains(log, "codex "+codex) {
+			t.Fatalf("%s ran:\n%s", name, log)
+		}
+		os.Remove(f.log)
+	}
+
+	bin, err := Find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The operator's own override naming the shim is pinned too.
+	env := PinEnv(append(os.Environ(), "CODEX_CLI_BIN="+filepath.Join(f.shims, "codex"), "OPENCODE_BIN=opencode"), bin)
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	if got["CODEX_CLI_BIN"] != codex {
+		t.Errorf("CODEX_CLI_BIN = %q, want %s", got["CODEX_CLI_BIN"], codex)
+	}
+	if v, ok := got["OPENCODE_BIN"]; ok {
+		t.Errorf("OPENCODE_BIN = %q, want it unset (not pinnable)", v)
+	}
+	for _, p := range filepath.SplitList(got["PATH"]) {
+		if p == f.shims {
+			t.Errorf("PATH still has the shims dir: %s", got["PATH"])
+		}
+	}
+}
+
 func TestShimManagerDetection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix paths")
@@ -315,6 +372,8 @@ func TestShimManagerDetection(t *testing.T) {
 	t.Setenv("ASDF_DATA_DIR", custom)
 	t.Setenv("MISE_DATA_DIR", "")
 	t.Setenv("VOLTA_HOME", "")
+	t.Setenv("NODENV_ROOT", "")
+	t.Setenv("PROTO_HOME", "")
 	write := func(path, body string) string {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -331,11 +390,37 @@ func TestShimManagerDetection(t *testing.T) {
 		write(filepath.Join(custom, "shims", "monomind"), "#!/bin/sh\n"):                                                                        managerAsdf,
 		write(filepath.Join(home, ".local", "share", "mise", "shims", "monomind"), "#!/bin/sh\n"):                                               managerMise,
 		write(filepath.Join(home, ".volta", "bin", "monomind"), "#!/bin/sh\n"):                                                                  managerVolta,
+		write(filepath.Join(other, "n", "monomind"), "#!/usr/bin/env bash\nset -e\nexec \"/usr/local/bin/nodenv\" exec \"$program\" \"$@\"\n"):  managerNodenv,
+		write(filepath.Join(home, ".nodenv", "shims", "monomind"), "#!/bin/sh\n"):                                                               managerNodenv,
+		write(filepath.Join(home, ".proto", "shims", "monomind"), "#!/bin/sh\n"):                                                                managerProto,
 		write(filepath.Join(other, "plain", "monomind"), "#!/usr/bin/env node\nconsole.log(1)\n"):                                               "",
 	} {
 		if got := shimManager(path); got != want {
 			t.Errorf("shimManager(%s) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// proto has no `which` for an npm global's bins: its shim fails closed.
+func TestProtoShimFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix paths")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PROTO_HOME", "")
+	shim := filepath.Join(home, ".proto", "shims", "monomind")
+	if err := os.MkdirAll(filepath.Dir(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvOverride, shim)
+	ResetCapabilityCache()
+	t.Cleanup(ResetCapabilityCache)
+	if _, err := Find(); err == nil || !strings.Contains(err.Error(), "proto shim") {
+		t.Fatalf("Find() err = %v, want a proto refusal", err)
 	}
 }
 
