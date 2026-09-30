@@ -57,7 +57,7 @@ func (l *MonomindLibrary) run(ctx context.Context, args ...string) ([]byte, erro
 	}
 	cmd := exec.CommandContext(cctx, l.Bin, args...)
 	cmd.Dir = l.Cwd
-	cmd.Env = monomind.PinEnv(monomind.FilteredEnviron(), l.Bin)
+	cmd.Env = monomind.PinEnvIn(monomind.FilteredEnviron(), l.Bin, l.Cwd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

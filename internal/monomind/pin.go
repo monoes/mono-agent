@@ -33,6 +33,7 @@ func resetPins() {
 	pins.byFound, pins.nodeDir = nil, nil
 	pins.Unlock()
 	resetRuntimePins()
+	resetBinPaths()
 }
 
 // pin resolves found (an absolute candidate path) to the binary that runs
@@ -117,47 +118,6 @@ func runsOnNode(bin string) bool {
 	}
 	line, _, _ := strings.Cut(head, "\n")
 	return strings.Contains(line, "node")
-}
-
-// PinEnv returns env with PATH led by bin's pinned node dir and bin's own
-// dir, so `#!/usr/bin/env node` (and any node monomind starts by name)
-// resolves to the pinned interpreter whatever the working directory. The
-// version managers' shims dirs are dropped from PATH, and the agent CLIs
-// monomind starts are passed pinned (pinRuntimes), so nothing monomind
-// runs by name in a project root goes through a shim the project steers.
-func PinEnv(env []string, bin string) []string {
-	dirs := []string{}
-	if nd := nodeDirFor(bin); nd != "" {
-		dirs = append(dirs, nd)
-	}
-	if filepath.IsAbs(bin) && (len(dirs) == 0 || dirs[0] != filepath.Dir(bin)) {
-		dirs = append(dirs, filepath.Dir(bin))
-	}
-	out := make([]string, 0, len(env)+1)
-	cur, key := "", "PATH"
-	for _, kv := range env {
-		k, v, _ := strings.Cut(kv, "=")
-		if k == "PATH" || (runtime.GOOS == "windows" && strings.EqualFold(k, "PATH")) {
-			cur, key = v, k
-			continue
-		}
-		out = append(out, kv)
-	}
-	isShimDir := shimDirMatcher()
-	parts := append([]string(nil), dirs...)
-	for _, p := range filepath.SplitList(cur) {
-		dup := false
-		for _, d := range dirs {
-			if p == d {
-				dup = true
-			}
-		}
-		if p != "" && !dup && !isShimDir(p) {
-			parts = append(parts, p)
-		}
-	}
-	out = append(out, key+"="+strings.Join(parts, string(os.PathListSeparator)))
-	return pinRuntimes(out, cur)
 }
 
 // nodeDirFor is bin's pinned node dir, pinned now when bin didn't come

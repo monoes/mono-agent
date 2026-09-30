@@ -53,7 +53,7 @@ func runOrgJSONFull(ctx context.Context, projectRoot string, args, full []string
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	cmd := CommandContext(cctx, bin, full...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -109,7 +109,7 @@ func orgTextOutput(ctx context.Context, bin, projectRoot string, args ...string)
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	cmd := CommandContext(cctx, bin, append([]string{"org"}, args...)...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	return cmd.CombinedOutput()
 }
 
@@ -237,7 +237,7 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	// setProcessGroup + a manual ctx.Done()/killProcessGroup select mirrors
 	// OrgEvents below, the most similar long-running case.
 	cmd := Command(bin, full...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	setProcessGroup(cmd)
 
 	var stdout, stderr bytes.Buffer
@@ -301,7 +301,7 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 		args = append(args, "--task", task)
 	}
 	cmd := Command(bin, args...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	cmd, err = startDetached(cmd)
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
@@ -546,7 +546,7 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 	}
 
 	cmd := Command(bin, args...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	setProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Stands in for mise in the #301 tests. Copied to a file named `mise`;
-# shims are symlinks to it named after their tool. `mise which <tool>` and
+# shims are symlinks to it named after their tool. `mise bin-paths` lists
+# the global installs' bin dirs. `mise which <tool>` and
 # a shim pick the tool the way mise does for a node `path:` version:
 # MISE_NODE_VERSION, then the nearest .tool-versions from the working
 # directory up, then whatever is installed under $MISE_DATA_DIR/installs.
@@ -32,9 +33,22 @@ pick() {
 
 tool=$(basename "$0")
 if [ "$tool" = mise ]; then
-	[ "$1" = which ] || exit 2
-	pick "$2"
-	exit $?
+	case "$1" in
+	which)
+		pick "$2"
+		exit $?
+		;;
+	bin-paths)
+		# The global tools' bin dirs; FAKE_MISE_NO_BIN_PATHS stands in for
+		# a mise that can't list them.
+		[ -z "$FAKE_MISE_NO_BIN_PATHS" ] || exit 1
+		for d in "$MISE_DATA_DIR"/installs/*/*/bin; do
+			[ -d "$d" ] && echo "$d"
+		done
+		exit 0
+		;;
+	esac
+	exit 2
 fi
 p=$(pick "$tool") || exit 1
 exec "$p" "$@"

@@ -362,6 +362,93 @@ func TestAgentRuntimesPinnedAndShimsDropped(t *testing.T) {
 	}
 }
 
+func pathOf(env []string) []string {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			return filepath.SplitList(v)
+		}
+	}
+	return nil
+}
+
+func envValue(env []string, key string) (string, bool) {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// The shims dir is replaced by mise's global tool bin dirs, after the
+// system dirs; when mise can't list them, the shims dir goes last. The
+// pinned agent CLIs are the same either way.
+func TestPinEnvGlobalToolDirs(t *testing.T) {
+	f := newShimFixture(t, "node/22.0.0")
+	codexDir := filepath.Join(f.data, "installs", "npm-openai-codex", "1.0.0", "bin")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin, err := Find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := PinEnv(os.Environ(), bin)
+	path := pathOf(env)
+	if path[0] != f.node || indexOf(path, f.shims) >= 0 || indexOf(path, codexDir) < indexOf(path, "/bin") || indexOf(path, "/bin") < 0 {
+		t.Fatalf("PATH = %v, want the pinned node first, the system dirs, then %s, and no shims", path, codexDir)
+	}
+	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(codexDir, "codex") {
+		t.Fatalf("CODEX_CLI_BIN = %q", v)
+	}
+
+	t.Setenv("FAKE_MISE_NO_BIN_PATHS", "1")
+	ResetCapabilityCache()
+	env = PinEnv(os.Environ(), bin)
+	path = pathOf(env)
+	if path[len(path)-1] != f.shims || indexOf(path, codexDir) >= 0 {
+		t.Fatalf("fallback PATH = %v, want the shims dir last", path)
+	}
+	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(codexDir, "codex") {
+		t.Fatalf("fallback CODEX_CLI_BIN = %q", v)
+	}
+}
+
+// Relative PATH entries resolve against the project root, and absolute
+// ones inside it are the project's: neither reaches a command run there,
+// nor does an agent CLI override naming a project file.
+func TestPinEnvInDropsProjectPaths(t *testing.T) {
+	f := newShimFixture(t, "node/22.0.0")
+	bin, err := Find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projBin := filepath.Join(f.project, "bin")
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", strings.Join([]string{".", "node_modules/.bin", projBin, "/usr/bin", "/bin"}, sep))
+	env := PinEnvIn(append(os.Environ(), "CODEX_CLI_BIN="+filepath.Join(f.project, ".cache", "n", "bin", "codex")), bin, f.project)
+	for _, p := range pathOf(env) {
+		if !filepath.IsAbs(p) || strings.HasPrefix(p, f.project) {
+			t.Fatalf("PATH kept %q: %v", p, pathOf(env))
+		}
+	}
+	if v, ok := envValue(env, "CODEX_CLI_BIN"); ok {
+		t.Fatalf("CODEX_CLI_BIN = %q, want it dropped", v)
+	}
+}
+
 func TestShimManagerDetection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix paths")

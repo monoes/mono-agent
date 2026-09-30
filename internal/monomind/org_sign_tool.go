@@ -49,7 +49,7 @@ func (t *signTool) orgSignHelp(ctx context.Context, root string) string {
 		cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 		defer cancel()
 		cmd := CommandContext(cctx, t.path, "org", "sign", "--help")
-		cmd.Dir = root
+		inRoot(cmd, root)
 		out, _ := cmd.CombinedOutput()
 		t.help = string(out)
 	})
@@ -94,7 +94,7 @@ func handshakeIn(ctx context.Context, bin, root string) (string, map[string]bool
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := CommandContext(cctx, bin, "--version", "--json")
-	cmd.Dir = root
+	inRoot(cmd, root)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", nil, fmt.Errorf("handshake with %s in %s: %w", bin, root, err)

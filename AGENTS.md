@@ -846,6 +846,22 @@ login (and its bill) is what the turn uses.
   `pi-rpc` transports). `monoagentcli agent install <runtime>` installs one
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
+- **Pinned binaries (#301).** monomind, its node and every agent CLI it
+  starts by name run from global installs a project can't redirect. A
+  version-manager shim (mise, asdf, Volta, nodenv) is resolved once from
+  your home directory; proto shims are refused (set `MONOMIND_BIN`). The
+  agent CLIs are passed by absolute path (`CODEX_CLI_BIN`, `OPENCODE_BIN`,
+  …). In monomind's children, PATH loses its relative entries, anything
+  inside the project, and the shims dirs. The managers' global tool dirs
+  (`mise bin-paths`, `asdf current`/`asdf where`, `nodenv prefix`) go after
+  the system dirs instead. So agent sessions and org roles get your
+  **global** tool versions, not the project's `.tool-versions`/`mise.toml`
+  ones: use `mise exec -- <cmd>` (or `asdf exec`) for a per-project
+  version. When a manager can't list its global tools (Volta, or a failing
+  `mise bin-paths`), its shims dir is appended last instead, with a
+  one-line notice in the log. Residual risk: a tool found nowhere else is
+  then still picked by the project's version files; the pinned agent CLIs
+  are not affected.
 - **Validated roster.** `monoagentcli agent validate` sends the one-word test
   turn to every listed model of every installed runtime (`--all`, the
   default, or only `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,

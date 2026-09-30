@@ -181,7 +181,7 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 	}
 	defer logf.Close()
 	cmd := Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	// Detached: the daemon must outlive this process, so it gets no job or
@@ -201,7 +201,7 @@ func OrgServeRun(ctx context.Context, projectRoot string) error {
 		return err
 	}
 	cmd := Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)

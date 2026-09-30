@@ -85,4 +85,32 @@ func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 		}
 		os.Remove(log)
 	}
+
+	// PATH entries that resolve in the project (relative ones, a direnv
+	// `PATH_add bin`) and an override naming a project file supply
+	// nothing: opencode, not installed, still doesn't start, and codex is
+	// the installed one.
+	for _, dir := range []string{"node_modules/.bin", "bin"} {
+		p := filepath.Join(project, dir, "opencode")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!/bin/sh\necho \"PLANTED $0\" >>\"$PIN_LOG\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", strings.Join([]string{"node_modules/.bin", ".", filepath.Join(project, "bin"), shims, "/usr/bin", "/bin"}, sep))
+	t.Setenv("CODEX_CLI_BIN", filepath.Join(project, ".cache", "n", "bin", "codex"))
+	monomind.ResetCapabilityCache()
+	cmd := newOrgCmd(&globalConfig{})
+	cmd.SetArgs([]string{"status", "growth", "--project", project})
+	var runErr error
+	captureStdout(t, func() { runErr = cmd.Execute() })
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if b, _ := os.ReadFile(log); strings.Contains(string(b), "PLANTED") || !strings.Contains(string(b), "codex "+codex) {
+		t.Fatalf("org status with project PATH entries ran:\n%s", b)
+	}
 }

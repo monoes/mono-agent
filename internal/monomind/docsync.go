@@ -116,7 +116,7 @@ func runIngest(ctx context.Context, dir, monomindDir string, params map[string]s
 
 	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(raw), "--format", "json")
 	cmd.Dir = dir
-	cmd.Env = PinEnv(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin)
+	cmd.Env = PinEnvIn(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin, dir)
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("knowledge_ingest: %w", err)

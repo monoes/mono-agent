@@ -471,7 +471,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// user's own Keychain-stored credentials are perfectly valid. Stripping
 	// them here means every chat/agent turn gets a clean environment
 	// regardless of what launched monoagentcli.
-	cmd.Env = PinEnv(append(FilteredEnviron(), envSlice(opts.Env)...), bin)
+	cmd.Env = PinEnvIn(append(FilteredEnviron(), envSlice(opts.Env)...), bin, opts.Cwd)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()

@@ -67,7 +67,7 @@ func runOrgCheck(ctx context.Context, projectRoot string, args ...string) (orgCh
 	defer cancel()
 	full := append(append([]string{"org", "sign"}, args...), "--check", "--format", "json")
 	cmd := CommandContext(cctx, tool.path, full...)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	out, err := cmd.Output() // exit 1 means "not all signed", with the same JSON
 	if unknownOption(err, out) {
 		return res, false
@@ -194,7 +194,7 @@ func orgSignReviewJSON(ctx context.Context, tool *signTool, projectRoot, name st
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	cmd := CommandContext(cctx, tool.path, "org", "sign", name, "--format", "json")
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	out, err := cmd.Output()
 	if unknownOption(err, out) {
 		return OrgReview{}, false, nil
@@ -225,7 +225,7 @@ func orgSignReviewText(ctx context.Context, bin, projectRoot, name string) (stri
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	cmd := CommandContext(cctx, bin, "org", "sign", name)
-	cmd.Dir = projectRoot
+	inRoot(cmd, projectRoot)
 	out, runErr := cmd.CombinedOutput()
 	var kept []string
 	for _, line := range strings.Split(ansiRe.ReplaceAllString(string(out), ""), "\n") {

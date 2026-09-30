@@ -84,7 +84,7 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = opts.Dir
-	cmd.Env = PinEnv(append(os.Environ(), "CI=true"), bin) // never prompt
+	cmd.Env = PinEnvIn(append(os.Environ(), "CI=true"), bin, opts.Dir) // never prompt
 	// On the deadline, end everything monomind started (git, npm), and
 	// don't let a child that still holds the output pipe keep Output()
 	// waiting.

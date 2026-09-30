@@ -128,34 +128,3 @@ func lookPathIn(name, searchPath string) string {
 	}
 	return ""
 }
-
-// shimDirMatcher reports whether a PATH entry is a version manager's shims
-// dir (or Volta's bin): every configured one, and any mise/rtx/asdf/
-// nodenv/proto shims dir by name.
-func shimDirMatcher() func(dir string) bool {
-	known := map[string]bool{}
-	for _, kind := range shimKinds {
-		for _, d := range shimDirs(kind) {
-			known[filepath.Clean(d)] = true
-			if r, err := filepath.EvalSymlinks(d); err == nil {
-				known[r] = true
-			}
-		}
-	}
-	return func(dir string) bool {
-		c := filepath.Clean(dir)
-		if known[c] {
-			return true
-		}
-		if r, err := filepath.EvalSymlinks(c); err == nil && known[r] {
-			return true
-		}
-		s := filepath.ToSlash(c)
-		for _, suffix := range []string{"/mise/shims", "/rtx/shims", "/asdf/shims", "/.nodenv/shims", "/.proto/shims"} {
-			if strings.HasSuffix(s, suffix) {
-				return true
-			}
-		}
-		return false
-	}
-}
