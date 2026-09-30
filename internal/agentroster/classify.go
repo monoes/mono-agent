@@ -13,10 +13,14 @@ import (
 
 // Validation statuses.
 const (
-	StatusOK               = "ok"
-	StatusOKUnexpected     = "ok_unexpected"
-	StatusAuth             = "auth"
-	StatusQuota            = "quota"
+	StatusOK           = "ok"
+	StatusOKUnexpected = "ok_unexpected"
+	StatusAuth         = "auth"
+	StatusQuota        = "quota"
+	// StatusRateLimited is a transient 429 (agent exec already retried
+	// it): the model can't run right now, but nothing is wrong with it,
+	// so the roster shows it stale (re-checked) rather than failed.
+	StatusRateLimited      = "rate_limited"
 	StatusModelUnavailable = "model_unavailable"
 	StatusTimeout          = "timeout"
 	StatusMissingBinary    = "missing_binary"
@@ -33,7 +37,8 @@ func Works(status string) bool {
 
 var (
 	notLoggedIn = regexp.MustCompile(`(?i)not logged in|not signed in|please run /login|use /login|run: \S+ login|unauthori[sz]ed|invalid api key|no api key|api key (not found|missing|required)|no providers? configured|authentication|401\b|login required|please (log|sign) ?in`)
-	quotaHit    = regexp.MustCompile(`(?i)quota|rate.?limit|usage limit|too many requests|429\b|credit balance|insufficient (credit|balance|funds)|billing`)
+	quotaHit    = regexp.MustCompile(`(?i)quota|usage limit|credit balance|insufficient (credit|balance|funds)|billing`)
+	rateLimited = regexp.MustCompile(`(?i)rate.?limit|too many requests|429\b`)
 	modelGone   = regexp.MustCompile(`(?i)unknown model|invalid model|model[^.\n]{0,80}(not found|not available|does not exist|isn'?t available|unsupported|not supported|no access)|model_not_found|not a valid model|no such model|unsupported model`)
 )
 
@@ -56,6 +61,8 @@ func Classify(res *monomind.TurnResult, execErr error) (status, detail string) {
 			return StatusAuth, msg
 		case monomind.ErrQuota:
 			return StatusQuota, msg
+		case monomind.ErrRateLimited:
+			return StatusRateLimited, msg
 		case monomind.ErrMissingBinary, monomind.ErrNoRunner:
 			return StatusMissingBinary, msg
 		case monomind.ErrTimeout:
@@ -99,6 +106,8 @@ func classifyMessage(msg string) string {
 		return StatusModelUnavailable
 	case quotaHit.MatchString(msg):
 		return StatusQuota
+	case rateLimited.MatchString(msg):
+		return StatusRateLimited
 	}
 	return StatusError
 }

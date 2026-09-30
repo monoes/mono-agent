@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/monoes/mono-agent/internal/agentroster"
 )
 
 // Candidate is one ranked agent or skill from monomind pick.
@@ -44,6 +46,9 @@ type Staffer struct {
 	Picker      Picker  // nil = built-in roles only
 	Chooser     Chooser // nil = no Jev: the fallback rules choose
 	Library     Library // nil = built-in roles only
+	// Quality is the roster's track record from earlier workers (#230):
+	// bad fits for a worker's category rank last, and Jev sees the rates.
+	Quality agentroster.Quality
 }
 
 // Staff turns a spawn request into a staffed worker. The lead's own choices
@@ -170,6 +175,7 @@ func (s *Staffer) staffModel(ctx context.Context, req SpawnRequest, st *Staff) e
 			eligible = append(eligible, m)
 		}
 	}
+	eligible, bad := s.rankByQuality(eligible, st.Category)
 	if req.Runtime != "" || req.Model != "" {
 		i := slices.IndexFunc(s.Roster, func(m Model) bool {
 			return (req.Runtime == "" || m.Runtime == req.Runtime) && (req.Model == "" || m.Model == req.Model || strings.EqualFold(m.Label, req.Model))
@@ -196,9 +202,15 @@ func (s *Staffer) staffModel(ctx context.Context, req SpawnRequest, st *Staff) e
 		opts := map[string]string{}
 		for _, m := range eligible {
 			opts[m.Key()] = modelDescription(m)
+			if r, ok := s.trackRecord(m, st.Category); ok {
+				opts[m.Key()] += ", " + trackRecordText(r)
+			}
 		}
 		state := map[string]any{"brief": req.Brief, "role": st.Role, "category": st.Category, "access": st.Access, "lead_model": s.Lead.Key()}
-		if id, conf, err := s.Chooser.Choose(ctx, state, "Which model should run this worker? Prefer the cheaper model when two fit equally well.", opts); err == nil {
+		if tr := s.trackRecordState(eligible, st.Category); len(tr) > 0 {
+			state["track_record"] = tr
+		}
+		if id, conf, err := s.Chooser.Choose(ctx, state, "Which model should run this worker? Prefer the cheaper model when two fit equally well, and avoid a model with a low success rate for this kind of work.", opts); err == nil {
 			if i := slices.IndexFunc(eligible, func(m Model) bool { return m.Key() == id }); i >= 0 {
 				st.Model, st.JevConf = eligible[i], &conf
 				st.Fallbacks = without(eligible, eligible[i])
@@ -207,9 +219,17 @@ func (s *Staffer) staffModel(ctx context.Context, req SpawnRequest, st *Staff) e
 			}
 		}
 	}
-	st.Model = ruleModel(eligible, s.Lead, st.Access)
+	// The rule never picks a bad fit while another model can do the work.
+	fits := eligible[:len(eligible)-len(bad)]
+	if len(fits) == 0 {
+		fits = eligible
+	}
+	st.Model = ruleModel(fits, s.Lead, st.Access)
 	st.Fallbacks = without(eligible, st.Model)
 	st.Why = append(st.Why, "model by rule (no Jev answer)")
+	if len(bad) > 0 && len(bad) < len(eligible) {
+		st.Why = append(st.Why, "passed over for a low success rate: "+keys(bad))
+	}
 	return nil
 }
 
