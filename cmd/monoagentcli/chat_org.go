@@ -67,6 +67,7 @@ func orgRoster(ctx context.Context, db *sql.DB, st coderStatus, lead dynorg.Mode
 			models = append(models, dynorg.Model{
 				Runtime: rr.Runtime, Model: model, Label: m.Label, Efforts: m.EffortLevels,
 				FullAccess: e.FullAccess, Read: read, Resume: e.Resume, ReadOnlySandbox: readOnlySandbox(st, e),
+				CallerTools: e.CallerTools, CallerToolsFull: e.CallerToolsWithFullAccess,
 				CostUSD: m.CostUSD, LatencyMs: m.LatencyMs, Stale: m.State == agentroster.StateStale,
 			})
 		}
@@ -119,6 +120,7 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 	if e := st.scan.Find(rt.ID); e != nil {
 		lead.Read = st.caps.Has(monomind.CapAgentExecAccessRead) && slices.Contains(e.AccessModes, monomind.AccessRead)
 		lead.ReadOnlySandbox = readOnlySandbox(st, e)
+		lead.CallerTools, lead.CallerToolsFull = e.CallerTools, e.CallerToolsWithFullAccess
 	}
 	lib := &dynorg.MonomindLibrary{Bin: opts.Bin, Cwd: t.cwd}
 	staffer := &dynorg.Staffer{
@@ -137,6 +139,7 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Cwd: t.cwd, Limits: limits, Staffer: staffer, Base: base,
 		ReadAccess: st.caps.Has(monomind.CapAgentExecAccessRead),
 		Emit:       journal,
+		Answers:    journalAnswers{journal},
 		Outcome: func(runtime, model, status, detail string, at time.Time) {
 			_ = agentroster.RecordOutcome(context.WithoutCancel(ctx), db.DB, runtime, model, status, detail, at)
 		},
@@ -149,6 +152,14 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		cond.Close()
 		db.Close()
 	}
+}
+
+// journalAnswers hands a turn's conductor the answers `chat history answer`
+// stored for its workers' questions (#256).
+type journalAnswers struct{ j *turnJournal }
+
+func (a journalAnswers) Answer(_ context.Context, agentID, questionID string) (string, bool, error) {
+	return a.j.store.TakeAnswer(a.j.profileID, a.j.turnID, agentID, questionID)
 }
 
 // Emit implements dynorg.Emitter: a worker's event, journaled in the
