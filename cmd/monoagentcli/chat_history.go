@@ -123,7 +123,6 @@ func newChatHistoryCmd(cfg *globalConfig) *cobra.Command {
 		newChatHistoryReconcileCmd(cfg),
 		newChatHistoryTranscriptCmd(cfg),
 		newChatHistorySetOrgCmd(cfg),
-		newChatHistoryAnswerCmd(cfg),
 	)
 	return cmd
 }

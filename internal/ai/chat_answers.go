@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Answers to a dynamic-org worker's questions (#256). `chat history answer`
+// Answers to a dynamic-org worker's questions (#256). `chat turn answer`
 // (another process) records the user's answer here; the running turn's
 // conductor takes it and journals it, so the turn process stays the only
 // writer of its own journal.
@@ -39,9 +39,6 @@ func (s *AIStore) AddAnswer(profileID, conversationID, turnID, agentID, question
 	if profileID == "" {
 		profileID = "default"
 	}
-	if err := s.ensureAnswersTable(); err != nil {
-		return err
-	}
 	_, err := s.db.Exec(`INSERT INTO ai_chat_answers (profile_id, conversation_id, turn_id, agent_id, question_id, text, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, profileID, conversationID, turnID, agentID, questionID, text, nowRFC3339())
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
@@ -57,9 +54,6 @@ func (s *AIStore) AddAnswer(profileID, conversationID, turnID, agentID, question
 func (s *AIStore) TakeAnswer(profileID, turnID, agentID, questionID string) (string, bool, error) {
 	if profileID == "" {
 		profileID = "default"
-	}
-	if err := s.ensureAnswersTable(); err != nil {
-		return "", false, err
 	}
 	var id int64
 	var text string

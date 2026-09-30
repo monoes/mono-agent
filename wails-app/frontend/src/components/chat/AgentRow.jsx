@@ -21,7 +21,7 @@ function StatusIcon({ status }) {
 }
 
 // QuestionBox answers a worker's open question (#256) through
-// `chat history answer`. scope is the live turn's { conversationId, turnId }.
+// `chat turn answer`. scope is the live turn's { conversationId, turnId }.
 function QuestionBox({ agent, scope }) {
   const { t } = useTranslation()
   const [text, setText] = useState('')

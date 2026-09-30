@@ -12,10 +12,20 @@ import (
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
 )
 
-// newChatHistoryAnswerCmd answers a dynamic-org worker's question (#256):
-// the running turn picks the answer up, journals it, and hands it to the
+// newChatTurnCmd groups commands that act on a running chat turn.
+func newChatTurnCmd(cfg *globalConfig) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "turn",
+		Short: "Act on a running chat turn",
+	}
+	cmd.AddCommand(newChatTurnAnswerCmd(cfg))
+	return cmd
+}
+
+// newChatTurnAnswerCmd answers a dynamic-org worker's question (#256): the
+// running turn picks the answer up, journals it, and hands it to the
 // worker.
-func newChatHistoryAnswerCmd(cfg *globalConfig) *cobra.Command {
+func newChatTurnAnswerCmd(cfg *globalConfig) *cobra.Command {
 	var agentID, questionID, text string
 	cmd := &cobra.Command{
 		Use:   "answer <conversation-id> <turn-id> --agent <id> --question <id> --text <answer>",
@@ -23,8 +33,9 @@ func newChatHistoryAnswerCmd(cfg *globalConfig) *cobra.Command {
 		Long: "A worker in a dynamic-org coder chat can ask the user a question (agent.message with direction " +
 			"\"question\" and a questionId in the turn's events). This records the answer; the running turn " +
 			"passes it to the worker within a second and journals it as that worker's follow-up from the user. " +
-			"Only an open question of a turn that is still running can be answered, and only once.",
-		Example: `  monoagentcli chat history answer c1 t1 --agent w1 --question q1 --text "Use Postgres"`,
+			"Only an open question of a turn that is still running can be answered, and only once: a question " +
+			"that timed out or whose worker was stopped is closed.",
+		Example: `  monoagentcli chat turn answer c1 t1 --agent w1 --question q1 --text "Use Postgres"`,
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			conversationID, turnID := args[0], args[1]
@@ -60,7 +71,8 @@ func newChatHistoryAnswerCmd(cfg *globalConfig) *cobra.Command {
 }
 
 // checkOpenQuestion refuses an answer unless the turn is still running and
-// its journal has that worker's question without a user answer yet.
+// its journal has that worker's question and nothing has closed it yet
+// (the user's answer, or a timeout or stop, both followups with its id).
 func checkOpenQuestion(store *ai.AIStore, profileID, conversationID, turnID, agentID, questionID string) error {
 	turn, err := store.GetTurn(turnID, profileID)
 	if err != nil {
@@ -91,7 +103,7 @@ func checkOpenQuestion(store *ai.AIStore, profileID, conversationID, turnID, age
 			switch {
 			case m.Direction == "question":
 				asked = true
-			case m.Direction == "followup" && m.From == "user":
+			case m.Direction == "followup" && (m.From == "user" || m.From == "system"):
 				answered = true
 			}
 		}
@@ -103,7 +115,7 @@ func checkOpenQuestion(store *ai.AIStore, profileID, conversationID, turnID, age
 	case !asked:
 		return errInvalidInput("%s asked no question %s in turn %s", agentID, questionID, turnID)
 	case answered:
-		return errInvalidInput("question %s of %s already has an answer", questionID, agentID)
+		return errInvalidInput("question %s of %s is closed (answered, timed out, or its worker stopped)", questionID, agentID)
 	}
 	return nil
 }

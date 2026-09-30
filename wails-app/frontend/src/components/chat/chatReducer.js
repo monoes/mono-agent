@@ -67,7 +67,8 @@ function agentPatch(state, ev) {
       if (p.direction === 'result') return put({ report: p.text })
       // A worker's question for the user (#256), open until answered.
       if (p.direction === 'question') return put({ question: { id: p.questionId, text: p.text } })
-      if (p.direction === 'followup' && p.from === 'user' && cur.question?.id === p.questionId) return put({ question: null })
+      // Closed by the user's answer, or by the system (timed out, stopped).
+      if (p.direction === 'followup' && (p.from === 'user' || p.from === 'system') && cur.question?.id === p.questionId) return put({ question: null })
       return {}
     case 'agent.finished':
       return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })

@@ -283,7 +283,7 @@ func TestWorkerAsksTheUserAndGetsTheAnswer(t *testing.T) {
 	}()
 
 	// Wait for the question in the journal, then answer it the way
-	// `chat history answer` does.
+	// `chat turn answer` does.
 	var asked bool
 	for i := 0; i < 300 && !asked; i++ {
 		time.Sleep(20 * time.Millisecond)
@@ -345,10 +345,49 @@ func TestChatHistoryAnswerRefusesBadInput(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
 	store := openTestChatStore(t, dbPath)
 	conv, _ := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
-	if _, code := runChatHistory(t, dbPath, "default", "answer", conv.ID, "nope", "--agent", "w1", "--question", "q1", "--text", "x"); code == 0 {
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "nope", "--agent", "w1", "--question", "q1", "--text", "x"); code == 0 {
 		t.Error("an unknown turn must be refused")
 	}
-	if _, code := runChatHistory(t, dbPath, "default", "answer", conv.ID, "nope", "--agent", "w1"); code != 3 {
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "nope", "--agent", "w1"); code != 3 {
 		t.Errorf("missing flags: exit %d, want 3", code)
+	}
+}
+
+// runChatTurn runs `chat turn <args>` with --json.
+func runChatTurn(t *testing.T, dbPath string, args ...string) (string, int) {
+	t.Helper()
+	cfg := &globalConfig{DBPath: dbPath, ProfileID: "default", JSONOutput: true}
+	var err error
+	out := captureStdout(t, func() {
+		cmd := newChatCmd(cfg)
+		cmd.SetArgs(append([]string{"turn"}, args...))
+		cmd.SilenceErrors, cmd.SilenceUsage = true, true
+		err = cmd.Execute()
+	})
+	return out, exitCodeFor(err)
+}
+
+func TestChatTurnAnswerRefusesAClosedQuestion(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	store := openTestChatStore(t, dbPath)
+	conv, _ := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
+	if _, _, err := store.CreateTurn(conv.ID, "default", "t1", "i", "go"); err != nil {
+		t.Fatal(err)
+	}
+	q := chatevents.AgentMessagePayload{AgentID: "w1", Direction: "question", QuestionID: "q1", From: "w1", To: "user", Text: "Which DB?"}
+	if _, err := store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, q); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "t1", "--agent", "w1", "--question", "q1", "--text", "x"); code != 0 {
+		t.Fatalf("open question: exit %d", code)
+	}
+	closedByTimeout := chatevents.AgentMessagePayload{AgentID: "w1", Direction: "followup", QuestionID: "q2", From: "system", Text: "No answer"}
+	store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, chatevents.AgentMessagePayload{AgentID: "w1", Direction: "question", QuestionID: "q2", From: "w1", To: "user", Text: "?"})
+	store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, closedByTimeout)
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "t1", "--agent", "w1", "--question", "q2", "--text", "late"); code != 3 {
+		t.Errorf("a timed-out question must be refused: exit %d", code)
+	}
+	if err := checkOpenQuestion(store, "default", conv.ID, "t1", "w1", "q2"); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("refusal = %v", err)
 	}
 }

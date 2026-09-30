@@ -154,7 +154,7 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 	}
 }
 
-// journalAnswers hands a turn's conductor the answers `chat history answer`
+// journalAnswers hands a turn's conductor the answers `chat turn answer`
 // stored for its workers' questions (#256).
 type journalAnswers struct{ j *turnJournal }
 

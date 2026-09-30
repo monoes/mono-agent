@@ -16,9 +16,14 @@ import (
 // A worker asking the user a question (#256). A worker whose exec can take
 // caller tools gets ask_user. The conductor journals the question
 // (agent.status waiting_user, then agent.message direction "question"),
-// lets go of the worker's leases while it waits, and polls Config.Answers
-// until the user answers (`chat history answer`), the question times out,
-// or the turn ends.
+// lets go of the worker's leases and slot while it waits, and polls
+// Config.Answers until the user answers (`chat turn answer`), the question
+// times out, or the worker is stopped. Every way a question ends is
+// journaled as a followup with its questionId, from "user" or "system".
+//
+// Limits of the lease hand-off: background processes the worker started
+// keep running while it waits, and a tool call it makes in the same
+// message as ask_user isn't held back by the lease it gave up.
 
 // ToolAskUser is the worker's question tool.
 const ToolAskUser = "ask_user"
@@ -40,7 +45,8 @@ type AnswerSource interface {
 }
 
 const askRule = "- If a decision only the user can make blocks you, call ask_user with one short question " +
-	"(at most 3 per task) and wait for the answer; otherwise decide yourself and say what you assumed.\n"
+	"(at most 3 per task) on its own, not alongside other tool calls, and wait for the answer; otherwise " +
+	"decide yourself and say what you assumed.\n"
 
 func askSpec() monomind.ToolSpec {
 	return monomind.ToolSpec{
@@ -90,16 +96,20 @@ func (c *Conductor) workerTools(w *worker, m Model, opts *monomind.ExecOptions) 
 // ask journals a worker's question and waits for the user's answer.
 func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string, error) {
 	c.mu.Lock()
-	if w.questions >= MaxQuestions {
+	if w.askedThisRun >= MaxQuestions {
 		c.mu.Unlock()
 		return "", fmt.Errorf("you already asked %d questions; decide yourself and say what you assumed", MaxQuestions)
 	}
-	w.questions++
-	qid := "q" + strconv.Itoa(w.questions)
+	w.askedThisRun++
+	w.questionSeq++
+	qid := "q" + strconv.Itoa(w.questionSeq)
+	w.openQuestion = question
 	c.mu.Unlock()
 
-	// Nobody edits while it waits: its leases go to others meanwhile.
-	held := c.releaseLeases(w)
+	// While it waits it holds nothing: its leases and its concurrency slot
+	// go to others, and it takes them back in the conductor's order
+	// (leases, then the slot), so no one can deadlock against it.
+	held := c.releaseHeld(w)
 	// Status first: the stage clears "needs you" on the next status change.
 	c.setStatus(w, chatevents.AgentWaitingUser, qid)
 	bounded, cut, _ := chatevents.BoundText(question, 2000)
@@ -108,26 +118,36 @@ func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string
 	})
 
 	answer, answered, err := c.waitAnswer(ctx, w.id, qid)
-	if answered {
-		c.emitAnswer(w.id, qid, answer)
+	c.mu.Lock()
+	w.openQuestion = ""
+	c.mu.Unlock()
+	switch {
+	case answered:
+		c.emitAnswer(w.id, qid, "user", answer)
+	case err != nil:
+		// Stopped while waiting: close the question so a late answer is
+		// refused (`chat turn answer` checks the journal).
+		c.emitAnswer(w.id, qid, "system", "The worker was stopped before the question was answered.")
+		return "", err
+	default:
+		c.emitAnswer(w.id, qid, "system", fmt.Sprintf("No answer within %s; the worker went on without one.", AskTimeout))
 	}
-	if lerr := c.retakeLeases(ctx, w, held); lerr != nil {
-		return "", lerr
+	if err := c.retakeHeld(ctx, w, held); err != nil {
+		return "", err
 	}
 	c.setStatus(w, chatevents.AgentWorking, "")
-	switch {
-	case err != nil:
-		return "", err
-	case !answered:
+	if !answered {
 		return fmt.Sprintf("The user didn't answer within %s. Go on with your best judgment and say in your report what you assumed.", AskTimeout), nil
 	}
 	return "The user answered: " + answer, nil
 }
 
-func (c *Conductor) emitAnswer(agentID, qid, answer string) {
-	bounded, cut, _ := chatevents.BoundText(answer, maxReport)
+// emitAnswer closes a question in the journal: the user's answer, or
+// (from "system") why it closed without one.
+func (c *Conductor) emitAnswer(agentID, qid, from, text string) {
+	bounded, cut, _ := chatevents.BoundText(text, maxReport)
 	c.cfg.Emit.Emit(chatevents.EventAgentMessage, chatevents.AgentMessagePayload{
-		AgentID: agentID, Direction: "followup", QuestionID: qid, From: "user", To: agentID, Text: bounded, Truncated: cut,
+		AgentID: agentID, Direction: "followup", QuestionID: qid, From: from, To: agentID, Text: bounded, Truncated: cut,
 	})
 }
 
@@ -152,8 +172,9 @@ func (c *Conductor) waitAnswer(ctx context.Context, agentID, qid string) (string
 	}
 }
 
-// releaseLeases lets go of the leases w holds and returns them.
-func (c *Conductor) releaseLeases(w *worker) []*lease {
+// releaseHeld lets go of the leases and the concurrency slot w holds and
+// returns the leases.
+func (c *Conductor) releaseHeld(w *worker) []*lease {
 	c.mu.Lock()
 	held := w.leases
 	w.leases = nil
@@ -161,11 +182,13 @@ func (c *Conductor) releaseLeases(w *worker) []*lease {
 	for _, l := range held {
 		l.release()
 	}
+	c.dropSlot(w)
 	return held
 }
 
-// retakeLeases takes the leases back, in their original order.
-func (c *Conductor) retakeLeases(ctx context.Context, w *worker, held []*lease) error {
+// retakeHeld takes the leases back in their original order, then a slot:
+// the same order run takes them in.
+func (c *Conductor) retakeHeld(ctx context.Context, w *worker, held []*lease) error {
 	for _, l := range held {
 		if !l.tryAcquire() {
 			c.setStatus(w, chatevents.AgentWaitingLease, "")
@@ -177,5 +200,18 @@ func (c *Conductor) retakeLeases(ctx context.Context, w *worker, held []*lease) 
 		w.leases = append(w.leases, l)
 		c.mu.Unlock()
 	}
+	select {
+	case c.slots <- struct{}{}:
+	default:
+		c.setStatus(w, chatevents.AgentQueued, "slot")
+		select {
+		case c.slots <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	c.mu.Lock()
+	w.hasSlot = true
+	c.mu.Unlock()
 	return nil
 }

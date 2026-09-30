@@ -186,10 +186,17 @@ func TestAskUserTimesOutAndStops(t *testing.T) {
 	if info.Status != chatevents.AgentDone || !strings.Contains(info.Report, "didn't answer") {
 		t.Errorf("timed-out question = %+v", info)
 	}
+	closed := false
 	for _, p := range em.find(chatevents.EventAgentMessage) {
 		if m := p.(chatevents.AgentMessagePayload); m.Direction == "followup" {
-			t.Error("no answer must be journaled on a timeout")
+			if m.From == "user" {
+				t.Error("a timeout must not be journaled as a user answer")
+			}
+			closed = m.From == "system" && m.QuestionID == "q1"
 		}
+	}
+	if !closed {
+		t.Error("a timed-out question must be closed in the journal (followup from system)")
 	}
 
 	withFastAsk(t, time.Hour)
@@ -222,4 +229,119 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition never became true")
+}
+
+func TestWaitingWorkerHoldsNoSlotSoNoDeadlock(t *testing.T) {
+	withFastAsk(t, 5*time.Second)
+	ans := &fakeAnswers{}
+	ex := &askingExec{hold: 80 * time.Millisecond}
+	em := &recEmitter{}
+	c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{askModel}, Lead: askModel}, Exec: ex.exec, Emit: em, Answers: ans,
+		Limits: Limits{MaxAgents: 3, MaxConcurrent: 1}})
+	defer c.Close()
+	c.Spawn(context.Background(), SpawnRequest{Brief: "ask then implement a", Access: ProfileCoding})
+	waitFor(t, func() bool { return len(em.find(chatevents.EventAgentMessage)) >= 2 })
+	// B gets the write lease and the only slot while A waits on the user.
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement b", Access: ProfileCoding})
+	waitFor(t, func() bool {
+		infos := c.Wait(context.Background(), []string{"w2"}, time.Millisecond)
+		return infos[0].Status == chatevents.AgentWorking
+	})
+	ans.put("w1", "q1", "go") // A resumes while B still runs: it must queue, not deadlock
+	infos := c.Wait(context.Background(), nil, 5*time.Second)
+	for _, in := range infos {
+		if in.Status != chatevents.AgentDone {
+			t.Fatalf("deadlocked: %+v", infos)
+		}
+	}
+	assertClean(t, c)
+}
+
+func TestTwoAskingWritersDontDeadlock(t *testing.T) {
+	withFastAsk(t, 5*time.Second)
+	ans := &fakeAnswers{}
+	ex := &askingExec{hold: 20 * time.Millisecond}
+	em := &recEmitter{}
+	c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{askModel}, Lead: askModel}, Exec: ex.exec, Emit: em, Answers: ans,
+		Limits: Limits{MaxAgents: 3, MaxConcurrent: 2}})
+	defer c.Close()
+	c.Spawn(context.Background(), SpawnRequest{Brief: "ask then implement a", Access: ProfileCoding})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "ask then implement b", Access: ProfileCoding})
+	waitFor(t, func() bool { return len(em.find(chatevents.EventAgentMessage)) >= 4 })
+	ans.put("w1", "q1", "a")
+	ans.put("w2", "q1", "b")
+	for _, in := range c.Wait(context.Background(), nil, 5*time.Second) {
+		if in.Status != chatevents.AgentDone {
+			t.Fatalf("deadlocked: %+v", in)
+		}
+	}
+	assertClean(t, c)
+}
+
+func TestQuestionIDsNeverRepeatAcrossFollowUps(t *testing.T) {
+	withFastAsk(t, 40*time.Millisecond)
+	ans := &fakeAnswers{}
+	ex := &askingExec{}
+	c, em := newAskConductor(t, ex, ans)
+	info, _ := c.Spawn(context.Background(), SpawnRequest{Brief: "ask then implement", Wait: true})
+	if !strings.Contains(info.Report, "didn't answer") {
+		t.Fatalf("run 1 = %+v", info)
+	}
+	// A late answer to the closed q1 must not reach the next run's question.
+	ans.put("w1", "q1", "LATE")
+	withFastAsk(t, 5*time.Second)
+	if _, err := c.Message(context.Background(), "w1", "ask again"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		for _, p := range em.find(chatevents.EventAgentMessage) {
+			if m := p.(chatevents.AgentMessagePayload); m.Direction == "question" && m.QuestionID == "q2" {
+				return true
+			}
+		}
+		return false
+	})
+	ans.put("w1", "q2", "right")
+	infos := c.Wait(context.Background(), []string{"w1"}, 5*time.Second)
+	if !strings.Contains(infos[0].Report, "The user answered: right") || strings.Contains(infos[0].Report, "LATE") {
+		t.Errorf("run 2 report = %s", infos[0].Report)
+	}
+}
+
+func TestStopWhileAskingClosesTheQuestion(t *testing.T) {
+	withFastAsk(t, time.Hour)
+	ex := &askingExec{}
+	c, em := newAskConductor(t, ex, &fakeAnswers{})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "ask then implement", Access: ProfileCoding})
+	waitFor(t, func() bool { return len(em.find(chatevents.EventAgentMessage)) >= 2 })
+	if in := c.Wait(context.Background(), []string{"w1"}, time.Millisecond)[0]; in.Question != "Which database?" {
+		t.Errorf("org_wait must show the open question: %+v", in)
+	}
+	c.Stop("w1")
+	c.Wait(context.Background(), nil, 5*time.Second)
+	closed := false
+	for _, p := range em.find(chatevents.EventAgentMessage) {
+		if m := p.(chatevents.AgentMessagePayload); m.Direction == "followup" && m.From == "system" && m.QuestionID == "q1" {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Error("a question cut short by a stop must be closed in the journal")
+	}
+	assertClean(t, c)
+}
+
+// assertClean checks no worker left a slot or a lease behind.
+func assertClean(t *testing.T, c *Conductor) {
+	t.Helper()
+	if n := len(c.slots); n != 0 {
+		t.Errorf("%d concurrency slots still taken", n)
+	}
+	for name, l := range map[string]*lease{"write": c.write, "browser": c.browser} {
+		if !l.tryAcquire() {
+			t.Errorf("the %s lease is still held", name)
+			continue
+		}
+		l.release()
+	}
 }

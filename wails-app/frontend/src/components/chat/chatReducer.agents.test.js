@@ -44,4 +44,13 @@ describe('worker questions (#256)', () => {
     s = chatReducer(s, ev('agent.message', { agentId: 'w2', direction: 'followup', questionId: 'q1', from: 'user', to: 'w2', text: 'Postgres' }))
     expect(s.agents.w2.question).toBeNull()
   })
+
+  it('closes a question the system ended (timeout or stop)', () => {
+    let s = run(
+      ev('agent.spawned', { agentId: 'w3', role: 'Coder' }),
+      ev('agent.message', { agentId: 'w3', direction: 'question', questionId: 'q4', from: 'w3', to: 'user', text: '?' }),
+    )
+    s = chatReducer(s, ev('agent.message', { agentId: 'w3', direction: 'followup', questionId: 'q4', from: 'system', to: 'w3', text: 'No answer' }))
+    expect(s.agents.w3.question).toBeNull()
+  })
 })

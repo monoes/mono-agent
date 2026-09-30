@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Dynamic-org workers can ask you a question** (#256). A worker gets an `ask_user` tool.
-  - **In the chat:** its row shows the question with an answer box, and the answer goes back to the worker through the new `chat history answer`.
+  - **In the chat:** its row shows the question with an answer box, and the answer goes back to the worker through the new `chat turn answer`.
   - **While it waits:** the worker releases its edit and browser leases.
   - **Timeout:** unanswered after 10 minutes, it carries on with its best judgment.
 

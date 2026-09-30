@@ -145,9 +145,9 @@ func (a *App) SetChatOrgMode(conversationID, mode string) string {
 }
 
 // AnswerAgentQuestion answers a dynamic-org worker's question (#256):
-// `chat history answer`.
+// `chat turn answer`.
 func (a *App) AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text string) string {
-	return a.jsonResult("chat", "history", "answer", conversationID, turnID, "--agent", agentID, "--question", questionID, "--text", text)
+	return a.jsonResult("chat", "turn", "answer", conversationID, turnID, "--agent", agentID, "--question", questionID, "--text", text)
 }
 
 // coderConversationArgs builds `chat history create` for a coder

@@ -76,10 +76,15 @@ type worker struct {
 	started time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
-	// questions counts this run's ask_user calls (#256); leases are the
-	// leases it holds right now (let go while it waits for an answer).
-	questions int
-	leases    []*lease
+	// askedThisRun counts this run's ask_user calls (capped at
+	// MaxQuestions); questionSeq numbers its questions across runs, so an
+	// id never repeats within the turn (#256). leases and hasSlot are what
+	// it holds right now: it lets go of both while it waits for an answer.
+	askedThisRun int
+	questionSeq  int
+	openQuestion string
+	leases       []*lease
+	hasSlot      bool
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -141,12 +146,15 @@ type WorkerInfo struct {
 	Report  string   `json:"report,omitempty"`
 	Error   string   `json:"error,omitempty"`
 	Files   []string `json:"files_changed,omitempty"`
+	// Question is the question a waiting_user worker asked the user (#256).
+	Question string `json:"question,omitempty"`
 }
 
 func (c *Conductor) infoLocked(w *worker, withReport bool) WorkerInfo {
 	info := WorkerInfo{
 		ID: w.id, Role: w.staff.Role, Status: w.status, Runtime: w.model.Runtime, Model: w.model.Model,
 		Effort: w.staff.Effort, Access: w.staff.Access, Error: w.errText, Files: sortedKeys(w.changed),
+		Question: w.openQuestion,
 	}
 	for _, s := range w.staff.Skills {
 		info.Skills = append(info.Skills, s.Name)
@@ -292,7 +300,7 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	}
 	w.report, w.errText = "", ""
 	w.followups++
-	w.questions = 0
+	w.askedThisRun = 0
 	w.started = c.cfg.Now()
 	// Marked queued in the same critical section as the running check, so
 	// two concurrent follow-ups can't both start a run.
@@ -375,7 +383,10 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	}
 	select {
 	case c.slots <- struct{}{}:
-		defer func() { <-c.slots }()
+		c.mu.Lock()
+		w.hasSlot = true
+		c.mu.Unlock()
+		defer c.dropSlot(w)
 	case <-ctx.Done():
 		return chatevents.AgentCancelled, "", "cancelled before it started"
 	}
@@ -439,6 +450,17 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return !c.confined(w.model)
+}
+
+// dropSlot gives back w's concurrency slot if it still holds it.
+func (c *Conductor) dropSlot(w *worker) {
+	c.mu.Lock()
+	had := w.hasSlot
+	w.hasSlot = false
+	c.mu.Unlock()
+	if had {
+		<-c.slots
+	}
 }
 
 // dropLease releases l if w still holds it (a worker waiting on the user

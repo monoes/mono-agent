@@ -537,6 +537,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
+	cmd.AddCommand(newChatTurnCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
 	// With --json a failure also ends stdout with {"error","code"}; an agent
 	// that is not installed or not logged in is code agent_not_setup.
