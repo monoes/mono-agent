@@ -215,3 +215,92 @@ func TestCoderSetOrgSettings(t *testing.T) {
 		t.Errorf("zero agents: exit %d", code)
 	}
 }
+
+// writeLeadEditMonomind is a fake monomind whose lead starts a writing
+// worker, edits a file itself while the worker runs, then org_waits. The
+// worker holds the write lease for about a second.
+func writeLeadEditMonomind(t *testing.T) (bin, reply string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "monomind")
+	reply = filepath.Join(dir, "wait-reply.json")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi
+if [ "$1" = "pick" ]; then echo '{"agents":{"confident":false,"ranked":[]},"skills":{"confident":false,"ranked":[]}}'; exit 0; fi
+if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
+  sys=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--system-file" ]; then sys="$a"; fi
+    prev="$a"
+  done
+  if [ -n "$sys" ] && grep -q "a worker in a team" "$sys"; then
+    echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":2,"access":"full"}'
+    sleep 1
+    echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Fixed it.","cost_usd":0.002}'
+    echo '{"v":1,"type":"done","exit_code":0}'
+    exit 0
+  fi
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
+  echo '{"v":1,"type":"tool_call","id":"c1","name":"org_spawn","args":{"brief":"implement the fix","access":"coding"}}'
+  read -r spawned
+  sleep 0.3
+  echo '{"v":1,"type":"tool_activity","id":"e1","phase":"start","name":"Edit","input":{"file_path":"/w/main.go"}}'
+  echo '{"v":1,"type":"tool_activity","id":"e1","phase":"end","name":"Edit","ok":true}'
+  echo '{"v":1,"type":"tool_call","id":"c2","name":"org_wait","args":{"timeout_s":10}}'
+  read -r waited
+  printf '%s\n' "$waited" > '` + reply + `'
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Done."}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+echo "unsupported: $*" >&2
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(monomind.EnvOverride, bin)
+	return bin, reply
+}
+
+// #260 end to end: the lead's Edit event goes through the coder turn's
+// onEvent chain into the conductor. Made while a writer holds the write
+// lease, it is journaled as a warning notice and reported in the lead's
+// next org tool result.
+func TestDynamicOrgLeadEditWhileAWriterRunsIsReported(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	dbPath := newChatCLITestDB(t)
+	bin, replyPath := writeLeadEditMonomind(t)
+	withCoderCaps(t, append(monomind.CoderCapabilities, monomind.CapAgentExecFullAccessTools, monomind.CapAgentExecAccessRead)...)
+	withCoderScan(t, orgScan(true))
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+	store := openTestChatStore(t, dbPath)
+	conv, err := store.CreateConversationMode("default", "agent", "general", "claude", "", "opus", ai.ModeCoder, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runChatHistory(t, dbPath, "default", "set-org", conv.ID, "dynamic"); code != 0 {
+		t.Fatalf("set-org: %s", out)
+	}
+	out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "fix the bug")
+	if err != nil {
+		t.Fatalf("turn: %v\n%s", err, out)
+	}
+	j := parseJournaledTurn(t, out)
+	conflict := false
+	for _, e := range j.byType(chatevents.EventNotice) {
+		var p chatevents.NoticePayload
+		json.Unmarshal(e.Payload, &p)
+		if p.Code == "org_lead_edit_conflict" && strings.Contains(p.Message, "/w/main.go") && strings.Contains(p.Message, "w1") {
+			conflict = true
+		}
+	}
+	if !conflict {
+		t.Errorf("no org_lead_edit_conflict notice in the journal:\n%s", out)
+	}
+	reply, _ := os.ReadFile(replyPath)
+	if !strings.Contains(string(reply), "warnings") || !strings.Contains(string(reply), "main.go") || !strings.Contains(string(reply), "Fixed it.") {
+		t.Errorf("the lead's org_wait result = %s", reply)
+	}
+}
