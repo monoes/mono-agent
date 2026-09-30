@@ -31,6 +31,15 @@ const (
 	EventUsageUpdated   EventType = "usage.updated"
 	EventNotice         EventType = "notice"
 	EventTurnFinished   EventType = "turn.finished"
+
+	// Dynamic org (monoes/mono-agent#226): the workers a coder chat's lead
+	// agent spawns. Their tool calls reuse tool.started/tool.completed with
+	// AgentID set; the lead's own events carry no AgentID.
+	EventAgentSpawned    EventType = "agent.spawned"
+	EventAgentStatus     EventType = "agent.status"
+	EventAgentMessage    EventType = "agent.message"
+	EventAgentReassigned EventType = "agent.reassigned"
+	EventAgentFinished   EventType = "agent.finished"
 )
 
 // Event is one journaled/emitted line — the outer envelope. Payload is kept
@@ -126,6 +135,8 @@ type AssistantDeltaPayload struct {
 // stable handle a later tool.completed uses to update this same step:
 // "Tool identity is (turnId,callId), never array position or name."
 type ToolStartedPayload struct {
+	// AgentID is the dynamic-org worker that made the call; "" for the lead.
+	AgentID   string          `json:"agentId,omitempty"`
 	CallID    string          `json:"callId"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -147,6 +158,7 @@ type ToolStartedPayload struct {
 // present once this event fires — an empty string is a valid result, not a
 // missing one, so it is a plain string rather than a pointer.
 type ToolCompletedPayload struct {
+	AgentID    string `json:"agentId,omitempty"`
 	CallID     string `json:"callId"`
 	OK         *bool  `json:"ok"`
 	Result     string `json:"result"`
@@ -263,4 +275,78 @@ func (r Record) Event() Event {
 		Version: r.Version, ProfileID: r.ProfileID, ConversationID: r.ConversationID, TurnID: r.TurnID,
 		Seq: r.Seq, At: r.At, Type: r.Type, Payload: r.Payload,
 	}
+}
+
+// AgentSpawnedPayload is agent.spawned's payload: a worker the lead added,
+// with how it was staffed. Why says who chose what ("lead chose the model;
+// role from pick"). The confidences are nil when that step didn't ask.
+type AgentSpawnedPayload struct {
+	AgentID        string   `json:"agentId"`
+	ParentID       string   `json:"parentId,omitempty"` // "" = the lead
+	Role           string   `json:"role"`
+	AgentType      string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
+	Skills         []string `json:"skills,omitempty"`
+	Runtime        string   `json:"runtime,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	Access         string   `json:"access,omitempty"` // coding, qa, automation, research
+	Brief          string   `json:"brief,omitempty"`
+	Why            string   `json:"why,omitempty"`
+	PickConfidence *float64 `json:"pickConfidence,omitempty"`
+	JevConfidence  *float64 `json:"jevConfidence,omitempty"`
+}
+
+// Worker statuses (agent.status's To).
+const (
+	AgentQueued       = "queued"
+	AgentStarting     = "starting"
+	AgentWorking      = "working"
+	AgentWaitingLease = "waiting_lease"
+	AgentIdle         = "idle"
+	AgentDone         = "done"
+	AgentFailed       = "failed"
+	AgentCancelled    = "cancelled"
+)
+
+// AgentStatusPayload is agent.status's payload.
+type AgentStatusPayload struct {
+	AgentID string `json:"agentId"`
+	From    string `json:"from,omitempty"`
+	To      string `json:"to"`
+	Detail  string `json:"detail,omitempty"` // e.g. which lease it waits for
+}
+
+// AgentMessagePayload is agent.message's payload: a brief, a result, a
+// follow-up or a question passing between the lead and a worker.
+type AgentMessagePayload struct {
+	AgentID   string `json:"agentId"`
+	Direction string `json:"direction"` // brief | result | followup | question
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// AgentReassignedPayload is agent.reassigned's payload: the chosen model
+// could not run (sign-in, quota, unknown model) and the next one took over.
+type AgentReassignedPayload struct {
+	AgentID     string `json:"agentId"`
+	FromRuntime string `json:"fromRuntime"`
+	FromModel   string `json:"fromModel"`
+	ToRuntime   string `json:"toRuntime"`
+	ToModel     string `json:"toModel"`
+	Reason      string `json:"reason"`
+}
+
+// AgentFinishedPayload is agent.finished's payload.
+type AgentFinishedPayload struct {
+	AgentID       string   `json:"agentId"`
+	Outcome       string   `json:"outcome"` // done | failed | cancelled
+	Summary       string   `json:"summary,omitempty"`
+	InputTokens   *int64   `json:"inputTokens,omitempty"`
+	OutputTokens  *int64   `json:"outputTokens,omitempty"`
+	CostUSD       *float64 `json:"costUsd,omitempty"`
+	CostEstimated bool     `json:"costEstimated,omitempty"`
+	DurationMs    int64    `json:"durationMs,omitempty"`
+	FilesChanged  []string `json:"filesChanged,omitempty"`
 }

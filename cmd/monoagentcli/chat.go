@@ -88,7 +88,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"`chat history`): its runtime, model and session come from the conversation, and the turn " +
 			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
 			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
-			"`history` subcommand.",
+			"`history` or `turn` subcommand.",
 		Args: cobra.MinimumNArgs(1),
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"
@@ -148,7 +148,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 					if tools != "" {
 						return errInvalidInput("--tools does not apply to a coder conversation: it has full access")
 					}
-					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd})
+					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd, orgMode: conv.OrgMode})
 				}
 			}
 			if mode == ai.ModeCoder {
@@ -537,6 +537,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
+	cmd.AddCommand(newChatTurnCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
 	// With --json a failure also ends stdout with {"error","code"}; an agent
 	// that is not installed or not logged in is code agent_not_setup.

@@ -377,6 +377,13 @@ type ScanEntry struct {
 	// (agent-exec-sandbox, monomind 2.19.0); nil from an older monomind.
 	// monomind refuses any other mode, so SandboxArgs checks this first.
 	SandboxModes []string `json:"sandbox_modes,omitempty"`
+	// AccessModes are the --access modes the runtime accepts ("scoped",
+	// "read", "full"; agent-exec-access-read). CallerTools says stdio
+	// caller tools reach the model, CallerToolsWithFullAccess that they
+	// also do under --access full (agent-exec-full-access-tools).
+	AccessModes               []string `json:"access_modes,omitempty"`
+	CallerTools               bool     `json:"caller_tools,omitempty"`
+	CallerToolsWithFullAccess bool     `json:"caller_tools_with_full_access,omitempty"`
 }
 
 // ScanResult is the `agent scan --json` payload (§6).

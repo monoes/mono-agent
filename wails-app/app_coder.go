@@ -137,6 +137,13 @@ func (a *App) CoderStopBackground(conversationID, turnID string) string {
 	return a.jsonResult("coder", "stop-background", "--conversation", conversationID, "--turn", turnID)
 }
 
+// SetChatOrgMode switches a coder conversation between working alone
+// ("solo") and a dynamic org ("dynamic", #226) from its next turn on:
+// `chat history set-org`.
+func (a *App) SetChatOrgMode(conversationID, mode string) string {
+	return a.jsonResult("chat", "history", "set-org", conversationID, mode)
+}
+
 // coderConversationArgs builds `chat history create` for a coder
 // conversation: either in cwd, or (newWorkspace) in a folder the CLI
 // creates. Coder chats belong to the general assistant's history. An empty

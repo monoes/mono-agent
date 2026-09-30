@@ -123,7 +123,7 @@ describe('coder bubbles', () => {
     api.getChatTurns.mockResolvedValue({ items: [{ id: 't1', prompt: 'fix the build', status: 'active', ownedByThisInstance: true }] })
     render(<Harness open={conv} />)
     await waitFor(() => expect(screen.getByText('fix the build')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('stage-lead')).toHaveAttribute('data-working', 'true'))
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-node"][data-agent="lead"]')).toHaveAttribute('data-status', 'working'))
     expect(bubble('c1')).toHaveAttribute('data-status', 'working')
 
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -273,7 +273,8 @@ describe('restored bubbles', () => {
     render(<Harness />)
     await waitFor(() => expect(bubble('gone')).toBeNull())
     expect(bubble('c1')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1'])
+    // Saved by an effect after the render that dropped it.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1']))
   })
 })
 
@@ -363,7 +364,7 @@ describe('verification matrix (#231)', () => {
   it('does not collapse for a click inside the overlay or in a portal it owns; the collapse button does, without stopping work', async () => {
     api.getChatTurns.mockResolvedValue({ items: [{ id: 't1', prompt: 'go', status: 'active' }] })
     render(<Harness open={conv} />)
-    await waitFor(() => expect(screen.getByTestId('stage-lead')).toHaveAttribute('data-working', 'true'))
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-node"][data-agent="lead"]')).toHaveAttribute('data-status', 'working'))
 
     fireEvent.pointerDown(overlay())
     fireEvent.click(overlay())
@@ -421,8 +422,14 @@ describe('verification matrix (#231)', () => {
     ].map((e, i) => ({ ...e, conversationId: 'c1', turnId, seq: i + 1, at: at(i) }))
     for (const ev of events) emit(ev)
     await waitFor(() => expect(within(overlay()).getByText('One test fails: TestX.')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('stage-lead')).toHaveAttribute('data-working', 'false'))
-    const live = overlay().textContent
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-node"][data-agent="lead"]')).not.toHaveAttribute('data-status', 'working'))
+    // Stable fields only: the stage has a clock-driven ticker, so compare the
+    // transcript and the lead's status, not the overlay's raw text.
+    const snapshot = () => ({
+      transcript: screen.getByTestId('bubble-transcript').textContent,
+      lead: document.querySelector('[data-testid="stage-node"][data-agent="lead"]')?.getAttribute('data-status'),
+    })
+    const live = snapshot()
 
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(overlay()).toBeNull())
@@ -430,7 +437,7 @@ describe('verification matrix (#231)', () => {
     api.getChatTurns.mockResolvedValue({ items: [{ id: turnId, prompt: 'run the tests', status: 'completed' }] })
     fireEvent.click(bubble('c1'))
     await waitFor(() => expect(within(overlay()).getByText('One test fails: TestX.')).toBeInTheDocument())
-    expect(overlay().textContent).toBe(live)
+    await waitFor(() => expect(snapshot()).toEqual(live))
   })
 
   it('collapses at once with reduced motion, and animates otherwise', async () => {

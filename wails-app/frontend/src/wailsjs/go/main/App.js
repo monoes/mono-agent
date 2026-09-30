@@ -1010,6 +1010,10 @@ export function StopAgentValidation() {
   return window['go']['main']['App']['StopAgentValidation']();
 }
 
+export function StopChatAgent(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StopChatAgent'](arg1, arg2, arg3);
+}
+
 export function StopChatTurn(arg1, arg2) {
   return window['go']['main']['App']['StopChatTurn'](arg1, arg2);
 }
@@ -1088,4 +1092,8 @@ export function ValidateOrgReport(arg1) {
 
 export function VerifyDraft(arg1, arg2, arg3) {
   return window['go']['main']['App']['VerifyDraft'](arg1, arg2, arg3);
+}
+
+export function SetChatOrgMode(arg1, arg2) {
+  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
 }

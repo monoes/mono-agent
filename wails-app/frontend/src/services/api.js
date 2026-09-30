@@ -172,6 +172,10 @@ export const api = {
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>
     GoApp.StopChatTurn(conversationID, turnID).then(parseStreamResult),
+  // One worker of a dynamic-org turn; the lead and the other workers keep
+  // running (#255).
+  stopChatAgent: (conversationID, turnID, agentID) =>
+    GoApp.StopChatAgent(conversationID, turnID, agentID).then(parseStreamResult),
   listChatConversations: (cursor = '', limit = 50) =>
     GoApp.ListChatConversations(cursor, limit).then(parseStreamResult),
   getChatTurns: (conversationID, cursor = '', limit = 50) =>
@@ -190,6 +194,9 @@ export const api = {
   coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
     GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
   // {stopped, gone, refused} pids of a turn's leftover background processes.
+  // Dynamic org (#226): 'solo' or 'dynamic', from the next turn on.
+  setChatOrgMode: (conversationID, mode) =>
+    GoApp.SetChatOrgMode(conversationID, mode).then(parseStreamResult),
   coderStopBackground: (conversationID, turnID) =>
     GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
   coderWorkspaceRoot: (runtimeID = '') => GoApp.CoderWorkspaceRoot(runtimeID).then(parseStreamResult),

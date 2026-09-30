@@ -22,6 +22,7 @@ type coderTurn struct {
 	effort  string
 	resume  string
 	cwd     string
+	orgMode string // ai.OrgModeDynamic lets the agent spawn workers (#226)
 }
 
 // coderSystemPrompt is appended to the runtime's own system prompt (not a
@@ -79,7 +80,24 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		journal.notice(noticeCoderWorkspace, "Working in "+t.cwd, chatevents.SeverityInfo)
 		onEvent = journal.handle
 	}
+	var closeOrg func()
+	if journal != nil && t.orgMode == ai.OrgModeDynamic {
+		var leadEvent func(monomind.Event)
+		closeOrg, leadEvent = startDynamicOrg(ctx, cfg, journal, settings, st, rt, t, &opts)
+		if leadEvent != nil {
+			journalEvent := onEvent
+			onEvent = func(ev monomind.Event) {
+				leadEvent(ev)
+				journalEvent(ev)
+			}
+		}
+	}
 	res, err := monomind.Exec(ctx, opts, onEvent)
+	if closeOrg != nil {
+		// The lead is done: workers still running are stopped and their
+		// ends journaled before the turn finishes.
+		closeOrg()
+	}
 	if journal != nil {
 		if err != nil && res == nil {
 			res = &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}}
