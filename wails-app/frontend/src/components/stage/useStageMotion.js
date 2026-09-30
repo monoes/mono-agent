@@ -31,9 +31,20 @@ export function useStageMotion(flights, { reducedMotion = false } = {}) {
   const timers = useRef(new Set())
   const flying = useRef(0)
 
+  // On unmount (or StrictMode's dev re-mount) drop every pending timer and
+  // start over: nothing is left flying, and a re-mount flies what is
+  // still fresh again.
   useEffect(() => {
     const pending = timers.current
-    return () => { pending.forEach(clearTimeout); pending.clear() }
+    const seenIds = seen.current
+    return () => {
+      pending.forEach(clearTimeout)
+      pending.clear()
+      seenIds.clear()
+      flying.current = 0
+      setActive([])
+      setBubbles([])
+    }
   }, [])
 
   useEffect(() => {

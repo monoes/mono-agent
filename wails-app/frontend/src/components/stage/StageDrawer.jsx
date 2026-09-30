@@ -6,11 +6,19 @@ import { ChatTimeline } from '../chat/ChatTimeline.jsx'
 import { LEAD_ID } from '../../lib/orgStage.js'
 import { ModelChip, formatCost, formatTokens, roleColor } from './StageNode.jsx'
 
-// agentTimeline is a worker's own text and tool calls as chatReducer-shaped
+// agentTimeline is an agent's own text and tool calls as chatReducer-shaped
 // state, so ChatTimeline (and NativeToolCard under it) renders them exactly
-// as it renders the lead's.
-function agentTimeline(node) {
-  return { parts: node.parts, calls: node.calls, notices: [] }
+// as it renders the lead's. calls is the turn's (chatReducer's agentCalls);
+// the stage keeps only their order. A native subagent's calls sit inside
+// its caller's Task call, which isn't in its own list, so they show flat.
+function agentTimeline(node, calls) {
+  const own = {}
+  for (const id of node.callOrder) {
+    const call = calls?.[id]
+    if (call) own[id] = node.native && call.parentCallId ? { ...call, parentCallId: undefined } : call
+  }
+  const parts = node.parts.filter(p => p.kind === 'text' || own[p.callId])
+  return { parts, calls: own, notices: [] }
 }
 
 function pct(v) {
@@ -19,11 +27,12 @@ function pct(v) {
 
 // StageDrawer is a clicked node's detail (#228): its brief, why it was
 // staffed the way it was, model, effort and access, the messages it got and
-// sent, and its tool cards. onStop stops just this agent; without it the
-// button explains that only the whole turn can be stopped.
-export function StageDrawer({ node, leadInfo, turnId, isLive, onClose, onStop }) {
+// sent, and its tool cards (from calls, the turn's agentCalls). onStop
+// stops just this agent; without it the button explains that only the
+// whole turn can be stopped.
+export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, onStop }) {
   const { t } = useTranslation()
-  const timeline = useMemo(() => agentTimeline(node), [node])
+  const timeline = useMemo(() => agentTimeline(node, calls), [node, calls])
   const isLead = node.id === LEAD_ID
   const title = isLead ? t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
   const running = ['queued', 'starting', 'working', 'waiting_lease'].includes(node.status)

@@ -90,6 +90,45 @@ describe('the org stage in a coder bubble', () => {
     await waitFor(() => expect(screen.queryByTestId('bubble-overlay')).toBeNull())
   })
 
+  it('narrows only the shown turn: an older turn keeps its own w1 row and the lead\'s text', async () => {
+    // Worker ids repeat per turn, so the older turn has a w1 of its own.
+    const older = [
+      { conversationId: 'conv-org', turnId: 'turn-0', seq: 1, at: '2026-09-30T09:00:00.000Z', type: 'turn.started', payload: {} },
+      { conversationId: 'conv-org', turnId: 'turn-0', seq: 2, at: '2026-09-30T09:00:01.000Z', type: 'assistant.delta', payload: { partId: 'p1', text: 'Earlier answer.' } },
+      { conversationId: 'conv-org', turnId: 'turn-0', seq: 3, at: '2026-09-30T09:00:02.000Z', type: 'agent.spawned', payload: { agentId: 'w1', role: 'Earlier worker' } },
+      { conversationId: 'conv-org', turnId: 'turn-0', seq: 4, at: '2026-09-30T09:00:03.000Z', type: 'turn.finished', payload: { status: 'completed' } },
+    ]
+    api.getChatTurns.mockResolvedValue({ items: [
+      { id: 'turn-1', prompt: 'Fix the flaky cache test', status: 'completed' },
+      { id: 'turn-0', prompt: 'Look around', status: 'completed' },
+    ] })
+    api.getChatEvents.mockImplementation((c, t, after) => Promise.resolve({ items: (t === 'turn-0' ? older : journal).filter(e => e.seq > after), hasMore: false }))
+    render(<Harness open={conv} />)
+    await waitFor(() => expect(node('w1')).toBeInTheDocument())
+    expect(screen.getAllByTestId('agent-row')).toHaveLength(5)
+    fireEvent.click(node('w1'))
+    const rows = screen.getAllByTestId('agent-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('Earlier worker')
+    expect(rows[1]).toHaveTextContent('Researcher')
+    expect(screen.getByText('Earlier answer.')).toBeInTheDocument()
+    expect(screen.queryByText('Done: the cache test is fixed.')).toBeNull()
+  })
+
+  it('clears the selection when a new turn starts', async () => {
+    api.startChatTurn.mockResolvedValue({ ok: true })
+    render(<Harness open={conv} />)
+    await waitFor(() => expect(node('w2')).toBeInTheDocument())
+    fireEvent.click(node('w2'))
+    expect(screen.getByTestId('stage-drawer')).toBeInTheDocument()
+    const box = screen.getByRole('textbox')
+    fireEvent.change(box, { target: { value: 'now the docs' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(api.startChatTurn).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByTestId('stage-drawer')).toBeNull())
+    expect(screen.queryByTestId('chat-agent-filter')).toBeNull()
+  })
+
   it('clicking the selected node again closes its drawer', async () => {
     render(<Harness open={conv} />)
     await waitFor(() => expect(node('w1')).toBeInTheDocument())

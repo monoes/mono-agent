@@ -149,6 +149,10 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
 
   const shown = shownTurn(conv)
   const stage = shown?.state?.stage || null
+  // Worker ids repeat per turn (w1, w2, …): a selection belongs to the turn
+  // the stage shows, and a new turn clears it.
+  const shownTurnId = shown?.turnId || ''
+  useEffect(() => { setSelectedAgent(null) }, [shownTurnId])
   const selectedNode = selectedAgent ? (stage?.nodes?.[selectedAgent] || null) : null
   selectedRef.current = selectedNode ? selectedAgent : null
   const selectAgent = useCallback(id => setSelectedAgent(cur => (cur === id ? null : id)), [])
@@ -224,11 +228,12 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
             onScroll={top => store.setView(bubble.key, { scrollTop: top })}
             onNavigate={onNavigate}
             agentFilter={agentFilter}
+            agentFilterTurnId={shownTurnId}
             agentFilterName={filterName}
             onClearAgentFilter={() => setSelectedAgent(null)}
           />
           {selectedNode && (
-            <StageDrawer node={selectedNode} leadInfo={{ runtime, model, effort: bubble.effort || setup.effort }}
+            <StageDrawer node={selectedNode} calls={shown?.state?.agentCalls} leadInfo={{ runtime, model, effort: bubble.effort || setup.effort }}
               turnId={shown?.turnId || ''} isLive={!!shown?.isLive} onClose={() => setSelectedAgent(null)} />
           )}
         </div>
