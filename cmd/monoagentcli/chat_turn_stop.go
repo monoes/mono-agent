@@ -173,6 +173,7 @@ func newChatTurnCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Control a running chat turn",
 	}
 	cmd.AddCommand(newChatTurnStopCmd(cfg))
+	cmd.AddCommand(newChatTurnAnswerCmd(cfg))
 	return cmd
 }
 

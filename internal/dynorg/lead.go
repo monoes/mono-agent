@@ -98,7 +98,7 @@ func (c *Conductor) writersLocked() []string {
 	var out []string
 	for _, id := range c.order {
 		w := c.workers[id]
-		if w != nil && running(w.status) && w.status != chatevents.AgentWaitingLease && (writes(w.staff.Access) || w.unconfined || !c.confined(w.model)) {
+		if w != nil && running(w.status) && w.status != chatevents.AgentWaitingLease && w.status != chatevents.AgentWaitingUser && (writes(w.staff.Access) || w.unconfined || !c.confined(w.model)) {
 			out = append(out, id)
 		}
 	}

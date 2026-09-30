@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Dynamic-org workers can ask you a question** (#256). A worker gets an `ask_user` tool.
+  - **In the chat:** its row shows the question with an answer box, and the answer goes back to the worker through the new `chat turn answer`.
+  - **While it waits:** the worker releases its edit and browser leases.
+  - **Timeout:** unanswered after 10 minutes, it carries on with its best judgment.
 - **Automatic re-validation of the agent roster, off by default** (#230). `agent roster auto-revalidate on|off|status` and a toggle in the roster section of the AI agents page. When on, the daemon re-checks stale roster models in the background: one runtime at a time, only while no chat turn, workflow run or org run is active and after a quiet period (15 minutes by default), never at startup, and at most 1 runtime a day with 3 models by default (`--per-day`, `--max-models`, `--quiet`). A run stops as soon as a chat, workflow or org run starts or the setting is turned off. Each re-check is a real, paid model call (a full agent turn), so turning it on asks first and shows the next run's estimated cost and the daily ceiling (runs × models × the priciest model with a known cost); `status` shows today's runs and spend. A manual `agent validate` and the automatic one never overlap: a second validation fails with "another validation is running".
 - **Dynamic org for coder chats** (#226, phase 1 of #224).
   - **Turning it on:** `chat history create --mode coder --org dynamic`, or `chat history set-org <conversation> dynamic`.

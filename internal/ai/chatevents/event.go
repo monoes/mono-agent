@@ -312,6 +312,7 @@ const (
 	AgentStarting     = "starting"
 	AgentWorking      = "working"
 	AgentWaitingLease = "waiting_lease"
+	AgentWaitingUser  = "waiting_user" // asked the user a question (#256)
 	AgentIdle         = "idle"
 	AgentDone         = "done"
 	AgentFailed       = "failed"
@@ -335,10 +336,13 @@ type AgentStatusPayload struct {
 type AgentMessagePayload struct {
 	AgentID   string `json:"agentId"`
 	Direction string `json:"direction"` // brief | result | followup | question
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Text      string `json:"text"`
-	Truncated bool   `json:"truncated,omitempty"`
+	// QuestionID names a worker's question ("q1") and, on the user's
+	// answer (a followup from "user"), the question it answers.
+	QuestionID string `json:"questionId,omitempty"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Text       string `json:"text"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 // AgentReassignedPayload is agent.reassigned's payload: the chosen model

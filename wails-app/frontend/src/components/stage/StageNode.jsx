@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Code2, Bot, User, Check, X, Lock, Wrench, FileText, Coins } from 'lucide-react'
+import { Code2, Bot, User, Check, X, Lock, HelpCircle, Wrench, FileText, Coins } from 'lucide-react'
 import { suggestIcon, iconUrl, CAT_COLOR } from '../orgdesigner/roleIcons.js'
 import { runtimeLabel } from '../../lib/runtimeLabels.js'
 import { LEAD_ID } from '../../lib/orgStage.js'
@@ -117,6 +117,7 @@ function StatusGlyph({ status }) {
   if (status === 'done') return <Check size={11} color="var(--green-neon, #22c55e)" aria-hidden="true" />
   if (status === 'failed') return <X size={11} color="#ef4444" aria-hidden="true" />
   if (status === 'waiting_lease') return <Lock size={10} color="#fbbf24" aria-hidden="true" />
+  if (status === 'waiting_user') return <HelpCircle size={10} color="#fbbf24" aria-hidden="true" />
   return null
 }
 
@@ -136,6 +137,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   let line = ''
   if (node.status === 'waiting_lease') line = t('stage.waitingLease', { lease: t(`stage.lease.${node.statusDetail === 'browser' ? 'browser' : 'pen'}`) })
   else if (node.doing?.active || working) line = doingText(node) || t('stage.thinking')
+  else if (node.status === 'waiting_user') line = t('stage.status.waiting_user')
   else if (node.status === 'queued') line = t('stage.status.queued')
   else line = node.summary || doingText(node)
   const Fallback = isLead ? Code2 : node.native ? Bot : User

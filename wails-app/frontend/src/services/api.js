@@ -198,6 +198,9 @@ export const api = {
     GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
   // {stopped, gone, refused} pids of a turn's leftover background processes.
   // Dynamic org (#226): 'solo' or 'dynamic', from the next turn on.
+  // Answer a dynamic-org worker's question (#256).
+  answerAgentQuestion: (conversationID, turnID, agentID, questionID, text) =>
+    GoApp.AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text).then(parseStreamResult),
   setChatOrgMode: (conversationID, mode) =>
     GoApp.SetChatOrgMode(conversationID, mode).then(parseStreamResult),
   coderStopBackground: (conversationID, turnID) =>

@@ -109,7 +109,12 @@ function agentPatch(state, ev) {
     case 'agent.reassigned':
       return put({ runtime: p.toRuntime, model: p.toModel, reassigned: `${p.fromRuntime}/${p.fromModel || 'default'}: ${p.reason}` })
     case 'agent.message':
-      return p.direction === 'result' ? put({ report: p.text }) : {}
+      if (p.direction === 'result') return put({ report: p.text })
+      // A worker's question for the user (#256), open until answered.
+      if (p.direction === 'question') return put({ question: { id: p.questionId, text: p.text } })
+      // Closed by the user's answer, or by the system (timed out, stopped).
+      if (p.direction === 'followup' && (p.from === 'user' || p.from === 'system') && cur.question?.id === p.questionId) return put({ question: null })
+      return {}
     case 'agent.finished':
       return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
     case 'tool.started':

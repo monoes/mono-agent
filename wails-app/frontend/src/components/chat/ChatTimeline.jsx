@@ -99,7 +99,7 @@ export function ChatTimeline({ state, turnId = '', isLive = true, agentFilter = 
         if (part.kind === 'text') {
           return part.text ? <ChatMarkdown key={`text-${part.partId}-${i}`} content={part.text} /> : null
         }
-        if (part.kind === 'agent') return <AgentRow key={`agent-${part.agentId}`} agent={(state.agents || {})[part.agentId]} />
+        if (part.kind === 'agent') return <AgentRow key={`agent-${part.agentId}`} agent={(state.agents || {})[part.agentId]} scope={state.scope} />
         const call = calls[part.callId]
         if (!call || childrenOf[call.parentCallId]) return null
         return renderCall(call)

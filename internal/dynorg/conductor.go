@@ -35,6 +35,9 @@ type Config struct {
 	Emit       Emitter
 	Outcome    Outcome // nil = don't record
 	Now        func() time.Time
+	// Answers brings the user's answers to workers' questions (#256); nil
+	// gives workers no ask_user tool.
+	Answers AnswerSource
 
 	// Quality records worker results and the lead's ratings (#230); nil
 	// records nothing.
@@ -85,6 +88,15 @@ type worker struct {
 	started time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
+	// askedThisRun counts this run's ask_user calls (capped at
+	// MaxQuestions); questionSeq numbers its questions across runs, so an
+	// id never repeats within the turn (#256). hasSlot says whether it holds
+	// a concurrency slot right now: it lets go of the slot and its leases
+	// while it waits for an answer.
+	askedThisRun int
+	questionSeq  int
+	openQuestion string
+	hasSlot      bool
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
@@ -92,7 +104,7 @@ type worker struct {
 	// worker (auth, quota, …), so a retry doesn't try them again.
 	unusable map[string]bool
 	stream   workerStream // its text and live usage (workerstream.go)
-	leases   []string     // the leases it holds, for agent.status (lease.go)
+	leases   []heldLease  // the leases it holds, for agent.status (lease.go)
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -164,12 +176,15 @@ type WorkerInfo struct {
 	Report  string   `json:"report,omitempty"`
 	Error   string   `json:"error,omitempty"`
 	Files   []string `json:"files_changed,omitempty"`
+	// Question is the question a waiting_user worker asked the user (#256).
+	Question string `json:"question,omitempty"`
 }
 
 func (c *Conductor) infoLocked(w *worker, withReport bool) WorkerInfo {
 	info := WorkerInfo{
 		ID: w.id, Role: w.staff.Role, Status: w.status, Runtime: w.model.Runtime, Model: w.model.Model,
 		Effort: w.staff.Effort, Access: w.staff.Access, Error: w.errText, Files: sortedKeys(w.changed),
+		Question: w.openQuestion,
 	}
 	for _, s := range w.staff.Skills {
 		info.Skills = append(info.Skills, s.Name)
@@ -318,6 +333,7 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	}
 	w.report, w.errText = "", ""
 	w.followups++
+	w.askedThisRun = 0
 	w.started = c.cfg.Now()
 	// Marked queued in the same critical section as the running check, so
 	// two concurrent follow-ups can't both start a run.
@@ -345,7 +361,7 @@ func (c *Conductor) Stop(id string) (WorkerInfo, error) {
 
 func running(status string) bool {
 	switch status {
-	case chatevents.AgentQueued, chatevents.AgentStarting, chatevents.AgentWorking, chatevents.AgentWaitingLease:
+	case chatevents.AgentQueued, chatevents.AgentStarting, chatevents.AgentWorking, chatevents.AgentWaitingLease, chatevents.AgentWaitingUser:
 		return true
 	}
 	return false
@@ -420,7 +436,10 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 	}
 	select {
 	case c.slots <- struct{}{}:
-		defer func() { <-c.slots }()
+		c.mu.Lock()
+		w.hasSlot = true
+		c.mu.Unlock()
+		defer c.dropSlot(w)
 	case <-ctx.Done():
 		return chatevents.AgentCancelled, "", "cancelled before it started", false
 	}
@@ -511,6 +530,17 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 	return w.unconfined || !c.confined(w.model)
 }
 
+// dropSlot gives back w's concurrency slot if it still holds it.
+func (c *Conductor) dropSlot(w *worker) {
+	c.mu.Lock()
+	had := w.hasSlot
+	w.hasSlot = false
+	c.mu.Unlock()
+	if had {
+		<-c.slots
+	}
+}
+
 // unusable statuses mean the model can't run at all, so the next one is
 // tried; any other failure is the worker's own.
 func unusable(status string) bool {
@@ -571,8 +601,8 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.BudgetUSD = remaining
 	}
 	c.mu.Unlock()
-	opts.Tools, opts.OnToolCall = nil, nil
 	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files)
+	c.workerTools(w, m, &opts)
 	var run monomind.TurnResult
 	ectx, ecancel := context.WithCancel(ctx)
 	defer ecancel()
@@ -717,7 +747,7 @@ func (c *Conductor) setStatusLocked(w *worker, to, detail string) {
 	}
 	from := w.status
 	w.status = to
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: slices.Clone(w.leases)})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: leaseNames(w.leases)})
 }
 
 func (c *Conductor) finish(w *worker, outcome, report, errText string) {

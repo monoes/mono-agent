@@ -27,7 +27,7 @@ const MAX_QUESTS = 100
 const MAX_FILES = 200
 
 // Statuses a node can be in (agent.status's "to", plus the lead's own).
-export const RUNNING = new Set(['queued', 'starting', 'working', 'waiting_lease'])
+export const RUNNING = new Set(['queued', 'starting', 'working', 'waiting_lease', 'waiting_user'])
 export const FINISHED = new Set(['done', 'failed', 'cancelled'])
 
 const CLAUDE_KINDS = {

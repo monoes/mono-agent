@@ -36,30 +36,56 @@ func (l *lease) acquire(ctx context.Context) error {
 
 func (l *lease) release() { <-l.ch }
 
+// heldLease is a lease a worker holds, with the name the stage reads.
+type heldLease struct {
+	l    *lease
+	name string
+}
+
+// leaseNames lists the names of the leases in hs.
+func leaseNames(hs []heldLease) []string {
+	if len(hs) == 0 {
+		return nil
+	}
+	out := make([]string, len(hs))
+	for i, h := range hs {
+		out[i] = h.name
+	}
+	return out
+}
+
 // holdLease records that w holds l (named name) until the returned func
 // releases it, and journals that at once (agent.status with its status
 // unchanged). Every agent.status reports the leases its worker holds, so
 // the org stage reads who holds the pen and the browser from the journal
-// instead of re-deriving the rules (#228).
+// instead of re-deriving the rules (#228). The release frees l only if w
+// still holds it: a worker waiting on the user has already let go of its
+// leases (#256), and freeing one it doesn't hold would free another
+// worker's.
 func (c *Conductor) holdLease(w *worker, l *lease, name string) (release func()) {
 	c.mu.Lock()
-	w.leases = append(w.leases, name)
+	w.leases = append(w.leases, heldLease{l: l, name: name})
 	// Say so now: a worker that holds a lease may still wait for another
 	// lease or a free slot before its status changes.
 	c.reportLocked(w)
 	c.mu.Unlock()
 	return func() {
 		c.mu.Lock()
-		w.leases = slices.DeleteFunc(w.leases, func(n string) bool { return n == name })
+		i := slices.IndexFunc(w.leases, func(h heldLease) bool { return h.l == l })
+		if i >= 0 {
+			w.leases = slices.Delete(w.leases, i, i+1)
+		}
 		c.mu.Unlock()
-		l.release()
+		if i >= 0 {
+			l.release()
+		}
 	}
 }
 
 // reportLocked journals w's current status again, with the leases it
 // holds now.
 func (c *Conductor) reportLocked(w *worker) {
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: slices.Clone(w.leases)})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: leaseNames(w.leases)})
 }
 
 // LeadAgentID names the lead in the lease report the stage reads.

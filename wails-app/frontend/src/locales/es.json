@@ -725,8 +725,13 @@
       "done": "hecho",
       "failed": "falló",
       "cancelled": "detenido",
-      "idle": "inactivo"
-    }
+      "idle": "inactivo",
+      "waiting_user": "esperando tu respuesta"
+    },
+    "questionFor": "Pregunta para ti:",
+    "answer": "Responder",
+    "answerLabel": "Tu respuesta",
+    "answerPlaceholder": "Escribe tu respuesta…"
   },
   "stage": {
     "subagent": "Subagente",
@@ -739,7 +744,8 @@
       "done": "listo",
       "failed": "falló",
       "cancelled": "detenido",
-      "blocked": "bloqueado"
+      "blocked": "bloqueado",
+      "waiting_user": "esperando tu respuesta"
     },
     "waitingLease": "esperando {{lease}}",
     "lease": {

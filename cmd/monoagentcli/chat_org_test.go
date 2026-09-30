@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
@@ -99,7 +100,7 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 		if !strings.HasPrefix(l, "agent exec") {
 			continue
 		}
-		if strings.Contains(l, "--tools-file") {
+		if strings.Contains(l, "--access full") {
 			leadLine = l
 		} else {
 			workerLine = l
@@ -110,7 +111,8 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 			t.Errorf("lead argv lacks %q: %s", want, leadLine)
 		}
 	}
-	for _, want := range []string{"--access read", "--cwd " + cwd, "--tools none", "--system-file", "--model opus"} {
+	// The worker's only caller tool is ask_user (#256).
+	for _, want := range []string{"--access read", "--cwd " + cwd, "--tools stdio", "--tools-file", "--system-file", "--model opus"} {
 		if !strings.Contains(workerLine, want) {
 			t.Errorf("worker argv lacks %q: %s", want, workerLine)
 		}
@@ -357,5 +359,179 @@ func TestDynamicOrgLeadEditWhileAWriterRunsIsReported(t *testing.T) {
 	reply, _ := os.ReadFile(replyPath)
 	if !strings.Contains(string(reply), "warnings") || !strings.Contains(string(reply), "main.go") || !strings.Contains(string(reply), "Fixed it.") {
 		t.Errorf("the lead's org_wait result = %s", reply)
+	}
+}
+
+// writeAskingOrgMonomind: the lead spawns a worker (waiting); the worker
+// asks the user a question with ask_user and reports the answer it got.
+func writeAskingOrgMonomind(t *testing.T) (bin, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	bin = filepath.Join(dir, "monomind")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi
+if [ "$1" = "pick" ]; then echo '{"agents":{"confident":false,"ranked":[]},"skills":{"confident":false,"ranked":[]}}'; exit 0; fi
+if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
+  sys=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--system-file" ]; then sys="$a"; fi
+    prev="$a"
+  done
+  if [ -n "$sys" ] && grep -q "a worker in a team" "$sys"; then
+    echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":2,"access":"full"}'
+    echo '{"v":1,"type":"tool_call","id":"a1","name":"ask_user","args":{"question":"Which database?"}}'
+    read -r reply
+    printf '%s\n' "$reply" > '` + filepath.Join(dir, "worker-reply.json") + `'
+    echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Used the answer."}'
+    echo '{"v":1,"type":"done","exit_code":0}'
+    exit 0
+  fi
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
+  echo '{"v":1,"type":"tool_call","id":"c1","name":"org_spawn","args":{"brief":"implement the storage layer","access":"coding","wait":true}}'
+  read -r reply
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Done."}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(monomind.EnvOverride, bin)
+	return bin, dir
+}
+
+func TestWorkerAsksTheUserAndGetsTheAnswer(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	dbPath := newChatCLITestDB(t)
+	bin, dir := writeAskingOrgMonomind(t)
+	withCoderCaps(t, append(monomind.CoderCapabilities, monomind.CapAgentExecFullAccessTools, monomind.CapAgentExecAccessRead)...)
+	withCoderScan(t, orgScan(true))
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+	store := openTestChatStore(t, dbPath)
+	conv, _ := store.CreateConversationMode("default", "agent", "general", "claude", "", "opus", ai.ModeCoder, t.TempDir())
+	if err := store.SetConversationOrgMode(conv.ID, "default", ai.OrgModeDynamic); err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-q", "--", "build it")
+		done <- result{out, err}
+	}()
+
+	// Wait for the question in the journal, then answer it the way
+	// `chat turn answer` does.
+	var asked bool
+	for i := 0; i < 300 && !asked; i++ {
+		time.Sleep(20 * time.Millisecond)
+		evs, _ := store.GetEvents(conv.ID, "turn-q", "default", 0, 500)
+		for _, ev := range evs {
+			var m chatevents.AgentMessagePayload
+			if ev.Type == chatevents.EventAgentMessage && json.Unmarshal(ev.Payload, &m) == nil && m.Direction == "question" {
+				asked = m.AgentID == "w1" && m.QuestionID == "q1" && m.Text == "Which database?"
+			}
+		}
+	}
+	if !asked {
+		t.Fatal("the worker's question never reached the journal")
+	}
+	if err := checkOpenQuestion(store, "default", conv.ID, "turn-q", "w1", "q9"); err == nil {
+		t.Error("an unknown question must be refused")
+	}
+	if err := checkOpenQuestion(store, "default", conv.ID, "turn-q", "w1", "q1"); err != nil {
+		t.Fatalf("open question refused: %v", err)
+	}
+	if err := store.AddAnswer("default", conv.ID, "turn-q", "w1", "q1", "Postgres"); err != nil {
+		t.Fatal(err)
+	}
+
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the turn did not finish after the answer")
+	}
+	if r.err != nil {
+		t.Fatalf("turn: %v\n%s", r.err, r.out)
+	}
+	reply, _ := os.ReadFile(filepath.Join(dir, "worker-reply.json"))
+	if !strings.Contains(string(reply), "The user answered: Postgres") {
+		t.Errorf("the worker got %s", reply)
+	}
+	j := parseJournaledTurn(t, r.out)
+	answered := false
+	for _, e := range j.byType(chatevents.EventAgentMessage) {
+		var m chatevents.AgentMessagePayload
+		json.Unmarshal(e.Payload, &m)
+		if m.Direction == "followup" && m.From == "user" && m.QuestionID == "q1" && m.Text == "Postgres" {
+			answered = true
+		}
+	}
+	if !answered {
+		t.Error("the answer must be journaled as the worker's follow-up from the user")
+	}
+	if err := checkOpenQuestion(store, "default", conv.ID, "turn-q", "w1", "q1"); err == nil {
+		t.Error("a finished turn's question must be refused")
+	}
+	if err := store.AddAnswer("default", conv.ID, "turn-q", "w1", "q1", "again"); err == nil {
+		t.Error("a second answer must be refused")
+	}
+}
+
+func TestChatHistoryAnswerRefusesBadInput(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	store := openTestChatStore(t, dbPath)
+	conv, _ := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "nope", "--agent", "w1", "--question", "q1", "--text", "x"); code == 0 {
+		t.Error("an unknown turn must be refused")
+	}
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "nope", "--agent", "w1"); code != 3 {
+		t.Errorf("missing flags: exit %d, want 3", code)
+	}
+}
+
+// runChatTurn runs `chat turn <args>` with --json.
+func runChatTurn(t *testing.T, dbPath string, args ...string) (string, int) {
+	t.Helper()
+	cfg := &globalConfig{DBPath: dbPath, ProfileID: "default", JSONOutput: true}
+	var err error
+	out := captureStdout(t, func() {
+		cmd := newChatCmd(cfg)
+		cmd.SetArgs(append([]string{"turn"}, args...))
+		cmd.SilenceErrors, cmd.SilenceUsage = true, true
+		err = cmd.Execute()
+	})
+	return out, exitCodeFor(err)
+}
+
+func TestChatTurnAnswerRefusesAClosedQuestion(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	store := openTestChatStore(t, dbPath)
+	conv, _ := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, t.TempDir())
+	if _, _, err := store.CreateTurn(conv.ID, "default", "t1", "i", "go"); err != nil {
+		t.Fatal(err)
+	}
+	q := chatevents.AgentMessagePayload{AgentID: "w1", Direction: "question", QuestionID: "q1", From: "w1", To: "user", Text: "Which DB?"}
+	if _, err := store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, q); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "t1", "--agent", "w1", "--question", "q1", "--text", "x"); code != 0 {
+		t.Fatalf("open question: exit %d", code)
+	}
+	closedByTimeout := chatevents.AgentMessagePayload{AgentID: "w1", Direction: "followup", QuestionID: "q2", From: "system", Text: "No answer"}
+	store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, chatevents.AgentMessagePayload{AgentID: "w1", Direction: "question", QuestionID: "q2", From: "w1", To: "user", Text: "?"})
+	store.AppendEvent("default", conv.ID, "t1", chatevents.EventAgentMessage, closedByTimeout)
+	if _, code := runChatTurn(t, dbPath, "answer", conv.ID, "t1", "--agent", "w1", "--question", "q2", "--text", "late"); code != 3 {
+		t.Errorf("a timed-out question must be refused: exit %d", code)
+	}
+	if err := checkOpenQuestion(store, "default", conv.ID, "t1", "w1", "q2"); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("refusal = %v", err)
 	}
 }

@@ -82,6 +82,9 @@ type Turn struct {
 const turnStatusActive = "active"
 
 func (s *AIStore) initChatEventTables() error {
+	if err := s.ensureAnswersTable(); err != nil {
+		return err
+	}
 	const conversationsSQL = `CREATE TABLE IF NOT EXISTS ai_chat_conversations (
 		id TEXT PRIMARY KEY,
 		profile_id TEXT NOT NULL,

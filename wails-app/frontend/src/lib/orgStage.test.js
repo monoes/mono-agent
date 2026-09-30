@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import journal from './__fixtures__/orgStageJournal.json'
 import {
-  stageReducer, replayStage, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID, MAX_CALLS, MAX_PARTS,
+  stageReducer, replayStage, RUNNING, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID, MAX_CALLS, MAX_PARTS,
 } from './orgStage.js'
 import { chatReducer, initialChatState } from '../components/chat/chatReducer.js'
 import { reduceTurnEvents } from '../components/chat/useChatStream.js'
@@ -136,6 +136,22 @@ describe('tolerance', () => {
     expect(s.flights.at(-1)).toMatchObject({ kind: 'question', from: 'w1' })
     s = stageReducer(s, { seq: 901, type: 'agent.status', payload: { agentId: 'w1', to: 'done' } })
     expect(s.nodes.w1.needsYou).toBe(false)
+  })
+
+  it('keeps a worker that waits on the user running, marks it needing you, and clears it on the answer (#256)', () => {
+    let s = stageReducer(null, { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder' } })
+    // The conductor journals the status first, then the question.
+    s = stageReducer(s, { seq: 2, type: 'agent.status', payload: { agentId: 'w1', from: 'working', to: 'waiting_user', detail: 'q1' } })
+    s = stageReducer(s, { seq: 3, type: 'agent.message', payload: { agentId: 'w1', direction: 'question', questionId: 'q1', from: 'w1', to: 'user', text: 'Which DB?' } })
+    expect(s.nodes.w1).toMatchObject({ status: 'waiting_user', needsYou: true })
+    expect(RUNNING.has(s.nodes.w1.status)).toBe(true)
+    // A lease report (same status) while it waits must not clear the question.
+    s = stageReducer(s, { seq: 4, type: 'agent.status', payload: { agentId: 'w1', from: 'waiting_user', to: 'waiting_user', leases: [] } })
+    expect(s.nodes.w1.needsYou).toBe(true)
+    // The answer, then it moves on.
+    s = stageReducer(s, { seq: 5, type: 'agent.message', payload: { agentId: 'w1', direction: 'followup', questionId: 'q1', from: 'user', to: 'w1', text: 'Postgres' } })
+    s = stageReducer(s, { seq: 6, type: 'agent.status', payload: { agentId: 'w1', from: 'waiting_user', to: 'working' } })
+    expect(s.nodes.w1).toMatchObject({ status: 'working', needsYou: false })
   })
 
   it('takes a per-agent usage.updated and the native agent.spawned when the runner sends them', () => {

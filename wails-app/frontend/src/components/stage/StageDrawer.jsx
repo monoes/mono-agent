@@ -37,7 +37,7 @@ export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, on
   const timeline = useMemo(() => agentTimeline(node, calls), [node, calls])
   const isLead = node.id === LEAD_ID
   const title = isLead ? node.role || t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
-  const running = ['queued', 'starting', 'working', 'waiting_lease'].includes(node.status)
+  const running = ['queued', 'starting', 'working', 'waiting_lease', 'waiting_user'].includes(node.status)
   const cost = formatCost(node.costUsd, node.costEstimated)
   const confidences = [
     node.pickConfidence != null && t('stage.pickConfidence', { value: pct(node.pickConfidence) }),
