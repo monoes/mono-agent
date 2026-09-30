@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -73,6 +74,19 @@ func ToolSpecs() []monomind.ToolSpec {
 // unknown model) is returned as an error, which the lead reads as the
 // tool's failed result.
 func (c *Conductor) Handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	out, err := c.handle(ctx, name, args)
+	// Edits the lead made while a writer held the write lease (LeadEvent)
+	// are reported with its next org tool call, which it reads.
+	if warnings := c.takeLeadWarnings(); len(warnings) > 0 {
+		if err != nil {
+			return "", fmt.Errorf("%w (warning: %s)", err, strings.Join(warnings, " "))
+		}
+		return marshal(map[string]any{"warnings": warnings, "result": json.RawMessage(out)})
+	}
+	return out, err
+}
+
+func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	switch name {
 	case ToolRoster:
 		return marshal(c.Roster())
