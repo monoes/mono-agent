@@ -590,7 +590,10 @@ How workers run:
   calls `org_wait` or its turn ends. Writers queue behind the lead. The
   lead's native tools can't be refused, so an edit it starts while a
   worker holds the lease is reported instead: an `org_lead_edit_conflict`
-  warning notice, and `warnings` in its next org tool result.
+  warning notice, and `warnings` in its next org tool result. Only edit
+  tool calls are seen (`isEditCall` in `internal/dynorg/lead.go`): a lead
+  that edits through the shell (`sed -i`, `cat >`, a codex exec command)
+  takes no lease and gets no warning.
 - **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
   (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
   3 follow-ups (`org_message`) per worker.

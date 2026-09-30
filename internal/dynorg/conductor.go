@@ -84,6 +84,9 @@ type worker struct {
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
+	// unusable holds the models (runtime/model) that couldn't run this
+	// worker (auth, quota, …), so a retry doesn't try them again.
+	unusable map[string]bool
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -421,6 +424,9 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 	models := []Model{w.model}
 	if first {
 		for _, m := range w.staff.Fallbacks {
+			if w.unusable[modelKey(m)] || modelKey(m) == modelKey(w.model) {
+				continue
+			}
 			// A confined research worker runs without the write lease,
 			// so it may only fall back to models that confine it too.
 			if w.staff.Access == ProfileResearch && !w.unconfined && c.confined(w.model) && !c.confined(m) {
@@ -445,7 +451,12 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 			if !strings.HasPrefix(detail, "budget") {
 				detail = "budget: " + detail
 			}
-			return chatevents.AgentFailed, "", boundText(detail, 500), false
+			// A run monomind stopped at its cap keeps what it wrote so far.
+			text := ""
+			if res != nil {
+				text = strings.TrimSpace(res.ResultText)
+			}
+			return chatevents.AgentFailed, text, boundText(detail, 500), false
 		}
 		c.recordOutcome(m, status, detail)
 		switch {
@@ -454,6 +465,10 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 		case unusable(status) && i+1 < len(models):
 			next := models[i+1]
 			c.mu.Lock()
+			if w.unusable == nil {
+				w.unusable = map[string]bool{}
+			}
+			w.unusable[modelKey(m)] = true
 			w.model = next
 			c.mu.Unlock()
 			c.cfg.Emit.Emit(chatevents.EventAgentReassigned, chatevents.AgentReassignedPayload{
@@ -470,6 +485,8 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 	}
 	return chatevents.AgentFailed, "", "no model could run this worker", false
 }
+
+func modelKey(m Model) string { return m.Runtime + "/" + m.Model }
 
 // confined reports whether a research worker on m can't edit files: it
 // runs with --access read, or in a read-only sandbox.
@@ -553,13 +570,11 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	var run monomind.TurnResult
 	ectx, ecancel := context.WithCancel(ctx)
 	defer ecancel()
-	// sandbox is the start event's sandbox status; refused is set when it
-	// says the confined run isn't sandboxed, and the run is cancelled.
-	var sandbox atomic.Value
+	// refused is set when the start event says the confined run isn't
+	// sandboxed, and the run is cancelled.
 	var refused atomic.Bool
 	res, err := c.cfg.Exec(ectx, opts, func(ev monomind.Event) {
 		if requireSandbox && ev.Type == monomind.EventStart {
-			sandbox.Store(ev.SandboxStatus)
 			if ev.SandboxStatus != monomind.SandboxStatusSandboxed {
 				refused.Store(true)
 				ecancel()
@@ -586,11 +601,15 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	}
 	c.mu.Unlock()
 	if requireSandbox {
-		status, _ := sandbox.Load().(string)
-		if status == "" && res != nil {
+		// Refused: Exec couldn't apply the sandbox, the start event said it
+		// wasn't applied (the run was cancelled), or the turn's own report
+		// says so. A run that failed before it started (no start event, no
+		// report, e.g. auth) ran nothing, and keeps its own failure.
+		status := ""
+		if res != nil {
 			status = res.SandboxStatus
 		}
-		if refused.Load() || errors.Is(err, monomind.ErrSandboxRequired) || (err == nil && status != monomind.SandboxStatusSandboxed) {
+		if refused.Load() || errors.Is(err, monomind.ErrSandboxRequired) || (status != "" && status != monomind.SandboxStatusSandboxed) {
 			return res, errUnconfined
 		}
 	}

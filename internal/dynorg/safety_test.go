@@ -170,7 +170,7 @@ func TestBudgetRefusalIsNotAModelOutcome(t *testing.T) {
 
 	// monomind's own budget stop (error code "budget").
 	ex2 := &execScript{answers: map[string]*monomind.TurnResult{
-		"claude/opus": {SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrBudget, Message: "budget exceeded"}},
+		"claude/opus": {SawDone: true, ResultText: "half done", Err: &monomind.ProtocolError{Code: monomind.ErrBudget, Message: "budget exceeded"}},
 	}}
 	outcomes2 := &outcomeLog{}
 	c2 := New(context.Background(), Config{Cwd: "/w", ReadAccess: true, Staffer: &Staffer{Roster: []Model{opus, haiku}, Lead: opus},
@@ -179,6 +179,10 @@ func TestBudgetRefusalIsNotAModelOutcome(t *testing.T) {
 	info, _ := c2.Spawn(context.Background(), SpawnRequest{Brief: "implement", Access: ProfileCoding, Runtime: "claude", Model: "opus", Wait: true})
 	if info.Status != chatevents.AgentFailed || len(outcomes2.list()) != 0 || len(ex2.calls) != 1 {
 		t.Fatalf("status %s, outcomes %v, execs %d", info.Status, outcomes2.list(), len(ex2.calls))
+	}
+	// The partial report survives the budget stop.
+	if info.Report != "half done" || !strings.HasPrefix(info.Error, "budget") {
+		t.Fatalf("report %q, error %q", info.Report, info.Error)
 	}
 }
 
@@ -277,4 +281,34 @@ func TestLeadWaitReleasesItsEditLease(t *testing.T) {
 		t.Fatal("the write lease is still held")
 	}
 	c.write.release()
+}
+
+// The retry after a refused sandbox doesn't go back to a model that
+// already failed to run the worker (auth), nor run its current model twice.
+func TestUnconfinedRetrySkipsModelsThatFailed(t *testing.T) {
+	a := Model{Runtime: "copilot", Model: "a", FullAccess: true, ReadOnlySandbox: true}
+	b := Model{Runtime: "copilot", Model: "b", FullAccess: true, ReadOnlySandbox: true}
+	var mu sync.Mutex
+	var calls []string
+	exec := func(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
+		mu.Lock()
+		calls = append(calls, o.Model+":"+o.Sandbox)
+		mu.Unlock()
+		if o.Model == "a" {
+			return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrAuth, Message: "Not logged in"}}, nil
+		}
+		if o.Sandbox != "" {
+			return nil, fmt.Errorf("%w: unsupported", monomind.ErrSandboxRequired)
+		}
+		on(monomind.Event{Type: monomind.EventStart})
+		return okTurn("found it"), nil
+	}
+	c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{a, b}, Lead: a}, Exec: exec, Emit: &recEmitter{}})
+	defer c.Close()
+	info, _ := c.Spawn(context.Background(), SpawnRequest{Brief: "investigate", Access: ProfileResearch, Runtime: "copilot", Model: "a", Wait: true})
+	mu.Lock()
+	defer mu.Unlock()
+	if info.Status != chatevents.AgentDone || strings.Join(calls, ",") != "a:read-only,b:read-only,b:" {
+		t.Fatalf("status %s, execs %v; want a (auth), b refused, then b unsandboxed", info.Status, calls)
+	}
 }
