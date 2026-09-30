@@ -127,3 +127,42 @@ func TestOrgSignCheckAll(t *testing.T) {
 		t.Fatalf("calls:\n%s", calls)
 	}
 }
+
+// --expect-hash is passed only when this monomind's `org sign --help`
+// lists it (monomind#568, 2.22); otherwise the plain --yes, with
+// mono-agent's own post-check.
+func TestOrgSignExpectHashOnlyWhenOffered(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	for _, c := range []struct {
+		version, help string
+		want          bool
+	}{
+		{"2.22.0", "  --expect-hash <hex>  Sign only if the signable hash is <hex>", true},
+		{"2.22.0", "  --yes  Skip the confirmation", false},
+		{"2.21.0", "  --expect-hash <hex>", false},
+	} {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "calls")
+		bin := filepath.Join(dir, "monomind")
+		script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+			`if [ "$3" = "--help" ]; then echo '` + c.help + `'; exit 0; fi` + "\n" +
+			"echo signed\nexit 0\n"
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(EnvOverride, bin)
+		ResetCapabilityCache()
+		if _, err := OrgSign(context.Background(), t.TempDir(), "growth", "abc123"); err != nil {
+			t.Fatal(err)
+		}
+		calls, _ := os.ReadFile(log)
+		got := strings.Contains(string(calls), "org sign growth --yes --expect-hash abc123")
+		if got != c.want || !strings.Contains(string(calls), "org sign growth --yes") {
+			t.Errorf("%s %q: calls\n%s", c.version, c.help, calls)
+		}
+	}
+	ResetCapabilityCache()
+}

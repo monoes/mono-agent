@@ -188,3 +188,47 @@ func TestInstructionsFileOutsideProjectIsUnknown(t *testing.T) {
 }
 
 func mustJSON(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+// monomind's documented signable hash (doc/commands/org.md "The signable
+// hash", monomind#568), pinned there by org-sign-expect-hash.test.ts: the
+// worked example's canonical JSON and both fixture hashes, with and
+// without an instructions file.
+func TestMonomindDocumentedHashVectors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "boss.md"), []byte("Be the boss.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const fixture = `{"name":"fx","goal":"ship it","roles":[
+  {"id":"boss","type":"boss","reports_to":null,"title":"CEO","instructions_file":"boss.md"},
+  {"reports_to":"boss","id":"dev","responsibilities":["code"],"policy":{"git":"read"}}]}`
+	const bare = `{"name":"fx","goal":"ship it","roles":[
+  {"id":"boss","type":"boss","reports_to":null,"title":"CEO"},
+  {"reports_to":"boss","id":"dev","responsibilities":["code"],"policy":{"git":"read"}}]}`
+	for _, c := range []struct{ name, raw, canonical, hash string }{
+		{"with instructions", fixture,
+			`{"definition":{"name":"fx","roles":[{"id":"boss","instructions_file":"boss.md","reports_to":null,"type":"boss"},{"id":"dev","policy":{"git":"read"},"reports_to":"boss"}]},"instructions":{"role:boss":"sha256:272f6cf685a554faa4bc04a7890d434994aefcf98e9bfdfd339de87234e512cc"}}`,
+			"a895d86cd63d1374360add64ce590de7591895b523e53512f5a2d9257ddf7125"},
+		{"bare", bare,
+			`{"name":"fx","roles":[{"id":"boss","reports_to":null,"type":"boss"},{"id":"dev","policy":{"git":"read"},"reports_to":"boss"}]}`,
+			"2bb0a6ad90aa73e34b175333c401695c88079fb8faee131a43e27030689f247c"},
+	} {
+		v, err := parseOrgJSON([]byte(c.raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		proj := projection(v)
+		digests, err := instructionsDigests(v, readDigests(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(digests) > 0 {
+			proj = map[string]interface{}{"definition": proj, "instructions": digests}
+		}
+		if got := stringify(proj); got != c.canonical {
+			t.Errorf("%s: canonical JSON\n got %s\nwant %s", c.name, got, c.canonical)
+		}
+		if got, err := Hash(root, []byte(c.raw)); err != nil || got != c.hash {
+			t.Errorf("%s: hash %s (%v), monomind %s", c.name, got, err, c.hash)
+		}
+	}
+}
