@@ -530,6 +530,87 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
   and pi. The app shows `dsh` as "DeepSeek Harness".
 
+#### Dynamic org (a coder chat that spawns workers)
+
+`chat history create --mode coder --org dynamic`, or `chat history set-org
+<conversation> dynamic` on an existing coder conversation, lets the chat's
+agent (the **lead**) bring in **worker** agents. The lead gets five caller
+tools:
+
+| Tool | What it does |
+|---|---|
+| `org_roster` | The models, roles and access profiles it can staff with, the limits, and the workers so far. |
+| `org_spawn` | Starts a worker on a brief. The lead may choose the worker's `role`, `skills`, `runtime`/`model`, `effort` and `access`; anything left out is picked for it. With `wait` it waits up to 100s. |
+| `org_wait` | Waits for workers and returns their reports. |
+| `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
+| `org_stop` | Stops a worker. |
+
+How the conductor staffs a worker:
+
+- **The lead's choices win.** They are only checked: a model must be in the
+  validated roster (`agent roster`), and a role must exist.
+- **Role:** `monomind pick --agents` in the chat folder, with Jev choosing
+  from the shortlist when pick isn't confident. Without a match it falls
+  back to a built-in role: coder, reviewer, tester, researcher or planner.
+- **Skills:** `monomind pick --skills`, up to three, only when pick is
+  confident. Their text comes from `monomind org skills show`.
+- **Model and effort:** Jev chooses when a TypeSafe key is set; otherwise
+  rules decide. Research goes to the cheapest, fastest ready model, and
+  writing work to the lead's own model. `coder set --org-model-picker lead`
+  makes the lead name every model itself.
+
+Each worker's access profile is set by the lead, and none goes past the
+coder chat's own full access. A `research` worker is confined, in order of
+preference, by `--access read`, else by a read-only sandbox
+(`--sandbox read-only` where the runtime's `sandbox_modes` list it). With
+neither, only its prompt keeps it from editing, so it takes the write lease
+like a writer. A confined researcher only falls back to models that confine
+it too.
+
+| Profile | Access |
+|---|---|
+| `coding` | Full access. |
+| `qa`, `automation` | Full access, plus `monoagentcli` for the browser, extension, workflows and automations. |
+| `research` | Read-only, confined as described below. |
+
+How workers run:
+
+- **Processes:** each worker is its own `agent exec` in the chat folder,
+  with the user's setup loaded.
+- **Leases:** one worker edits at a time (the write lease), and one uses the
+  browser at a time (the browser lease). Readers run in parallel.
+- **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
+  (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
+  3 follow-ups (`org_message`) per worker.
+  - Every spawn and follow-up checks the budget.
+  - Each worker exec gets the remaining budget as its own `--budget-usd`, so
+    concurrent workers can together overshoot by at most
+    `--org-max-concurrent` × the remainder.
+  - Runtimes that report no cost (codex, …) are bounded only by
+    `--max-turns` and the timeout.
+  - A limit makes the tool return an error the lead can read.
+- **Names:** role and skill names from the lead must match
+  `[A-Za-z0-9][A-Za-z0-9._-]*`. An unknown skill is refused.
+- **Tools and MCP servers:** workers get no caller tools. They load the
+  user's settings like the coder chat itself (`--settings
+  user,project,local`), so they see the same MCP servers the lead does. "No
+  messaging or people" is a rule in their prompt, not a tool filter.
+- **Fallback:** when a model can't run (not signed in, out of quota, unknown
+  model), the next ready model takes over (`agent.reassigned`). The failure
+  is also written back to the roster.
+- **End of turn:** when the lead's turn ends, workers still running are
+  stopped.
+- **Solo fallback:** when the runtime can't take caller tools with full
+  access (monomind 2.19's `agent-exec-full-access-tools`, scan
+  `caller_tools_with_full_access`), the turn runs solo with an
+  `org.unavailable` notice.
+
+**Journal.** New events are `agent.spawned`, `agent.status`,
+`agent.message` (brief, result, followup), `agent.reassigned` and
+`agent.finished`. A worker's own tool calls reuse
+`tool.started`/`tool.completed` with `agentId` set and call ids `<agentId>:<id>`.
+The lead's own events carry no `agentId`.
+
 ## How AI works in mono-agent
 
 Every AI feature runs through the **monomind runner** (`monomind agent

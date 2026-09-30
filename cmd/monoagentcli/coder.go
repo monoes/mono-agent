@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/dynorg"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -25,6 +26,13 @@ type coderSettings struct {
 	MaxTurns      int     `json:"maxTurns"`
 	Timeout       string  `json:"timeout"`
 	BudgetUSD     float64 `json:"budgetUsd"`
+	// Dynamic org (#226): per-turn worker limits, the workers' budget
+	// (0 = none), and who picks a worker's model when the lead doesn't
+	// ("lead-then-jev" or "lead").
+	OrgMaxAgents     int     `json:"orgMaxAgents"`
+	OrgMaxConcurrent int     `json:"orgMaxConcurrent"`
+	OrgBudgetUSD     float64 `json:"orgBudgetUsd"`
+	OrgModelPicker   string  `json:"orgModelPicker"`
 }
 
 const (
@@ -44,6 +52,16 @@ func (s coderSettings) withDefaults() coderSettings {
 	}
 	if s.Timeout == "" {
 		s.Timeout = defaultCoderTimeout
+	}
+	d := dynorg.DefaultLimits()
+	if s.OrgMaxAgents <= 0 {
+		s.OrgMaxAgents = d.MaxAgents
+	}
+	if s.OrgMaxConcurrent <= 0 {
+		s.OrgMaxConcurrent = d.MaxConcurrent
+	}
+	if s.OrgModelPicker != dynorg.PickerLead {
+		s.OrgModelPicker = dynorg.PickerLeadThenJev
 	}
 	return s
 }
@@ -91,6 +109,7 @@ type coderStatus struct {
 	Runtimes            []monomind.CoderRuntime `json:"runtimes"`
 
 	caps *monomind.CapabilitySet
+	scan *monomind.ScanResult // nil when the scan failed
 }
 
 // capabilityProbe is monomind's capability handshake; a var so tests can
@@ -120,6 +139,7 @@ func currentCoderStatus(cmd *cobra.Command, s coderSettings) coderStatus {
 		// A failed scan leaves claude alone, as before per-runtime support.
 		scan, _ = runtimeScan(cmd.Context())
 	}
+	st.scan = scan
 	st.Runtimes = monomind.CoderRuntimes(scan, st.caps)
 	return st
 }
@@ -278,6 +298,10 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 		maxTurns int
 		timeout  string
 		budget   float64
+		orgMax   int
+		orgConc  int
+		orgBudg  float64
+		picker   string
 	)
 	c := coderSettingsCmd(cfg, "set", "Change coder mode's defaults", func(cmd *cobra.Command, s *coderSettings) error {
 		f := cmd.Flags()
@@ -307,12 +331,40 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			s.BudgetUSD = budget
 		}
+		if f.Changed("org-max-agents") {
+			if orgMax <= 0 || orgMax > 20 {
+				return errInvalidInput("--org-max-agents must be 1-20")
+			}
+			s.OrgMaxAgents = orgMax
+		}
+		if f.Changed("org-max-concurrent") {
+			if orgConc <= 0 || orgConc > 10 {
+				return errInvalidInput("--org-max-concurrent must be 1-10")
+			}
+			s.OrgMaxConcurrent = orgConc
+		}
+		if f.Changed("org-budget-usd") {
+			if orgBudg < 0 {
+				return errInvalidInput("--org-budget-usd can't be negative (0 means no cap)")
+			}
+			s.OrgBudgetUSD = orgBudg
+		}
+		if f.Changed("org-model-picker") {
+			if picker != dynorg.PickerLead && picker != dynorg.PickerLeadThenJev {
+				return errInvalidInput("--org-model-picker must be %q or %q", dynorg.PickerLeadThenJev, dynorg.PickerLead)
+			}
+			s.OrgModelPicker = picker
+		}
 		return nil
 	})
 	c.Flags().StringVar(&root, "workspace-root", "", "Folder new test workspaces are created in")
 	c.Flags().IntVar(&maxTurns, "max-turns", 0, "Agent turn cap per message")
 	c.Flags().StringVar(&timeout, "timeout", "", "Wall-clock cap per message (e.g. 60m)")
 	c.Flags().Float64Var(&budget, "budget-usd", 0, "Spend cap per message in USD (0 = none)")
+	c.Flags().IntVar(&orgMax, "org-max-agents", 0, "Dynamic org: workers the lead may spawn per message (default 6)")
+	c.Flags().IntVar(&orgConc, "org-max-concurrent", 0, "Dynamic org: workers running at once (default 3)")
+	c.Flags().Float64Var(&orgBudg, "org-budget-usd", 0, "Dynamic org: reported worker cost cap per message in USD (0 = none)")
+	c.Flags().StringVar(&picker, "org-model-picker", "", "Dynamic org: who picks a worker's model when the lead doesn't: lead-then-jev (default) or lead")
 	return c
 }
 

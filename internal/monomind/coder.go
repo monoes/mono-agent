@@ -17,6 +17,9 @@ import (
 const (
 	AccessScoped = "scoped"
 	AccessFull   = "full"
+	// AccessRead reads files, searches, uses the web and read-only shell
+	// commands; no edits (agent-exec-access-read, monomind#388).
+	AccessRead = "read"
 )
 
 // CoderSettings is the setting sources a coder turn loads: the user's own

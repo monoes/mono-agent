@@ -3,6 +3,7 @@ import { ChatMarkdown } from './ChatMarkdown.jsx'
 import { ToolActivityCard } from './ToolActivityCard.jsx'
 import { CoderBackgroundBanner } from './CoderBackgroundBanner.jsx'
 import { SandboxBadge } from './SandboxBadge.jsx'
+import { AgentRow } from './AgentRow.jsx'
 
 const NOTICE_ICON = {
   info: Info,
@@ -94,6 +95,7 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
         if (part.kind === 'text') {
           return part.text ? <ChatMarkdown key={`text-${part.partId}-${i}`} content={part.text} /> : null
         }
+        if (part.kind === 'agent') return <AgentRow key={`agent-${part.agentId}`} agent={(state.agents || {})[part.agentId]} />
         const call = calls[part.callId]
         if (!call || childrenOf[call.parentCallId]) return null
         return renderCall(call)

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dynamic org for coder chats** (#226, phase 1 of #224).
+  - **Turning it on:** `chat history create --mode coder --org dynamic`, or `chat history set-org <conversation> dynamic`.
+  - **What the agent can do:** the chat's agent gets `org_roster`, `org_spawn`, `org_wait`, `org_message` and `org_stop`, to bring in worker agents. Each worker has its own role, skills, model, effort and access profile (`coding`, `qa`, `automation`, `research`). The lead chooses or leaves them open; monomind `pick` and Jev fill the gaps from the validated roster.
+  - **How workers run:** one worker edits at a time, and a model that can't run is swapped for the next ready one.
+  - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
+  - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
+  - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+
 ### Fixed
 - **Chat with monoagent tools lost a turn to a denied workflow command (#247).** The system prompt showed `monoagentcli --profile <id> workflow create <name>`, but Bash in a tools turn only runs commands that start with `monomind org`, `monoagentcli org` or `monoagentcli workflow`, so that form was always denied. The prompt now puts `--profile` after the subcommand (`monoagentcli workflow create <name> --profile <id>`), and a test checks that every command the prompt shows is allowed.
 - **A granted tool call cut off by a closed connection reported a false timeout (#244).** When a client closed stdin (a piped `monoagentcli mcp --grant` script), the call stopped waiting 3 seconds later but answered `"still running after 600s"`, which read as a wait that never saw the run finish. The call now reads the run once more before answering, so a run that has just finished returns its output, and the note gives the real time waited and the reason: the connection closed, or the tool's timeout.

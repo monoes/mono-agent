@@ -1089,3 +1089,7 @@ export function ValidateOrgReport(arg1) {
 export function VerifyDraft(arg1, arg2, arg3) {
   return window['go']['main']['App']['VerifyDraft'](arg1, arg2, arg3);
 }
+
+export function SetChatOrgMode(arg1, arg2) {
+  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
+}
