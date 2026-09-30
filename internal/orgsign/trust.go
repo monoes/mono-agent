@@ -81,7 +81,7 @@ func Untrusted(root, org string) string {
 // into .monomind while monomind reviewed, which a review may retry. It
 // never makes the review count: a retry must come back unchanged.
 func (s Stamp) OnlyDirTimesMoved(o Stamp) bool {
-	if s == nil || o == nil || len(s) != len(o) || s.Same(o) {
+	if s == nil || o == nil || len(s) != len(o) || s.Same(o) || s.hasSymlink() || o.hasSymlink() {
 		return false
 	}
 	for k, v := range s {

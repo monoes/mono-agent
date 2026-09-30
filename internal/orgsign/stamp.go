@@ -20,12 +20,17 @@ import (
 // real one back leaves the files' own stamps as they were. The root itself
 // is stamped by identity only (device, inode), since unrelated work in the
 // project changes its times.
+// Swapping the project root itself is out of this model (trust.go).
 type Stamp map[string]fileStamp
 
 // fileStamp is one path's lstat and stat identity; exists is false for a
 // path that isn't there.
 type fileStamp struct {
-	exists     bool
+	exists bool
+	// symlink marks a path component that is a symlink: its target can be
+	// swapped without the stamp moving, so a stamp holding one is never
+	// Same as anything (Untrusted explains why).
+	symlink    bool
 	link, file fileID
 }
 
@@ -34,7 +39,7 @@ func stampPath(path string) fileStamp {
 	if err != nil {
 		return fileStamp{}
 	}
-	fs := fileStamp{exists: true, link: idOf(lst)}
+	fs := fileStamp{exists: true, link: idOf(lst), symlink: lst.Mode()&os.ModeSymlink != 0}
 	if st, err := os.Stat(path); err == nil {
 		fs.file = idOf(st)
 	}
@@ -47,7 +52,7 @@ func stampDir(path string) fileStamp {
 	if err != nil {
 		return fileStamp{}
 	}
-	return fileStamp{exists: true, link: dirIDOf(st)}
+	return fileStamp{exists: true, link: dirIDOf(st), symlink: st.Mode()&os.ModeSymlink != 0}
 }
 
 // stampRoot stamps the project root by identity alone.
@@ -110,9 +115,10 @@ func StampDefinition(root, org string) (Stamp, error) {
 	return s, nil
 }
 
-// Same reports whether s and o stamp the same files, unchanged.
+// Same reports whether s and o stamp the same files, unchanged, with no
+// symlink among them (a symlink's target can change under an equal stamp).
 func (s Stamp) Same(o Stamp) bool {
-	if s == nil || o == nil || len(s) != len(o) {
+	if s == nil || o == nil || len(s) != len(o) || s.hasSymlink() || o.hasSymlink() {
 		return false
 	}
 	for k, v := range s {
@@ -121,4 +127,13 @@ func (s Stamp) Same(o Stamp) bool {
 		}
 	}
 	return true
+}
+
+func (s Stamp) hasSymlink() bool {
+	for _, v := range s {
+		if v.symlink {
+			return true
+		}
+	}
+	return false
 }

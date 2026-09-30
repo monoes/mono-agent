@@ -534,7 +534,7 @@ func TestStampSeesADirectorySwap(t *testing.T) {
 // enforcingSigner is fakeSigner on a monomind that enforces --expect-hash.
 type enforcingSigner struct{ fakeSigner }
 
-func (enforcingSigner) EnforcesHash(context.Context) bool { return true }
+func (enforcingSigner) EnforcesHash(context.Context, string) bool { return true }
 
 // MUST (#295, fifth review): a symlinked .monomind — target inside or
 // outside the project — or a symlink on the way to an instructions file
@@ -634,5 +634,33 @@ func TestOnlyDirTimesMoved(t *testing.T) {
 	c, _ := StampDefinition(root, "growth")
 	if b.OnlyDirTimesMoved(c) {
 		t.Fatal("a changed instructions file is not a busy folder")
+	}
+}
+
+// A stamp that holds a symlink is never Same, not even as itself, and a
+// symlinked path is never just "busy" (#295, sixth review).
+func TestStampWithSymlinkIsNeverSame(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX symlinks")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "cfg-mm")
+	if err := os.MkdirAll(filepath.Join(target, "orgs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".monomind")); err != nil {
+		t.Fatal(err)
+	}
+	writeOrg(t, root, "growth", signedBody)
+	a, err := StampDefinition(root, "growth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Same(a) {
+		t.Fatal("a stamp with a symlinked .monomind is Same as itself")
+	}
+	b, _ := StampDefinition(root, "growth")
+	if a.OnlyDirTimesMoved(b) {
+		t.Fatal("a symlinked path counted as busy")
 	}
 }

@@ -123,39 +123,73 @@ func OrgSignCheckAll(ctx context.Context, projectRoot string) (map[string]orgsig
 // for 2.22) it is passed, so monomind refuses to sign anything else.
 func OrgSign(ctx context.Context, projectRoot, name, hash string) (string, error) {
 	args := []string{"sign", name, "--yes"}
-	if hash != "" && OrgSignExpectsHash(ctx) {
+	if hash != "" && OrgSignExpectsHash(ctx, projectRoot) {
 		args = append(args, "--expect-hash", hash)
 	}
 	return runOrgText(ctx, projectRoot, args...)
 }
 
+// CapOrgSignExpectHash is the capability monomind is asked to advertise
+// for `org sign --expect-hash` (#568); when a handshake carries it, it
+// decides, instead of reading `org sign --help`.
+const CapOrgSignExpectHash = "org-sign-expect-hash"
+
 var expectHashCache struct {
 	sync.Mutex
-	bin string
-	ok  bool
+	ok map[string]bool // bin + "\x00" + project root
 }
 
-// OrgSignExpectsHash reports whether the installed monomind's `org sign`
-// has --expect-hash: 2.22+ whose help lists it (cached per binary). Then
-// monomind itself refuses to sign content other than the hash it is given.
-func OrgSignExpectsHash(ctx context.Context) bool {
-	set, err := Capabilities(ctx)
-	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
-		return false
-	}
+// OrgSignExpectsHash reports whether the monomind that runs in projectRoot
+// has `org sign --expect-hash`, so it refuses to sign content other than
+// the hash it is given. A version shim (mise, asdf) can pick another
+// monomind per project, so the handshake and `org sign --help` run in
+// projectRoot, like the sign itself, and the answer is cached per binary
+// and root. The capability decides where advertised; otherwise 2.22+
+// whose help lists the flag (2.21 silently ignores an unknown flag).
+func OrgSignExpectsHash(ctx context.Context, projectRoot string) bool {
 	bin, err := Find()
 	if err != nil {
 		return false
 	}
+	key := bin + "\x00" + projectRoot
 	expectHashCache.Lock()
 	defer expectHashCache.Unlock()
-	if expectHashCache.bin != bin {
-		cctx, cancel := context.WithTimeout(ctx, orgTimeout)
-		defer cancel()
-		out, _ := exec.CommandContext(cctx, bin, "org", "sign", "--help").CombinedOutput()
-		expectHashCache.bin, expectHashCache.ok = bin, strings.Contains(string(out), "--expect-hash")
+	if ok, cached := expectHashCache.ok[key]; cached {
+		return ok
 	}
-	return expectHashCache.ok
+	ok := orgSignExpectsHashIn(ctx, bin, projectRoot)
+	if expectHashCache.ok == nil {
+		expectHashCache.ok = map[string]bool{}
+	}
+	expectHashCache.ok[key] = ok
+	return ok
+}
+
+func orgSignExpectsHashIn(ctx context.Context, bin, dir string) bool {
+	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
+	defer cancel()
+	run := func(args ...string) []byte {
+		cmd := exec.CommandContext(cctx, bin, args...)
+		cmd.Dir = dir
+		out, _ := cmd.Output()
+		return out
+	}
+	var vi struct {
+		Version      string   `json:"version"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if json.Unmarshal(lastJSONDocument(run("--version", "--json")), &vi) != nil {
+		return false
+	}
+	for _, c := range vi.Capabilities {
+		if c == CapOrgSignExpectHash {
+			return true
+		}
+	}
+	if !versionAtLeast(vi.Version, orgSignCheckMinVersion) {
+		return false
+	}
+	return strings.Contains(string(run("org", "sign", "--help")), "--expect-hash")
 }
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")

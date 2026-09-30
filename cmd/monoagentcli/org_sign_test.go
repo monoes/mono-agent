@@ -43,6 +43,10 @@ if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
     exit 1
   fi
   if [ "$4" = "--yes" ]; then echo "org $3: signed"; exit 0; fi
+  if [ -n "$FAKE_REVIEW_TOLINK" ] && [ ! -L .monomind ]; then
+    # A role turns .monomind into a symlink to a copy during the read.
+    mv .monomind .mm-real && ln -s .mm-real .monomind
+  fi
   if [ -n "$FAKE_REVIEW_BUSY" ]; then
     # Something else writes into .monomind/orgs during the first N reviews.
     n=$(cat .monomind/busy-count 2>/dev/null || echo 0); n=$((n+1)); echo $n > .monomind/busy-count
@@ -100,8 +104,8 @@ func (s *recordingSigner) Sign(ctx context.Context, root, org, hash string) erro
 }
 
 // EnforcesHash is the production signer's (monomind 2.22 --expect-hash).
-func (s *recordingSigner) EnforcesHash(ctx context.Context) bool {
-	return monomindOrgSigner{}.EnforcesHash(ctx)
+func (s *recordingSigner) EnforcesHash(ctx context.Context, root string) bool {
+	return monomindOrgSigner{}.EnforcesHash(ctx, root)
 }
 
 func mustRead(t *testing.T, root, org string) []byte {
@@ -650,4 +654,47 @@ func TestReviewUnderSymlinkedMonomind(t *testing.T) {
 	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != goHash {
 		t.Fatalf("2.22 review under a symlink = %v", rev)
 	}
+}
+
+// MUST (#295, sixth review): the busy retry must not reuse a verdict from
+// before the retry. .monomind turned into a symlink during the backoff, or
+// during the first read, leaves the review without a hash.
+func TestBusyRetryRechecksForSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX symlinks")
+	}
+	toLink := func(t *testing.T, root string) {
+		t.Helper()
+		mm := filepath.Join(root, ".monomind")
+		if err := os.Rename(mm, mm+"-real"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(mm+"-real", mm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("during the backoff", func(t *testing.T) {
+		f, s, _ := newSigningFixture(t, "2.21.0")
+		prev, prevSleep := reviewRetryBackoff, reviewSleep
+		reviewRetryBackoff = time.Millisecond
+		reviewSleep = func(time.Duration) { toLink(t, f.root) }
+		t.Cleanup(func() { reviewRetryBackoff, reviewSleep = prev, prevSleep })
+		_ = os.WriteFile(filepath.Join(f.root, ".monomind", "busy-count"), []byte("0"), 0o644)
+		t.Setenv("FAKE_REVIEW_BUSY", "1") // attempt 1 busy, then a clean read
+		rev := f.mustRun(t, "sign", "growth")
+		if h, _ := rev["hash"].(string); h != "" || !strings.Contains(rev["message"].(string), "symlink") {
+			t.Fatalf("review after .monomind became a symlink = %v", rev)
+		}
+		if len(s.calls) != 0 {
+			t.Fatalf("calls %v", s.calls)
+		}
+	})
+	t.Run("during the first read", func(t *testing.T) {
+		f, _, _ := newSigningFixture(t, "2.21.0")
+		t.Setenv("FAKE_REVIEW_TOLINK", "1")
+		rev := f.mustRun(t, "sign", "growth")
+		if h, _ := rev["hash"].(string); h != "" {
+			t.Fatalf("review with .monomind linked mid-read = %v", rev)
+		}
+	})
 }

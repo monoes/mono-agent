@@ -38,8 +38,8 @@ func (monomindOrgSigner) Sign(ctx context.Context, root, org, hash string) error
 }
 
 // EnforcesHash: monomind's own --expect-hash (2.22) refuses other content.
-func (monomindOrgSigner) EnforcesHash(ctx context.Context) bool {
-	return monomind.OrgSignExpectsHash(ctx)
+func (monomindOrgSigner) EnforcesHash(ctx context.Context, root string) bool {
+	return monomind.OrgSignExpectsHash(ctx, root)
 }
 
 // Check is monomind's own verdict where it has one (2.22 --check).
@@ -236,7 +236,6 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 // up to twice; it counts only once it comes back unchanged.
 func reviewOrg(ctx context.Context, root, name string) (hash, review, note string, err error) {
 	const changed = "the definition changed during the review — review it again"
-	untrusted := orgsign.Untrusted(root, name)
 	for attempt := 0; ; attempt++ {
 		before, stampErr := orgsign.StampDefinition(root, name)
 		raw, _, readErr := orgsign.ReadFile(root, name)
@@ -248,13 +247,16 @@ func reviewOrg(ctx context.Context, root, name string) (hash, review, note strin
 		after, stampErr2 := orgsign.StampDefinition(root, name)
 		raw2, _, readErr2 := orgsign.ReadFile(root, name)
 		h2, hashErr2 := orgsign.Hash(root, raw2)
+		// Judged now, after this attempt's read: a folder turned into a
+		// symlink between attempts must not ride on an earlier verdict.
+		untrusted := orgsign.Untrusted(root, name)
 		goAgrees := func(want string) bool {
 			// Where Go can hash the definition, it must equal want at both
 			// ends of the read.
 			return (hashErr == nil) == (hashErr2 == nil) && (hashErr != nil || (h == want && h2 == want))
 		}
 		if untrusted != "" {
-			if rv.Hash != "" && monomind.OrgSignExpectsHash(ctx) && goAgrees(rv.Hash) {
+			if rv.Hash != "" && monomind.OrgSignExpectsHash(ctx, root) && goAgrees(rv.Hash) {
 				return rv.Hash, rv.Text, "", nil
 			}
 			return "", rv.Text, untrusted, nil
@@ -263,7 +265,7 @@ func reviewOrg(ctx context.Context, root, name string) (hash, review, note strin
 			busy := stampErr == nil && stampErr2 == nil && before.OnlyDirTimesMoved(after) &&
 				hashErr == nil && hashErr2 == nil && h == h2
 			if busy && attempt < reviewRetries {
-				time.Sleep(time.Duration(attempt+1) * reviewRetryBackoff)
+				reviewSleep(time.Duration(attempt+1) * reviewRetryBackoff)
 				continue
 			}
 			return "", rv.Text, changed, nil
@@ -290,6 +292,7 @@ func reviewOrg(ctx context.Context, root, name string) (hash, review, note strin
 var (
 	reviewRetries      = 2
 	reviewRetryBackoff = 250 * time.Millisecond
+	reviewSleep        = time.Sleep
 )
 
 // errOrgSigningUnsupported: the installed monomind predates signed org

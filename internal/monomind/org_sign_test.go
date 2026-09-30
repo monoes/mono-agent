@@ -200,3 +200,49 @@ func TestOrgSignReviewJSON(t *testing.T) {
 	}
 	ResetCapabilityCache()
 }
+
+// A version shim (mise, asdf) picks the monomind per project: the
+// --expect-hash detection runs in the project root, as the sign does, and
+// is cached per root. An advertised org-sign-expect-hash capability
+// decides without reading help.
+func TestOrgSignExpectsHashPerProjectRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	// A shim: in a folder with .tool-versions it is 2.21 (no flag);
+	// with .caps it is a 2.21 that advertises the capability; else 2.22
+	// whose help lists --expect-hash.
+	script := "#!/bin/sh\n" +
+		`v=2.22.0; caps='"agent-exec","agent-scan","org-json-v1"'; help='  --expect-hash <hex>'` + "\n" +
+		`if [ -f .tool-versions ]; then v=2.21.0; help='  --yes'; fi` + "\n" +
+		`if [ -f .caps ]; then v=2.21.0; help='  --yes'; caps="$caps,\"org-sign-expect-hash\""; fi` + "\n" +
+		`if [ "$1" = "--version" ]; then echo "{\"v\":1,\"version\":\"$v\",\"min_caller\":\"1.0.0\",\"capabilities\":[$caps]}"; exit 0; fi` + "\n" +
+		`if [ "$3" = "--help" ]; then echo "$help"; exit 0; fi` + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvOverride, bin)
+	ResetCapabilityCache()
+	t.Cleanup(ResetCapabilityCache)
+
+	pinned, plain, advertised := t.TempDir(), t.TempDir(), t.TempDir()
+	_ = os.WriteFile(filepath.Join(pinned, ".tool-versions"), []byte("monomind 2.21.0\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(advertised, ".caps"), []byte("x"), 0o644)
+	ctx := context.Background()
+	if OrgSignExpectsHash(ctx, pinned) {
+		t.Error("claimed --expect-hash where the shim picks 2.21")
+	}
+	if !OrgSignExpectsHash(ctx, plain) {
+		t.Error("missed --expect-hash on 2.22")
+	}
+	if !OrgSignExpectsHash(ctx, advertised) {
+		t.Error("missed the advertised capability")
+	}
+	// Cached per root: the answer for pinned doesn't leak to plain.
+	if OrgSignExpectsHash(ctx, pinned) || !OrgSignExpectsHash(ctx, plain) {
+		t.Error("cache mixed the roots up")
+	}
+}

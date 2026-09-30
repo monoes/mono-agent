@@ -20,8 +20,10 @@ type Signer interface {
 // of the content it reads equals the one it was given (2.22's
 // --expect-hash, reading the files once). Only then may a hash this
 // package can't compute itself — monomind's own reviewed hash — be signed.
+// root matters: a version shim (mise, asdf) can pick another monomind per
+// project, so the answer is the monomind that runs in root.
 type HashEnforcer interface {
-	EnforcesHash(ctx context.Context) bool
+	EnforcesHash(ctx context.Context, root string) bool
 }
 
 // Checker is a Signer that can also ask monomind itself whether the
@@ -125,7 +127,7 @@ func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew 
 	// Where the stamps can't vouch for the files (a symlink on the way, an
 	// untrusted filesystem, Windows), only a monomind that enforces the
 	// hash itself (--expect-hash) may re-sign.
-	if reason := Untrusted(root, org); reason != "" && !enforcesHash(ctx, s) {
+	if reason := Untrusted(root, org); reason != "" && !enforcesHash(ctx, s, root) {
 		p.why = reason
 		return p
 	}
@@ -197,9 +199,9 @@ func (p Pre) After(ctx context.Context, s Signer, org, sha string) Outcome {
 	return SignExact(ctx, s, p.root, org, want)
 }
 
-func enforcesHash(ctx context.Context, s Signer) bool {
+func enforcesHash(ctx context.Context, s Signer, root string) bool {
 	e, ok := s.(HashEnforcer)
-	return ok && e.EnforcesHash(ctx)
+	return ok && e.EnforcesHash(ctx, root)
 }
 
 func notSigned(org, state, why string) Outcome {
@@ -231,7 +233,7 @@ func SignExact(ctx context.Context, s Signer, root, org, want string) Outcome {
 	switch {
 	case err == nil && now != want:
 		return notSigned(org, Verify(root, org, raw).State, "it changed after it was written or reviewed")
-	case err != nil && !enforcesHash(ctx, s):
+	case err != nil && !enforcesHash(ctx, s, root):
 		// No Go hash to check want against, and a monomind that would sign
 		// whatever it reads: never sign on its word (#295 review).
 		return notSigned(org, StateUnknown, "its hash can't be computed here — sign it with `monomind org sign "+org+"` in a terminal")
