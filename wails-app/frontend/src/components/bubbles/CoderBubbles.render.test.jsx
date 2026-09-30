@@ -326,6 +326,20 @@ describe('empty new chats', () => {
   })
 })
 
+describe('bubble cost (#230)', () => {
+  it('marks a cost with a worker\'s estimate in it with "≈"', async () => {
+    render(<Harness open={conv} />)
+    await waitFor(() => expect(overlay()).toBeInTheDocument())
+    act(() => { store.openConversation({ id: 'c2', cwd: '/w/api', model: 'sonnet' }) })
+    await waitFor(() => expect(bubble('c2')).toHaveAttribute('aria-pressed', 'true'))
+    emit({ conversationId: 'c1', turnId: 't1', seq: 1, type: 'usage.updated', payload: { costUsd: 0.1 } })
+    emit({ conversationId: 'c1', turnId: 't1', seq: 2, type: 'usage.updated', payload: { agentId: 'w1', costUsd: 0.35, costEstimated: true } })
+    fireEvent.mouseEnter(bubble('c1').parentElement)
+    const cost = screen.getByTitle('Partly estimated from the tokens used: some runtimes report no cost')
+    expect(cost).toHaveTextContent('≈$0.4500')
+  })
+})
+
 // #231 phases 2 and 3: the verification matrix for coder bubbles.
 describe('verification matrix (#231)', () => {
   const at = n => `2026-09-30T10:00:0${n}.000Z`

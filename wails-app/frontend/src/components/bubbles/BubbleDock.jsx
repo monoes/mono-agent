@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, X, Code2, Network } from 'lucide-react'
 import { folderName } from '../chat/useCoderMode.js'
-import { layoutBubbles, monogram, totalCost } from '../../lib/coderBubbles.js'
+import { layoutBubbles, monogram, totalCost, costEstimated } from '../../lib/coderBubbles.js'
 import './bubbles.css'
 
 const statusKey = { idle: 'statusIdle', working: 'statusWorking', done: 'statusDone', error: 'statusError', needs: 'statusNeeds' }
@@ -13,6 +13,7 @@ function ChatBubble({ bubble, summary, expanded, onOpen, onClose, onDragStart, o
   const isOrg = bubble.kind === 'org'
   const name = isOrg ? bubble.orgName : bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
   const cost = totalCost(summary)
+  const estimated = costEstimated(summary)
   const label = (isOrg ? t('orgBubble.bubbleLabel', { name, status: t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`) })
     : t('bubbles.bubbleLabel', { name, status: t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`) })) +
     (summary.unread ? ` · ${t('bubbles.unread', { count: summary.unread })}` : '')
@@ -45,7 +46,7 @@ function ChatBubble({ bubble, summary, expanded, onOpen, onClose, onDragStart, o
             <span>{t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`)}</span>
             {bubble.model && <span style={{ color: 'var(--cyan)' }}>{bubble.model}</span>}
             {summary.needs > 0 && <span style={{ color: 'var(--yellow, #fbbf24)' }}>{t('orgBubble.needsCount', { count: summary.needs })}</span>}
-            {cost > 0 && <span>${cost.toFixed(4)}</span>}
+            {cost > 0 && <span title={estimated ? t('bubbles.costEstimated') : undefined}>{estimated ? '≈' : ''}${cost.toFixed(4)}</span>}
           </div>
         </div>
       )}

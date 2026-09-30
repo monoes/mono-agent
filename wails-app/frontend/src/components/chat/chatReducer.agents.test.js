@@ -51,7 +51,21 @@ describe('dynamic org events (#226)', () => {
     expect(s.parts.filter(p => p.kind === 'text').map(p => p.text)).toEqual(['lead text'])
     expect(s.usage.costUsd).toBe(0.1)
     expect(s.agents.w1.costUsd).toBe(0.03)
+    expect(s.agents.w1.costEstimated).toBe(false)
     expect(s.stage.nodes.w1.parts).toEqual([{ kind: 'text', partId: 'w1:p1', text: 'worker text' }])
+  })
+})
+
+describe('estimated worker cost (#230)', () => {
+  it('keeps a worker\'s estimate marked, live and when it finishes', () => {
+    let s = run(
+      ev('agent.spawned', { agentId: 'w1', role: 'Coder' }),
+      ev('usage.updated', { agentId: 'w1', inputTokens: 100000, outputTokens: 10000, costUsd: 0.35, costEstimated: true }),
+    )
+    expect(s.agents.w1).toMatchObject({ costUsd: 0.35, costEstimated: true })
+    s = chatReducer(s, ev('agent.finished', { agentId: 'w1', outcome: 'done', costUsd: 0.35, costEstimated: true }))
+    expect(s.agents.w1).toMatchObject({ costUsd: 0.35, costEstimated: true })
+    expect(s.stage.nodes.w1).toMatchObject({ costUsd: 0.35, costEstimated: true })
   })
 })
 

@@ -137,9 +137,9 @@ func (c *Conductor) emitUsage(w *worker, run *monomind.TurnResult) {
 		in, out := w.inTok+run.InputTokens, w.outTok+run.OutputTokens
 		p.InputTokens, p.OutputTokens = &in, &out
 	}
-	if run.HasCostUSD || w.hasCost {
-		cost := w.cost + run.CostUSD
-		p.CostUSD = &cost
+	if cost, estimated, ok := liveCost(w.model, run); ok || w.hasCost {
+		total := w.cost + cost
+		p.CostUSD, p.CostEstimated = &total, estimated || w.costEstimated
 	}
 	c.mu.Unlock()
 	c.cfg.Emit.Emit(chatevents.EventUsageUpdated, p)

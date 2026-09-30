@@ -218,8 +218,14 @@ describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
     let s = replayStage([spawn()])
     s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100, outputTokens: 10, costUsd: 0.01 } })
     s = stageReducer(s, { seq: 3, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 150, outputTokens: 30, costUsd: 0.02 } })
-    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02 })
+    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02, costEstimated: false })
     expect(s.nodes.lead.costUsd).toBeNull()
+  })
+
+  it('marks a worker\'s live cost estimated when its runtime reports none (#230)', () => {
+    let s = replayStage([spawn()])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100000, outputTokens: 10000, costUsd: 0.35, costEstimated: true } })
+    expect(s.nodes.w1).toMatchObject({ costUsd: 0.35, costEstimated: true })
   })
 
   it('shows limited activity from the reported fidelity, from the start', () => {

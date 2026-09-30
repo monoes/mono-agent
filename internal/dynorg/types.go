@@ -71,11 +71,14 @@ type Model struct {
 	CallerToolsFull bool `json:"caller_tools_full,omitempty"`
 	// Fidelity is the runtime's tool-activity fidelity from the scan
 	// ("full", "start-only" or "none"); "" when unknown.
-	Fidelity  string  `json:"tool_activity_fidelity,omitempty"`
-	Resume    bool    `json:"resume"`
-	CostUSD   float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
-	LatencyMs int64   `json:"latency_ms,omitempty"`
-	Stale     bool    `json:"stale,omitempty"`
+	Fidelity string `json:"tool_activity_fidelity,omitempty"`
+	Resume   bool   `json:"resume"`
+	// ReportsCost: the runtime reports its cost (the scan's reports_cost).
+	// Other runtimes' workers are costed from their tokens (estimate.go).
+	ReportsCost bool    `json:"reports_cost,omitempty"`
+	CostUSD     float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
+	LatencyMs   int64   `json:"latency_ms,omitempty"`
+	Stale       bool    `json:"stale,omitempty"`
 }
 
 // Key names a model as "runtime/model".
