@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orgsign"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,6 +300,7 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 		return aiError(fmt.Errorf("invalid layout: %w", err))
 	}
 	_ = d.SetLayout(pos)
+	sig := orgsign.Before(root, orgName, d.LoadedSHA(), false)
 	sha, err := orgdesign.Save(root, d)
 	if err != nil {
 		return aiError(err)
@@ -305,6 +308,7 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 	if a.orgWatcher != nil {
 		a.orgWatcher.MarkSelfWrite(orgName, sha)
 	}
+	a.keepOrgSignature(root, sig, orgName, sha)
 	a.emitOrgDesignUpdated(orgName, "ui", false, d, true, nil)
 	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha})
 	return string(b)
@@ -390,6 +394,9 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
 	}
+	// Decided before the first write: whether this save may be re-signed
+	// (a new org drawn on the canvas is the user's own).
+	sig := orgsign.Before(root, d.Name, d.LoadedSHA(), true)
 
 	if _, err := a.writeOrgDoc(root, d); err != nil {
 		return "", err
@@ -405,7 +412,36 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 		a.rollbackOrgDoc(root, d.Name, preImage)
 		return "", err
 	}
-	return a.writeOrgDoc(root, d)
+	if sha, err = a.writeOrgDoc(root, d); err != nil {
+		return "", err
+	}
+	a.keepOrgSignature(root, sig, d.Name, sha)
+	return sha, nil
+}
+
+// keepOrgSignature re-signs an org after the designer's own write when
+// monomind 2.21 requires signed definitions (#288): only if sig (taken
+// before the write) allowed it, and only when the write changed a signed
+// field — a layout or title change still verifies. Signing is the CLI's
+// (`org sign --yes --expect-sha256`, which signs exactly these bytes and
+// withdraws the signature if they changed under it). Anything else leaves
+// the org for the Review & sign banner.
+func (a *App) keepOrgSignature(root string, sig orgsign.Pre, name, sha string) {
+	if !sig.Eligible() {
+		return
+	}
+	st, cur, err := orgsign.VerifyFile(root, name)
+	if err != nil || st.OK() || cur != sha {
+		return
+	}
+	out := a.rawCLI(orgCLITimeout, orgSignArgs(root, name, "--yes", "--expect-sha256", sha)...)
+	var res struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if json.Unmarshal([]byte(out), &res) == nil && res.Error != "" && res.Code != "org_signing_unsupported" {
+		log.Printf("org %s was not re-signed after this change: %s", name, res.Error)
+	}
 }
 
 // writeOrgDoc saves d and registers the write with the watcher so it doesn't

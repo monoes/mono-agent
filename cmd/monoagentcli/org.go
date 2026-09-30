@@ -14,6 +14,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orgsign"
 )
 
 // newOrgCmd exposes monomind's org observe/action surface: thin proxies over
@@ -58,6 +59,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgReloadCmd(root),
 		newOrgRoleCmd(root),
 		newOrgCreateJSONCmd(env),
+		newOrgSignCmd(env),
 		newOrgAutomationCmd(env),
 		newOrgGrantCmd(env),
 		newOrgEffectiveToolsCmd(env),
@@ -116,7 +118,7 @@ func newOrgStatusCmd(root func() string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printOrgJSON(out)
+			return printOrgJSON(withOrgSignature(cmd.Context(), root(), out))
 		},
 	}
 }
@@ -503,15 +505,19 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 				}
 				// Grants, providers, and endpoints in the document only
 				// survive when a row backs them (C-3).
-				rep, err := saveOrgReconciled(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID))
+				// A new org is the user's own; an overwrite replaces the file
+				// with content not loaded from it, so it is left for review.
+				rep, err := saveOrgReconciledFrom(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID), name, true)
 				if err != nil {
 					return err
 				}
 				findings = rep.Findings
 			} else if docCarriesEnforcedKeys(&d) {
 				return fmt.Errorf("this document carries grants, tool providers, or automation roles, which need the active profile's org folder: %w", perr)
-			} else if _, err := orgdesign.Save(root(), &d); err != nil {
+			} else if _, out, err := saveOrgSigned(cmd.Context(), root(), name, &d, true); err != nil {
 				return err
+			} else {
+				warnOrgSignature(out)
 			}
 			path, _ := orgdesign.ConfigPath(root(), name)
 			sha, err := fileSHA256(path)
@@ -560,6 +566,14 @@ func newOrgReloadCmd(root func() string) *cobra.Command {
 				payload["error"] = reloadErr.Error()
 			} else {
 				payload["output"] = out
+			}
+			// monomind 2.21 keeps a running org on its last verified
+			// definition until this one is signed: say so, with the fix.
+			if orgSigningOn(cmd.Context()) {
+				if st, _, err := orgsign.VerifyFile(root(), name); err == nil && st.Refused() {
+					payload["signature"] = st
+					payload["warning"] = orgsign.Message(name, st) + " — until then the running org keeps its last signed definition"
+				}
 			}
 			b, err := json.Marshal(payload)
 			if err != nil {

@@ -85,6 +85,11 @@ func BuildPlan(ctx context.Context, scan *monomind.ScanResult, list Lister, prev
 			add(Target{Model: DefaultModel, Label: "Default model", Source: SourceListed})
 		}
 		for _, m := range listed[i] {
+			// Another name for a model already listed (monomind 2.21's
+			// alias_of): testing it would run, and bill, the same model twice.
+			if m.AliasOf != "" {
+				continue
+			}
 			add(Target{Model: m.ID, Label: m.Label, EffortLevels: m.EffortLevels, Source: SourceListed})
 		}
 		for _, r := range previous {

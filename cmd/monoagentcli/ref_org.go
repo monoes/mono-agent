@@ -34,6 +34,23 @@ PROCESSES
   roles cannot run, and every org behaves as autonomy level manual.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SIGNED DEFINITIONS (monomind 2.21+)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  org sign <org> --status           signed | unsigned | changed | ...
+  org sign <org>                    monomind's review; signs nothing
+                                    (asks first on a terminal)
+  org sign <org> --yes [--expect-sha256 <sha>]   sign (only that file)
+
+  monomind runs or reloads an org only when the operator signed its
+  definition (everything but goal, status and role titles,
+  responsibilities and layout). monoagentcli re-signs its own edits of
+  a signed org; an org edited any other way, imported, or changed by a
+  chat assistant is left unsigned with a warning until you review and
+  sign it. org run refuses such an org with code org_not_signed, and
+  org status shows each org's "signature".
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATIONS AND GRANTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

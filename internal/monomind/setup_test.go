@@ -24,6 +24,8 @@ func TestIsAgentNotSetup(t *testing.T) {
 		{"missing binary", &ProtocolError{Code: ErrMissingBinary, Message: "codex CLI not found"}, true},
 		{"no runner", &ProtocolError{Code: ErrNoRunner, Message: `unknown runtime "nosuch"`}, true},
 		{"claude not logged in", &ProtocolError{Code: ErrRunnerError, Message: "Claude Code returned an error result: Not logged in · Please run /login"}, true},
+		{"rev 27 missing key", &ProtocolError{Code: ErrAuth, Fatal: true, Message: "missing API key for provider openrouter"}, true},
+		{"unclassified text", &ProtocolError{Code: ErrRunnerError, Message: "exit 1\n[output below is not classified]\nNot logged in · Please run /login"}, false},
 		{"marker in plain text", errors.New("node ask failed: agent.ask (claude) turn failed: x " + AgentNotSetupMarker), true},
 		{"quota", &ProtocolError{Code: ErrQuota, Message: "usage limit reached"}, false},
 		{"runner error", &ProtocolError{Code: ErrRunnerError, Message: "done reported nonzero exit_code 1"}, false},

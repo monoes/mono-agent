@@ -203,7 +203,9 @@ func newOrgRenameCmd(env *orgEnv) *cobra.Command {
 				}
 			}
 			doc.Name = newName
-			if _, err := saveOrgReconciled(ctx, db, profileID, root, doc, env.genOptions(profileID)); err != nil {
+			// The signature is bound to the org name: a signed org is
+			// re-signed under its new one.
+			if _, err := saveOrgReconciledFrom(ctx, db, profileID, root, doc, env.genOptions(profileID), oldName, false); err != nil {
 				return err
 			}
 			if err := os.Remove(filepath.Join(dir, oldName+".json")); err != nil && !os.IsNotExist(err) {
@@ -220,7 +222,7 @@ func newOrgRenameCmd(env *orgEnv) *cobra.Command {
 					}
 				}
 				if changed {
-					if _, err := orgdesign.Save(root, d); err != nil {
+					if _, err := saveOrgDoc(ctx, root, d); err != nil {
 						return fmt.Errorf("updating holding org %s: %w", d.Name, err)
 					}
 				}

@@ -42,7 +42,18 @@ type Doc struct {
 	// save never drops something monomind or a hand edit put there (e.g.
 	// `fence`).
 	Extra map[string]json.RawMessage `json:"-"`
+
+	// loadedSHA is the sha256 of the file bytes this Doc was read from (or
+	// last written as) by LoadPath/Save; "" for a Doc built any other way.
+	// A write re-signs the org (internal/orgsign) only when it replaces
+	// exactly those bytes, so a Doc read before an outside edit, or never
+	// read from the file at all, can't carry that edit into a signature.
+	loadedSHA string
 }
+
+// LoadedSHA is the sha256 of the file bytes d was loaded from or last saved
+// as, or "" when d did not come from an org file.
+func (d *Doc) LoadedSHA() string { return d.loadedSHA }
 
 // docKnownKeys lists the JSON keys handled by named Doc fields, used by
 // UnmarshalJSON to compute Extra and by MarshalJSON to avoid emitting a key

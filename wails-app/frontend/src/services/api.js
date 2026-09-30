@@ -259,6 +259,13 @@ export const api = {
   // Full-access roles (#205): grant ('full', only after the confirm dialog)
   // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.
   orgRoleSetAccess:    (name, roleID, access) => GoApp.OrgRoleSetAccess(name, roleID, access).then(parseStreamResult),
+  // Signed org definitions (#288, monomind 2.21): the state
+  // {supported, state, detail, sha256, message}, monomind's review (signs
+  // nothing), and signing the reviewed file (its sha256). Refusals reject
+  // with the CLI's text.
+  orgSignatureStatus:  (name) => GoApp.OrgSignatureStatus(name).then(parseStreamResult),
+  orgSignatureReview:  (name) => GoApp.OrgSignatureReview(name).then(parseStreamResult),
+  orgSign:             (name, sha256) => GoApp.OrgSign(name, sha256).then(parseStreamResult),
   // `org validate`'s report {valid, error?, warnings}, taint problems
   // included. An invalid org's report has "error" too, so only a reply
   // without "valid" is a failure.
