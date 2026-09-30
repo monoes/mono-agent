@@ -68,6 +68,10 @@ func dialAndAuthenticate(t *testing.T, wsURL string) *websocket.Conn {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
+	// Also keeps conn reachable until the test ends: a socket nobody holds
+	// is closed by its finalizer at the next GC, which the server sees as
+	// the extension going away.
+	t.Cleanup(func() { _ = conn.Close() })
 	tok, err := CurrentToken()
 	if err != nil {
 		t.Fatalf("CurrentToken: %v", err)

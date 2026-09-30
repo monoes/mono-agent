@@ -88,10 +88,16 @@ func TestSameInstanceReplacesItself(t *testing.T) {
 
 func TestLegacyExtensionsStillReplaceEachOther(t *testing.T) {
 	srv, _, wsURL, _ := startStatusTestServer(t)
-	dialAndAuthenticate(t, wsURL)
+	first := dialAndAuthenticate(t, wsURL)
 	waitBrowsers(t, srv, 1)
 	dialAndAuthenticate(t, wsURL)
-	time.Sleep(100 * time.Millisecond)
+	// The old socket is closed by the server once its replacement is in.
+	_ = first.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		if _, _, err := first.ReadMessage(); err != nil {
+			break
+		}
+	}
 	got := waitBrowsers(t, srv, 1)
 	if !got[0].Legacy || got[0].Instance != legacyInstanceID {
 		t.Fatalf("legacy browser = %+v", got[0])
