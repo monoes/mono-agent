@@ -2,16 +2,16 @@ package orgchat
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
 // Client is the monomind surface resolving goes through; tests fake it.
@@ -117,10 +117,13 @@ func running(ctx context.Context, c Client, root, org string) (bool, string, err
 // nothing, so a retried or doubled click is harmless; a pending one is
 // resolved only while the org runs (NotRunningError otherwise).
 func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, error) {
+	if !orgdesign.ValidOrgName(req.Org) {
+		return nil, fmt.Errorf("orgchat: invalid org name %q", req.Org)
+	}
 	if req.Answer && strings.TrimSpace(req.Text) == "" {
 		return nil, errors.New("orgchat: an answer needs text")
 	}
-	unlock, err := lockOrg(root, req.Org)
+	unlock, err := lockOrg(ctx, root, req.Org)
 	if err != nil {
 		return nil, err
 	}
@@ -225,19 +228,27 @@ func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, 
 	return res, nil
 }
 
+// Resolving is a few monomind calls: a lock held longer than this belongs
+// to something stuck, and the caller is told so instead of waiting on.
+const (
+	lockPollInterval = 50 * time.Millisecond
+	lockWaitTimeout  = 90 * time.Second
+)
+
 // lockOrg serializes resolving within one org folder across processes, so
-// two clicks racing can't both see an item pending and both send.
-func lockOrg(root, org string) (func(), error) {
-	sum := sha256.Sum256([]byte(root + "\x00" + org))
-	dir := filepath.Join(os.TempDir(), "monoagent-orgchat")
+// two clicks racing can't both see an item pending and both send. The lock
+// lives in the folder's own .monomind directory (the person's, never a
+// shared temp dir), and the wait is bounded and ends with ctx.
+func lockOrg(ctx context.Context, root, org string) (func(), error) {
+	dir := filepath.Join(root, ".monomind", "locks")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, hex.EncodeToString(sum[:8])+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, "orgchat-"+org+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	if err := lockFile(f); err != nil {
+	if err := lockFile(ctx, f); err != nil {
 		f.Close()
 		return nil, err
 	}

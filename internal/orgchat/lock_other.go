@@ -3,6 +3,7 @@
 package orgchat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,14 +13,9 @@ import (
 
 // Without flock the lock is a claim file created with O_EXCL; a claim
 // older than staleLockAge belongs to a crashed holder and is broken.
-// Resolving is a few monomind calls, so both waits are short.
-const (
-	lockPollInterval = 50 * time.Millisecond
-	lockWaitTimeout  = 2 * time.Minute
-	staleLockAge     = 5 * time.Minute
-)
+const staleLockAge = 5 * time.Minute
 
-func lockFile(f *os.File) error {
+func lockFile(ctx context.Context, f *os.File) error {
 	claim := f.Name() + ".claim"
 	deadline := time.Now().Add(lockWaitTimeout)
 	for {
@@ -38,7 +34,11 @@ func lockFile(f *os.File) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("another process has held %s for %s", filepath.Base(claim), lockWaitTimeout)
 		}
-		time.Sleep(lockPollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(lockPollInterval):
+		}
 	}
 }
 

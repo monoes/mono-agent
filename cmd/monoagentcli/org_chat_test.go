@@ -304,3 +304,33 @@ func TestOrgChatHistoryGUIFixture(t *testing.T) {
 		t.Fatalf("%s is out of date with internal/orgchat/testdata; rerun with UPDATE_ORG_CHAT_FIXTURE=1 (%v)", busPath, err)
 	}
 }
+
+// The app puts "--" before every value it passes, and refs are checked, so
+// nothing the page sends can be read as a flag (#267 review).
+func TestOrgChatRefusesFlagLikeRefs(t *testing.T) {
+	cfg, fake, _ := setupOrgChat(t)
+	for _, args := range [][]string{
+		{"approve", "--", "acme", "--project=/elsewhere"},
+		{"deny", "--", "acme", "../gate-1"},
+		{"answer", "--", "acme", "-q", "x"},
+	} {
+		if _, err := runOrgChat(t, cfg, args...); exitCodeFor(err) != 3 {
+			t.Errorf("%v: %v, want exit 3", args, err)
+		}
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("sent %v", fake.sent)
+	}
+	// The app's own shape: "--" first, then org, ref and the text.
+	out, err := runOrgChat(t, cfg, "answer", "--", "acme", "q-2250-cd34", "yes", "--", "all")
+	if err != nil || !strings.Contains(out, `"state":"answered"`) {
+		t.Fatalf("answer after --: %v %s", err, out)
+	}
+	if fake.sent[0] != "answer q-2250-cd34 yes -- all" {
+		t.Fatalf("sent %q", fake.sent)
+	}
+	out, err = runOrgChat(t, cfg, "approve", "--", "acme", "gate-1850-x1", "ship")
+	if err != nil || !strings.Contains(out, `"state":"approved"`) || fake.sent[1] != "gate gate-1850-x1 ship" {
+		t.Fatalf("approve after --: %v %s %v", err, out, fake.sent)
+	}
+}

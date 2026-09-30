@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -21,6 +22,22 @@ var (
 	orgChatLogs                  = monomind.OrgLogs
 	orgChatSend                  = orgbridge.Send
 )
+
+// orgChatRef is what a question id, gate id, request id or role:action
+// looks like; anything else (a flag, a path) is refused before monomind
+// sees it.
+var orgChatRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._-]*$`)
+
+// tail is the text after the n leading positionals. "--" may come before
+// them (the app always puts it first) or after (`answer <org> <id> -- …`);
+// written in both places, the second one is a separator too.
+func tail(cmd *cobra.Command, args []string, n int) string {
+	rest := args[n:]
+	if at := cmd.ArgsLenAtDash(); at >= 0 && at < n && len(rest) > 0 && rest[0] == "--" {
+		rest = rest[1:]
+	}
+	return strings.TrimSpace(joinRemainder(rest))
+}
 
 // orgChatSender is who the person's chat messages come from.
 const orgChatSender = "human:operator"
@@ -53,7 +70,7 @@ func newOrgChatSendCmd(env *orgEnv) *cobra.Command {
 			if !orgdesign.ValidOrgName(org) {
 				return errInvalidInput("invalid org name %q", org)
 			}
-			text := strings.TrimSpace(joinRemainder(args[1:]))
+			text := tail(cmd, args, 1)
 			if text == "" {
 				return errInvalidInput("the message is empty")
 			}
@@ -231,6 +248,9 @@ func runOrgChatResolve(cmd *cobra.Command, env *orgEnv, req orgchat.Request) err
 	if !orgdesign.ValidOrgName(req.Org) {
 		return errInvalidInput("invalid org name %q", req.Org)
 	}
+	if !orgChatRef.MatchString(req.Ref) {
+		return errInvalidInput("invalid item ref %q", req.Ref)
+	}
 	res, err := orgchat.Resolve(cmd.Context(), orgChatClient, env.Root(), req)
 	if err != nil {
 		var stopped *orgchat.NotRunningError
@@ -251,7 +271,7 @@ func newOrgChatAnswerCmd(env *orgEnv) *cobra.Command {
 		Short: "Answer an org's question (idempotent; refused while the org is not running)",
 		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			text := strings.TrimSpace(joinRemainder(args[2:]))
+			text := tail(cmd, args, 2)
 			if text == "" {
 				return errInvalidInput("the answer is empty")
 			}
@@ -273,7 +293,7 @@ func newOrgChatResolveCmd(env *orgEnv, verb string, approve bool) *cobra.Command
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runOrgChatResolve(cmd, env, orgchat.Request{
-				Org: args[0], Ref: args[1], Approve: approve, Text: strings.TrimSpace(joinRemainder(args[2:])),
+				Org: args[0], Ref: args[1], Approve: approve, Text: tail(cmd, args, 2),
 			})
 		},
 	}

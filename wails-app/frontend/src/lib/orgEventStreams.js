@@ -5,9 +5,15 @@
 // view, an org bubble) share one tail through here: the first acquire
 // starts it, the last release stops it, and restart re-resolves which run
 // it follows without disturbing the other holders.
+//
+// Every id a tail was started under is stopped on the last release, not
+// just the newest: a restart's StreamOrgEvents may not have registered yet
+// when the last holder lets go, and a stop for the newest id alone would
+// then miss the older process, which would follow its run until the app
+// quits (#239). Stopping an id that already ended is harmless.
 import { api, newOrgEventsStreamId } from '../services/api.js'
 
-const streams = new Map() // org → { count, id }
+const streams = new Map() // org → { count, ids }
 
 // call runs a binding and drops its failure: a tail that can't start or
 // stop has nothing else to do about it here.
@@ -20,8 +26,9 @@ function call(fn) {
 }
 
 function start(org, entry) {
-  entry.id = newOrgEventsStreamId()
-  call(() => api.streamOrgEvents(org, entry.id))
+  const id = newOrgEventsStreamId()
+  entry.ids.push(id)
+  call(() => api.streamOrgEvents(org, id))
 }
 
 // acquireOrgEvents makes sure org's events flow and returns the release.
@@ -30,7 +37,7 @@ export function acquireOrgEvents(org) {
   if (!org) return () => {}
   let entry = streams.get(org)
   if (!entry) {
-    entry = { count: 0, id: '' }
+    entry = { count: 0, ids: [] }
     streams.set(org, entry)
   }
   entry.count += 1
@@ -42,7 +49,7 @@ export function acquireOrgEvents(org) {
     entry.count -= 1
     if (entry.count === 0 && streams.get(org) === entry) {
       streams.delete(org)
-      call(() => api.stopOrgEvents(org, entry.id))
+      for (const id of entry.ids) call(() => api.stopOrgEvents(org, id))
     }
   }
 }

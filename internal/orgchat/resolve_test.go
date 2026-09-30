@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeClient is an org in memory: resolving an item flips it, so a second
@@ -194,5 +197,24 @@ func TestResolveNotFoundAndEmptyAnswer(t *testing.T) {
 	}
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v", f.sent)
+	}
+}
+
+func TestLockWaitEndsWithTheContext(t *testing.T) {
+	root := t.TempDir()
+	unlock, err := lockOrg(context.Background(), root, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = Resolve(ctx, newFake(), root, Request{Org: "acme", Ref: "gate-1", Approve: true})
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 5*time.Second {
+		t.Fatalf("waiting on a held lock: %v after %s", err, time.Since(start))
+	}
+	if info, err := os.Stat(filepath.Join(root, ".monomind", "locks")); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("lock dir: %v %v", info, err)
 	}
 }

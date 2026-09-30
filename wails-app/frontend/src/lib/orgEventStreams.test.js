@@ -30,14 +30,19 @@ describe('shared org event tails', () => {
     expect(orgEventHolders('acme')).toBe(0)
   })
 
-  it('restarts a held tail under a new id and stops the newest one', () => {
+  it('restarts a held tail under a new id, and the last release stops every id it ran under', () => {
+    // The restart's stream never registers before the release (its promise
+    // stays pending), so the Go side still runs the first id: both must be
+    // stopped, or the first follower leaks.
+    api.streamOrgEvents.mockImplementationOnce(() => Promise.resolve({ ok: true }))
+      .mockImplementationOnce(() => new Promise(() => {}))
     const release = acquireOrgEvents('acme')
     restartOrgEvents('acme')
     expect(api.streamOrgEvents).toHaveBeenCalledTimes(2)
     const [first, second] = api.streamOrgEvents.mock.calls.map(c => c[1])
     expect(first).not.toBe(second)
     release()
-    expect(api.stopOrgEvents).toHaveBeenCalledWith('acme', second)
+    expect(api.stopOrgEvents.mock.calls).toEqual([['acme', first], ['acme', second]])
     restartOrgEvents('acme') // nobody holds it: nothing starts
     expect(api.streamOrgEvents).toHaveBeenCalledTimes(2)
   })
