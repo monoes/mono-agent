@@ -7,6 +7,7 @@ import '../../i18n.js'
 import i18n from 'i18next'
 import journal from '../../lib/__fixtures__/orgStageJournal.json'
 import { replayStage, stageReducer } from '../../lib/orgStage.js'
+import { reduceTurnEvents } from '../chat/useChatStream.js'
 import { OrgStage, layoutStage, fitStage } from './OrgStage.jsx'
 import { StageDrawer } from './StageDrawer.jsx'
 import { FLIGHT_MS, BUBBLE_MS } from './useStageMotion.js'
@@ -107,6 +108,16 @@ describe('OrgStage', () => {
     expect(screen.queryByTestId('stage-speech')).toBeNull()
   })
 
+  it('lands every flight under StrictMode\'s dev re-mount', () => {
+    vi.useFakeTimers({ now: T0 + 3000 })
+    const briefSeq = journal.find(e => e.type === 'agent.message' && e.payload.agentId === 'w1').seq
+    render(<React.StrictMode><OrgStage stage={replayStage(journal.filter(e => e.seq <= briefSeq))} leadInfo={lead} onSelect={() => {}} /></React.StrictMode>)
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(screen.getAllByTestId('stage-flight')).toHaveLength(1)
+    act(() => { vi.advanceTimersByTime(FLIGHT_MS) })
+    expect(screen.queryByTestId('stage-flight')).toBeNull()
+  })
+
   it('does not replay old flights when a finished turn is opened', () => {
     vi.useFakeTimers({ now: T0 + 3600_000 })
     render(<OrgStage stage={replayStage(journal)} leadInfo={lead} onSelect={() => {}} />)
@@ -161,9 +172,10 @@ describe('stage layout', () => {
 
 describe('StageDrawer', () => {
   const stage = replayStage(journal)
+  const { agentCalls } = reduceTurnEvents(journal)
 
   it('shows the brief, why, model and access, messages and tool cards', () => {
-    render(<StageDrawer node={stage.nodes.w2} turnId="turn-1" isLive={false} onClose={() => {}} />)
+    render(<StageDrawer node={stage.nodes.w2} calls={agentCalls} turnId="turn-1" isLive={false} onClose={() => {}} />)
     const drawer = screen.getByTestId('stage-drawer')
     expect(drawer).toHaveTextContent('Make the cache test deterministic')
     expect(screen.getByTestId('stage-why')).toHaveTextContent('lead chose the model')
@@ -175,10 +187,15 @@ describe('StageDrawer', () => {
     expect(screen.getByTestId('stage-tools')).toHaveTextContent('go test ./internal/cache/...')
   })
 
+  it('shows a native subagent\'s own calls flat, outside its caller\'s Task card', () => {
+    render(<StageDrawer node={stage.nodes['native:w1:t1']} calls={agentCalls} turnId="t" onClose={() => {}} />)
+    expect(screen.getByTestId('stage-tools')).toHaveTextContent('cache_test.go')
+  })
+
   it('nests a native subagent card in its caller and offers Stop only when it can', () => {
     const onClose = vi.fn()
     const onStop = vi.fn()
-    const { rerender } = render(<StageDrawer node={stage.nodes.w1} turnId="t" onClose={onClose} />)
+    const { rerender } = render(<StageDrawer node={stage.nodes.w1} calls={agentCalls} turnId="t" onClose={onClose} />)
     expect(screen.getByTestId('stage-stop')).toBeDisabled()
     expect(screen.getByTestId('stage-stop')).toHaveAttribute('title', expect.stringContaining("isn't available yet"))
     fireEvent.click(screen.getByLabelText('Close the agent details'))

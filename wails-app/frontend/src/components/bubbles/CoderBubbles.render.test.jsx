@@ -271,7 +271,8 @@ describe('restored bubbles', () => {
     render(<Harness />)
     await waitFor(() => expect(bubble('gone')).toBeNull())
     expect(bubble('c1')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1'])
+    // Saved by an effect after the render that dropped it.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1']))
   })
 })
 
