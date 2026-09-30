@@ -79,7 +79,7 @@ func signToolFor(ctx context.Context, root string) (*signTool, error) {
 	path := found
 	kind := shimKind(found)
 	if kind != "" {
-		if path, err = resolveShim(ctx, kind); err != nil {
+		if path, err = resolveSignShim(ctx, kind); err != nil {
 			return nil, err
 		}
 	}
@@ -111,12 +111,12 @@ func shimKind(bin string) string {
 	return ""
 }
 
-// resolveShim is `<mise|asdf> which monomind`: the binary the shim picks,
+// resolveSignShim is `<mise|asdf> which monomind`: the binary the shim picks,
 // as an absolute path. It runs in the home directory, never the project
 // root: a role can plant a `.tool-versions` or `mise.toml` there that
 // points the manager at a binary it wrote (#295 review; the general fix
 // for every project-dir call is #301).
-func resolveShim(ctx context.Context, kind string) (string, error) {
+func resolveSignShim(ctx context.Context, kind string) (string, error) {
 	tool, err := exec.LookPath(kind)
 	if err != nil {
 		return "", fmt.Errorf("monomind is a %s shim, and %s is not on PATH to resolve it: %w", kind, kind, err)

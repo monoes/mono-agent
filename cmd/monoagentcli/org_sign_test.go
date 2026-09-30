@@ -45,7 +45,7 @@ if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
 fi
 if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
   if [ "$3" = "--help" ]; then echo "${FAKE_SIGN_HELP:-  --yes  Skip the confirmation}"; exit 0; fi
-  if [ "$4" = "--format" ] && [ -n "$FAKE_REVIEW_JSON" ]; then echo "$FAKE_REVIEW_JSON"; exit 0; fi
+  if [ "$4" = "--format" ] && [ -n "$FAKE_REVIEW_JSON" ]; then printf '%s\n' "$FAKE_REVIEW_JSON"; exit 0; fi
   if [ "$4" = "--check" ]; then
     echo '{"orgs":[{"org":"'"$3"'","state":"'"${FAKE_CHECK_STATE:-changed}"'","message":"from monomind"}]}'
     exit 1
