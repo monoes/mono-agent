@@ -345,3 +345,72 @@ func assertClean(t *testing.T, c *Conductor) {
 		l.release()
 	}
 }
+
+// parallelAskExec asks two questions in one message: both tool calls run
+// at once, as monomind.Exec runs a message's tool calls concurrently.
+type parallelAskExec struct {
+	mu      sync.Mutex
+	results []string
+}
+
+func (e *parallelAskExec) exec(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
+	on(monomind.Event{Type: monomind.EventStart})
+	var wg sync.WaitGroup
+	for _, q := range []string{"Which database?", "Which port?"} {
+		wg.Add(1)
+		go func(q string) {
+			defer wg.Done()
+			out, err := o.OnToolCall(ctx, ToolAskUser, json.RawMessage(`{"question":"`+q+`"}`))
+			e.mu.Lock()
+			if err != nil {
+				out = "error: " + err.Error()
+			}
+			e.results = append(e.results, out)
+			e.mu.Unlock()
+		}(q)
+	}
+	wg.Wait()
+	return okTurn("done"), nil
+}
+
+func TestParallelAsksKeepOneQuestionAndCleanAccounting(t *testing.T) {
+	for _, mc := range []int{1, 2} {
+		withFastAsk(t, 5*time.Second)
+		ans := &fakeAnswers{}
+		ex := &parallelAskExec{}
+		em := &recEmitter{}
+		c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{askModel}, Lead: askModel}, Exec: ex.exec, Emit: em, Answers: ans,
+			Limits: Limits{MaxAgents: 2, MaxConcurrent: mc}})
+		c.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Access: ProfileCoding})
+		waitFor(t, func() bool {
+			for _, p := range em.find(chatevents.EventAgentMessage) {
+				if p.(chatevents.AgentMessagePayload).Direction == "question" {
+					return true
+				}
+			}
+			return false
+		})
+		ans.put("w1", "q1", "yes")
+		info := c.Wait(context.Background(), []string{"w1"}, 5*time.Second)[0]
+		if info.Status != chatevents.AgentDone {
+			t.Fatalf("mc=%d: worker stuck: %+v", mc, info)
+		}
+		ex.mu.Lock()
+		got := strings.Join(ex.results, " | ")
+		ex.mu.Unlock()
+		if !strings.Contains(got, "The user answered: yes") || !strings.Contains(got, "already have an open question") {
+			t.Errorf("mc=%d: tool results = %s", mc, got)
+		}
+		questions := 0
+		for _, p := range em.find(chatevents.EventAgentMessage) {
+			if p.(chatevents.AgentMessagePayload).Direction == "question" {
+				questions++
+			}
+		}
+		if questions != 1 {
+			t.Errorf("mc=%d: %d questions journaled, want 1", mc, questions)
+		}
+		assertClean(t, c)
+		c.Close()
+	}
+}

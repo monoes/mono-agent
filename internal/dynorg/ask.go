@@ -96,6 +96,12 @@ func (c *Conductor) workerTools(w *worker, m Model, opts *monomind.ExecOptions) 
 // ask journals a worker's question and waits for the user's answer.
 func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string, error) {
 	c.mu.Lock()
+	// One question at a time: tool calls of one message run concurrently,
+	// and a second ask would release nothing and retake a second slot.
+	if w.openQuestion != "" {
+		c.mu.Unlock()
+		return "", fmt.Errorf("you already have an open question for the user; wait for its answer before asking another")
+	}
 	if w.askedThisRun >= MaxQuestions {
 		c.mu.Unlock()
 		return "", fmt.Errorf("you already asked %d questions; decide yourself and say what you assumed", MaxQuestions)
@@ -103,7 +109,7 @@ func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string
 	w.askedThisRun++
 	w.questionSeq++
 	qid := "q" + strconv.Itoa(w.questionSeq)
-	w.openQuestion = question
+	w.openQuestion = question // claimed here, in the same critical section as the check
 	c.mu.Unlock()
 
 	// While it waits it holds nothing: its leases and its concurrency slot
