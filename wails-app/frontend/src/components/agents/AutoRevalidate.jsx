@@ -55,7 +55,9 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
   const toggle = useCallback(async on => {
     if (on) {
       const next = st?.next
-      const cost = next
+      const cost = next && st?.next_unchecked
+        ? t('agents.roster.auto.confirmNextUnchecked', { count: next.targets?.length || 0, cost: nextCost(t, next) })
+        : next
         ? t('agents.roster.auto.confirmNext', { count: next.targets?.length || 0, runtime: next.runtime, cost: nextCost(t, next) })
         : t('agents.roster.auto.confirmNothing')
       const ok = await confirm(
@@ -94,11 +96,15 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
       </div>
       {st && (
         <div role="status" style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: '2px 12px' }}>
-          <span>{next
+          <span>{next && st.next_unchecked
+            ? t('agents.roster.auto.nextUnchecked', { count: next.targets?.length || 0, cost: nextCost(t, next) })
+            : next
             ? t('agents.roster.auto.next', { count: next.targets?.length || 0, runtime: next.runtime, cost: nextCost(t, next) })
             : t('agents.roster.auto.nothingStale')}</span>
           <span>{ceilingText(t, st)}</span>
-          <span>{t('agents.roster.auto.today', { count: state.runtimes_today || 0, spent: formatUSD(t, state.spent_today_usd, state.unknown_cost_calls_today) })}</span>
+          {st.state_error
+            ? <span style={{ color: 'var(--yellow)' }}>{t('agents.roster.auto.stateUnreadable')}</span>
+            : <span>{t('agents.roster.auto.today', { count: state.runtimes_today || 0, spent: formatUSD(t, state.spent_today_usd, state.unknown_cost_calls_today) })}</span>}
           {isSet(state.last_run_at) && (
             <span>{t('agents.roster.auto.lastRun', { at: new Date(state.last_run_at).toLocaleString(), runtime: state.last_runtime || '' })}</span>
           )}

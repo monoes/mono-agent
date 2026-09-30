@@ -91,7 +91,8 @@ func autoRosterPick(ctx context.Context, db *sql.DB, scan *monomind.ScanResult, 
 	}
 	roster := agentroster.Build(results, scan, time.Now(), agentroster.DefaultMaxAge)
 	if scan == nil {
-		// No scan (status --no-scan): installs are unknown, count them in.
+		// No scan (status --no-scan): installs are unknown, count them in
+		// for the estimate. The caller must not name the runtime.
 		for i := range roster {
 			roster[i].Installed = true
 		}
@@ -114,6 +115,9 @@ func newAutoRevalidator(db *sql.DB, logf func(string, ...interface{})) *agentros
 			}
 			scan = s
 			return autoRosterPick(ctx, db, s, maxModels)
+		},
+		Repick: func(ctx context.Context, maxModels int) (*agentroster.AutoPlan, error) {
+			return autoRosterPick(ctx, db, scan, maxModels)
 		},
 		Validate: func(ctx context.Context, p agentroster.AutoPlan) (agentroster.AutoRunResult, error) {
 			return runAutoRevalidation(ctx, db, scan, p)
@@ -144,16 +148,7 @@ func runAutoRevalidation(ctx context.Context, db *sql.DB, scan *monomind.ScanRes
 	out.Summary = agentroster.Run(ctx, p.Targets, agentroster.RunOptions{
 		RunID: runID, Bin: bin, Timeout: 60 * time.Second, Concurrency: 1, Test: test,
 		Save: func(r agentroster.Result) error { return agentroster.Save(saveCtx, db, r) },
-	}, func(l agentroster.Line) {
-		if l.Type != "validate.result" || l.Result == nil {
-			return
-		}
-		if l.Result.HasCost {
-			out.SpentUSD += l.Result.CostUSD
-		} else if l.Result.Status != agentroster.StatusCancelled {
-			out.UnknownCost++
-		}
-	})
+	}, out.Add)
 	return out, agentroster.FinishRun(saveCtx, db, runID, out.Summary, time.Now())
 }
 
@@ -177,6 +172,11 @@ type autoRevalidateStatus struct {
 	State         agentroster.AutoState `json:"state"`
 	DaemonRunning bool                  `json:"daemon_running"`
 	Next          *agentroster.AutoPlan `json:"next,omitempty"` // what the next run would test
+	// NextUnchecked: installs weren't checked (--no-scan), so next.runtime
+	// is left empty rather than naming a runtime that may be gone.
+	NextUnchecked bool `json:"next_unchecked,omitempty"`
+	// StateError is set when the stored state can't be read; `on` resets it.
+	StateError string `json:"state_error,omitempty"`
 	// DailyMaxUSD is the most a day can cost: every run at the cap, every
 	// model priced like PriciestUSD, the priciest model with a known cost.
 	// Both are 0 and CostKnown false before any model reported a cost.
@@ -264,15 +264,28 @@ func setAutoRevalidate(ctx context.Context, cfg *globalConfig, change func(*agen
 		return err
 	}
 	defer db.Close()
-	c, err := agentroster.LoadAutoConfig(ctx, db.DB)
+	if err := applyAutoRevalidate(ctx, db.DB, change); err != nil {
+		return err
+	}
+	return printAutoRevalidateStatus(ctx, cfg, db.DB, false)
+}
+
+// applyAutoRevalidate changes the setting. Turning it on resets a corrupt
+// stored state: otherwise the daemon would refuse to run for good, and
+// nothing else can repair it. A state that can't be read right now (a busy
+// database) fails the command instead.
+func applyAutoRevalidate(ctx context.Context, db *sql.DB, change func(*agentroster.AutoConfig)) error {
+	c, err := agentroster.LoadAutoConfig(ctx, db)
 	if err != nil {
 		return err
 	}
 	change(&c)
-	if err := agentroster.SaveAutoConfig(ctx, db.DB, c); err != nil {
-		return err
+	if c.Enabled {
+		if _, err := agentroster.ResetCorruptAutoState(ctx, db, time.Now()); err != nil {
+			return err
+		}
 	}
-	return printAutoRevalidateStatus(ctx, cfg, db.DB, false)
+	return agentroster.SaveAutoConfig(ctx, db, c)
 }
 
 func newAgentRosterAutoStatusCmd(cfg *globalConfig) *cobra.Command {
@@ -293,31 +306,45 @@ func newAgentRosterAutoStatusCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
-func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.DB, scan bool) error {
+// autoRevalidateSnapshot gathers `status`. An unreadable state is
+// reported in StateError, not returned as an error.
+func autoRevalidateSnapshot(ctx context.Context, db *sql.DB, scan bool) (autoRevalidateStatus, error) {
 	c, err := agentroster.LoadAutoConfig(ctx, db)
 	if err != nil {
-		return err
+		return autoRevalidateStatus{}, err
 	}
-	st, err := agentroster.LoadAutoState(ctx, db, time.Now())
-	if err != nil {
-		return err
+	out := autoRevalidateStatus{AutoConfig: c, QuietText: c.QuietPeriod.String(), Note: autoRevalidateMoneyNote}
+	if out.State, err = agentroster.LoadAutoState(ctx, db, time.Now()); err != nil {
+		out.State, out.StateError = agentroster.AutoState{}, err.Error()
 	}
 	var sr *monomind.ScanResult
 	if scan {
 		sr, _ = monomind.Scan(ctx) // without a scan the estimate still covers age staleness
 	}
-	next, _ := autoRosterPick(ctx, db, sr, c.MaxModelsPerRun)
+	out.Next, _ = autoRosterPick(ctx, db, sr, c.MaxModelsPerRun)
+	if out.Next != nil && sr == nil {
+		out.Next.Runtime, out.NextUnchecked = "", true
+		for i := range out.Next.Targets {
+			out.Next.Targets[i].Runtime = ""
+		}
+	}
 	results, err := agentroster.List(ctx, db)
+	if err != nil {
+		return out, err
+	}
+	out.DailyMaxUSD, out.PriciestUSD, out.CostKnown = agentroster.DailyCeiling(c, results)
+	hb, ok := daemonhb.Read()
+	out.DaemonRunning = ok && daemonhb.IsLive(hb, time.Now())
+	return out, nil
+}
+
+func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.DB, scan bool) error {
+	out, err := autoRevalidateSnapshot(ctx, db, scan)
 	if err != nil {
 		return err
 	}
-	perDay, priciest, known := agentroster.DailyCeiling(c, results)
-	hb, ok := daemonhb.Read()
-	out := autoRevalidateStatus{
-		AutoConfig: c, QuietText: c.QuietPeriod.String(), State: st,
-		DaemonRunning: ok && daemonhb.IsLive(hb, time.Now()), Next: next,
-		DailyMaxUSD: perDay, PriciestUSD: priciest, CostKnown: known, Note: autoRevalidateMoneyNote,
-	}
+	c, st, next := out.AutoConfig, out.State, out.Next
+	perDay, priciest, known := out.DailyMaxUSD, out.PriciestUSD, out.CostKnown
 	if cfg.JSONOutput {
 		return printJSON(out)
 	}
@@ -329,12 +356,16 @@ func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.D
 	fmt.Printf("Limits: %d runtime(s) a day, %d model(s) per run, after %s with nothing running\n",
 		c.MaxRuntimesPerDay, c.MaxModelsPerRun, c.QuietPeriod)
 	if known {
-		fmt.Printf("Daily ceiling: up to %d run(s) × %d model(s), %s/day at most (priciest known model %s)\n",
+		fmt.Printf("Daily ceiling: up to %d run(s) × %d model(s), %s/day at the priciest cost seen so far (%s a model); models with unknown cost not included\n",
 			c.MaxRuntimesPerDay, c.MaxModelsPerRun, usd(perDay, 0), usd(priciest, 0))
 	} else {
 		fmt.Printf("Daily ceiling: up to %d run(s) × %d model(s); no model has reported a cost yet\n", c.MaxRuntimesPerDay, c.MaxModelsPerRun)
 	}
-	fmt.Printf("Today: %d run(s), spent %s\n", st.RuntimesToday, usd(st.SpentTodayUSD, st.UnknownCostCall))
+	if out.StateError != "" {
+		fmt.Printf("Today: state unreadable (%s); runs are stopped until `auto-revalidate on` resets it\n", out.StateError)
+	} else {
+		fmt.Printf("Today: %d run(s), spent %s\n", st.RuntimesToday, usd(st.SpentTodayUSD, st.UnknownCostCall))
+	}
 	if !st.LastRunAt.IsZero() {
 		line := fmt.Sprintf("Last run: %s, %s", st.LastRunAt.Local().Format("2006-01-02 15:04"), st.LastRuntime)
 		if s := st.LastSummary; s != nil {
@@ -356,11 +387,17 @@ func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.D
 			fmt.Println(line)
 		}
 	}
+	var cost string
 	if next != nil {
-		cost := usd(next.EstCostUSD, next.UnknownCost)
+		cost = usd(next.EstCostUSD, next.UnknownCost)
 		if next.TableEstimated > 0 {
 			cost += fmt.Sprintf(" (%d priced from the built-in table)", next.TableEstimated)
 		}
+	}
+	if next != nil && out.NextUnchecked {
+		fmt.Printf("Next run would test up to %d stale model(s): %s per run (installs not checked; run without --no-scan to see the runtime)\n",
+			len(next.Targets), cost)
+	} else if next != nil {
 		fmt.Printf("Next run would test %d stale model(s) of %s: %s per run, up to %d run(s) a day\n",
 			len(next.Targets), next.Runtime, cost, c.MaxRuntimesPerDay)
 	} else {

@@ -3,6 +3,7 @@ package agentroster
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"strings"
 	"sync"
@@ -412,5 +413,115 @@ func TestDailyCeiling(t *testing.T) {
 	perDay, priciest, known := DailyCeiling(c, []Result{{HasCost: true, CostUSD: 0.01}, {HasCost: true, CostUSD: 0.05}})
 	if !known || priciest != 0.05 || perDay < 0.2999 || perDay > 0.3001 {
 		t.Fatalf("ceiling = %v/day, priciest %v, known %v", perDay, priciest, known)
+	}
+}
+
+// Planning again under the lock: models a manual validation just checked
+// are not tested twice, and an empty second plan runs nothing.
+func TestAutoRepicksUnderLock(t *testing.T) {
+	db := openDB(t)
+	enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+	f := newFakeAuto(t, db, localNoon())
+	repicks := 0
+	f.s.Repick = func(context.Context, int) (*AutoPlan, error) {
+		repicks++
+		if repicks == 1 {
+			return nil, nil // a manual validate re-checked everything meanwhile
+		}
+		return &AutoPlan{Runtime: "codex", Targets: []Target{{Runtime: "codex", Model: "mb"}}}, nil
+	}
+	ctx := context.Background()
+	f.s.Step(ctx)
+	f.advance(time.Minute)
+	if got := f.s.Step(ctx); got != AutoCheckNothing {
+		t.Fatalf("empty repick = %q, want nothing stale", got)
+	}
+	st, _ := LoadAutoState(ctx, db, f.now)
+	if len(f.runs) != 0 || st.RuntimesToday != 0 {
+		t.Fatalf("ran %d / counted %d after an empty repick", len(f.runs), st.RuntimesToday)
+	}
+	f.advance(time.Minute)
+	if got := f.s.Step(ctx); got != AutoCheckRan {
+		t.Fatalf("second = %q", got)
+	}
+	if len(f.runs) != 1 || len(f.runs[0].Targets) != 1 || f.runs[0].Targets[0].Model != "mb" {
+		t.Fatalf("ran %+v, want the repicked plan", f.runs)
+	}
+}
+
+// Calls cancelled mid-flight still count: their cost, or as unknown.
+func TestAutoRunResultCountsCancelledCalls(t *testing.T) {
+	var r AutoRunResult
+	for _, l := range []Line{
+		{Type: "validate.started"},
+		{Type: "validate.result", Result: &Result{Status: StatusOK, HasCost: true, CostUSD: 0.01}},
+		{Type: "validate.result", Result: &Result{Status: StatusCancelled, HasCost: true, CostUSD: 0.02}},
+		{Type: "validate.result", Result: &Result{Status: StatusCancelled}},
+		{Type: "validate.done", Summary: &Summary{}},
+	} {
+		r.Add(l)
+	}
+	if r.SpentUSD < 0.0299 || r.SpentUSD > 0.0301 || r.UnknownCost != 1 {
+		t.Fatalf("spent %v, unknown %d; want 0.03 and 1", r.SpentUSD, r.UnknownCost)
+	}
+}
+
+// Only a corrupt state is reset. A read error that may be transient leaves
+// the stored count alone, so today's cap still holds.
+func TestResetCorruptAutoStateOnlyWhenCorrupt(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	now := localNoon()
+	if err := SaveAutoState(ctx, db, AutoState{Day: now.Format("2006-01-02"), RuntimesToday: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if reset, err := ResetCorruptAutoState(ctx, db, now); reset || err != nil {
+		t.Fatalf("readable state: reset=%v err=%v", reset, err)
+	}
+
+	// Unreadable for another reason: the table is missing for a moment.
+	if _, err := db.Exec(`ALTER TABLE settings RENAME TO settings_away`); err != nil {
+		t.Fatal(err)
+	}
+	reset, err := ResetCorruptAutoState(ctx, db, now)
+	if reset || err == nil || errors.Is(err, ErrAutoStateCorrupt) {
+		t.Fatalf("transient error: reset=%v err=%v; want no reset and the error", reset, err)
+	}
+	if _, err := db.Exec(`ALTER TABLE settings_away RENAME TO settings`); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := LoadAutoState(ctx, db, now); err != nil || st.RuntimesToday != 1 {
+		t.Fatalf("count lost after a transient error: %+v, %v", st, err)
+	}
+
+	if err := setSetting(ctx, db, autoStateKey, "{broken"); err != nil {
+		t.Fatal(err)
+	}
+	if reset, err := ResetCorruptAutoState(ctx, db, now); !reset || err != nil {
+		t.Fatalf("corrupt state: reset=%v err=%v; want reset", reset, err)
+	}
+	if _, err := LoadAutoState(ctx, db, now); err != nil {
+		t.Fatalf("still unreadable after reset: %v", err)
+	}
+}
+
+// A watcher cancel while planning again under the lock is "cancelled".
+func TestAutoCancelDuringRepick(t *testing.T) {
+	db := openDB(t)
+	enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+	f := newFakeAuto(t, db, localNoon())
+	f.s.Repick = func(ctx context.Context, _ int) (*AutoPlan, error) {
+		f.busy.Store(true)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx := context.Background()
+	f.s.Step(ctx)
+	f.advance(time.Minute)
+	if got, want := f.s.Step(ctx), AutoCheckCancelled+": the app got busy (chat turn)"; got != want {
+		t.Fatalf("step = %q, want %q", got, want)
+	}
+	if len(f.runs) != 0 {
+		t.Fatal("ran after a cancelled repick")
 	}
 }

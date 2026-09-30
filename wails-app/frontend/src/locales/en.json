@@ -516,7 +516,8 @@
         "model_unavailable": "✗ model unavailable",
         "timeout": "✗ timed out",
         "missing_binary": "✗ not installed",
-        "error": "✗ error"
+        "error": "✗ error",
+        "rateLimited": "⚠ rate limited (will re-check)"
       },
       "auto": {
         "label": "Re-check stale models automatically",
@@ -537,8 +538,11 @@
         "confirmNext": "The next run tests {{count}} model(s) of {{runtime}}, {{cost}}.",
         "confirmNothing": "Nothing is stale right now, so nothing runs until a model goes stale.",
         "turnOn": "Turn on",
-        "ceiling": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s), {{cost}}/day at most (priciest known model {{priciest}}).",
-        "ceilingUnknown": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s); no model has reported a cost yet."
+        "ceiling": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s), {{cost}}/day at the priciest cost seen so far ({{priciest}} a model); models with unknown cost not included.",
+        "ceilingUnknown": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s); no model has reported a cost yet.",
+        "nextUnchecked": "Next run: up to {{count}} stale model(s), {{cost}} (installs not checked)",
+        "confirmNextUnchecked": "The next run tests up to {{count}} stale model(s), {{cost}}.",
+        "stateUnreadable": "Today's count can't be read, so nothing runs; turning it on again resets it."
       }
     }
   },
