@@ -157,3 +157,24 @@ func TestWorkerSubagentEventsAreJournaled(t *testing.T) {
 		t.Errorf("spawned = %+v", sp)
 	}
 }
+
+// Two workers whose runtimes reuse a call id each get their subagent's
+// finish: the ids are tracked per caller, not raw.
+func TestSubagentsTrackedPerCaller(t *testing.T) {
+	em := &recEmitter{}
+	var s Subagents
+	started := `{"v":1,"type":"subagent","phase":"started","id":"call_1","tool_use_id":"call_1","description":"Find it"}`
+	finished := `{"v":1,"type":"subagent","phase":"finished","id":"call_1","tool_use_id":"call_1","status":"completed"}`
+	for _, step := range []struct{ line, prefix, owner string }{
+		{started, "w1:", "w1"}, {started, "w2:", "w2"}, {finished, "w1:", "w1"}, {finished, "w2:", "w2"},
+	} {
+		s.Handle(em, decodeEvents(t, []string{step.line})[0], step.prefix, step.owner)
+	}
+	var got []string
+	for _, p := range em.find(chatevents.EventAgentFinished) {
+		got = append(got, p.(chatevents.AgentFinishedPayload).AgentID)
+	}
+	if strings.Join(got, " ") != "native:w1:call_1 native:w2:call_1" {
+		t.Errorf("finished = %v, want both workers' subagents", got)
+	}
+}

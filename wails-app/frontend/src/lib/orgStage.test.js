@@ -382,6 +382,13 @@ describe('reported native subagents', () => {
     expect(live.edges.filter(e => e.to === 'native:w1:t1')).toHaveLength(1)
   })
 
+  it('keeps the node under the caller its Task call put it under', () => {
+    const events = [...base, { seq: 3, type: 'agent.spawned', payload: { agentId: 'native:w1:t1', agentType: 'native', role: 'Explore' } }]
+    const s = replayStage(events)
+    expect(s.nodes['native:w1:t1'].parentId).toBe('w1')
+    expect(s.edges.filter(e => e.to === 'native:w1:t1').map(e => e.from)).toEqual(['w1'])
+  })
+
   it('lets the reported finish decide, not the Task call\'s end', () => {
     const n = replayStage(reported).nodes['native:w1:t1']
     expect(n).toMatchObject({ status: 'failed', outcome: 'failed', summary: 'It is loadConfig.', durationMs: 3050 })

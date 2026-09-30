@@ -355,9 +355,11 @@ function onText(d, p) {
 
 function onSpawned(d, ev, p) {
   const id = p.agentId
+  // A native subagent's node from its Task call already sits under its caller.
+  const keepParent = p.agentType === 'native' && d.nodes[id]?.native
   const n = d.node(id)
   Object.assign(n, {
-    parentId: p.parentId || LEAD_ID,
+    parentId: keepParent ? n.parentId : p.parentId || LEAD_ID,
     role: p.role || n.role, agentType: p.agentType || n.agentType, native: p.agentType === 'native',
     skills: Array.isArray(p.skills) ? p.skills : n.skills,
     runtime: p.runtime || n.runtime, model: p.model ?? n.model, effort: p.effort || n.effort, access: p.access || n.access,

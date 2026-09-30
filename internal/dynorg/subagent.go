@@ -25,7 +25,7 @@ const maxSubagentText = 16 * 1024
 // keeps inferring. The zero value is ready to use.
 type Subagents struct {
 	mu    sync.Mutex
-	open  map[string]bool // tool_use_id -> started and not finished
+	open  map[string]bool // native agent id -> started and not finished
 	parts map[string]int  // native agent id -> text parts so far
 }
 
@@ -52,7 +52,7 @@ func (s *Subagents) Handle(emit Emitter, ev monomind.Event, callPrefix, owner st
 	id := NativeAgentID(callPrefix + ev.ToolUseID)
 	switch ev.Phase {
 	case "started":
-		s.open[ev.ToolUseID] = true
+		s.open[id] = true
 		role := ev.SubagentType
 		if role == "" {
 			role = ev.Description
@@ -66,7 +66,7 @@ func (s *Subagents) Handle(emit Emitter, ev monomind.Event, callPrefix, owner st
 		})
 		emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: id, To: chatevents.AgentWorking})
 	case "progress":
-		if !s.open[ev.ToolUseID] {
+		if !s.open[id] {
 			return true
 		}
 		detail := ev.Summary
@@ -77,10 +77,10 @@ func (s *Subagents) Handle(emit Emitter, ev monomind.Event, callPrefix, owner st
 			AgentID: id, From: chatevents.AgentWorking, To: chatevents.AgentWorking, Detail: boundText(detail, 300),
 		})
 	case "finished":
-		if !s.open[ev.ToolUseID] {
+		if !s.open[id] {
 			return true
 		}
-		delete(s.open, ev.ToolUseID)
+		delete(s.open, id)
 		if ev.Summary != "" {
 			to := owner
 			if to == "" {
