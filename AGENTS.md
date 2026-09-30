@@ -545,6 +545,23 @@ tools:
 | `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
 | `org_stop` | Stops a worker. |
 
+Outside the turn, `monoagentcli chat turn stop <conversation> <turn> --agent
+<id> [--wait 20s] --json` stops one worker and leaves the lead and the other
+workers running (#255); the app's stage drawer calls it through
+`App.StopChatAgent`. The control path is a mailbox folder next to the
+database, `<db dir>/chat-control/<turn-id>/`: the command drops a
+`stop-<agent-id>` file, and the turn process, which polls the folder while
+its conductor runs, calls `Conductor.Stop` and removes the file (that removal
+is the acknowledgement). A file works from any process of the same user, on
+every OS, whichever window owns the turn. The journal then shows the usual
+`agent.status` to `cancelled` and `agent.finished` with outcome `cancelled`,
+and the command reports the worker's status from it. A worker or turn that
+already finished is a no-op (`requested: false`), and an agent the turn
+doesn't have reports `unknown`. The turn removes its folder when it ends,
+and writes its pid into it: a stop against a crashed turn (dead pid) is an
+immediate no-op with `detail`, and `chat history reconcile` (app start)
+sweeps folders whose pid is gone. The app passes the ids after `--`.
+
 How the conductor staffs a worker:
 
 - **The lead's choices win.** They are only checked: a model must be in the
@@ -565,7 +582,13 @@ preference, by `--access read`, else by a read-only sandbox
 (`--sandbox read-only` where the runtime's `sandbox_modes` list it). With
 neither, only its prompt keeps it from editing, so it takes the write lease
 like a writer. A confined researcher only falls back to models that confine
-it too.
+it too. The sandbox fails closed: the run passes `RequireSandbox`, so if
+`Exec` can't apply the read-only sandbox at run time (the scan was stale,
+the runtime changed), or the start event reports anything but `sandboxed`,
+the run is refused or cancelled. It then runs again without the sandbox,
+holding the write lease. A refusal is not recorded as a model outcome, and
+neither is a run the org's budget refused or monomind stopped at its
+budget.
 
 | Profile | Access |
 |---|---|
@@ -578,7 +601,16 @@ How workers run:
 - **Processes:** each worker is its own `agent exec` in the chat folder,
   with the user's setup loaded.
 - **Leases:** one worker edits at a time (the write lease), and one uses the
-  browser at a time (the browser lease). Readers run in parallel.
+  browser at a time (the browser lease). Readers run in parallel. The lead's
+  own file edits (`Edit`, `Write`, patch tool calls in its event stream)
+  take the write lease from the call's start to its end, or until the lead
+  calls `org_wait` or its turn ends. Writers queue behind the lead. The
+  lead's native tools can't be refused, so an edit it starts while a
+  worker holds the lease is reported instead: an `org_lead_edit_conflict`
+  warning notice, and `warnings` in its next org tool result. Only edit
+  tool calls are seen (`isEditCall` in `internal/dynorg/lead.go`): a lead
+  that edits through the shell (`sed -i`, `cat >`, a codex exec command)
+  takes no lease and gets no warning.
 - **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
   (default 3) and `--org-budget-usd` (reported worker cost; 0 = none), plus
   3 follow-ups (`org_message`) per worker.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -486,7 +487,8 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile",
 		Short: "Mark every turn left active, in every profile, as interrupted",
-		Long: "Marks every turn still active as interrupted, across all profiles. The desktop app runs " +
+		Long: "Marks every turn still active as interrupted, across all profiles, and removes the " +
+			"`chat turn stop` mailbox folders of turn processes that are gone. The desktop app runs " +
 			"this at startup with --except-owner set to its own instance id, so turns it has already " +
 			"started are skipped. There is no liveness check: a second running app's turns are " +
 			"interrupted too.",
@@ -498,6 +500,8 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer closeDB()
 			turns, errs := store.ReconcileActiveTurns(exceptOwner)
+			// Mailbox folders of turns whose process died (#255).
+			sweepAgentControl(agentControlRoot(cfg), time.Now())
 			res := chatReconcileResult{Reconciled: []ai.TurnRecord{}, Errors: []string{}}
 			for _, t := range turns {
 				res.Reconciled = append(res.Reconciled, t.Record())

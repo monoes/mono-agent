@@ -3,11 +3,13 @@ package dynorg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/agentroster"
@@ -50,6 +52,12 @@ type Conductor struct {
 	order   []string
 	spawned int
 	cost    float64
+	// The lead's own file edits (#260): the call ids of its edit tool
+	// calls in flight, whether it holds the write lease for them, and the
+	// warnings for edits it made while a writer held the lease.
+	leadEdits    map[string]bool
+	leadHolds    bool
+	leadWarnings []string
 }
 
 type worker struct {
@@ -73,13 +81,28 @@ type worker struct {
 	started time.Time
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
-	stream    workerStream // its text and live usage (workerstream.go)
-	leases    []string     // the leases it holds, for agent.status (lease.go)
+	// unconfined: a research worker whose read-only sandbox could not be
+	// applied at run time; it runs holding the write lease instead.
+	unconfined bool
+	// unusable holds the models (runtime/model) that couldn't run this
+	// worker (auth, quota, …), so a retry doesn't try them again.
+	unusable map[string]bool
+	stream   workerStream // its text and live usage (workerstream.go)
+	leases   []string     // the leases it holds, for agent.status (lease.go)
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
 // in for new workers past the turn's agent cap.
 const MaxFollowups = 3
+
+// errBudgetRefused is execOnce's refusal to start a run once the workers'
+// budget is spent. It is the org's cap, not the model's failure, so it is
+// not recorded as a model outcome.
+var errBudgetRefused = errors.New("budget")
+
+// errUnconfined is execOnce's refusal of a research run whose read-only
+// sandbox was not applied at run time (#261).
+var errUnconfined = errors.New("the read-only sandbox was not applied")
 
 // errBudgetSpent is returned when the workers' budget has run out.
 func (c *Conductor) budgetErrLocked() error {
@@ -111,7 +134,7 @@ func New(ctx context.Context, cfg Config) *Conductor {
 		cfg: cfg, ctx: cctx, cancel: cancel,
 		slots: make(chan struct{}, cfg.Limits.MaxConcurrent),
 		write: newLease(), browser: newLease(),
-		workers: map[string]*worker{},
+		workers: map[string]*worker{}, leadEdits: map[string]bool{},
 	}
 }
 
@@ -120,6 +143,7 @@ func New(ctx context.Context, cfg Config) *Conductor {
 func (c *Conductor) Close() {
 	c.cancel()
 	c.wg.Wait()
+	c.leadStopsEditing()
 }
 
 // WorkerInfo is what the lead's tools report about a worker.
@@ -219,6 +243,9 @@ func (c *Conductor) Wait(ctx context.Context, ids []string, timeout time.Duratio
 	if timeout <= 0 || timeout > MaxWait {
 		timeout = MaxWait
 	}
+	// A lead that waits for workers is not editing: a writer it waits for
+	// must not wait on the lead's lease.
+	c.leadStopsEditing()
 	c.mu.Lock()
 	if len(ids) == 0 {
 		ids = slices.Clone(c.order)
@@ -346,6 +373,29 @@ func (c *Conductor) launch(w *worker, ctx context.Context, cancel context.Cancel
 }
 
 func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, first bool) (outcome, report, errText string) {
+	outcome, report, errText, unconfined := c.runLeased(ctx, w, prompt, resume, first)
+	if !unconfined {
+		return outcome, report, errText
+	}
+	// The read-only sandbox this research worker was staffed for was not
+	// applied at run time (the runtime changed since the scan, a stale
+	// cache): Exec refused it, or its start event said so. Rather than run
+	// it unconfined beside a writer, it runs again holding the write lease,
+	// like a research worker nothing confines (#261).
+	c.mu.Lock()
+	w.unconfined = true
+	c.mu.Unlock()
+	c.setStatus(w, chatevents.AgentQueued, "no read-only sandbox; waiting for the write lease")
+	outcome, report, errText, unconfined = c.runLeased(ctx, w, prompt, resume, first)
+	if unconfined {
+		return chatevents.AgentFailed, "", errUnconfined.Error()
+	}
+	return outcome, report, errText
+}
+
+// runLeased is one attempt at a worker's run under its leases. unconfined
+// reports that a sandbox-confined research run was refused (errUnconfined).
+func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume string, first bool) (outcome, report, errText string, unconfined bool) {
 	// Leases first, then a concurrency slot: a writer queued behind another
 	// writer must not hold a slot a reader could use.
 	for _, need := range []struct {
@@ -359,7 +409,7 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 		if !need.l.tryAcquire() {
 			c.setStatus(w, chatevents.AgentWaitingLease, need.name)
 			if err := need.l.acquire(ctx); err != nil {
-				return chatevents.AgentCancelled, "", "cancelled while waiting for the " + need.name + " lease"
+				return chatevents.AgentCancelled, "", "cancelled while waiting for the " + need.name + " lease", false
 			}
 		}
 		defer c.holdLease(w, need.l, need.name)()
@@ -368,7 +418,7 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	case c.slots <- struct{}{}:
 		defer func() { <-c.slots }()
 	case <-ctx.Done():
-		return chatevents.AgentCancelled, "", "cancelled before it started"
+		return chatevents.AgentCancelled, "", "cancelled before it started", false
 	}
 	c.setStatus(w, chatevents.AgentStarting, "")
 
@@ -376,9 +426,12 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	models := []Model{w.model}
 	if first {
 		for _, m := range w.staff.Fallbacks {
+			if w.unusable[modelKey(m)] || modelKey(m) == modelKey(w.model) {
+				continue
+			}
 			// A confined research worker runs without the write lease,
 			// so it may only fall back to models that confine it too.
-			if w.staff.Access == ProfileResearch && c.confined(w.model) && !c.confined(m) {
+			if w.staff.Access == ProfileResearch && !w.unconfined && c.confined(w.model) && !c.confined(m) {
 				continue
 			}
 			models = append(models, m)
@@ -388,16 +441,36 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	for i, m := range models {
 		res, err := c.execOnce(ctx, w, m, prompt, resume)
 		if ctx.Err() != nil {
-			return chatevents.AgentCancelled, "", "cancelled"
+			return chatevents.AgentCancelled, "", "cancelled", false
+		}
+		if errors.Is(err, errUnconfined) {
+			return "", "", "", true
 		}
 		status, detail := agentroster.Classify(res, err)
+		if errors.Is(err, errBudgetRefused) || (res != nil && res.Err != nil && res.Err.Code == monomind.ErrBudget) {
+			// The org's budget stopped it, not the model: nothing to
+			// record about the model, and no fallback to try.
+			if !strings.HasPrefix(detail, "budget") {
+				detail = "budget: " + detail
+			}
+			// A run monomind stopped at its cap keeps what it wrote so far.
+			text := ""
+			if res != nil {
+				text = strings.TrimSpace(res.ResultText)
+			}
+			return chatevents.AgentFailed, text, boundText(detail, 500), false
+		}
 		c.recordOutcome(m, status, detail)
 		switch {
 		case agentroster.Works(status):
-			return chatevents.AgentDone, strings.TrimSpace(res.ResultText), ""
+			return chatevents.AgentDone, strings.TrimSpace(res.ResultText), "", false
 		case unusable(status) && i+1 < len(models):
 			next := models[i+1]
 			c.mu.Lock()
+			if w.unusable == nil {
+				w.unusable = map[string]bool{}
+			}
+			w.unusable[modelKey(m)] = true
 			w.model = next
 			c.mu.Unlock()
 			c.cfg.Emit.Emit(chatevents.EventAgentReassigned, chatevents.AgentReassignedPayload{
@@ -410,10 +483,12 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 		if res != nil {
 			text = strings.TrimSpace(res.ResultText)
 		}
-		return chatevents.AgentFailed, text, status + ": " + boundText(detail, 500)
+		return chatevents.AgentFailed, text, status + ": " + boundText(detail, 500), false
 	}
-	return chatevents.AgentFailed, "", "no model could run this worker"
+	return chatevents.AgentFailed, "", "no model could run this worker", false
 }
+
+func modelKey(m Model) string { return m.Runtime + "/" + m.Model }
 
 // confined reports whether a research worker on m can't edit files: it
 // runs with --access read, or in a read-only sandbox.
@@ -429,7 +504,7 @@ func (c *Conductor) needsWriteLease(w *worker) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return !c.confined(w.model)
+	return w.unconfined || !c.confined(w.model)
 }
 
 // unusable statuses mean the model can't run at all, so the next one is
@@ -460,14 +535,22 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.Effort = w.staff.Effort
 	}
 	opts.Access = monomind.AccessFull
+	c.mu.Lock()
+	unconfined := w.unconfined
+	c.mu.Unlock()
+	requireSandbox := false
 	if w.staff.Access == ProfileResearch {
 		switch {
 		case c.cfg.ReadAccess && m.Read:
 			opts.Access = monomind.AccessRead
-		case m.ReadOnlySandbox:
+		case m.ReadOnlySandbox && !unconfined:
 			// No --access read on this runtime: confine the worker with a
 			// read-only sandbox instead (Exec's SandboxArgs decides the flag).
+			// The sandbox is what lets it run without the write lease, so
+			// the run fails closed when Exec can't apply it (#261).
 			opts.Sandbox = monomind.SandboxReadOnly
+			opts.RequireSandbox = true
+			requireSandbox = true
 		}
 		// Neither: it holds the write lease instead (needsWriteLease).
 	}
@@ -479,7 +562,7 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		remaining := b - c.cost
 		if remaining <= 0 {
 			c.mu.Unlock()
-			return nil, fmt.Errorf("budget: the workers' budget of $%.2f for this turn is spent", b)
+			return nil, fmt.Errorf("%w: the workers' budget of $%.2f for this turn is spent", errBudgetRefused, b)
 		}
 		opts.BudgetUSD = remaining
 	}
@@ -487,7 +570,18 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	opts.Tools, opts.OnToolCall = nil, nil
 	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files)
 	var run monomind.TurnResult
-	res, err := c.cfg.Exec(ctx, opts, func(ev monomind.Event) {
+	ectx, ecancel := context.WithCancel(ctx)
+	defer ecancel()
+	// refused is set when the start event says the confined run isn't
+	// sandboxed, and the run is cancelled.
+	var refused atomic.Bool
+	res, err := c.cfg.Exec(ectx, opts, func(ev monomind.Event) {
+		if requireSandbox && ev.Type == monomind.EventStart {
+			if ev.SandboxStatus != monomind.SandboxStatusSandboxed {
+				refused.Store(true)
+				ecancel()
+			}
+		}
 		monomind.ApplyEventToResult(&run, ev)
 		c.stream(w, ev, &run)
 		c.workerEvent(w, ev)
@@ -510,6 +604,19 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		c.cost += run.CostUSD
 	}
 	c.mu.Unlock()
+	if requireSandbox {
+		// Refused: Exec couldn't apply the sandbox, the start event said it
+		// wasn't applied (the run was cancelled), or the turn's own report
+		// says so. A run that failed before it started (no start event, no
+		// report, e.g. auth) ran nothing, and keeps its own failure.
+		status := ""
+		if res != nil {
+			status = res.SandboxStatus
+		}
+		if refused.Load() || errors.Is(err, monomind.ErrSandboxRequired) || (status != "" && status != monomind.SandboxStatusSandboxed) {
+			return res, errUnconfined
+		}
+	}
 	return res, err
 }
 
@@ -556,6 +663,15 @@ func (c *Conductor) workerEvent(w *worker, ev monomind.Event) {
 
 // noteChangedFile remembers the file a writing tool call targets.
 func (c *Conductor) noteChangedFile(w *worker, ev monomind.Event) {
+	if p := editTarget(ev); p != "" {
+		c.mu.Lock()
+		w.changed[p] = true
+		c.mu.Unlock()
+	}
+}
+
+// isEditCall reports whether a tool call edits files.
+func isEditCall(ev monomind.Event) bool {
 	kind := ev.Kind
 	if kind == "" {
 		switch ev.Name {
@@ -565,21 +681,24 @@ func (c *Conductor) noteChangedFile(w *worker, ev monomind.Event) {
 			kind = "write"
 		}
 	}
-	if kind != "edit" && kind != "write" && kind != "patch" {
-		return
+	return kind == "edit" || kind == "write" || kind == "patch"
+}
+
+// editTarget is the file an editing tool call targets, or "".
+func editTarget(ev monomind.Event) string {
+	if !isEditCall(ev) {
+		return ""
 	}
 	var input map[string]any
 	if json.Unmarshal(ev.Input, &input) != nil {
-		return
+		return ""
 	}
 	for _, k := range []string{"file_path", "path", "notebook_path"} {
 		if p, ok := input[k].(string); ok && p != "" {
-			c.mu.Lock()
-			w.changed[p] = true
-			c.mu.Unlock()
-			return
+			return p
 		}
 	}
+	return ""
 }
 
 func (c *Conductor) setStatus(w *worker, to, detail string) {

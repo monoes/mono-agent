@@ -514,6 +514,39 @@ func TestApp_StopChatTurn_ForeignUnknownAndFinishedTurns(t *testing.T) {
 	}
 }
 
+func TestApp_StopChatAgent_ShellsOutToChatTurnStop(t *testing.T) {
+	a, _ := newCLIChatApp(t, "")
+	bin, argsLog := chatFakeCLI(t,
+		fakeChatReply{match: "chat turn stop --agent=w2 --wait 20s -- c1 t1", stdout: `{"agent_id":"w2","status":"cancelled","requested":true,"turn_status":"active"}`},
+		fakeChatReply{match: "-- c1 t-unknown", code: 2, stderr: "chat: turn not found\n"},
+	)
+	a.chatSup.findCLI = func() (string, error) { return bin, nil }
+
+	var r struct {
+		OK        bool   `json:"ok"`
+		Status    string `json:"status"`
+		Requested bool   `json:"requested"`
+		Error     string `json:"error"`
+	}
+	json.Unmarshal([]byte(a.StopChatAgent("c1", "t1", "w2")), &r)
+	if !r.OK || r.Status != "cancelled" || !r.Requested {
+		t.Errorf("StopChatAgent = %+v", r)
+	}
+	r = struct {
+		OK        bool   `json:"ok"`
+		Status    string `json:"status"`
+		Requested bool   `json:"requested"`
+		Error     string `json:"error"`
+	}{}
+	json.Unmarshal([]byte(a.StopChatAgent("c1", "t-unknown", "w2")), &r)
+	if r.OK || !strings.Contains(r.Error, "turn not found") {
+		t.Errorf("StopChatAgent on an unknown turn = %+v, want the CLI's error", r)
+	}
+	if calls := readArgsLog(t, argsLog); calls[0] != "--profile default --json chat turn stop --agent=w2 --wait 20s -- c1 t1" {
+		t.Errorf("argv = %q", calls)
+	}
+}
+
 func TestChatSupervisor_ReconcileShellsOutExceptItsOwnTurns(t *testing.T) {
 	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history reconcile", code: 1,
 		stdout: `{"reconciled":[{"id":"t1","status":"interrupted"}],"errors":["reconcile turn t2: database is locked"]}`,
