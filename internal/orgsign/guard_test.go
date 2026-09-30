@@ -385,17 +385,20 @@ func TestNewInstructionsReferenceIsNotSigned(t *testing.T) {
 	}
 }
 
-// SHOULD-FIX 4: Go and Node decode invalid UTF-8 and lone surrogate
-// escapes differently, so such a definition gets no Go verdict.
+// SHOULD-FIX 4: Go and Node decode invalid UTF-8 and unpaired surrogate
+// escapes differently, so such a definition gets no Go verdict. A valid
+// escaped pair and a backslash-escaped "\\ud800" as text decode the same in
+// both, so they still hash (the pair as the character it spells).
 func TestUndecidableEncodingsAreUnknown(t *testing.T) {
 	operatorDirForTest(t)
 	root := t.TempDir()
 	signFixture(t, root, "growth", []byte(signedBody))
 	for name, raw := range map[string][]byte{
-		"lone surrogate":    []byte(`{"name":"growth","roles":[],"x":"\ud800"}`),
-		"surrogate pair":    []byte(`{"name":"growth","roles":[],"x":"\ud83d\ude00"}`),
-		"truncated utf8":    append([]byte(`{"name":"growth","roles":[],"x":"`), 0xE2, 0x82, '"', '}'),
-		"invalid utf8 byte": append([]byte(`{"name":"growth","roles":[],"x":"`), 0xFF, '"', '}'),
+		"lone high surrogate": []byte(`{"name":"growth","roles":[],"x":"\ud800"}`),
+		"lone low surrogate":  []byte(`{"name":"growth","roles":[],"x":"\udc00"}`),
+		"high then non-low":   []byte(`{"name":"growth","roles":[],"x":"\ud83d\u0041"}`),
+		"truncated utf8":      append([]byte(`{"name":"growth","roles":[],"x":"`), 0xE2, 0x82, '"', '}'),
+		"invalid utf8 byte":   append([]byte(`{"name":"growth","roles":[],"x":"`), 0xFF, '"', '}'),
 	} {
 		if st := Verify(root, "growth", raw); st.State != StateUnknown {
 			t.Errorf("%s: state %+v, want unknown", name, st)
@@ -404,6 +407,11 @@ func TestUndecidableEncodingsAreUnknown(t *testing.T) {
 			t.Errorf("%s: hashed", name)
 		}
 	}
+	pair := mustHash(t, root, `{"name":"growth","roles":[],"x":"\ud83d\ude00"}`)
+	if emoji := mustHash(t, root, `{"name":"growth","roles":[],"x":"😀"}`); pair != emoji {
+		t.Error("an escaped pair must hash as the character it spells")
+	}
+	mustHash(t, root, `{"name":"growth","roles":[],"x":"\\ud800"}`) // text, not an escape
 }
 
 // SHOULD-FIX 5: no automatic signing under any agent-context marker
@@ -441,5 +449,31 @@ func TestRelativeOperatorDirIsUnderRoot(t *testing.T) {
 	t.Setenv("MONOMIND_ORGRT_OPERATOR_DIR", abs)
 	if got := OperatorDir(root); got != abs {
 		t.Fatalf("OperatorDir = %s", got)
+	}
+}
+
+// Stamps tell an untouched definition from one whose JSON or instructions
+// file was rewritten, even when the bytes were put back.
+func TestStampSeesARestoredSwap(t *testing.T) {
+	root, _ := instructionsOrg(t)
+	a, err := StampDefinition(root, "growth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := StampDefinition(root, "growth"); !a.Same(b) {
+		t.Fatal("an untouched definition stamped differently")
+	}
+	if len(a) < 2 {
+		t.Fatalf("the instructions file is not stamped: %v", a)
+	}
+	for _, path := range []string{filepath.Join(root, ".monomind", "orgs", "growth.json"), filepath.Join(root, "instr.md")} {
+		orig, _ := os.ReadFile(path)
+		_ = os.WriteFile(path, []byte("swapped"), 0o644)
+		_ = os.WriteFile(path, orig, 0o644)
+		b, err := StampDefinition(root, "growth")
+		if err != nil || a.Same(b) {
+			t.Fatalf("%s rewritten and restored, stamps still equal", filepath.Base(path))
+		}
+		a = b
 	}
 }

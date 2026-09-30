@@ -97,3 +97,15 @@ describe('OrgSignatureBanner', () => {
     expect(await screen.findByTestId('org-signature-banner')).toHaveAttribute('data-state', 'changed')
   })
 })
+
+describe('reviewAndSign', () => {
+  it('never signs a review that could not vouch for its hash', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue({ ...REVIEW, hash: undefined, message: 'not signed: the definition changed during the review' })
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('changed during the review'), undefined))
+    expect(screen.queryByTestId('org-sign-review')).toBeNull()
+    expect(api.orgSign).not.toHaveBeenCalled()
+  })
+})

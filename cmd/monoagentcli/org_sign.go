@@ -153,24 +153,18 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				return printJSONValue(res)
 			}
 			if !yes {
-				before, _ := orgsign.Hash(root, raw)
-				review, err := monomind.OrgSignReview(ctx, root, name)
+				res.Hash, res.Review, err = reviewOrg(ctx, root, name)
 				if err != nil {
 					return err
 				}
-				// The hash is the reviewed definition's only if nothing
-				// changed while monomind reviewed it.
-				if raw2, _, err := orgsign.ReadFile(root, name); err == nil {
-					if after, _ := orgsign.Hash(root, raw2); after == before {
-						res.Hash = before
-					}
-				}
-				res.Review = review
 				if env.cfg.JSONOutput || !stdinIsTerminal() {
-					res.Message = "not signed: review the above, then run `monoagentcli org sign " + name + " --yes`"
+					res.Message = "not signed: review the above, then run `monoagentcli org sign " + name + " --yes --expect-hash " + res.Hash + "`"
+					if res.Hash == "" {
+						res.Message = "not signed: the definition changed during the review, or its hash can't be computed here — review it again"
+					}
 					return printJSONValue(res)
 				}
-				if !confirmOrgSign(cmd.ErrOrStderr(), os.Stdin, name, review) {
+				if !confirmOrgSign(cmd.ErrOrStderr(), os.Stdin, name, res.Review) {
 					res.Message = "not signed (declined)"
 					return printJSONValue(res)
 				}
@@ -181,6 +175,16 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 			}
 			if m := orgsign.RoleContextMarker(); m != "" {
 				return errInvalidInput("refusing to sign: %s is set — this is an org role or agent turn, and only the operator signs org definitions", m)
+			}
+			// A coding agent (the chat assistant included) runs commands with
+			// no terminal: under its markers, --yes needs a person at a TTY.
+			if m := orgsign.AgentContextMarker(); m != "" && yes && !stdinIsTerminal() {
+				return errInvalidInput("refusing to sign with --yes: %s is set and there is no terminal — a coding agent is running this. Review and sign it yourself: in the app (Review & sign), or `monoagentcli org sign %s` in your terminal", m, name)
+			}
+			if cmd.Flags().Changed("expect-hash") && expect == "" {
+				// A review that couldn't vouch for its hash hands over "":
+				// never read that as "sign whatever is there now".
+				return errInvalidInput("org %s: --expect-hash is empty: the review could not tell what it showed — review it again", name)
 			}
 			if expect == "" {
 				expect, _ = orgsign.Hash(root, raw)
@@ -198,6 +202,30 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 	c.Flags().StringVar(&expect, "expect-hash", "", "With --yes: sign only if the definition's hash (the review's \"hash\", instructions files included) is this")
 	c.Flags().BoolVar(&statusOnly, "status", false, "Print the signature state only")
 	return c
+}
+
+// reviewOrg is monomind's review of org and the hash of exactly the
+// definition it reviewed — or "" when that can't be told: monomind reads
+// the files itself, so a file swapped in for its read and restored after
+// would show one definition and hash another (#295 review). The org JSON
+// and every instructions file are stamped (identity, size, mtime, ctime)
+// before the hash and after the review, and must not have moved.
+func reviewOrg(ctx context.Context, root, name string) (hash, review string, err error) {
+	before, stampErr := orgsign.StampDefinition(root, name)
+	raw, _, readErr := orgsign.ReadFile(root, name)
+	h, hashErr := orgsign.Hash(root, raw)
+	review, err = monomind.OrgSignReview(ctx, root, name)
+	if err != nil {
+		return "", "", err
+	}
+	after, stampErr2 := orgsign.StampDefinition(root, name)
+	raw2, _, readErr2 := orgsign.ReadFile(root, name)
+	h2, hashErr2 := orgsign.Hash(root, raw2)
+	if stampErr != nil || stampErr2 != nil || readErr != nil || readErr2 != nil || hashErr != nil || hashErr2 != nil ||
+		!before.Same(after) || h != h2 {
+		return "", review, nil
+	}
+	return h, review, nil
 }
 
 // errOrgSigningUnsupported: the installed monomind predates signed org

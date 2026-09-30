@@ -16,8 +16,11 @@ import (
 // only when the operator signed its definition. The org view and designer
 // show a banner for an unsigned or changed org; "Review & sign" shows
 // monomind's own review and signs only after the user confirms, and only
-// the file that was reviewed (its sha256). All of it is `monoagentcli org
-// sign`; nothing here signs or verifies by itself.
+// the definition that was reviewed: the review's `hash` (the projection
+// hash, instructions files included), which the CLI hands over only when
+// no file moved during monomind's read. Signing is always `monoagentcli
+// org sign`. The designer's own writes are decided in orgSignBefore: the
+// CLI's verdict, then orgsign.Before's pinning (read-only checks).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // orgSignArgs builds `org [--project <root>] sign <org> [extra...]`.
@@ -31,12 +34,15 @@ func orgSignArgs(root, orgName string, extra ...string) []string {
 
 // OrgSignatureStatus is `org sign <org> --status`: {supported, state,
 // detail, sha256, message}. supported is false below monomind 2.21.
+// sha256 is the file's; nothing is signed by it.
 func (a *App) OrgSignatureStatus(orgName string) string {
 	return a.jsonResult(orgSignArgs(a.orgProjectRoot(), orgName, "--status")...)
 }
 
 // OrgSignatureReview is `org sign <org>` without --yes: monomind's review
-// text and the sha256 of the file it reviewed. It signs nothing.
+// text and the hash of exactly the reviewed definition ("" when a file
+// moved during the review, and then nothing may be signed from it). It
+// signs nothing.
 func (a *App) OrgSignatureReview(orgName string) string {
 	return a.jsonResult(orgSignArgs(a.orgProjectRoot(), orgName)...)
 }

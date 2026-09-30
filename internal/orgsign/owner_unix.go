@@ -30,3 +30,18 @@ func multiplyLinked(st fs.FileInfo) bool {
 	sys, ok := st.Sys().(*syscall.Stat_t)
 	return ok && sys.Nlink > 1
 }
+
+// fileID is a file's identity and every time a write or replacement moves.
+type fileID struct {
+	dev, ino, size         uint64
+	mtimeNs, ctimeNs, mode int64
+}
+
+func idOf(st fs.FileInfo) fileID {
+	id := fileID{size: uint64(st.Size()), mtimeNs: st.ModTime().UnixNano(), mode: int64(st.Mode())}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		id.dev, id.ino = uint64(sys.Dev), uint64(sys.Ino)
+		id.ctimeNs = ctimeNs(sys)
+	}
+	return id
+}

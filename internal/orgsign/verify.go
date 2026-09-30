@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -359,9 +360,47 @@ func hashWith(raw []byte, dig digestFunc) (string, error) {
 	return hashValue(v, dig)
 }
 
-// surrogateEscape matches a \uD800-\uDFFF escape: Go decodes a lone one
-// to U+FFFD where Node keeps it, so such a definition's hash could differ.
-var surrogateEscape = regexp.MustCompile(`(?i)\\ud[89a-f][0-9a-f]{2}`)
+// unpairedSurrogate reports a \u escape of an unpaired surrogate (a high
+// \uD800-\uDBFF not followed by an escaped low one, or a lone low
+// \uDC00-\uDFFF): Go decodes one to U+FFFD where Node keeps it, so the
+// hash could differ. An escaped backslash ("\\ud800" as text) and a valid
+// pair (an escaped emoji) decode the same in both and are fine.
+func unpairedSurrogate(raw []byte) bool {
+	hex4 := func(i int) (int, bool) {
+		if i+4 > len(raw) {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(string(raw[i:i+4]), 16, 32)
+		return int(v), err == nil
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' || i+1 >= len(raw) {
+			continue
+		}
+		if raw[i+1] != 'u' {
+			i++ // \\, \" and the like: skip the escaped character
+			continue
+		}
+		cp, ok := hex4(i + 2)
+		if !ok {
+			continue
+		}
+		switch {
+		case cp >= 0xD800 && cp <= 0xDBFF:
+			if i+12 <= len(raw) && raw[i+6] == '\\' && raw[i+7] == 'u' {
+				if lo, ok := hex4(i + 8); ok && lo >= 0xDC00 && lo <= 0xDFFF {
+					i += 11
+					continue
+				}
+			}
+			return true
+		case cp >= 0xDC00 && cp <= 0xDFFF:
+			return true
+		}
+		i += 5
+	}
+	return false
+}
 
 // parseOrgJSON is parseJSON for an org definition, refusing (as unknown)
 // the inputs Go and Node decode differently: bytes that are not valid
@@ -370,8 +409,8 @@ func parseOrgJSON(raw []byte) (interface{}, error) {
 	if !utf8.Valid(raw) {
 		return nil, fmt.Errorf("%w: the file is not valid UTF-8", errUnknown)
 	}
-	if surrogateEscape.Match(raw) {
-		return nil, fmt.Errorf("%w: the file holds a \\u surrogate escape", errUnknown)
+	if unpairedSurrogate(raw) {
+		return nil, fmt.Errorf("%w: the file holds an unpaired \\u surrogate escape", errUnknown)
 	}
 	return parseJSON(raw)
 }

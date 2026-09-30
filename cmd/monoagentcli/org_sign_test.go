@@ -40,6 +40,10 @@ if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
     exit 1
   fi
   if [ "$4" = "--yes" ]; then echo "org $3: signed"; exit 0; fi
+  if [ -n "$FAKE_REVIEW_SWAP" ]; then
+    # A role swaps a file in for monomind's read and restores it after.
+    f="$FAKE_REVIEW_SWAP"; cp "$f" "$f.bak"; echo '{"swapped":true}' > "$f"; cat "$f.bak" > "$f"; rm "$f.bak"
+  fi
   printf '\033[1m\norg %s (changed):\033[0m\n  lead: runtime claude \302\267 git push \302\267 access scoped\n  Changed since the last signature:\n    roles.lead.policy.git: read -> push\n  1 protected path(s) would be quarantined as possible plants: .claude/settings.json \342\200\224 if they are yours, approve them with monomind org approve-paths <path>\nNot signed. Review the above, then sign it yourself in a terminal: monomind org sign <org> (or pass --yes).\n[ERROR] confirmation required (--yes)\n' "$3"
   exit 1
 fi
@@ -394,7 +398,8 @@ func TestCreateJSONIsLeftForReview(t *testing.T) {
 }
 
 // Nor is any write made under a coding agent's own markers (CLAUDECODE,
-// CODEX_*, ...), though the user's agent may still run an explicit sign.
+// CODEX_*, ...), and an explicit `org sign --yes` without a terminal is
+// refused there too: that is how an agent would run it (#295 review).
 func TestNoAutomaticSigningUnderAgentContext(t *testing.T) {
 	f, s, _ := newSigningFixture(t, "2.21.0")
 	orgsigntest.Sign(t, f.root, "growth")
@@ -405,8 +410,19 @@ func TestNoAutomaticSigningUnderAgentContext(t *testing.T) {
 	if len(s.calls) != 0 || !strings.Contains(stderr, "CLAUDECODE") {
 		t.Fatalf("calls %v, stderr %q", s.calls, stderr)
 	}
-	signed := f.mustRun(t, "sign", "growth", "--yes")
-	if signed["signed"] != true || len(s.calls) != 1 {
+	for _, m := range []string{"CLAUDECODE", "CODEX_THREAD_ID", "OPENCODE"} {
+		t.Setenv("CLAUDECODE", "")
+		t.Setenv(m, "1")
+		if _, err := f.run(t, "sign", "growth", "--yes"); err == nil || !strings.Contains(err.Error(), "no terminal") {
+			t.Fatalf("%s: sign --yes without a terminal: %v", m, err)
+		}
+		t.Setenv(m, "")
+	}
+	if len(s.calls) != 0 {
+		t.Fatalf("calls %v", s.calls)
+	}
+	// The operator's own terminal (no markers) still signs.
+	if signed := f.mustRun(t, "sign", "growth", "--yes"); signed["signed"] != true || len(s.calls) != 1 {
 		t.Fatalf("explicit sign = %v (calls %v)", signed, s.calls)
 	}
 }
@@ -437,5 +453,38 @@ func TestOrgStatusChecksAllOrgsInOneRun(t *testing.T) {
 	calls, _ := os.ReadFile(logPath)
 	if strings.Count(string(calls), "check-all") != 1 || strings.Contains(string(calls), "--check") {
 		t.Fatalf("calls:\n%s", calls)
+	}
+}
+
+// MUST-FIX (third review of #295): a file swapped in only for monomind's
+// review read, and restored after, would make the review show one
+// definition and the hash sign another. The stamps (identity, size, mtime,
+// ctime) of the org JSON and its instructions files catch it: no hash, so
+// nothing can be signed from that review.
+func TestReviewDetectsASwapDuringTheRead(t *testing.T) {
+	f, s, _ := newSigningFixture(t, "2.21.0")
+	instr := filepath.Join(f.root, "prompts.md")
+	if err := os.WriteFile(instr, []byte("Be careful.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.editOutside(t, func(m map[string]interface{}) {
+		m["roles"].([]interface{})[0].(map[string]interface{})["instructions_file"] = "prompts.md"
+	})
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] == nil || rev["hash"] == "" {
+		t.Fatalf("an undisturbed review has no hash: %v", rev)
+	}
+	for _, swapped := range []string{filepath.Join(orgdesign.OrgsDir(f.root), "growth.json"), instr} {
+		t.Setenv("FAKE_REVIEW_SWAP", swapped)
+		rev := f.mustRun(t, "sign", "growth")
+		if h, _ := rev["hash"].(string); h != "" || !strings.Contains(rev["message"].(string), "changed during the review") {
+			t.Fatalf("%s swapped during the review: %v", filepath.Base(swapped), rev)
+		}
+	}
+	// And an empty --expect-hash (what such a review hands over) never signs.
+	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-hash", ""); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("signed with an empty --expect-hash: %v", err)
+	}
+	if len(s.calls) != 0 {
+		t.Fatalf("calls %v", s.calls)
 	}
 }

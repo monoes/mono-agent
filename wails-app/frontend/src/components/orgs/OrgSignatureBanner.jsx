@@ -75,6 +75,9 @@ function ReviewText({ review }) {
 // true when signed, false when cancelled; rejects with the CLI's refusal.
 export async function reviewAndSign(orgName) {
   const review = await api.orgSignatureReview(orgName)
+  // No hash: the definition changed while monomind reviewed it, so the
+  // review may not show what would be signed.
+  if (!review.hash) throw new Error(review.message || `org ${orgName} changed during the review; review it again`)
   const ok = await confirm(<ReviewText review={review.review || ''} />, {
     title: `Sign org ${orgName}?`,
     confirmLabel: 'Sign',
