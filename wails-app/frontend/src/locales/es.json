@@ -494,6 +494,9 @@
         "nextUnchecked": "Próxima ejecución: hasta {{count}} modelo(s) caducado(s), {{cost}} (instalaciones sin comprobar)",
         "confirmNextUnchecked": "La próxima ejecución prueba hasta {{count}} modelo(s) caducado(s), {{cost}}.",
         "stateUnreadable": "No se puede leer el recuento de hoy, así que no se ejecuta nada; al volver a activarlo se restablece."
+      },
+      "status": {
+        "rateLimited": "⚠ límite de uso (se volverá a comprobar)"
       }
     }
   },

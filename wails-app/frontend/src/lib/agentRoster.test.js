@@ -32,6 +32,13 @@ describe('withLiveResults', () => {
     const out = withLiveResults(roster, { k: { runtime: 'codex', model: 'x', status: 'quota' } })
     expect(out.find(r => r.runtime === 'codex').models[0].state).toBe('failed')
   })
+  it('shows a live rate_limited result as stale, not failed', () => {
+    const out = withLiveResults(roster, { k: { runtime: 'claude', model: 'haiku', status: 'rate_limited' } })
+    const m = out[0].models[0]
+    expect(m.state).toBe('stale')
+    expect(chipFor(m)).toEqual({ key: 'rateLimited', tone: 'warn' })
+    expect(out[0].ready).toBe(0)
+  })
 })
 
 describe('chipFor', () => {
@@ -40,6 +47,7 @@ describe('chipFor', () => {
     [{ state: 'ready', status: 'ok_unexpected' }, 'okUnexpected', 'warn'],
     [{ state: 'stale', stale_reason: 'age' }, 'stale', 'warn'],
     [{ state: 'stale', stale_reason: 'version' }, 'staleVersion', 'warn'],
+    [{ state: 'stale', stale_reason: 'rate_limited', status: 'rate_limited' }, 'rateLimited', 'warn'],
     [{ state: 'untested' }, 'untested', 'muted'],
     [{ state: 'failed', status: 'auth' }, 'auth', 'bad'],
     [{ state: 'failed', status: 'weird' }, 'error', 'bad'],

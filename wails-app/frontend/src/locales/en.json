@@ -513,7 +513,8 @@
         "model_unavailable": "✗ model unavailable",
         "timeout": "✗ timed out",
         "missing_binary": "✗ not installed",
-        "error": "✗ error"
+        "error": "✗ error",
+        "rateLimited": "⚠ rate limited (will re-check)"
       },
       "auto": {
         "label": "Re-check stale models automatically",

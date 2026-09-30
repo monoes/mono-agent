@@ -45,7 +45,11 @@ export function withLiveResults(runtimes, results) {
       rr = { runtime: r.runtime, installed: true, models: [], ready: 0 }
       out.push(rr)
     }
-    const entry = { ...r, state: works(r.status) ? 'ready' : 'failed', stale_reason: '' }
+    // rate_limited (#268) is stale, not failed: the model works and is
+    // re-checked later, as `agent roster` stores it.
+    const entry = r.status === 'rate_limited'
+      ? { ...r, state: 'stale', stale_reason: 'rate_limited' }
+      : { ...r, state: works(r.status) ? 'ready' : 'failed', stale_reason: '' }
     const i = rr.models.findIndex(m => m.model === r.model)
     if (i >= 0) rr.models[i] = { ...rr.models[i], ...entry }
     else rr.models.push(entry)
@@ -59,7 +63,10 @@ export function withLiveResults(runtimes, results) {
 export function chipFor(entry) {
   if (!entry) return { key: 'untested', tone: 'muted' }
   if (entry.state === 'untested') return { key: 'untested', tone: 'muted' }
-  if (entry.state === 'stale') return { key: entry.stale_reason === 'version' ? 'staleVersion' : 'stale', tone: 'warn' }
+  if (entry.state === 'stale') {
+    const key = { version: 'staleVersion', rate_limited: 'rateLimited' }[entry.stale_reason] || 'stale'
+    return { key, tone: 'warn' }
+  }
   if (entry.state === 'ready') return { key: entry.status === 'ok_unexpected' ? 'okUnexpected' : 'ok', tone: entry.status === 'ok_unexpected' ? 'warn' : 'ok' }
   const known = ['auth', 'quota', 'model_unavailable', 'timeout', 'missing_binary']
   return { key: known.includes(entry.status) ? entry.status : 'error', tone: 'bad' }
