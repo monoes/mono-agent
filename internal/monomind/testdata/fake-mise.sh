@@ -1,11 +1,13 @@
 #!/bin/sh
 # Stands in for mise in the #301 tests. Copied to a file named `mise`;
 # shims are symlinks to it named after their tool. `mise bin-paths` lists
-# the global installs' bin dirs. `mise which <tool>` and
+# the installs' bin dirs, led by a steered path: version's. `mise which <tool>` and
 # a shim pick the tool the way mise does for a node `path:` version:
 # MISE_NODE_VERSION, then the nearest .tool-versions from the working
 # directory up, then whatever is installed under $MISE_DATA_DIR/installs.
-pick() {
+# steered prints the node `path:` version the environment or the nearest
+# .tool-versions selects, or nothing.
+steered() {
 	v=""
 	case "$MISE_NODE_VERSION" in path:*) v="${MISE_NODE_VERSION#path:}" ;; esac
 	d="$PWD"
@@ -17,6 +19,11 @@ pick() {
 		[ "$d" = / ] && break
 		d=$(dirname "$d")
 	done
+	echo "$v"
+}
+
+pick() {
+	v=$(steered)
 	if [ -n "$v" ]; then
 		echo "$v/bin/$1"
 		return 0
@@ -42,6 +49,8 @@ if [ "$tool" = mise ]; then
 		# The global tools' bin dirs; FAKE_MISE_NO_BIN_PATHS stands in for
 		# a mise that can't list them.
 		[ -z "$FAKE_MISE_NO_BIN_PATHS" ] || exit 1
+		v=$(steered)
+		[ -n "$v" ] && echo "$v/bin"
 		for d in "$MISE_DATA_DIR"/installs/*/*/bin; do
 			[ -d "$d" ] && echo "$d"
 		done

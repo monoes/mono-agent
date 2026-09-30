@@ -88,8 +88,9 @@ func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 
 	// PATH entries that resolve in the project (relative ones, a direnv
 	// `PATH_add bin`) and an override naming a project file supply
-	// nothing: opencode, not installed, still doesn't start, and codex is
-	// the installed one.
+	// nothing: opencode, not installed, still doesn't start, and codex,
+	// overridden to a project file, doesn't start at all (it is pointed at
+	// the missing unpinned path, so it isn't looked up by name either).
 	for _, dir := range []string{"node_modules/.bin", "bin"} {
 		p := filepath.Join(project, dir, "opencode")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -110,7 +111,7 @@ func TestOrgCommandsNeverRunProjectPlantedMonomind(t *testing.T) {
 	if runErr != nil {
 		t.Fatal(runErr)
 	}
-	if b, _ := os.ReadFile(log); strings.Contains(string(b), "PLANTED") || !strings.Contains(string(b), "codex "+codex) {
+	if b, _ := os.ReadFile(log); strings.Contains(string(b), "PLANTED") || strings.Contains(string(b), "codex ") {
 		t.Fatalf("org status with project PATH entries ran:\n%s", b)
 	}
 }

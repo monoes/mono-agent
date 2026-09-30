@@ -60,9 +60,10 @@ func PinEnv(env []string, bin string) []string {
 	return pinRuntimes(out, cur, shimsKept)
 }
 
-// PinEnvIn is PinEnv for a command that runs in roots: PATH entries and
-// pinned agent CLIs inside them are dropped too (a direnv `PATH_add bin`,
-// an override naming a project file), so the project can't supply them.
+// PinEnvIn is PinEnv for a command that runs in roots: PATH entries inside
+// them (a direnv `PATH_add bin`) are dropped too, and an agent CLI pinned
+// there (an override naming a project file) is pointed at a file that
+// doesn't exist (unpinnedPath), so the project can't supply either.
 func PinEnvIn(env []string, bin string, roots ...string) []string {
 	return scrubRoots(PinEnv(env, bin), roots...)
 }
@@ -109,7 +110,9 @@ func scrubRoots(env []string, roots ...string) []string {
 			}
 			kv = k + "=" + strings.Join(keep, string(os.PathListSeparator))
 		case isRuntimeBinEnv(k) && inside(v):
-			continue
+			// Pointed at a missing file, not removed: unset, monomind
+			// would find the CLI by name, through any shim on PATH.
+			kv = k + "=" + unpinnedPath(runtimeName(k))
 		}
 		out = append(out, kv)
 	}

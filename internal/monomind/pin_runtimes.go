@@ -73,15 +73,26 @@ func pinRuntimes(env []string, searchPath string, shimsOnPath bool) []string {
 	return out
 }
 
-// unpinnedPath is where an unpinnable agent CLI is pointed while shims are
-// on PATH: a path in mono-agent's own data dir that is never created, so
-// the CLI is reported missing. "" without a home directory.
+// unpinnedPath is where an agent CLI that must not be found by name is
+// pointed: a path in mono-agent's own data dir that is never created, so
+// monomind reports it missing. Never "": monomind treats an empty override
+// as unset and looks the CLI up on PATH.
 func unpinnedPath(name string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return ""
+		home = string(filepath.Separator)
 	}
 	return filepath.Join(home, ".monoagent", "unpinned", name)
+}
+
+// runtimeName is the CLI whose override key is.
+func runtimeName(key string) string {
+	for _, rt := range runtimeBinEnv {
+		if key == rt.env {
+			return rt.name
+		}
+	}
+	return ""
 }
 
 func isRuntimeBinEnv(key string) bool {

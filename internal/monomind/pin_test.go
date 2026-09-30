@@ -451,7 +451,8 @@ func TestPinEnvGlobalToolDirs(t *testing.T) {
 
 // Relative PATH entries resolve against the project root, and absolute
 // ones inside it are the project's: neither reaches a command run there,
-// nor does an agent CLI override naming a project file.
+// nor does an agent CLI override naming a project file (it is pointed at
+// the missing unpinned path).
 func TestPinEnvInDropsProjectPaths(t *testing.T) {
 	f := newShimFixture(t, "node/22.0.0")
 	bin, err := Find()
@@ -467,9 +468,91 @@ func TestPinEnvInDropsProjectPaths(t *testing.T) {
 			t.Fatalf("PATH kept %q: %v", p, pathOf(env))
 		}
 	}
-	if v, ok := envValue(env, "CODEX_CLI_BIN"); ok {
-		t.Fatalf("CODEX_CLI_BIN = %q, want it dropped", v)
+	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(f.home, ".monoagent", "unpinned", "codex") {
+		t.Fatalf("CODEX_CLI_BIN = %q, want the unpinned path", v)
 	}
+}
+
+// In the fallback (shims last on PATH), an agent CLI whose pin lands in
+// the project — here through a direnv-style <project>/bin ahead of the
+// shims — is pointed at the missing unpinned path, not unset: unset,
+// monomind would start it by name through the shims.
+func TestPinEnvInFallbackProjectPathAhead(t *testing.T) {
+	f := newShimFixture(t, "node/22.0.0")
+	codex := filepath.Join(f.data, "installs", "npm-openai-codex", "1.0.0", "bin", "codex")
+	planted := filepath.Join(f.project, "bin", "codex")
+	for path, who := range map[string]string{codex: "codex", planted: "PLANTED"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho \""+who+" $0\" >>\"$PIN_LOG\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", strings.Join([]string{filepath.Join(f.project, "bin"), f.shims, "/usr/bin", "/bin"}, sep))
+	t.Setenv("FAKE_MISE_NO_BIN_PATHS", "1")
+	t.Setenv("FAKE_RUNTIMES", "codex")
+	ResetCapabilityCache()
+	if _, err := OrgStatus(context.Background(), f.project, "growth"); err != nil {
+		t.Fatal(err)
+	}
+	if log := f.readLog(t); strings.Contains(log, "PLANTED") {
+		t.Fatalf("a planted binary ran:\n%s", log)
+	}
+	bin, err := Find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := PinEnvIn(os.Environ(), bin, f.project)
+	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(f.home, ".monoagent", "unpinned", "codex") {
+		t.Fatalf("CODEX_CLI_BIN = %q, want the unpinned path", v)
+	}
+	if path := pathOf(env); path[len(path)-1] != f.shims || indexOf(path, filepath.Join(f.project, "bin")) >= 0 {
+		t.Fatalf("PATH = %v", path)
+	}
+}
+
+// `mise bin-paths` runs from home with the project-scoped settings
+// scrubbed: neither the project's .tool-versions (this process's cwd is
+// the project) nor MISE_NODE_VERSION pointing into it adds a dir, though
+// the same mise run in the project lists the planted one.
+func TestMiseBinPathsIgnoreProjectSteering(t *testing.T) {
+	f := newShimFixture(t, "node/22.0.0")
+	steer := exec.Command(filepath.Join(filepath.Dir(mustEval(t, filepath.Join(f.shims, "node"))), "mise"), "bin-paths")
+	steer.Dir = f.project
+	if out, err := steer.Output(); err != nil || !strings.Contains(string(out), f.project) || !strings.Contains(string(out), ".cache/n/bin") {
+		t.Fatalf("fixture: mise bin-paths in the project = %q, %v; want it steered into the project", out, err)
+	}
+	t.Chdir(f.project)
+	t.Setenv("MISE_NODE_VERSION", "path:"+filepath.Join(f.project, ".cache", "n"))
+	ResetCapabilityCache()
+	// The raw listing is unsteered (not only the installs filter after it).
+	raw, err := runManager(managerMise, shimIn(f.shims), "bin-paths")
+	if err != nil || strings.Contains(raw, f.project) {
+		t.Fatalf("mise bin-paths = %q, %v; want no project dir", raw, err)
+	}
+	dirs, err := managerBinPaths(managerMise, f.shims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexOf(dirs, f.node) < 0 {
+		t.Fatalf("bin-paths = %v, want %s", dirs, f.node)
+	}
+	for _, d := range dirs {
+		if strings.HasPrefix(d, f.project) {
+			t.Fatalf("bin-paths = %v: %s is the project's", dirs, d)
+		}
+	}
+}
+
+func mustEval(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 func TestShimManagerDetection(t *testing.T) {
