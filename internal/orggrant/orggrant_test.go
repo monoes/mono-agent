@@ -551,3 +551,35 @@ func TestMergeOrgToolsStaysAdditiveAcrossChildren(t *testing.T) {
 		t.Fatalf("scope = %q", got)
 	}
 }
+
+// #281: each grant's display copy carries the tier the decision service
+// routes it by, and a hand edit of that tier is rewritten from the row.
+func TestReconcileWritesGrantTier(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	d := goldenDoc(t)
+	if _, err := s.UpsertGrant(ctx, GrantInput{ProfileID: "default", OrgName: "growth", RoleID: "lead",
+		Tool: Tool{Alias: "publish_post", WorkflowID: "wf-publish", Tier: GrantTier(nil)}}); err != nil {
+		t.Fatal(err)
+	}
+	lead, _ := d.FindRole("lead")
+	lead.Automations[0].Tier = orgdesign.TierRoutine
+	if _, err := Reconcile(ctx, s, d, testOpts); err != nil {
+		t.Fatal(err)
+	}
+	lead, _ = d.FindRole("lead")
+	if got := lead.Automations[0].Tier; got != orgdesign.TierConsequential {
+		t.Fatalf("tier = %q, want consequential for a workflow with no outbound nodes", got)
+	}
+
+	for tier, want := range map[string]string{
+		orgdesign.TierIrreversible: orgdesign.TierIrreversible,
+		orgdesign.TierRoutine:      orgdesign.TierRoutine,
+		"":                         orgdesign.TierIrreversible,
+		"bogus":                    orgdesign.TierIrreversible,
+	} {
+		if got := SpecFromTool(Tool{Alias: "a", Tier: tier}, orgdesign.GrantSpec{}).Tier; got != want {
+			t.Errorf("SpecFromTool tier %q = %q, want %q", tier, got, want)
+		}
+	}
+}

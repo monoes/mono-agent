@@ -145,6 +145,9 @@ func TestOrgGrantLifecycle(t *testing.T) {
 	if len(writer.Automations) != 1 || len(writer.ToolProviders) != 1 {
 		t.Fatalf("JSON not updated: %+v", writer)
 	}
+	if writer.Automations[0].Tier != "irreversible" {
+		t.Fatalf("display copy tier = %q, want irreversible", writer.Automations[0].Tier)
+	}
 	p := writer.ToolProviders[0]
 	if p.Args[2] != grant["id"] || p.Args[4] != "default" || p.Name != "monoagent" {
 		t.Fatalf("provider = %+v", p)
@@ -229,6 +232,10 @@ func TestOrgGrantRefusals(t *testing.T) {
 	g := f.mustRun(t, "grant", "add", "growth", "--role", "lead", "--automation", "summarize")
 	if gg := g["grant"].(map[string]interface{}); gg["approval"] != "none" || gg["tier"] != "consequential" {
 		t.Fatalf("plain workflow grant defaults = %v", gg)
+	}
+	lead, _ := f.load(t).FindRole("lead")
+	if spec := lead.FindGrantSpec("summarize"); spec == nil || spec.Tier != "consequential" {
+		t.Fatalf("display copy of a grant to a workflow with no outbound nodes = %+v, want tier consequential", spec)
 	}
 }
 
