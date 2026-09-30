@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Minimize2, X, ChevronUp, ChevronDown, Code2 } from 'lucide-react'
+import { Minimize2, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { CoderHeader, CoderBadge } from '../chat/CoderHeader.jsx'
 import { folderName } from '../chat/useCoderMode.js'
 import { runtimeLabel } from '../../lib/runtimeLabels.js'
 import { CoderChatView } from './CoderChatView.jsx'
 import { useCoderConversation } from './useCoderConversation.js'
-import { shouldCollapseOnBackdrop, nowDoing } from '../../lib/coderBubbles.js'
+import { shouldCollapseOnBackdrop } from '../../lib/coderBubbles.js'
+import { LEAD_ID } from '../../lib/orgStage.js'
+import { OrgStage } from '../stage/OrgStage.jsx'
+import { StageDrawer } from '../stage/StageDrawer.jsx'
 import './bubbles.css'
 
 const mono = 'var(--font-mono)'
@@ -19,41 +22,27 @@ function isModalOpen() {
   return !!document.querySelector('[aria-modal="true"]')
 }
 
-function prefersReducedMotion() {
-  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+// shownTurn is the turn the stage shows: the running one, else the last
+// finished one.
+function shownTurn(conv) {
+  if (conv.streaming) return { state: conv.liveTurn, turnId: conv.activeTurnId, isLive: true }
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    const m = conv.messages[i]
+    if (m.role === 'turn') return { state: m.state, turnId: m.turnId, isLive: false }
+  }
+  return null
 }
 
-// Stage is the org at the top of an expanded coder bubble. Until the
-// dynamic org (#226, #228) staffs workers, the org is the lead alone: its
-// model, whether it is working, and what it is doing right now.
-function Stage({ bubble, conv, runtime, model }) {
-  const { t } = useTranslation()
-  const working = conv.streaming
-  const doing = working ? nowDoing(conv.liveTurn) : ''
-  return (
-    <div className="bubble-stage" data-testid="bubble-stage" style={{ height: '100%' }}>
-      <div className={`stage-node${working ? ' working' : ''}`} data-testid="stage-lead" data-working={working ? 'true' : 'false'}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,180,216,0.12)', color: 'var(--cyan)' }}>
-            <Code2 size={14} />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>{t('bubbles.lead')}</div>
-            <div style={{ fontFamily: mono, fontSize: 9.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {[runtime && runtimeLabel(runtime), model].filter(Boolean).join(' · ')}
-            </div>
-          </div>
-          <span style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: working ? 'var(--cyan)' : 'var(--text-muted)', boxShadow: working ? '0 0 8px var(--cyan)' : 'none' }} />
-        </div>
-        <div style={{ fontFamily: mono, fontSize: 9.5, marginTop: 7, color: working ? 'var(--text-secondary)' : 'var(--text-muted)', minHeight: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {working ? (doing || t('bubbles.thinking')) : bubble.conversationId ? t('bubbles.idle') : t('bubbles.ready')}
-        </div>
-      </div>
-      <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center', fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', opacity: 0.7 }}>
-        {t('bubbles.teamSoon')}
-      </div>
-    </div>
-  )
+// chatAgentOf is the agent whose rows the chat keeps when a node is
+// selected: a native subagent's rows live under the worker that called it.
+function chatAgentOf(stage, id) {
+  let cur = stage?.nodes?.[id]
+  while (cur && cur.native && cur.parentId) cur = stage.nodes[cur.parentId]
+  return cur ? cur.id : id
+}
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 }
 
 // CoderChatOverlay is an expanded coder bubble (#227): the org stage on
@@ -71,6 +60,8 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
   const [stageCollapsed, setStageCollapsed] = useState(!!view.stageCollapsed)
   const [draft, setDraft] = useState(view.draft || '')
   const [setup, setSetup] = useState(view.setup || { workspace: { kind: 'root' }, runtime: '', model: '', effort: '' })
+  const [selectedAgent, setSelectedAgent] = useState(null)
+  const selectedRef = useRef(null)
   const bodyRef = useRef(null)
   const pressOnBackdrop = useRef(false)
 
@@ -109,13 +100,14 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
     setTimeout(onCollapse, CLOSE_MS)
   }, [closing, onCollapse])
 
-  // Esc collapses. Captured on window first, so the assistant panel under
-  // the overlay (which also closes on Esc) doesn't react to the same key;
-  // an open dialog handles its own Esc.
+  // Esc closes an open node drawer, else collapses. Captured on window
+  // first, so the assistant panel under the overlay (which also closes on
+  // Esc) doesn't react to the same key; an open dialog handles its own Esc.
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape' || isModalOpen()) return
       e.stopImmediatePropagation()
+      if (selectedRef.current) { setSelectedAgent(null); return }
       collapse()
     }
     window.addEventListener('keydown', onKey, true)
@@ -154,6 +146,14 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
     if (e.key === 'ArrowUp') { e.preventDefault(); setStageRatio(r => Math.max(0.15, r - 0.05)) }
     if (e.key === 'ArrowDown') { e.preventDefault(); setStageRatio(r => Math.min(0.7, r + 0.05)) }
   }
+
+  const shown = shownTurn(conv)
+  const stage = shown?.state?.stage || null
+  const selectedNode = selectedAgent ? (stage?.nodes?.[selectedAgent] || null) : null
+  selectedRef.current = selectedNode ? selectedAgent : null
+  const selectAgent = useCallback(id => setSelectedAgent(cur => (cur === id ? null : id)), [])
+  const agentFilter = selectedNode ? chatAgentOf(stage, selectedNode.id) : null
+  const filterName = selectedNode ? (selectedNode.id === LEAD_ID ? t('bubbles.lead') : stage.nodes[agentFilter]?.role || agentFilter) : ''
 
   const title = bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
   const runtime = bubble.conversationId ? bubble.runtime : setup.runtime
@@ -199,11 +199,14 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
           </button>
         </div>
         {bubble.cwd && <CoderHeader cwd={bubble.cwd} />}
-        <div ref={bodyRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div ref={bodyRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {!stageCollapsed && (
             <>
               <div style={{ height: `${Math.round(stageRatio * 100)}%`, flexShrink: 0 }}>
-                <Stage bubble={bubble} conv={conv} runtime={runtime} model={model} />
+                <OrgStage stage={stage} turnId={shown?.turnId || ''} working={conv.streaming}
+                  leadInfo={{ runtime, model, effort: bubble.effort || setup.effort }}
+                  leadIdle={bubble.conversationId ? t('bubbles.idle') : t('bubbles.ready')}
+                  selectedId={selectedAgent} onSelect={selectAgent} />
               </div>
               <div className="bubble-divider" role="separator" aria-orientation="horizontal" tabIndex={0}
                 aria-label={t('bubbles.resizeOrg')} aria-valuenow={Math.round(stageRatio * 100)} aria-valuemin={15} aria-valuemax={70}
@@ -220,7 +223,14 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
             initialScrollTop={view.scrollTop}
             onScroll={top => store.setView(bubble.key, { scrollTop: top })}
             onNavigate={onNavigate}
+            agentFilter={agentFilter}
+            agentFilterName={filterName}
+            onClearAgentFilter={() => setSelectedAgent(null)}
           />
+          {selectedNode && (
+            <StageDrawer node={selectedNode} leadInfo={{ runtime, model, effort: bubble.effort || setup.effort }}
+              turnId={shown?.turnId || ''} isLive={!!shown?.isLive} onClose={() => setSelectedAgent(null)} />
+          )}
         </div>
       </div>
     </>

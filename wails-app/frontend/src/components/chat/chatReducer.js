@@ -4,6 +4,7 @@
 // hydration/live merge/gap catch-up and dispatches events here in
 // ascending-sequence order. Kept pure so it is directly unit-testable
 // without mocking Wails.
+import { stageReducer } from '../../lib/orgStage.js'
 
 export function initialChatState() {
   return {
@@ -15,6 +16,7 @@ export function initialChatState() {
     session: null,          // { runtime, sessionId } once session.bound fires
     terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
     sandbox: null,           // the CLI's monomind.SandboxStatus* verdict ('sandboxed', 'scoped', …); null = none asked for
+    stage: null,             // the org stage (#228, lib/orgStage.js); null until an event it uses
     agents: {},              // dynamic org (#226): agentId -> { role, runtime, model, access, status, brief, report, tools, lastTool, … }
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
@@ -198,7 +200,7 @@ function eventPatch(state, ev) {
 function applyEvent(state, ev) {
   const lastSeq = typeof ev.seq === 'number' ? ev.seq : state.lastSeq
   const lastEventAt = ev.at || state.lastEventAt
-  return { ...state, ...eventPatch(state, ev), lastSeq, lastEventAt }
+  return { ...state, ...eventPatch(state, ev), stage: stageReducer(state.stage, ev), lastSeq, lastEventAt }
 }
 
 export function chatReducer(state, action) {

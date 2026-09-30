@@ -134,3 +134,22 @@ describe('nowDoing', () => {
     expect(nowDoing({ calls: { a: { name: 'Think', status: 'started', arguments: null } } })).toBe('Think')
   })
 })
+
+describe('applyChatEvent: a dynamic-org agent asking the user (#228)', () => {
+  it('pulses the bubble until that agent moves on', () => {
+    let s = applyChatEvent(emptySummary(), ev('turn.started', 't1'), false)
+    s = applyChatEvent(s, ev('agent.message', 't1', { agentId: 'w1', direction: 'result', text: 'x' }), false)
+    expect(s.status).toBe(STATUS.working)
+    s = applyChatEvent(s, ev('agent.message', 't1', { agentId: 'w1', direction: 'question', text: 'Which cache?' }), false)
+    expect(s.status).toBe(STATUS.needs)
+    s = applyChatEvent(s, ev('agent.status', 't1', { agentId: 'w2', to: 'done' }), false)
+    expect(s.status).toBe(STATUS.needs)
+    s = applyChatEvent(s, ev('agent.status', 't1', { agentId: 'w1', to: 'working' }), false)
+    expect(s.status).toBe(STATUS.working)
+  })
+
+  it('ignores a question from another turn', () => {
+    const s = applyChatEvent(applyChatEvent(emptySummary(), ev('turn.started', 't2'), false), ev('agent.message', 't1', { agentId: 'w1', direction: 'question' }), false)
+    expect(s.status).toBe(STATUS.working)
+  })
+})

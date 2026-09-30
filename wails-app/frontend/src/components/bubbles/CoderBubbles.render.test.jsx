@@ -121,7 +121,7 @@ describe('coder bubbles', () => {
     api.getChatTurns.mockResolvedValue({ items: [{ id: 't1', prompt: 'fix the build', status: 'active', ownedByThisInstance: true }] })
     render(<Harness open={conv} />)
     await waitFor(() => expect(screen.getByText('fix the build')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('stage-lead')).toHaveAttribute('data-working', 'true'))
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-node"][data-agent="lead"]')).toHaveAttribute('data-status', 'working'))
     expect(bubble('c1')).toHaveAttribute('data-status', 'working')
 
     fireEvent.keyDown(window, { key: 'Escape' })
