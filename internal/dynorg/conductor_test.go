@@ -133,7 +133,7 @@ func TestSpawnRunsAndJournals(t *testing.T) {
 		t.Errorf("info = %+v", info)
 	}
 	got := strings.Join(em.types("w1"), " ")
-	want := "agent.spawned agent.message agent.status:queued agent.status:starting agent.status:working tool.started tool.completed agent.status:done agent.message agent.finished"
+	want := "agent.spawned agent.message agent.status:queued agent.status:queued agent.status:starting agent.status:working tool.started tool.completed agent.status:done agent.message agent.finished"
 	if got != want {
 		t.Errorf("events\n got %s\nwant %s", got, want)
 	}

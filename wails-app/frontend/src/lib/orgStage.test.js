@@ -192,6 +192,12 @@ describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
     expect(stageReducer(s, { seq: 7, type: 'assistant.delta', payload: { text: 'more lead' } })).toBe(s)
   })
 
+  it('caps a text part', () => {
+    const big = 'x'.repeat(40 * 1024)
+    const s = replayStage([spawn(), ...[2, 3, 4].map(seq => ({ seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: big } }))])
+    expect(s.nodes.w1.parts[0].text.length).toBe(64 * 1024 + 1)
+  })
+
   it('moves a worker\'s meters live from its usage.updated', () => {
     let s = replayStage([spawn()])
     s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100, outputTokens: 10, costUsd: 0.01 } })
@@ -231,6 +237,18 @@ describe('lease holders come from the conductor', () => {
     s = stageReducer(s, { seq: 5, type: 'agent.status', payload: { agentId: 'w1', to: 'done' } })
     s = stageReducer(s, { seq: 6, type: 'agent.status', payload: { agentId: 'w2', to: 'waiting_lease', detail: 'browser', leases: ['write'] } })
     expect(leasesOf(s)).toEqual({ pen: 'w2', browser: null, waiting: [{ id: 'w2', lease: 'browser' }] })
+  })
+
+  it('takes a repeated status as a lease update: the pen shows held while the worker still waits for a slot', () => {
+    let s = replayStage([
+      { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', access: 'coding' } },
+      { seq: 2, type: 'agent.status', payload: { agentId: 'w1', to: 'queued' } },
+    ])
+    const feed = s.feed.length
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'w1', from: 'queued', to: 'queued', leases: ['write'] } })
+    expect(leasesOf(s).pen).toBe('w1')
+    expect(s.nodes.w1.status).toBe('queued')
+    expect(s.feed.length).toBe(feed)
   })
 })
 

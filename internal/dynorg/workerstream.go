@@ -31,7 +31,11 @@ type workerStream struct {
 	bytes     int
 	cut       bool
 	timer     *time.Timer
+	usageAt   time.Time // when its last usage snapshot was journaled
 }
+
+// usageEvery spaces a worker's usage snapshots; its result's always goes.
+const usageEvery = time.Second
 
 // stream handles the events of a worker's exec that workerEvent doesn't:
 // text and usage. run is that exec's accounting so far. It runs before
@@ -45,8 +49,22 @@ func (c *Conductor) stream(w *worker, ev monomind.Event, run *monomind.TurnResul
 	case monomind.EventUsage, monomind.EventResult:
 		// Text so far goes ahead of the usage it led to.
 		c.flushText(w, ev.Type == monomind.EventResult)
-		c.emitUsage(w, run)
+		if ev.Type == monomind.EventResult || w.stream.usageDue(time.Now()) {
+			c.emitUsage(w, run)
+		}
 	}
+}
+
+// usageDue reports whether a usage snapshot may be journaled now, and
+// if so counts it as journaled.
+func (s *workerStream) usageDue(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.usageAt.IsZero() && now.Sub(s.usageAt) < usageEvery {
+		return false
+	}
+	s.usageAt = now
+	return true
 }
 
 func (c *Conductor) pushText(w *worker, text string) {

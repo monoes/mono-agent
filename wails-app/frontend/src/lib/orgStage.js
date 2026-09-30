@@ -18,6 +18,9 @@ export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
 const MAX_CALLS = 400
 const MAX_PARTS = 800
+// A text part longer than this is cut (the CLI already bounds a worker's
+// text; this keeps a journal from elsewhere in check too).
+export const MAX_PART_TEXT = 64 * 1024
 const MAX_QUESTS = 100
 const MAX_FILES = 200
 
@@ -317,6 +320,10 @@ function limitedOf(n) {
   return FINISHED.has(n.status) && n.tools > 0 && n.toolsDone === 0
 }
 
+function capText(text) {
+  return text.length > MAX_PART_TEXT ? text.slice(0, MAX_PART_TEXT) + '…' : text
+}
+
 // onText adds a worker's own text (assistant.delta with its agentId, #258)
 // to its timeline: a delta for the part it is writing extends that part.
 function onText(d, p) {
@@ -324,9 +331,10 @@ function onText(d, p) {
   const n = d.node(p.agentId)
   const last = n.parts[n.parts.length - 1]
   if (last && last.kind === 'text' && last.partId === p.partId) {
-    n.parts = [...n.parts.slice(0, -1), { ...last, text: last.text + p.text }]
+    if (last.text.length >= MAX_PART_TEXT) return
+    n.parts = [...n.parts.slice(0, -1), { ...last, text: capText(last.text + p.text) }]
   } else if (n.parts.length < MAX_PARTS) {
-    n.parts = [...n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: p.text }]
+    n.parts = [...n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: capText(p.text) }]
   }
 }
 
@@ -424,6 +432,11 @@ function stageApply(d, ev) {
       break
     case 'agent.status':
       if (!p.agentId || !p.to) break
+      // A repeat of the same status only updates the leases it holds.
+      if (d.nodes[p.agentId]?.status === p.to) {
+        setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
+        break
+      }
       setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
       if (p.to === 'waiting_lease' || p.to === 'failed' || p.to === 'cancelled') addFeed(d, ev, p.agentId, 'status', p.to, p.detail || '')
       break

@@ -86,12 +86,32 @@ func itoa(n int64) string {
 	return string(b)
 }
 
+func TestWorkerUsageSnapshotsAreSpaced(t *testing.T) {
+	ex := func(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
+		on(monomind.Event{Type: monomind.EventStart})
+		for i := int64(1); i <= 50; i++ {
+			on(monomind.Event{Type: monomind.EventUsage, InputTokens: i, HasInputTokens: true})
+		}
+		on(monomind.Event{Type: monomind.EventResult, InputTokens: 60, HasInputTokens: true})
+		return okTurn("done"), nil
+	}
+	c, em := newStreamConductor(t, ex)
+	if _, err := c.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Wait: true}); err != nil {
+		t.Fatal(err)
+	}
+	us := em.find(chatevents.EventUsageUpdated)
+	if len(us) != 2 || *us[0].(chatevents.UsageUpdatedPayload).InputTokens != 1 || *us[1].(chatevents.UsageUpdatedPayload).InputTokens != 60 {
+		t.Errorf("usage snapshots = %d", len(us))
+	}
+}
+
 func TestWorkerUsageCountsEarlierExecs(t *testing.T) {
 	calls := 0
 	ex := func(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
 		calls++
 		on(monomind.Event{Type: monomind.EventStart})
 		on(monomind.Event{Type: monomind.EventUsage, InputTokens: 10, HasInputTokens: true, CostUSD: 0.01, HasCostUSD: true})
+		on(monomind.Event{Type: monomind.EventResult, InputTokens: 10, HasInputTokens: true, CostUSD: 0.01, HasCostUSD: true})
 		r := okTurn("done")
 		r.InputTokens, r.HasInputTokens = 10, true
 		return r, nil
@@ -150,9 +170,10 @@ func TestSpawnedAndReassignedCarryFidelity(t *testing.T) {
 }
 
 func TestStatusReportsHeldLeases(t *testing.T) {
-	ex := &execScript{hold: 60 * time.Millisecond}
+	ex := &execScript{hold: 100 * time.Millisecond}
 	c, em := newTestConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 3})
 	c.Spawn(context.Background(), SpawnRequest{Brief: "implement a", Access: ProfileCoding})
+	time.Sleep(30 * time.Millisecond) // w1 takes the pen first
 	c.Spawn(context.Background(), SpawnRequest{Brief: "check the page", Access: ProfileQA})
 	c.Wait(context.Background(), nil, 5*time.Second)
 	got := map[string][]string{}
@@ -160,11 +181,35 @@ func TestStatusReportsHeldLeases(t *testing.T) {
 		s := p.(chatevents.AgentStatusPayload)
 		got[s.AgentID] = append(got[s.AgentID], s.To+"="+strings.Join(s.Leases, "+"))
 	}
-	if w1 := strings.Join(got["w1"], " "); w1 != "queued= starting=write working=write done=" {
+	if w1 := strings.Join(got["w1"], " "); w1 != "queued= queued=write starting=write working=write done=" {
 		t.Errorf("w1 statuses = %s", w1)
 	}
 	// The QA worker waits for the pen holding nothing, then holds both.
-	if w2 := strings.Join(got["w2"], " "); w2 != "queued= waiting_lease= starting=write+browser working=write+browser done=" {
+	if w2 := strings.Join(got["w2"], " "); w2 != "queued= waiting_lease= waiting_lease=write waiting_lease=write+browser starting=write+browser working=write+browser done=" {
 		t.Errorf("w2 statuses = %s", w2)
 	}
+}
+
+// A worker that holds the pen but waits for a free slot must show it held.
+func TestLeaseHeldWhileWaitingForASlotIsReported(t *testing.T) {
+	ex := &execScript{hold: 150 * time.Millisecond}
+	c, em := newTestConductor(t, ex, Limits{MaxAgents: 2, MaxConcurrent: 1})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "investigate the cache", Access: ProfileResearch})
+	time.Sleep(30 * time.Millisecond) // w1 has the only slot
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Access: ProfileCoding})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, p := range em.find(chatevents.EventAgentStatus) {
+			s := p.(chatevents.AgentStatusPayload)
+			if s.AgentID == "w2" && s.To == chatevents.AgentQueued && strings.Join(s.Leases, "+") == "write" {
+				if ex.maxRun != 1 {
+					t.Errorf("max running = %d", ex.maxRun)
+				}
+				c.Wait(context.Background(), nil, 5*time.Second)
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("w2 never reported holding the write lease while queued: %v", em.types("w2"))
 }
