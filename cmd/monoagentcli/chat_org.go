@@ -126,6 +126,9 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Roster: orgRoster(ctx, db.DB, st, lead), Lead: lead, ModelPicker: settings.OrgModelPicker,
 		Picker: lib, Library: lib,
 	}
+	if q, err := agentroster.LoadQuality(ctx, db.DB, time.Now()); err == nil {
+		staffer.Quality = q
+	}
 	if client, err := jevconf.NewClient(ctx, db.DB, cfg.ProfileID, "", "", jevconf.DynamicOrg); err == nil {
 		staffer.Chooser = dynorg.JevChooser{Client: client}
 	}
@@ -141,6 +144,9 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Outcome: func(runtime, model, status, detail string, at time.Time) {
 			_ = agentroster.RecordOutcome(context.WithoutCancel(ctx), db.DB, runtime, model, status, detail, at)
 		},
+		Quality: &dynorg.Quality{Record: func(e agentroster.QualityEvent) {
+			_ = agentroster.RecordQuality(context.WithoutCancel(ctx), db.DB, e)
+		}},
 	})
 	opts.Tools = dynorg.ToolSpecs()
 	opts.OnToolCall = cond.Handle

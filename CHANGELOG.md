@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
   - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
   - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+- **Roster quality from outcomes** (part of #230). Dynamic-org staffing now learns which models fit which kind of work.
+  - **What counts:** each worker result, and the lead's `good`/`bad` rating of it with the new `org_rate` tool, count toward the model's score for the worker's role category. A worker that hits the turn's exec timeout counts as a failure. Budget stops, cancelled runs and models that couldn't run at all (auth, quota, rate limits, …) don't count.
+  - **Rate limits are transient:** a 429 (monomind's `rate-limited` code, or a "429"/"rate limit" message) is its own `rate_limited` status. The worker falls back to the next model, and the validated model is not demoted. `agent validate` stores it as `rate_limited`, which the roster shows as stale so it gets re-checked. Quota now means used-up credits only.
+  - **How it's scored:** ratings weigh twice as much as results, and older events count less (the weight halves every 30 days). Scores are smoothed and only apply after 3 results; ratings don't add to that count. One turn records at most 2 results per model and category, so a single bad turn can't bench a model.
+  - **What changes:** a model scoring under 50% for a category drops to the bottom of the ranking for that kind of work, and Jev sees every score with its plain counts when it picks a model. A benched model recovers as its failures age (about 18 days for 3 failures, about 54–65 days when the lead also rated 2–3 of them bad).
+  - **Where to see it:** `agent roster` shows the scores in a "Track record" column, such as `engineering score 43% (0 of 3 succeeded) low` (`track_record` in `--json`).
 - **Stop a single worker** (#255): `chat turn stop <conversation> <turn> --agent <id>` cancels one worker of a running dynamic-org turn, and the lead and the other workers keep running. It reaches the turn's process through a small mailbox folder next to the database, so it works whichever window runs the turn. Stopping a worker that already finished is a no-op. The app binding is `StopChatAgent`.
 
 ### Fixed

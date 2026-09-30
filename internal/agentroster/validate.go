@@ -322,7 +322,7 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
 // knownStatuses are the statuses `agent test --json` may report.
 var knownStatuses = map[string]bool{
-	StatusOK: true, StatusOKUnexpected: true, StatusAuth: true, StatusQuota: true,
+	StatusOK: true, StatusOKUnexpected: true, StatusAuth: true, StatusQuota: true, StatusRateLimited: true,
 	StatusModelUnavailable: true, StatusTimeout: true, StatusMissingBinary: true, StatusError: true,
 }
 
@@ -330,6 +330,9 @@ var knownStatuses = map[string]bool{
 // status (a newer monomind) is kept as error with the status in the detail.
 func applyAgentTest(r *Result, tr *monomind.AgentTestResult) {
 	r.Status = tr.Status
+	if r.Status == monomind.ErrRateLimited {
+		r.Status = StatusRateLimited
+	}
 	unknown := !knownStatuses[r.Status]
 	if unknown {
 		r.Status, r.Detail = StatusError, "unknown status "+tr.Status
