@@ -32,8 +32,17 @@ func realRoot(root string) string {
 	return abs
 }
 
+// AsOperator clears every agent-context marker for the test, so mono-agent
+// acts as it would in the operator's own terminal.
+func AsOperator(t testing.TB) {
+	t.Helper()
+	for _, k := range orgsign.AgentContextMarkers() {
+		t.Setenv(k, "")
+	}
+}
+
 // Sign writes the operator key (if missing) and org's signature for the
-// definition currently on disk under root, in orgsign.OperatorDir().
+// definition currently on disk under root, in orgsign.OperatorDir(root).
 func Sign(t testing.TB, root, org string) {
 	t.Helper()
 	raw, _, err := orgsign.ReadFile(root, org)
@@ -44,7 +53,7 @@ func Sign(t testing.TB, root, org string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := orgsign.OperatorDir()
+	dir := orgsign.OperatorDir(root)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

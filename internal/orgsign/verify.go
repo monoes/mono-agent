@@ -10,7 +10,9 @@
 // signature state and `org sign` without --yes only prints a human review.
 // This package reimplements the signed projection, its hash and the HMAC
 // check against the sidecar with the operator key. It only ever reads the
-// operator dir; signing is always monomind's (`monomind org sign --yes`).
+// operator dir, except that Withdraw deletes a signature sidecar (and its
+// projection) that turned out to cover bytes mono-agent did not write.
+// Signing is always monomind's (`monomind org sign --yes`).
 // Where this code cannot reproduce monomind's hash with certainty (an
 // instructions_file it would refuse to read), the answer is StateUnknown,
 // which never leads to a signature.
@@ -28,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Signature states: monomind's OrgSignatureReason, plus "signed" and
@@ -39,6 +42,9 @@ const (
 	StateInvalid      = "invalid-signature"
 	StateForbiddenKey = "forbidden-key"
 	StateUnknown      = "unknown"
+	// StateInvalidDefinition is monomind's --check "invalid": the JSON is
+	// unreadable or not a valid org. Not a signature problem.
+	StateInvalidDefinition = "invalid-definition"
 )
 
 // Status is one org definition's signature state.
@@ -75,11 +81,16 @@ var (
 // errUnknown marks a hash this package can't reproduce with certainty.
 var errUnknown = errors.New("cannot reproduce monomind's hash for this definition")
 
-// OperatorDir is monomind's defaultOperatorDir(): where the operator key
-// and the signature sidecars live.
-func OperatorDir() string {
+// OperatorDir is monomind's defaultOperatorDir() for a monomind run in
+// project root: where the operator key and the signature sidecars live. A
+// relative MONOMIND_ORGRT_OPERATOR_DIR is taken against root, as monomind
+// takes it against its cwd, which mono-agent sets to root.
+func OperatorDir(root string) string {
 	if d := os.Getenv("MONOMIND_ORGRT_OPERATOR_DIR"); d != "" {
-		if abs, err := filepath.Abs(d); err == nil {
+		if filepath.IsAbs(d) {
+			return d
+		}
+		if abs, err := filepath.Abs(filepath.Join(root, d)); err == nil {
 			return abs
 		}
 		return d
@@ -106,7 +117,7 @@ func SignaturePath(root, org string) (string, error) {
 		return "", fmt.Errorf("invalid org name: %s", org)
 	}
 	sum := sha256.Sum256([]byte(realRoot(root)))
-	return filepath.Join(OperatorDir(), "org-signatures", hex.EncodeToString(sum[:])[:24], org+".json"), nil
+	return filepath.Join(OperatorDir(root), "org-signatures", hex.EncodeToString(sum[:])[:24], org+".json"), nil
 }
 
 // readRecord reads a sidecar: (nil, "") when there is none, or a problem
@@ -155,36 +166,38 @@ func untrusted(st fs.FileInfo, what string, dir bool) string {
 	return ""
 }
 
-// keyUnreadable prefixes loadKey's problem when the key exists and is
-// trusted but this process can't read it.
-const keyUnreadable = "\x00unreadable:"
+// errKeyUnreadable: the key is there and trusted, but this process can't
+// read it (monomind can), so this package has no verdict.
+type errKeyUnreadable struct{ msg string }
+
+func (e *errKeyUnreadable) Error() string { return e.msg }
 
 // loadKey reads the operator key the way loadOperatorKey does (never
 // creating it). The operator dir's own mode is not checked: monomind
 // tightens a dir of ours to 0700 before trusting it, and the key and every
 // sidecar must be ours and owner-only regardless.
-func loadKey(dir string) ([]byte, string) {
+func loadKey(dir string) ([]byte, error) {
 	path := filepath.Join(dir, "full-access-grant.key")
 	st, err := os.Lstat(path)
 	if err != nil {
-		return nil, "no operator key at " + path
+		return nil, errors.New("no operator key at " + path)
 	}
 	if dst, err := os.Lstat(dir); err == nil {
 		if bad := untrusted(dst, "operator dir "+dir, true); bad != "" {
-			return nil, bad
+			return nil, errors.New(bad)
 		}
 	}
 	if bad := untrusted(st, "operator key "+path, false); bad != "" {
-		return nil, bad
+		return nil, errors.New(bad)
 	}
 	key, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Sprintf("%soperator key %s is unreadable (%v)", keyUnreadable, path, err)
+		return nil, &errKeyUnreadable{fmt.Sprintf("operator key %s is unreadable (%v)", path, err)}
 	}
 	if len(key) == 0 {
-		return nil, fmt.Sprintf("operator key %s is empty", path)
+		return nil, fmt.Errorf("operator key %s is empty", path)
 	}
-	return key, ""
+	return key, nil
 }
 
 // Describe says what the state means for the definition, as monomind's
@@ -201,6 +214,8 @@ func (s Status) Describe() string {
 		return fmt.Sprintf("the definition holds a forbidden key (%s) — remove it", s.Detail)
 	case StateInvalid:
 		return fmt.Sprintf("the definition has an operator signature that does not verify (%s)", s.Detail)
+	case StateInvalidDefinition:
+		return "the definition is unreadable or not a valid org — see monoagentcli org validate"
 	}
 	return "the definition's signature could not be checked here (" + s.Detail + ")"
 }
@@ -216,7 +231,7 @@ func Message(org string, st Status) string {
 // Verify checks raw (the bytes of <root>/.monomind/orgs/<org>.json)
 // against the operator's signature, as monomind's verifyOrgDef does.
 func Verify(root, org string, raw []byte) Status {
-	v, err := parseJSON(raw)
+	v, err := parseOrgJSON(raw)
 	if err != nil {
 		return Status{State: StateUnknown, Detail: "unreadable JSON: " + err.Error()}
 	}
@@ -234,14 +249,14 @@ func Verify(root, org string, raw []byte) Status {
 	if rec == nil {
 		return Status{State: StateUnsigned}
 	}
-	dir := OperatorDir()
-	key, problem := loadKey(dir)
-	if detail, ok := strings.CutPrefix(problem, keyUnreadable); ok {
-		// This process can't read the key (monomind can): no verdict here.
-		return Status{State: StateUnknown, Detail: detail}
+	dir := OperatorDir(root)
+	key, err := loadKey(dir)
+	var unreadable *errKeyUnreadable
+	if errors.As(err, &unreadable) {
+		return Status{State: StateUnknown, Detail: unreadable.msg}
 	}
-	if problem != "" {
-		return Status{State: StateInvalid, Detail: problem}
+	if err != nil {
+		return Status{State: StateInvalid, Detail: err.Error()}
 	}
 	sig, sigOK := rec["sig"].(string)
 	hash, hashOK := rec["hash"].(string)
@@ -261,7 +276,7 @@ func Verify(root, org string, raw []byte) Status {
 	if err != nil || !hmac.Equal(want, got) {
 		return Status{State: StateInvalid, Detail: "the HMAC does not match the operator key"}
 	}
-	h, err := hashValue(v, root)
+	h, err := hashValue(v, readDigests(root))
 	if err != nil {
 		return Status{State: StateUnknown, Detail: err.Error()}
 	}
@@ -317,19 +332,53 @@ func jsString(x interface{}) (string, bool) {
 // Hash is monomind's computeOrgDefHash(raw, root): the sha256 of the
 // signed projection, with the digests of any instructions files.
 func Hash(root string, raw []byte) (string, error) {
-	v, err := parseJSON(raw)
+	return hashWith(raw, readDigests(root))
+}
+
+// HashPins is Hash that also returns the instructions-file digests it used.
+func HashPins(root string, raw []byte) (string, Pins, error) {
+	pins := Pins{}
+	h, err := hashWith(raw, recordingDigests(root, pins))
+	return h, pins, err
+}
+
+// HashPinned is Hash with the instructions files taken as pins recorded,
+// not as they are on disk now; a file not in pins is an error.
+func HashPinned(raw []byte, pins Pins) (string, error) {
+	return hashWith(raw, pins.pinned)
+}
+
+func hashWith(raw []byte, dig digestFunc) (string, error) {
+	v, err := parseOrgJSON(raw)
 	if err != nil {
 		return "", err
 	}
 	if p := forbiddenKeyPath(v, ""); p != "" {
 		return "", fmt.Errorf("holds a forbidden key (%s)", p)
 	}
-	return hashValue(v, root)
+	return hashValue(v, dig)
 }
 
-func hashValue(v interface{}, root string) (string, error) {
+// surrogateEscape matches a \uD800-\uDFFF escape: Go decodes a lone one
+// to U+FFFD where Node keeps it, so such a definition's hash could differ.
+var surrogateEscape = regexp.MustCompile(`(?i)\\ud[89a-f][0-9a-f]{2}`)
+
+// parseOrgJSON is parseJSON for an org definition, refusing (as unknown)
+// the inputs Go and Node decode differently: bytes that are not valid
+// UTF-8 (Node and Go replace them differently) and surrogate escapes.
+func parseOrgJSON(raw []byte) (interface{}, error) {
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("%w: the file is not valid UTF-8", errUnknown)
+	}
+	if surrogateEscape.Match(raw) {
+		return nil, fmt.Errorf("%w: the file holds a \\u surrogate escape", errUnknown)
+	}
+	return parseJSON(raw)
+}
+
+func hashValue(v interface{}, dig digestFunc) (string, error) {
 	proj := projection(v)
-	digests, err := instructionsDigests(v, root)
+	digests, err := instructionsDigests(v, dig)
 	if err != nil {
 		return "", err
 	}

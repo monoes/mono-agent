@@ -505,16 +505,17 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 				}
 				// Grants, providers, and endpoints in the document only
 				// survive when a row backs them (C-3).
-				// A new org is the user's own; an overwrite replaces the file
-				// with content not loaded from it, so it is left for review.
-				rep, err := saveOrgReconciledFrom(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID), name, true)
+				// A whole document can come from anyone, the chat assistant
+				// included, so it is never signed here: the user reviews it
+				// with `org sign`.
+				rep, err := saveOrgReconciled(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID))
 				if err != nil {
 					return err
 				}
 				findings = rep.Findings
 			} else if docCarriesEnforcedKeys(&d) {
 				return fmt.Errorf("this document carries grants, tool providers, or automation roles, which need the active profile's org folder: %w", perr)
-			} else if _, out, err := saveOrgSigned(cmd.Context(), root(), name, &d, true); err != nil {
+			} else if _, out, err := saveOrgSigned(cmd.Context(), root(), name, &d); err != nil {
 				return err
 			} else {
 				warnOrgSignature(out)

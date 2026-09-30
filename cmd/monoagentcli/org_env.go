@@ -146,17 +146,17 @@ func orgAPIAddr(db *storage.Database) string {
 // never reaches disk carrying grants or providers no row backs. The save
 // keeps the org's operator signature (saveOrgSigned).
 func saveOrgReconciled(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions) (*orggrant.Report, error) {
-	return saveOrgReconciledFrom(ctx, db, profileID, root, doc, opts, doc.Name, false)
+	return saveOrgReconciledFrom(ctx, db, profileID, root, doc, opts, doc.Name)
 }
 
 // saveOrgReconciledFrom is saveOrgReconciled with saveOrgSigned's from
-// (the org file doc replaces) and signNew (a new org is the user's own).
-func saveOrgReconciledFrom(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions, from string, signNew bool) (*orggrant.Report, error) {
+// (the org file doc replaces; a rename's old name).
+func saveOrgReconciledFrom(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions, from string) (*orggrant.Report, error) {
 	rep, err := reconcileOrgRows(ctx, db, profileID, doc, opts)
 	if err != nil {
 		return rep, err
 	}
-	_, out, err := saveOrgSigned(ctx, root, from, doc, signNew)
+	_, out, err := saveOrgSigned(ctx, root, from, doc)
 	if err != nil {
 		return rep, err
 	}

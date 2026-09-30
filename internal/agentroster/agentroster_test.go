@@ -469,7 +469,9 @@ func TestApplyAgentTestRateLimited(t *testing.T) {
 
 // An alias of a model already listed (monomind 2.21's alias_of) is not
 // tested again: it runs, and bills, the same model (M1: claude default and
-// opus were both tested and paid).
+// opus were both tested and paid). It rides along with its canonical
+// target, so its roster row is stored from that one test and a lookup by
+// the alias id (a lead running "opus") still finds the model.
 func TestBuildPlanSkipsAliases(t *testing.T) {
 	scan := scanOf(monomind.ScanEntry{ID: "claude", Installed: true})
 	list := func(context.Context, string, string) ([]monomind.RuntimeModel, error) {
@@ -480,7 +482,37 @@ func TestBuildPlanSkipsAliases(t *testing.T) {
 	for _, tg := range p.Targets {
 		got = append(got, tg.Model)
 	}
-	if strings.Join(got, ",") != "default,haiku" {
-		t.Fatalf("targets = %v, want default and haiku only", got)
+	if strings.Join(got, ",") != "default,haiku" || p.Calls != 2 {
+		t.Fatalf("targets = %v (calls %d), want default and haiku only", got, p.Calls)
+	}
+	if a := p.Targets[0].Aliases; len(a) != 1 || a[0].Model != "opus" {
+		t.Fatalf("default's aliases = %+v", a)
+	}
+
+	// Asking for the alias by id tests its canonical model.
+	p = BuildPlan(context.Background(), scan, list, nil, PlanFilter{Now: time.Now(), Runtimes: []string{"claude"}, Models: []string{"opus"}})
+	if len(p.Targets) != 1 || p.Targets[0].Model != "default" {
+		t.Fatalf("--model opus plan = %+v", p.Targets)
+	}
+
+	calls := 0
+	var saved []Result
+	exec := func(context.Context, monomind.ExecOptions, func(monomind.Event)) (*monomind.TurnResult, error) {
+		calls++
+		return done("ok"), nil
+	}
+	Run(context.Background(), p.Targets, RunOptions{Exec: exec, Save: func(r Result) error { saved = append(saved, r); return nil }}, func(Line) {})
+	if calls != 1 || len(saved) != 2 || saved[1].Model != "opus" || saved[1].Status != StatusOK {
+		t.Fatalf("exec calls %d, saved %+v", calls, saved)
+	}
+	roster := Build(saved, scan, time.Now(), 0)
+	var opus *Entry
+	for i := range roster[0].Models {
+		if roster[0].Models[i].Model == "opus" {
+			opus = &roster[0].Models[i]
+		}
+	}
+	if opus == nil || opus.State != StateReady {
+		t.Fatalf("roster lookup of the alias = %+v", opus)
 	}
 }

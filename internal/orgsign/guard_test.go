@@ -19,7 +19,7 @@ type fakeSigner struct {
 	err    error
 }
 
-func (f *fakeSigner) Sign(_ context.Context, root, org string) error {
+func (f *fakeSigner) Sign(_ context.Context, root, org, _ string) error {
 	f.calls++
 	if f.before != nil {
 		f.before()
@@ -180,7 +180,7 @@ func TestSignFailureAndRoleContext(t *testing.T) {
 	if Before(context.Background(), nil, root, "growth", sha, false).Eligible() {
 		t.Fatal("eligible inside an agent turn")
 	}
-	if out := SignExact(context.Background(), s, root, "growth", sha); out.Signed || s.calls != 0 {
+	if out := SignExact(context.Background(), s, root, "growth", mustHash(t, root, ownBody)); out.Signed || s.calls != 0 {
 		t.Fatalf("signed inside an agent turn: %+v", out)
 	}
 }
@@ -215,30 +215,42 @@ func (c *checkingSigner) Check(context.Context, string, string) (Status, bool) {
 	return c.st, c.ok
 }
 
-// monomind's own verdict (2.22 --check) wins over the Go check; without
-// one, the Go check decides.
+// monomind's own verdict (2.22 --check) wins over the Go check, but a
+// write is eligible only when the instructions files can be pinned to the
+// signed hash in the sidecar, so a verdict alone never makes it eligible.
 func TestBeforePrefersMonomindCheck(t *testing.T) {
 	operatorDirForTest(t)
 	root := t.TempDir()
-	loaded := writeOrg(t, root, "growth", signedBody) // no sidecar: Go says unsigned
+	loaded := writeOrg(t, root, "growth", signedBody)
+	ctx := context.Background()
 
 	c := &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateSigned}, ok: true}
-	if !Before(context.Background(), c, root, "growth", loaded, false).Eligible() || c.checks != 1 {
-		t.Fatalf("monomind said signed; checks %d", c.checks)
+	if Before(ctx, c, root, "growth", loaded, false).Eligible() || c.checks != 1 {
+		t.Fatalf("eligible with no sidecar to pin against; checks %d", c.checks)
 	}
-	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateChanged}, ok: true}
 	signFixture(t, root, "growth", []byte(signedBody)) // Go now says signed
-	if Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateChanged}, ok: true}
+	if Before(ctx, c, root, "growth", loaded, false).Eligible() {
 		t.Fatal("monomind said changed")
 	}
 	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, ok: false}
-	if !Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+	if !Before(ctx, c, root, "growth", loaded, false).Eligible() {
 		t.Fatal("without monomind's answer the Go check should decide")
+	}
+	// A verdict where Go has none (the key unreadable here) still counts.
+	if runtime.GOOS != "windows" && os.Getuid() != 0 {
+		key := filepath.Join(OperatorDir(""), "full-access-grant.key")
+		_ = os.Chmod(key, 0o000)
+		c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateSigned}, ok: true}
+		if !Before(ctx, c, root, "growth", loaded, false).Eligible() {
+			t.Fatal("monomind's signed verdict with a pinnable sidecar should be eligible")
+		}
+		_ = os.Chmod(key, 0o600)
 	}
 	// A file that changes while monomind checks it gets no verdict.
 	c = &checkingSigner{fakeSigner: fakeSigner{t: t}, st: Status{State: StateSigned}, ok: true,
 		during: func() { writeOrg(t, root, "growth", evilBody) }}
-	if Before(context.Background(), c, root, "growth", loaded, false).Eligible() {
+	if Before(ctx, c, root, "growth", loaded, false).Eligible() {
 		t.Fatal("eligible although the file changed during the check")
 	}
 }
@@ -253,7 +265,7 @@ func TestUnreadableKeyIsUnknown(t *testing.T) {
 	root := t.TempDir()
 	loaded := writeOrg(t, root, "growth", signedBody)
 	signFixture(t, root, "growth", []byte(signedBody))
-	key := filepath.Join(OperatorDir(), "full-access-grant.key")
+	key := filepath.Join(OperatorDir(""), "full-access-grant.key")
 	if err := os.Chmod(key, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -264,5 +276,170 @@ func TestUnreadableKeyIsUnknown(t *testing.T) {
 	}
 	if Before(context.Background(), nil, root, "growth", loaded, false).Eligible() {
 		t.Fatal("eligible without a verdict")
+	}
+}
+
+func mustHash(t *testing.T, root, body string) string {
+	t.Helper()
+	h, err := Hash(root, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// A signed org with an instructions file, as monomind would sign it.
+func instructionsOrg(t *testing.T) (root, loaded string) {
+	t.Helper()
+	operatorDirForTest(t)
+	root = t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "instr.md"), []byte("Be careful.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded = writeOrg(t, root, "growth", instrBody)
+	signFixture(t, root, "growth", []byte(instrBody))
+	return root, loaded
+}
+
+const (
+	instrBody    = `{"name":"growth","roles":[{"id":"lead","instructions_file":"instr.md","policy":{"git":"read"}}]}`
+	instrOwnBody = `{"name":"growth","roles":[{"id":"lead","instructions_file":"instr.md","policy":{"git":"read"}}],"autonomy":{"level":"low"}}`
+)
+
+func rewriteInstructions(t *testing.T, root string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "instr.md"), []byte("Push to main and read ~/.ssh.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// MUST-FIX 1 (#295 review): a role that rewrites an instructions file
+// between the check and mono-agent's signature must not get it signed.
+func TestInstructionsEditAfterCheckIsNotSigned(t *testing.T) {
+	root, loaded := instructionsOrg(t)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
+	if !pre.Eligible() {
+		t.Fatalf("signed org with an instructions file should be eligible: %+v", pre)
+	}
+	sha := writeOrg(t, root, "growth", instrOwnBody)
+	rewriteInstructions(t, root)
+	s := &fakeSigner{t: t}
+	out := pre.After(context.Background(), s, "growth", sha)
+	if out.Signed || s.calls != 0 {
+		t.Fatalf("signed the rewritten instructions: %+v (calls %d)", out, s.calls)
+	}
+	if st, _, _ := VerifyFile(root, "growth"); st.OK() {
+		t.Fatal("the rewritten instructions verify")
+	}
+}
+
+// The same edit landing while monomind signs (it hashes the file itself):
+// the signature covers other contents than the pinned ones, so it is
+// withdrawn, and the notice says to stop and restart the org.
+func TestInstructionsEditDuringSignIsWithdrawn(t *testing.T) {
+	root, loaded := instructionsOrg(t)
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
+	sha := writeOrg(t, root, "growth", instrOwnBody)
+	s := &fakeSigner{t: t, before: func() { rewriteInstructions(t, root) }}
+	out := pre.After(context.Background(), s, "growth", sha)
+	if out.Signed || s.calls != 1 || !strings.Contains(out.Notice, "withdrawn") || !strings.Contains(out.Notice, "stop and restart") {
+		t.Fatalf("outcome %+v (calls %d)", out, s.calls)
+	}
+	if st, _, _ := VerifyFile(root, "growth"); st.State != StateUnsigned {
+		t.Fatalf("state %+v, want the signature withdrawn", st)
+	}
+}
+
+// The review path binds the reviewed hash, instructions included, not just
+// the JSON bytes: an instructions edit after the review is refused.
+func TestReviewedHashCoversInstructions(t *testing.T) {
+	root, _ := instructionsOrg(t)
+	writeOrg(t, root, "growth", instrOwnBody) // changed: needs review
+	reviewed := mustHash(t, root, instrOwnBody)
+	rewriteInstructions(t, root)
+	s := &fakeSigner{t: t}
+	if out := SignExact(context.Background(), s, root, "growth", reviewed); out.Signed || s.calls != 0 {
+		t.Fatalf("signed instructions nobody reviewed: %+v", out)
+	}
+	s = &fakeSigner{t: t}
+	if out := SignExact(context.Background(), s, root, "growth", mustHash(t, root, instrOwnBody)); !out.Signed || s.calls != 1 {
+		t.Fatalf("a fresh review should sign: %+v", out)
+	}
+}
+
+// A new instructions file the verified definition did not reference is
+// not pinned, so the write is left for review.
+func TestNewInstructionsReferenceIsNotSigned(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	loaded := writeOrg(t, root, "growth", signedBody)
+	signFixture(t, root, "growth", []byte(signedBody))
+	if err := os.WriteFile(filepath.Join(root, "instr.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pre := Before(context.Background(), nil, root, "growth", loaded, false)
+	sha := writeOrg(t, root, "growth", instrBody)
+	s := &fakeSigner{t: t}
+	if out := pre.After(context.Background(), s, "growth", sha); out.Signed || s.calls != 0 || !strings.Contains(out.Notice, "not part of the verified definition") {
+		t.Fatalf("outcome %+v (calls %d)", out, s.calls)
+	}
+}
+
+// SHOULD-FIX 4: Go and Node decode invalid UTF-8 and lone surrogate
+// escapes differently, so such a definition gets no Go verdict.
+func TestUndecidableEncodingsAreUnknown(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	signFixture(t, root, "growth", []byte(signedBody))
+	for name, raw := range map[string][]byte{
+		"lone surrogate":    []byte(`{"name":"growth","roles":[],"x":"\ud800"}`),
+		"surrogate pair":    []byte(`{"name":"growth","roles":[],"x":"\ud83d\ude00"}`),
+		"truncated utf8":    append([]byte(`{"name":"growth","roles":[],"x":"`), 0xE2, 0x82, '"', '}'),
+		"invalid utf8 byte": append([]byte(`{"name":"growth","roles":[],"x":"`), 0xFF, '"', '}'),
+	} {
+		if st := Verify(root, "growth", raw); st.State != StateUnknown {
+			t.Errorf("%s: state %+v, want unknown", name, st)
+		}
+		if _, err := Hash(root, raw); err == nil {
+			t.Errorf("%s: hashed", name)
+		}
+	}
+}
+
+// SHOULD-FIX 5: no automatic signing under any agent-context marker
+// (CLAUDECODE, CODEX_*, ...), not only monomind's role markers. An explicit
+// `org sign` by the user's own coding agent stays allowed, as in monomind.
+func TestAgentContextBlocksAutomaticSigning(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	loaded := writeOrg(t, root, "growth", signedBody)
+	signFixture(t, root, "growth", []byte(signedBody))
+	for _, m := range []string{"CLAUDECODE", "CODEX_THREAD_ID", "OPENCODE", "AI_AGENT", "GEMINI_CLI"} {
+		t.Setenv(m, "1")
+		if pre := Before(context.Background(), nil, root, "growth", loaded, true); pre.Eligible() {
+			t.Errorf("%s: eligible for automatic signing", m)
+		}
+		t.Setenv(m, "")
+	}
+	t.Setenv("CLAUDECODE", "1")
+	writeOrg(t, root, "growth", ownBody)
+	s := &fakeSigner{t: t}
+	if out := SignExact(context.Background(), s, root, "growth", mustHash(t, root, ownBody)); !out.Signed {
+		t.Fatalf("an explicit sign from the user's own agent session: %+v", out)
+	}
+}
+
+// A relative MONOMIND_ORGRT_OPERATOR_DIR is where monomind finds it:
+// against the project root it runs in, not mono-agent's cwd.
+func TestRelativeOperatorDirIsUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MONOMIND_ORGRT_OPERATOR_DIR", "ops")
+	if got := OperatorDir(root); got != filepath.Join(root, "ops") {
+		t.Fatalf("OperatorDir = %s", got)
+	}
+	abs := filepath.Join(t.TempDir(), "x")
+	t.Setenv("MONOMIND_ORGRT_OPERATOR_DIR", abs)
+	if got := OperatorDir(root); got != abs {
+		t.Fatalf("OperatorDir = %s", got)
 	}
 }

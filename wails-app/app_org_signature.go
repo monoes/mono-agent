@@ -1,5 +1,16 @@
 package main
 
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orgsign"
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Signed org definitions (#288, monomind#502). monomind 2.21 runs an org
 // only when the operator signed its definition. The org view and designer
@@ -31,8 +42,83 @@ func (a *App) OrgSignatureReview(orgName string) string {
 }
 
 // OrgSign signs the reviewed definition. The frontend calls it only from
-// the review dialog's confirm button; sha256 is the review's, so a file
-// that changed since is refused rather than signed.
-func (a *App) OrgSign(orgName, sha256 string) string {
-	return a.jsonResult(orgSignArgs(a.orgProjectRoot(), orgName, "--yes", "--expect-sha256", sha256)...)
+// the review dialog's confirm button; hash is the review's projection hash
+// (instructions files included), so a definition that changed since is
+// refused rather than signed.
+func (a *App) OrgSign(orgName, hash string) string {
+	return a.jsonResult(orgSignArgs(a.orgProjectRoot(), orgName, "--yes", "--expect-hash", hash)...)
+}
+
+// orgSignSupport caches whether the installed monomind requires signed
+// org definitions, as `org sign --status` last said, so a monomind below
+// 2.21 costs one CLI call every few minutes rather than one per save.
+type orgSignSupport struct {
+	mu        sync.Mutex
+	known, ok bool
+	at        time.Time
+}
+
+const orgSignSupportTTL = 5 * time.Minute
+
+func (c *orgSignSupport) get() (ok, known bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ok, c.known && time.Since(c.at) < orgSignSupportTTL
+}
+
+func (c *orgSignSupport) set(ok bool) {
+	c.mu.Lock()
+	c.known, c.ok, c.at = true, ok, time.Now()
+	c.mu.Unlock()
+}
+
+// cliVerdict hands orgsign.Before the CLI's answer as its Checker (the CLI
+// uses monomind's own --check where monomind has it). It never signs.
+type cliVerdict struct{ st orgsign.Status }
+
+func (cliVerdict) Sign(context.Context, string, string, string) error {
+	return errors.New("the designer signs through the CLI")
+}
+
+func (v cliVerdict) Check(context.Context, string, string) (orgsign.Status, bool) { return v.st, true }
+
+// orgSignBefore decides, before a designer write, whether it may be
+// re-signed: by the CLI's verdict on the org as it is now (`org sign
+// --status`), then orgsign.Before's own checks (loaded from exactly the
+// signed bytes, instructions files pinned). Nothing is eligible below
+// monomind 2.21.
+func (a *App) orgSignBefore(root string, d *orgdesign.Doc, signNew bool) orgsign.Pre {
+	if ok, known := a.orgSignSupport.get(); known && !ok {
+		return orgsign.Pre{}
+	}
+	var res struct {
+		Supported *bool  `json:"supported"`
+		State     string `json:"state"`
+		Detail    string `json:"detail"`
+		Error     string `json:"error"`
+		Code      string `json:"code"`
+	}
+	out := a.rawCLI(orgCLITimeout, orgSignArgs(root, d.Name, "--status")...)
+	if json.Unmarshal([]byte(out), &res) != nil {
+		return orgsign.Pre{}
+	}
+	if res.Supported != nil {
+		a.orgSignSupport.set(*res.Supported)
+		if !*res.Supported {
+			return orgsign.Pre{}
+		}
+	}
+	if res.Code == "not_found" {
+		// A new org: signed only when it is the user's own (signNew), and
+		// only where monomind is known to take signatures.
+		if ok, known := a.orgSignSupport.get(); !known || !ok {
+			return orgsign.Pre{}
+		}
+		return orgsign.Before(context.Background(), nil, root, d.Name, d.LoadedSHA(), signNew)
+	}
+	if res.Error != "" || res.State == "" {
+		return orgsign.Pre{}
+	}
+	return orgsign.Before(context.Background(), cliVerdict{orgsign.Status{State: res.State, Detail: res.Detail}},
+		root, d.Name, d.LoadedSHA(), signNew)
 }

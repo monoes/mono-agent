@@ -8,14 +8,19 @@ import { confirm } from '../ConfirmDialog.jsx'
 // policies, runtimes, autonomy, automations — not the goal, status or role
 // titles). mono-agent re-signs its own edits of a signed org; anything else
 // shows this banner. "Review & sign" shows monomind's own review and signs
-// only on confirm, and only the file that was reviewed.
+// only on confirm, and only the definition that was reviewed (its hash,
+// instructions files included).
 
 const STATE_TEXT = {
   unsigned: 'This org has no operator signature yet, so monomind will not run it.',
   changed: 'This org changed since it was signed (roles, policies, runtimes, autonomy or automations), so monomind will not run or reload it.',
   'invalid-signature': 'This org’s signature does not verify on this machine, so monomind will not run it.',
   'forbidden-key': 'This org holds a forbidden key, so monomind will not run it. Remove the key, then sign.',
+  'invalid-definition': 'This org\u2019s file is unreadable or not a valid org. Fix it (see Validate), then sign.',
 }
+
+// States with nothing to sign until the definition itself is fixed.
+const NO_SIGN = new Set(['forbidden-key', 'invalid-definition'])
 
 // isSignatureRefusal recognises monomind's (and the CLI's) refusal to start
 // or reload an unsigned org in a run's error text.
@@ -76,7 +81,7 @@ export async function reviewAndSign(orgName) {
     danger: true,
   })
   if (!ok) return false
-  await api.orgSign(orgName, review.sha256)
+  await api.orgSign(orgName, review.hash)
   return true
 }
 
@@ -85,7 +90,7 @@ export default function OrgSignatureBanner({ orgName, refreshKey = '' }) {
   const [busy, setBusy] = useState(false)
   const text = status?.supported ? STATE_TEXT[status.state] : null
   if (!text) return null
-  const canSign = status.state !== 'forbidden-key'
+  const canSign = !NO_SIGN.has(status.state)
   const onSign = async () => {
     setBusy(true)
     try {

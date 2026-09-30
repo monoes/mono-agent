@@ -62,7 +62,7 @@ func TestJSNumber(t *testing.T) {
 // monomind's signOrgDef does, returning the key.
 func signFixture(t *testing.T, root, org string, raw []byte) []byte {
 	t.Helper()
-	dir := OperatorDir()
+	dir := OperatorDir("")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func signFixture(t *testing.T, root, org string, raw []byte) []byte {
 func operatorDirForTest(t *testing.T) {
 	t.Helper()
 	t.Setenv("MONOMIND_ORGRT_OPERATOR_DIR", filepath.Join(t.TempDir(), "operator"))
-	for _, k := range roleContextMarkers {
+	for _, k := range agentContextMarkers {
 		t.Setenv(k, "")
 	}
 }
@@ -162,7 +162,7 @@ func TestVerifyRejectsForgedOrUntrustedSidecar(t *testing.T) {
 		t.Fatalf("world-readable sidecar: %+v", st)
 	}
 	signFixture(t, root, "growth", raw)
-	if err := os.Chmod(filepath.Join(OperatorDir(), "full-access-grant.key"), 0o640); err != nil {
+	if err := os.Chmod(filepath.Join(OperatorDir(""), "full-access-grant.key"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	if st := Verify(root, "growth", raw); st.State != StateInvalid {

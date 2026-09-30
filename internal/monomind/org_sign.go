@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/monoes/mono-agent/internal/orgsign"
 )
@@ -34,53 +35,126 @@ func OrgSigningEnforced(ctx context.Context) bool {
 	return err == nil && set.OrgSigning()
 }
 
-// OrgSignCheck asks monomind whether org's definition in projectRoot
-// verifies (`org sign <org> --check --format json`, 2.22+; read-only, no
-// prompt). ok is false when the installed monomind has no --check or its
-// answer can't be used; callers then check in Go (internal/orgsign).
-func OrgSignCheck(ctx context.Context, projectRoot, name string) (st orgsign.Status, ok bool) {
+// orgCheckResult is `org sign --check --format json` (monomind 2.22).
+type orgCheckResult struct {
+	Orgs []struct {
+		Org     string `json:"org"`
+		State   string `json:"state"`
+		Message string `json:"message"`
+	} `json:"orgs"`
+}
+
+// checkState maps a --check state; ok is false for not-found or a state
+// this client doesn't know (the Go check is used then).
+func checkState(state, message string) (orgsign.Status, bool) {
+	switch state {
+	case orgsign.StateSigned, orgsign.StateChanged, orgsign.StateUnsigned, orgsign.StateForbiddenKey, orgsign.StateInvalid:
+		return orgsign.Status{State: state, Detail: message}, true
+	case "invalid":
+		// Unreadable or schema-invalid JSON, not a bad signature.
+		return orgsign.Status{State: orgsign.StateInvalidDefinition, Detail: message}, true
+	}
+	return orgsign.Status{}, false
+}
+
+// runOrgCheck runs `monomind org sign <args> --check --format json` on a
+// monomind that has it (2.22+). Any other shape — no --check, a usage
+// error, JSON this client doesn't expect — gives ok=false, never an error:
+// callers fall back to the Go check.
+func runOrgCheck(ctx context.Context, projectRoot string, args ...string) (orgCheckResult, bool) {
+	var res orgCheckResult
 	set, err := Capabilities(ctx)
 	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
-		return st, false
+		return res, false
 	}
 	bin, _, err := Ensure(ctx)
 	if err != nil {
-		return st, false
+		return res, false
 	}
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, "org", "sign", name, "--check", "--format", "json")
+	full := append(append([]string{"org", "sign"}, args...), "--check", "--format", "json")
+	cmd := exec.CommandContext(cctx, bin, full...)
 	cmd.Dir = projectRoot
-	out, _ := cmd.Output() // exit 1 means "not signed", with the same JSON
-	var res struct {
-		Orgs []struct {
-			Org     string `json:"org"`
-			State   string `json:"state"`
-			Message string `json:"message"`
-		} `json:"orgs"`
+	out, _ := cmd.Output() // exit 1 means "not all signed", with the same JSON
+	if json.Unmarshal(lastJSONDocument(out), &res) != nil || res.Orgs == nil {
+		return res, false
 	}
-	if json.Unmarshal(lastJSONDocument(out), &res) != nil {
-		return st, false
+	return res, true
+}
+
+// OrgSignCheck asks monomind whether org's definition in projectRoot
+// verifies (`org sign <org> --check --format json`, 2.22+; read-only, no
+// prompt). ok is false when monomind can't answer; callers then check in
+// Go (internal/orgsign).
+func OrgSignCheck(ctx context.Context, projectRoot, name string) (orgsign.Status, bool) {
+	res, ok := runOrgCheck(ctx, projectRoot, name)
+	if !ok {
+		return orgsign.Status{}, false
 	}
 	for _, o := range res.Orgs {
-		if o.Org != name {
-			continue
-		}
-		switch o.State {
-		case orgsign.StateSigned, orgsign.StateChanged, orgsign.StateUnsigned, orgsign.StateForbiddenKey:
-			return orgsign.Status{State: o.State, Detail: o.Message}, true
-		case "invalid":
-			return orgsign.Status{State: orgsign.StateInvalid, Detail: o.Message}, true
+		if o.Org == name {
+			return checkState(o.State, o.Message)
 		}
 	}
-	return st, false // not-found, or a state this client doesn't know
+	return orgsign.Status{}, false
+}
+
+// OrgSignCheckAll is OrgSignCheck for every org of the project in one
+// monomind run (`--check --all`): the orgs it could answer for.
+func OrgSignCheckAll(ctx context.Context, projectRoot string) (map[string]orgsign.Status, bool) {
+	res, ok := runOrgCheck(ctx, projectRoot, "--all")
+	if !ok {
+		return nil, false
+	}
+	out := map[string]orgsign.Status{}
+	for _, o := range res.Orgs {
+		if st, ok := checkState(o.State, o.Message); ok {
+			out[o.Org] = st
+		}
+	}
+	return out, true
 }
 
 // OrgSign signs an org definition as the operator: `monomind org sign
 // <name> --yes` in projectRoot. monomind itself refuses inside an org role
-// or agent turn.
-func OrgSign(ctx context.Context, projectRoot, name string) (string, error) {
-	return runOrgText(ctx, projectRoot, "sign", name, "--yes")
+// or agent turn. hash is the projection hash the signature must cover;
+// when this monomind's `org sign` takes --expect-hash (asked of monomind
+// for 2.22) it is passed, so monomind refuses to sign anything else.
+func OrgSign(ctx context.Context, projectRoot, name, hash string) (string, error) {
+	args := []string{"sign", name, "--yes"}
+	if hash != "" && orgSignExpectsHash(ctx) {
+		args = append(args, "--expect-hash", hash)
+	}
+	return runOrgText(ctx, projectRoot, args...)
+}
+
+var expectHashCache struct {
+	sync.Mutex
+	bin string
+	ok  bool
+}
+
+// orgSignExpectsHash reports whether the installed monomind's `org sign`
+// has --expect-hash: 2.22+ whose help lists it (cached per binary).
+func orgSignExpectsHash(ctx context.Context) bool {
+	set, err := Capabilities(ctx)
+	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
+		return false
+	}
+	bin, err := Find()
+	if err != nil {
+		return false
+	}
+	expectHashCache.Lock()
+	defer expectHashCache.Unlock()
+	if expectHashCache.bin != bin {
+		cctx, cancel := context.WithTimeout(ctx, orgTimeout)
+		defer cancel()
+		out, _ := exec.CommandContext(cctx, bin, "org", "sign", "--help").CombinedOutput()
+		expectHashCache.bin, expectHashCache.ok = bin, strings.Contains(string(out), "--expect-hash")
+	}
+	return expectHashCache.ok
 }
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")

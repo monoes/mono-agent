@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Signed org definitions (#288): the banner for an unsigned or changed org,
 // monomind's review behind "Review & sign", and signing only on confirm —
-// with the reviewed file's sha256.
+// with the reviewed definition's hash.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
@@ -17,7 +17,7 @@ import OrgSignatureBanner, { isSignatureRefusal, requestSignatureRefresh } from 
 
 const CHANGED = { v: 1, org: 'growth', supported: true, state: 'changed', sha256: 'abc', signed: false }
 const SIGNED = { v: 1, org: 'growth', supported: true, state: 'signed', sha256: 'def', signed: false }
-const REVIEW = { v: 1, org: 'growth', supported: true, state: 'changed', sha256: 'abc', review: 'org growth (changed):\n  lead: runtime claude · git push', signed: false }
+const REVIEW = { v: 1, org: 'growth', supported: true, state: 'changed', sha256: 'abc', hash: 'h-reviewed', review: 'org growth (changed):\n  lead: runtime claude · git push', signed: false }
 
 beforeEach(() => { vi.clearAllMocks() })
 afterEach(() => { cleanup() })
@@ -52,7 +52,7 @@ describe('OrgSignatureBanner', () => {
     expect(await screen.findByTestId('org-sign-review')).toHaveTextContent('git push')
     expect(api.orgSign).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Sign' }))
-    await waitFor(() => expect(api.orgSign).toHaveBeenCalledWith('growth', 'abc'))
+    await waitFor(() => expect(api.orgSign).toHaveBeenCalledWith('growth', 'h-reviewed'))
   })
 
   it('does not sign when the review is cancelled', async () => {
@@ -76,11 +76,14 @@ describe('OrgSignatureBanner', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('changed after'), 'org_not_signed'))
   })
 
-  it('offers no signing for a forbidden key', async () => {
-    api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, state: 'forbidden-key', detail: '__proto__' })
-    renderBanner()
-    await screen.findByTestId('org-signature-banner')
-    expect(screen.queryByRole('button', { name: 'Review & sign' })).toBeNull()
+  it('offers no signing for a forbidden key or a broken definition', async () => {
+    for (const state of ['forbidden-key', 'invalid-definition']) {
+      api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, state, detail: 'x' })
+      const { unmount } = renderBanner()
+      expect(await screen.findByTestId('org-signature-banner')).toHaveAttribute('data-state', state)
+      expect(screen.queryByRole('button', { name: 'Review & sign' })).toBeNull()
+      unmount()
+    }
   })
 
   it('looks again when a run is refused for its signature', async () => {

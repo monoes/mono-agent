@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -137,7 +136,7 @@ func (a *App) CreateOrgDesign(specJSON string) string {
 		RootRoleTitle:     spec.RootRoleTitle,
 		RestrictFileWrite: a.restrictFileWriteForOrgs(),
 	})
-	return a.saveAndRespond(root, d, "ui")
+	return a.saveAndRespondNew(root, d, "ui", true)
 }
 
 // DeleteOrgDesign removes an org's config file only — its run-data
@@ -263,7 +262,7 @@ func (a *App) RemoveOrgRole(orgName, roleID, strategy string) string {
 	if err != nil {
 		return aiError(err)
 	}
-	sha, cliErr := a.saveOrgDoc(root, d)
+	sha, cliErr := a.saveOrgDoc(root, d, false)
 	if cliErr != nil {
 		return aiError(cliErr)
 	}
@@ -300,8 +299,8 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 	if err := json.Unmarshal([]byte(layoutJSON), &pos); err != nil {
 		return aiError(fmt.Errorf("invalid layout: %w", err))
 	}
+	// Layout is role `ui`, which is not signed: no signature work here.
 	_ = d.SetLayout(pos)
-	sig := orgsign.Before(context.Background(), nil, root, orgName, d.LoadedSHA(), false)
 	sha, err := orgdesign.Save(root, d)
 	if err != nil {
 		return aiError(err)
@@ -309,7 +308,6 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 	if a.orgWatcher != nil {
 		a.orgWatcher.MarkSelfWrite(orgName, sha)
 	}
-	a.keepOrgSignature(root, sig, orgName, sha)
 	a.emitOrgDesignUpdated(orgName, "ui", false, d, true, nil)
 	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha})
 	return string(b)
@@ -367,7 +365,13 @@ func (a *App) orgDesignRoot() string {
 // success emits the live-update event and returns {"ok":true,"rev":sha,
 // "org":<fresh doc>}. On any failure it returns the aiError envelope.
 func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) string {
-	sha, err := a.saveOrgDoc(root, d)
+	return a.saveAndRespondNew(root, d, origin, false)
+}
+
+// saveAndRespondNew is saveAndRespond; signNew says d is a new org the
+// user just created (CreateOrgDesign), which may be signed as theirs.
+func (a *App) saveAndRespondNew(root string, d *orgdesign.Doc, origin string, signNew bool) string {
+	sha, err := a.saveOrgDoc(root, d, signNew)
 	if err != nil {
 		return aiError(err)
 	}
@@ -390,14 +394,13 @@ func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) strin
 // on disk — still listing the role and its `automations` display copies —
 // while the rows behind them are gone for good, so the role silently loses
 // its tools at runtime with no error anywhere.
-func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) {
+func (a *App) saveOrgDoc(root string, d *orgdesign.Doc, signNew bool) (sha string, err error) {
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
 	}
-	// Decided before the first write: whether this save may be re-signed
-	// (a new org drawn on the canvas is the user's own).
-	sig := orgsign.Before(context.Background(), nil, root, d.Name, d.LoadedSHA(), true)
+	// Decided before the first write: whether this save may be re-signed.
+	sig := a.orgSignBefore(root, d, signNew)
 
 	if _, err := a.writeOrgDoc(root, d); err != nil {
 		return "", err
@@ -421,21 +424,26 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 }
 
 // keepOrgSignature re-signs an org after the designer's own write when
-// monomind 2.21 requires signed definitions (#288): only if sig (taken
+// monomind 2.21+ requires signed definitions (#288): only if sig (taken
 // before the write) allowed it, and only when the write changed a signed
-// field — a layout or title change still verifies. Signing is the CLI's
-// (`org sign --yes --expect-sha256`, which signs exactly these bytes and
-// withdraws the signature if they changed under it). Anything else leaves
-// the org for the Review & sign banner.
+// field. The CLI signs (`org sign --yes --expect-hash`), for the new JSON
+// with the instructions files sig pinned, and withdraws the signature if
+// monomind signed anything else. Anything else leaves the org for the
+// Review & sign banner.
 func (a *App) keepOrgSignature(root string, sig orgsign.Pre, name, sha string) {
 	if !sig.Eligible() {
 		return
 	}
-	st, cur, err := orgsign.VerifyFile(root, name)
-	if err != nil || st.OK() || cur != sha {
+	raw, cur, err := orgsign.ReadFile(root, name)
+	if err != nil || cur != sha || orgsign.Verify(root, name, raw).OK() {
 		return
 	}
-	out := a.rawCLI(orgCLITimeout, orgSignArgs(root, name, "--yes", "--expect-sha256", sha)...)
+	want, err := sig.PinnedHash(raw)
+	if err != nil {
+		log.Printf("org %s was not re-signed after this change: %v", name, err)
+		return
+	}
+	out := a.rawCLI(orgCLITimeout, orgSignArgs(root, name, "--yes", "--expect-hash", want)...)
 	var res struct {
 		Error string `json:"error"`
 		Code  string `json:"code"`

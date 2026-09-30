@@ -192,7 +192,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 	}
 	// An org edited outside mono-agent fails the signature check first, so
 	// this write never signs that edit (orgsign.Before).
-	sha, sig, err := saveOrgSigned(ctx, pr.Root, d.Name, d, false)
+	sha, sig, err := saveOrgSigned(ctx, pr.Root, d.Name, d)
 	if err != nil {
 		return fail("org services: saving reconciled %s: %v", err)
 	}

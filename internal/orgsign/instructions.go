@@ -14,9 +14,44 @@ import (
 // Instructions files (monomind's instructions-file.ts): a role's or
 // loadout's instructions_file is signed by the digest of its content.
 
+// digestFunc gives an instructions_file's digest ("sha256:<hex>").
+type digestFunc func(file string) (string, error)
+
+// readDigests digests each file as it is on disk now.
+func readDigests(root string) digestFunc {
+	return func(file string) (string, error) { return instructionsDigest(file, root) }
+}
+
+// Pins are the instructions-file digests a verified definition was
+// checked with, keyed by the instructions_file value. Signing with them,
+// rather than with the files as they are when monomind signs, is what
+// keeps a file edited in between from being signed (monomind hashes the
+// file itself, so the result then differs and the signature is withdrawn).
+type Pins map[string]string
+
+// pinned digests only files in p; any other is a reference this package
+// never verified.
+func (p Pins) pinned(file string) (string, error) {
+	if d, ok := p[file]; ok {
+		return d, nil
+	}
+	return "", fmt.Errorf("instructions_file %s was not part of the verified definition", file)
+}
+
+// recordingDigests is readDigests that also records each digest in pins.
+func recordingDigests(root string, pins Pins) digestFunc {
+	return func(file string) (string, error) {
+		d, err := instructionsDigest(file, root)
+		if err == nil {
+			pins[file] = d
+		}
+		return d, err
+	}
+}
+
 // instructionsDigests is monomind's instructionsDigests: "role:<id>" and
 // "loadout:<name>" to "sha256:<hex>" of each instructions_file.
-func instructionsDigests(v interface{}, root string) (map[string]interface{}, error) {
+func instructionsDigests(v interface{}, dig digestFunc) (map[string]interface{}, error) {
 	out := map[string]interface{}{}
 	def, _ := v.(map[string]interface{})
 	if roles, ok := def["roles"].([]interface{}); ok {
@@ -30,7 +65,7 @@ func instructionsDigests(v interface{}, root string) (map[string]interface{}, er
 			if !ok {
 				return nil, errUnknown
 			}
-			d, err := instructionsDigest(file, root)
+			d, err := dig(file)
 			if err != nil {
 				return nil, err
 			}
@@ -53,7 +88,7 @@ func instructionsDigests(v interface{}, root string) (map[string]interface{}, er
 		if !ok {
 			continue
 		}
-		d, err := instructionsDigest(file, root)
+		d, err := dig(file)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +134,7 @@ func instructionsDigest(file, root string) (string, error) {
 		// The project holds the home dir, so a denied dir may be inside it.
 		return "", errUnknown
 	}
-	denied := []string{OperatorDir()}
+	denied := []string{OperatorDir(root)}
 	for _, p := range []string{".ssh", ".git-credentials", ".config/git/credentials", ".config/gh", ".netrc",
 		".monomind/orgrt-operator", ".monomind/dashboard-auth"} {
 		denied = append(denied, filepath.Join(home, p))

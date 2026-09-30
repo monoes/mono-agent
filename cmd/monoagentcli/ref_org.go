@@ -40,14 +40,16 @@ SIGNED DEFINITIONS (monomind 2.21+)
   org sign <org> --status           signed | unsigned | changed | ...
   org sign <org>                    monomind's review; signs nothing
                                     (asks first on a terminal)
-  org sign <org> --yes [--expect-sha256 <sha>]   sign (only that file)
+  org sign <org> --yes [--expect-hash <hash>]    sign (only that definition)
 
   monomind runs or reloads an org only when the operator signed its
   definition (everything but goal, status and role titles,
   responsibilities and layout). monoagentcli re-signs its own edits of
-  a signed org; an org edited any other way, imported, or changed by a
-  chat assistant is left unsigned with a warning until you review and
-  sign it. org run refuses such an org with code org_not_signed, and
+  a signed org; an org edited any other way, imported, written whole
+  with create-json, or changed from inside a coding agent is left
+  unsigned with a warning until you review and sign it (the review's
+  "hash" is what --expect-hash signs). org run refuses such an org with
+  code org_not_signed, and
   org status shows each org's "signature".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

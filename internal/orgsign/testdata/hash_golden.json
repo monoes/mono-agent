@@ -8,8 +8,8 @@
     "hash": "9fbde8a1f096af3ad310ed7c4cb6a6f46b82a948cc9f1f02f1488d5d7d5435d1"
   },
   "strings": {
-    "json": "{\"name\":\"s\",\"roles\":[],\"x\":\"quote\\\" back\\\\ nl\\n tab\\t ctl\\u0001 del\\u007f lt< gt> amp& ls\\u2028 emoji 😀 \\ud83d\\ude00 bmp \\uffff\"}",
-    "hash": "ef32c57acfbc8d0ffcc9dd10aba16d40fe4246c3b6f36be9d8e7e45c74ad9859"
+    "json": "{\"name\":\"s\",\"roles\":[],\"x\":\"quote\\\" back\\\\ nl\\n tab\\t ctl\\u0001 del\\u007f lt< gt> amp& ls\\u2028 emoji 😀 bmp \\uffff\"}",
+    "hash": "acf5a27e068e8bfb07f449907394f52ed55829f1e3c266d34875f707caede94a"
   },
   "keys": {
     "json": "{\"name\":\"k\",\"roles\":[],\"m\":{\"b\":1,\"a\":2,\"10\":3,\"9\":4,\"01\":5,\"B\":6,\"é\":7,\"😀\":8,\"\\uffff\":9,\"4294967294\":10,\"4294967295\":11,\"\":12}}",

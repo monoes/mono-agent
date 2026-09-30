@@ -67,8 +67,8 @@ type recordingSigner struct {
 	calls []string
 }
 
-func (s *recordingSigner) Sign(ctx context.Context, root, org string) error {
-	if err := (monomindOrgSigner{}).Sign(ctx, root, org); err != nil {
+func (s *recordingSigner) Sign(ctx context.Context, root, org, hash string) error {
+	if err := (monomindOrgSigner{}).Sign(ctx, root, org, hash); err != nil {
 		return err
 	}
 	s.calls = append(s.calls, org)
@@ -88,9 +88,7 @@ func newSigningFixture(t *testing.T, version string) (*orgCLIFixture, *recording
 	f := newOrgCLIFixture(t)
 	logPath := fakeSigningMonomind(t, version)
 	t.Setenv("MONOMIND_ORGRT_OPERATOR_DIR", filepath.Join(t.TempDir(), "operator"))
-	for _, k := range []string{"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC", "MONOMIND_CLINE_TURN", "MONOMIND_AIDER"} {
-		t.Setenv(k, "")
-	}
+	orgsigntest.AsOperator(t)
 	s := &recordingSigner{t: t}
 	prev := orgSigner
 	orgSigner = s
@@ -222,7 +220,7 @@ func TestOrgSignCommand(t *testing.T) {
 		strings.Contains(review, "confirmation required") || strings.Contains(review, "\x1b[") {
 		t.Fatalf("review = %q", review)
 	}
-	if rev["signed"] != nil || len(s.calls) != 0 || rev["sha256"] == "" {
+	if rev["signed"] != nil || len(s.calls) != 0 || rev["hash"] == nil || rev["hash"] == "" {
 		t.Fatalf("review signed or lacks sha256: %v (calls %v)", rev, s.calls)
 	}
 	calls, _ := os.ReadFile(logPath)
@@ -231,14 +229,14 @@ func TestOrgSignCommand(t *testing.T) {
 	}
 
 	// A file that changed since the review is not signed.
-	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-sha256", strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "changed after") {
+	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-hash", strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "changed after") {
 		t.Fatalf("stale review signed: %v", err)
 	}
 	if len(s.calls) != 0 {
 		t.Fatalf("signed a stale review: %v", s.calls)
 	}
 
-	signed := f.mustRun(t, "sign", "growth", "--yes", "--expect-sha256", rev["sha256"].(string))
+	signed := f.mustRun(t, "sign", "growth", "--yes", "--expect-hash", rev["hash"].(string))
 	if signed["signed"] != true || len(s.calls) != 1 {
 		t.Fatalf("sign = %v (calls %v)", signed, s.calls)
 	}
@@ -378,5 +376,66 @@ func TestNoSigningFromRoleContext(t *testing.T) {
 				t.Fatalf("monomind asked to sign:\n%s", calls)
 			}
 		})
+	}
+}
+
+// A whole document from create-json is never signed automatically: the
+// chat assistant is told to use it (SHOULD-FIX 5 of the #295 review).
+func TestCreateJSONIsLeftForReview(t *testing.T) {
+	f, s, _ := newSigningFixture(t, "2.21.0")
+	doc := `{"name":"fresh","goal":"g","status":"stopped","schedule":null,"roles":[{"id":"lead","title":"Lead","type":"lead","reports_to":null,"responsibilities":["lead"],"policy":{"git":"push"}}]}`
+	stderr := captureStderr(t, func() { f.mustRun(t, "create-json", "fresh", "--json", doc) })
+	if len(s.calls) != 0 || !strings.Contains(stderr, "monoagentcli org sign fresh") {
+		t.Fatalf("calls %v, stderr %q", s.calls, stderr)
+	}
+	if st, _, _ := orgsign.VerifyFile(f.root, "fresh"); st.State != orgsign.StateUnsigned {
+		t.Fatalf("state %+v", st)
+	}
+}
+
+// Nor is any write made under a coding agent's own markers (CLAUDECODE,
+// CODEX_*, ...), though the user's agent may still run an explicit sign.
+func TestNoAutomaticSigningUnderAgentContext(t *testing.T) {
+	f, s, _ := newSigningFixture(t, "2.21.0")
+	orgsigntest.Sign(t, f.root, "growth")
+	t.Setenv("CLAUDECODE", "1")
+	stderr := captureStderr(t, func() {
+		f.mustRun(t, "automation", "add", "growth", "--workflow", f.outboundWF, "--alias", "publish_post")
+	})
+	if len(s.calls) != 0 || !strings.Contains(stderr, "CLAUDECODE") {
+		t.Fatalf("calls %v, stderr %q", s.calls, stderr)
+	}
+	signed := f.mustRun(t, "sign", "growth", "--yes")
+	if signed["signed"] != true || len(s.calls) != 1 {
+		t.Fatalf("explicit sign = %v (calls %v)", signed, s.calls)
+	}
+}
+
+// org status asks monomind once for every org (2.22 --check --all).
+func TestOrgStatusChecksAllOrgsInOneRun(t *testing.T) {
+	f, _, logPath := newSigningFixture(t, "2.22.0")
+	prev := orgSignCheckAll
+	orgSignCheckAll = func(context.Context, string) (map[string]orgsign.Status, bool) {
+		b, _ := os.ReadFile(logPath)
+		_ = os.WriteFile(logPath, append(b, []byte("check-all\n")...), 0o644)
+		return map[string]orgsign.Status{"growth": {State: orgsign.StateChanged}}, true
+	}
+	t.Cleanup(func() { orgSignCheckAll = prev })
+	out := withOrgSignature(context.Background(), f.root, []byte(`{"v":1,"items":[{"name":"growth"},{"name":"other"}]}`))
+	var got struct {
+		Items []struct {
+			Name      string          `json:"name"`
+			Signature *orgsign.Status `json:"signature"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Items[0].Signature == nil || got.Items[0].Signature.State != orgsign.StateChanged {
+		t.Fatalf("growth = %+v", got.Items[0])
+	}
+	calls, _ := os.ReadFile(logPath)
+	if strings.Count(string(calls), "check-all") != 1 || strings.Contains(string(calls), "--check") {
+		t.Fatalf("calls:\n%s", calls)
 	}
 }

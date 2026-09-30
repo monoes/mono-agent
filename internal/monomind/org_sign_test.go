@@ -85,11 +85,21 @@ func TestOrgSignCheck(t *testing.T) {
 		t.Fatalf("calls:\n%s", calls)
 	}
 
-	fakeCheckMonomind(t, "2.22.0", `{"orgs":[{"org":"growth","state":"invalid","message":"bad sig"}]}`)
-	if st, ok := OrgSignCheck(context.Background(), root, "growth"); !ok || st.State != orgsign.StateInvalid {
+	// A bad HMAC is invalid-signature; "invalid" is a broken definition.
+	fakeCheckMonomind(t, "2.22.0", `{"orgs":[{"org":"growth","state":"invalid-signature","message":"bad sig"}]}`)
+	if st, ok := OrgSignCheck(context.Background(), root, "growth"); !ok || st.State != orgsign.StateInvalid || !st.Refused() {
+		t.Fatalf("invalid-signature = %+v, %v", st, ok)
+	}
+	fakeCheckMonomind(t, "2.22.0", `{"orgs":[{"org":"growth","state":"invalid","message":"not JSON"}]}`)
+	if st, ok := OrgSignCheck(context.Background(), root, "growth"); !ok || st.State != orgsign.StateInvalidDefinition || st.Refused() {
 		t.Fatalf("invalid = %+v, %v", st, ok)
 	}
-	for _, body := range []string{`{"orgs":[{"org":"growth","state":"not-found"}]}`, `not json`, `{"orgs":[{"org":"other","state":"signed"}]}`} {
+	// Anything else — including a 2.22 that ships without --check or with
+	// another shape — is no answer, so the Go check is used.
+	for _, body := range []string{
+		`{"orgs":[{"org":"growth","state":"not-found"}]}`, `not json`, `{"orgs":[{"org":"other","state":"signed"}]}`,
+		`[ERROR] Unknown option: --check`, `{"growth":"signed"}`, `{"orgs":[{"org":"growth","state":"verified"}]}`,
+	} {
 		fakeCheckMonomind(t, "2.22.0", body)
 		if _, ok := OrgSignCheck(context.Background(), root, "growth"); ok {
 			t.Fatalf("%s: want no verdict", body)
@@ -102,5 +112,18 @@ func TestOrgSignCheck(t *testing.T) {
 	}
 	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "--check") {
 		t.Fatalf("ran --check on 2.21:\n%s", calls)
+	}
+}
+
+func TestOrgSignCheckAll(t *testing.T) {
+	root := t.TempDir()
+	log := fakeCheckMonomind(t, "2.22.0", `{"orgs":[{"org":"a","state":"signed"},{"org":"b","state":"changed"},{"org":"c","state":"not-found"}]}`)
+	got, ok := OrgSignCheckAll(context.Background(), root)
+	if !ok || len(got) != 2 || got["a"].State != orgsign.StateSigned || got["b"].State != orgsign.StateChanged {
+		t.Fatalf("all = %+v, %v", got, ok)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "org sign --all --check --format json") {
+		t.Fatalf("calls:\n%s", calls)
 	}
 }

@@ -8,9 +8,12 @@ import (
 )
 
 // Signer signs an org definition as the operator: `monomind org sign <org>
-// --yes` run in the project root (internal/monomind.OrgSign).
+// --yes` run in the project root (internal/monomind.OrgSign). hash is the
+// projection hash the signature must cover; a monomind that can refuse
+// anything else (`--expect-hash`) is given it, others sign what is on disk
+// and the caller checks afterwards.
 type Signer interface {
-	Sign(ctx context.Context, root, org string) error
+	Sign(ctx context.Context, root, org, hash string) error
 }
 
 // Checker is a Signer that can also ask monomind itself whether the
@@ -43,9 +46,20 @@ var roleContextMarkers = []string{
 	"MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC", "MONOMIND_CLINE_TURN", "MONOMIND_AIDER",
 }
 
-// RoleContextMarker names the marker set in this process's env, or "".
-func RoleContextMarker() string {
-	for _, k := range roleContextMarkers {
+// agentContextMarkers are monomind's AGENT_CONTEXT_ENV_MARKERS
+// (orgrt/agent-context.ts): any coding agent's or org role's process tree.
+// mono-agent never signs automatically under one of them — a change an
+// agent made through a mono-agent command is the operator's to review.
+var agentContextMarkers = []string{
+	"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "MONOMIND_ORG_ROLE", "MONOMIND_SDK_AGENT", "MONOMIND_AGENT_EXEC",
+	"AI_AGENT", "AGENT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID", "CODEX_CI",
+	"OPENCODE", "OPENCODE_PID", "ANTIGRAVITY_AGENT", "GEMINI_CLI", "GROK_SESSION_ID", "GROK_MANAGED_BY_NPM",
+	"COPILOT_CLI_BINARY_VERSION", "COPILOT_AGENT_SESSION_ID", "CRUSH", "PI_CODING_AGENT", "QWEN_CODE",
+	"PI_SESSION_ID", "DSH_SHELL", "DSH_SESSION_ID", "MONOMIND_CLINE_TURN", "MONOMIND_AIDER",
+}
+
+func firstSet(keys []string) string {
+	for _, k := range keys {
 		if os.Getenv(k) != "" {
 			return k
 		}
@@ -53,36 +67,58 @@ func RoleContextMarker() string {
 	return ""
 }
 
+// RoleContextMarker names the org-role/agent-exec marker set in this
+// process's env, or "": monomind's own rule for any signature, so it also
+// bounds an explicit `org sign`.
+func RoleContextMarker() string { return firstSet(roleContextMarkers) }
+
+// AgentContextMarker names any agent-context marker set, or "": no
+// automatic signing then.
+func AgentContextMarker() string { return firstSet(agentContextMarkers) }
+
+// AgentContextMarkers lists every marker AgentContextMarker looks at
+// (tests clear them to act as the operator's own terminal).
+func AgentContextMarkers() []string { return append([]string(nil), agentContextMarkers...) }
+
 // Pre is an org file's state just before mono-agent writes it.
 type Pre struct {
 	root, org string
 	eligible  bool
 	why       string
+	// pins are the instructions-file digests the file verified with: the
+	// signature after the write covers those contents and nothing else.
+	pins Pins
 }
 
 // Eligible reports whether the coming write may be re-signed.
 func (p Pre) Eligible() bool { return p.eligible }
 
+// PinnedHash is raw's projection hash with the instructions files p
+// pinned: the hash a re-signature of mono-agent's write must cover.
+func (p Pre) PinnedHash(raw []byte) (string, error) { return HashPinned(raw, p.pins) }
+
 // Before records whether the write mono-agent is about to make to org
 // (the file the document came from; a rename's old name) may be re-signed
 // afterwards. It may when the file on disk verifies now AND the document
 // was loaded from exactly those bytes (loadedSHA, orgdesign.Doc.LoadedSHA)
-// — then the only change a signature approves is mono-agent's own. A
-// missing file is eligible only when signNew says the new definition is
-// mono-agent's own content (a user's `org create`), not an import.
+// — then the only change a signature approves is mono-agent's own. The
+// instructions files it verified with are pinned (Pins). A missing file is
+// eligible only when signNew says the new definition is the user's own
+// content (the designer's New org), not an import or an agent's.
+//
 // s is the signer the write will use (its Checker, if any, decides); nil
 // means this package's own check.
 func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew bool) Pre {
-	p := Pre{root: root, org: org}
-	if m := RoleContextMarker(); m != "" {
-		p.why = fmt.Sprintf("%s is set: an org role or agent turn made this change, and only the operator signs", m)
+	p := Pre{root: root, org: org, pins: Pins{}}
+	if m := AgentContextMarker(); m != "" {
+		p.why = fmt.Sprintf("%s is set: an agent or org role made this change, and only the operator signs", m)
 		return p
 	}
 	raw, sha, err := ReadFile(root, org)
 	if errors.Is(err, os.ErrNotExist) {
 		p.eligible = signNew
 		if !signNew {
-			p.why = "it was installed from outside mono-agent"
+			p.why = "it did not come from you in mono-agent (an import, or a document supplied whole)"
 		}
 		return p
 	}
@@ -94,11 +130,19 @@ func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew 
 	switch {
 	case !st.OK():
 		p.why = st.Describe()
+		return p
 	case loadedSHA == "" || loadedSHA != sha:
 		p.why = "the change was not made to the signed file as it is on disk"
-	default:
-		p.eligible = true
+		return p
 	}
+	// Pin the instructions files, and only if what was pinned is what the
+	// signature covers (a file edited since the check above is not).
+	h, pins, err := HashPins(root, raw)
+	if signed, ok := SignedHash(root, org); err != nil || !ok || signed != h {
+		p.why = "its instructions files could not be pinned to the signed contents"
+		return p
+	}
+	p.eligible, p.pins = true, pins
 	return p
 }
 
@@ -112,13 +156,15 @@ type Outcome struct {
 
 // After re-signs org (the name just written; a rename's new name) when p
 // allowed it and the file still holds exactly the bytes mono-agent wrote
-// (sha, orgdesign.Save's return value). Otherwise the org is left unsigned
-// with a notice saying why and how to review and sign it.
+// (sha, orgdesign.Save's return value), with the instructions files p
+// pinned. Otherwise the org is left unsigned with a notice saying why and
+// how to review and sign it.
 func (p Pre) After(ctx context.Context, s Signer, org, sha string) Outcome {
+	raw, got, err := ReadFile(p.root, org)
 	if !p.eligible {
 		st := Status{State: StateUnknown}
-		if raw, sha, err := ReadFile(p.root, org); err == nil {
-			st = verifyNow(ctx, s, p.root, org, raw, sha)
+		if err == nil {
+			st = verifyNow(ctx, s, p.root, org, raw, got)
 		}
 		out := Outcome{Signed: st.OK(), State: st.State}
 		if !st.OK() {
@@ -126,53 +172,55 @@ func (p Pre) After(ctx context.Context, s Signer, org, sha string) Outcome {
 		}
 		return out
 	}
-	return SignExact(ctx, s, p.root, org, sha)
+	if err != nil || got != sha {
+		return notSigned(org, StateUnknown, "the file changed after mono-agent wrote it")
+	}
+	want, err := p.PinnedHash(raw)
+	if err != nil {
+		return notSigned(org, StateUnknown, err.Error())
+	}
+	return SignExact(ctx, s, p.root, org, want)
 }
 
-// SignExact signs org only if its file holds the bytes whose sha256 is
-// sha, and confirms afterwards that monomind signed those bytes: if the
-// file changed between the check and the signature, the signature is
-// withdrawn. A definition that already verifies (only unsigned fields
-// changed) needs no new signature.
-func SignExact(ctx context.Context, s Signer, root, org, sha string) Outcome {
-	notice := func(state, why string) Outcome {
-		return Outcome{State: state, Notice: fmt.Sprintf("org %s is not signed: %s — review it, then sign it: monoagentcli org sign %s", org, why, org)}
-	}
+func notSigned(org, state, why string) Outcome {
+	return Outcome{State: state, Notice: fmt.Sprintf("org %s is not signed: %s — review it, then sign it: monoagentcli org sign %s", org, why, org)}
+}
+
+// withdrawnNotice is the notice for a signature taken back: a reload in the
+// moment it held may have loaded content nobody approved.
+const withdrawnNotice = "the definition changed while it was being signed, so the signature was withdrawn. " +
+	"If the org is running, stop and restart it: a reload in that moment may have loaded the unapproved change"
+
+// SignExact signs org only if its definition, as this package hashes it
+// now, has projection hash want (the reviewed or pinned one), and confirms
+// afterwards that monomind signed exactly want: if the JSON or an
+// instructions file changed in between, the signature is withdrawn. A
+// definition that already verifies needs no new signature.
+func SignExact(ctx context.Context, s Signer, root, org, want string) Outcome {
 	if m := RoleContextMarker(); m != "" {
-		return notice(StateUnknown, m+" is set, and only the operator signs")
+		return notSigned(org, StateUnknown, m+" is set, and only the operator signs")
 	}
-	raw, got, err := ReadFile(root, org)
+	raw, sha, err := ReadFile(root, org)
 	if err != nil {
-		return notice(StateUnknown, err.Error())
+		return notSigned(org, StateUnknown, err.Error())
 	}
-	if got != sha {
-		return notice(Verify(root, org, raw).State, "the file changed after it was written or reviewed")
+	if want == "" {
+		return notSigned(org, StateUnknown, "its hash can't be computed here — sign it with `monomind org sign "+org+"` in a terminal")
+	}
+	if now, err := Hash(root, raw); err != nil || now != want {
+		return notSigned(org, Verify(root, org, raw).State, "it changed after it was written or reviewed")
 	}
 	if st := verifyNow(ctx, s, root, org, raw, sha); st.OK() {
 		return Outcome{Signed: true, State: StateSigned}
 	} else if st.State == StateForbiddenKey {
-		return notice(st.State, Message(org, st))
+		return notSigned(org, st.State, Message(org, st))
 	}
-	// What monomind is about to sign must be confirmable afterwards: by the
-	// hash in its sidecar, or else by monomind's own check.
-	want, hashErr := Hash(root, raw)
-	_, canCheck := s.(Checker)
-	if hashErr != nil && !canCheck {
-		return notice(StateUnknown, hashErr.Error())
+	if err := s.Sign(ctx, root, org, want); err != nil {
+		return notSigned(org, verifyNow(ctx, s, root, org, raw, sha).State, "monomind did not sign it: "+err.Error())
 	}
-	if err := s.Sign(ctx, root, org); err != nil {
-		return notice(verifyNow(ctx, s, root, org, raw, sha).State, "monomind did not sign it: "+err.Error())
-	}
-	confirmed := false
-	if hashErr == nil {
-		signed, ok := SignedHash(root, org)
-		confirmed = ok && signed == want
-	} else {
-		confirmed = verifyNow(ctx, s, root, org, raw, sha).OK()
-	}
-	if !confirmed {
+	if signed, ok := SignedHash(root, org); !ok || signed != want {
 		_ = Withdraw(root, org)
-		return notice(StateUnsigned, "the file changed while it was being signed, so the signature was withdrawn")
+		return notSigned(org, StateUnsigned, withdrawnNotice)
 	}
 	return Outcome{Signed: true, State: StateSigned}
 }
