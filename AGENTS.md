@@ -1020,8 +1020,29 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   row, and never create one from the file.
 - A role's first grant pre-fills `denyTools: ["Bash"]`: Bash can run
   `monoagentcli` directly and bypass every grant. Workflows with outbound
-  nodes (email, chat, social, service writes, non-GET HTTP, shell) default
-  to `--approval required`.
+  nodes default to `--approval required` and tier `irreversible`, so a
+  person approves their calls at `mid`.
+- Outbound is deny-by-default (`internal/orggrant/outbound.go`): every
+  node type counts except triggers and the reviewed `readOnlyNodes` —
+  control flow, data transforms, image transforms, `*_read`-style reads,
+  mono-agent's own stores (people, applications, documents), `ai.choose`
+  and the deprecated `ai.*` stubs, and the official browser actions that
+  declare `sideEffects: "read"` (find/list/scrape/export/metrics).
+  `http.request` counts only for methods other than GET/HEAD, and
+  `data.spreadsheet` only for writes. So `comm.*`/`service.*` sends,
+  `db.*`, `org.*`, every social write (DMs, posts, comments, likes,
+  follows, `instagram.watch_stories`), `gemini.*`, `browser.jev`,
+  `agent.ask`/`ai.agent`, `ai.extract_page`, `applications.evaluate`,
+  `system.execute_command`, `http.ftp`/`ssh`, `data.write_binary_file`,
+  `vault.secret_save`, installed packages' actions and any unknown type
+  need a person at `mid`.
+- A new node type fails `TestEveryRegisteredNodeTypeIsClassified` (run it
+  with and without `-tags nosocial`) until it is classified: add it to
+  `readOnlyNodes` only if its implementation can't act outside mono-agent
+  (for a browser action: `sideEffects: "read"` and no step marked
+  `sideEffect`, which `TestReadOnlyBrowserActionsDeclareNoSideEffects`
+  checks), otherwise to `outboundNodes`. When in doubt, outbound. Existing
+  grants pick up a raised tier at the next reconcile or save (#286).
 - A waiting granted call (`wait`, mode `run`) returns as soon as the run
   is final. It stops waiting at the tool's timeout, or `postEOFGrace` (3 s)
   after the client closes stdin. It then reads the run once more and, if
