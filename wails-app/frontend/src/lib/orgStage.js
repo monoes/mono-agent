@@ -110,6 +110,9 @@ function newNode(id, patch = {}) {
     parentId: id === LEAD_ID ? null : LEAD_ID,
     role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
+    // veteran: a worker of an earlier turn, loaded idle for the lead to
+    // message (#230); the stage greys it out until it runs.
+    veteran: false,
     status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null, leases: [],
     prevModel: null, reassignedSeq: 0, reassignedAt: null,
     doing: null,
@@ -359,10 +362,11 @@ function onSpawned(d, ev, p) {
     fidelity: p.fidelity || n.fidelity,
   })
   n.limited = limitedOf(n)
+  if (p.veteran) n.veteran = true
   addEdge(d, n.parentId, id)
   if (!n.spawnedSeen) {
     n.spawnedSeen = true
-    addFeed(d, ev, id, 'spawned', n.role, [n.runtime, n.model].filter(Boolean).join('/'))
+    addFeed(d, ev, id, n.veteran ? 'veteran' : 'spawned', n.role, [n.runtime, n.model].filter(Boolean).join('/'))
   }
 }
 
@@ -504,7 +508,8 @@ function stageApply(d, ev) {
 // buildScoreboard is the end-of-turn card: agents, time, cost (with "≈"
 // when any of it is estimated), files changed, tests run and passed.
 export function buildScoreboard(s) {
-  const nodes = s.order.map(id => s.nodes[id])
+  // Veterans that stayed idle did nothing this turn.
+  const nodes = s.order.map(id => s.nodes[id]).filter(n => !isIdleVeteran(n))
   const agents = nodes.filter(n => n.id !== LEAD_ID)
   const files = new Set()
   let cost = 0
@@ -565,6 +570,12 @@ export function replayStage(events) {
 }
 
 // ── Selectors ────────────────────────────────────────────────────────────
+
+// isIdleVeteran: a worker of an earlier turn the lead hasn't messaged this
+// turn; the stage greys it out.
+export function isIdleVeteran(n) {
+  return !!n?.veteran && n.status === 'idle'
+}
 
 // hasTeam reports whether the lead brought anyone in this turn.
 export function hasTeam(stage) {

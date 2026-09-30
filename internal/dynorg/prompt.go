@@ -25,8 +25,9 @@ var profileRules = map[string]string{
 }
 
 // workerSystemPrompt is a worker's system prompt: its agent definition,
-// its skills, and the worker contract.
-func workerSystemPrompt(st Staff, cwd string, files []string) string {
+// its skills, and the worker contract. canSpawn: it has the sub-worker
+// tools (tree.go).
+func workerSystemPrompt(st Staff, cwd string, files []string, canSpawn bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are %s, a worker in a team led by the lead agent of a mono-agent coder chat. ", st.Role)
 	fmt.Fprintf(&b, "You work in %s.\n\n", cwd)
@@ -50,7 +51,13 @@ func workerSystemPrompt(st Staff, cwd string, files []string) string {
 		b.WriteString("- Stay within these files unless the brief needs more: " + strings.Join(files, ", ") + "\n")
 	}
 	b.WriteString("- Do only what the brief asks. Other workers may be working in the same folder at the same time; don't undo their changes.\n")
-	b.WriteString("- You can't hand work to other agents and can't change anyone's access.\n")
+	if canSpawn {
+		b.WriteString("- You may bring in sub-workers with org_spawn when part of the brief can run in parallel or needs another specialty, " +
+			"org_wait for their reports and org_message them. They can't start workers of their own, their access can't exceed yours, " +
+			"and they count against the team's limits. They are stopped when you finish, so org_wait for them before your report.\n")
+	} else {
+		b.WriteString("- You can't hand work to other agents and can't change anyone's access.\n")
+	}
 	b.WriteString("- Never read, send or change the user's messages or people records.\n")
 	b.WriteString("- Finish with a report for the lead of at most 200 words: what you did, what you found, and, if you changed files, the list of files.\n")
 	return b.String()
@@ -71,7 +78,11 @@ func LeadPrompt(l Limits) string {
 		"You decide each worker's brief and may choose its role, skills, model, effort and access profile " +
 		"(coding, qa, automation, research); leave any of them out and they are picked for you. " +
 		"Only one worker edits files at a time (the others queue), so run research and review workers in parallel and " +
-		"give writers separate files. Workers can't spawn workers. " +
+		"give writers separate files. " +
+		"A worker can start sub-workers of its own only when you pass allow_spawn: true (for a big part that splits further); " +
+		"its sub-workers can't spawn, their access never exceeds the worker's, they count against this turn's limits, and they stop when it finishes. " +
+		"Workers from earlier turns of this chat are listed as veterans (status idle) in org_roster and org_wait: " +
+		"org_message one to continue its work with its context instead of spawning a new worker. " +
 		"Your own file edits take the same write lease: writers wait while you edit, and you must not edit files " +
 		"while a writing worker runs; org_wait for it first. " +
 		fmt.Sprintf("This turn allows %d workers, %d running at once%s. ", l.MaxAgents, l.MaxConcurrent, budget) +

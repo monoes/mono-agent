@@ -831,7 +831,8 @@
       "status": "{{name}} está {{text}}",
       "reassigned": "{{name}} cambió de modelo: {{detail}}",
       "finished": "{{name}} terminó ({{detail}})",
-      "message": "{{name}}: {{text}}"
+      "message": "{{name}}: {{text}}",
+      "veteran": "{{name}} vuelve de un turno anterior"
     },
     "zoomIn": "Acercar",
     "zoomOut": "Alejar",
@@ -845,7 +846,9 @@
       "org_message": "escribiendo a un agente",
       "org_stop": "deteniendo a un agente"
     },
-    "work": "Lo que hizo"
+    "work": "Lo que hizo",
+    "veteranIdle": "inactivo · de un turno anterior",
+    "veteranHelp": "Un trabajador de un turno anterior de este chat. El líder puede escribirle para que continúe con su contexto."
   },
   "orgBubble": {
     "bubbleLabel": "Organización {{name}}, {{status}}",

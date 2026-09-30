@@ -38,6 +38,9 @@ type Config struct {
 	// Answers brings the user's answers to workers' questions (#256); nil
 	// gives workers no ask_user tool.
 	Answers AnswerSource
+	// Remember keeps a worker for the conversation's later turns after
+	// each of its runs (#230, veterans.go); nil keeps nothing.
+	Remember func(Veteran)
 
 	// Quality records worker results and the lead's ratings (#230); nil
 	// records nothing.
@@ -58,6 +61,7 @@ type Conductor struct {
 	workers map[string]*worker
 	order   []string
 	spawned int
+	seq     int // the highest worker number so far, veterans included
 	cost    float64
 	// The lead's own file edits (#260): the call ids of its edit tool
 	// calls in flight, whether it holds the write lease for them, and the
@@ -97,6 +101,23 @@ type worker struct {
 	questionSeq  int
 	openQuestion string
 	hasSlot      bool
+	// The spawn tree (#230, tree.go): the worker that spawned it (nil =
+	// the lead), whether the lead let it spawn, and whether it must run
+	// confined (a research worker's sub-worker). runCtx is its current
+	// run's context, which its sub-workers' runs derive from, so they end
+	// with it.
+	parent      *worker
+	allowSpawn  bool
+	mustConfine bool
+	runCtx      context.Context
+	// suspended counts the waits (a question, its sub-workers) it holds
+	// nothing for; held is what it gave up for them.
+	suspended int
+	held      []heldLease
+	// veteran: loaded from an earlier turn of the conversation, and cwd
+	// the folder its session ran in (veterans.go).
+	veteran bool
+	cwd     string
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
@@ -176,6 +197,12 @@ type WorkerInfo struct {
 	Report  string   `json:"report,omitempty"`
 	Error   string   `json:"error,omitempty"`
 	Files   []string `json:"files_changed,omitempty"`
+	// ParentID is the worker that spawned it ("" = the lead); AllowSpawn
+	// says it may spawn sub-workers; Veteran marks a worker from an earlier
+	// turn (#230).
+	ParentID   string `json:"parent_id,omitempty"`
+	AllowSpawn bool   `json:"allow_spawn,omitempty"`
+	Veteran    bool   `json:"veteran,omitempty"`
 	// Question is the question a waiting_user worker asked the user (#256).
 	Question string `json:"question,omitempty"`
 }
@@ -186,6 +213,7 @@ func (c *Conductor) infoLocked(w *worker, withReport bool) WorkerInfo {
 		Effort: w.staff.Effort, Access: w.staff.Access, Error: w.errText, Files: sortedKeys(w.changed),
 		Question: w.openQuestion,
 	}
+	info.ParentID, info.AllowSpawn, info.Veteran = parentID(w), w.allowSpawn, w.veteran
 	for _, s := range w.staff.Skills {
 		info.Skills = append(info.Skills, s.Name)
 	}
@@ -198,6 +226,18 @@ func (c *Conductor) infoLocked(w *worker, withReport bool) WorkerInfo {
 // Spawn staffs and starts a worker. With req.Wait it also waits for it
 // (up to MaxWait).
 func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, error) {
+	return c.spawn(ctx, req, nil)
+}
+
+// spawn starts a worker for the lead (parent nil) or a sub-worker for
+// parent (tree.go). The limits count the whole tree.
+func (c *Conductor) spawn(ctx context.Context, req SpawnRequest, parent *worker) (WorkerInfo, error) {
+	if parent != nil {
+		var err error
+		if req, err = childRequest(parent, req); err != nil {
+			return WorkerInfo{}, err
+		}
+	}
 	c.mu.Lock()
 	if c.spawned >= c.cfg.Limits.MaxAgents {
 		c.mu.Unlock()
@@ -213,15 +253,23 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 	if err != nil {
 		return WorkerInfo{}, err
 	}
+	if parent != nil {
+		if err := c.fitChild(parent, req, &st); err != nil {
+			return WorkerInfo{}, err
+		}
+	}
 	c.mu.Lock()
 	if c.spawned >= c.cfg.Limits.MaxAgents { // another spawn won the race
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("this turn already has its %d workers", c.cfg.Limits.MaxAgents)
 	}
 	c.spawned++
+	c.seq++
 	w := &worker{
-		id: fmt.Sprintf("w%d", c.spawned), staff: st, brief: req.Brief, files: req.Files,
+		id: fmt.Sprintf("w%d", c.seq), staff: st, brief: req.Brief, files: req.Files,
 		model: st.Model, status: chatevents.AgentQueued, changed: map[string]bool{}, started: c.cfg.Now(),
+		parent: parent, allowSpawn: req.AllowSpawn && parent == nil, cwd: c.cfg.Cwd,
+		mustConfine: parent != nil && st.Access == ProfileResearch && parent.staff.Access == ProfileResearch,
 	}
 	c.workers[w.id] = w
 	c.order = append(c.order, w.id)
@@ -232,11 +280,11 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 		skills[i] = s.Name
 	}
 	c.cfg.Emit.Emit(chatevents.EventAgentSpawned, chatevents.AgentSpawnedPayload{
-		AgentID: w.id, Role: st.Role, AgentType: st.AgentType, Skills: skills,
+		AgentID: w.id, ParentID: parentID(w), AllowSpawn: w.allowSpawn, Role: st.Role, AgentType: st.AgentType, Skills: skills,
 		Runtime: st.Model.Runtime, Model: st.Model.Model, Fidelity: st.Model.Fidelity, Effort: st.Effort, Access: st.Access,
 		Brief: boundText(req.Brief, 2000), Why: strings.Join(st.Why, "; "), PickConfidence: st.PickConf, JevConfidence: st.JevConf,
 	})
-	c.emitMessage(w.id, "brief", "lead", w.id, req.Brief)
+	c.emitMessage(w.id, "brief", orLead(parent), w.id, req.Brief)
 	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, To: chatevents.AgentQueued})
 
 	c.mu.Lock()
@@ -244,7 +292,7 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 	c.mu.Unlock()
 	c.launch(w, ctx2, cancel, done, req.Brief, "", true)
 	if req.Wait {
-		infos := c.Wait(ctx, []string{w.id}, MaxWait)
+		infos := c.waitFor(ctx, parent, []string{w.id}, MaxWait)
 		if len(infos) == 1 {
 			return infos[0], nil
 		}
@@ -259,12 +307,14 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 // Wait blocks until the workers finish or timeout passes, then reports on
 // each; ids empty means every worker.
 func (c *Conductor) Wait(ctx context.Context, ids []string, timeout time.Duration) []WorkerInfo {
+	return c.waitFor(ctx, nil, ids, timeout)
+}
+
+// wait is Wait for whoever is waiting; ids empty means every worker.
+func (c *Conductor) wait(ctx context.Context, ids []string, timeout time.Duration) []WorkerInfo {
 	if timeout <= 0 || timeout > MaxWait {
 		timeout = MaxWait
 	}
-	// A lead that waits for workers is not editing: a writer it waits for
-	// must not wait on the lead's lease.
-	c.leadStopsEditing()
 	c.mu.Lock()
 	if len(ids) == 0 {
 		ids = slices.Clone(c.order)
@@ -293,7 +343,8 @@ report:
 	out := []WorkerInfo{}
 	for _, id := range ids {
 		if w := c.workers[id]; w != nil {
-			out = append(out, c.infoLocked(w, !running(w.status)))
+			// A veteran that hasn't run this turn has no new report.
+			out = append(out, c.infoLocked(w, !running(w.status) && w.done != nil))
 		} else {
 			out = append(out, WorkerInfo{ID: id, Status: "unknown", Error: "no such worker"})
 		}
@@ -304,6 +355,12 @@ report:
 // Message sends a follow-up to a worker that has finished: its session is
 // resumed when its runtime can, else it gets its earlier report as context.
 func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, error) {
+	return c.message(ctx, nil, id, text)
+}
+
+// message is Message from the lead (from nil), or from a worker to one of
+// its own sub-workers.
+func (c *Conductor) message(ctx context.Context, from *worker, id, text string) (WorkerInfo, error) {
 	if strings.TrimSpace(text) == "" {
 		return WorkerInfo{}, fmt.Errorf("text is required")
 	}
@@ -312,6 +369,10 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	if w == nil {
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("no worker %q", id)
+	}
+	if err := messageScope(from, w); err != nil {
+		c.mu.Unlock()
+		return WorkerInfo{}, err
 	}
 	if running(w.status) {
 		c.mu.Unlock()
@@ -326,7 +387,9 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 		return WorkerInfo{}, fmt.Errorf("%s already had its %d follow-ups this turn; spawn a new worker if the turn's limit allows", id, MaxFollowups)
 	}
 	prompt, resume := text, ""
-	if w.session != "" && w.model.Resume {
+	// A session resumes only in the folder it ran in (a veteran's may be
+	// another).
+	if w.session != "" && w.model.Resume && w.cwd == c.cfg.Cwd {
 		resume = w.session
 	} else {
 		prompt = "Your earlier report:\n" + w.report + "\n\nFollow-up from the lead:\n" + text
@@ -340,7 +403,7 @@ func (c *Conductor) Message(ctx context.Context, id, text string) (WorkerInfo, e
 	ctx2, cancel, done := c.prepareRunLocked(w)
 	info := c.infoLocked(w, false)
 	c.mu.Unlock()
-	c.emitMessage(id, "followup", "lead", id, text)
+	c.emitMessage(id, "followup", orLead(from), id, text)
 	c.launch(w, ctx2, cancel, done, prompt, resume, false)
 	return info, nil
 }
@@ -374,9 +437,15 @@ func running(status string) bool {
 // for its next run. Callers hold c.mu, together with the check that w
 // isn't already running.
 func (c *Conductor) prepareRunLocked(w *worker) (context.Context, context.CancelFunc, chan struct{}) {
-	ctx, cancel := context.WithCancel(c.ctx)
+	// A sub-worker's run ends with its parent's run (or the turn).
+	base := c.ctx
+	if w.parent != nil && w.parent.runCtx != nil {
+		base = w.parent.runCtx
+	}
+	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
-	w.cancel, w.done = cancel, done
+	w.cancel, w.done, w.runCtx = cancel, done, ctx
+	w.suspended, w.held = 0, nil
 	c.setStatusLocked(w, chatevents.AgentQueued, "")
 	return ctx, cancel, done
 }
@@ -396,6 +465,11 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 	outcome, report, errText, unconfined := c.runLeased(ctx, w, prompt, resume, first)
 	if !unconfined {
 		return outcome, report, errText
+	}
+	if w.mustConfine {
+		// A research worker's sub-worker never runs unconfined: its access
+		// can't exceed its parent's.
+		return chatevents.AgentFailed, "", errUnconfined.Error() + "; a research worker's sub-worker can't run without it"
 	}
 	// The read-only sandbox this research worker was staffed for was not
 	// applied at run time (the runtime changed since the scan, a stale
@@ -601,7 +675,7 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.BudgetUSD = remaining
 	}
 	c.mu.Unlock()
-	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files)
+	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files, c.spawnsOn(w, m, opts.Access))
 	c.workerTools(w, m, &opts)
 	var run monomind.TurnResult
 	ectx, ecancel := context.WithCancel(ctx)
@@ -767,6 +841,7 @@ func (c *Conductor) finish(w *worker, outcome, report, errText string) {
 	}
 	c.setStatusLocked(w, outcome, "")
 	c.mu.Unlock()
+	c.remember(w)
 	c.recordResult(w, outcome, errText)
 	if report != "" {
 		c.emitMessage(w.id, "result", w.id, "lead", report)

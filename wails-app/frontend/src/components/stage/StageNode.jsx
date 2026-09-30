@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Code2, Bot, User, Check, X, Lock, HelpCircle, Wrench, FileText, Coins } from 'lucide-react'
 import { suggestIcon, iconUrl, CAT_COLOR } from '../orgdesigner/roleIcons.js'
 import { runtimeLabel } from '../../lib/runtimeLabels.js'
-import { LEAD_ID } from '../../lib/orgStage.js'
+import { LEAD_ID, isIdleVeteran } from '../../lib/orgStage.js'
 import { isFresh } from './useStageMotion.js'
 import { FullAccessBadge } from '../orgdesigner/fullAccess.jsx'
 
@@ -139,6 +139,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   else if (node.doing?.active || working) line = doingText(node) || t('stage.thinking')
   else if (node.status === 'waiting_user') line = t('stage.status.waiting_user')
   else if (node.status === 'queued') line = t('stage.status.queued')
+  else if (isIdleVeteran(node)) line = t('stage.veteranIdle')
   else line = node.summary || doingText(node)
   const Fallback = isLead ? Code2 : node.native ? Bot : User
   const cost = formatCost(node.costUsd, node.costEstimated)
@@ -146,6 +147,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   const cls = [
     'stage-card',
     node.native && 'native',
+    isIdleVeteran(node) && 'veteran',
     selected && 'selected',
     node.needsYou && 'needs',
     !isLead && isFresh(node.spawnAt, now) && 'fresh',
@@ -153,6 +155,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   ].filter(Boolean).join(' ')
   return (
     <button type="button" className={cls} data-testid="stage-node" data-agent={node.id} data-status={node.status}
+      title={isIdleVeteran(node) ? t('stage.veteranHelp') : undefined}
       aria-pressed={selected} onClick={() => onSelect(node.id)}
       aria-label={t('stage.nodeLabel', { name: title, status: statusLabel, doing: line })}
       style={{ left: x, top: y, borderTopColor: color }}>

@@ -288,15 +288,20 @@ func (r Record) Event() Event {
 // with how it was staffed. Why says who chose what ("lead chose the model;
 // role from pick"). The confidences are nil when that step didn't ask.
 type AgentSpawnedPayload struct {
-	AgentID   string   `json:"agentId"`
-	ParentID  string   `json:"parentId,omitempty"` // "" = the lead
-	Role      string   `json:"role"`
-	AgentType string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
-	Skills    []string `json:"skills,omitempty"`
-	Runtime   string   `json:"runtime,omitempty"`
-	Model     string   `json:"model,omitempty"`
-	Effort    string   `json:"effort,omitempty"`
-	Access    string   `json:"access,omitempty"` // coding, qa, automation, research
+	AgentID  string `json:"agentId"`
+	ParentID string `json:"parentId,omitempty"` // "" = the lead
+	// Veteran: a worker of an earlier turn of the conversation, loaded
+	// idle for the lead to message (#230). AllowSpawn: the lead let it
+	// spawn sub-workers.
+	Veteran    bool     `json:"veteran,omitempty"`
+	AllowSpawn bool     `json:"allowSpawn,omitempty"`
+	Role       string   `json:"role"`
+	AgentType  string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
+	Skills     []string `json:"skills,omitempty"`
+	Runtime    string   `json:"runtime,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Effort     string   `json:"effort,omitempty"`
+	Access     string   `json:"access,omitempty"` // coding, qa, automation, research
 	// Fidelity is the runtime's tool-activity fidelity (#259): "full",
 	// "start-only" (tool starts, never their ends) or "none"; "" unknown.
 	Fidelity       string   `json:"fidelity,omitempty"`

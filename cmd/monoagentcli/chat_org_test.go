@@ -15,7 +15,8 @@ import (
 )
 
 // writeOrgMonomind is a fake monomind for a dynamic-org turn. The lead's
-// exec calls org_spawn (waiting) and reports the tool result it gets back;
+// exec calls org_spawn (waiting), or $ORG_LEAD_CALL and then
+// $ORG_LEAD_CALL2 when set, and saves the tool results it gets back;
 // a worker's exec (its system prompt names it a worker) edits a file and
 // reports. `pick` ranks nothing and `org skills show` fails, so staffing
 // uses the built-in roles.
@@ -47,9 +48,18 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
   fi
   echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
   echo '{"v":1,"type":"session","session_id":"th_lead"}'
-  echo '{"v":1,"type":"tool_call","id":"c1","name":"org_spawn","args":{"brief":"investigate where the cache lives","wait":true}}'
+  if [ -n "$ORG_LEAD_CALL" ]; then
+    echo "$ORG_LEAD_CALL"
+  else
+    echo '{"v":1,"type":"tool_call","id":"c1","name":"org_spawn","args":{"brief":"investigate where the cache lives","wait":true}}'
+  fi
   read -r reply
   printf '%s\n' "$reply" > '` + filepath.Join(dir, "reply.json") + `'
+  if [ -n "$ORG_LEAD_CALL2" ]; then
+    echo "$ORG_LEAD_CALL2"
+    read -r reply2
+    printf '%s\n' "$reply2" > '` + filepath.Join(dir, "reply2.json") + `'
+  fi
   echo '{"v":1,"type":"assistant","text":"The team found it."}'
   echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"The team found it."}'
   echo '{"v":1,"type":"done","exit_code":0}'

@@ -43,19 +43,7 @@ func ToolSpecs() []monomind.ToolSpec {
 	return []monomind.ToolSpec{
 		{Name: ToolRoster, Description: "List what you can staff workers with: the ready models (runtime, model, effort levels, access), the access profiles, the built-in roles, the limits, and the workers so far.",
 			Schema: obj(map[string]any{})},
-		{Name: ToolSpawn, Description: "Start a worker agent on a brief. It runs in the background in this chat's folder; use org_wait to read its report. Leave role, skills, model, effort or access out to have them picked for you.",
-			Schema: obj(map[string]any{
-				"brief":       str("What the worker should do, with everything it needs to know. It can't see this conversation."),
-				"role":        str("A role: a monomind agent id (e.g. engineering-code-reviewer) or a built-in role (coder, reviewer, tester, researcher, planner)."),
-				"skills":      strList("Skill names to give the worker."),
-				"runtime":     str("Runtime to run on (e.g. claude, codex). Must have a ready model; see org_roster."),
-				"model":       str("Model id on that runtime; see org_roster."),
-				"effort":      str("Reasoning effort, one of the model's effort levels."),
-				"access":      str("Access profile: coding (default for writers), qa, automation, or research (read only)."),
-				"files":       strList("Files the worker should keep to."),
-				"needs_write": map[string]any{"type": "boolean", "description": "The worker will edit files (it then waits its turn for the write lease)."},
-				"wait":        map[string]any{"type": "boolean", "description": "Wait for the worker to finish (up to 100s) before returning."},
-			}, "brief")},
+		spawnSpec(true),
 		{Name: ToolWait, Description: "Wait for workers to finish (up to timeout_s, at most 100) and get their reports. Call it again for workers still running.",
 			Schema: obj(map[string]any{
 				"agent_ids": strList("Workers to wait for; empty = all."),
@@ -70,11 +58,50 @@ func ToolSpecs() []monomind.ToolSpec {
 	}
 }
 
+// spawnSpec is org_spawn's spec: the lead's has allow_spawn, a spawning
+// worker's doesn't (its sub-workers can't spawn).
+func spawnSpec(lead bool) monomind.ToolSpec {
+	props := map[string]any{
+		"brief":       str("What the worker should do, with everything it needs to know. It can't see this conversation."),
+		"role":        str("A role: a monomind agent id (e.g. engineering-code-reviewer) or a built-in role (coder, reviewer, tester, researcher, planner)."),
+		"skills":      strList("Skill names to give the worker."),
+		"runtime":     str("Runtime to run on (e.g. claude, codex). Must have a ready model; see org_roster."),
+		"model":       str("Model id on that runtime; see org_roster."),
+		"effort":      str("Reasoning effort, one of the model's effort levels."),
+		"access":      str("Access profile: coding (default for writers), qa, automation, or research (read only)."),
+		"files":       strList("Files the worker should keep to."),
+		"needs_write": map[string]any{"type": "boolean", "description": "The worker will edit files (it then waits its turn for the write lease)."},
+		"wait":        map[string]any{"type": "boolean", "description": "Wait for the worker to finish (up to 100s) before returning."},
+	}
+	desc := "Start a worker agent on a brief. It runs in the background in this chat's folder; use org_wait to read its report. Leave role, skills, model, effort or access out to have them picked for you."
+	if lead {
+		props["allow_spawn"] = map[string]any{"type": "boolean", "description": "Let this worker start sub-workers of its own (they can't spawn further, and their access never exceeds the worker's)."}
+	} else {
+		desc = "Start a sub-worker on a brief. Its access can't exceed yours, and it can't start workers of its own. Use org_wait to read its report."
+	}
+	return monomind.ToolSpec{Name: ToolSpawn, Description: desc, Schema: obj(props, "brief")}
+}
+
+// childToolSpecs are the org tools of a worker the lead let spawn: its own
+// sub-workers only.
+func childToolSpecs() []monomind.ToolSpec {
+	var out []monomind.ToolSpec
+	for _, t := range ToolSpecs() {
+		switch t.Name {
+		case ToolSpawn:
+			out = append(out, spawnSpec(false))
+		case ToolWait, ToolMessage:
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // Handle runs one of the lead's org tool calls. A refusal (a limit, an
 // unknown model) is returned as an error, which the lead reads as the
 // tool's failed result.
 func (c *Conductor) Handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
-	out, err := c.handle(ctx, name, args)
+	out, err := c.handle(ctx, nil, name, args)
 	// Edits the lead made while a writer held the write lease (LeadEvent)
 	// are reported with its next org tool call, which it reads.
 	if warnings := c.takeLeadWarnings(); len(warnings) > 0 {
@@ -86,7 +113,13 @@ func (c *Conductor) Handle(ctx context.Context, name string, args json.RawMessag
 	return out, err
 }
 
-func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
+// handle runs an org tool call of the lead (parent nil) or of a worker
+// the lead let spawn (parent), which has org_spawn, org_wait and
+// org_message for its own sub-workers only.
+func (c *Conductor) handle(ctx context.Context, parent *worker, name string, args json.RawMessage) (string, error) {
+	if parent != nil && name != ToolSpawn && name != ToolWait && name != ToolMessage {
+		return "", fmt.Errorf("unknown org tool %q", name)
+	}
 	switch name {
 	case ToolRoster:
 		return marshal(c.Roster())
@@ -95,7 +128,7 @@ func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessag
 		if err := json.Unmarshal(orEmpty(args), &req); err != nil {
 			return "", fmt.Errorf("bad arguments: %v", err)
 		}
-		info, err := c.Spawn(ctx, req)
+		info, err := c.spawn(ctx, req, parent)
 		if err != nil {
 			return "", err
 		}
@@ -108,7 +141,7 @@ func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessag
 		if err := json.Unmarshal(orEmpty(args), &a); err != nil {
 			return "", fmt.Errorf("bad arguments: %v", err)
 		}
-		return marshal(map[string]any{"workers": c.Wait(ctx, a.AgentIDs, time.Duration(a.Timeout)*time.Second)})
+		return marshal(map[string]any{"workers": c.waitFor(ctx, parent, a.AgentIDs, time.Duration(a.Timeout)*time.Second)})
 	case ToolMessage:
 		var a struct {
 			AgentID string `json:"agent_id"`
@@ -117,7 +150,7 @@ func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessag
 		if err := json.Unmarshal(orEmpty(args), &a); err != nil {
 			return "", fmt.Errorf("bad arguments: %v", err)
 		}
-		info, err := c.Message(ctx, a.AgentID, a.Text)
+		info, err := c.message(ctx, parent, a.AgentID, a.Text)
 		if err != nil {
 			return "", err
 		}
