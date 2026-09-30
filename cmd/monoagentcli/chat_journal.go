@@ -12,6 +12,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/dynorg"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -83,6 +84,15 @@ type turnJournal struct {
 	cwd          string
 	coderRuntime monomind.CoderRuntime
 	nativeRun    map[string]nativeCall
+	// subagents journals the agent's native subagents (monomind#387).
+	subagents dynorg.Subagents
+}
+
+// lockedEmitter journals through a turnJournal whose mu the caller holds.
+type lockedEmitter struct{ j *turnJournal }
+
+func (e lockedEmitter) Emit(typ chatevents.EventType, payload any) {
+	_ = e.j.appendLocked(typ, payload)
 }
 
 func newTurnJournal(store *ai.AIStore, profileID, conversationID, turnID, runtimeID string, out io.Writer) *turnJournal {
@@ -192,6 +202,13 @@ func (j *turnJournal) handle(ev monomind.Event) {
 		return
 	}
 	monomind.ApplyEventToResult(&j.usage, ev)
+
+	// A native subagent's lifecycle and text are its own, not the lead's.
+	if ev.Type == monomind.EventSubagent || (ev.Type == monomind.EventAssistant && ev.ParentToolUseID != "") {
+		j.forceFlushLocked()
+		j.subagents.Handle(lockedEmitter{j}, ev, "", "")
+		return
+	}
 
 	switch ev.Type {
 	case monomind.EventStart:

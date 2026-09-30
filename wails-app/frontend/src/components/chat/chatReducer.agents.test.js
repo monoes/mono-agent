@@ -76,3 +76,17 @@ describe('worker questions (#256)', () => {
     expect(s.agents.w3.question).toBeNull()
   })
 })
+
+describe('native subagents (#230)', () => {
+  it('tracks a native subagent without a timeline row of its own', () => {
+    const s = run(
+      ev('tool.started', { callId: 'toolu_task', name: 'Task', native: true, kind: 'task' }),
+      ev('agent.spawned', { agentId: 'native:toolu_task', agentType: 'native', role: 'Explore', brief: 'Find it.' }),
+      ev('assistant.delta', { agentId: 'native:toolu_task', partId: 'native:toolu_task:p1', text: 'Searching.' }),
+      ev('agent.finished', { agentId: 'native:toolu_task', outcome: 'done', summary: 'Found.' }),
+    )
+    expect(s.parts.map(p => p.kind)).toEqual(['tool'])
+    expect(s.agents['native:toolu_task']).toMatchObject({ role: 'Explore', status: 'done', summary: 'Found.' })
+    expect(s.stage.nodes['native:toolu_task'].parts).toEqual([{ kind: 'text', partId: 'native:toolu_task:p1', text: 'Searching.' }])
+  })
+})

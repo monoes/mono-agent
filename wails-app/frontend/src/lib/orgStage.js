@@ -1,8 +1,10 @@
 // The org stage model (monoes/mono-agent#228): one coder turn's dynamic org
 // as {nodes, edges, flights, feed, quests, scoreboard}, folded from the
 // turn's journal by a pure stageReducer. The lead is always node "lead";
-// the workers it spawns come from agent.* events (#226), and Claude-native
-// subagents from their Task tool calls. Everything is keyed by the event,
+// the workers it spawns come from agent.* events (#226), and native
+// subagents from their Task tool calls, or from the agent.* events the CLI
+// journals for them when monomind reports their lifecycle (#230,
+// monomind#387; their text then fills the drawer). Everything is keyed by the event,
 // never by the clock, so replaying a recorded journal gives exactly the
 // state the live stream built.
 //
@@ -117,6 +119,9 @@ function newNode(id, patch = {}) {
     tokensIn: null, tokensOut: null, costUsd: null, costEstimated: false,
     needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false, fidelity: '',
     spawnSeq: 0, spawnAt: null, spawnedSeen: false,
+    // reported: a native subagent whose lifecycle the runner reports
+    // (agent.* events), so its Task call no longer decides its status.
+    reported: false,
     // callOrder is the agent's own tool calls, in order; their content is
     // the turn's (chatReducer's agentCalls), never copied here. parts is
     // its timeline in chatReducer's shape: its text ({kind:'text', partId,
@@ -275,9 +280,10 @@ function onToolStarted(d, ev, p) {
     const parts = dropped ? n.parts.filter(x => x.kind !== 'tool' || x.callId !== dropped) : n.parts
     n.parts = pushCapped(parts, { kind: 'tool', callId: p.callId }, MAX_PARTS)
   }
-  // A Claude-native Task call starts a subagent: its own node under the
-  // agent that called it (#226: agent.spawned{agentType:"native"} when the
-  // runner reports it; the Task call otherwise).
+  // A native Task call starts a subagent: its own node under the agent
+  // that called it. When the runner reports the subagent (#230), its
+  // agent.spawned{agentType:"native"} for the same id follows and fills
+  // the node in.
   if (kind === 'task' && !d.nativeByCall[p.callId]) {
     const id = `native:${p.callId}`
     const brief = args.prompt || args.description || ''
@@ -285,7 +291,7 @@ function onToolStarted(d, ev, p) {
     Object.assign(sub, {
       parentId: owner, native: true, agentType: 'native', role: args.subagent_type || args.description || '',
       brief: clip(brief, 2000), status: 'working', spawnSeq: ev.seq ?? 0, spawnAt: ev.at || null,
-      runtime: d.nodes[owner]?.runtime || '', model: d.nodes[owner]?.model || '',
+      runtime: d.nodes[owner]?.runtime || '', model: d.nodes[owner]?.model || '', spawnedSeen: true,
     })
     d.nativeByCall = { ...d.nativeByCall, [p.callId]: id }
     addEdge(d, owner, id)
@@ -306,7 +312,9 @@ function onToolCompleted(d, ev, p) {
     if (p.ok !== false) n.testsPassed += 1
   }
   const nativeId = d.nativeByCall[p.callId]
-  if (nativeId && d.has(nativeId)) {
+  // A reported subagent's own agent.finished already ended it; the Task
+  // call's end only closes one it never reported finishing.
+  if (nativeId && d.has(nativeId) && !(d.nodes[nativeId].reported && FINISHED.has(d.nodes[nativeId].status))) {
     const failed = p.ok === false || p.cancelled || p.denied
     const sub = d.node(nativeId)
     setStatus(d, ev, nativeId, p.cancelled ? 'cancelled' : failed ? 'failed' : 'done')
@@ -358,6 +366,13 @@ function onSpawned(d, ev, p) {
     spawnSeq: n.spawnSeq || ev.seq || 0, spawnAt: n.spawnAt || ev.at || null,
     fidelity: p.fidelity || n.fidelity,
   })
+  if (n.native) {
+    n.reported = true
+    // It runs inside its caller's exec, on its caller's model.
+    const caller = d.nodes[n.parentId]
+    if (!n.runtime && caller) n.runtime = caller.runtime
+    if (!n.model && caller) n.model = caller.model
+  }
   n.limited = limitedOf(n)
   addEdge(d, n.parentId, id)
   if (!n.spawnedSeen) {

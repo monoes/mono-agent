@@ -610,8 +610,13 @@ Each worker's access profile is set by the lead, and none goes past the
 coder chat's own full access. A `research` worker is confined, in order of
 preference, by `--access read`, else by a read-only sandbox
 (`--sandbox read-only` where the runtime's `sandbox_modes` list it). With
-neither, only its prompt keeps it from editing, so it takes the write lease
-like a writer. A confined researcher only falls back to models that confine
+neither (monomind without `agent-exec-access-read`, or a runtime with no
+`read` access mode and no sandbox), only its prompt keeps it from editing,
+so it runs with full access and takes the write lease like a writer. Staffing
+by rule picks a model that confines research before a cheaper one that
+doesn't. Each `agent.status` of a research worker says which path its run
+took (`confinement`: `access-read`, `sandbox-read-only` or `write-lease`).
+A confined researcher only falls back to models that confine
 it too. The sandbox fails closed: the run passes `RequireSandbox`, so if
 `Exec` can't apply the read-only sandbox at run time (the scan was stale,
 the runtime changed), or the start event reports anything but `sandboxed`,
@@ -704,7 +709,13 @@ a running total across its execs, never part of the lead's usage.
 `leases` its worker holds (`write`, `browser`), which is where the app's
 pen and browser indicators come from. The lead's own write lease is
 reported the same way, as `agent.status` for `lead` (`working`, with
-`leases`). The lead's own events carry no
+`leases`). A native subagent (Claude's `Task`/`Agent` tool; monomind's
+`subagent` events, `agent-exec-subagent-events`) is journaled as agent
+`native:<call id>` under the agent that called it: `agent.spawned`
+(`agentType: "native"`), `agent.status` with its progress summary as
+`detail`, its own text as `assistant.delta` (never part of its caller's
+text or answer), and `agent.message` (result) plus `agent.finished`. With an
+older monomind the stage infers it from the `Task` call instead. The lead's own events carry no
 `agentId`. `chat history events --agent <id|lead>` filters a turn's
 events, and `chat history transcript --by-agent <conversation> <turn>`
 shows the turn split by agent.

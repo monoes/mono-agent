@@ -136,7 +136,9 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   const working = node.status === 'working' || node.status === 'starting'
   let line = ''
   if (node.status === 'waiting_lease') line = t('stage.waitingLease', { lease: t(`stage.lease.${node.statusDetail === 'browser' ? 'browser' : 'pen'}`) })
-  else if (node.doing?.active || working) line = doingText(node) || t('stage.thinking')
+  // A reported native subagent's progress summary (#230) says more than its
+  // last finished call.
+  else if (node.doing?.active || working) line = (node.doing?.active && doingText(node)) || (node.native && node.statusDetail) || doingText(node) || t('stage.thinking')
   else if (node.status === 'waiting_user') line = t('stage.status.waiting_user')
   else if (node.status === 'queued') line = t('stage.status.queued')
   else line = node.summary || doingText(node)

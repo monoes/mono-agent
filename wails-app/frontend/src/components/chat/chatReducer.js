@@ -100,6 +100,9 @@ function agentPatch(state, ev) {
   const put = (next) => ({ agents: { ...agents, [id]: { ...cur, ...next } } })
   switch (ev.type) {
     case 'agent.spawned':
+      // A native subagent (#230) already shows as its Task call's card: no
+      // row of its own in the timeline, only the stage's node.
+      if (p.agentType === 'native') return put({ role: p.role, agentType: p.agentType, brief: p.brief, startedAt: ev.at })
       return {
         ...put({ role: p.role, agentType: p.agentType, runtime: p.runtime, model: p.model, effort: p.effort, access: p.access, skills: p.skills || [], brief: p.brief, why: p.why, startedAt: ev.at }),
         parts: state.parts.some(x => x.kind === 'agent' && x.agentId === id) ? state.parts : [...state.parts, { kind: 'agent', agentId: id }],
