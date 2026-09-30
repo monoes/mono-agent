@@ -28,7 +28,7 @@
 //   question from a role            → agent.message question (amber)
 //   org started / org stopped       → turn.started / turn.finished
 
-import { stageReducer, initialStage, LEAD_ID, MAX_CALLS } from './orgStage.js'
+import { stageReducer, initialStage, ownerOf, LEAD_ID, MAX_CALLS } from './orgStage.js'
 import {
   initialState as activityInitial, applyEvent as activityApply, parseAddress, pendingGates,
 } from '../components/orgdesigner/orgActivity.js'
@@ -128,14 +128,8 @@ function emitter(s, ev) {
   }
 }
 
-// ownerOf is the node a call belongs to, as the stage decides it: a call
-// made inside a native subagent belongs to that subagent's node.
-function ownerOf(stage, p) {
-  return (p.parentCallId && stage.nativeByCall[p.parentCallId]) || stage.callOwner[p.callId] || p.agentId || LEAD_ID
-}
-
 // recordCall keeps a call in the shape ChatTimeline renders, under the node
-// the stage files it under, dropping that node's oldest once it has more
+// the stage files it under (its own ownerOf), dropping that node's oldest once it has more
 // than MAX_CALLS, exactly as the stage caps the node's callOrder. The
 // lead's own calls aren't kept (the stage keeps no order for them).
 function recordCall(s, stage, type, p, at) {

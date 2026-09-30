@@ -234,7 +234,8 @@ function addFiles(n, paths) {
 
 // ownerOf is the node a tool event belongs to: a call made inside a native
 // subagent belongs to that subagent, else to its worker, else to the lead.
-function ownerOf(d, p) {
+// d is a stage (or its draft); the running-org adapter files calls by it.
+export function ownerOf(d, p) {
   if (p.parentCallId && d.nativeByCall[p.parentCallId]) return d.nativeByCall[p.parentCallId]
   if (d.callOwner[p.callId]) return d.callOwner[p.callId]
   return p.agentId || LEAD_ID
