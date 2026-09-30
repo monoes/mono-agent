@@ -299,9 +299,65 @@ func OrgStatus(ctx context.Context, projectRoot, name string) (json.RawMessage, 
 	}
 	// `status` with no name is a list too, and carries the same phantoms.
 	if name == "" {
-		return dropUnnamableOrgs(raw), nil
+		return deadRunsStopped(projectRoot, dropUnnamableOrgs(raw)), nil
 	}
-	return raw, nil
+	return deadRunsStopped(projectRoot, raw), nil
+}
+
+// deadRunsStopped reports a "running" org whose run is dead (OrgRunDead)
+// as "stopped", in a one-org status or in the list's items, so the GUI and
+// every caller agree with `org summary` (#294, monoes/monomind#573).
+func deadRunsStopped(projectRoot string, raw json.RawMessage) json.RawMessage {
+	fix := func(item json.RawMessage) (json.RawMessage, bool) {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(item, &obj) != nil {
+			return item, false
+		}
+		var name, status string
+		_ = json.Unmarshal(obj["name"], &name)
+		_ = json.Unmarshal(obj["status"], &status)
+		if status != "running" || !orgdesign.ValidOrgName(name) || !OrgRunDead(projectRoot, name) {
+			return item, false
+		}
+		obj["status"] = json.RawMessage(`"stopped"`)
+		out, err := json.Marshal(obj)
+		if err != nil {
+			return item, false
+		}
+		return out, true
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return raw
+	}
+	itemsRaw, isList := envelope["items"]
+	if !isList {
+		out, _ := fix(raw)
+		return out
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(itemsRaw, &items) != nil {
+		return raw
+	}
+	changed := false
+	for i, item := range items {
+		if out, ok := fix(item); ok {
+			items[i], changed = out, true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return raw
+	}
+	envelope["items"] = b
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // OrgLogs returns the org's bus event log (`org logs <name>`). There is no
