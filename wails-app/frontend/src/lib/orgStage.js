@@ -108,7 +108,7 @@ function newNode(id, patch = {}) {
   return {
     id,
     parentId: id === LEAD_ID ? null : LEAD_ID,
-    role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
+    role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '', branch: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
     // veteran: a worker of an earlier turn, loaded idle for the lead to
     // message (#230); the stage greys it out until it runs.
@@ -360,6 +360,8 @@ function onSpawned(d, ev, p) {
     pickConfidence: p.pickConfidence ?? n.pickConfidence, jevConfidence: p.jevConfidence ?? n.jevConfidence,
     spawnSeq: n.spawnSeq || ev.seq || 0, spawnAt: n.spawnAt || ev.at || null,
     fidelity: p.fidelity || n.fidelity,
+    // An isolated writer's own git branch (#230).
+    branch: p.branch || n.branch,
   })
   n.limited = limitedOf(n)
   if (p.veteran) n.veteran = true
@@ -449,6 +451,7 @@ function stageApply(d, ev) {
       break
     case 'agent.status':
       if (!p.agentId || !p.to) break
+      if (p.branch) d.node(p.agentId).branch = p.branch
       // A repeat of the same status only updates the leases it holds.
       if (d.nodes[p.agentId]?.status === p.to) {
         setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)

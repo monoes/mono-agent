@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // keptWorkers collects what Config.Remember is handed, as the store would.
@@ -218,5 +219,45 @@ func TestResearchVeteranSubWorkerStaysConfined(t *testing.T) {
 			}
 			assertClean(t, c)
 		})
+	}
+}
+
+// With isolated writers, a writing veteran gets its own worktree when the
+// lead messages it, like a new writer, and is re-briefed there: its
+// session ran in another folder.
+func TestWritingVeteranGetsAWorktreeWhenWritersAreIsolated(t *testing.T) {
+	needGit(t)
+	repo := newRepo(t)
+	fx := &fileExec{}
+	var mu sync.Mutex
+	var resumes []string
+	em := &recEmitter{}
+	c := New(context.Background(), Config{
+		Cwd: repo, Limits: treeLimits, Staffer: &Staffer{Roster: []Model{opus}, Lead: opus}, ReadAccess: true, Emit: em,
+		Writers: WritersIsolated, TurnID: "t2",
+		Exec: func(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
+			mu.Lock()
+			resumes = append(resumes, o.Resume)
+			mu.Unlock()
+			return fx.exec(ctx, o, on)
+		},
+	})
+	defer c.Close()
+	c.AddVeterans([]Veteran{{ID: "w1", Role: "Coder", Access: ProfileCoding, Runtime: "claude", Model: "opus", Session: "s1", Cwd: repo, Report: "wrote a.txt"}})
+	if _, err := c.Message(context.Background(), "w1", "now b.txt"); err != nil {
+		t.Fatal(err)
+	}
+	c.Wait(context.Background(), []string{"w1"}, 0)
+	fx.mu.Lock()
+	cwds := slices.Clone(fx.cwds)
+	fx.mu.Unlock()
+	if len(cwds) != 1 || realPath(t, cwds[0]) == realPath(t, repo) {
+		t.Errorf("the veteran writer ran in %v, not its own worktree", cwds)
+	}
+	if len(resumes) != 1 || resumes[0] != "" {
+		t.Errorf("resumed %v in a folder its session never ran in", resumes)
+	}
+	if !branchExists(t, repo, branchName("t2", "w1")) {
+		t.Error("no branch for the veteran writer")
 	}
 }

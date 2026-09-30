@@ -787,6 +787,8 @@
     "closeDrawer": "Cerrar los detalles del agente",
     "access": "acceso: {{access}}",
     "effort": "esfuerzo: {{effort}}",
+    "branch": "rama: {{branch}}",
+    "branchHelp": "Este agente escribe en su propio worktree de git, en esta rama; el líder la fusiona en la carpeta del chat.",
     "reassignedFrom": "Cambió desde {{model}}: {{reason}}",
     "brief": "Encargo",
     "why": "Por qué este agente",

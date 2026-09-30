@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/dynorg"
 )
 
 // `chat history …` reads and writes the desktop chat's conversation, turn
@@ -98,6 +100,10 @@ type chatFinishResult struct {
 type chatReconcileResult struct {
 	Reconciled []ai.TurnRecord `json:"reconciled"`
 	Errors     []string        `json:"errors"`
+	// Worktrees are the isolated org writers' worktrees of turns no longer
+	// active that were cleaned up, with the branches kept because their
+	// work was never merged (#230).
+	Worktrees []dynorg.TreeCleanup `json:"worktrees"`
 }
 
 func newChatHistoryCmd(cfg *globalConfig) *cobra.Command {
@@ -502,7 +508,7 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 			turns, errs := store.ReconcileActiveTurns(exceptOwner)
 			// Mailbox folders of turns whose process died (#255).
 			sweepAgentControl(agentControlRoot(cfg), time.Now())
-			res := chatReconcileResult{Reconciled: []ai.TurnRecord{}, Errors: []string{}}
+			res := chatReconcileResult{Reconciled: []ai.TurnRecord{}, Errors: []string{}, Worktrees: reconcileWorktrees(cmd.Context(), store)}
 			for _, t := range turns {
 				res.Reconciled = append(res.Reconciled, t.Record())
 			}
@@ -515,6 +521,14 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 				}
 			} else {
 				fmt.Printf("interrupted %d turn(s)\n", len(res.Reconciled))
+				for _, w := range res.Worktrees {
+					switch {
+					case w.Error != "":
+						fmt.Printf("kept worktree %s: %s\n", w.Path, w.Error)
+					case w.BranchKept:
+						fmt.Printf("removed worktree %s; kept unmerged branch %s\n", w.Path, w.Branch)
+					}
+				}
 			}
 			if len(errs) > 0 {
 				return fmt.Errorf("reconcile: %d turn(s) failed: %s", len(errs), errs[0])
@@ -639,4 +653,22 @@ func setOrgMode(cfg *globalConfig, id, mode string) (ai.Conversation, error) {
 	}
 	conv.OrgMode = mode
 	return conv, nil
+}
+
+// reconcileWorktrees cleans up, in every coder folder, the worktrees of
+// isolated org writers whose turn is no longer active (#230).
+func reconcileWorktrees(ctx context.Context, store *ai.AIStore) []dynorg.TreeCleanup {
+	out := []dynorg.TreeCleanup{}
+	active, err := activeTurnIDs(store)
+	if err != nil {
+		return out
+	}
+	folders, err := store.CoderFolders()
+	if err != nil {
+		return out
+	}
+	for _, cwd := range folders {
+		out = append(out, dynorg.ReconcileWorktrees(ctx, cwd, func(id string) bool { return active[id] })...)
+	}
+	return out
 }

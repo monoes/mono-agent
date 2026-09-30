@@ -45,6 +45,12 @@ type Config struct {
 	// Quality records worker results and the lead's ratings (#230); nil
 	// records nothing.
 	Quality *Quality
+
+	// Writers is WritersIsolated to give each writer its own git worktree
+	// (worktree.go); anything else keeps the write lease. TurnID names the
+	// worktrees and branches.
+	Writers string
+	TurnID  string
 }
 
 // Conductor runs one lead turn's workers.
@@ -71,6 +77,10 @@ type Conductor struct {
 	leadEdits    map[string]bool
 	leadHolds    bool
 	leadWarnings []string
+	// iso is set when writers get their own worktrees (worktree.go);
+	// mergeMu runs org_merge calls one at a time.
+	iso     *isolation
+	mergeMu sync.Mutex
 }
 
 type worker struct {
@@ -123,6 +133,7 @@ type worker struct {
 	veteran  bool
 	cwd      string
 	notReady bool // a veteran whose model is no longer ready
+	treeDone bool // a veteran's worktree was tried (veteranWorktree)
 	// unconfined: a research worker whose read-only sandbox could not be
 	// applied at run time; it runs holding the write lease instead.
 	unconfined bool
@@ -131,6 +142,11 @@ type worker struct {
 	unusable map[string]bool
 	stream   workerStream // its text and live usage (workerstream.go)
 	leases   []heldLease  // the leases it holds, for agent.status (lease.go)
+	// worktree, branch and workDir are set for an isolated writer
+	// (worktree.go): it runs in workDir, inside worktree, on branch.
+	// merging is set while org_merge commits and merges its branch.
+	worktree, branch, workDir string
+	merging                   bool
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -175,12 +191,14 @@ func New(ctx context.Context, cfg Config) *Conductor {
 		cfg.Exec = monomind.Exec
 	}
 	cctx, cancel := context.WithCancel(ctx)
-	return &Conductor{
+	c := &Conductor{
 		cfg: cfg, ctx: cctx, cancel: cancel,
 		slots: make(chan struct{}, cfg.Limits.MaxConcurrent),
 		write: newLease(), browser: newLease(),
 		workers: map[string]*worker{}, leadEdits: map[string]bool{},
 	}
+	c.initWriters()
+	return c
 }
 
 // Close cancels every worker still running and waits for them to finish.
@@ -189,6 +207,7 @@ func (c *Conductor) Close() {
 	c.cancel()
 	c.wg.Wait()
 	c.leadStopsEditing()
+	c.cleanupWorktrees()
 }
 
 // WorkerInfo is what the lead's tools report about a worker.
@@ -213,13 +232,15 @@ type WorkerInfo struct {
 	Veteran    bool   `json:"veteran,omitempty"`
 	// Question is the question a waiting_user worker asked the user (#256).
 	Question string `json:"question,omitempty"`
+	// Branch is an isolated writer's branch (#230).
+	Branch string `json:"branch,omitempty"`
 }
 
 func (c *Conductor) infoLocked(w *worker, withReport bool) WorkerInfo {
 	info := WorkerInfo{
 		ID: w.id, Role: w.staff.Role, Status: w.status, Runtime: w.model.Runtime, Model: w.model.Model,
 		Effort: w.staff.Effort, Access: w.staff.Access, Error: w.errText, Files: sortedKeys(w.changed),
-		Question: w.openQuestion,
+		Question: w.openQuestion, Branch: w.branch,
 	}
 	info.ParentID, info.AllowSpawn, info.Veteran = parentID(w), w.allowSpawn, w.veteran
 	for _, s := range w.staff.Skills {
@@ -283,6 +304,7 @@ func (c *Conductor) spawn(ctx context.Context, req SpawnRequest, parent *worker)
 	c.order = append(c.order, w.id)
 	c.mu.Unlock()
 
+	c.addWorktree(w)
 	skills := make([]string, len(st.Skills))
 	for i, s := range st.Skills {
 		skills[i] = s.Name
@@ -291,9 +313,10 @@ func (c *Conductor) spawn(ctx context.Context, req SpawnRequest, parent *worker)
 		AgentID: w.id, ParentID: parentID(w), AllowSpawn: w.allowSpawn, Role: st.Role, AgentType: st.AgentType, Skills: skills,
 		Runtime: st.Model.Runtime, Model: st.Model.Model, Fidelity: st.Model.Fidelity, Effort: st.Effort, Access: st.Access,
 		Brief: boundText(req.Brief, 2000), Why: strings.Join(st.Why, "; "), PickConfidence: st.PickConf, JevConfidence: st.JevConf,
+		Branch: w.branch,
 	})
 	c.emitMessage(w.id, "brief", orLead(parent), w.id, req.Brief)
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, To: chatevents.AgentQueued})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, To: chatevents.AgentQueued, Branch: w.branch})
 
 	c.mu.Lock()
 	ctx2, cancel, done := c.prepareRunLocked(w)
@@ -372,6 +395,7 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 	if strings.TrimSpace(text) == "" {
 		return WorkerInfo{}, fmt.Errorf("text is required")
 	}
+	c.veteranWorktree(id)
 	c.mu.Lock()
 	w := c.workers[id]
 	if w == nil {
@@ -390,6 +414,10 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 		c.mu.Unlock()
 		return WorkerInfo{}, fmt.Errorf("%s is still working; org_wait for it first", id)
 	}
+	if w.merging {
+		c.mu.Unlock()
+		return WorkerInfo{}, fmt.Errorf("%s's branch is being merged; send the follow-up once org_merge returns", id)
+	}
 	if err := c.budgetErrLocked(); err != nil {
 		c.mu.Unlock()
 		return WorkerInfo{}, err
@@ -399,9 +427,9 @@ func (c *Conductor) message(ctx context.Context, from *worker, id, text string) 
 		return WorkerInfo{}, fmt.Errorf("%s already had its %d follow-ups this turn; spawn a new worker if the turn's limit allows", id, MaxFollowups)
 	}
 	prompt, resume := text, ""
-	// A session resumes only in the folder it ran in (a veteran's may be
-	// another).
-	if w.session != "" && w.model.Resume && w.cwd == c.cfg.Cwd {
+	// A session resumes only in the folder it ran in (a veteran's, or an
+	// isolated writer's worktree of an earlier turn, is another).
+	if w.session != "" && w.model.Resume && w.cwd == orElse(w.workDir, c.cfg.Cwd) {
 		resume = w.session
 	} else {
 		prompt = "Your earlier report:\n" + w.report + "\n\nFollow-up from the lead:\n" + text
@@ -457,6 +485,7 @@ func (c *Conductor) prepareRunLocked(w *worker) (context.Context, context.Cancel
 	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
 	w.cancel, w.done, w.runCtx = cancel, done, ctx
+	w.cwd = orElse(w.workDir, c.cfg.Cwd)
 	w.suspended, w.held = 0, nil
 	c.setStatusLocked(w, chatevents.AgentQueued, "")
 	return ctx, cancel, done
@@ -469,6 +498,7 @@ func (c *Conductor) launch(w *worker, ctx context.Context, cancel context.Cancel
 		defer close(done)
 		defer cancel()
 		outcome, report, errText := c.run(ctx, w, prompt, resume, first)
+		c.commitWorktree(w)
 		c.finish(w, outcome, report, errText)
 	}()
 }
@@ -608,15 +638,15 @@ func (c *Conductor) confined(m Model) bool {
 // needsWriteLease: every editing profile, and a research worker that
 // nothing confines (only its prompt keeps it from editing).
 func (c *Conductor) needsWriteLease(w *worker) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if writes(w.staff.Access) {
-		return true
+		return w.worktree == "" // an isolated writer edits only its own worktree
 	}
 	if w.mustConfine {
 		// Never: it runs confined or not at all (execOnce).
 		return false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return w.unconfined || !c.confined(w.model)
 }
 
@@ -658,7 +688,8 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		return nil, errUnconfined
 	}
 	opts := c.cfg.Base
-	opts.Runtime, opts.Model, opts.Cwd, opts.Prompt, opts.Resume = m.Runtime, m.Model, c.cfg.Cwd, prompt, resume
+	dir := c.workDir(w)
+	opts.Runtime, opts.Model, opts.Cwd, opts.Prompt, opts.Resume = m.Runtime, m.Model, dir, prompt, resume
 	opts.Effort = ""
 	if slices.Contains(m.Efforts, w.staff.Effort) {
 		opts.Effort = w.staff.Effort
@@ -697,7 +728,7 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 		opts.BudgetUSD = remaining
 	}
 	c.mu.Unlock()
-	opts.SystemPrompt = workerSystemPrompt(w.staff, c.cfg.Cwd, w.files, c.spawnsOn(w, m, opts.Access))
+	opts.SystemPrompt = workerSystemPrompt(w.staff, dir, w.files, c.spawnsOn(w, m, opts.Access)) + c.worktreeRule(w)
 	c.workerTools(w, m, &opts)
 	var run monomind.TurnResult
 	ectx, ecancel := context.WithCancel(ctx)
@@ -845,7 +876,7 @@ func (c *Conductor) setStatusLocked(w *worker, to, detail string) {
 	}
 	from := w.status
 	w.status = to
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: leaseNames(w.leases)})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: leaseNames(w.leases), Branch: w.branch})
 }
 
 func (c *Conductor) finish(w *worker, outcome, report, errText string) {

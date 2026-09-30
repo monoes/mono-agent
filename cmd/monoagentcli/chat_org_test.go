@@ -267,13 +267,21 @@ func TestCoderSetOrgSettings(t *testing.T) {
 	out, code := runCoderCLI(t, dbPath, "status")
 	var st coderStatus
 	decodeChatJSON(t, out, &st)
-	if code != 0 || st.OrgMaxAgents != 6 || st.OrgMaxConcurrent != 3 || st.OrgModelPicker != "lead-then-jev" {
+	if code != 0 || st.OrgMaxAgents != 6 || st.OrgMaxConcurrent != 3 || st.OrgModelPicker != "lead-then-jev" || st.OrgWriters != "shared" {
 		t.Fatalf("defaults = %+v", st)
 	}
 	out, code = runCoderCLI(t, dbPath, "set", "--org-max-agents", "4", "--org-max-concurrent", "2", "--org-budget-usd", "1.5", "--org-model-picker", "lead")
 	decodeChatJSON(t, out, &st)
 	if code != 0 || st.OrgMaxAgents != 4 || st.OrgMaxConcurrent != 2 || st.OrgBudgetUSD != 1.5 || st.OrgModelPicker != "lead" {
 		t.Fatalf("set = exit %d %+v", code, st)
+	}
+	out, code = runCoderCLI(t, dbPath, "set", "--org-writers", "isolated")
+	decodeChatJSON(t, out, &st)
+	if code != 0 || st.OrgWriters != "isolated" || st.OrgModelPicker != "lead" {
+		t.Fatalf("set writers = exit %d %+v", code, st)
+	}
+	if _, code := runCoderCLI(t, dbPath, "set", "--org-writers", "parallel"); code != 3 {
+		t.Errorf("bad writers: exit %d", code)
 	}
 	if _, code := runCoderCLI(t, dbPath, "set", "--org-model-picker", "dice"); code != 3 {
 		t.Errorf("bad picker: exit %d", code)

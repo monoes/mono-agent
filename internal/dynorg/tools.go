@@ -180,6 +180,18 @@ func (c *Conductor) handle(ctx context.Context, parent *worker, name string, arg
 			return "", err
 		}
 		return marshal(res)
+	case ToolMerge:
+		var a struct {
+			AgentID string `json:"agent_id"`
+		}
+		if err := json.Unmarshal(orEmpty(args), &a); err != nil {
+			return "", fmt.Errorf("bad arguments: %v", err)
+		}
+		res, err := c.Merge(ctx, a.AgentID)
+		if err != nil {
+			return "", err
+		}
+		return marshal(res)
 	}
 	return "", fmt.Errorf("unknown org tool %q", name)
 }

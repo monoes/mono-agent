@@ -66,6 +66,7 @@ export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, on
           <ModelChip node={node} fallback={isLead ? leadInfo : null} now={0} />
           {node.access && <span className="stage-chip" style={{ color: 'var(--text-secondary)' }}>{t('stage.access', { access: node.access })}</span>}
           {node.effort && <span className="stage-chip" style={{ color: 'var(--text-secondary)' }}>{t('stage.effort', { effort: node.effort })}</span>}
+          {node.branch && <span className="stage-chip" data-testid="stage-branch" title={t('stage.branchHelp')} style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>{t('stage.branch', { branch: node.branch })}</span>}
         </div>
         {node.prevModel && (
           <div style={{ color: '#fbbf24' }}>{t('stage.reassignedFrom', { model: `${node.prevModel.runtime}/${node.prevModel.model || 'default'}`, reason: node.prevModel.reason })}</div>

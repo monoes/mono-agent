@@ -829,6 +829,8 @@
     "closeDrawer": "Close the agent details",
     "access": "access: {{access}}",
     "effort": "effort: {{effort}}",
+    "branch": "branch: {{branch}}",
+    "branchHelp": "This writer works in its own git worktree on this branch; the lead merges it into the chat folder.",
     "reassignedFrom": "Switched from {{model}}: {{reason}}",
     "brief": "Brief",
     "why": "Why this agent",

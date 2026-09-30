@@ -225,6 +225,15 @@ describe('StageDrawer', () => {
     expect(work.querySelector('strong')).toHaveTextContent('fake clock')
   })
 
+  it('shows an isolated writer\'s branch, and none for a shared writer (#230)', () => {
+    expect(stage.nodes.w2.branch).toBe('')
+    const { rerender } = render(<StageDrawer node={stage.nodes.w2} calls={agentCalls} turnId="t" onClose={() => {}} />)
+    expect(screen.queryByTestId('stage-branch')).toBeNull()
+    const s = stageReducer(stage, { seq: 1000, type: 'agent.status', payload: { agentId: 'w2', to: 'working', branch: 'monoagent/t/w2' } })
+    rerender(<StageDrawer node={s.nodes.w2} calls={agentCalls} turnId="t" onClose={() => {}} />)
+    expect(screen.getByTestId('stage-branch')).toHaveTextContent('branch: monoagent/t/w2')
+  })
+
   it('shows a native subagent\'s own calls flat, outside its caller\'s Task card', () => {
     render(<StageDrawer node={stage.nodes['native:w1:t1']} calls={agentCalls} turnId="t" onClose={() => {}} />)
     expect(screen.getByTestId('stage-tools')).toHaveTextContent('cache_test.go')
