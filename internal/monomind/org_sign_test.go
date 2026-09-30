@@ -239,11 +239,13 @@ func TestHandshakeInReadsCapabilitiesInEitherPlace(t *testing.T) {
 	}
 }
 
-// A version shim (mise here) picks the monomind per project: it is
-// resolved in the project root (`mise which monomind`) and the handshake,
-// the help and the sign all run through that exact binary, in that root.
-// The shim itself is never run for them.
-func TestSignToolPinsTheBinaryAShimPicks(t *testing.T) {
+// A version shim (mise here) is resolved with `mise which monomind` run
+// from the home directory — never the project root, where a role can plant
+// a .tool-versions or mise.toml pointing at a binary it wrote — and the
+// binary must sit in mise's installs, outside the project. The handshake,
+// help and sign then run through that exact binary, in the project root;
+// the shim itself is never run for them.
+func TestSignToolResolvesShimsSafely(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake binaries are shell scripts")
 	}
@@ -258,111 +260,107 @@ func TestSignToolPinsTheBinaryAShimPicks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	old := filepath.Join(base, "installs", "2.21", "monomind")
-	cur := filepath.Join(base, "installs", "2.22", "monomind")
-	fake := func(name, version, caps, help string) string {
+	fake := func(name string) string {
 		return `echo "` + name + ` $(pwd) $*" >> '` + log + "'\n" +
-			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"` + caps + `]}'; exit 0; fi` + "\n" +
-			`if [ "$3" = "--help" ]; then echo '` + help + `'; exit 0; fi` + "\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"2.22.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","org-sign-expect-hash"]}'; exit 0; fi` + "\n" +
+			`if [ "$3" = "--help" ]; then echo '  --expect-hash <hex>'; exit 0; fi` + "\n" +
 			"echo signed\n"
 	}
-	write(old, fake("OLD", "2.21.0", "", "  --yes"))
-	write(cur, fake("CUR", "2.22.0", `,"org-sign-expect-hash"`, "  --expect-hash <hex>"))
+	t.Setenv("MISE_DATA_DIR", filepath.Join(base, "mise-data"))
+	good := filepath.Join(base, "mise-data", "installs", "monomind", "2.22.0", "bin", "monomind")
+	write(good, fake("GOOD"))
 	shim := filepath.Join(base, "mise", "shims", "monomind")
 	write(shim, `echo "SHIM $*" >> '`+log+"'\nexit 3\n")
-	write(filepath.Join(base, "bin", "mise"),
-		`if [ "$1" = "which" ] && [ -f .tool-versions ]; then echo '`+old+`'; exit 0; fi`+"\n"+
-			`if [ "$1" = "which" ]; then echo '`+cur+`'; exit 0; fi`+"\nexit 1\n")
+	project := t.TempDir()
+	planted := filepath.Join(project, ".cache", "n", "bin", "monomind")
+	write(planted, fake("PLANTED"))
+	// The planted .tool-versions would point mise at the planted binary —
+	// but only when mise runs in the project.
+	_ = os.WriteFile(filepath.Join(project, ".tool-versions"), []byte("monomind path:./.cache/n\n"), 0o644)
+	mise := func(body string) {
+		write(filepath.Join(base, "bin", "mise"), `echo "MISE $(pwd)" >> '`+log+"'\n"+body)
+	}
+	mise(`if [ -f .tool-versions ]; then echo '` + planted + `'; else echo '` + good + `'; fi` + "\n")
 	t.Setenv("PATH", filepath.Join(base, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(EnvOverride, shim)
 	ResetCapabilityCache()
 	t.Cleanup(ResetCapabilityCache)
-
-	pinned, plain := t.TempDir(), t.TempDir()
-	_ = os.WriteFile(filepath.Join(pinned, ".tool-versions"), []byte("monomind 2.21.0\n"), 0o644)
 	ctx := context.Background()
-	if OrgSignExpectsHash(ctx, pinned) {
-		t.Error("claimed --expect-hash where the shim picks 2.21")
+
+	if !OrgSignExpectsHash(ctx, project) {
+		t.Fatal("the installed monomind was not used")
 	}
-	if !OrgSignExpectsHash(ctx, plain) {
-		t.Error("missed --expect-hash where the shim picks 2.22")
-	}
-	for _, root := range []string{pinned, plain} {
-		if _, err := OrgSign(ctx, root, "growth", "abc123"); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := OrgSign(ctx, project, "growth", "abc123"); err != nil {
+		t.Fatal(err)
 	}
 	calls, _ := os.ReadFile(log)
-	realPinned, _ := filepath.EvalSymlinks(pinned)
-	realPlain, _ := filepath.EvalSymlinks(plain)
-	for _, want := range []string{
-		"OLD " + realPinned + " org sign growth --yes\n",
-		"CUR " + realPlain + " org sign growth --yes --expect-hash abc123\n",
-	} {
+	home, _ := os.UserHomeDir()
+	realHome, _ := filepath.EvalSymlinks(home)
+	realProject, _ := filepath.EvalSymlinks(project)
+	for _, want := range []string{"MISE " + realHome + "\n", "GOOD " + realProject + " org sign growth --yes --expect-hash abc123\n"} {
 		if !strings.Contains(string(calls), want) {
 			t.Errorf("missing %q in calls:\n%s", want, calls)
 		}
 	}
-	if strings.Contains(string(calls), "SHIM") {
-		t.Errorf("the shim itself was run:\n%s", calls)
+	if strings.Contains(string(calls), "PLANTED") || strings.Contains(string(calls), "SHIM") {
+		t.Errorf("ran the planted binary or the shim:\n%s", calls)
 	}
 
-	// A shim that can't be resolved signs nothing.
-	write(filepath.Join(base, "bin", "mise"), "exit 1\n")
+	// Whatever makes the manager name a binary inside the project, or one
+	// outside its installs, is refused: nothing signs, nothing enforces.
+	elsewhere := filepath.Join(base, "elsewhere", "monomind")
+	write(elsewhere, fake("ELSEWHERE"))
+	for _, picked := range []string{planted, elsewhere} {
+		mise(`echo '` + picked + `'` + "\n")
+		ResetCapabilityCache()
+		if _, err := OrgSign(ctx, project, "growth", "abc123"); err == nil {
+			t.Errorf("signed through %s", picked)
+		}
+		if OrgSignExpectsHash(ctx, project) || OrgSigningEnforced(ctx, project) {
+			t.Errorf("%s counted as a trusted monomind", picked)
+		}
+	}
+	// No shim, but the binary itself is inside the project: refused too.
+	t.Setenv(EnvOverride, planted)
 	ResetCapabilityCache()
-	if _, err := OrgSign(ctx, plain, "growth", "abc123"); err == nil {
-		t.Error("signed through an unresolvable shim")
+	if _, err := OrgSign(ctx, project, "growth", "abc123"); err == nil {
+		t.Error("signed through a monomind inside the project")
+	}
+	calls, _ = os.ReadFile(log)
+	if strings.Contains(string(calls), "PLANTED") || strings.Contains(string(calls), "ELSEWHERE") {
+		t.Errorf("an untrusted binary ran:\n%s", calls)
 	}
 }
 
-// OrgSigningEnforced asks the monomind that runs in each project: behind a
-// shim that picks 2.20 globally and 2.21 in one project, only that project
-// enforces (and is re-signed). The handshake runs once per (binary, root).
-func TestOrgSigningEnforcedPerProjectRoot(t *testing.T) {
+// OrgSigningEnforced runs the handshake of the pinned monomind in each
+// project root (not the process's cwd), cached per (binary, root).
+func TestOrgSigningEnforcedHandshakePerRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake binaries are shell scripts")
 	}
 	base := t.TempDir()
 	log := filepath.Join(base, "calls")
-	write := func(path, body string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	bin := filepath.Join(base, "monomind")
+	script := "#!/bin/sh\necho \"$(pwd) $*\" >> '" + log + "'\n" +
+		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"2.21.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	fake := func(name, version string) string {
-		return `echo "` + name + ` $*" >> '` + log + "'\n" +
-			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n"
-	}
-	global := filepath.Join(base, "installs", "2.20", "monomind")
-	project := filepath.Join(base, "installs", "2.21", "monomind")
-	write(global, fake("G220", "2.20.3"))
-	write(project, fake("P221", "2.21.0"))
-	shim := filepath.Join(base, "mise", "shims", "monomind")
-	write(shim, "exit 3\n")
-	write(filepath.Join(base, "bin", "mise"),
-		`if [ -f .tool-versions ]; then echo '`+project+`'; else echo '`+global+`'; fi`+"\n")
-	t.Setenv("PATH", filepath.Join(base, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(EnvOverride, shim)
+	t.Setenv(EnvOverride, bin)
 	ResetCapabilityCache()
 	t.Cleanup(ResetCapabilityCache)
-
-	onProject, plain := t.TempDir(), t.TempDir()
-	_ = os.WriteFile(filepath.Join(onProject, ".tool-versions"), []byte("monomind 2.21.0\n"), 0o644)
+	a, b := t.TempDir(), t.TempDir()
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		if !OrgSigningEnforced(ctx, onProject) {
-			t.Fatal("the project on 2.21 does not enforce")
-		}
-		if OrgSigningEnforced(ctx, plain) {
-			t.Fatal("the global 2.20 enforces")
+		if !OrgSigningEnforced(ctx, a) || !OrgSigningEnforced(ctx, b) {
+			t.Fatal("2.21 not enforcing")
 		}
 	}
 	calls, _ := os.ReadFile(log)
-	if strings.Count(string(calls), "P221 --version") != 1 || strings.Count(string(calls), "G220 --version") != 1 {
-		t.Fatalf("handshakes not cached per root:\n%s", calls)
+	for _, root := range []string{a, b} {
+		real, _ := filepath.EvalSymlinks(root)
+		if n := strings.Count(string(calls), real+" --version --json"); n != 1 {
+			t.Errorf("%s: %d handshakes in the root, want 1:\n%s", root, n, calls)
+		}
 	}
 }
