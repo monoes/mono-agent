@@ -20,6 +20,15 @@ export function formatUSD(t, usd, unknown) {
   return s
 }
 
+// ceilingText is the most a day can cost, priced at the priciest model
+// with a known cost.
+function ceilingText(t, st) {
+  const args = { perDay: st?.max_runtimes_per_day ?? 1, models: st?.max_models_per_run ?? 3 }
+  return st?.cost_known
+    ? t('agents.roster.auto.ceiling', { ...args, cost: formatUSD(t, st.daily_max_usd), priciest: formatUSD(t, st.priciest_model_usd) })
+    : t('agents.roster.auto.ceilingUnknown', args)
+}
+
 const isSet = ts => !!ts && !String(ts).startsWith('0001-')
 
 export default function AutoRevalidate({ refreshKey = 0 }) {
@@ -43,7 +52,7 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
         ? t('agents.roster.auto.confirmNext', { count: next.targets?.length || 0, runtime: next.runtime, cost: formatUSD(t, next.est_cost_usd, next.unknown_cost) })
         : t('agents.roster.auto.confirmNothing')
       const ok = await confirm(
-        <span>{t('agents.roster.auto.confirmBody', { perDay: st?.max_runtimes_per_day ?? 1, models: st?.max_models_per_run ?? 3 })} {cost}</span>,
+        <span>{t('agents.roster.auto.confirmBody', { perDay: st?.max_runtimes_per_day ?? 1, models: st?.max_models_per_run ?? 3 })} {cost} {ceilingText(t, st)}</span>,
         { title: t('agents.roster.auto.confirmTitle'), confirmLabel: t('agents.roster.auto.turnOn'), cancelLabel: t('agents.cancel'), danger: false },
       )
       if (!ok) return
@@ -81,6 +90,7 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
           <span>{next
             ? t('agents.roster.auto.next', { count: next.targets?.length || 0, runtime: next.runtime, cost: formatUSD(t, next.est_cost_usd, next.unknown_cost) })
             : t('agents.roster.auto.nothingStale')}</span>
+          <span>{ceilingText(t, st)}</span>
           <span>{t('agents.roster.auto.today', { count: state.runtimes_today || 0, spent: formatUSD(t, state.spent_today_usd, state.unknown_cost_calls_today) })}</span>
           {isSet(state.last_run_at) && (
             <span>{t('agents.roster.auto.lastRun', { at: new Date(state.last_run_at).toLocaleString(), runtime: state.last_runtime || '' })}</span>

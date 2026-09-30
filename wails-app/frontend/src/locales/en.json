@@ -532,7 +532,9 @@
         "confirmBody": "The daemon will make real, paid model calls without asking: up to {{perDay}} runtime(s) a day, {{models}} model(s) each.",
         "confirmNext": "The next run tests {{count}} model(s) of {{runtime}}, {{cost}}.",
         "confirmNothing": "Nothing is stale right now, so nothing runs until a model goes stale.",
-        "turnOn": "Turn on"
+        "turnOn": "Turn on",
+        "ceiling": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s), {{cost}}/day at most (priciest known model {{priciest}}).",
+        "ceilingUnknown": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s); no model has reported a cost yet."
       }
     }
   },

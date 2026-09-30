@@ -23,7 +23,7 @@ import (
 // call that costs money.
 
 // autoRevalidateMoneyNote is printed wherever the setting is shown.
-const autoRevalidateMoneyNote = "Each re-check is a real model call and costs money (usually a fraction of a cent per model)."
+const autoRevalidateMoneyNote = "Each re-check is a real, paid model call (a full agent turn); what it costs depends on the model."
 
 // validateLockPath is the lock every validation run takes, so a manual
 // `agent validate` and the daemon's automatic one never overlap.
@@ -177,7 +177,13 @@ type autoRevalidateStatus struct {
 	State         agentroster.AutoState `json:"state"`
 	DaemonRunning bool                  `json:"daemon_running"`
 	Next          *agentroster.AutoPlan `json:"next,omitempty"` // what the next run would test
-	Note          string                `json:"note"`
+	// DailyMaxUSD is the most a day can cost: every run at the cap, every
+	// model priced like PriciestUSD, the priciest model with a known cost.
+	// Both are 0 and CostKnown false before any model reported a cost.
+	DailyMaxUSD float64 `json:"daily_max_usd"`
+	PriciestUSD float64 `json:"priciest_model_usd"`
+	CostKnown   bool    `json:"cost_known"`
+	Note        string  `json:"note"`
 }
 
 func newAgentRosterAutoCmd(cfg *globalConfig) *cobra.Command {
@@ -187,7 +193,7 @@ func newAgentRosterAutoCmd(cfg *globalConfig) *cobra.Command {
 		Long: "When on, the daemon re-validates stale roster models (passed once, but older than 7 days " +
 			"or on an older runtime version) in the background: one runtime at a time, only while no chat " +
 			"turn, workflow run or org run is active and after a quiet period, never at startup, and at " +
-			"most --per-day runtimes a day with at most --max-models models each. Failed and untested " +
+			"most --per-day runtimes a day (the daemon's local day) with at most --max-models models each. Failed and untested " +
 			"models are left for you to validate.\n\n" + autoRevalidateMoneyNote + " It is off by default. " +
 			"`status` shows the estimated cost of the next run.",
 		Example: `  monoagentcli agent roster auto-revalidate status
@@ -301,10 +307,16 @@ func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.D
 		sr, _ = monomind.Scan(ctx) // without a scan the estimate still covers age staleness
 	}
 	next, _ := autoRosterPick(ctx, db, sr, c.MaxModelsPerRun)
+	results, err := agentroster.List(ctx, db)
+	if err != nil {
+		return err
+	}
+	perDay, priciest, known := agentroster.DailyCeiling(c, results)
 	hb, ok := daemonhb.Read()
 	out := autoRevalidateStatus{
 		AutoConfig: c, QuietText: c.QuietPeriod.String(), State: st,
-		DaemonRunning: ok && daemonhb.IsLive(hb, time.Now()), Next: next, Note: autoRevalidateMoneyNote,
+		DaemonRunning: ok && daemonhb.IsLive(hb, time.Now()), Next: next,
+		DailyMaxUSD: perDay, PriciestUSD: priciest, CostKnown: known, Note: autoRevalidateMoneyNote,
 	}
 	if cfg.JSONOutput {
 		return printJSON(out)
@@ -316,6 +328,12 @@ func printAutoRevalidateStatus(ctx context.Context, cfg *globalConfig, db *sql.D
 	fmt.Printf("Automatic re-validation: %s\n", state)
 	fmt.Printf("Limits: %d runtime(s) a day, %d model(s) per run, after %s with nothing running\n",
 		c.MaxRuntimesPerDay, c.MaxModelsPerRun, c.QuietPeriod)
+	if known {
+		fmt.Printf("Daily ceiling: up to %d run(s) × %d model(s), %s/day at most (priciest known model %s)\n",
+			c.MaxRuntimesPerDay, c.MaxModelsPerRun, usd(perDay, 0), usd(priciest, 0))
+	} else {
+		fmt.Printf("Daily ceiling: up to %d run(s) × %d model(s); no model has reported a cost yet\n", c.MaxRuntimesPerDay, c.MaxModelsPerRun)
+	}
 	fmt.Printf("Today: %d run(s), spent %s\n", st.RuntimesToday, usd(st.SpentTodayUSD, st.UnknownCostCall))
 	if !st.LastRunAt.IsZero() {
 		line := fmt.Sprintf("Last run: %s, %s", st.LastRunAt.Local().Format("2006-01-02 15:04"), st.LastRuntime)

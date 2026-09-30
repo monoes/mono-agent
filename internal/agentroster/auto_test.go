@@ -15,8 +15,10 @@ import (
 type fakeAuto struct {
 	s       *AutoScheduler
 	now     time.Time
-	busy    bool
+	busy    atomic.Bool
 	locked  bool
+	picks   int
+	locks   int
 	runs    []AutoPlan
 	mu      sync.Mutex
 	nothing bool
@@ -27,8 +29,9 @@ func newFakeAuto(t *testing.T, db *sql.DB, start time.Time) *fakeAuto {
 	f.s = &AutoScheduler{
 		DB:   db,
 		Now:  func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now },
-		Busy: func(context.Context) (bool, string) { return f.busy, "chat turn" },
+		Busy: func(context.Context) (bool, string) { return f.busy.Load(), "chat turn" },
 		Pick: func(_ context.Context, maxModels int) (*AutoPlan, error) {
+			f.picks++
 			if f.nothing {
 				return nil, nil
 			}
@@ -42,7 +45,8 @@ func newFakeAuto(t *testing.T, db *sql.DB, start time.Time) *fakeAuto {
 			f.runs = append(f.runs, p)
 			return AutoRunResult{Summary: Summary{Planned: len(p.Targets), OK: len(p.Targets)}, SpentUSD: 0.001}, nil
 		},
-		Lock: func() (func(), bool) { return func() {}, !f.locked },
+		Lock:          func() (func(), bool) { f.locks++; return func() {}, !f.locked },
+		WatchInterval: time.Millisecond,
 	}
 	return f
 }
@@ -179,13 +183,13 @@ func TestAutoBusyWaitsForQuietPeriod(t *testing.T) {
 	ctx := context.Background()
 	f.s.Step(ctx)
 	f.advance(9 * time.Minute)
-	f.busy = true
+	f.busy.Store(true)
 	if got := f.s.Step(ctx); !strings.HasPrefix(got, AutoCheckBusy) {
 		t.Fatalf("busy step = %q", got)
 	}
 	f.advance(time.Hour) // busy for an hour
 	f.s.Step(ctx)
-	f.busy = false
+	f.busy.Store(false)
 	f.advance(9 * time.Minute)
 	if got := f.s.Step(ctx); got != AutoCheckQuiet {
 		t.Fatalf("9m after busy = %q, want quiet", got)
@@ -304,5 +308,102 @@ func TestPickStale(t *testing.T) {
 	}
 	if PickStale([]RuntimeRoster{{Runtime: "claude", Installed: true, Models: []Entry{e("s", StateReady, now)}}}, nil, 3) != nil {
 		t.Fatal("picked with nothing stale")
+	}
+}
+
+// A state that can't be read stops the run: the cap must not fail open,
+// and the stored state is not overwritten.
+func TestAutoUnreadableStateFailsClosed(t *testing.T) {
+	db := openDB(t)
+	enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+	if err := setSetting(context.Background(), db, autoStateKey, "{broken"); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeAuto(t, db, localNoon())
+	ctx := context.Background()
+	f.s.Step(ctx)
+	for i := 0; i < 3; i++ {
+		f.advance(time.Hour)
+		if got := f.s.Step(ctx); got != AutoCheckFailed {
+			t.Fatalf("step = %q, want failed", got)
+		}
+	}
+	if len(f.runs) != 0 || f.picks != 0 {
+		t.Fatalf("ran (%d) or planned (%d) without a readable state", len(f.runs), f.picks)
+	}
+	if raw, _, _ := getSetting(ctx, db, autoStateKey); raw != "{broken" {
+		t.Fatalf("state overwritten: %q", raw)
+	}
+}
+
+// A run in progress stops when the app gets busy or the setting is turned
+// off; the run still counts, and the next one waits a quiet period.
+func TestAutoRunCancelledMidRun(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause func(f *fakeAuto, db *sql.DB)
+		want  string
+	}{
+		{"busy", func(f *fakeAuto, _ *sql.DB) { f.busy.Store(true) }, AutoCheckCancelled + ": the app got busy (chat turn)"},
+		{"off", func(_ *fakeAuto, db *sql.DB) {
+			_ = SaveAutoConfig(context.Background(), db, AutoConfig{Enabled: false, QuietPeriod: time.Minute})
+		}, AutoCheckCancelled + ": turned off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openDB(t)
+			enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+			f := newFakeAuto(t, db, localNoon())
+			f.s.Validate = func(ctx context.Context, p AutoPlan) (AutoRunResult, error) {
+				tc.cause(f, db) // between the first and second model
+				<-ctx.Done()
+				return AutoRunResult{Summary: Summary{Planned: len(p.Targets), OK: 1, Cancelled: len(p.Targets) - 1}}, nil
+			}
+			ctx := context.Background()
+			f.s.Step(ctx)
+			f.advance(time.Minute)
+			if got := f.s.Step(ctx); got != tc.want {
+				t.Fatalf("step = %q, want %q", got, tc.want)
+			}
+			st, _ := LoadAutoState(ctx, db, f.now)
+			if st.RuntimesToday != 1 || st.LastSummary == nil || st.LastSummary.Cancelled != 2 || st.LastCheck != tc.want {
+				t.Fatalf("state = %+v", st)
+			}
+		})
+	}
+}
+
+// Nothing stale: no scan or lock every minute; planning waits an hour.
+func TestAutoNothingStaleBacksOff(t *testing.T) {
+	db := openDB(t)
+	enableAuto(t, db, AutoConfig{QuietPeriod: time.Minute})
+	f := newFakeAuto(t, db, localNoon())
+	f.nothing = true
+	ctx := context.Background()
+	f.s.Step(ctx)
+	f.advance(time.Minute)
+	for i := 0; i < 59; i++ {
+		if got := f.s.Step(ctx); got != AutoCheckNothing {
+			t.Fatalf("step %d = %q", i, got)
+		}
+		f.advance(time.Minute)
+	}
+	if f.picks != 1 || f.locks != 0 {
+		t.Fatalf("picks = %d, locks = %d; want one plan and no lock within the hour", f.picks, f.locks)
+	}
+	f.advance(time.Minute)
+	f.s.Step(ctx)
+	if f.picks != 2 {
+		t.Fatalf("picks after the backoff = %d, want 2", f.picks)
+	}
+}
+
+func TestDailyCeiling(t *testing.T) {
+	c := AutoConfig{MaxRuntimesPerDay: 2, MaxModelsPerRun: 3}
+	if _, _, known := DailyCeiling(c, []Result{{HasCost: false}}); known {
+		t.Fatal("known without any cost")
+	}
+	perDay, priciest, known := DailyCeiling(c, []Result{{HasCost: true, CostUSD: 0.01}, {HasCost: true, CostUSD: 0.05}})
+	if !known || priciest != 0.05 || perDay < 0.2999 || perDay > 0.3001 {
+		t.Fatalf("ceiling = %v/day, priciest %v, known %v", perDay, priciest, known)
 	}
 }

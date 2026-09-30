@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -69,7 +70,7 @@ func (c AutoConfig) Normalize() AutoConfig {
 // AutoState is what the scheduler did, persisted so the daily cap survives
 // a daemon restart and `auto-revalidate status` can show it.
 type AutoState struct {
-	Day             string    `json:"day"` // local date the counts below belong to
+	Day             string    `json:"day"` // local date (daemon's time zone) the counts below belong to
 	RuntimesToday   int       `json:"runtimes_today"`
 	SpentTodayUSD   float64   `json:"spent_today_usd"`
 	UnknownCostCall int       `json:"unknown_cost_calls_today"` // calls that reported no cost
@@ -206,6 +207,19 @@ func PickStale(roster []RuntimeRoster, previous []Result, maxModels int) *AutoPl
 	return p
 }
 
+// DailyCeiling is the most a day of automatic runs can cost: every run
+// at the cap, every model priced like the priciest model with a known cost
+// in previous. known is false when no model has reported a cost yet.
+func DailyCeiling(c AutoConfig, previous []Result) (perDay, priciest float64, known bool) {
+	c = c.Normalize()
+	for _, r := range previous {
+		if r.HasCost && r.CostUSD > priciest {
+			priciest, known = r.CostUSD, true
+		}
+	}
+	return float64(c.MaxRuntimesPerDay*c.MaxModelsPerRun) * priciest, priciest, known
+}
+
 // AutoRunResult is what one automatic run did.
 type AutoRunResult struct {
 	Summary     Summary
@@ -221,20 +235,29 @@ type AutoScheduler struct {
 	// Busy reports whether a chat turn, workflow run or org run is active,
 	// with a short reason.
 	Busy func(ctx context.Context) (bool, string)
-	// Pick returns the next run (nil when nothing is stale).
+	// Pick returns the next run (nil when nothing is stale). It runs
+	// before the lock is taken: a scan must not block a manual validate.
 	Pick func(ctx context.Context, maxModels int) (*AutoPlan, error)
-	// Validate runs the plan's tests, one at a time.
+	// Validate runs the plan's tests, one at a time. Its ctx is cancelled
+	// when the app gets busy or the setting is turned off mid-run.
 	Validate func(ctx context.Context, p AutoPlan) (AutoRunResult, error)
 	// Lock takes the validation lock `agent validate` also takes; ok false
 	// means another validation runs.
 	Lock func() (release func(), ok bool)
 	// Interval between checks; 1 minute when zero.
 	Interval time.Duration
-	Logf     func(format string, args ...any)
+	// WatchInterval is how often a run in progress re-checks Busy and the
+	// setting; 5 seconds when zero.
+	WatchInterval time.Duration
+	// NothingBackoff is how long to wait after "nothing stale" before
+	// planning (and scanning) again; 1 hour when zero.
+	NothingBackoff time.Duration
+	Logf           func(format string, args ...any)
 
-	mu       sync.Mutex
-	lastBusy time.Time // start, last busy check, or last run: the quiet period counts from here
-	started  bool
+	mu        sync.Mutex
+	lastBusy  time.Time // start, last busy check, or last run: the quiet period counts from here
+	planAfter time.Time // no planning before this (backoff after nothing stale)
+	started   bool
 }
 
 // Check outcomes.
@@ -246,8 +269,17 @@ const (
 	AutoCheckLocked     = "another validation is running"
 	AutoCheckNothing    = "nothing stale"
 	AutoCheckRan        = "ran"
+	AutoCheckCancelled  = "cancelled"
 	AutoCheckFailed     = "failed"
 	autoDefaultInterval = time.Minute
+	autoDefaultWatch    = 5 * time.Second
+	autoDefaultBackoff  = time.Hour
+)
+
+// Why a run in progress was cancelled.
+var (
+	errAutoBusy      = errors.New("the app got busy")
+	errAutoTurnedOff = errors.New("turned off")
 )
 
 // Start marks the scheduler as started now: the quiet period counts from
@@ -282,13 +314,14 @@ func (s *AutoScheduler) Run(ctx context.Context) {
 
 // Step makes one decision and, when everything allows it, runs one
 // runtime's stale models. It returns the outcome (one of the AutoCheck
-// values, "busy" with its reason appended).
+// values, with a reason appended for busy, cancelled and failed).
 func (s *AutoScheduler) Step(ctx context.Context) string {
 	s.Start()
 	now := s.Now()
 	cfg, err := LoadAutoConfig(ctx, s.DB)
 	if err != nil {
 		s.logf("auto re-validation: %v", err)
+		s.markBusy(now)
 		return AutoCheckFailed
 	}
 	if !cfg.Enabled {
@@ -298,24 +331,54 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 	}
 	if busy, why := s.Busy(ctx); busy {
 		s.markBusy(now)
-		out := AutoCheckBusy
-		if why != "" {
-			out += ": " + why
-		}
-		return s.record(ctx, now, out, time.Time{})
+		return s.record(ctx, now, withReason(AutoCheckBusy, why), time.Time{})
 	}
 	s.mu.Lock()
-	quietUntil := s.lastBusy.Add(cfg.QuietPeriod)
+	quietUntil, planAfter := s.lastBusy.Add(cfg.QuietPeriod), s.planAfter
 	s.mu.Unlock()
 	if now.Before(quietUntil) {
 		return s.record(ctx, now, AutoCheckQuiet, quietUntil)
 	}
+	if now.Before(planAfter) {
+		return s.record(ctx, now, AutoCheckNothing, planAfter)
+	}
+	// A state that can't be read must not be taken for "nothing ran
+	// today": the cap would fail open, and saving it would reset the count.
 	st, err := LoadAutoState(ctx, s.DB, now)
 	if err != nil {
 		s.logf("auto re-validation: reading state: %v", err)
+		s.markBusy(now)
+		return AutoCheckFailed
 	}
 	if st.RuntimesToday >= cfg.MaxRuntimesPerDay {
 		return s.record(ctx, now, AutoCheckCap, nextDay(now).Add(cfg.QuietPeriod))
+	}
+
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stopWatch := s.watch(runCtx, cancel)
+	defer stopWatch()
+
+	plan, err := s.Pick(runCtx, cfg.MaxModelsPerRun)
+	if cause := context.Cause(runCtx); cause != nil && ctx.Err() == nil {
+		s.markBusy(s.Now())
+		return s.record(ctx, now, withReason(AutoCheckCancelled, cause.Error()), time.Time{})
+	}
+	if err != nil {
+		s.logf("auto re-validation: planning: %v", err)
+		s.markBusy(now)
+		return s.record(ctx, now, withReason(AutoCheckFailed, err.Error()), time.Time{})
+	}
+	if plan == nil || len(plan.Targets) == 0 {
+		backoff := s.NothingBackoff
+		if backoff <= 0 {
+			backoff = autoDefaultBackoff
+		}
+		next := now.Add(max(backoff, cfg.QuietPeriod))
+		s.mu.Lock()
+		s.planAfter = next
+		s.mu.Unlock()
+		return s.record(ctx, now, AutoCheckNothing, next)
 	}
 	release, ok := s.Lock()
 	if !ok {
@@ -323,15 +386,6 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 		return s.record(ctx, now, AutoCheckLocked, time.Time{})
 	}
 	defer release()
-	plan, err := s.Pick(ctx, cfg.MaxModelsPerRun)
-	if err != nil {
-		s.logf("auto re-validation: planning: %v", err)
-		s.markBusy(now)
-		return s.record(ctx, now, AutoCheckFailed+": "+err.Error(), time.Time{})
-	}
-	if plan == nil || len(plan.Targets) == 0 {
-		return s.record(ctx, now, AutoCheckNothing, time.Time{})
-	}
 
 	// The runtime counts against today's cap before the calls are made, so
 	// a crash mid-run can never lead to more runs than the cap.
@@ -343,20 +397,32 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 	}
 	s.logf("auto re-validation: testing %d stale model(s) of %s (≈ $%.4f, %d with unknown cost)",
 		len(plan.Targets), plan.Runtime, plan.EstCostUSD, plan.UnknownCost)
-	res, runErr := s.Validate(ctx, *plan)
+	res, runErr := s.Validate(runCtx, *plan)
+	stopWatch()
 	end := s.Now()
 	s.markBusy(end)
 
+	out := AutoCheckRan
+	switch cause := context.Cause(runCtx); {
+	case cause != nil && ctx.Err() == nil:
+		out = withReason(AutoCheckCancelled, cause.Error())
+	case runErr != nil:
+		out = withReason(AutoCheckFailed, runErr.Error())
+	}
 	saveCtx := context.WithoutCancel(ctx)
-	st, _ = LoadAutoState(saveCtx, s.DB, end)
+	st, err = LoadAutoState(saveCtx, s.DB, end)
+	if err != nil {
+		// Never save over a state that couldn't be read: the count would
+		// go back to zero.
+		s.logf("auto re-validation: reading state after the run: %v", err)
+		return out
+	}
 	sum := res.Summary
 	st.LastSummary = &sum
 	st.SpentTodayUSD += res.SpentUSD
 	st.UnknownCostCall += res.UnknownCost
-	out := AutoCheckRan
 	if runErr != nil {
 		st.LastError = runErr.Error()
-		out = AutoCheckFailed + ": " + runErr.Error()
 	}
 	next := end.Add(cfg.QuietPeriod)
 	if st.RuntimesToday >= cfg.MaxRuntimesPerDay {
@@ -366,8 +432,53 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 	if err := SaveAutoState(saveCtx, s.DB, st); err != nil {
 		s.logf("auto re-validation: saving state: %v", err)
 	}
-	s.logf("auto re-validation: %s: %d ok, %d failed, %d cancelled", plan.Runtime, sum.OK, sum.Failed, sum.Cancelled)
+	s.logf("auto re-validation: %s: %s: %d ok, %d failed, %d cancelled", plan.Runtime, out, sum.OK, sum.Failed, sum.Cancelled)
 	return out
+}
+
+// watch cancels a run in progress when the app gets busy or the setting is
+// turned off. stop ends the watch and waits for it; it may be called twice.
+func (s *AutoScheduler) watch(ctx context.Context, cancel context.CancelCauseFunc) (stop func()) {
+	every := s.WatchInterval
+	if every <= 0 {
+		every = autoDefaultWatch
+	}
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if cfg, err := LoadAutoConfig(ctx, s.DB); err == nil && !cfg.Enabled {
+				cancel(errAutoTurnedOff)
+				return
+			}
+			if busy, why := s.Busy(ctx); busy {
+				cancel(fmt.Errorf("%w (%s)", errAutoBusy, why))
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
+}
+
+func withReason(check, why string) string {
+	if why == "" {
+		return check
+	}
+	return check + ": " + why
 }
 
 func (s *AutoScheduler) markBusy(t time.Time) {
@@ -378,12 +489,13 @@ func (s *AutoScheduler) markBusy(t time.Time) {
 
 // record stores the latest decision when it changed; a repeated decision
 // is not rewritten every minute. next is when a run may start at the
-// earliest; zero when that depends on something else ending (busy, locked)
-// or changing (nothing stale).
+// earliest; zero when that depends on something else ending (busy, locked).
+// A state that can't be read is left alone.
 func (s *AutoScheduler) record(ctx context.Context, now time.Time, check string, next time.Time) string {
 	st, err := LoadAutoState(ctx, s.DB, now)
 	if err != nil {
 		s.logf("auto re-validation: reading state: %v", err)
+		return check
 	}
 	if st.LastCheck == check && st.NextEligibleAt.Equal(next) {
 		return check
@@ -401,7 +513,8 @@ func (s *AutoScheduler) logf(format string, args ...any) {
 	}
 }
 
-// nextDay is local midnight after t.
+// nextDay is local midnight after t: the daily cap follows the daemon's
+// local time zone.
 func nextDay(t time.Time) time.Time {
 	l := t.Local()
 	return time.Date(l.Year(), l.Month(), l.Day()+1, 0, 0, 0, 0, l.Location())
