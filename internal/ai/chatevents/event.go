@@ -126,8 +126,11 @@ type SessionBoundPayload struct {
 // PartID, so text/tool ordering survives even though tool events flow on a
 // separate lane.
 type AssistantDeltaPayload struct {
-	PartID string `json:"partId"`
-	Text   string `json:"text"`
+	// AgentID is the dynamic-org worker that wrote the text (#258); "" for
+	// the lead. A worker's part ids are its own ("w1:p1").
+	AgentID string `json:"agentId,omitempty"`
+	PartID  string `json:"partId"`
+	Text    string `json:"text"`
 }
 
 // ToolStartedPayload is tool.started's payload — one call, appended once as
@@ -177,6 +180,10 @@ type ToolCompletedPayload struct {
 // "result"), since usage semantics differ by source and must not be summed
 // across sources without verified delta semantics.
 type UsageUpdatedPayload struct {
+	// AgentID is the dynamic-org worker this snapshot is for (#257): its
+	// running total across its execs so far. "" is the lead's own usage;
+	// a worker's never counts toward it.
+	AgentID      string   `json:"agentId,omitempty"`
 	InputTokens  *int64   `json:"inputTokens"`
 	OutputTokens *int64   `json:"outputTokens"`
 	CostUSD      *float64 `json:"costUsd"`
@@ -281,15 +288,18 @@ func (r Record) Event() Event {
 // with how it was staffed. Why says who chose what ("lead chose the model;
 // role from pick"). The confidences are nil when that step didn't ask.
 type AgentSpawnedPayload struct {
-	AgentID        string   `json:"agentId"`
-	ParentID       string   `json:"parentId,omitempty"` // "" = the lead
-	Role           string   `json:"role"`
-	AgentType      string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
-	Skills         []string `json:"skills,omitempty"`
-	Runtime        string   `json:"runtime,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Effort         string   `json:"effort,omitempty"`
-	Access         string   `json:"access,omitempty"` // coding, qa, automation, research
+	AgentID   string   `json:"agentId"`
+	ParentID  string   `json:"parentId,omitempty"` // "" = the lead
+	Role      string   `json:"role"`
+	AgentType string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
+	Skills    []string `json:"skills,omitempty"`
+	Runtime   string   `json:"runtime,omitempty"`
+	Model     string   `json:"model,omitempty"`
+	Effort    string   `json:"effort,omitempty"`
+	Access    string   `json:"access,omitempty"` // coding, qa, automation, research
+	// Fidelity is the runtime's tool-activity fidelity (#259): "full",
+	// "start-only" (tool starts, never their ends) or "none"; "" unknown.
+	Fidelity       string   `json:"fidelity,omitempty"`
 	Brief          string   `json:"brief,omitempty"`
 	Why            string   `json:"why,omitempty"`
 	PickConfidence *float64 `json:"pickConfidence,omitempty"`
@@ -314,6 +324,10 @@ type AgentStatusPayload struct {
 	From    string `json:"from,omitempty"`
 	To      string `json:"to"`
 	Detail  string `json:"detail,omitempty"` // e.g. which lease it waits for
+	// Leases are the leases the worker holds at this status ("write",
+	// "browser"): the org stage shows who holds the pen and the browser
+	// from them (#228).
+	Leases []string `json:"leases,omitempty"`
 }
 
 // AgentMessagePayload is agent.message's payload: a brief, a result, a
@@ -336,6 +350,9 @@ type AgentReassignedPayload struct {
 	ToRuntime   string `json:"toRuntime"`
 	ToModel     string `json:"toModel"`
 	Reason      string `json:"reason"`
+	// Fidelity is the new runtime's tool-activity fidelity, as in
+	// agent.spawned.
+	Fidelity string `json:"fidelity,omitempty"`
 }
 
 // AgentFinishedPayload is agent.finished's payload.

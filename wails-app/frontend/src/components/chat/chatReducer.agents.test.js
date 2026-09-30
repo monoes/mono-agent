@@ -27,10 +27,30 @@ describe('dynamic org events (#226)', () => {
     expect(w.reassigned).toContain('claude/opus')
   })
 
+  it('leaves the lead\'s lease reports to the stage', () => {
+    const s = run(ev('agent.status', { agentId: 'lead', from: 'working', to: 'working', leases: ['write'] }))
+    expect(s.agents).toEqual({})
+    expect(s.stage.nodes.lead.leases).toEqual(['write'])
+  })
+
   it('adds one agent part per worker even if spawned is replayed', () => {
     const spawn = { agentId: 'w1', role: 'Coder' }
     let s = run(ev('agent.spawned', spawn))
     s = chatReducer(s, { type: 'event', event: { type: 'agent.spawned', payload: spawn, seq: ++seq, conversationId: 'c', turnId: 't' } })
     expect(s.parts.filter(p => p.kind === 'agent')).toHaveLength(1)
+  })
+
+  it('keeps a worker\'s text and usage out of the lead\'s timeline and usage (#257, #258)', () => {
+    const s = run(
+      ev('agent.spawned', { agentId: 'w1', role: 'Coder' }),
+      ev('assistant.delta', { agentId: 'w1', partId: 'w1:p1', text: 'worker text' }),
+      ev('usage.updated', { agentId: 'w1', inputTokens: 5, outputTokens: 1, costUsd: 0.03 }),
+      ev('assistant.delta', { partId: 'part-1', text: 'lead text' }),
+      ev('usage.updated', { inputTokens: 50, outputTokens: 9, costUsd: 0.1 }),
+    )
+    expect(s.parts.filter(p => p.kind === 'text').map(p => p.text)).toEqual(['lead text'])
+    expect(s.usage.costUsd).toBe(0.1)
+    expect(s.agents.w1.costUsd).toBe(0.03)
+    expect(s.stage.nodes.w1.parts).toEqual([{ kind: 'text', partId: 'w1:p1', text: 'worker text' }])
   })
 })

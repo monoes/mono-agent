@@ -797,7 +797,6 @@
       "question": "pregunta para ti",
       "message": "mensaje {{from}} → {{to}}"
     },
-    "tools": "Llamadas a herramientas",
     "leadInChat": "El trabajo propio del líder está en el chat de abajo.",
     "quests": "Misiones",
     "questProgress": "{{done}} de {{total}} encargos terminados",
@@ -839,7 +838,8 @@
       "org_wait": "esperando al equipo",
       "org_message": "escribiendo a un agente",
       "org_stop": "deteniendo a un agente"
-    }
+    },
+    "work": "Lo que hizo"
   },
   "orgBubble": {
     "bubbleLabel": "Organización {{name}}, {{status}}",

@@ -7,18 +7,19 @@ import { LEAD_ID } from '../../lib/orgStage.js'
 import { ModelChip, formatCost, formatTokens, roleColor } from './StageNode.jsx'
 import { FullAccessBadge } from '../orgdesigner/fullAccess.jsx'
 
-// agentTimeline is an agent's own tool calls as chatReducer-shaped state,
-// so ChatTimeline (and NativeToolCard under it) renders them exactly as it
-// renders the lead's. calls is the turn's (chatReducer's agentCalls); the
-// stage keeps only the order. A native subagent's calls sit inside its
-// caller's Task call, which isn't in its own list, so they show flat.
+// agentTimeline is an agent's own text and tool calls as chatReducer-shaped
+// state, so ChatTimeline (and NativeToolCard under it) renders them exactly
+// as it renders the lead's. calls is the turn's (chatReducer's agentCalls);
+// the stage keeps only their order. A native subagent's calls sit inside
+// its caller's Task call, which isn't in its own list, so they show flat.
 function agentTimeline(node, calls) {
   const own = {}
   for (const id of node.callOrder) {
     const call = calls?.[id]
     if (call) own[id] = node.native && call.parentCallId ? { ...call, parentCallId: undefined } : call
   }
-  return { parts: node.callOrder.filter(id => own[id]).map(callId => ({ kind: 'tool', callId })), calls: own, notices: [] }
+  const parts = node.parts.filter(p => p.kind === 'text' || own[p.callId])
+  return { parts, calls: own, notices: [] }
 }
 
 function pct(v) {
@@ -109,7 +110,7 @@ export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, on
         )}
         {timeline.parts.length > 0 && (
           <section data-testid="stage-tools">
-            <h4>{t('stage.tools')}</h4>
+            <h4>{t('stage.work')}</h4>
             <ChatTimeline state={timeline} turnId={`${turnId}-${node.id}`} isLive={isLive} />
           </section>
         )}

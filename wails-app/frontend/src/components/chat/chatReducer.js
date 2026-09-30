@@ -93,6 +93,8 @@ function completedCall(existing, payload, at) {
 function agentPatch(state, ev) {
   const p = ev.payload || {}
   const id = p.agentId
+  // The lead's lease reports (agent.status for "lead") are the stage's.
+  if (id === 'lead') return {}
   const agents = state.agents || {}
   const cur = agents[id] || { agentId: id, tools: 0, status: 'queued' }
   const put = (next) => ({ agents: { ...agents, [id]: { ...cur, ...next } } })
@@ -114,14 +116,20 @@ function agentPatch(state, ev) {
       return { ...put({ tools: cur.tools + 1, lastTool: p.name }), agentCalls: { ...state.agentCalls, [p.callId]: { ...startedCall(p, ev.at), agentId: id } } }
     case 'tool.completed':
       return { agentCalls: { ...state.agentCalls, [p.callId]: { ...completedCall(state.agentCalls?.[p.callId], p, ev.at), agentId: id } } }
+    case 'usage.updated':
+      return p.costUsd != null ? put({ costUsd: p.costUsd }) : {}
     default:
       return {}
   }
 }
 
+// A worker's tool calls, text (#258) and usage (#257) carry its agentId and
+// never land in the lead's timeline or usage.
+const AGENT_EVENTS = new Set(['tool.started', 'tool.completed', 'assistant.delta', 'usage.updated'])
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
-  if (payload.agentId && (ev.type.startsWith('agent.') || ev.type === 'tool.started' || ev.type === 'tool.completed')) {
+  if (payload.agentId && (ev.type.startsWith('agent.') || AGENT_EVENTS.has(ev.type))) {
     return agentPatch(state, ev)
   }
   switch (ev.type) {

@@ -6,7 +6,7 @@ import { render, screen, fireEvent, cleanup, act, within } from '@testing-librar
 import '../../i18n.js'
 import i18n from 'i18next'
 import journal from '../../lib/__fixtures__/orgStageJournal.json'
-import { replayStage, stageReducer } from '../../lib/orgStage.js'
+import { replayStage, stageReducer, MAX_CALLS } from '../../lib/orgStage.js'
 import { reduceTurnEvents } from '../chat/useChatStream.js'
 import { OrgStage, layoutStage, fitStage } from './OrgStage.jsx'
 import { StageDrawer } from './StageDrawer.jsx'
@@ -170,6 +170,27 @@ describe('stage layout', () => {
   })
 })
 
+describe('StageDrawer on a long run', () => {
+  it('shows the latest calls and text once older ones are dropped', () => {
+    const events = [{ conversationId: 'c', turnId: 't', seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder' } }]
+    let seq = 1
+    for (let i = 0; i < 450; i++) {
+      events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'tool.started', payload: { agentId: 'w1', callId: `w1:c${i}`, name: 'Bash', native: true, kind: 'shell', arguments: { command: `step-${i}` } } })
+      events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'tool.completed', payload: { agentId: 'w1', callId: `w1:c${i}`, ok: true, result: '' } })
+    }
+    events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'All steps ran.' } })
+    const state = reduceTurnEvents(events)
+    render(<StageDrawer node={state.stage.nodes.w1} calls={state.agentCalls} turnId="t" isLive={false} onClose={() => {}} />)
+    const work = screen.getByTestId('stage-tools')
+    expect(work).toHaveTextContent('What it did')
+    expect(work).toHaveTextContent('$ step-449')
+    expect(work).toHaveTextContent('All steps ran.')
+    expect(work).not.toHaveTextContent('$ step-49 ')
+    expect(work.textContent).not.toMatch(/\$ step-0\b/)
+    expect(work.textContent.match(/\$ step-\d+/g)).toHaveLength(MAX_CALLS)
+  })
+})
+
 describe('StageDrawer', () => {
   const stage = replayStage(journal)
   const { agentCalls } = reduceTurnEvents(journal)
@@ -185,6 +206,15 @@ describe('StageDrawer', () => {
     expect(screen.getByTestId('stage-transcript')).toHaveTextContent('Replaced the sleep with a fake clock')
     expect(within(screen.getByTestId('stage-tools')).getAllByRole('button').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByTestId('stage-tools')).toHaveTextContent('go test ./internal/cache/...')
+  })
+
+  it('shows a worker\'s own text between its tool cards (#258)', () => {
+    const s = stageReducer(stage, { seq: 1000, type: 'assistant.delta', payload: { agentId: 'w2', partId: 'w2:p9', text: 'Swapping the sleep for a **fake clock**.' } })
+    render(<StageDrawer node={s.nodes.w2} calls={agentCalls} turnId="turn-1" isLive={false} onClose={() => {}} />)
+    const work = screen.getByTestId('stage-tools')
+    expect(work).toHaveTextContent('What it did')
+    expect(work).toHaveTextContent('Swapping the sleep for a fake clock.')
+    expect(work.querySelector('strong')).toHaveTextContent('fake clock')
   })
 
   it('shows a native subagent\'s own calls flat, outside its caller\'s Task card', () => {

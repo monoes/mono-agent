@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import journal from './__fixtures__/orgStageJournal.json'
 import {
-  stageReducer, replayStage, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID,
+  stageReducer, replayStage, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID, MAX_CALLS, MAX_PARTS,
 } from './orgStage.js'
 import { chatReducer, initialChatState } from '../components/chat/chatReducer.js'
 import { reduceTurnEvents } from '../components/chat/useChatStream.js'
@@ -171,6 +171,99 @@ describe('tolerance', () => {
   })
 })
 
+describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
+  const spawn = (fidelity) => ({ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', ...(fidelity ? { fidelity } : {}) } })
+
+  it('interleaves a worker\'s text parts with its tool calls, and leaves the lead\'s text to the chat', () => {
+    const s = replayStage([
+      spawn(),
+      { seq: 2, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'Look' } },
+      { seq: 3, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'ing.' } },
+      { seq: 4, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:t1', name: 'Read', native: true } },
+      { seq: 5, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p2', text: 'Found it.' } },
+      { seq: 6, type: 'assistant.delta', payload: { partId: 'part-1', text: 'lead text' } },
+    ])
+    expect(s.nodes.w1.parts).toEqual([
+      { kind: 'text', partId: 'w1:p1', text: 'Looking.' },
+      { kind: 'tool', callId: 'w1:t1' },
+      { kind: 'text', partId: 'w1:p2', text: 'Found it.' },
+    ])
+    expect(s.nodes.lead.parts).toEqual([])
+    expect(stageReducer(s, { seq: 7, type: 'assistant.delta', payload: { text: 'more lead' } })).toBe(s)
+  })
+
+  it('caps a text part', () => {
+    const big = 'x'.repeat(40 * 1024)
+    const s = replayStage([spawn(), ...[2, 3, 4].map(seq => ({ seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: big } }))])
+    expect(s.nodes.w1.parts[0].text.length).toBe(64 * 1024 + 1)
+  })
+
+  it('moves a worker\'s meters live from its usage.updated', () => {
+    let s = replayStage([spawn()])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100, outputTokens: 10, costUsd: 0.01 } })
+    s = stageReducer(s, { seq: 3, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 150, outputTokens: 30, costUsd: 0.02 } })
+    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02 })
+    expect(s.nodes.lead.costUsd).toBeNull()
+  })
+
+  it('shows limited activity from the reported fidelity, from the start', () => {
+    expect(replayStage([spawn('start-only')]).nodes.w1.limited).toBe(true)
+    expect(replayStage([spawn('none')]).nodes.w1.limited).toBe(true)
+    // A full-fidelity runtime isn't limited even when its ends never came.
+    const full = replayStage([
+      spawn('full'),
+      { seq: 2, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:a', name: 'Read' } },
+      { seq: 3, type: 'agent.finished', payload: { agentId: 'w1', outcome: 'done' } },
+    ])
+    expect(full.nodes.w1.limited).toBe(false)
+    // A reassignment to another runtime brings its fidelity.
+    const moved = stageReducer(full, { seq: 4, type: 'agent.reassigned', payload: { agentId: 'w1', toRuntime: 'x', toModel: 'm', fidelity: 'start-only' } })
+    expect(moved.nodes.w1).toMatchObject({ fidelity: 'start-only', limited: true })
+  })
+})
+
+describe('lease holders come from the conductor', () => {
+  it('shows what agent.status reports, whatever the access profile', () => {
+    let s = replayStage([
+      { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', access: 'research' } },
+      { seq: 2, type: 'agent.spawned', payload: { agentId: 'w2', access: 'qa' } },
+      // An unconfined research worker takes the write lease.
+      { seq: 3, type: 'agent.status', payload: { agentId: 'w1', to: 'working', leases: ['write'] } },
+      // A QA worker keeps nothing while it waits for the pen.
+      { seq: 4, type: 'agent.status', payload: { agentId: 'w2', to: 'waiting_lease', detail: 'write' } },
+    ])
+    expect(leasesOf(s)).toEqual({ pen: 'w1', browser: null, waiting: [{ id: 'w2', lease: 'write' }] })
+    // Holding the pen while it waits for the browser.
+    s = stageReducer(s, { seq: 5, type: 'agent.status', payload: { agentId: 'w1', to: 'done' } })
+    s = stageReducer(s, { seq: 6, type: 'agent.status', payload: { agentId: 'w2', to: 'waiting_lease', detail: 'browser', leases: ['write'] } })
+    expect(leasesOf(s)).toEqual({ pen: 'w2', browser: null, waiting: [{ id: 'w2', lease: 'browser' }] })
+  })
+
+  it('shows the lead holding the pen when the conductor reports it', () => {
+    let s = replayStage([
+      { seq: 1, type: 'turn.started', payload: {} },
+      { seq: 2, type: 'agent.status', payload: { agentId: 'lead', from: 'working', to: 'working', leases: ['write'] } },
+    ])
+    expect(leasesOf(s).pen).toBe('lead')
+    expect(s.order).toEqual(['lead'])
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'lead', from: 'working', to: 'working' } })
+    expect(leasesOf(s).pen).toBeNull()
+    expect(s.nodes.lead.status).toBe('working')
+  })
+
+  it('takes a repeated status as a lease update: the pen shows held while the worker still waits for a slot', () => {
+    let s = replayStage([
+      { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', access: 'coding' } },
+      { seq: 2, type: 'agent.status', payload: { agentId: 'w1', to: 'queued' } },
+    ])
+    const feed = s.feed.length
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'w1', from: 'queued', to: 'queued', leases: ['write'] } })
+    expect(leasesOf(s).pen).toBe('w1')
+    expect(s.nodes.w1.status).toBe('queued')
+    expect(s.feed.length).toBe(feed)
+  })
+})
+
 describe('performance', () => {
   it('folds a 20,000-event journal of six busy workers quickly', () => {
     const events = []
@@ -193,6 +286,39 @@ describe('performance', () => {
     expect(s.nodes.w1.callOrder.at(-1)).toBe(w1Last)
     // The stage never copies a call's content: that stays in the turn.
     expect(s.nodes.w1.calls).toBeUndefined()
+  })
+})
+
+describe('a long run keeps its latest work', () => {
+  it('keeps the latest calls and timeline parts together, never a tool part for a dropped call', () => {
+    const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
+    let seq = 1
+    for (let i = 0; i < 900; i++) {
+      events.push({ seq: ++seq, type: 'tool.started', payload: { agentId: 'w1', callId: `w1:c${i}`, name: 'Read' } })
+      if (i % 3 === 0) events.push({ seq: ++seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: `w1:p${i}`, text: `note ${i}` } })
+    }
+    const n = replayStage(events).nodes.w1
+    expect(n.callOrder.length).toBe(MAX_CALLS)
+    expect(n.callOrder[0]).toBe('w1:c500')
+    expect(n.callOrder.at(-1)).toBe('w1:c899')
+    expect(n.parts.length).toBeLessThanOrEqual(MAX_PARTS)
+    const kept = new Set(n.callOrder)
+    const tools = n.parts.filter(p => p.kind === 'tool')
+    expect(tools.every(p => kept.has(p.callId))).toBe(true)
+    expect(tools.length).toBe(MAX_CALLS)
+    expect(n.parts.slice(-4)).toEqual([
+      { kind: 'tool', callId: 'w1:c897' }, { kind: 'text', partId: 'w1:p897', text: 'note 897' },
+      { kind: 'tool', callId: 'w1:c898' }, { kind: 'tool', callId: 'w1:c899' },
+    ])
+  })
+
+  it('keeps the latest text parts when a run mostly talks', () => {
+    const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
+    for (let i = 0; i < 1000; i++) events.push({ seq: i + 2, type: 'assistant.delta', payload: { agentId: 'w1', partId: `w1:p${i}`, text: `t${i}` } })
+    const n = replayStage(events).nodes.w1
+    expect(n.parts.length).toBe(MAX_PARTS)
+    expect(n.parts[0].text).toBe('t200')
+    expect(n.parts.at(-1).text).toBe('t999')
   })
 })
 

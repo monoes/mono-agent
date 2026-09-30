@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,6 +37,7 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
   if [ -n "$sys" ] && grep -q "a worker in a team" "$sys"; then
     echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":2,"access":"read"}'
     echo '{"v":1,"type":"session","session_id":"th_worker"}'
+    echo '{"v":1,"type":"assistant","text":"Checking the cache."}'
     echo '{"v":1,"type":"tool_activity","id":"r1","phase":"start","name":"Read","input":{"file_path":"/w/cache.go"}}'
     echo '{"v":1,"type":"tool_activity","id":"r1","phase":"end","name":"Read","ok":true,"output":"package cache"}'
     echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"The cache is in cache.go.","cost_usd":0.002}'
@@ -126,7 +128,7 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 	} else {
 		json.Unmarshal(evs[0].Payload, &spawned)
 	}
-	if spawned.AgentID != "w1" || spawned.Role != "Researcher" || spawned.Access != "research" || spawned.Runtime != "claude" {
+	if spawned.AgentID != "w1" || spawned.Role != "Researcher" || spawned.Access != "research" || spawned.Runtime != "claude" || spawned.Fidelity != "full" {
 		t.Errorf("spawned = %+v", spawned)
 	}
 	var finished chatevents.AgentFinishedPayload
@@ -147,6 +149,59 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 	}
 	if p := j.finished(t); p.Status != chatevents.StatusCompleted {
 		t.Errorf("turn.finished = %+v", p)
+	}
+	// The worker's text and usage carry its agentId (#257, #258); the
+	// lead's text doesn't.
+	var texts []string
+	for _, e := range j.byType(chatevents.EventAssistantDelta) {
+		var p chatevents.AssistantDeltaPayload
+		json.Unmarshal(e.Payload, &p)
+		texts = append(texts, p.AgentID+"|"+p.PartID+"|"+p.Text)
+	}
+	if !slices.Contains(texts, "w1|w1:p1|Checking the cache.") || slices.ContainsFunc(texts, func(s string) bool { return strings.HasPrefix(s, "|w1") }) {
+		t.Errorf("assistant.delta = %v", texts)
+	}
+	workerUsage := false
+	for _, e := range j.byType(chatevents.EventUsageUpdated) {
+		var p chatevents.UsageUpdatedPayload
+		json.Unmarshal(e.Payload, &p)
+		if p.AgentID == "w1" && p.CostUSD != nil && *p.CostUSD == 0.002 {
+			workerUsage = true
+		}
+	}
+	if !workerUsage {
+		t.Error("no usage.updated for w1")
+	}
+
+	// chat history events --agent and transcript --by-agent.
+	out, code = runChatHistory(t, dbPath, "default", "events", conv.ID, "turn-1", "--agent", "w1")
+	var page chatEventPage
+	decodeChatJSON(t, out, &page)
+	if code != 0 || len(page.Items) == 0 {
+		t.Fatalf("events --agent: exit %d %s", code, out)
+	}
+	for _, r := range page.Items {
+		if eventAgentID(r) != "w1" {
+			t.Errorf("events --agent w1 returned %s %s", r.Type, r.Payload)
+		}
+	}
+	out, code = runChatHistory(t, dbPath, "default", "transcript", "--by-agent", conv.ID, "turn-1")
+	var tr struct {
+		Items []agentTranscript `json:"items"`
+	}
+	decodeChatJSON(t, out, &tr)
+	if code != 0 || len(tr.Items) != 2 || tr.Items[0].AgentID != "lead" || tr.Items[1].AgentID != "w1" {
+		t.Fatalf("transcript --by-agent: exit %d %s", code, out)
+	}
+	w := tr.Items[1]
+	if w.Role != "Researcher" || w.Status != chatevents.AgentDone || w.Text != "Checking the cache." || w.Tools != 1 || len(w.Messages) != 2 || w.Messages[0].Direction != "brief" {
+		t.Errorf("w1 transcript = %+v", w)
+	}
+	if !strings.Contains(tr.Items[0].Text, "The team found it.") {
+		t.Errorf("lead transcript = %+v", tr.Items[0])
+	}
+	if _, code := runChatHistory(t, dbPath, "default", "transcript", "--by-agent", conv.ID); code == 0 {
+		t.Error("--by-agent needs a conversation and a turn")
 	}
 }
 

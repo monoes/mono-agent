@@ -18,6 +18,11 @@ export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
 // A node keeps the order of its latest MAX_CALLS tool calls.
 export const MAX_CALLS = 400
+// ... and its latest MAX_PARTS timeline parts (text and tool calls).
+export const MAX_PARTS = 800
+// A text part longer than this is cut (the CLI already bounds a worker's
+// text; this keeps a journal from elsewhere in check too).
+export const MAX_PART_TEXT = 64 * 1024
 const MAX_QUESTS = 100
 const MAX_FILES = 200
 
@@ -105,16 +110,18 @@ function newNode(id, patch = {}) {
     parentId: id === LEAD_ID ? null : LEAD_ID,
     role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
-    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null,
+    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null, leases: [],
     prevModel: null, reassignedSeq: 0, reassignedAt: null,
     doing: null,
     tools: 0, toolsDone: 0, files: [], testsRun: 0, testsPassed: 0,
     tokensIn: null, tokensOut: null, costUsd: null, costEstimated: false,
-    needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false,
+    needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false, fidelity: '',
     spawnSeq: 0, spawnAt: null, spawnedSeen: false,
     // callOrder is the agent's own tool calls, in order; their content is
-    // the turn's (chatReducer's agentCalls), never copied here.
-    callOrder: [], messages: [],
+    // the turn's (chatReducer's agentCalls), never copied here. parts is
+    // its timeline in chatReducer's shape: its text ({kind:'text', partId,
+    // text}) and tool calls ({kind:'tool', callId}).
+    callOrder: [], parts: [], messages: [],
     ...patch,
   }
 }
@@ -142,7 +149,7 @@ export function initialStage() {
 }
 
 const RELEVANT = new Set([
-  'turn.started', 'turn.finished', 'session.bound', 'tool.started', 'tool.completed', 'usage.updated',
+  'assistant.delta', 'turn.started', 'turn.finished', 'session.bound', 'tool.started', 'tool.completed', 'usage.updated',
   'agent.spawned', 'agent.status', 'agent.message', 'agent.reassigned', 'agent.finished',
 ])
 
@@ -215,12 +222,13 @@ function syncQuest(d, agentId) {
   }
 }
 
-function setStatus(d, ev, id, to, detail = '') {
+function setStatus(d, ev, id, to, detail = '', leases = []) {
   const n = d.node(id)
   // A question waits for an answer until the agent moves on.
   if (n.status !== to) n.needsYou = false
   n.status = to
   n.statusDetail = detail || ''
+  n.leases = Array.isArray(leases) ? leases : []
   n.statusAt = ev.at || n.statusAt
   syncQuest(d, id)
 }
@@ -259,7 +267,14 @@ function onToolStarted(d, ev, p) {
     d.testCalls = { ...d.testCalls, [p.callId]: 'run' }
     n.testsRun += 1
   }
-  if (owner !== LEAD_ID) n.callOrder = pushCapped(n.callOrder, p.callId, MAX_CALLS)
+  if (owner !== LEAD_ID) {
+    // Latest-N, for the call order and the timeline alike; a call that
+    // falls out of the order leaves the timeline with it.
+    const dropped = n.callOrder.length >= MAX_CALLS ? n.callOrder[0] : null
+    n.callOrder = pushCapped(n.callOrder, p.callId, MAX_CALLS)
+    const parts = dropped ? n.parts.filter(x => x.kind !== 'tool' || x.callId !== dropped) : n.parts
+    n.parts = pushCapped(parts, { kind: 'tool', callId: p.callId }, MAX_PARTS)
+  }
   // A Claude-native Task call starts a subagent: its own node under the
   // agent that called it (#226: agent.spawned{agentType:"native"} when the
   // runner reports it; the Task call otherwise).
@@ -297,10 +312,36 @@ function onToolCompleted(d, ev, p) {
     setStatus(d, ev, nativeId, p.cancelled ? 'cancelled' : failed ? 'failed' : 'done')
     sub.outcome = sub.status
     sub.summary = clip(p.result, 600)
-    sub.limited = sub.tools > 0 && sub.toolsDone === 0
+    sub.limited = limitedOf(sub)
     if (sub.spawnAt && ev.at) sub.durationMs = Math.max(0, Date.parse(ev.at) - Date.parse(sub.spawnAt)) || 0
     if (p.result) addFlight(d, ev, 'result', nativeId, sub.parentId || LEAD_ID, p.result)
     addFeed(d, ev, nativeId, 'finished', sub.summary, sub.status)
+  }
+}
+
+// limitedOf says whether an agent's runtime shows its work only partly:
+// the fidelity the journal reports (#259), else, once it has finished,
+// tool starts that never ended.
+function limitedOf(n) {
+  if (n.fidelity) return n.fidelity !== 'full'
+  return FINISHED.has(n.status) && n.tools > 0 && n.toolsDone === 0
+}
+
+function capText(text) {
+  return text.length > MAX_PART_TEXT ? text.slice(0, MAX_PART_TEXT) + '…' : text
+}
+
+// onText adds a worker's own text (assistant.delta with its agentId, #258)
+// to its timeline: a delta for the part it is writing extends that part.
+function onText(d, p) {
+  if (!p.agentId || !p.text) return
+  const n = d.node(p.agentId)
+  const last = n.parts[n.parts.length - 1]
+  if (last && last.kind === 'text' && last.partId === p.partId) {
+    if (last.text.length >= MAX_PART_TEXT) return
+    n.parts = [...n.parts.slice(0, -1), { ...last, text: capText(last.text + p.text) }]
+  } else {
+    n.parts = pushCapped(n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: capText(p.text) }, MAX_PARTS)
   }
 }
 
@@ -315,7 +356,9 @@ function onSpawned(d, ev, p) {
     brief: p.brief || n.brief, why: p.why || n.why,
     pickConfidence: p.pickConfidence ?? n.pickConfidence, jevConfidence: p.jevConfidence ?? n.jevConfidence,
     spawnSeq: n.spawnSeq || ev.seq || 0, spawnAt: n.spawnAt || ev.at || null,
+    fidelity: p.fidelity || n.fidelity,
   })
+  n.limited = limitedOf(n)
   addEdge(d, n.parentId, id)
   if (!n.spawnedSeen) {
     n.spawnedSeen = true
@@ -376,6 +419,9 @@ function stageApply(d, ev) {
     case 'session.bound':
       if (p.runtime) d.node(LEAD_ID).runtime = p.runtime
       break
+    case 'assistant.delta':
+      onText(d, p)
+      break
     case 'tool.started':
       onToolStarted(d, ev, p)
       break
@@ -397,7 +443,12 @@ function stageApply(d, ev) {
       break
     case 'agent.status':
       if (!p.agentId || !p.to) break
-      setStatus(d, ev, p.agentId, p.to, p.detail)
+      // A repeat of the same status only updates the leases it holds.
+      if (d.nodes[p.agentId]?.status === p.to) {
+        setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
+        break
+      }
+      setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
       if (p.to === 'waiting_lease' || p.to === 'failed' || p.to === 'cancelled') addFeed(d, ev, p.agentId, 'status', p.to, p.detail || '')
       break
     case 'agent.message':
@@ -411,6 +462,8 @@ function stageApply(d, ev) {
       n.model = p.toModel ?? n.model
       n.reassignedSeq = ev.seq ?? 0
       n.reassignedAt = ev.at || null
+      if (p.fidelity) n.fidelity = p.fidelity
+      n.limited = limitedOf(n)
       addFeed(d, ev, p.agentId, 'reassigned', p.reason || '', `${n.prevModel.runtime}/${n.prevModel.model || 'default'} → ${n.runtime}/${n.model || 'default'}`)
       break
     }
@@ -431,7 +484,7 @@ function stageApply(d, ev) {
       addFiles(n, p.filesChanged)
       // A runtime that reports tool starts but never their ends shows its
       // activity only partly: the stage says so.
-      n.limited = n.tools > 0 && n.toolsDone === 0
+      n.limited = limitedOf(n)
       addFeed(d, ev, p.agentId, 'finished', n.summary, outcome)
       break
     }
@@ -494,6 +547,8 @@ export function buildScoreboard(s) {
 // applied seq (a re-delivery) is ignored.
 export function stageReducer(state, ev) {
   if (!ev || !RELEVANT.has(ev.type)) return state
+  // The lead's own text is the chat's, not the stage's.
+  if (ev.type === 'assistant.delta' && !ev.payload?.agentId) return state
   const s = state || initialStage()
   if (typeof ev.seq === 'number' && ev.seq <= s.lastSeq) return s
   const d = draft(s)
@@ -517,25 +572,17 @@ export function hasTeam(stage) {
 }
 
 // leasesOf says who holds the pen (the write lease) and the browser, and
-// who waits for which. A worker holds a lease from the moment it starts
-// until it finishes (the conductor takes leases before a slot); the lead
-// holds the pen only while one of its edits runs.
+// who waits for which, as the conductor reports them on agent.status
+// (leases and a waiting_lease detail): the stage never re-derives them.
 export function leasesOf(stage) {
   const out = { pen: null, browser: null, waiting: [] }
   if (!stage) return out
   for (const id of stage.order) {
     const n = stage.nodes[id]
-    if (n.status === 'waiting_lease') {
-      out.waiting.push({ id, lease: n.statusDetail || 'write' })
-      continue
-    }
-    if (id === LEAD_ID || n.native) continue
-    if (n.status !== 'starting' && n.status !== 'working') continue
-    if (n.access && n.access !== 'research' && !out.pen) out.pen = id
-    if ((n.access === 'qa' || n.access === 'automation') && !out.browser) out.browser = id
+    if (n.status === 'waiting_lease') out.waiting.push({ id, lease: n.statusDetail || 'write' })
+    if (n.leases.includes('write') && !out.pen) out.pen = id
+    if (n.leases.includes('browser') && !out.browser) out.browser = id
   }
-  const lead = stage.nodes[LEAD_ID]
-  if (!out.pen && lead?.doing?.active && WRITE_KINDS.has(lead.doing.kind)) out.pen = LEAD_ID
   return out
 }
 

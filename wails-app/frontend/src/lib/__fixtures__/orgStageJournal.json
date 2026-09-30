@@ -198,7 +198,10 @@
   "payload": {
    "agentId": "w2",
    "from": "queued",
-   "to": "starting"
+   "to": "starting",
+   "leases": [
+    "write"
+   ]
   }
  },
  {
@@ -482,7 +485,10 @@
   "payload": {
    "agentId": "w2",
    "from": "starting",
-   "to": "working"
+   "to": "working",
+   "leases": [
+    "write"
+   ]
   }
  },
  {
@@ -681,7 +687,11 @@
   "payload": {
    "agentId": "w3",
    "from": "waiting_lease",
-   "to": "starting"
+   "to": "starting",
+   "leases": [
+    "write",
+    "browser"
+   ]
   }
  },
  {
@@ -693,7 +703,11 @@
   "payload": {
    "agentId": "w3",
    "from": "starting",
-   "to": "working"
+   "to": "working",
+   "leases": [
+    "write",
+    "browser"
+   ]
   }
  },
  {

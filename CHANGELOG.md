@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **What changes:** a model scoring under 50% for a category drops to the bottom of the ranking for that kind of work, and Jev sees every score with its plain counts when it picks a model. A benched model recovers as its failures age (about 18 days for 3 failures, about 54–65 days when the lead also rated 2–3 of them bad).
   - **Where to see it:** `agent roster` shows the scores in a "Track record" column, such as `engineering score 43% (0 of 3 succeeded) low` (`track_record` in `--json`).
 - **Stop a single worker** (#255): `chat turn stop <conversation> <turn> --agent <id>` cancels one worker of a running dynamic-org turn, and the lead and the other workers keep running. It reaches the turn's process through a small mailbox folder next to the database, so it works whichever window runs the turn. Stopping a worker that already finished is a no-op. In the app, the Stop button in a running worker's stage drawer uses it (`StopChatAgent`).
+- **Dynamic org: worker text, live usage and fidelity in the journal** (#257, #258, #259).
+  - A worker's own text is journaled as `assistant.delta` with its `agentId` (part ids `w1:p1`, …; at most 64 KB per worker), and the app shows it in the org stage's node drawer, not in the lead's timeline.
+  - A worker's tokens and cost are journaled live as `usage.updated` with its `agentId`, so the stage's meters move while it works. The lead's own usage stays separate; the bubble's cost adds the workers' in explicitly.
+  - `agent.spawned` and `agent.reassigned` carry the runtime's tool-activity `fidelity`, so the stage shows "limited activity" from the start instead of guessing at the end.
+  - Each `agent.status` lists the leases its worker holds (`write`, `browser`), and the org stage's pen and browser indicators read them instead of guessing from access profiles. The lead's own write lease is reported as `agent.status` for `lead`.
+  - `chat history events --agent <id|lead>` and `chat history transcript --by-agent <conversation> <turn>`.
 
 ### Fixed
 - `agent validate --all` failed with "unknown flag", although #225 and the release checklist (#231) use it. `--all` now names the default explicitly (every installed runtime and its models) and is refused together with `--runtime` or `--model`.

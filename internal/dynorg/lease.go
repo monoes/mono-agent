@@ -1,6 +1,11 @@
 package dynorg
 
-import "context"
+import (
+	"context"
+	"slices"
+
+	"github.com/monoes/mono-agent/internal/ai/chatevents"
+)
 
 // lease is a first-come, first-served lock that can be waited for with a
 // context: the write lease (one worker edits the chat folder at a time) and
@@ -30,3 +35,45 @@ func (l *lease) acquire(ctx context.Context) error {
 }
 
 func (l *lease) release() { <-l.ch }
+
+// holdLease records that w holds l (named name) until the returned func
+// releases it, and journals that at once (agent.status with its status
+// unchanged). Every agent.status reports the leases its worker holds, so
+// the org stage reads who holds the pen and the browser from the journal
+// instead of re-deriving the rules (#228).
+func (c *Conductor) holdLease(w *worker, l *lease, name string) (release func()) {
+	c.mu.Lock()
+	w.leases = append(w.leases, name)
+	// Say so now: a worker that holds a lease may still wait for another
+	// lease or a free slot before its status changes.
+	c.reportLocked(w)
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		w.leases = slices.DeleteFunc(w.leases, func(n string) bool { return n == name })
+		c.mu.Unlock()
+		l.release()
+	}
+}
+
+// reportLocked journals w's current status again, with the leases it
+// holds now.
+func (c *Conductor) reportLocked(w *worker) {
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: slices.Clone(w.leases)})
+}
+
+// LeadAgentID names the lead in the lease report the stage reads.
+const LeadAgentID = "lead"
+
+// reportLeadLocked journals whether the lead holds the write lease: an
+// agent.status for "lead" (working, as the lead is while it edits) with
+// its leases, so the stage shows the lead holding the pen too.
+func (c *Conductor) reportLeadLocked() {
+	var leases []string
+	if c.leadHolds {
+		leases = []string{"write"}
+	}
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{
+		AgentID: LeadAgentID, From: chatevents.AgentWorking, To: chatevents.AgentWorking, Leases: leases,
+	})
+}

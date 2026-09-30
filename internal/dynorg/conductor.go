@@ -91,6 +91,8 @@ type worker struct {
 	// unusable holds the models (runtime/model) that couldn't run this
 	// worker (auth, quota, …), so a retry doesn't try them again.
 	unusable map[string]bool
+	stream   workerStream // its text and live usage (workerstream.go)
+	leases   []string     // the leases it holds, for agent.status (lease.go)
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -216,7 +218,7 @@ func (c *Conductor) Spawn(ctx context.Context, req SpawnRequest) (WorkerInfo, er
 	}
 	c.cfg.Emit.Emit(chatevents.EventAgentSpawned, chatevents.AgentSpawnedPayload{
 		AgentID: w.id, Role: st.Role, AgentType: st.AgentType, Skills: skills,
-		Runtime: st.Model.Runtime, Model: st.Model.Model, Effort: st.Effort, Access: st.Access,
+		Runtime: st.Model.Runtime, Model: st.Model.Model, Fidelity: st.Model.Fidelity, Effort: st.Effort, Access: st.Access,
 		Brief: boundText(req.Brief, 2000), Why: strings.Join(st.Why, "; "), PickConfidence: st.PickConf, JevConfidence: st.JevConf,
 	})
 	c.emitMessage(w.id, "brief", "lead", w.id, req.Brief)
@@ -414,7 +416,7 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 				return chatevents.AgentCancelled, "", "cancelled while waiting for the " + need.name + " lease", false
 			}
 		}
-		defer need.l.release()
+		defer c.holdLease(w, need.l, need.name)()
 	}
 	select {
 	case c.slots <- struct{}{}:
@@ -476,7 +478,7 @@ func (c *Conductor) runLeased(ctx context.Context, w *worker, prompt, resume str
 			w.model = next
 			c.mu.Unlock()
 			c.cfg.Emit.Emit(chatevents.EventAgentReassigned, chatevents.AgentReassignedPayload{
-				AgentID: w.id, FromRuntime: m.Runtime, FromModel: m.Model, ToRuntime: next.Runtime, ToModel: next.Model,
+				AgentID: w.id, FromRuntime: m.Runtime, FromModel: m.Model, ToRuntime: next.Runtime, ToModel: next.Model, Fidelity: next.Fidelity,
 				Reason: status + ": " + boundText(detail, 300),
 			})
 			continue
@@ -585,8 +587,10 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 			}
 		}
 		monomind.ApplyEventToResult(&run, ev)
+		c.stream(w, ev, &run)
 		c.workerEvent(w, ev)
 	})
+	c.flushText(w, true)
 	// Exec's result is the turn's final accounting; the events are the
 	// fallback when it returned none.
 	if res != nil {
@@ -713,7 +717,7 @@ func (c *Conductor) setStatusLocked(w *worker, to, detail string) {
 	}
 	from := w.status
 	w.status = to
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: slices.Clone(w.leases)})
 }
 
 func (c *Conductor) finish(w *worker, outcome, report, errText string) {

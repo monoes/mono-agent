@@ -340,6 +340,7 @@ func newChatHistoryTurnCmd(cfg *globalConfig) *cobra.Command {
 func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 	var afterSeq int64
 	var limit int
+	var agent string
 	cmd := &cobra.Command{
 		Use:   "events <conversation-id> <turn-id>",
 		Short: "Show a turn's events after --after-seq, oldest first, with the turn's status",
@@ -367,7 +368,11 @@ func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 			}
 			page := chatEventPage{Items: []chatevents.Record{}, Turn: t.Record(), LastCommittedSeq: t.LastCommittedSeq, HasMore: len(evs) == n}
 			for _, ev := range evs {
-				page.Items = append(page.Items, ev.Record())
+				// --agent keeps one dynamic-org agent's events; has_more
+				// and paging still follow the unfiltered page.
+				if r := ev.Record(); agent == "" || eventAgentID(r) == agent {
+					page.Items = append(page.Items, r)
+				}
 			}
 			if cfg.JSONOutput {
 				return printJSON(page)
@@ -381,6 +386,7 @@ func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&afterSeq, "after-seq", 0, "Only events with a higher seq")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum events (default 500, max 1000); has_more is true when a full page came back")
+	cmd.Flags().StringVar(&agent, "agent", "", "Dynamic org: only this agent's events (a worker id such as w1, or lead)")
 	return cmd
 }
 
@@ -521,19 +527,43 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func newChatHistoryTranscriptCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
-		Use:   "transcript <history-id>",
-		Short: "Show the legacy transcript `chat --history-id`/`--canvas` saved (read-only)",
+	var byAgent bool
+	cmd := &cobra.Command{
+		Use:   "transcript <history-id> | --by-agent <conversation-id> <turn-id>",
+		Short: "Show the legacy transcript `chat --history-id`/`--canvas` saved, or a dynamic-org turn by agent",
 		Long: "Shows the messages a plain `chat --history-id <id>` (or `--canvas <id>`) turn saved to the " +
 			"legacy ai_chat_messages transcript, oldest first. Conversations run through " +
-			"`chat --conversation` are journaled as events instead and never appear here.",
-		Args: cobra.ExactArgs(1),
+			"`chat --conversation` are journaled as events instead and never appear here.\n\n" +
+			"With --by-agent it shows a journaled dynamic-org turn split by agent instead: the lead, then " +
+			"each worker with its role, model and status, the briefs and reports it exchanged, and the " +
+			"text it wrote.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if byAgent {
+				return cobra.ExactArgs(2)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, profileID, closeDB, err := openChatHistory(cfg)
 			if err != nil {
 				return err
 			}
 			defer closeDB()
+			if byAgent {
+				if _, err := turnInConversation(store, profileID, args[0], args[1]); err != nil {
+					return err
+				}
+				recs, err := allTurnEvents(store, profileID, args[0], args[1])
+				if err != nil {
+					return err
+				}
+				items := agentTranscripts(recs)
+				if cfg.JSONOutput {
+					return printJSON(map[string]any{"items": items})
+				}
+				printAgentTranscripts(items)
+				return nil
+			}
 			msgs, err := store.GetChatHistory(args[0], profileID)
 			if err != nil {
 				return err
@@ -550,6 +580,8 @@ func newChatHistoryTranscriptCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&byAgent, "by-agent", false, "Show a journaled dynamic-org turn (<conversation-id> <turn-id>) split by agent")
+	return cmd
 }
 
 func firstLineOf(s string) string {
