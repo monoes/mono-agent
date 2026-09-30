@@ -93,7 +93,12 @@ func (e *execScript) exec(ctx context.Context, o monomind.ExecOptions, on func(m
 		}
 	}
 	defer atomic.AddInt32(&e.running, -1)
-	on(monomind.Event{Type: monomind.EventStart})
+	start := monomind.Event{Type: monomind.EventStart}
+	if o.Sandbox != "" {
+		// Exec reports the sandbox it applied on the start event.
+		start.SandboxStatus = monomind.SandboxStatusSandboxed
+	}
+	on(start)
 	on(monomind.Event{Type: monomind.EventSession, SessionID: "sess-" + o.Model})
 	on(monomind.Event{Type: monomind.EventToolActivity, CoderFields: monomind.CoderFields{Phase: "start", Input: json.RawMessage(`{"file_path":"a.go"}`)}, ID: "t1", Name: "Edit"})
 	on(monomind.Event{Type: monomind.EventToolActivity, CoderFields: monomind.CoderFields{Phase: "end"}, ID: "t1", Name: "Edit"})

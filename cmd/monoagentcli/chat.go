@@ -88,7 +88,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"`chat history`): its runtime, model and session come from the conversation, and the turn " +
 			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
 			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
-			"`history` subcommand.",
+			"`history` or `turn` subcommand.",
 		Args: cobra.MinimumNArgs(1),
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"
@@ -385,15 +385,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				// prompt-injected instruction hidden in one could otherwise
 				// try to walk the model into running something well outside
 				// what "help me create an org" ever needs.
-				opts.AllowBashPrefixes = []string{"monomind org", "monoagentcli org", "monoagentcli workflow"}
-				systemPromptParts = append(systemPromptParts, fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
-
-1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
-2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
-3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s BEFORE the subcommand instead of --project, e.g. monoagentcli --profile %s workflow create <name>.
-4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
-
-Changes made this way appear in the app automatically — orgs are picked up live by an existing filesystem watcher, no separate refresh step needed.`, projectRoot, projectRoot, profileID, profileID))
+				opts.AllowBashPrefixes = chatBashPrefixes
+				systemPromptParts = append(systemPromptParts, chatBashPrompt(projectRoot, profileID))
 			}
 			// Only the EMPTY case gets extra framing. An earlier version also
 			// added a "you might have no tools, be careful" caution AND a
@@ -544,6 +537,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
+	cmd.AddCommand(newChatTurnCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
 	// With --json a failure also ends stdout with {"error","code"}; an agent
 	// that is not installed or not logged in is code agent_not_setup.
@@ -766,4 +760,23 @@ func registryNodeTypes(db *sql.DB) []aichat.NodeTypeInfo {
 		out = append(out, aichat.NodeTypeInfo{Type: t, Label: t, Category: cat, Description: ""})
 	}
 	return out
+}
+
+// chatBashPrefixes are the only Bash commands a tools turn may run. The
+// match is literal (monomind's canUseTool), so every command
+// chatBashPrompt shows must start with one of them: its example
+// `monoagentcli --profile <id> workflow create` was always denied (#247).
+var chatBashPrefixes = []string{"monomind org", "monoagentcli org", "monoagentcli workflow"}
+
+// chatBashPrompt is the system prompt part that explains the scoped Bash
+// access of a tools turn.
+func chatBashPrompt(projectRoot, profileID string) string {
+	return fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
+
+1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
+2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
+3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s instead of --project. Put --profile AFTER the subcommand, e.g. monoagentcli workflow create <name> --profile %s. With --profile before the subcommand the command is denied: only commands that begin with one of the allowed prefixes run.
+4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
+
+Changes made this way appear in the app automatically — orgs are picked up live by an existing filesystem watcher, no separate refresh step needed.`, projectRoot, projectRoot, profileID, profileID)
 }
