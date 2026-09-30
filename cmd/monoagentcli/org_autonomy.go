@@ -371,17 +371,32 @@ func newOrgAutonomyPauseCmd(env *orgEnv, pause bool) *cobra.Command {
 				}
 				views = append(views, autonomyView(a))
 			}
-			// The rows are paused first, so an org file that cannot be
-			// rewritten never keeps another org from pausing.
+			// Every row is written before any file, and a file that cannot
+			// be rewritten is reported after the rest are: one bad org file
+			// never keeps another org's row or file from being updated.
+			var failed, reasons []string
 			for _, org := range orgs {
 				if err := rewriteAutonomyDisplayCopy(ctx, env, db, profileID, root, store, org); err != nil {
-					return err
+					failed = append(failed, org)
+					reasons = append(reasons, err.Error())
 				}
 			}
+			var out interface{} = map[string]interface{}{"v": 1, "orgs": views}
 			if !all && len(views) == 1 {
-				return printJSONValue(views[0])
+				out = views[0]
 			}
-			return printJSONValue(map[string]interface{}{"v": 1, "orgs": views})
+			if err := printJSONValue(out); err != nil {
+				return err
+			}
+			if len(failed) > 0 {
+				verb := "resumed"
+				if pause {
+					verb = "paused"
+				}
+				return fmt.Errorf("%s in the database; org file(s) %s not updated: %s",
+					verb, strings.Join(failed, ", "), strings.Join(reasons, "; "))
+			}
+			return nil
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "Every org in the profile")
