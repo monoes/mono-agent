@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import journal from './__fixtures__/orgStageJournal.json'
 import {
-  stageReducer, replayStage, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID,
+  stageReducer, replayStage, initialStage, leasesOf, questProgress, structureKey, doingOf, hasTeam, LEAD_ID, MAX_CALLS, MAX_PARTS,
 } from './orgStage.js'
 import { chatReducer, initialChatState } from '../components/chat/chatReducer.js'
 import { reduceTurnEvents } from '../components/chat/useChatStream.js'
@@ -279,10 +279,46 @@ describe('performance', () => {
     const s = replayStage(events)
     expect(performance.now() - t0).toBeLessThan(3000)
     expect(s.nodes.w1.tools).toBeGreaterThan(1000)
-    // The call order kept per agent is capped; the counters are not.
-    expect(s.nodes.w1.callOrder.length).toBeLessThanOrEqual(400)
+    // The call order kept per agent is capped at its latest calls; the
+    // counters are not.
+    expect(s.nodes.w1.callOrder.length).toBe(400)
+    const w1Last = events.filter(e => e.type === 'tool.started' && e.payload.agentId === 'w1').at(-1).payload.callId
+    expect(s.nodes.w1.callOrder.at(-1)).toBe(w1Last)
     // The stage never copies a call's content: that stays in the turn.
     expect(s.nodes.w1.calls).toBeUndefined()
+  })
+})
+
+describe('a long run keeps its latest work', () => {
+  it('keeps the latest calls and timeline parts together, never a tool part for a dropped call', () => {
+    const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
+    let seq = 1
+    for (let i = 0; i < 900; i++) {
+      events.push({ seq: ++seq, type: 'tool.started', payload: { agentId: 'w1', callId: `w1:c${i}`, name: 'Read' } })
+      if (i % 3 === 0) events.push({ seq: ++seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: `w1:p${i}`, text: `note ${i}` } })
+    }
+    const n = replayStage(events).nodes.w1
+    expect(n.callOrder.length).toBe(MAX_CALLS)
+    expect(n.callOrder[0]).toBe('w1:c500')
+    expect(n.callOrder.at(-1)).toBe('w1:c899')
+    expect(n.parts.length).toBeLessThanOrEqual(MAX_PARTS)
+    const kept = new Set(n.callOrder)
+    const tools = n.parts.filter(p => p.kind === 'tool')
+    expect(tools.every(p => kept.has(p.callId))).toBe(true)
+    expect(tools.length).toBe(MAX_CALLS)
+    expect(n.parts.slice(-4)).toEqual([
+      { kind: 'tool', callId: 'w1:c897' }, { kind: 'text', partId: 'w1:p897', text: 'note 897' },
+      { kind: 'tool', callId: 'w1:c898' }, { kind: 'tool', callId: 'w1:c899' },
+    ])
+  })
+
+  it('keeps the latest text parts when a run mostly talks', () => {
+    const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
+    for (let i = 0; i < 1000; i++) events.push({ seq: i + 2, type: 'assistant.delta', payload: { agentId: 'w1', partId: `w1:p${i}`, text: `t${i}` } })
+    const n = replayStage(events).nodes.w1
+    expect(n.parts.length).toBe(MAX_PARTS)
+    expect(n.parts[0].text).toBe('t200')
+    expect(n.parts.at(-1).text).toBe('t999')
   })
 })
 

@@ -65,8 +65,8 @@ func LeadPrompt(l Limits) string {
 	}
 	return "\n\nYou lead a dynamic org. Besides your own tools you have org tools to bring in workers: " +
 		"org_roster (the models, roles and access profiles you can use), org_spawn (start a worker with a brief), " +
-		"org_wait (wait for workers and read their reports), org_message (a follow-up to a finished worker) and " +
-		"org_stop. Use workers when the task splits into parts that can run in parallel or need a different " +
+		"org_wait (wait for workers and read their reports), org_message (a follow-up to a finished worker), " +
+		"org_stop and org_rate (rate a worker's result). Use workers when the task splits into parts that can run in parallel or need a different " +
 		"specialty (review, testing, research); do small things yourself. " +
 		"You decide each worker's brief and may choose its role, skills, model, effort and access profile " +
 		"(coding, qa, automation, research); leave any of them out and they are picked for you. " +
@@ -76,6 +76,7 @@ func LeadPrompt(l Limits) string {
 		"while a writing worker runs; org_wait for it first. " +
 		fmt.Sprintf("This turn allows %d workers, %d running at once%s. ", l.MaxAgents, l.MaxConcurrent, budget) +
 		"Prefer org_spawn over your runtime's own subagent tool: org workers can use other models and the user sees them. " +
+		"After you read a worker's report, org_rate it once: good if it did the job, bad if it didn't; ratings teach staffing which models fit which work. " +
 		"Always org_wait for the workers you started before you finish, then tell the user what the team did."
 }
 

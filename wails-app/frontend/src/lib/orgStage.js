@@ -16,8 +16,10 @@ export const LEAD_ID = 'lead'
 export const MAX_FEED = 200
 export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
-const MAX_CALLS = 400
-const MAX_PARTS = 800
+// A node keeps the order of its latest MAX_CALLS tool calls.
+export const MAX_CALLS = 400
+// ... and its latest MAX_PARTS timeline parts (text and tool calls).
+export const MAX_PARTS = 800
 // A text part longer than this is cut (the CLI already bounds a worker's
 // text; this keeps a journal from elsewhere in check too).
 export const MAX_PART_TEXT = 64 * 1024
@@ -240,7 +242,8 @@ function addFiles(n, paths) {
 
 // ownerOf is the node a tool event belongs to: a call made inside a native
 // subagent belongs to that subagent, else to its worker, else to the lead.
-function ownerOf(d, p) {
+// d is a stage (or its draft); the running-org adapter files calls by it.
+export function ownerOf(d, p) {
   if (p.parentCallId && d.nativeByCall[p.parentCallId]) return d.nativeByCall[p.parentCallId]
   if (d.callOwner[p.callId]) return d.callOwner[p.callId]
   return p.agentId || LEAD_ID
@@ -264,9 +267,13 @@ function onToolStarted(d, ev, p) {
     d.testCalls = { ...d.testCalls, [p.callId]: 'run' }
     n.testsRun += 1
   }
-  if (owner !== LEAD_ID && n.callOrder.length < MAX_CALLS) {
-    n.callOrder = [...n.callOrder, p.callId]
-    if (n.parts.length < MAX_PARTS) n.parts = [...n.parts, { kind: 'tool', callId: p.callId }]
+  if (owner !== LEAD_ID) {
+    // Latest-N, for the call order and the timeline alike; a call that
+    // falls out of the order leaves the timeline with it.
+    const dropped = n.callOrder.length >= MAX_CALLS ? n.callOrder[0] : null
+    n.callOrder = pushCapped(n.callOrder, p.callId, MAX_CALLS)
+    const parts = dropped ? n.parts.filter(x => x.kind !== 'tool' || x.callId !== dropped) : n.parts
+    n.parts = pushCapped(parts, { kind: 'tool', callId: p.callId }, MAX_PARTS)
   }
   // A Claude-native Task call starts a subagent: its own node under the
   // agent that called it (#226: agent.spawned{agentType:"native"} when the
@@ -333,8 +340,8 @@ function onText(d, p) {
   if (last && last.kind === 'text' && last.partId === p.partId) {
     if (last.text.length >= MAX_PART_TEXT) return
     n.parts = [...n.parts.slice(0, -1), { ...last, text: capText(last.text + p.text) }]
-  } else if (n.parts.length < MAX_PARTS) {
-    n.parts = [...n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: capText(p.text) }]
+  } else {
+    n.parts = pushCapped(n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: capText(p.text) }, MAX_PARTS)
   }
 }
 

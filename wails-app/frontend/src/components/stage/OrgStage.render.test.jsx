@@ -6,7 +6,7 @@ import { render, screen, fireEvent, cleanup, act, within } from '@testing-librar
 import '../../i18n.js'
 import i18n from 'i18next'
 import journal from '../../lib/__fixtures__/orgStageJournal.json'
-import { replayStage, stageReducer } from '../../lib/orgStage.js'
+import { replayStage, stageReducer, MAX_CALLS } from '../../lib/orgStage.js'
 import { reduceTurnEvents } from '../chat/useChatStream.js'
 import { OrgStage, layoutStage, fitStage } from './OrgStage.jsx'
 import { StageDrawer } from './StageDrawer.jsx'
@@ -167,6 +167,27 @@ describe('stage layout', () => {
     expect(cam.zoom).toBeLessThanOrEqual(1.1)
     const all = fitStage(layoutStage(replayStage(journal)), 400, 200)
     expect(all.zoom).toBeLessThan(1)
+  })
+})
+
+describe('StageDrawer on a long run', () => {
+  it('shows the latest calls and text once older ones are dropped', () => {
+    const events = [{ conversationId: 'c', turnId: 't', seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder' } }]
+    let seq = 1
+    for (let i = 0; i < 450; i++) {
+      events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'tool.started', payload: { agentId: 'w1', callId: `w1:c${i}`, name: 'Bash', native: true, kind: 'shell', arguments: { command: `step-${i}` } } })
+      events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'tool.completed', payload: { agentId: 'w1', callId: `w1:c${i}`, ok: true, result: '' } })
+    }
+    events.push({ conversationId: 'c', turnId: 't', seq: ++seq, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'All steps ran.' } })
+    const state = reduceTurnEvents(events)
+    render(<StageDrawer node={state.stage.nodes.w1} calls={state.agentCalls} turnId="t" isLive={false} onClose={() => {}} />)
+    const work = screen.getByTestId('stage-tools')
+    expect(work).toHaveTextContent('What it did')
+    expect(work).toHaveTextContent('$ step-449')
+    expect(work).toHaveTextContent('All steps ran.')
+    expect(work).not.toHaveTextContent('$ step-49 ')
+    expect(work.textContent).not.toMatch(/\$ step-0\b/)
+    expect(work.textContent.match(/\$ step-\d+/g)).toHaveLength(MAX_CALLS)
   })
 })
 
