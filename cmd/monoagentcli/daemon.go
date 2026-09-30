@@ -39,7 +39,9 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			"`monoagentcli httpapi`), runs org automations that roles call and trigger.org workflows, " +
 			"resumes org.run/org.ask pauses when their org event arrives, reconciles org files with their " +
 			"grants, and makes autonomy decisions. Without it every org behaves as autonomy level manual. " +
-			"It writes ~/.monoagent/daemon-heartbeat.json every 10 seconds.\n\n" +
+			"It writes ~/.monoagent/daemon-heartbeat.json every 10 seconds. When turned on with " +
+			"`agent roster auto-revalidate on` (off by default; it spends money), it also re-checks stale " +
+			"roster models while nothing else runs.\n\n" +
 			"It also holds the Chrome extension bridge open (--bridge, on by default, same bridge " +
 			"`monoagentcli extension serve` runs standalone), so the MonoAgent Bridge extension stays " +
 			"connected for as long as the daemon runs instead of needing a separate `extension serve` " +
@@ -138,6 +140,9 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			go daemonhb.RunWith(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, Version: getVersion()},
 				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
 			orgs.start(ctx, engine)
+			// Automatic roster re-validation (#230): off unless the user
+			// turned it on; waited for so a run stops before the db closes.
+			defer startAutoRevalidation(ctx, db.DB, orgs.logf)()
 
 			msg := "Daemon running. Active workflows' triggers are live."
 			if servingAddr != "" {

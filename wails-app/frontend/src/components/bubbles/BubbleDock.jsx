@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, X, Code2 } from 'lucide-react'
+import { Plus, X, Code2, Network } from 'lucide-react'
 import { folderName } from '../chat/useCoderMode.js'
 import { layoutBubbles, monogram, totalCost } from '../../lib/coderBubbles.js'
 import './bubbles.css'
@@ -10,9 +10,11 @@ const statusKey = { idle: 'statusIdle', working: 'statusWorking', done: 'statusD
 function ChatBubble({ bubble, summary, expanded, onOpen, onClose, onDragStart, onDropOn, dragging, registerEl }) {
   const { t } = useTranslation()
   const [hover, setHover] = useState(false)
-  const name = bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
+  const isOrg = bubble.kind === 'org'
+  const name = isOrg ? bubble.orgName : bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
   const cost = totalCost(summary)
-  const label = t('bubbles.bubbleLabel', { name, status: t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`) }) +
+  const label = (isOrg ? t('orgBubble.bubbleLabel', { name, status: t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`) })
+    : t('bubbles.bubbleLabel', { name, status: t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`) })) +
     (summary.unread ? ` · ${t('bubbles.unread', { count: summary.unread })}` : '')
   return (
     <div className="bubble-wrap"
@@ -26,20 +28,23 @@ function ChatBubble({ bubble, summary, expanded, onOpen, onClose, onDragStart, o
         onDragEnd={() => onDragStart('')}
         onClick={() => onOpen(bubble.key)}>
         <span className="bubble-ring" aria-hidden="true" />
-        {bubble.conversationId ? monogram(name) : <Code2 size={16} />}
+        {bubble.conversationId || isOrg ? monogram(name) : <Code2 size={16} />}
+        {isOrg && <span className="bubble-kind" aria-hidden="true"><Network size={8} /></span>}
         {summary.unread > 0 && <span className="bubble-badge" aria-hidden="true">{summary.unread > 9 ? '9+' : summary.unread}</span>}
       </button>
       <button type="button" className="bubble-close" onClick={e => { e.stopPropagation(); onClose(bubble.key) }}
-        aria-label={t('bubbles.closeNamed', { name })} title={t('bubbles.closeChat')}>
+        aria-label={t('bubbles.closeNamed', { name })} title={isOrg ? t('orgBubble.close') : t('bubbles.closeChat')}>
         <X size={9} />
       </button>
       {hover && !expanded && (
         <div className="bubble-card" role="tooltip">
           <div className="bubble-card-title">{name}</div>
+          {isOrg && <div>{t('orgBubble.cardKind')}</div>}
           {bubble.cwd && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{bubble.cwd}</bdi></div>}
           <div style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span>{t(`bubbles.${statusKey[summary.status] || 'statusIdle'}`)}</span>
             {bubble.model && <span style={{ color: 'var(--cyan)' }}>{bubble.model}</span>}
+            {summary.needs > 0 && <span style={{ color: 'var(--yellow, #fbbf24)' }}>{t('orgBubble.needsCount', { count: summary.needs })}</span>}
             {cost > 0 && <span>${cost.toFixed(4)}</span>}
           </div>
         </div>
@@ -57,7 +62,7 @@ export function BubbleDock({ store, onOpen, onClose, registerEl, canCreate = tru
   const [dragKey, setDragKey] = useState('')
   const [fanOpen, setFanOpen] = useState(false)
   const gripStart = useRef(null)
-  const { bubbles, summaries, expandedKey, side } = store
+  const { bubbles, expandedKey, side } = store
   const { visible, overflow } = layoutBubbles(bubbles, expandedKey)
 
   const onDropOn = (key) => {
@@ -70,7 +75,7 @@ export function BubbleDock({ store, onOpen, onClose, registerEl, canCreate = tru
     dragging: dragKey === b.key, registerEl,
   })
   if (bubbles.length === 0 && !canCreate) return null
-  const overflowUnread = overflow.reduce((n, b) => n + (summaries[b.key]?.unread || 0), 0)
+  const overflowUnread = overflow.reduce((n, b) => n + (store.summaryOf(b.key).unread || 0), 0)
 
   return (
     <div className={`bubble-dock ${side}`} data-testid="bubble-dock" role="toolbar" aria-label={t('bubbles.dockLabel')}>

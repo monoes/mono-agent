@@ -514,6 +514,27 @@
         "timeout": "✗ timed out",
         "missing_binary": "✗ not installed",
         "error": "✗ error"
+      },
+      "auto": {
+        "label": "Re-check stale models automatically",
+        "on": "on",
+        "off": "off",
+        "help": "When on, the daemon re-checks stale models in the background while no chat, workflow or org is running (after {{quiet}} of quiet, never at startup): at most {{perDay}} runtime(s) a day, {{models}} model(s) each.",
+        "money": "Each re-check is a real model call and costs money.",
+        "next": "Next run: {{count}} model(s) of {{runtime}}, {{cost}}",
+        "nothingStale": "Nothing is stale right now",
+        "today": "Today: {{count}} run(s), spent {{spent}}",
+        "lastRun": "Last run {{at}} ({{runtime}})",
+        "nextEligible": "Next run {{at}} at the earliest",
+        "noDaemon": "The daemon isn't running, so nothing runs until it starts.",
+        "unknownCost": "(+ {{count}} with unknown cost)",
+        "confirmTitle": "Re-check stale models automatically?",
+        "confirmBody": "The daemon will make real, paid model calls without asking: up to {{perDay}} runtime(s) a day, {{models}} model(s) each.",
+        "confirmNext": "The next run tests {{count}} model(s) of {{runtime}}, {{cost}}.",
+        "confirmNothing": "Nothing is stale right now, so nothing runs until a model goes stale.",
+        "turnOn": "Turn on",
+        "ceiling": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s), {{cost}}/day at most (priciest known model {{priciest}}).",
+        "ceilingUnknown": "Daily ceiling: up to {{perDay}} run(s) × {{models}} model(s); no model has reported a cost yet."
       }
     }
   },
@@ -751,7 +772,8 @@
       "waiting_lease": "waiting its turn",
       "done": "done",
       "failed": "failed",
-      "cancelled": "stopped"
+      "cancelled": "stopped",
+      "blocked": "blocked"
     },
     "waitingLease": "waiting for the {{lease}}",
     "lease": {
@@ -806,7 +828,8 @@
       "brief": "brief from {{from}}",
       "result": "report to {{to}}",
       "followup": "follow-up from {{from}}",
-      "question": "question for you"
+      "question": "question for you",
+      "message": "message {{from}} → {{to}}"
     },
     "leadInChat": "The lead's own work is in the chat below.",
     "quests": "Quests",
@@ -851,5 +874,71 @@
       "org_stop": "stopping an agent"
     },
     "work": "What it did"
+  },
+  "orgBubble": {
+    "bubbleLabel": "Org {{name}}, {{status}}",
+    "close": "Close this bubble (the org keeps running)",
+    "cardKind": "Running org · chat with its boss",
+    "needsCount_one": "{{count}} waiting for you",
+    "needsCount_other": "{{count}} waiting for you",
+    "chatLabel": "Org: {{name}}",
+    "status": {
+      "running": "running",
+      "paused": "paused",
+      "stopped": "stopped",
+      "neverRun": "never run",
+      "loading": "…"
+    },
+    "bossIs": "Boss: {{name}}",
+    "boss": "Boss",
+    "pause": "Pause",
+    "resume": "Resume",
+    "stop": "Stop",
+    "cancel": "Cancel",
+    "openInOrgs": "Open on the Orgs page",
+    "bossIdle": "waiting for messages",
+    "teamHint": "Roles appear here as they start work.",
+    "confirm": {
+      "pauseTitle": "Pause {{name}}?",
+      "pauseBody": "Turns already running finish; no new work starts until you resume it.",
+      "resumeTitle": "Resume {{name}}?",
+      "resumeBody": "The org picks up its work again.",
+      "stopTitle": "Stop {{name}}?",
+      "stopBody": "Every role stops. Questions and gates still open stay pending until the org runs again."
+    },
+    "couldNotControl": "Could not change the org: {{error}}",
+    "resolvedBy": "by {{by}}",
+    "already": "Already {{state}}",
+    "state": {
+      "answered": "answered",
+      "approved": "approved",
+      "denied": "denied",
+      "rejected": "rejected"
+    },
+    "asks": "{{name}} asks",
+    "yourAnswer": "Answer: {{answer}}",
+    "answerLabel": "Your answer",
+    "answerPlaceholder": "Type your answer…",
+    "answer": "Answer",
+    "approvalTitle": "{{name}} wants to use {{action}}",
+    "gateTitle": "{{name}} asks for approval: {{gate}}",
+    "noteLabel": "Note for the org",
+    "notePlaceholder": "Note (optional)",
+    "approve": "Approve",
+    "deny": "Deny",
+    "reject": "Reject",
+    "teamRow": "{{from}} → {{to}}",
+    "you": "You",
+    "queuedNote": "The org isn't running: messages wait for its next start.",
+    "couldNotLoad": "Could not load the chat: {{error}}",
+    "empty": "No messages yet. Write to {{boss}} below.",
+    "notRunning": "The org isn't running, so its questions and gates can't be answered now. Resume or start it first; nothing is lost.",
+    "started": "The org started",
+    "stopped": "The org stopped",
+    "queued": "queued for the org's next start",
+    "sent": "sent",
+    "couldNotSend": "Could not send: {{error}}",
+    "openAsBubble": "Open as bubble",
+    "openAsBubbleNamed": "Open {{name}} as a chat bubble"
   }
 }

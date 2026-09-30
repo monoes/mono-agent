@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   STATUS, emptySummary, applyChatEvent, summaryFromTurns, totalCost, layoutBubbles, moveBubble,
-  loadState, saveState, STORAGE_KEY, shouldCollapseOnBackdrop, monogram, newDraftKey,
+  loadState, saveState, STORAGE_KEY, shouldCollapseOnBackdrop, monogram, newDraftKey, orgBubble, isOrgBubble,
 } from './coderBubbles.js'
 
 const ev = (type, turnId, payload = {}, at = '2026-09-29T10:00:00Z') => ({ type, turnId, payload, at, conversationId: 'c1' })
@@ -162,5 +162,27 @@ describe('applyChatEvent: worker usage (#257)', () => {
     s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.03 }), false)
     s = applyChatEvent(s, ev('usage.updated', 't1', { costUsd: 0.12 }), false)
     expect(totalCost(s)).toBeCloseTo(0.15)
+  })
+})
+
+describe('org bubbles (#229)', () => {
+  function memoryStorage() {
+    const m = new Map()
+    return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)) }
+  }
+  it('are kept across restarts next to coder chats, in order', () => {
+    const store = memoryStorage()
+    const coder = { key: 'c1', conversationId: 'c1', cwd: '/w/a', model: 'm', runtime: 'claude' }
+    saveState({ bubbles: [coder, orgBubble('acme'), { key: 'draft-1', conversationId: '' }], side: 'left' }, store)
+    const { bubbles, side } = loadState(store)
+    expect(side).toBe('left')
+    expect(bubbles.map(b => b.key)).toEqual(['c1', 'org:acme'])
+    expect(isOrgBubble(bubbles[1])).toBe(true)
+    expect(bubbles[1].orgName).toBe('acme')
+  })
+  it('drops a malformed org entry', () => {
+    const store = memoryStorage()
+    store.setItem(STORAGE_KEY, JSON.stringify({ bubbles: [{ kind: 'org' }, { kind: 'org', orgName: 7 }, { kind: 'org', orgName: 'ok' }] }))
+    expect(loadState(store).bubbles.map(b => b.key)).toEqual(['org:ok'])
   })
 })

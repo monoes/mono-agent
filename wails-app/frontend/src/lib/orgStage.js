@@ -390,6 +390,10 @@ function onMessage(d, ev, p) {
       break
     default:
       addFeed(d, ev, id, 'message', p.text, dir || '')
+      // A running org's role-to-role message (#229) names both ends.
+      if (p.flightFrom && p.flightTo && p.flightFrom !== p.flightTo && d.nodes[p.flightFrom] && d.nodes[p.flightTo]) {
+        addFlight(d, ev, 'brief', p.flightFrom, p.flightTo, p.text)
+      }
   }
 }
 
