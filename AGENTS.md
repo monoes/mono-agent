@@ -557,7 +557,10 @@ every OS, whichever window owns the turn. The journal then shows the usual
 `agent.status` to `cancelled` and `agent.finished` with outcome `cancelled`,
 and the command reports the worker's status from it. A worker or turn that
 already finished is a no-op (`requested: false`), and an agent the turn
-doesn't have reports `unknown`. The turn removes its folder when it ends.
+doesn't have reports `unknown`. The turn removes its folder when it ends,
+and writes its pid into it: a stop against a crashed turn (dead pid) is an
+immediate no-op with `detail`, and `chat history reconcile` (app start)
+sweeps folders whose pid is gone. The app passes the ids after `--`.
 
 How the conductor staffs a worker:
 

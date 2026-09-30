@@ -517,8 +517,8 @@ func TestApp_StopChatTurn_ForeignUnknownAndFinishedTurns(t *testing.T) {
 func TestApp_StopChatAgent_ShellsOutToChatTurnStop(t *testing.T) {
 	a, _ := newCLIChatApp(t, "")
 	bin, argsLog := chatFakeCLI(t,
-		fakeChatReply{match: "chat turn stop c1 t1 --agent w2", stdout: `{"agent_id":"w2","status":"cancelled","requested":true,"turn_status":"active"}`},
-		fakeChatReply{match: "chat turn stop c1 t-unknown", code: 2, stderr: "chat: turn not found\n"},
+		fakeChatReply{match: "chat turn stop --agent=w2 --wait 20s -- c1 t1", stdout: `{"agent_id":"w2","status":"cancelled","requested":true,"turn_status":"active"}`},
+		fakeChatReply{match: "-- c1 t-unknown", code: 2, stderr: "chat: turn not found\n"},
 	)
 	a.chatSup.findCLI = func() (string, error) { return bin, nil }
 
@@ -542,7 +542,7 @@ func TestApp_StopChatAgent_ShellsOutToChatTurnStop(t *testing.T) {
 	if r.OK || !strings.Contains(r.Error, "turn not found") {
 		t.Errorf("StopChatAgent on an unknown turn = %+v, want the CLI's error", r)
 	}
-	if calls := readArgsLog(t, argsLog); calls[0] != "--profile default --json chat turn stop c1 t1 --agent w2 --wait 20s" {
+	if calls := readArgsLog(t, argsLog); calls[0] != "--profile default --json chat turn stop --agent=w2 --wait 20s -- c1 t1" {
 		t.Errorf("argv = %q", calls)
 	}
 }

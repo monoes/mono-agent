@@ -678,13 +678,14 @@ func (a *App) StopChatTurn(conversationID, turnID string) string {
 // chat turn stop --agent`. That reaches the turn's process whichever
 // window runs it. It returns the CLI's result: the worker's status after
 // the stop (cancelled, or what it had already finished with) and whether a
-// stop was sent. The stage updates from the journal's agent events.
+// stop was sent. The stage updates from the journal's agent events. The ids
+// go after "--" (and the agent as --agent=), so none can read as a flag.
 func (a *App) StopChatAgent(conversationID, turnID, agentID string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
 	var res map[string]any
-	if err := a.chatSup.cli(a.getActiveProfileID(), &res, "chat", "turn", "stop", conversationID, turnID, "--agent", agentID, "--wait", "20s"); err != nil {
+	if err := a.chatSup.cli(a.getActiveProfileID(), &res, "chat", "turn", "stop", "--agent="+agentID, "--wait", "20s", "--", conversationID, turnID); err != nil {
 		return a.chatBindingError(err)
 	}
 	res["ok"] = true

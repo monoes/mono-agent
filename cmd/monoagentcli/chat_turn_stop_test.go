@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,7 +22,8 @@ import (
 // writeTwoWorkerMonomind is a fake monomind whose lead spawns two workers
 // without waiting, then waits for both and reports what org_wait said. The
 // "slow" worker runs a 30s sleep child (its pid in dir/slow.pid) until it
-// is stopped; the "quick" one answers after 3s.
+// is stopped; the "quick" one answers once dir/release exists, so the test
+// decides when it finishes instead of racing a timer.
 func writeTwoWorkerMonomind(t *testing.T) (bin, dir string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -44,7 +46,8 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
       wait
       echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"slow finished anyway"}'
     else
-      sleep 3
+      i=0
+      while [ ! -f '` + filepath.Join(dir, "release") + `' ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
       echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"quick report"}'
     fi
     echo '{"v":1,"type":"done","exit_code":0}'
@@ -101,7 +104,11 @@ func TestChatTurnStopStopsOneWorker(t *testing.T) {
 	got := make(chan stopped, 1)
 	go func() {
 		var s stopped
-		defer func() { got <- s }()
+		defer func() {
+			// Let the quick worker finish, whatever happened here.
+			os.WriteFile(filepath.Join(dir, "release"), nil, 0o600)
+			got <- s
+		}()
 		pidFile := filepath.Join(dir, "slow.pid")
 		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 			if _, err := os.Stat(pidFile); err == nil {
@@ -175,7 +182,8 @@ func TestChatTurnStopStopsOneWorker(t *testing.T) {
 
 	// Idempotent: w1 again, a finished worker, and an unknown one.
 	for agent, want := range map[string]string{"w1": chatevents.AgentCancelled, "w2": chatevents.AgentDone, "w9": agentStatusUnknown} {
-		out, code := runChatHistoryRoot(t, dbPath, "turn", "stop", conv.ID, "turn-1", "--agent", agent)
+		// The app's argv: ids after "--", the agent as --agent=.
+		out, code := runChatHistoryRoot(t, dbPath, "turn", "stop", "--agent="+agent, "--", conv.ID, "turn-1")
 		var res chatAgentStopResult
 		decodeChatJSON(t, out, &res)
 		if code != 0 || res.Requested || res.Status != want {
@@ -227,5 +235,87 @@ func TestChatTurnStopUnknownAgentWhileRunning(t *testing.T) {
 	stopWatch()
 	if len(calls) != 1 || calls[0] != "w7" {
 		t.Errorf("the turn got stop calls %v, want [w7]", calls)
+	}
+}
+
+// deadPID is the pid of a process that has exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
+
+// A turn killed with -9 stays active in the database and leaves its
+// folder: a stop sees the dead pid and answers at once instead of waiting
+// out --wait, and removes the folder.
+func TestChatTurnStopCrashedTurn(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	store := openTestChatStore(t, dbPath)
+	conv, err := store.CreateConversationMode("default", "agent", "general", "claude", "", "opus", ai.ModeCoder, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreateTurn(conv.ID, "default", "turn-3", "inst", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	mailbox := agentControlDir(&globalConfig{DBPath: dbPath}, "turn-3")
+	os.MkdirAll(mailbox, 0o700)
+	os.WriteFile(filepath.Join(mailbox, agentControlPIDFile), []byte(strconv.Itoa(deadPID(t))), 0o600)
+
+	start := time.Now()
+	res, err := stopChatAgent(context.Background(), store, "default", mailbox, conv.ID, "turn-3", "w1", 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Requested || res.Detail != detailTurnGone || res.TurnStatus != "active" || time.Since(start) > 2*time.Second {
+		t.Errorf("crashed turn: %+v after %s, want an immediate no-op saying the process is gone", res, time.Since(start))
+	}
+	if _, err := os.Stat(mailbox); !os.IsNotExist(err) {
+		t.Errorf("the crashed turn's folder is still there: %v", err)
+	}
+}
+
+// The sweep (run by reconcile) removes folders whose pid is dead, and old
+// ones with no pid; a live turn's folder and a new one being set up stay.
+func TestSweepAgentControl(t *testing.T) {
+	root := t.TempDir()
+	mk := func(name, pid string) string {
+		dir := filepath.Join(root, name)
+		os.MkdirAll(dir, 0o700)
+		if pid != "" {
+			os.WriteFile(filepath.Join(dir, agentControlPIDFile), []byte(pid), 0o600)
+		}
+		return dir
+	}
+	dead := mk("dead", strconv.Itoa(deadPID(t)))
+	live := mk("live", strconv.Itoa(os.Getpid()))
+	fresh := mk("fresh", "")
+	old := mk("old", "")
+	past := time.Now().Add(-2 * agentControlSweepAge)
+	os.Chtimes(old, past, past)
+
+	if n := sweepAgentControl(root, time.Now()); n != 2 {
+		t.Errorf("swept %d, want 2", n)
+	}
+	for dir, want := range map[string]bool{dead: false, old: false, live: true, fresh: true} {
+		_, err := os.Stat(dir)
+		if exists := err == nil; exists != want {
+			t.Errorf("%s exists = %v, want %v", filepath.Base(dir), exists, want)
+		}
+	}
+}
+
+func TestChatTurnStopRejectsDashIDs(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	for _, args := range [][]string{
+		{"turn", "stop", "--agent=-x", "--", "c1", "t1"},
+		{"turn", "stop", "--agent=w1", "--", "c1", "-t1"},
+	} {
+		if out, code := runChatHistoryRoot(t, dbPath, args...); code == 0 {
+			t.Errorf("%v: exit 0 (%s), want invalid input", args, out)
+		}
 	}
 }

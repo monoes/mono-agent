@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/daemonhb"
 )
 
 // Stopping one worker of a running dynamic-org turn (#255) from outside the
@@ -33,12 +35,67 @@ var agentStopPoll = 250 * time.Millisecond
 
 const agentStopPrefix = "stop-"
 
-// controlID is what a turn or agent id must look like to name a file.
-var controlID = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$`)
+// controlID is what a turn or agent id must look like to name a file. No
+// leading "-", so an id never reads as a flag either.
+var controlID = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+
+// agentControlPIDFile holds the turn process's pid, so a folder a crashed
+// turn left behind can be told from a live one.
+const agentControlPIDFile = "pid"
+
+// agentControlSweepAge is how old a folder without a pid file must be
+// before a sweep removes it (a turn writes its pid right after creating
+// the folder).
+const agentControlSweepAge = time.Minute
+
+// agentControlRoot holds every turn's mailbox folder.
+func agentControlRoot(cfg *globalConfig) string {
+	return filepath.Join(filepath.Dir(expandPath(cfg.DBPath)), "chat-control")
+}
 
 // agentControlDir is turnID's mailbox folder.
 func agentControlDir(cfg *globalConfig, turnID string) string {
-	return filepath.Join(filepath.Dir(expandPath(cfg.DBPath)), "chat-control", turnID)
+	return filepath.Join(agentControlRoot(cfg), turnID)
+}
+
+// turnProcessGone reports whether dir's turn recorded a pid that is no
+// longer running: the turn crashed (kill -9) and left its folder behind.
+// With no readable pid it can't tell, and says no.
+func turnProcessGone(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, agentControlPIDFile))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	return err == nil && !daemonhb.ProcessAlive(pid)
+}
+
+// sweepAgentControl removes the mailbox folders under root that no running
+// turn owns: its pid is gone, or it never got one and is older than
+// agentControlSweepAge. `chat history reconcile` (run at app start) calls
+// it. It returns how many it removed.
+func sweepAgentControl(root string, now time.Time) int {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		stale := turnProcessGone(dir)
+		if _, err := os.Stat(filepath.Join(dir, agentControlPIDFile)); errors.Is(err, os.ErrNotExist) {
+			if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) > agentControlSweepAge {
+				stale = true
+			}
+		}
+		if stale && os.RemoveAll(dir) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // watchAgentStops starts polling dir for stop requests and calls stop for
@@ -49,6 +106,7 @@ func watchAgentStops(dir string, stop func(agentID string)) func() {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return func() {}
 	}
+	_ = os.WriteFile(filepath.Join(dir, agentControlPIDFile), []byte(strconv.Itoa(os.Getpid())), 0o600)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -68,6 +126,9 @@ func watchAgentStops(dir string, stop func(agentID string)) func() {
 					continue
 				}
 				stop(id)
+				// On Windows the remove fails while the requester still has
+				// the file open; the next tick sees it again and stops the
+				// worker again, which is a no-op.
 				_ = os.Remove(filepath.Join(dir, e.Name()))
 			}
 		}
@@ -93,7 +154,13 @@ type chatAgentStopResult struct {
 	// for a no-op (the worker or the turn had already finished).
 	Requested  bool   `json:"requested"`
 	TurnStatus string `json:"turn_status"`
+	// Detail explains a no-op that isn't obvious from the statuses.
+	Detail string `json:"detail,omitempty"`
 }
+
+// detailTurnGone is Detail when the turn is still active in the database
+// but its process is gone (a crash); `chat history reconcile` finishes it.
+const detailTurnGone = "the turn's process is no longer running"
 
 const agentStatusUnknown = "unknown"
 
@@ -163,29 +230,40 @@ func newChatTurnStopCmd(cfg *globalConfig) *cobra.Command {
 // may still be running and waits for the journal to show the outcome.
 func stopChatAgent(ctx context.Context, store *ai.AIStore, profileID, dir, conversationID, turnID, agentID string, wait time.Duration) (chatAgentStopResult, error) {
 	res := chatAgentStopResult{ConversationID: conversationID, TurnID: turnID, AgentID: agentID}
-	t, status, err := agentStatusInTurn(store, profileID, conversationID, turnID, agentID)
-	if err != nil {
-		return res, err
-	}
-	res.TurnStatus, res.Status = t.Status, status
-	if t.Status != turnActive || agentFinished(status) {
+	// done fills res for a stop that needn't (or can't) go further.
+	done := func(t ai.Turn, status, detail string) (chatAgentStopResult, error) {
+		res.TurnStatus, res.Status, res.Detail = t.Status, status, detail
 		if status == "" {
 			res.Status = agentStatusUnknown
 		}
 		return res, nil
 	}
+	t, status, err := agentStatusInTurn(store, profileID, conversationID, turnID, agentID)
+	if err != nil {
+		return res, err
+	}
+	if t.Status != turnActive || agentFinished(status) {
+		return done(t, status, "")
+	}
+	if turnProcessGone(dir) {
+		_ = os.RemoveAll(dir)
+		return done(t, status, detailTurnGone)
+	}
 
 	req := filepath.Join(dir, agentStopPrefix+agentID)
 	if err := os.WriteFile(req, nil, 0o600); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			// No mailbox: the turn runs solo, or on a build without it.
-			if status == "" {
-				res.Status = agentStatusUnknown
-				return res, nil
-			}
-			return res, errInvalidInput("turn %s can't stop a single worker (it has no control folder)", turnID)
+		if !errors.Is(err, os.ErrNotExist) {
+			return res, fmt.Errorf("request the stop: %w", err)
 		}
-		return res, fmt.Errorf("request the stop: %w", err)
+		// No mailbox. The turn may have just ended (its folder goes with
+		// it); otherwise it runs solo, or on a build without the mailbox.
+		if t, status, err = agentStatusInTurn(store, profileID, conversationID, turnID, agentID); err != nil {
+			return res, err
+		}
+		if t.Status != turnActive || agentFinished(status) || status == "" {
+			return done(t, status, "")
+		}
+		return res, errInvalidInput("turn %s can't stop a single worker (it has no control folder)", turnID)
 	}
 	res.Requested = true
 	deadline := time.Now().Add(wait)
@@ -203,13 +281,12 @@ func stopChatAgent(ctx context.Context, store *ai.AIStore, profileID, dir, conve
 		case t.Status != turnActive:
 			// The turn ended; its Close cancelled every worker still running.
 			_ = os.Remove(req)
-			if status == "" {
-				res.Status = agentStatusUnknown
-			}
-			return res, nil
+			return done(t, status, "")
 		case taken && status == "":
-			res.Status = agentStatusUnknown
-			return res, nil
+			return done(t, status, "")
+		case !taken && turnProcessGone(dir):
+			_ = os.RemoveAll(dir)
+			return done(t, status, detailTurnGone)
 		case time.Now().After(deadline):
 			res.Status = "stopping"
 			return res, nil
