@@ -1,0 +1,130 @@
+// @vitest-environment jsdom
+// Signed org definitions (#288): the banner for an unsigned or changed org,
+// monomind's review behind "Review & sign", and signing only on confirm —
+// with the reviewed definition's hash.
+import React from 'react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import '@testing-library/jest-dom/vitest'
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
+
+vi.mock('../../services/api.js', () => ({
+  api: { orgSignatureStatus: vi.fn(), orgSignatureReview: vi.fn(), orgSign: vi.fn() },
+  notify: vi.fn(),
+}))
+import { api, notify } from '../../services/api.js'
+import ConfirmHost from '../ConfirmDialog.jsx'
+import OrgSignatureBanner, { isSignatureRefusal, requestSignatureRefresh } from './OrgSignatureBanner.jsx'
+
+const CHANGED = { v: 1, org: 'growth', supported: true, state: 'changed', sha256: 'abc', signed: false }
+const SIGNED = { v: 1, org: 'growth', supported: true, state: 'signed', sha256: 'def', signed: false }
+const REVIEW = { v: 1, org: 'growth', supported: true, state: 'changed', sha256: 'abc', hash: 'h-reviewed', review: 'org growth (changed):\n  lead: runtime claude · git push', signed: false }
+
+beforeEach(() => { vi.clearAllMocks() })
+afterEach(() => { cleanup() })
+
+function renderBanner() {
+  return render(<><OrgSignatureBanner orgName="growth" /><ConfirmHost /></>)
+}
+
+describe('OrgSignatureBanner', () => {
+  it('shows nothing for a signed org, or below monomind 2.21', async () => {
+    api.orgSignatureStatus.mockResolvedValueOnce(SIGNED)
+    const { unmount } = renderBanner()
+    await waitFor(() => expect(api.orgSignatureStatus).toHaveBeenCalledWith('growth'))
+    expect(screen.queryByTestId('org-signature-banner')).toBeNull()
+    unmount()
+
+    api.orgSignatureStatus.mockResolvedValueOnce({ v: 1, org: 'growth', supported: false, signed: false })
+    renderBanner()
+    await waitFor(() => expect(api.orgSignatureStatus).toHaveBeenCalledTimes(2))
+    expect(screen.queryByTestId('org-signature-banner')).toBeNull()
+  })
+
+  it('shows monomind’s review and signs the reviewed file only on confirm', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue(REVIEW)
+    api.orgSign.mockResolvedValue({ ...REVIEW, state: 'signed', signed: true })
+    renderBanner()
+    const banner = await screen.findByTestId('org-signature-banner')
+    expect(banner).toHaveAttribute('data-state', 'changed')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review & sign' }))
+    expect(await screen.findByTestId('org-sign-review')).toHaveTextContent('git push')
+    expect(api.orgSign).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Sign' }))
+    await waitFor(() => expect(api.orgSign).toHaveBeenCalledWith('growth', 'h-reviewed'))
+  })
+
+  it('does not sign when the review is cancelled', async () => {
+    api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, state: 'unsigned' })
+    api.orgSignatureReview.mockResolvedValue(REVIEW)
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    await screen.findByTestId('org-sign-review')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByTestId('org-sign-review')).toBeNull())
+    expect(api.orgSign).not.toHaveBeenCalled()
+  })
+
+  it('reports a refused signature', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue(REVIEW)
+    api.orgSign.mockRejectedValue(Object.assign(new Error('org growth is not signed: the file changed after it was written or reviewed'), { code: 'org_not_signed' }))
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('changed after'), 'org_not_signed'))
+  })
+
+  it('offers no signing for a forbidden key or a broken definition', async () => {
+    for (const state of ['forbidden-key', 'invalid-definition']) {
+      api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, state, detail: 'x' })
+      const { unmount } = renderBanner()
+      expect(await screen.findByTestId('org-signature-banner')).toHaveAttribute('data-state', state)
+      expect(screen.queryByRole('button', { name: 'Review & sign' })).toBeNull()
+      unmount()
+    }
+  })
+
+  it('looks again when a run is refused for its signature', async () => {
+    api.orgSignatureStatus.mockResolvedValueOnce(SIGNED).mockResolvedValue(CHANGED)
+    renderBanner()
+    await waitFor(() => expect(api.orgSignatureStatus).toHaveBeenCalledTimes(1))
+    const refusal = 'org growth: the definition changed since the operator signed it — review it, then sign it: monoagentcli org sign growth'
+    expect(isSignatureRefusal(refusal)).toBe(true)
+    expect(isSignatureRefusal('org growth exited: rate limited')).toBe(false)
+    act(() => requestSignatureRefresh('growth'))
+    expect(await screen.findByTestId('org-signature-banner')).toHaveAttribute('data-state', 'changed')
+  })
+})
+
+describe('reviewAndSign', () => {
+  it('never signs a review that could not vouch for its hash', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue({ ...REVIEW, hash: undefined, message: 'not signed: the definition changed during the review' })
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('changed during the review'), undefined))
+    expect(screen.queryByTestId('org-sign-review')).toBeNull()
+    expect(api.orgSign).not.toHaveBeenCalled()
+  })
+})
+
+describe('an app started from an AI-agent shell', () => {
+  it('says why it can not sign instead of offering the button', async () => {
+    api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, blocked_by: 'CLAUDECODE' })
+    renderBanner()
+    expect(await screen.findByTestId('org-sign-blocked')).toHaveTextContent('started from an AI-agent shell (CLAUDECODE); start it normally to sign')
+    expect(screen.queryByRole('button', { name: 'Review & sign' })).toBeNull()
+  })
+
+  it('refuses in the review too, before any dialog', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue({ ...REVIEW, blocked_by: 'CLAUDECODE' })
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('AI-agent shell (CLAUDECODE)'), undefined))
+    expect(screen.queryByTestId('org-sign-review')).toBeNull()
+    expect(api.orgSign).not.toHaveBeenCalled()
+  })
+})

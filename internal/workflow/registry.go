@@ -80,6 +80,15 @@ func (r *NodeTypeRegistry) Types() []string {
 	return types
 }
 
+// Aliases returns a copy of the legacy name → canonical name map.
+func (r *NodeTypeRegistry) Aliases() map[string]string {
+	out := make(map[string]string, len(r.aliases))
+	for from, to := range r.aliases {
+		out[from] = to
+	}
+	return out
+}
+
 // Has reports whether the type is registered.
 func (r *NodeTypeRegistry) Has(nodeType string) bool {
 	_, ok := r.factories[r.resolve(nodeType)]

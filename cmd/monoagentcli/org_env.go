@@ -101,6 +101,7 @@ func (e *orgEnv) genOptions(profileID string) orggrant.GenOptions {
 		ProfileID: profileID,
 		CLIPath:   selfExecutable(),
 		APIAddr:   orgAPIAddr(e.db),
+		Workflow:  grantWorkflowLoader(e.db),
 	}
 }
 
@@ -143,15 +144,24 @@ func orgAPIAddr(db *storage.Database) string {
 
 // saveOrgReconciled reconciles doc against the enforcement rows and saves
 // it. Every CLI path that writes an org JSON goes through here, so a doc
-// never reaches disk carrying grants or providers no row backs.
+// never reaches disk carrying grants or providers no row backs. The save
+// keeps the org's operator signature (saveOrgSigned).
 func saveOrgReconciled(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions) (*orggrant.Report, error) {
+	return saveOrgReconciledFrom(ctx, db, profileID, root, doc, opts, doc.Name)
+}
+
+// saveOrgReconciledFrom is saveOrgReconciled with saveOrgSigned's from
+// (the org file doc replaces; a rename's old name).
+func saveOrgReconciledFrom(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions, from string) (*orggrant.Report, error) {
 	rep, err := reconcileOrgRows(ctx, db, profileID, doc, opts)
 	if err != nil {
 		return rep, err
 	}
-	if _, err := orgdesign.Save(root, doc); err != nil {
+	_, out, err := saveOrgSigned(ctx, root, from, doc)
+	if err != nil {
 		return rep, err
 	}
+	warnOrgSignature(out)
 	return rep, nil
 }
 

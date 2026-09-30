@@ -36,7 +36,7 @@ func Works(status string) bool {
 }
 
 var (
-	notLoggedIn = regexp.MustCompile(`(?i)not logged in|not signed in|please run /login|use /login|run: \S+ login|unauthori[sz]ed|invalid api key|no api key|api key (not found|missing|required)|no providers? configured|authentication|401\b|login required|please (log|sign) ?in`)
+	notLoggedIn = regexp.MustCompile(`(?i)not logged in|not signed in|please run /login|use /login|run: \S+ login|unauthori[sz]ed|invalid api key|no api key|missing api key|api key (not found|missing|required)|no (inference )?providers? configured|authentication|401\b|login required|please (log|sign) ?in`)
 	quotaHit    = regexp.MustCompile(`(?i)quota|usage limit|credit balance|insufficient (credit|balance|funds)|billing`)
 	rateLimited = regexp.MustCompile(`(?i)rate.?limit|too many requests|429\b`)
 	modelGone   = regexp.MustCompile(`(?i)unknown model|invalid model|model[^.\n]{0,80}(not found|not available|does not exist|isn'?t available|unsupported|not supported|no access)|model_not_found|not a valid model|no such model|unsupported model`)
@@ -70,7 +70,10 @@ func Classify(res *monomind.TurnResult, execErr error) (status, detail string) {
 		case monomind.ErrCancelled:
 			return StatusCancelled, msg
 		}
-		return classifyMessage(pe.Message), msg
+		// A key that was never set is `auth` since protocol rev 27; an older
+		// monomind sent it as a runner-error, classified by its text — but
+		// never by text the runner only attached (a model's own words).
+		return classifyMessage(monomind.ClassifiableMessage(pe.Message)), msg
 	}
 	switch res.StopReason {
 	case monomind.StopTimeout:

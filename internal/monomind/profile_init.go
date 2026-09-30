@@ -40,7 +40,7 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 	if progress == nil {
 		progress = func(string) {}
 	}
-	bin, err := Find()
+	bin, err := findIn(opts.Root)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 		opts.Prepare(cmd)
 	}
 	cmd.Dir = opts.Root // init has no --project flag and ignores MONOMIND_CWD
-	cmd.Env = append(os.Environ(), "CI=true")
+	cmd.Env = PinEnvIn(append(os.Environ(), "CI=true"), bin, opts.Root)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -112,9 +112,22 @@ func registerClaudeCodeProject(ctx context.Context, root string, prepare func(*e
 		progress("(skipped: claude CLI not found on PATH — this profile won't appear in monomind's dashboard project list until a Claude Code session is opened here)")
 		return
 	}
+	// It runs in root: pinned like monomind, so a shim can't let the
+	// profile folder pick it (#301).
+	if abs, err := filepath.Abs(claudeBin); err == nil {
+		claudeBin = abs
+	}
+	if claudeBin, err = pinPath(claudeBin, "claude"); err == nil {
+		err = CheckOutside(claudeBin, root)
+	}
+	if err != nil {
+		progress("(skipped: claude CLI can't be pinned: " + err.Error() + ")")
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, claudeBin, "-p", "monomind initialized")
+	cmd.Env = PinEnvIn(os.Environ(), claudeBin, root)
 	if prepare != nil {
 		prepare(cmd)
 	}

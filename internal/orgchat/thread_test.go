@@ -181,3 +181,46 @@ func TestBuildThreadEmptyIsAnEmptyList(t *testing.T) {
 		t.Fatalf("items = %#v, want an empty, non-nil list", items)
 	}
 }
+
+// #294: a streaming runtime puts each text delta on the bus as its own chat
+// event. Consecutive boss deltas are one reply, also across a working/idle
+// flip; a question, a gate, a tool call, the end of the turn (usage) or
+// another role's message starts a new one, and another role's chat never
+// joins the boss's.
+func TestBuildThreadMergesStreamedBossChat(t *testing.T) {
+	chat := func(id, from, msg string) Event { return Event{ID: id, Type: "chat", From: from, Msg: msg} }
+	events := []Event{
+		chat("1", "boss", "I"),
+		chat("2", "boss", "'ve asked"),
+		{ID: "3", Type: "status", From: "boss", Reason: "state-change", Msg: "working → completed"},
+		chat("4", "boss", " the question."),
+		{ID: "5", Type: "question", From: "boss", Data: map[string]interface{}{"questionId": "q1", "question": "Red or blue?"}},
+		chat("6", "boss", "Waiting"),
+		chat("7", "boss", " for you."),
+		{ID: "8", Type: "usage", From: "boss"},
+		chat("9", "boss", "Next turn."),
+		chat("10", "writer", "writer text"),
+		chat("11", "boss", " still the boss"),
+		{ID: "12", Type: "tool", From: "boss", Msg: "org_gate"},
+		chat("13", "boss", "After the tool."),
+		{ID: "14", Type: "gate", From: "boss", Reason: "created", Data: map[string]interface{}{"gateId": "g1", "name": "Ship"}},
+		chat("15", "boss", "After the gate."),
+	}
+	var got []string
+	for _, it := range BuildThread("acme", "boss", events, HumanItems{}, 0) {
+		got = append(got, it.Kind+":"+it.Text)
+	}
+	want := []string{
+		"boss:I've asked the question.",
+		"question:Red or blue?",
+		"boss:Waiting for you.",
+		"boss:Next turn.",
+		"boss: still the boss",
+		"boss:After the tool.",
+		"gate:",
+		"boss:After the gate.",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("thread =\n%q\nwant\n%q", got, want)
+	}
+}

@@ -93,6 +93,22 @@ func (f *fakeExtension) nextCommand() *Command {
 	return &cmd
 }
 
+// answerPings reads the socket in the background for the rest of the test,
+// so the server's pings get their pongs the way a real browser's would.
+// Without it the server gives up on the socket pongWait after connecting,
+// and a test slowed down by a loaded machine loses its connection
+// mid-capture. Only for a test that reads nothing more from the socket.
+func (f *fakeExtension) answerPings() {
+	_ = f.conn.SetReadDeadline(time.Time{})
+	go func() {
+		for {
+			if _, _, err := f.conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+}
+
 func (f *fakeExtension) send(resp any) {
 	f.t.Helper()
 	blob, err := json.Marshal(resp)

@@ -51,6 +51,8 @@ type App struct {
 
 	orgWatchMu sync.Mutex
 	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
+	// orgSignSupport caches whether monomind requires signed orgs (#288).
+	orgSignSupport orgSignSupport
 
 	docWatchMu sync.Mutex
 	docWatcher *docscan.Watcher     // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher
@@ -614,7 +616,7 @@ func (a *App) bootstrapProfileMonograph(profileID string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, "monograph", "build", "--path", profiledir.MonomindDir(db, profileID))
+		cmd := monomind.CommandContext(ctx, bin, "monograph", "build", "--path", profiledir.MonomindDir(db, profileID))
 		hideWindow(cmd)
 		if err := cmd.Run(); err != nil {
 			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: monograph bootstrap: %v", profileID, err))

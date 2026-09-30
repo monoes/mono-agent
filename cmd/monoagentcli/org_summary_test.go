@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,5 +153,32 @@ func TestOrgSummaryAllProfiles(t *testing.T) {
 	}
 	if m.Orgs[0].Name != "home" || m.Orgs[0].ProfileID != "default" || m.Orgs[1].Name != "acme" || m.Orgs[1].ProfileName != "Work" {
 		t.Fatalf("orgs = %+v", m.Orgs)
+	}
+}
+
+// #294: an org run by a standalone `monomind org run` (the GUI's Run button,
+// no serve daemon) is running while its runtime.json says so and its pid is
+// alive; a dead pid or a stopped record is not.
+func TestOrgSummaryStandaloneRunIsRunning(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"live", "dead", "stopped"} {
+		writeOrgFile(t, root, n+".json", `{"name":"`+n+`"}`)
+	}
+	const deadPID = 2147483646 // above any pid_max: no such process
+	writeOrgFile(t, root, "live/runtime.json", fmt.Sprintf(`{"status":"running","run":"r1","pid":%d}`, os.Getpid()))
+	writeOrgFile(t, root, "dead/runtime.json", fmt.Sprintf(`{"status":"running","run":"r2","pid":%d}`, deadPID))
+	writeOrgFile(t, root, "stopped/runtime.json", fmt.Sprintf(`{"status":"stopped","run":"r3","pid":%d}`, os.Getpid()))
+
+	m := runOrgSummary(t, root, "--fast")
+	got := map[string]interface{}{}
+	for _, o := range m["orgs"].([]interface{}) {
+		row := o.(map[string]interface{})
+		got[row["name"].(string)] = row["running"]
+	}
+	if got["live"] != true || got["dead"] != false || got["stopped"] != false {
+		t.Fatalf("running = %v, want only live", got)
+	}
+	if m["serve_running"] != false || m["totals"].(map[string]interface{})["running"] != float64(1) {
+		t.Fatalf("payload = %v", m)
 	}
 }

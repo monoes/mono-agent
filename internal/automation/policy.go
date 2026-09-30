@@ -87,6 +87,10 @@ func PolicyAllows(m Manifest) (bool, string) {
 // availability decides whether an installed manifest can run in this
 // binary: policy gate, native bot compiled in, engine range.
 func availability(m Manifest) (bool, string) {
+	if ReservedID(m.ID) {
+		// Installed before ids were reserved: never load it.
+		return false, fmt.Sprintf("id %q is a built-in node namespace; reinstall it under another id", m.ID)
+	}
 	if ok, reason := PolicyAllows(m); !ok {
 		return false, reason
 	}

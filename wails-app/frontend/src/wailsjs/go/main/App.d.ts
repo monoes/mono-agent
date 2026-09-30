@@ -417,6 +417,12 @@ export function OrgGroupStatus(arg1:string):Promise<string>;
 
 export function OrgRoleSetAccess(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function OrgSign(arg1:string,arg2:string):Promise<string>;
+
+export function OrgSignatureReview(arg1:string):Promise<string>;
+
+export function OrgSignatureStatus(arg1:string):Promise<string>;
+
 export function PauseOrgAutonomy(arg1:string,arg2:string):Promise<string>;
 
 export function PickCoderFolder():Promise<string>;

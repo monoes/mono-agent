@@ -86,7 +86,7 @@ func AgentTest(ctx context.Context, bin, runtime, model string, timeout time.Dur
 		defer cancel()
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = FilteredEnviron()
+	cmd.Env = PinEnv(FilteredEnviron(), bin)
 	setProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		killProcessGroup(cmd, 0)

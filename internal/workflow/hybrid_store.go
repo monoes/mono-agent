@@ -16,8 +16,23 @@ import (
 // If the file store is nil, all workflow CRUD falls back to SQLite only.
 // This is the canonical store — used by both the CLI and the Wails GUI.
 type HybridWorkflowStore struct {
-	files *WorkflowFileStore
-	sql   *SQLiteWorkflowStore
+	files   *WorkflowFileStore
+	sql     *SQLiteWorkflowStore
+	onSaved func(ctx context.Context, workflowID string)
+}
+
+// SetOnSaved registers fn to run after every successful save of a
+// workflow's definition or nodes (the CLI re-derives org grant tiers).
+func (h *HybridWorkflowStore) SetOnSaved(fn func(ctx context.Context, workflowID string)) {
+	h.onSaved = fn
+}
+
+// saved runs the OnSaved hook when err is nil, and returns err.
+func (h *HybridWorkflowStore) saved(ctx context.Context, workflowID string, err error) error {
+	if err == nil && h.onSaved != nil && workflowID != "" {
+		h.onSaved(ctx, workflowID)
+	}
+	return err
 }
 
 // NewHybridWorkflowStore creates a HybridWorkflowStore.
@@ -35,9 +50,9 @@ func (h *HybridWorkflowStore) CreateWorkflow(ctx context.Context, w *Workflow) e
 		if err := h.files.SaveWorkflow(ctx, w); err != nil {
 			return err
 		}
-		return h.mirrorToSQL(ctx, w)
+		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
 	}
-	return h.sql.CreateWorkflow(ctx, w)
+	return h.saved(ctx, w.ID, h.sql.CreateWorkflow(ctx, w))
 }
 
 func (h *HybridWorkflowStore) GetWorkflow(ctx context.Context, id string) (*Workflow, error) {
@@ -117,9 +132,9 @@ func (h *HybridWorkflowStore) UpdateWorkflow(ctx context.Context, w *Workflow) e
 		if err := h.files.SaveWorkflow(ctx, w); err != nil {
 			return err
 		}
-		return h.mirrorToSQL(ctx, w)
+		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
 	}
-	return h.sql.UpdateWorkflow(ctx, w)
+	return h.saved(ctx, w.ID, h.sql.UpdateWorkflow(ctx, w))
 }
 
 // SaveWorkflow writes a workflow to the file store (create or update) and
@@ -130,9 +145,9 @@ func (h *HybridWorkflowStore) SaveWorkflow(ctx context.Context, w *Workflow) err
 		if err := h.files.SaveWorkflow(ctx, w); err != nil {
 			return err
 		}
-		return h.mirrorToSQL(ctx, w)
+		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
 	}
-	return h.sql.UpdateWorkflow(ctx, w)
+	return h.saved(ctx, w.ID, h.sql.UpdateWorkflow(ctx, w))
 }
 
 // ErrSharedIDs reports a workflow whose node or connection ids belong to
@@ -308,7 +323,7 @@ func (h *HybridWorkflowStore) SaveWorkflowNodes(ctx context.Context, workflowID 
 		return err
 	}
 	h.syncFileNodes(ctx, workflowID)
-	return nil
+	return h.saved(ctx, workflowID, nil)
 }
 
 func (h *HybridWorkflowStore) SaveWorkflowConnections(ctx context.Context, workflowID string, conns []WorkflowConnection) error {

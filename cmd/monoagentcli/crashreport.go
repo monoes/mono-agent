@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // crashReportOptIn enables GitHub crash filing via the sibling `monomind`
@@ -23,8 +25,8 @@ const crashReportOptIn = "MONOAGENT_CRASH_REPORT"
 // reported on stderr and swallowed).
 //
 // Opt-in: when MONOAGENT_CRASH_REPORT=1 AND `monomind` is already installed
-// (resolved via exec.LookPath), the crash is filed to GitHub through
-// `monomind report-crash` so redaction, dedup against existing issues, and
+// (resolved and pinned via monomind.Find), the crash is filed to GitHub
+// through `monomind report-crash` so redaction, dedup against existing issues, and
 // auth (gh CLI / GITHUB_TOKEN) live in one place. There is no auto-download
 // fallback: npx is never invoked.
 func reportCrash(panicValue interface{}, stack []byte) {
@@ -32,7 +34,7 @@ func reportCrash(panicValue interface{}, stack []byte) {
 	body := fmt.Sprintf("Uncaught panic in `monoagentcli`.\n\nVersion: %s (built %s)\n\n```\n%s\n```\n", getVersion(), getBuildDate(), stack)
 
 	if os.Getenv(crashReportOptIn) == "1" {
-		if monomindPath, err := exec.LookPath("monomind"); err == nil {
+		if monomindPath, err := monomind.Find(); err == nil {
 			if reportViaMonomind(monomindPath, title, body) {
 				return
 			}
@@ -45,7 +47,7 @@ func reportCrash(panicValue interface{}, stack []byte) {
 // monomind on PATH predates the `report-crash` command) so the caller can
 // fall back rather than silently swallowing the crash report.
 func reportViaMonomind(monomindPath, title, body string) bool {
-	cmd := exec.Command(monomindPath, "report-crash", "--repo", "monoes/mono-agent", "--title", title, "--body", body)
+	cmd := monomind.Command(monomindPath, "report-crash", "--repo", "monoes/mono-agent", "--title", title, "--body", body)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return runWithTimeout(cmd, 15*time.Second) == nil

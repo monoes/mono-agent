@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -80,7 +79,7 @@ func runKGTool(ctx context.Context, bin, name string, args json.RawMessage, prof
 		if limit <= 0 {
 			limit = 15
 		}
-		out, err := exec.CommandContext(cctx, bin, "monograph", "search",
+		out, err := monomind.CommandContext(cctx, bin, "monograph", "search",
 			"-q", in.Query, "-p", profileMonomindDir, "-l", strconv.Itoa(limit)).Output()
 		if err != nil {
 			return "", fmt.Errorf("monograph search: %w", err)
@@ -92,7 +91,7 @@ func runKGTool(ctx context.Context, bin, name string, args json.RawMessage, prof
 		if err != nil {
 			return "", err
 		}
-		cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "memory_kg_search", "-p", string(payload))
+		cmd := monomind.CommandContext(cctx, bin, "mcp", "exec", "-t", "memory_kg_search", "-p", string(payload))
 		// dbPath alone isn't honored by monomind's getDbPath() — it only
 		// accepts a custom dbPath inside the resolved project root
 		// (MONOMIND_CWD, or cwd if unset), so this env var is required for
@@ -104,7 +103,7 @@ func runKGTool(ctx context.Context, bin, name string, args json.RawMessage, prof
 		// overrides first so the explicit value below is the only one the
 		// child sees (a duplicate inherited entry could otherwise shadow
 		// the per-profile scoping).
-		cmd.Env = append(monomind.FilteredEnviron(), "MONOMIND_CWD="+profileMonomindDir)
+		cmd.Env = monomind.PinEnv(append(monomind.FilteredEnviron(), "MONOMIND_CWD="+profileMonomindDir), bin)
 		out, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("memory_kg_search: %w", err)

@@ -138,4 +138,6 @@ func ResetCapabilityCache() {
 	binCaps.Lock()
 	binCaps.sets, binCaps.at = nil, nil
 	binCaps.Unlock()
+	resetSignTools()
+	resetPins()
 }

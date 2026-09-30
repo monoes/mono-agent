@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -370,10 +371,32 @@ func newOrgAutonomyPauseCmd(env *orgEnv, pause bool) *cobra.Command {
 				}
 				views = append(views, autonomyView(a))
 			}
-			if !all && len(views) == 1 {
-				return printJSONValue(views[0])
+			// Every row is written before any file, and a file that cannot
+			// be rewritten is reported after the rest are: one bad org file
+			// never keeps another org's row or file from being updated.
+			var failed, reasons []string
+			for _, org := range orgs {
+				if err := rewriteAutonomyDisplayCopy(ctx, env, db, profileID, root, store, org); err != nil {
+					failed = append(failed, org)
+					reasons = append(reasons, err.Error())
+				}
 			}
-			return printJSONValue(map[string]interface{}{"v": 1, "orgs": views})
+			var out interface{} = map[string]interface{}{"v": 1, "orgs": views}
+			if !all && len(views) == 1 {
+				out = views[0]
+			}
+			if err := printJSONValue(out); err != nil {
+				return err
+			}
+			if len(failed) > 0 {
+				verb := "resumed"
+				if pause {
+					verb = "paused"
+				}
+				return fmt.Errorf("%s in the database; org file(s) %s not updated: %s",
+					verb, strings.Join(failed, ", "), strings.Join(reasons, "; "))
+			}
+			return nil
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "Every org in the profile")
@@ -381,6 +404,28 @@ func newOrgAutonomyPauseCmd(env *orgEnv, pause bool) *cobra.Command {
 		c.Flags().StringVar(&forDur, "for", "", "How long, e.g. 30m or 2h (default: until resumed)")
 	}
 	return c
+}
+
+// rewriteAutonomyDisplayCopy rewrites an org file's autonomy block from its
+// row, so monomind sees a pause or resume. An org with no file has nothing
+// to display it in.
+func rewriteAutonomyDisplayCopy(ctx context.Context, env *orgEnv, db *storage.Database, profileID, root string, store *orgdecide.Store, org string) error {
+	doc, err := orgdesign.Load(root, org)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("org %q: %w", org, err)
+	}
+	a, err := store.Get(ctx, profileID, org)
+	if err != nil {
+		return err
+	}
+	doc.Autonomy = orgdecide.DisplayCopy(a, doc.Autonomy)
+	if _, err := saveOrgReconciled(ctx, db, profileID, root, doc, env.genOptions(profileID)); err != nil {
+		return fmt.Errorf("org %q: %w", org, err)
+	}
+	return nil
 }
 
 func newOrgAutonomyDecisionsCmd(env *orgEnv) *cobra.Command {
@@ -486,6 +531,7 @@ func newOrgAutonomyNeedsYouCmd(env *orgEnv) *cobra.Command {
 // daemon escalated or could not decide.
 func needsYou(ctx context.Context, db *storage.Database, profileID, root, org string) ([]map[string]interface{}, error) {
 	svc := orgdecide.NewService(db.DB, nil)
+	svc.LoadWorkflow = grantWorkflowLoader(db)
 	a, err := svc.Store.Get(ctx, profileID, org)
 	if err != nil {
 		return nil, err

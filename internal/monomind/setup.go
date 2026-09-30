@@ -46,6 +46,19 @@ func unusable(format string, a ...any) error {
 // which monomind forwards as a non-fatal runner-error rather than `auth`.
 var notLoggedIn = regexp.MustCompile(`(?i)not logged in|please run /login|run: \S+ login`)
 
+// unclassifiedMarker introduces text a runner attached to an error but did
+// not write itself (hermes's stdout, cline's final model text; protocol
+// rev 27). It never decides the error's class: a model saying "401" must
+// not turn a failure into a sign-in problem.
+const unclassifiedMarker = "[output below is not classified]"
+
+// ClassifiableMessage is an error message without the unclassified text a
+// runner attached after unclassifiedMarker.
+func ClassifiableMessage(msg string) string {
+	before, _, _ := strings.Cut(msg, unclassifiedMarker)
+	return before
+}
+
 // IsAgentNotSetup reports whether err means the AI agent is not set up (see
 // AgentNotSetupCode).
 func IsAgentNotSetup(err error) bool {
@@ -64,7 +77,7 @@ func IsAgentNotSetup(err error) bool {
 		case ErrAuth, ErrMissingBinary, ErrNoRunner:
 			return true
 		}
-		return notLoggedIn.MatchString(pe.Message)
+		return notLoggedIn.MatchString(ClassifiableMessage(pe.Message))
 	}
 	return strings.Contains(err.Error(), AgentNotSetupMarker)
 }

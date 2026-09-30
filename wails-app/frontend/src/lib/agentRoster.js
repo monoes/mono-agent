@@ -83,8 +83,26 @@ export function formatCost(entry) {
   // cost_estimated: monomind priced the turn from its table because the
   // runtime reported no cost.
   const approx = entry.cost_estimated ? '≈' : ''
+  // A free model (or a failed sign-in) costs exactly $0 (#294).
+  if (c <= 0) return approx + '$0'
   return approx + (c < 0.0001 ? '<$0.0001' : `$${c.toFixed(4)}`)
 }
+
+// trackRecord is a model's known success rates per role category from real
+// dynamic-org workers, as `agent roster` shows them: [{category, pct, low,
+// succeeded, results}]. Unknown rates (too few results) are left out.
+export function trackRecord(entry) {
+  return (entry?.track_record || []).filter(r => r?.known).map(r => ({
+    category: r.category,
+    pct: Math.round((r.score || 0) * 100),
+    low: r.score < BAD_FIT,
+    succeeded: r.succeeded || 0,
+    results: r.results || 0,
+  }))
+}
+
+// BAD_FIT is agentroster.BadFit: a known score under it is a poor fit.
+const BAD_FIT = 0.5
 
 // ageParts gives how long ago a validation ran as {n, unit} for i18n, or
 // null when it never ran (a manual model, or Go's zero time).

@@ -27,6 +27,16 @@ type Target struct {
 	EffortLevels   []string `json:"effort_levels,omitempty"`
 	Source         string   `json:"source"`
 	RuntimeVersion string   `json:"runtime_version,omitempty"`
+	// Aliases are other ids monomind lists for this same model (alias_of):
+	// not tested again, but stored with this target's result so the roster
+	// answers for them too.
+	Aliases []Alias `json:"aliases,omitempty"`
+}
+
+// Alias is another id (and label) for a target's model.
+type Alias struct {
+	Model string `json:"model"`
+	Label string `json:"label,omitempty"`
 }
 
 // Plan is what a run will do: the targets, and a cost estimate from earlier
@@ -279,6 +289,18 @@ func Run(ctx context.Context, targets []Target, opts RunOptions, emit func(Line)
 					}
 				}
 				send(Line{Type: "validate.result", Target: &t, Result: &r})
+				if r.Status != StatusCancelled {
+					for _, a := range t.Aliases {
+						ar := r
+						ar.Model, ar.Label = a.Model, a.Label
+						if opts.Save != nil {
+							if err := opts.Save(ar); err != nil {
+								ar.Detail = strings.TrimSpace(ar.Detail + " (not saved: " + err.Error() + ")")
+							}
+						}
+						send(Line{Type: "validate.result", Target: &t, Result: &ar})
+					}
+				}
 				mu.Unlock()
 			}
 		}(groups[rt])

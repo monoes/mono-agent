@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orgsign"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +136,7 @@ func (a *App) CreateOrgDesign(specJSON string) string {
 		RootRoleTitle:     spec.RootRoleTitle,
 		RestrictFileWrite: a.restrictFileWriteForOrgs(),
 	})
-	return a.saveAndRespond(root, d, "ui")
+	return a.saveAndRespondNew(root, d, "ui", true)
 }
 
 // DeleteOrgDesign removes an org's config file only — its run-data
@@ -260,7 +262,7 @@ func (a *App) RemoveOrgRole(orgName, roleID, strategy string) string {
 	if err != nil {
 		return aiError(err)
 	}
-	sha, cliErr := a.saveOrgDoc(root, d)
+	sha, cliErr := a.saveOrgDoc(root, d, false)
 	if cliErr != nil {
 		return aiError(cliErr)
 	}
@@ -297,6 +299,7 @@ func (a *App) SaveOrgLayout(orgName, layoutJSON string) string {
 	if err := json.Unmarshal([]byte(layoutJSON), &pos); err != nil {
 		return aiError(fmt.Errorf("invalid layout: %w", err))
 	}
+	// Layout is role `ui`, which is not signed: no signature work here.
 	_ = d.SetLayout(pos)
 	sha, err := orgdesign.Save(root, d)
 	if err != nil {
@@ -362,7 +365,13 @@ func (a *App) orgDesignRoot() string {
 // success emits the live-update event and returns {"ok":true,"rev":sha,
 // "org":<fresh doc>}. On any failure it returns the aiError envelope.
 func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) string {
-	sha, err := a.saveOrgDoc(root, d)
+	return a.saveAndRespondNew(root, d, origin, false)
+}
+
+// saveAndRespondNew is saveAndRespond; signNew says d is a new org the
+// user just created (CreateOrgDesign), which may be signed as theirs.
+func (a *App) saveAndRespondNew(root string, d *orgdesign.Doc, origin string, signNew bool) string {
+	sha, err := a.saveOrgDoc(root, d, signNew)
 	if err != nil {
 		return aiError(err)
 	}
@@ -385,11 +394,13 @@ func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) strin
 // on disk — still listing the role and its `automations` display copies —
 // while the rows behind them are gone for good, so the role silently loses
 // its tools at runtime with no error anywhere.
-func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) {
+func (a *App) saveOrgDoc(root string, d *orgdesign.Doc, signNew bool) (sha string, err error) {
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
 	}
+	// Decided before the first write: whether this save may be re-signed.
+	sig := a.orgSignBefore(root, d, signNew)
 
 	if _, err := a.writeOrgDoc(root, d); err != nil {
 		return "", err
@@ -405,7 +416,41 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 		a.rollbackOrgDoc(root, d.Name, preImage)
 		return "", err
 	}
-	return a.writeOrgDoc(root, d)
+	if sha, err = a.writeOrgDoc(root, d); err != nil {
+		return "", err
+	}
+	a.keepOrgSignature(root, sig, d.Name, sha)
+	return sha, nil
+}
+
+// keepOrgSignature re-signs an org after the designer's own write when
+// monomind 2.21+ requires signed definitions (#288): only if sig (taken
+// before the write) allowed it, and only when the write changed a signed
+// field. The CLI signs (`org sign --yes --expect-hash`), for the new JSON
+// with the instructions files sig pinned, and withdraws the signature if
+// monomind signed anything else. Anything else leaves the org for the
+// Review & sign banner.
+func (a *App) keepOrgSignature(root string, sig orgsign.Pre, name, sha string) {
+	if !sig.Eligible() {
+		return
+	}
+	raw, cur, err := orgsign.ReadFile(root, name)
+	if err != nil || cur != sha || orgsign.Verify(root, name, raw).OK() {
+		return
+	}
+	want, err := sig.PinnedHash(raw)
+	if err != nil {
+		log.Printf("org %s was not re-signed after this change: %v", name, err)
+		return
+	}
+	out := a.rawCLI(orgCLITimeout, orgSignArgs(root, name, "--yes", "--expect-hash", want)...)
+	var res struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if json.Unmarshal([]byte(out), &res) == nil && res.Error != "" && res.Code != "org_signing_unsupported" {
+		log.Printf("org %s was not re-signed after this change: %s", name, res.Error)
+	}
 }
 
 // writeOrgDoc saves d and registers the write with the watcher so it doesn't

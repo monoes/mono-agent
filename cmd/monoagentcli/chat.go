@@ -766,17 +766,58 @@ func registryNodeTypes(db *sql.DB) []aichat.NodeTypeInfo {
 // match is literal (monomind's canUseTool), so every command
 // chatBashPrompt shows must start with one of them: its example
 // `monoagentcli --profile <id> workflow create` was always denied (#247).
-var chatBashPrefixes = []string{"monomind org", "monoagentcli org", "monoagentcli workflow"}
+//
+// Org commands are listed one by one (#288) so the assistant can't reach
+// the operator's own: signing an org definition (`org sign`), full-access
+// grants (`org role set-access`), approving quarantined paths
+// (`approve-paths`), and `monomind org create`, which signs what it
+// writes. A signature is the user's review, never the assistant's.
+var chatBashPrefixes = chatOrgPrefixes()
+
+// chatAgentOrgSubcommands are the `monoagentcli org` subcommands a chat
+// may run: all of them but sign and role.
+var chatAgentOrgSubcommands = []string{
+	"answer", "approvals", "approve", "automation", "automation-role", "autonomy", "chat", "costs", "create-json",
+	"decisions", "delete", "deny", "effective-tools", "events", "flow", "gate-approve", "gate-reject",
+	"gates", "grant", "group", "legacy", "list", "logs", "memory", "pause", "questions", "queued",
+	"reconcile", "reconcile-doc", "reload", "rename", "report", "resume", "run", "send", "serve", "status", "stop",
+	"summary", "teardown-profile", "validate",
+}
+
+// chatMonomindOrgSubcommands are the `monomind org` subcommands a chat may
+// run: all of them but sign, role, approve-paths and create. monomind
+// matches a prefix only up to a space, so "approve" can't admit
+// approve-paths — and "automation" doesn't admit automation-role, which
+// is listed itself.
+var chatMonomindOrgSubcommands = []string{
+	"answer", "approvals", "approve", "branch", "costs", "decisions", "delete", "deny", "events",
+	"flow", "gate-approve", "gate-reject", "gates", "inbox", "list", "logs", "mark-complete", "memory",
+	"migrate", "pause", "questions", "reload", "replay", "report", "resume", "resume-from", "run", "serve", "skills",
+	"status", "stop", "supervisor", "test-loop", "validate", "watch",
+}
+
+func chatOrgPrefixes() []string {
+	var out []string
+	for _, s := range chatMonomindOrgSubcommands {
+		out = append(out, "monomind org "+s)
+	}
+	for _, s := range chatAgentOrgSubcommands {
+		out = append(out, "monoagentcli org "+s)
+	}
+	return append(out, "monoagentcli workflow")
+}
 
 // chatBashPrompt is the system prompt part that explains the scoped Bash
 // access of a tools turn.
 func chatBashPrompt(projectRoot, profileID string) string {
-	return fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
+	return fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". Each call must be ONE plain command: pipes, "&&", ";", "2>&1", redirection and $(...) are rejected — read the JSON output as-is. To inspect an org use "monoagentcli org list|summary|report|logs|flow|costs|decisions|gates|approvals <name> --project ..." (there is no "org show"; run "monoagentcli org --help" for the rest). If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
 
 1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
-2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
+2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. The template scaffolder (org create) cannot set custom roles and is not available here — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
 3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s instead of --project. Put --profile AFTER the subcommand, e.g. monoagentcli workflow create <name> --profile %s. With --profile before the subcommand the command is denied: only commands that begin with one of the allowed prefixes run.
 4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
+
+5. Never sign an org or grant a role full access ("org sign", "org role set-access" are the user's own and are denied here). A change you make to an org may leave it waiting for the user's review; tell them to review and sign it in the app (the org's "Review & sign" banner).
 
 Changes made this way appear in the app automatically — orgs are picked up live by an existing filesystem watcher, no separate refresh step needed.`, projectRoot, projectRoot, profileID, profileID)
 }

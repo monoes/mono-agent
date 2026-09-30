@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/monoes/mono-agent/internal/capture"
 )
@@ -39,11 +38,14 @@ func TestCapturePageStreamsALargeArtifact(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		res, err := srv.CapturePage(CaptureRequest{Timeout: 30 * time.Second})
+		// Generous: this test is about reassembly, not timing, and a
+		// loaded CI runner under -race can be slow to push 6MB through.
+		res, err := srv.CapturePage(CaptureRequest{Timeout: DefaultCaptureTimeout})
 		done <- outcome{res, err}
 	}()
 
 	cmd := ext.nextCommand()
+	ext.answerPings()
 	for i, body := range bodies {
 		ext.sendChunk(cmd.ID, capture.ArtifactMHTML, i, chunks, body)
 	}

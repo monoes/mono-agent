@@ -52,9 +52,12 @@ func ValidName(name string) bool {
 func (l *MonomindLibrary) run(ctx context.Context, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, monomindCallTimeout)
 	defer cancel()
+	if err := monomind.CheckOutside(l.Bin, l.Cwd); err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(cctx, l.Bin, args...)
 	cmd.Dir = l.Cwd
-	cmd.Env = monomind.FilteredEnviron()
+	cmd.Env = monomind.PinEnvIn(monomind.FilteredEnviron(), l.Bin, l.Cwd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

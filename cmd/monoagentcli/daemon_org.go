@@ -16,6 +16,7 @@ import (
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/orggroup"
+	"github.com/monoes/mono-agent/internal/orgsign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -117,6 +118,7 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 		return profileRoots(s.db.DB)
 	})
 	svc.Logf = s.logf
+	svc.LoadWorkflow = grantWorkflowLoader(s.db)
 	svc.WorkflowFacts = func(ctx context.Context, profileID, workflowID string) string {
 		return workflowFacts(ctx, s.db, workflowID)
 	}
@@ -131,6 +133,9 @@ type orgReconcileOutcome struct {
 	Saved    bool               `json:"saved"`
 	Findings []orggrant.Finding `json:"findings"`
 	Error    string             `json:"error,omitempty"`
+	// Signature is what the save did to the org's operator signature
+	// (monomind 2.21+): re-signed, or left for review with a notice.
+	Signature *orgsign.Outcome `json:"signature,omitempty"`
 }
 
 // reconcileProfile reconciles every org of a profile at startup, so grants,
@@ -167,6 +172,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 	}
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(s.db.DB), d, orggrant.GenOptions{
 		ProfileID: pr.ProfileID, CLIPath: selfExecutable(), APIAddr: orgAPIAddr(s.db),
+		Workflow: grantWorkflowLoader(s.db),
 	})
 	if err != nil {
 		return fail("org services: reconcile %s: %v", err)
@@ -186,10 +192,16 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 	for _, f := range rep.Findings {
 		s.logf("org services: %s: %s %s", d.Name, f.Kind, f.Detail)
 	}
-	sha, err := orgdesign.Save(pr.Root, d)
+	// An org edited outside mono-agent fails the signature check first, so
+	// this write never signs that edit (orgsign.Before).
+	sha, sig, err := saveOrgSigned(ctx, pr.Root, d.Name, d)
 	if err != nil {
 		return fail("org services: saving reconciled %s: %v", err)
 	}
+	if sig != nil && sig.Notice != "" {
+		s.logf("org services: %s", sig.Notice)
+	}
+	res.Signature = sig
 	res.Saved = true
 	s.markSelfWrite(pr.ProfileID, d.Name, sha)
 	return res

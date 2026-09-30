@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -126,6 +125,41 @@ func ReadServeHeartbeat(projectRoot string) (*ServeHeartbeat, bool) {
 	return &hb, daemonhb.ProcessAlive(hb.PID)
 }
 
+// OrgRunLive reports whether a standalone `monomind org run` (no serve
+// daemon) is running the org: <root>/.monomind/orgs/<name>/runtime.json says
+// "running" and its pid is alive. Same rule as monomind's own `org status`
+// (isOrgRunning in org-manage.ts), so an org started from the GUI's Run
+// button counts as running without `org serve` (#294).
+func OrgRunLive(projectRoot, name string) bool {
+	pid, ok := runningRecord(projectRoot, name)
+	return ok && daemonhb.ProcessAlive(pid)
+}
+
+// OrgRunDead reports whether the org's runtime.json still says "running"
+// while its pid is gone: a run killed before it could record its stop
+// (monoes/monomind#573). monomind's own `org status` keeps reporting such a
+// run as running.
+func OrgRunDead(projectRoot, name string) bool {
+	pid, ok := runningRecord(projectRoot, name)
+	return ok && pid > 0 && !daemonhb.ProcessAlive(pid)
+}
+
+// runningRecord is the pid of the org's runtime.json when it says "running".
+func runningRecord(projectRoot, name string) (int, bool) {
+	b, err := os.ReadFile(filepath.Join(projectRoot, ".monomind", "orgs", name, "runtime.json"))
+	if err != nil {
+		return 0, false
+	}
+	var rt struct {
+		Status string `json:"status"`
+		PID    int    `json:"pid"`
+	}
+	if json.Unmarshal(b, &rt) != nil || rt.Status != "running" {
+		return 0, false
+	}
+	return rt.PID, true
+}
+
 // OrgServeStart starts `monomind org serve` for projectRoot as a detached
 // process group writing to <root>/.monomind/serve.log, unless a live serve
 // daemon already owns the root. Returns the pid and whether it was already
@@ -134,7 +168,7 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 	if hb, live := ReadServeHeartbeat(projectRoot); live {
 		return hb.PID, true, nil
 	}
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return 0, false, err
 	}
@@ -146,8 +180,8 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 		return 0, false, err
 	}
 	defer logf.Close()
-	cmd := exec.Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	cmd := Command(bin, "org", "serve", "--cross-process")
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	// Detached: the daemon must outlive this process, so it gets no job or
@@ -162,12 +196,12 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 
 // OrgServeRun runs `monomind org serve` in the foreground until ctx ends.
 func OrgServeRun(ctx context.Context, projectRoot string) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "org", "serve", "--cross-process")
-	cmd.Dir = projectRoot
+	cmd := Command(bin, "org", "serve", "--cross-process")
+	inRoot(cmd, projectRoot)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)
