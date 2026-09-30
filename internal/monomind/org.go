@@ -99,14 +99,22 @@ func runOrgText(ctx context.Context, projectRoot string, args ...string) (string
 
 // runOrgTextWith is runOrgText through a given monomind binary.
 func runOrgTextWith(ctx context.Context, bin, projectRoot string, args ...string) (string, error) {
-	full := append([]string{"org"}, args...)
+	out, err := orgTextOutput(ctx, bin, projectRoot, args...)
+	return orgTextResult(args, out, err)
+}
 
+// orgTextOutput runs `<bin> org <args...>` in projectRoot: its combined
+// output and exit error, unformatted.
+func orgTextOutput(ctx context.Context, bin, projectRoot string, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := CommandContext(cctx, bin, full...)
+	cmd := CommandContext(cctx, bin, append([]string{"org"}, args...)...)
 	cmd.Dir = projectRoot
+	return cmd.CombinedOutput()
+}
 
-	out, err := cmd.CombinedOutput()
+// orgTextResult is runOrgTextWith's result from orgTextOutput's.
+func orgTextResult(args []string, out []byte, err error) (string, error) {
 	if err != nil {
 		// CombinedOutput leaves ExitError.Stderr empty, so orgCommandError
 		// alone would say only "exit status 1": keep what monomind printed

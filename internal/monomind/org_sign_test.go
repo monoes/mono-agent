@@ -219,24 +219,78 @@ func TestOrgSignReviewJSON(t *testing.T) {
 	ResetCapabilityCache()
 }
 
-// The capabilities may sit at the top of the handshake or under "org".
-func TestHandshakeInReadsCapabilitiesInEitherPlace(t *testing.T) {
+// Only the handshake's top-level capabilities count (monomind#578): one
+// under "org" is ignored.
+func TestHandshakeInReadsTopLevelCapabilitiesOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
 	}
-	for _, out := range []string{
-		`{"v":1,"version":"2.22.0","capabilities":["org-sign-expect-hash"]}`,
-		`{"v":1,"version":"2.22.0","capabilities":["agent-exec"],"org":{"capabilities":["org-sign-expect-hash"]}}`,
+	for out, want := range map[string]bool{
+		`{"v":1,"version":"2.22.0","capabilities":["org-sign-expect-hash"]}`:                                       true,
+		`{"v":1,"version":"2.22.0","capabilities":["agent-exec"],"org":{"capabilities":["org-sign-expect-hash"]}}`: false,
 	} {
 		bin := filepath.Join(t.TempDir(), "monomind")
 		if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '"+out+"'\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		_, caps, err := handshakeIn(context.Background(), bin, t.TempDir())
-		if err != nil || !caps[CapOrgSignExpectHash] {
-			t.Errorf("%s: caps %v, %v", out, caps, err)
+		if err != nil || caps[CapOrgSignExpectHash] != want {
+			t.Errorf("%s: caps %v, %v; want expect-hash %v", out, caps, err, want)
 		}
 	}
+}
+
+// A monomind that advertises an org-sign feature but rejects its flag
+// (exit 2, "unknown option") is treated as not having it: --check gives no
+// verdict, the review JSON falls back to the text review with no hash, and
+// a sign that would pass --expect-hash signs nothing.
+func TestOrgSignUnknownOptionFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	h := strings.Repeat("ab", 32)
+	fake := func(t *testing.T, rejected string) string {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "calls")
+		bin := filepath.Join(dir, "monomind")
+		script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"2.22.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","org-sign-check","org-sign-expect-hash","org-sign-review-json"]}'; exit 0; fi` + "\n" +
+			`if [ "$3" = "--help" ]; then echo '  --expect-hash <hex>'; exit 0; fi` + "\n" +
+			`for a in "$@"; do if [ "$a" = "` + rejected + `" ]; then echo '{"orgs":[{"org":"growth","state":"signed"}],"org":"growth","hash":"` + h + `","reviewText":"json review"}'; echo "error: unknown option '` + rejected + `'" >&2; exit 2; fi; done` + "\n" +
+			"echo 'text review'\necho signed\nexit 0\n"
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(EnvOverride, bin)
+		ResetCapabilityCache()
+		t.Cleanup(ResetCapabilityCache)
+		return log
+	}
+	ctx := context.Background()
+	t.Run("check", func(t *testing.T) {
+		fake(t, "--check")
+		if st, ok := OrgSignCheck(ctx, t.TempDir(), "growth"); ok {
+			t.Fatalf("check gave a verdict: %+v", st)
+		}
+	})
+	t.Run("review-json", func(t *testing.T) {
+		fake(t, "--format")
+		rv, err := OrgSignReview(ctx, t.TempDir(), "growth")
+		if err != nil || rv.Hash != "" || !strings.Contains(rv.Text, "text review") {
+			t.Fatalf("review = %+v, %v; want the text review, no hash", rv, err)
+		}
+	})
+	t.Run("expect-hash", func(t *testing.T) {
+		log := fake(t, "--expect-hash")
+		out, err := OrgSign(ctx, t.TempDir(), "growth", "abc123")
+		if err == nil || !strings.Contains(err.Error(), "does not support --expect-hash") {
+			t.Fatalf("OrgSign = %q, %v; want a refusal", out, err)
+		}
+		calls, _ := os.ReadFile(log)
+		if strings.Count(string(calls), "org sign growth --yes") != 1 {
+			t.Fatalf("signed again without --expect-hash:\n%s", calls)
+		}
+	})
 }
 
 // A version shim (mise here) is resolved with `mise which monomind` run

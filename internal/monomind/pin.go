@@ -84,7 +84,8 @@ func pinPath(path, name string) (string, error) {
 
 // shimManager names the version manager whose shim path is, or "". It goes
 // by what the path resolves to (the mise/rtx binary, volta-shim), an asdf
-// or mise shim script's header, and the managers' shims dirs.
+// or mise shim script's header, a mise/asdf shims dir anywhere in the path,
+// and the managers' configured shims dirs.
 func shimManager(path string) string {
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -103,6 +104,12 @@ func shimManager(path string) string {
 		case strings.Contains(head, "mise x "), strings.Contains(head, "mise exec"), strings.Contains(head, "rtx exec"):
 			return managerMise
 		}
+	}
+	switch p := filepath.ToSlash(path); {
+	case strings.Contains(p, "/mise/shims/"), strings.Contains(p, "/rtx/shims/"):
+		return managerMise
+	case strings.Contains(p, "/asdf/shims/"), strings.Contains(p, "/.asdf/shims/"):
+		return managerAsdf
 	}
 	for _, dir := range []string{filepath.Dir(path), filepath.Dir(real)} {
 		for _, kind := range []string{managerMise, managerAsdf, managerVolta} {
