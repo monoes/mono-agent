@@ -341,7 +341,20 @@ type AgentStatusPayload struct {
 	Leases []string `json:"leases,omitempty"`
 	// Branch is the git branch an isolated writer works on (#230).
 	Branch string `json:"branch,omitempty"`
+	// Confinement says what keeps a research worker from editing on its
+	// current run (Confinement* constants); "" for the other profiles.
+	Confinement string `json:"confinement,omitempty"`
 }
+
+// A research worker's confinement (#230): agent exec --access read, else a
+// read-only sandbox, else the prompt fallback for an older monomind or a
+// runtime with neither — full access, told to stay read-only, holding the
+// write lease so it never runs beside a writer.
+const (
+	ConfinementAccessRead = "access-read"
+	ConfinementSandbox    = "sandbox-read-only"
+	ConfinementWriteLease = "write-lease"
+)
 
 // AgentMessagePayload is agent.message's payload: a brief, a result, a
 // follow-up or a question passing between the lead and a worker.
