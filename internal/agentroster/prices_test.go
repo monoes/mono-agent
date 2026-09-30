@@ -6,21 +6,29 @@ import (
 )
 
 func TestTableTestCost(t *testing.T) {
-	per := func(in, out float64) float64 { return (testTurnTokensIn*in + testTurnTokensOut*out) / 1e6 }
+	per := func(p price) float64 { return (testTurnTokensIn*p.cw + testTurnTokensOut*p.out) / 1e6 }
 	cases := []struct {
 		runtime, model string
 		want           float64
 		ok             bool
 	}{
-		{"claude", "haiku", per(1, 5), true},
-		{"claude", "claude-haiku-4-5-20251001", per(1, 5), true},
-		{"claude", "opus[1m]", per(5, 25), true},
-		{"claude", "claude-opus-4-1", per(15, 75), true},
-		{"claude", DefaultModel, per(5, 25), true},        // the runtime's paid default
-		{"claude", "some-new-model", per(5, 25), true},    // unknown model: the runtime's default
-		{"codex", "gpt-5.5", per(2.5, 10), true},          // longest prefix
-		{"codex", "gpt-4o-mini", per(0.15, 0.6), true},    // exact beats the gpt-4o prefix
-		{"opencode", "openai/gpt-4o", per(2.5, 10), true}, // provider prefix dropped
+		{"claude", "haiku", per(price{1, 5, 1.25}), true},
+		{"claude", "claude-haiku-4-5-20251001", per(price{1, 5, 1.25}), true},
+		{"claude", "claude-haiku-4-5@20251001", per(price{1, 5, 1.25}), true},
+		{"claude", "opus[1m]", per(price{5, 25, 6.25}), true},
+		{"claude", "claude-opus-4-1", per(price{15, 75, 18.75}), true},
+		{"claude", DefaultModel, per(price{5, 25, 6.25}), true}, // the runtime's paid default
+		{"codex", DefaultModel, per(price{2.5, 10, 2.5}), true},
+		{"claude", "some-new-model", 0, false},                  // unknown, not the runtime's default
+		{"codex", "gpt-5.5", per(price{2.5, 10, 2.5}), true},    // longest prefix
+		{"codex", "gpt-5-mini", per(price{2.5, 10, 2.5}), true}, // priced as gpt-5: high, not low
+		{"codex", "gpt-4o-mini", per(price{0.15, 0.6, 0.15}), true},
+		{"codex", "gpt-5-pro", 0, false}, // a dearer variant is not priced as gpt-5
+		{"codex", "gpt-5.5-pro", 0, false},
+		{"codex", "gpt-5-max", 0, false},
+		{"codex", "o3-pro", 0, false},
+		{"codex", "o4-mini", 0, false},
+		{"opencode", "openai/gpt-4o", per(price{2.5, 10, 2.5}), true}, // provider prefix dropped
 		{"opencode", "zai/glm-4.6", 0, false},
 		{"crush", DefaultModel, 0, false},
 	}

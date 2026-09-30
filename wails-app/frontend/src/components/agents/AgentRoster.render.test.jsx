@@ -238,6 +238,13 @@ describe('AgentRoster', () => {
     expect(within(panel).getByText('Daily ceiling: up to 1 run(s) × 3 model(s), ≈ $0.1500/day at most (priciest known model ≈ $0.0500).')).toBeInTheDocument()
   })
 
+  it("says how much of the next run's estimate comes from the built-in price table", async () => {
+    api.agentRosterAutoRevalidate.mockResolvedValue({ ...autoOff, next: { ...autoOff.next, unknown_cost: 0, table_estimated: 1 } })
+    render(<AgentRoster />)
+    const panel = await screen.findByTestId('auto-revalidate')
+    expect(await within(panel).findByText('Next run: 2 model(s) of codex, ≈ $0.0021 (1 priced from the built-in price table)')).toBeInTheDocument()
+  })
+
   it('asks before turning automatic re-validation on, and stays off when declined', async () => {
     mockConfirm.mockResolvedValue(false)
     render(<AgentRoster />)

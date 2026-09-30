@@ -486,6 +486,7 @@
         "lastRun": "Última ejecución {{at}} ({{runtime}})",
         "nextEligible": "Próxima ejecución no antes de {{at}}",
         "noDaemon": "El daemon no está en marcha, así que no se ejecuta nada hasta que arranque.",
+        "fromTable": "({{count}} con precio de la tabla de precios integrada)",
         "unknownCost": "(+ {{count}} con coste desconocido)",
         "confirmTitle": "¿Volver a comprobar automáticamente los modelos caducados?",
         "confirmBody": "El daemon hará llamadas reales y de pago a modelos sin preguntar: hasta {{perDay}} runtime(s) al día, {{models}} modelo(s) cada uno.",

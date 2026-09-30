@@ -304,10 +304,14 @@ func TestPickStale(t *testing.T) {
 	if strings.Join(models, ",") != "b,d,c" {
 		t.Fatalf("models = %v, want the 3 oldest stale b,d,c", models)
 	}
-	// c has no stored cost: the built-in table prices it at codex's default.
-	table, _ := TableTestCost("codex", "c")
-	if want := 0.003 + table; math.Abs(p.EstCostUSD-want) > 1e-9 || p.UnknownCost != 0 {
-		t.Fatalf("estimate = %v + %d unknown, want %v", p.EstCostUSD, p.UnknownCost, want)
+	// c has no stored cost and the built-in table doesn't know it.
+	if math.Abs(p.EstCostUSD-0.003) > 1e-9 || p.UnknownCost != 1 || p.TableEstimated != 0 {
+		t.Fatalf("estimate = %v + %d unknown, %d from the table", p.EstCostUSD, p.UnknownCost, p.TableEstimated)
+	}
+	// A "default" model with no stored cost is priced from the table.
+	roster[1].Models = append(roster[1].Models, e(DefaultModel, StateStale, old(100)))
+	if p = PickStale(roster, previous, 1); len(p.Targets) != 1 || p.Targets[0].Model != DefaultModel || p.TableEstimated != 1 || p.EstCostUSD <= 0 {
+		t.Fatalf("default-model plan = %+v", p)
 	}
 	if PickStale([]RuntimeRoster{{Runtime: "claude", Installed: true, Models: []Entry{e("s", StateReady, now)}}}, nil, 3) != nil {
 		t.Fatal("picked with nothing stale")
