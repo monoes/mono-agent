@@ -8,11 +8,13 @@ import "github.com/monoes/mono-agent/internal/workflow"
 func IsOutboundNode(n workflow.WorkflowNode) bool { return isOutboundNode(n) }
 
 // Classified reports whether nodeType was reviewed: read-only, read-only
-// by config, or matched by an explicit outbound rule.
+// by config or by its installed definition, or matched by an explicit
+// outbound rule.
 func Classified(nodeType string) bool {
 	_, byConfig := readOnlyByConfig[nodeType]
-	return readOnlyNodes[nodeType] || byConfig || classifiedOutbound(nodeType)
+	_, byDef := readOnlyActions[nodeType]
+	return readOnlyNodes[nodeType] || byConfig || byDef || classifiedOutbound(nodeType)
 }
 
-// ReadOnlyNodes lists readOnlyNodes.
-func ReadOnlyNodes() map[string]bool { return readOnlyNodes }
+// ReadOnlyActions lists readOnlyActions.
+func ReadOnlyActions() map[string][]string { return readOnlyActions }

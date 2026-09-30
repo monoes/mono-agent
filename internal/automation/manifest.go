@@ -29,6 +29,23 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
 // ValidID reports whether id is a valid automation id slug.
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
+// reservedIDs are the built-in node type namespaces. A package's actions
+// register as "<id>.<action>" next to the built-in "<namespace>.<type>"
+// nodes, so a package with one of these ids could shadow or collide with a
+// built-in node (and pass as one when grants classify nodes).
+// noderegistry's TestBuiltinNamespacesAreReserved keeps the list complete.
+var reservedIDs = map[string]bool{
+	"action": true, "agent": true, "ai": true, "applications": true,
+	"browser": true, "comm": true, "core": true, "data": true, "db": true,
+	"discovery": true, "documents": true, "http": true, "image": true,
+	"matching": true, "org": true, "people": true, "service": true,
+	"system": true, "trigger": true, "vault": true,
+}
+
+// ReservedID reports whether id is a built-in node type namespace, which
+// no automation package may use.
+func ReservedID(id string) bool { return reservedIDs[id] }
+
 // ParseManifest decodes automation.json.
 func ParseManifest(b []byte) (Manifest, error) {
 	var m Manifest
@@ -231,6 +248,8 @@ func validateManifest(m Manifest, source string) []IssueJSON {
 	}
 	if !ValidID(m.ID) {
 		add("error", "bad_id", "id %q must be 1–41 lowercase letters, digits or dashes, starting with a letter or digit", m.ID)
+	} else if ReservedID(m.ID) {
+		add("error", "reserved_id", "id %q is a built-in node namespace (%q nodes); choose another id", m.ID, m.ID+".*")
 	}
 	if strings.TrimSpace(m.Name) == "" {
 		add("error", "missing_name", "name is required")

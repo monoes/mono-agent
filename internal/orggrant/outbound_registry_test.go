@@ -2,12 +2,15 @@ package orggrant_test
 
 import (
 	"encoding/json"
-	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/automations"
 	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
@@ -56,98 +59,133 @@ func TestEveryRegisteredNodeTypeIsClassified(t *testing.T) {
 	t.Logf("%d registered node types classified", len(types))
 }
 
-// TestReadOnlyBrowserActionsDeclareNoSideEffects: an official automation
-// action on the read-only list declares sideEffects "read" and has no step
-// (nor called fragment) marked sideEffect. Changing such an action to write
-// fails here until it is moved off the list.
-func TestReadOnlyBrowserActionsDeclareNoSideEffects(t *testing.T) {
-	fsys := automations.FS()
-	checked := 0
-	for nt := range orggrant.ReadOnlyNodes() {
-		pkg, act, ok := strings.Cut(nt, ".")
-		if !ok || !isOfficialPackage(pkg) {
-			continue
+// bootOfficial installs the official automation packages from the repo
+// into a temp home and points the action loader at them, as the app does
+// after installing them from monoes.me. It returns the home.
+func bootOfficial(t *testing.T) string {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), ".monoagent")
+	prev := automation.TestSeed
+	automation.TestSeed = automations.FS()
+	t.Cleanup(func() {
+		automation.TestSeed = prev
+		action.SetDefSource(nil)
+		action.GetLoader().InvalidateAll()
+	})
+	reg, err := automation.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Boot(); err != nil {
+		t.Fatal(err)
+	}
+	action.SetDefSource(reg.DefSource())
+	action.GetLoader().InvalidateAll()
+	return home
+}
+
+// TestReadOnlyActionsVerifiedAgainstInstalledPackages: every official read
+// action on the list passes the installed-definition check when its
+// package is installed and available in this build, and is outbound when
+// it isn't. A repo change that adds a write step, a new bot method or a
+// write-level sideEffects to one of them fails here.
+func TestReadOnlyActionsVerifiedAgainstInstalledPackages(t *testing.T) {
+	bootOfficial(t)
+	src := action.CurrentDefSource()
+	verified := 0
+	for nt := range orggrant.ReadOnlyActions() {
+		pkg, _, _ := strings.Cut(nt, ".")
+		available := src.Package(pkg) != nil
+		if got := orggrant.IsOutboundNode(workflow.WorkflowNode{Type: nt}); got == available {
+			t.Errorf("%s: outbound = %v with its package available = %v", nt, got, available)
 		}
-		checked++
-		raw, err := fs.ReadFile(fsys, pkg+"/actions/"+act+".json")
+		if available {
+			verified++
+		}
+	}
+	if verified == 0 && bot.PlatformCompiledIn("linkedin") {
+		t.Fatal("no read action verified: are the official packages installed?")
+	}
+	t.Logf("%d/%d read actions verified", verified, len(orggrant.ReadOnlyActions()))
+}
+
+// TestEditedInstalledActionIsOutbound: the installed definition decides,
+// not the name. Hand edits under ~/.monoagent (or a package update) that
+// make a read action write turn it outbound; so does having no registry.
+func TestEditedInstalledActionIsOutbound(t *testing.T) {
+	const nodeType = "hackernews.list_comments"
+	isOut := func() bool {
+		action.GetLoader().InvalidateAll()
+		return orggrant.IsOutboundNode(workflow.WorkflowNode{Type: nodeType})
+	}
+	edit := func(t *testing.T, home, rel string, change func(map[string]interface{})) {
+		t.Helper()
+		files, _ := filepath.Glob(filepath.Join(home, "automations", "hackernews", "*", filepath.FromSlash(rel)))
+		if len(files) != 1 {
+			t.Fatalf("installed %s: %v", rel, files)
+		}
+		raw, err := os.ReadFile(files[0])
 		if err != nil {
-			t.Errorf("%s: read-only node has no official action: %v", nt, err)
-			continue
+			t.Fatal(err)
 		}
 		var def map[string]interface{}
 		if err := json.Unmarshal(raw, &def); err != nil {
-			t.Fatalf("%s: %v", nt, err)
+			t.Fatal(err)
 		}
-		if def["sideEffects"] != "read" {
-			t.Errorf("%s: sideEffects = %v, want read", nt, def["sideEffects"])
-		}
-		for _, frag := range append([]string{""}, fragments(def)...) {
-			body := def
-			if frag != "" {
-				fr, err := fs.ReadFile(fsys, pkg+"/fragments/"+frag+".json")
-				if err != nil || json.Unmarshal(fr, &body) != nil {
-					t.Errorf("%s: fragment %q unreadable: %v", nt, frag, err)
-					continue
-				}
-			}
-			if hasSideEffectStep(body) {
-				t.Errorf("%s: a step (fragment %q) is marked sideEffect", nt, frag)
-			}
+		change(def)
+		out, _ := json.Marshal(def)
+		if err := os.WriteFile(files[0], out, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if checked == 0 {
-		t.Fatal("no official browser actions on the read-only list")
+	addStep := func(step map[string]interface{}) func(map[string]interface{}) {
+		return func(def map[string]interface{}) {
+			def["steps"] = append(def["steps"].([]interface{}), step)
+		}
 	}
-}
+	for _, c := range []struct {
+		name   string
+		file   string
+		change func(map[string]interface{})
+	}{
+		{"a step marked sideEffect", "actions/list_comments.json",
+			addStep(map[string]interface{}{"id": "reply", "type": "extract_text", "sideEffect": true})},
+		{"a click", "actions/list_comments.json",
+			addStep(map[string]interface{}{"id": "upvote", "type": "click", "selector": ".votearrow"})},
+		{"an unlisted bot method", "actions/list_comments.json",
+			addStep(map[string]interface{}{"id": "dm", "type": "call_bot_method", "methodName": "send_message"})},
+		{"a call_action", "actions/list_comments.json",
+			addStep(map[string]interface{}{"id": "post", "type": "call_action", "action": "submit_post"})},
+		{"a write-level sideEffects", "actions/list_comments.json",
+			func(def map[string]interface{}) { def["sideEffects"] = "write" }},
+		{"no sideEffects", "actions/list_comments.json",
+			func(def map[string]interface{}) { delete(def, "sideEffects") }},
+		{"a fragment that writes", "fragments/check_item_id.json",
+			addStep(map[string]interface{}{"id": "w", "type": "type", "selector": "textarea", "value": "hi"})},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := bootOfficial(t)
+			if action.CurrentDefSource().Package("hackernews") == nil {
+				t.Skip("hackernews is not available in this build")
+			}
+			if isOut() {
+				t.Fatalf("%s is outbound before the edit", nodeType)
+			}
+			edit(t, home, c.file, c.change)
+			if !isOut() {
+				t.Fatalf("%s is not outbound after adding %s", nodeType, c.name)
+			}
+		})
+	}
 
-func isOfficialPackage(id string) bool {
-	for _, p := range automations.IDs {
-		if p == id {
-			return true
+	t.Run("no registry", func(t *testing.T) {
+		action.SetDefSource(nil)
+		action.SetTestFallback(automations.FS())
+		t.Cleanup(func() { action.SetTestFallback(nil) })
+		if !isOut() {
+			t.Fatalf("%s is not outbound without an automation registry to verify it", nodeType)
 		}
-	}
-	return false
-}
-
-func fragments(v interface{}) []string {
-	var out []string
-	switch x := v.(type) {
-	case map[string]interface{}:
-		if x["type"] == "call_fragment" {
-			if f, ok := x["fragment"].(string); ok {
-				out = append(out, f)
-			}
-		}
-		for _, c := range x {
-			out = append(out, fragments(c)...)
-		}
-	case []interface{}:
-		for _, c := range x {
-			out = append(out, fragments(c)...)
-		}
-	}
-	return out
-}
-
-func hasSideEffectStep(v interface{}) bool {
-	switch x := v.(type) {
-	case map[string]interface{}:
-		if x["sideEffect"] == true {
-			return true
-		}
-		for _, c := range x {
-			if hasSideEffectStep(c) {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, c := range x {
-			if hasSideEffectStep(c) {
-				return true
-			}
-		}
-	}
-	return false
+	})
 }
 
 func TestOutboundClassification(t *testing.T) {
@@ -158,13 +196,9 @@ func TestOutboundClassification(t *testing.T) {
 	}{
 		{workflow.WorkflowNode{Type: "linkedin.send_dms"}, true},
 		{workflow.WorkflowNode{Type: "linkedin.publish_post"}, true},
-		{workflow.WorkflowNode{Type: "linkedin.scrape_profile_info"}, false},
-		{workflow.WorkflowNode{Type: "linkedin.list_user_posts"}, false},
-		{workflow.WorkflowNode{Type: "linkedin.find_by_keyword"}, false},
 		{workflow.WorkflowNode{Type: "tiktok.follow_user"}, true},
 		{workflow.WorkflowNode{Type: "x.send_dms"}, true},
 		{workflow.WorkflowNode{Type: "hackernews.submit_post"}, true},
-		{workflow.WorkflowNode{Type: "hackernews.list_comments"}, false},
 		{workflow.WorkflowNode{Type: "producthunt.comment_on_launch"}, true},
 		{workflow.WorkflowNode{Type: "instagram.watch_stories"}, true},
 		{workflow.WorkflowNode{Type: "gemini.generate_text"}, true},
@@ -188,6 +222,8 @@ func TestOutboundClassification(t *testing.T) {
 		{workflow.WorkflowNode{Type: "comm.email_read"}, false},
 		{workflow.WorkflowNode{Type: "comm.email_send"}, true},
 		{workflow.WorkflowNode{Type: "trigger.webhook"}, false},
+		{workflow.WorkflowNode{Type: "trigger.send_dm"}, true}, // not a built-in trigger
+		{workflow.WorkflowNode{Type: "trigger.cron"}, true},
 		{workflow.WorkflowNode{Type: "core.if"}, false},
 		{workflow.WorkflowNode{Type: "if"}, false},
 	}
@@ -201,19 +237,29 @@ func TestOutboundClassification(t *testing.T) {
 // A workflow that sends LinkedIn DMs is granted irreversible: a person
 // approves its calls even at autonomy mid (#287).
 func TestGrantTierLinkedInDMIsIrreversible(t *testing.T) {
+	bootOfficial(t)
 	wf := &workflow.Workflow{Nodes: []workflow.WorkflowNode{
 		{Type: "trigger.manual"},
 		{Type: "linkedin.find_by_keyword", Name: "find"},
 		{Type: "linkedin.send_dms", Name: "dm"},
 	}}
 	out := orggrant.OutboundNodes(wf)
-	if strings.Join(out, "|") != "dm (linkedin.send_dms)" {
+	want := "dm (linkedin.send_dms)"
+	if !bot.PlatformCompiledIn("linkedin") {
+		// Without social support LinkedIn isn't installed, so nothing
+		// verifies the search as a read.
+		want = "dm (linkedin.send_dms)|find (linkedin.find_by_keyword)"
+	}
+	if strings.Join(out, "|") != want {
 		t.Fatalf("outbound = %v", out)
 	}
 	if tier := orggrant.GrantTier(out); tier != orgdesign.TierIrreversible {
 		t.Fatalf("tier = %s", tier)
 	}
 	wf.Nodes = wf.Nodes[:2]
+	if !bot.PlatformCompiledIn("linkedin") {
+		return
+	}
 	if tier := orggrant.GrantTier(orggrant.OutboundNodes(wf)); tier != orgdesign.TierConsequential {
 		t.Fatalf("read-only workflow tier = %s", tier)
 	}
