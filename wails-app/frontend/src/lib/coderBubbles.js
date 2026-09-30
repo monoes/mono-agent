@@ -108,18 +108,34 @@ export function moveBubble(bubbles, fromKey, toKey) {
   return next
 }
 
+// orgBubble is a running org opened as a bubble (#229): chatted with
+// through its boss. Its key can never collide with a conversation id.
+export function orgBubble(orgName) {
+  return { key: `org:${orgName}`, kind: 'org', orgName, conversationId: '', cwd: '', model: '', runtime: '' }
+}
+
+export function isOrgBubble(b) {
+  return b?.kind === 'org'
+}
+
 // ── Persistence ─────────────────────────────────────────────────────────────
-// Only real conversations are kept across restarts: a draft (no message
-// sent yet) has nothing to come back to. The storage accessors can throw
-// (private windows, blocked storage), and the app must work without them.
+// Only real conversations and org bubbles are kept across restarts: a
+// draft (no message sent yet) has nothing to come back to. The storage
+// accessors can throw (private windows, blocked storage), and the app must
+// work without them.
 
 export function loadState(storage = globalThis.localStorage) {
   try {
     const raw = storage?.getItem(STORAGE_KEY)
     const parsed = raw ? JSON.parse(raw) : null
     const bubbles = Array.isArray(parsed?.bubbles)
-      ? parsed.bubbles.filter(b => b && typeof b.conversationId === 'string' && b.conversationId)
-        .map(b => ({ key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || ''), runtime: String(b.runtime || '') }))
+      ? parsed.bubbles.map(b => {
+        if (b?.kind === 'org' && typeof b.orgName === 'string' && b.orgName) return orgBubble(b.orgName)
+        if (b && typeof b.conversationId === 'string' && b.conversationId) {
+          return { key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || ''), runtime: String(b.runtime || '') }
+        }
+        return null
+      }).filter(Boolean)
       : []
     const side = parsed?.side === 'left' ? 'left' : 'right'
     return { bubbles, side }
@@ -130,8 +146,10 @@ export function loadState(storage = globalThis.localStorage) {
 
 export function saveState(state, storage = globalThis.localStorage) {
   try {
-    const bubbles = state.bubbles.filter(b => b.conversationId)
-      .map(b => ({ conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '', runtime: b.runtime || '' }))
+    const bubbles = state.bubbles.filter(b => b.conversationId || (b.kind === 'org' && b.orgName))
+      .map(b => (b.kind === 'org'
+        ? { kind: 'org', orgName: b.orgName }
+        : { conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '', runtime: b.runtime || '' }))
     storage?.setItem(STORAGE_KEY, JSON.stringify({ bubbles, side: state.side === 'left' ? 'left' : 'right' }))
   } catch {
     // Storage unavailable: bubbles just won't come back after a restart.

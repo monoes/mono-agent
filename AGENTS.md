@@ -227,6 +227,11 @@ The desktop app does everything through these commands; they are equally usable 
 - **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). All reads need a login: without one they exit 4 with `"login_required": true`. `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
 - **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
+- **Org bubbles (chat with a running org's boss):**
+  - `org chat send <org> -- <text>` messages the boss as `human:operator` (live, or queued for the org's next start).
+  - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
+  - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
+  - `org stop|pause|resume <org>` are the bubble's controls.
 
 ## monoes.me library
 
@@ -534,7 +539,7 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 
 `chat history create --mode coder --org dynamic`, or `chat history set-org
 <conversation> dynamic` on an existing coder conversation, lets the chat's
-agent (the **lead**) bring in **worker** agents. The lead gets five caller
+agent (the **lead**) bring in **worker** agents. The lead gets six caller
 tools:
 
 | Tool | What it does |
@@ -544,6 +549,7 @@ tools:
 | `org_wait` | Waits for workers and returns their reports. |
 | `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
 | `org_stop` | Stops a worker. |
+| `org_rate` | Rates a worker's latest report `good` or `bad`, once per report. The rating feeds the roster's track record (below). |
 
 Outside the turn, `monoagentcli chat turn stop <conversation> <turn> --agent
 <id> [--wait 20s] --json` stops one worker and leaves the lead and the other
@@ -575,6 +581,30 @@ How the conductor staffs a worker:
   rules decide. Research goes to the cheapest, fastest ready model, and
   writing work to the lead's own model. `coder set --org-model-picker lead`
   makes the lead name every model itself.
+- **Track record (#230):** every worker result and every `org_rate`
+  rating is stored in `agent_model_outcome_events` with the runtime, model
+  and the worker's role category. A result counts when it is `done`
+  (success) or `failed` on the worker's own error or timeout (failure; the
+  timeout is the turn's exec timeout, `cfg.Base.Timeout`, so a model too
+  slow for it counts as failing). A cancelled run, a budget refusal or
+  budget stop (`ErrBudget`), and a model that couldn't run at all (auth,
+  quota, `rate-limited`, model unavailable, missing binary) are not
+  counted, and the lead can't rate them. A rating weighs twice as much as a
+  bare result. Each event's weight halves every 30 days, and the score is
+  smoothed with a Beta prior of 4 events at 75%, so it is not the plain
+  share of results that succeeded. A score counts only from 3 **results**
+  per model and category (ratings don't add to that count). One turn
+  records at most 2 results per model and category (`QualityTurnCap`), and
+  ratings only of those, so a single bad turn can't bench a model. Below
+  50% the model is a **bad fit** for that category: the rules pick it only
+  when nothing else can run the worker, fallbacks try it last, and Jev gets
+  each score and the plain counts in its state and in the option text
+  ("engineering score 38% (0 of 4 succeeded)"). The lead's own choice of
+  model still wins. A bad fit recovers only as its failures decay (about
+  18 days for 3 fresh failures, about 54–65 days when the lead also rated
+  2–3 of them bad), or through new results when Jev or the lead still
+  picks it. `agent roster` shows the scores
+  (`track_record` in `--json`).
 
 Each worker's access profile is set by the lead, and none goes past the
 coder chat's own full access. A `research` worker is confined, in order of
@@ -695,8 +725,13 @@ login (and its bill) is what the turn uses.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
-  or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
-  adds a model id that the runtime doesn't list. The roster is machine-wide,
+  or when the runtime has been updated or its last test was rate-limited
+  (`rate_limited`, a transient 429; `stale_reason` says which), and
+  **failed** otherwise. A worker's rate limit never demotes a validated
+  model; only auth, quota and model-unavailable failures do. `agent roster add <runtime> <model>`
+  adds a model id that the runtime doesn't list. Each model's **track
+  record** column (`track_record` in JSON) is its score per role
+  category from real dynamic-org workers (see "Dynamic org"). The roster is machine-wide,
   not per profile, and the AI agents page shows it with live validation.
 - **Automatic re-validation (off by default; it spends money).**
   `monoagentcli agent roster auto-revalidate on|off|status` (#230). When on,

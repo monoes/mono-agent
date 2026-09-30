@@ -732,7 +732,8 @@
       "waiting_lease": "esperando su turno",
       "done": "listo",
       "failed": "falló",
-      "cancelled": "detenido"
+      "cancelled": "detenido",
+      "blocked": "bloqueado"
     },
     "waitingLease": "esperando {{lease}}",
     "lease": {
@@ -787,7 +788,8 @@
       "brief": "encargo de {{from}}",
       "result": "informe para {{to}}",
       "followup": "seguimiento de {{from}}",
-      "question": "pregunta para ti"
+      "question": "pregunta para ti",
+      "message": "mensaje {{from}} → {{to}}"
     },
     "tools": "Llamadas a herramientas",
     "leadInChat": "El trabajo propio del líder está en el chat de abajo.",
@@ -832,5 +834,71 @@
       "org_message": "escribiendo a un agente",
       "org_stop": "deteniendo a un agente"
     }
+  },
+  "orgBubble": {
+    "bubbleLabel": "Organización {{name}}, {{status}}",
+    "close": "Cerrar esta burbuja (la organización sigue en marcha)",
+    "cardKind": "Organización en marcha · chatea con su jefe",
+    "needsCount_one": "{{count}} te espera",
+    "needsCount_other": "{{count}} te esperan",
+    "chatLabel": "Organización: {{name}}",
+    "status": {
+      "running": "en marcha",
+      "paused": "en pausa",
+      "stopped": "detenida",
+      "neverRun": "nunca ejecutada",
+      "loading": "…"
+    },
+    "bossIs": "Jefe: {{name}}",
+    "boss": "Jefe",
+    "pause": "Pausar",
+    "resume": "Reanudar",
+    "stop": "Detener",
+    "cancel": "Cancelar",
+    "openInOrgs": "Abrir en la página de organizaciones",
+    "bossIdle": "esperando mensajes",
+    "teamHint": "Los roles aparecen aquí cuando empiezan a trabajar.",
+    "confirm": {
+      "pauseTitle": "¿Pausar {{name}}?",
+      "pauseBody": "Los turnos en curso terminan; no empieza trabajo nuevo hasta que la reanudes.",
+      "resumeTitle": "¿Reanudar {{name}}?",
+      "resumeBody": "La organización retoma su trabajo.",
+      "stopTitle": "¿Detener {{name}}?",
+      "stopBody": "Todos los roles se detienen. Las preguntas y puertas abiertas siguen pendientes hasta que la organización vuelva a ejecutarse."
+    },
+    "couldNotControl": "No se pudo cambiar la organización: {{error}}",
+    "resolvedBy": "por {{by}}",
+    "already": "Ya {{state}}",
+    "state": {
+      "answered": "respondida",
+      "approved": "aprobada",
+      "denied": "denegada",
+      "rejected": "rechazada"
+    },
+    "asks": "{{name}} pregunta",
+    "yourAnswer": "Respuesta: {{answer}}",
+    "answerLabel": "Tu respuesta",
+    "answerPlaceholder": "Escribe tu respuesta…",
+    "answer": "Responder",
+    "approvalTitle": "{{name}} quiere usar {{action}}",
+    "gateTitle": "{{name}} pide aprobación: {{gate}}",
+    "noteLabel": "Nota para la organización",
+    "notePlaceholder": "Nota (opcional)",
+    "approve": "Aprobar",
+    "deny": "Denegar",
+    "reject": "Rechazar",
+    "teamRow": "{{from}} → {{to}}",
+    "you": "Tú",
+    "queuedNote": "La organización no está en marcha: los mensajes esperan a su próximo inicio.",
+    "couldNotLoad": "No se pudo cargar el chat: {{error}}",
+    "empty": "Aún no hay mensajes. Escribe a {{boss}} abajo.",
+    "notRunning": "La organización no está en marcha, así que ahora no se pueden responder sus preguntas ni puertas. Reanúdala o iníciala antes; no se pierde nada.",
+    "started": "La organización empezó",
+    "stopped": "La organización se detuvo",
+    "queued": "en cola para el próximo inicio",
+    "sent": "enviado",
+    "couldNotSend": "No se pudo enviar: {{error}}",
+    "openAsBubble": "Abrir como burbuja",
+    "openAsBubbleNamed": "Abrir {{name}} como burbuja de chat"
   }
 }
