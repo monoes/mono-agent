@@ -363,7 +363,7 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().Float64Var(&budget, "budget-usd", 0, "Spend cap per message in USD (0 = none)")
 	c.Flags().IntVar(&orgMax, "org-max-agents", 0, "Dynamic org: workers the lead may spawn per message (default 6)")
 	c.Flags().IntVar(&orgConc, "org-max-concurrent", 0, "Dynamic org: workers running at once (default 3)")
-	c.Flags().Float64Var(&orgBudg, "org-budget-usd", 0, "Dynamic org: reported worker cost cap per message in USD (0 = none)")
+	c.Flags().Float64Var(&orgBudg, "org-budget-usd", 0, "Dynamic org: worker cost cap per message in USD, estimated for runtimes that report none (0 = none)")
 	c.Flags().StringVar(&picker, "org-model-picker", "", "Dynamic org: who picks a worker's model when the lead doesn't: lead-then-jev (default) or lead")
 	return c
 }

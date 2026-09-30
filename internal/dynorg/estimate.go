@@ -12,6 +12,13 @@ import (
 // shows it as "≈". A run with neither a cost nor tokens, or on a model the
 // table can't price, counts nothing, as before: MaxTurns and the timeout
 // bound it.
+//
+// Estimates run high: exec reports no cache split, so all input is priced
+// as uncached, and a subscription plan (codex on ChatGPT, copilot) has no
+// per-token bill at all. So they count toward a budget, and can stop a
+// worker, only when the user set one (coder set --org-budget-usd; there is
+// no default budget, so Limits.BudgetUSD > 0 is always the user's). With
+// none they are only shown.
 
 // runCost is what one exec costs toward the budget: the cost its runtime
 // reported, else an estimate from its tokens. ok is false when neither is
@@ -65,6 +72,12 @@ func overEstimate(m Model, run *monomind.TurnResult, budget float64) bool {
 	}
 	cost, estimated, _ := liveCost(m, run)
 	return estimated && cost >= budget
+}
+
+// cutShort reports whether a run did not complete on its own: the budget
+// stop's cancel cut it off, or it never finished.
+func cutShort(run *monomind.TurnResult) bool {
+	return !run.SawDone || run.StopReason == monomind.StopCancelled
 }
 
 // finalRun is an exec's accounting: Exec's result, with the events' usage

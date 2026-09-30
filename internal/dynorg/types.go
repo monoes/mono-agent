@@ -45,7 +45,7 @@ const (
 type Limits struct {
 	MaxAgents     int     // workers spawned per turn
 	MaxConcurrent int     // workers running at once
-	BudgetUSD     float64 // total reported worker cost per turn; 0 = no budget
+	BudgetUSD     float64 // total worker cost per turn, estimates included (estimate.go); 0 = no budget, the default
 }
 
 // DefaultLimits are the coder settings' defaults.
@@ -75,6 +75,9 @@ type Model struct {
 	Resume   bool   `json:"resume"`
 	// ReportsCost: the runtime reports its cost (the scan's reports_cost).
 	// Other runtimes' workers are costed from their tokens (estimate.go).
+	// reports_cost is in the scan from monomind 2.19, which the dynamic org
+	// already requires (orgUnavailableReason): an older scan would leave it
+	// false and have claude's workers estimated too.
 	ReportsCost bool    `json:"reports_cost,omitempty"`
 	CostUSD     float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
 	LatencyMs   int64   `json:"latency_ms,omitempty"`

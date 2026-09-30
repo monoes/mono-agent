@@ -148,3 +148,57 @@ func TestEstimateStopsRunningWorker(t *testing.T) {
 		t.Errorf("spawn after the stop err = %v", err)
 	}
 }
+
+// An estimate that reaches the budget only on the run's last usage event
+// doesn't turn a completed run into a failure: it stays done, its cost
+// counts, and the budget refuses what comes next.
+func TestEstimateAtTheEndKeepsACompletedRunDone(t *testing.T) {
+	em := &recEmitter{}
+	exec := func(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
+		on(monomind.Event{Type: monomind.EventStart})
+		on(monomind.Event{Type: monomind.EventResult, Text: "all done", StopReason: monomind.StopEndTurn,
+			InputTokens: 100_000, OutputTokens: 10_000, HasInputTokens: true, HasOutputTokens: true, HasCostUSD: true})
+		r := noCostTurn(100_000, 10_000)
+		r.ResultText = "all done"
+		return r, nil
+	}
+	c := New(context.Background(), Config{Cwd: "/w", Staffer: &Staffer{Roster: []Model{codex5}, Lead: codex5},
+		Exec: exec, Emit: em, Limits: Limits{MaxAgents: 3, MaxConcurrent: 1, BudgetUSD: 0.3}})
+	t.Cleanup(c.Close)
+	info, err := c.Spawn(context.Background(), SpawnRequest{Brief: "implement it", Wait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Status != chatevents.AgentDone || info.Report != "all done" {
+		t.Errorf("info = %+v, want done", info)
+	}
+	fin := em.find(chatevents.EventAgentFinished)[0].(chatevents.AgentFinishedPayload)
+	if fin.CostUSD == nil || !near(*fin.CostUSD, 0.35) || !fin.CostEstimated {
+		t.Errorf("finished = %+v, want ≈$0.35 counted", fin)
+	}
+	_, err = c.Spawn(context.Background(), SpawnRequest{Brief: "more"})
+	if err == nil || !strings.Contains(err.Error(), "partly estimated") {
+		t.Errorf("next spawn err = %v, want the budget refusal", err)
+	}
+}
+
+// With no budget set (the default), an estimate is shown but never
+// refuses or stops a worker: it may be a subscription runtime.
+func TestEstimateWithoutBudgetNeverStops(t *testing.T) {
+	ex := &execScript{answers: map[string]*monomind.TurnResult{"codex/gpt-5": noCostTurn(10_000_000, 1_000_000)}}
+	c, em := newTestConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 1}, codex5)
+	for _, brief := range []string{"implement a", "implement b", "implement c"} {
+		info, err := c.Spawn(context.Background(), SpawnRequest{Brief: brief, Wait: true})
+		if err != nil || info.Status != chatevents.AgentDone {
+			t.Fatalf("%s: %+v, %v", brief, info, err)
+		}
+	}
+	if ex.calls[2].BudgetUSD != 0 {
+		t.Errorf("exec budget = %v, want none", ex.calls[2].BudgetUSD)
+	}
+	for _, p := range em.find(chatevents.EventAgentFinished) {
+		if f := p.(chatevents.AgentFinishedPayload); f.CostUSD == nil || !near(*f.CostUSD, 35) || !f.CostEstimated {
+			t.Errorf("finished = %+v, want ≈$35 shown", f)
+		}
+	}
+}

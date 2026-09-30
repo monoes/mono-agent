@@ -643,8 +643,10 @@ func (c *Conductor) execOnce(ctx context.Context, w *worker, m Model, prompt, re
 	}
 	c.addRunCostLocked(w, m, &run)
 	c.mu.Unlock()
-	if overBudget.Load() {
-		return res, fmt.Errorf("%w: the workers' budget of $%.2f for this turn is spent (≈$%.2f estimated from token counts)", errBudgetRefused, c.cfg.Limits.BudgetUSD, c.spent())
+	// A run that completed anyway stays done; budgetErrLocked refuses
+	// what comes next.
+	if overBudget.Load() && cutShort(&run) {
+		return res, fmt.Errorf("%w: the workers' budget of $%.2f for this turn is spent (≈$%.2f, partly estimated from token counts)", errBudgetRefused, c.cfg.Limits.BudgetUSD, c.spent())
 	}
 	if requireSandbox {
 		// Refused: Exec couldn't apply the sandbox, the start event said it
