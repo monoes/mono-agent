@@ -29,10 +29,18 @@ func fakeSigningMonomind(t *testing.T, version string) (logPath string) {
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls.log")
 	bin := filepath.Join(dir, "monomind")
+	// A 2.22 advertises its org-sign capabilities (#568), unless the test
+	// sets FAKE_NO_SIGN_CAPS (an older 2.22 build without them).
+	signCaps := ""
+	if version == "2.22.0" {
+		signCaps = `'"$SIGN_CAPS"'`
+	}
 	script := `#!/bin/sh
+SIGN_CAPS=',"org-sign-expect-hash","org-sign-review-json","org-sign-check"'
+if [ -n "$FAKE_NO_SIGN_CAPS" ]; then SIGN_CAPS=''; fi
 echo "$(pwd) $*" >> '` + logPath + `'
 if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
-  echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","org-tool-providers","org-endpoint-roles","org-federation","org-decision-attribution"]}'
+  echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","org-tool-providers","org-endpoint-roles","org-federation","org-decision-attribution"` + signCaps + `]}'
   exit 0
 fi
 if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
@@ -697,4 +705,24 @@ func TestBusyRetryRechecksForSymlinks(t *testing.T) {
 			t.Fatalf("review with .monomind linked mid-read = %v", rev)
 		}
 	})
+}
+
+// A 2.22 build without the org-sign capabilities is an older binary:
+// its review JSON and --expect-hash are not used (fail closed), so a
+// definition only it could hash is not signed.
+func TestMissingSignCapabilitiesFailClosed(t *testing.T) {
+	f, s, _ := newSigningFixture(t, "2.22.0")
+	t.Setenv("FAKE_NO_SIGN_CAPS", "1")
+	t.Setenv("FAKE_SIGN_HELP", "  --expect-hash <hex>")
+	f.editOutside(t, func(m map[string]interface{}) {
+		m["roles"].([]interface{})[0].(map[string]interface{})["blueprint"] = "researcher"
+	})
+	const mmHash = "abababababababababababababababababababababababababababababababab"
+	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+mmHash+`","review":{},"reviewText":"from JSON"}`)
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != nil && rev["hash"] != "" {
+		t.Fatalf("review without the capability = %v", rev)
+	}
+	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-hash", mmHash); err == nil || len(s.calls) != 0 {
+		t.Fatalf("signed without the capability: %v (calls %v)", err, s.calls)
+	}
 }

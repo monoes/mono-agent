@@ -54,6 +54,17 @@ func TestSignatureRefusalClassified(t *testing.T) {
 // --check --format json` with body (exit 1), logging each call's cwd+argv.
 func fakeCheckMonomind(t *testing.T, version, body string) string {
 	t.Helper()
+	caps := ""
+	if versionAtLeast(version, "2.22.0") {
+		caps = `,"` + CapOrgSignCheck + `"`
+	}
+	return fakeCheckMonomindCaps(t, version, caps, body)
+}
+
+// fakeCheckMonomindCaps is fakeCheckMonomind with extra capabilities (a
+// JSON fragment starting with a comma, or "").
+func fakeCheckMonomindCaps(t *testing.T, version, caps, body string) string {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
 	}
@@ -61,7 +72,7 @@ func fakeCheckMonomind(t *testing.T, version, body string) string {
 	log := filepath.Join(dir, "calls")
 	bin := filepath.Join(dir, "monomind")
 	script := "#!/bin/sh\necho \"$(pwd) $*\" >> '" + log + "'\n" +
-		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"` + caps + `]}'; exit 0; fi` + "\n" +
 		"cat <<'JSON'\n" + body + "\nJSON\nexit 1\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -105,13 +116,16 @@ func TestOrgSignCheck(t *testing.T) {
 			t.Fatalf("%s: want no verdict", body)
 		}
 	}
-	// 2.21 has no --check: never run.
-	log = fakeCheckMonomind(t, "2.21.0", `{"orgs":[{"org":"growth","state":"signed"}]}`)
-	if _, ok := OrgSignCheck(context.Background(), root, "growth"); ok {
-		t.Fatal("used --check on 2.21")
-	}
-	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "--check") {
-		t.Fatalf("ran --check on 2.21:\n%s", calls)
+	// No org-sign-check capability — 2.21, or a 2.22 without it — means
+	// an older binary: --check is never run.
+	for _, version := range []string{"2.21.0", "2.22.0"} {
+		log = fakeCheckMonomindCaps(t, version, "", `{"orgs":[{"org":"growth","state":"signed"}]}`)
+		if _, ok := OrgSignCheck(context.Background(), root, "growth"); ok {
+			t.Fatalf("used --check on %s without the capability", version)
+		}
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "--check") {
+			t.Fatalf("ran --check on %s without the capability:\n%s", version, calls)
+		}
 	}
 }
 
@@ -128,26 +142,27 @@ func TestOrgSignCheckAll(t *testing.T) {
 	}
 }
 
-// --expect-hash is passed only when this monomind's `org sign --help`
-// lists it (monomind#568, 2.22); otherwise the plain --yes, with
-// mono-agent's own post-check.
+// --expect-hash is passed only when the pinned monomind advertises
+// org-sign-expect-hash and its help lists the flag. Help alone (without
+// the capability) is never enough: 2.21 ignores an unknown flag.
 func TestOrgSignExpectHashOnlyWhenOffered(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
 	}
 	for _, c := range []struct {
-		version, help string
-		want          bool
+		version, caps, help string
+		want                bool
 	}{
-		{"2.22.0", "  --expect-hash <hex>  Sign only if the signable hash is <hex>", true},
-		{"2.22.0", "  --yes  Skip the confirmation", false},
-		{"2.21.0", "  --expect-hash <hex>", false},
+		{"2.22.0", `,"org-sign-expect-hash"`, "  --expect-hash <hex>  Sign only if the signable hash is <hex>", true},
+		{"2.22.0", `,"org-sign-expect-hash"`, "  --yes  Skip the confirmation", false},
+		{"2.22.0", "", "  --expect-hash <hex>", false},
+		{"2.21.0", "", "  --expect-hash <hex>", false},
 	} {
 		dir := t.TempDir()
 		log := filepath.Join(dir, "calls")
 		bin := filepath.Join(dir, "monomind")
 		script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" +
-			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"` + c.caps + `]}'; exit 0; fi` + "\n" +
 			`if [ "$3" = "--help" ]; then echo '` + c.help + `'; exit 0; fi` + "\n" +
 			"echo signed\nexit 0\n"
 		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -161,31 +176,34 @@ func TestOrgSignExpectHashOnlyWhenOffered(t *testing.T) {
 		calls, _ := os.ReadFile(log)
 		got := strings.Contains(string(calls), "org sign growth --yes --expect-hash abc123")
 		if got != c.want || !strings.Contains(string(calls), "org sign growth --yes") {
-			t.Errorf("%s %q: calls\n%s", c.version, c.help, calls)
+			t.Errorf("%s caps %q help %q: calls\n%s", c.version, c.caps, c.help, calls)
 		}
 	}
 	ResetCapabilityCache()
 }
 
-// 2.22's review JSON: the reviewText and the hash of what was reviewed.
-// Any other shape, or an older monomind, gives the human review instead.
+// The review JSON, used only when the pinned monomind advertises
+// org-sign-review-json: the reviewText and the hash of what was reviewed.
+// Any other shape, or no capability, gives the human review instead.
 func TestOrgSignReviewJSON(t *testing.T) {
 	root := t.TempDir()
 	h := strings.Repeat("ab", 32)
+	const cap = `,"org-sign-review-json"`
 	for _, c := range []struct {
-		version, jsonOut, wantHash, wantText string
-		wantErr                              bool
+		version, caps, jsonOut, wantHash, wantText string
+		wantErr                                    bool
 	}{
-		{"2.22.0", `{"org":"growth","state":"changed","hash":"` + strings.ToUpper(h) + `","review":{"authority":[]},"reviewText":"org growth (changed):"}`, h, "org growth (changed):", false},
-		{"2.22.0", `{"org":"growth","error":"org not found: growth"}`, "", "", true},
-		{"2.22.0", `{"org":"growth","state":"changed","reviewText":"no hash here"}`, "", "text review", false},
-		{"2.22.0", `{"org":"growth","hash":"xyz","reviewText":"bad hash"}`, "", "text review", false},
-		{"2.21.0", `{"org":"growth","hash":"` + h + `","reviewText":"never read"}`, "", "text review", false},
+		{"2.22.0", cap, `{"org":"growth","state":"changed","hash":"` + strings.ToUpper(h) + `","review":{"authority":[]},"reviewText":"org growth (changed):"}`, h, "org growth (changed):", false},
+		{"2.22.0", cap, `{"org":"growth","error":"org not found: growth"}`, "", "", true},
+		{"2.22.0", cap, `{"org":"growth","state":"changed","reviewText":"no hash here"}`, "", "text review", false},
+		{"2.22.0", cap, `{"org":"growth","hash":"xyz","reviewText":"bad hash"}`, "", "text review", false},
+		{"2.22.0", "", `{"org":"growth","hash":"` + h + `","reviewText":"no capability"}`, "", "text review", false},
+		{"2.21.0", "", `{"org":"growth","hash":"` + h + `","reviewText":"never read"}`, "", "text review", false},
 	} {
 		dir := t.TempDir()
 		bin := filepath.Join(dir, "monomind")
 		script := "#!/bin/sh\n" +
-			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"` + c.caps + `]}'; exit 0; fi` + "\n" +
 			`if [ "$4" = "--format" ]; then echo '` + c.jsonOut + `'; exit 0; fi` + "\n" +
 			"echo 'text review'\necho 'Not signed. Review the above, then sign it yourself in a terminal: monomind org sign <org> (or pass --yes).'\nexit 1\n"
 		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -195,54 +213,104 @@ func TestOrgSignReviewJSON(t *testing.T) {
 		ResetCapabilityCache()
 		rv, err := OrgSignReview(context.Background(), root, "growth")
 		if (err != nil) != c.wantErr || rv.Hash != c.wantHash || rv.Text != c.wantText {
-			t.Errorf("%s %s: %+v, %v", c.version, c.jsonOut, rv, err)
+			t.Errorf("%s caps %q %s: %+v, %v", c.version, c.caps, c.jsonOut, rv, err)
 		}
 	}
 	ResetCapabilityCache()
 }
 
-// A version shim (mise, asdf) picks the monomind per project: the
-// --expect-hash detection runs in the project root, as the sign does, and
-// is cached per root. An advertised org-sign-expect-hash capability
-// decides without reading help.
-func TestOrgSignExpectsHashPerProjectRoot(t *testing.T) {
+// The capabilities may sit at the top of the handshake or under "org".
+func TestHandshakeInReadsCapabilitiesInEitherPlace(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
 	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "monomind")
-	// A shim: in a folder with .tool-versions it is 2.21 (no flag);
-	// with .caps it is a 2.21 that advertises the capability; else 2.22
-	// whose help lists --expect-hash.
-	script := "#!/bin/sh\n" +
-		`v=2.22.0; caps='"agent-exec","agent-scan","org-json-v1"'; help='  --expect-hash <hex>'` + "\n" +
-		`if [ -f .tool-versions ]; then v=2.21.0; help='  --yes'; fi` + "\n" +
-		`if [ -f .caps ]; then v=2.21.0; help='  --yes'; caps="$caps,\"org-sign-expect-hash\""; fi` + "\n" +
-		`if [ "$1" = "--version" ]; then echo "{\"v\":1,\"version\":\"$v\",\"min_caller\":\"1.0.0\",\"capabilities\":[$caps]}"; exit 0; fi` + "\n" +
-		`if [ "$3" = "--help" ]; then echo "$help"; exit 0; fi` + "\n" +
-		"exit 0\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	for _, out := range []string{
+		`{"v":1,"version":"2.22.0","capabilities":["org-sign-expect-hash"]}`,
+		`{"v":1,"version":"2.22.0","capabilities":["agent-exec"],"org":{"capabilities":["org-sign-expect-hash"]}}`,
+	} {
+		bin := filepath.Join(t.TempDir(), "monomind")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '"+out+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, caps, err := handshakeIn(context.Background(), bin, t.TempDir())
+		if err != nil || !caps[CapOrgSignExpectHash] {
+			t.Errorf("%s: caps %v, %v", out, caps, err)
+		}
 	}
-	t.Setenv(EnvOverride, bin)
+}
+
+// A version shim (mise here) picks the monomind per project: it is
+// resolved in the project root (`mise which monomind`) and the handshake,
+// the help and the sign all run through that exact binary, in that root.
+// The shim itself is never run for them.
+func TestSignToolPinsTheBinaryAShimPicks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake binaries are shell scripts")
+	}
+	base := t.TempDir()
+	log := filepath.Join(base, "calls")
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := filepath.Join(base, "installs", "2.21", "monomind")
+	cur := filepath.Join(base, "installs", "2.22", "monomind")
+	fake := func(name, version, caps, help string) string {
+		return `echo "` + name + ` $(pwd) $*" >> '` + log + "'\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"` + caps + `]}'; exit 0; fi` + "\n" +
+			`if [ "$3" = "--help" ]; then echo '` + help + `'; exit 0; fi` + "\n" +
+			"echo signed\n"
+	}
+	write(old, fake("OLD", "2.21.0", "", "  --yes"))
+	write(cur, fake("CUR", "2.22.0", `,"org-sign-expect-hash"`, "  --expect-hash <hex>"))
+	shim := filepath.Join(base, "mise", "shims", "monomind")
+	write(shim, `echo "SHIM $*" >> '`+log+"'\nexit 3\n")
+	write(filepath.Join(base, "bin", "mise"),
+		`if [ "$1" = "which" ] && [ -f .tool-versions ]; then echo '`+old+`'; exit 0; fi`+"\n"+
+			`if [ "$1" = "which" ]; then echo '`+cur+`'; exit 0; fi`+"\nexit 1\n")
+	t.Setenv("PATH", filepath.Join(base, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvOverride, shim)
 	ResetCapabilityCache()
 	t.Cleanup(ResetCapabilityCache)
 
-	pinned, plain, advertised := t.TempDir(), t.TempDir(), t.TempDir()
+	pinned, plain := t.TempDir(), t.TempDir()
 	_ = os.WriteFile(filepath.Join(pinned, ".tool-versions"), []byte("monomind 2.21.0\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(advertised, ".caps"), []byte("x"), 0o644)
 	ctx := context.Background()
 	if OrgSignExpectsHash(ctx, pinned) {
 		t.Error("claimed --expect-hash where the shim picks 2.21")
 	}
 	if !OrgSignExpectsHash(ctx, plain) {
-		t.Error("missed --expect-hash on 2.22")
+		t.Error("missed --expect-hash where the shim picks 2.22")
 	}
-	if !OrgSignExpectsHash(ctx, advertised) {
-		t.Error("missed the advertised capability")
+	for _, root := range []string{pinned, plain} {
+		if _, err := OrgSign(ctx, root, "growth", "abc123"); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Cached per root: the answer for pinned doesn't leak to plain.
-	if OrgSignExpectsHash(ctx, pinned) || !OrgSignExpectsHash(ctx, plain) {
-		t.Error("cache mixed the roots up")
+	calls, _ := os.ReadFile(log)
+	realPinned, _ := filepath.EvalSymlinks(pinned)
+	realPlain, _ := filepath.EvalSymlinks(plain)
+	for _, want := range []string{
+		"OLD " + realPinned + " org sign growth --yes\n",
+		"CUR " + realPlain + " org sign growth --yes --expect-hash abc123\n",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("missing %q in calls:\n%s", want, calls)
+		}
+	}
+	if strings.Contains(string(calls), "SHIM") {
+		t.Errorf("the shim itself was run:\n%s", calls)
+	}
+
+	// A shim that can't be resolved signs nothing.
+	write(filepath.Join(base, "bin", "mise"), "exit 1\n")
+	ResetCapabilityCache()
+	if _, err := OrgSign(ctx, plain, "growth", "abc123"); err == nil {
+		t.Error("signed through an unresolvable shim")
 	}
 }

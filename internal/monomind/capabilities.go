@@ -138,7 +138,5 @@ func ResetCapabilityCache() {
 	binCaps.Lock()
 	binCaps.sets, binCaps.at = nil, nil
 	binCaps.Unlock()
-	expectHashCache.Lock()
-	expectHashCache.ok = nil
-	expectHashCache.Unlock()
+	resetSignTools()
 }

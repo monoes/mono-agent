@@ -94,6 +94,11 @@ func runOrgText(ctx context.Context, projectRoot string, args ...string) (string
 	if err != nil {
 		return "", err
 	}
+	return runOrgTextWith(ctx, bin, projectRoot, args...)
+}
+
+// runOrgTextWith is runOrgText through a given monomind binary.
+func runOrgTextWith(ctx context.Context, bin, projectRoot string, args ...string) (string, error) {
 	full := append([]string{"org"}, args...)
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)

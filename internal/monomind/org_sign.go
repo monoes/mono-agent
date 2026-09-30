@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/monoes/mono-agent/internal/orgsign"
 )
@@ -17,10 +16,6 @@ import (
 // or reload an org whose definition the operator has not signed. monomind
 // advertises no capability for it, so it is gated on the version.
 const orgSigningMinVersion = "2.21.0"
-
-// orgSignCheckMinVersion adds `org sign <org> --check --format json`: a
-// read-only verdict from monomind itself (2.22).
-const orgSignCheckMinVersion = "2.22.0"
 
 // OrgSigning reports whether this monomind enforces signed org definitions.
 func (c *CapabilitySet) OrgSigning() bool {
@@ -57,24 +52,21 @@ func checkState(state, message string) (orgsign.Status, bool) {
 	return orgsign.Status{}, false
 }
 
-// runOrgCheck runs `monomind org sign <args> --check --format json` on a
-// monomind that has it (2.22+). Any other shape — no --check, a usage
-// error, JSON this client doesn't expect — gives ok=false, never an error:
-// callers fall back to the Go check.
+// runOrgCheck runs `monomind org sign <args> --check --format json`
+// through the monomind pinned for projectRoot, when it advertises
+// org-sign-check. Anything else — no capability, a usage error, JSON this
+// client doesn't expect — gives ok=false, never an error: callers fall
+// back to the Go check.
 func runOrgCheck(ctx context.Context, projectRoot string, args ...string) (orgCheckResult, bool) {
 	var res orgCheckResult
-	set, err := Capabilities(ctx)
-	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
-		return res, false
-	}
-	bin, _, err := Ensure(ctx)
-	if err != nil {
+	tool, err := signToolFor(ctx, projectRoot)
+	if err != nil || !tool.has(CapOrgSignCheck) {
 		return res, false
 	}
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	full := append(append([]string{"org", "sign"}, args...), "--check", "--format", "json")
-	cmd := exec.CommandContext(cctx, bin, full...)
+	cmd := exec.CommandContext(cctx, tool.path, full...)
 	cmd.Dir = projectRoot
 	out, _ := cmd.Output() // exit 1 means "not all signed", with the same JSON
 	if json.Unmarshal(lastJSONDocument(out), &res) != nil || res.Orgs == nil {
@@ -117,79 +109,35 @@ func OrgSignCheckAll(ctx context.Context, projectRoot string) (map[string]orgsig
 }
 
 // OrgSign signs an org definition as the operator: `monomind org sign
-// <name> --yes` in projectRoot. monomind itself refuses inside an org role
-// or agent turn. hash is the projection hash the signature must cover;
-// when this monomind's `org sign` takes --expect-hash (asked of monomind
-// for 2.22) it is passed, so monomind refuses to sign anything else.
+// <name> --yes`, through the monomind pinned for projectRoot and run in
+// it. monomind itself refuses inside an org role or agent turn. hash is
+// the projection hash the signature must cover; when that monomind
+// enforces --expect-hash it is passed, so it signs nothing else. A binary
+// that can't be pinned (an unresolvable shim) signs nothing.
 func OrgSign(ctx context.Context, projectRoot, name, hash string) (string, error) {
+	tool, err := signToolFor(ctx, projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("monomind org sign %s: %w", name, err)
+	}
 	args := []string{"sign", name, "--yes"}
-	if hash != "" && OrgSignExpectsHash(ctx, projectRoot) {
+	if hash != "" && tool.enforcesHash(ctx, projectRoot) {
 		args = append(args, "--expect-hash", hash)
 	}
-	return runOrgText(ctx, projectRoot, args...)
+	return runOrgTextWith(ctx, tool.path, projectRoot, args...)
 }
 
-// CapOrgSignExpectHash is the capability monomind is asked to advertise
-// for `org sign --expect-hash` (#568); when a handshake carries it, it
-// decides, instead of reading `org sign --help`.
-const CapOrgSignExpectHash = "org-sign-expect-hash"
-
-var expectHashCache struct {
-	sync.Mutex
-	ok map[string]bool // bin + "\x00" + project root
-}
-
-// OrgSignExpectsHash reports whether the monomind that runs in projectRoot
-// has `org sign --expect-hash`, so it refuses to sign content other than
-// the hash it is given. A version shim (mise, asdf) can pick another
-// monomind per project, so the handshake and `org sign --help` run in
-// projectRoot, like the sign itself, and the answer is cached per binary
-// and root. The capability decides where advertised; otherwise 2.22+
-// whose help lists the flag (2.21 silently ignores an unknown flag).
+// OrgSignExpectsHash reports whether the monomind pinned for projectRoot
+// refuses to sign content other than the hash it is given. The
+// org-sign-expect-hash capability decides; its `org sign --help` listing
+// the flag is only a second check (2.21 silently ignores an unknown flag,
+// so help alone is never enough). No capability, or no binary, is false.
 func OrgSignExpectsHash(ctx context.Context, projectRoot string) bool {
-	bin, err := Find()
-	if err != nil {
-		return false
-	}
-	key := bin + "\x00" + projectRoot
-	expectHashCache.Lock()
-	defer expectHashCache.Unlock()
-	if ok, cached := expectHashCache.ok[key]; cached {
-		return ok
-	}
-	ok := orgSignExpectsHashIn(ctx, bin, projectRoot)
-	if expectHashCache.ok == nil {
-		expectHashCache.ok = map[string]bool{}
-	}
-	expectHashCache.ok[key] = ok
-	return ok
+	tool, err := signToolFor(ctx, projectRoot)
+	return err == nil && tool.enforcesHash(ctx, projectRoot)
 }
 
-func orgSignExpectsHashIn(ctx context.Context, bin, dir string) bool {
-	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
-	defer cancel()
-	run := func(args ...string) []byte {
-		cmd := exec.CommandContext(cctx, bin, args...)
-		cmd.Dir = dir
-		out, _ := cmd.Output()
-		return out
-	}
-	var vi struct {
-		Version      string   `json:"version"`
-		Capabilities []string `json:"capabilities"`
-	}
-	if json.Unmarshal(lastJSONDocument(run("--version", "--json")), &vi) != nil {
-		return false
-	}
-	for _, c := range vi.Capabilities {
-		if c == CapOrgSignExpectHash {
-			return true
-		}
-	}
-	if !versionAtLeast(vi.Version, orgSignCheckMinVersion) {
-		return false
-	}
-	return strings.Contains(string(run("org", "sign", "--help")), "--expect-hash")
+func (t *signTool) enforcesHash(ctx context.Context, root string) bool {
+	return t.has(CapOrgSignExpectHash) && strings.Contains(t.orgSignHelp(ctx, root), "--expect-hash")
 }
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
@@ -207,34 +155,34 @@ type OrgReview struct {
 
 var hexHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// OrgSignReview returns monomind's review of an org definition. On a
-// monomind whose `org sign <name> --format json` (no --yes: never prompts,
-// never signs) carries a `hash`, that JSON is used (feature-detected, never
-// assumed: 2.22+, and only if the answer has the shape); otherwise the
-// human review `monomind org sign <name>` prints without a terminal.
+// OrgSignReview returns monomind's review of an org definition, through
+// the monomind pinned for projectRoot. When it advertises
+// org-sign-review-json, `org sign <name> --format json` (no --yes: never
+// prompts, never signs) is used — and only if the answer has the shape;
+// otherwise the human review `monomind org sign <name>` prints without a
+// terminal, with no hash.
 func OrgSignReview(ctx context.Context, projectRoot, name string) (OrgReview, error) {
-	bin, _, err := Ensure(ctx)
+	tool, err := signToolFor(ctx, projectRoot)
 	if err != nil {
 		return OrgReview{}, err
 	}
-	if rv, ok, err := orgSignReviewJSON(ctx, bin, projectRoot, name); ok || err != nil {
+	if rv, ok, err := orgSignReviewJSON(ctx, tool, projectRoot, name); ok || err != nil {
 		return rv, err
 	}
-	text, err := orgSignReviewText(ctx, bin, projectRoot, name)
+	text, err := orgSignReviewText(ctx, tool.path, projectRoot, name)
 	return OrgReview{Text: text}, err
 }
 
 // orgSignReviewJSON is 2.22's review JSON. ok is false when this monomind
 // has none (or answers in another shape); err is a clear refusal from it
 // (the org is missing or unreadable).
-func orgSignReviewJSON(ctx context.Context, bin, projectRoot, name string) (OrgReview, bool, error) {
-	set, err := Capabilities(ctx)
-	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
+func orgSignReviewJSON(ctx context.Context, tool *signTool, projectRoot, name string) (OrgReview, bool, error) {
+	if !tool.has(CapOrgSignReviewJSON) {
 		return OrgReview{}, false, nil
 	}
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, "org", "sign", name, "--format", "json")
+	cmd := exec.CommandContext(cctx, tool.path, "org", "sign", name, "--format", "json")
 	cmd.Dir = projectRoot
 	out, _ := cmd.Output()
 	var res struct {
