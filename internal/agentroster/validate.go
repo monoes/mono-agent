@@ -73,7 +73,9 @@ func (p *Plan) EstimateCost(previous []Result) {
 	}
 	p.Calls, p.EstCostUSD, p.UnknownCost, p.TableEstimated = len(p.Targets), 0, 0, 0
 	for _, t := range p.Targets {
-		if r, ok := byKey[t.Runtime+"\x00"+t.Model]; ok && r.HasCost {
+		// A failed call that reported $0 (a 429, a sign-in error) says
+		// nothing about what a real turn costs.
+		if r, ok := byKey[t.Runtime+"\x00"+t.Model]; ok && r.HasCost && (Works(r.Status) || r.CostUSD > 0) {
 			p.EstCostUSD += r.CostUSD
 		} else if c, ok := TableTestCost(t.Runtime, t.Model); ok {
 			p.EstCostUSD += c
@@ -93,7 +95,8 @@ func (p *Plan) NoteSignIn(previous []Result, loginHints map[string]string) {
 	auth, works := map[string]string{}, map[string]bool{}
 	for _, r := range previous {
 		switch {
-		case Works(r.Status):
+		// A rate-limited call got past sign-in, so the runtime is signed in.
+		case Works(r.Status), r.Status == StatusRateLimited:
 			works[r.Runtime] = true
 		case r.Status == StatusAuth:
 			if auth[r.Runtime] == "" {

@@ -43,7 +43,7 @@ func TestTableTestCost(t *testing.T) {
 // A stored cost wins over the table; the table fills in the rest.
 func TestEstimateCostPrefersStoredCost(t *testing.T) {
 	p := Plan{Targets: []Target{{Runtime: "claude", Model: "opus"}, {Runtime: "claude", Model: "haiku"}, {Runtime: "crush", Model: "x"}}}
-	p.EstimateCost([]Result{{Runtime: "claude", Model: "opus", HasCost: true, CostUSD: 0.02}})
+	p.EstimateCost([]Result{{Runtime: "claude", Model: "opus", Status: StatusOK, HasCost: true, CostUSD: 0.02}})
 	haiku, _ := TableTestCost("claude", "haiku")
 	if p.Calls != 3 || math.Abs(p.EstCostUSD-(0.02+haiku)) > 1e-12 || p.TableEstimated != 1 || p.UnknownCost != 1 {
 		t.Errorf("plan = %+v", p)
@@ -62,5 +62,23 @@ func TestNoteSignIn(t *testing.T) {
 	want := []SignInNote{{Runtime: "claude", LoginHint: "claude /login"}, {Runtime: "codex", LoginHint: "codex login"}}
 	if len(p.SignIn) != len(want) || p.SignIn[0] != want[0] || p.SignIn[1] != want[1] {
 		t.Errorf("sign-in notes = %+v, want %+v", p.SignIn, want)
+	}
+}
+
+// A rate-limited call that reported $0 doesn't price the model at $0, and
+// it shows the runtime is signed in.
+func TestRateLimitedResultIsNotAPriceOrASignInFailure(t *testing.T) {
+	p := Plan{Targets: []Target{{Runtime: "claude", Model: "haiku"}, {Runtime: "claude", Model: "opus"}}}
+	previous := []Result{
+		{Runtime: "claude", Model: "haiku", Status: StatusRateLimited, HasCost: true, CostUSD: 0},
+		{Runtime: "claude", Model: "opus", Status: StatusAuth, LoginHint: "claude /login"},
+	}
+	p.EstimateCost(previous)
+	if p.TableEstimated != 2 || p.EstCostUSD <= 0 {
+		t.Errorf("plan = %+v, want both models priced from the table", p)
+	}
+	p.NoteSignIn(previous, nil)
+	if len(p.SignIn) != 0 {
+		t.Errorf("sign-in notes = %+v, want none: a rate-limited call got past sign-in", p.SignIn)
 	}
 }
