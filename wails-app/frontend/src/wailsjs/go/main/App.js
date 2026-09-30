@@ -46,6 +46,10 @@ export function AgentRosterAdd(arg1, arg2) {
   return window['go']['main']['App']['AgentRosterAdd'](arg1, arg2);
 }
 
+export function AgentRosterAutoRevalidate() {
+  return window['go']['main']['App']['AgentRosterAutoRevalidate']();
+}
+
 export function AgentRosterRemove(arg1, arg2) {
   return window['go']['main']['App']['AgentRosterRemove'](arg1, arg2);
 }
@@ -956,6 +960,10 @@ export function SendDraftPersonMessage(arg1) {
 
 export function SendOrgMessage(arg1, arg2) {
   return window['go']['main']['App']['SendOrgMessage'](arg1, arg2);
+}
+
+export function SetAgentRosterAutoRevalidate(arg1) {
+  return window['go']['main']['App']['SetAgentRosterAutoRevalidate'](arg1);
 }
 
 export function SetApplicationStatus(arg1, arg2, arg3) {

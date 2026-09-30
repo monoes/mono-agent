@@ -56,3 +56,22 @@ func TestLockAcrossProcesses(t *testing.T) {
 		t.Fatalf("another process got the lock (err %v)", err)
 	}
 }
+
+// LockFile is the same lock for any path (the validation lock uses it); a
+// held one gives ErrHeld, not the daemon's ErrLocked.
+func TestLockFileHeld(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.lock")
+	release, err := LockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LockFile(path); !errors.Is(err, ErrHeld) {
+		t.Fatalf("second LockFile = %v, want ErrHeld", err)
+	}
+	release()
+	again, err := LockFile(path)
+	if err != nil {
+		t.Fatalf("LockFile after release: %v", err)
+	}
+	again()
+}
