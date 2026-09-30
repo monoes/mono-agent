@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
 	"net/textproto"
 	"strings"
@@ -81,17 +80,23 @@ func (n *OutlookReadNode) Execute(ctx context.Context, input workflow.NodeInput,
 	return []workflow.NodeOutput{{Handle: "main", Items: out}}, nil
 }
 
-// fetchOutlookMail performs a minimal IMAP fetch using raw text protocol.
-// This avoids a third-party IMAP library dependency while still being functional
-// for simple cases. For production use, replace with go-imap or similar.
-func fetchOutlookMail(ctx context.Context, host string, port int, username, password, mailbox string, limit int, unreadOnly bool) ([]map[string]interface{}, error) {
-	addr := fmt.Sprintf("%s:%d", host, port)
-
+// dialOutlookIMAP opens the TLS connection to the IMAP server; tests swap
+// it for a fake server.
+var dialOutlookIMAP = func(ctx context.Context, host string, port int) (net.Conn, error) {
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 15 * time.Second},
 		Config:    &tls.Config{ServerName: host},
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	return dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", host, port))
+}
+
+// fetchOutlookMail performs a minimal IMAP fetch using raw text protocol.
+// This avoids a third-party IMAP library dependency while still being functional
+// for simple cases. For production use, replace with go-imap or similar.
+// It only reads: the mailbox is opened with EXAMINE (read-only) and bodies
+// are fetched with BODY.PEEK, so no message gets the \Seen flag.
+func fetchOutlookMail(ctx context.Context, host string, port int, username, password, mailbox string, limit int, unreadOnly bool) ([]map[string]interface{}, error) {
+	conn, err := dialOutlookIMAP(ctx, host, port)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
@@ -150,8 +155,8 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 		return nil, fmt.Errorf("login: %w", err)
 	}
 
-	// SELECT mailbox
-	if err := send("A2", fmt.Sprintf("SELECT %q", mailbox)); err != nil {
+	// EXAMINE mailbox (SELECT, but read-only)
+	if err := send("A2", fmt.Sprintf("EXAMINE %q", mailbox)); err != nil {
 		return nil, err
 	}
 	var totalMessages int
@@ -164,7 +169,7 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 			break
 		}
 		if strings.HasPrefix(line, "A2 NO") || strings.HasPrefix(line, "A2 BAD") {
-			return nil, fmt.Errorf("SELECT: %s", line)
+			return nil, fmt.Errorf("EXAMINE: %s", line)
 		}
 		// Parse EXISTS count
 		var n int
@@ -188,104 +193,53 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 		searchSpec = fmt.Sprintf("%d:*", start)
 	}
 
-	// FETCH envelope and body
-	fetchCmd := fmt.Sprintf("FETCH %s (FLAGS ENVELOPE BODY[TEXT]<0.2048>)", searchSpec)
+	// FETCH envelope and body; the response still says BODY[TEXT]
+	fetchCmd := fmt.Sprintf("FETCH %s (FLAGS ENVELOPE BODY.PEEK[TEXT]<0.2048>)", searchSpec)
 	if err := send("A3", fetchCmd); err != nil {
 		return nil, err
 	}
 
 	var results []map[string]interface{}
-	var current map[string]interface{}
-	var inFetch bool
-
 	for {
-		line, err := readLine()
+		resp, err := readIMAPResponse(readLine, tc.R)
 		if err != nil {
 			break
 		}
-		if strings.HasPrefix(line, "A3 OK") {
+		if strings.HasPrefix(resp.text, "A3 OK") {
 			break
 		}
-		if strings.HasPrefix(line, "A3 NO") || strings.HasPrefix(line, "A3 BAD") {
-			return nil, fmt.Errorf("FETCH: %s", line)
+		if strings.HasPrefix(resp.text, "A3 NO") || strings.HasPrefix(resp.text, "A3 BAD") {
+			return nil, fmt.Errorf("FETCH: %s", resp.text)
 		}
-
-		// New message fetch response
-		if strings.Contains(line, "FETCH (") {
-			current = map[string]interface{}{}
-			inFetch = true
-		}
-
-		if !inFetch || current == nil {
+		attrs, ok := parseFetchResponse(resp)
+		if !ok {
 			continue
 		}
 
-		// Flags
-		if strings.Contains(line, "FLAGS (") {
-			flagStart := strings.Index(line, "FLAGS (") + 7
-			end := strings.Index(line[flagStart:], ")")
-			if end >= 0 {
-				flags := line[flagStart : flagStart+end]
-				isRead := strings.Contains(flags, "\\Seen")
-				current["read"] = isRead
-				if unreadOnly && isRead {
-					current = nil
-					inFetch = false
-				}
+		msg := map[string]interface{}{"read": false}
+		flags, _ := attrs["FLAGS"].([]interface{})
+		for _, f := range flags {
+			if strings.EqualFold(imapString(f), `\Seen`) {
+				msg["read"] = true
 			}
 		}
-
-		// ENVELOPE: (date subject from sender reply-to to cc bcc in-reply-to message-id)
-		if strings.Contains(line, "ENVELOPE (") {
-			ei := strings.Index(line, "ENVELOPE (") + 10
-			env := extractParenContent(line[ei:])
-			parts := parseEnvelopeParts(env)
-			if len(parts) >= 10 {
-				current["date"] = unquoteIMAPString(parts[0])
-				current["subject"] = decodeIMAPSubject(unquoteIMAPString(parts[1]))
-				current["from"] = parseIMAPAddress(parts[2])
-				current["message_id"] = unquoteIMAPString(parts[9])
+		if unreadOnly && msg["read"] == true {
+			continue
+		}
+		if env, ok := attrs["ENVELOPE"].([]interface{}); ok {
+			envelopeFields(env, msg)
+		}
+		// The body comes back as BODY[TEXT]<0> for the partial fetch.
+		for name, v := range attrs {
+			if strings.HasPrefix(name, "BODY[TEXT]") {
+				bodyText := imapString(v)
+				if len(bodyText) > 2048 {
+					bodyText = bodyText[:2048] + "…"
+				}
+				msg["body"] = strings.TrimSpace(bodyText)
 			}
 		}
-
-		// Body text — IMAP literal: "BODY[TEXT] {N}" followed by N bytes of content.
-		if strings.Contains(line, "BODY[TEXT]") {
-			// Extract byte count from {N} at end of line.
-			var bodySize int
-			if bi := strings.LastIndex(line, "{"); bi >= 0 {
-				fmt.Sscanf(line[bi:], "{%d}", &bodySize)
-			}
-			if bodySize > 0 {
-				buf := make([]byte, bodySize)
-				_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-				if _, rerr := io.ReadFull(tc.R, buf); rerr == nil {
-					bodyText := string(buf)
-					if len(bodyText) > 2048 {
-						bodyText = bodyText[:2048] + "…"
-					}
-					current["body"] = strings.TrimSpace(bodyText)
-				}
-				// Consume the trailing \r\n after the literal.
-				_, _ = readLine()
-			} else {
-				// Fallback: inline value after BODY[TEXT] on same line
-				if idx := strings.Index(line, "BODY[TEXT] "); idx >= 0 {
-					current["body"] = strings.TrimSpace(line[idx+11:])
-				}
-			}
-		}
-
-		// End of this message
-		if line == ")" {
-			if current != nil && len(current) > 0 {
-				if current["read"] == nil {
-					current["read"] = false
-				}
-				results = append(results, current)
-			}
-			current = nil
-			inFetch = false
-		}
+		results = append(results, msg)
 	}
 
 	// Reverse so newest is first
@@ -297,115 +251,4 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 	_ = send("A4", "LOGOUT")
 
 	return results, nil
-}
-
-// extractParenContent returns everything inside the first balanced set of parentheses.
-func extractParenContent(s string) string {
-	depth := 0
-	start := -1
-	for i, ch := range s {
-		if ch == '(' {
-			if depth == 0 {
-				start = i + 1
-			}
-			depth++
-		} else if ch == ')' {
-			depth--
-			if depth == 0 && start >= 0 {
-				return s[start:i]
-			}
-		}
-	}
-	return s
-}
-
-// parseEnvelopeParts splits an IMAP envelope string into its 10 fields.
-// This is a simplified parser that handles quoted strings and nested parens.
-func parseEnvelopeParts(s string) []string {
-	var parts []string
-	i := 0
-	for i < len(s) {
-		ch := s[i]
-		if ch == ' ' {
-			i++
-			continue
-		}
-		if ch == '"' {
-			// Quoted string
-			j := i + 1
-			for j < len(s) && s[j] != '"' {
-				if s[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			parts = append(parts, s[i:j+1])
-			i = j + 1
-		} else if ch == '(' {
-			// Nested paren group
-			depth := 0
-			j := i
-			for j < len(s) {
-				if s[j] == '(' {
-					depth++
-				} else if s[j] == ')' {
-					depth--
-					if depth == 0 {
-						break
-					}
-				}
-				j++
-			}
-			parts = append(parts, s[i:j+1])
-			i = j + 1
-		} else {
-			// NIL or unquoted atom
-			j := i
-			for j < len(s) && s[j] != ' ' && s[j] != ')' {
-				j++
-			}
-			parts = append(parts, s[i:j])
-			i = j
-		}
-	}
-	return parts
-}
-
-func unquoteIMAPString(s string) string {
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return strings.ReplaceAll(s[1:len(s)-1], "\\\"", "\"")
-	}
-	if s == "NIL" {
-		return ""
-	}
-	return s
-}
-
-// decodeIMAPSubject handles simple ASCII subjects (=?charset?encoding?text?= decoding is omitted).
-func decodeIMAPSubject(s string) string {
-	return s
-}
-
-// parseIMAPAddress extracts a display address from an IMAP address list like ((name NIL mailbox host)).
-func parseIMAPAddress(s string) string {
-	inner := extractParenContent(s)
-	if inner == "" {
-		return ""
-	}
-	inner = extractParenContent(inner)
-	parts := parseEnvelopeParts(inner)
-	if len(parts) < 4 {
-		return ""
-	}
-	name := unquoteIMAPString(parts[0])
-	user := unquoteIMAPString(parts[2])
-	host := unquoteIMAPString(parts[3])
-	addr := ""
-	if user != "" && host != "" {
-		addr = user + "@" + host
-	}
-	if name != "" && addr != "" {
-		return name + " <" + addr + ">"
-	}
-	return addr
 }

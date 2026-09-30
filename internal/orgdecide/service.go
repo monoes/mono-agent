@@ -15,6 +15,7 @@ import (
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // Client is the monomind surface the service reads and resolves through.
@@ -93,9 +94,14 @@ type Service struct {
 	// WorkflowFacts describes a granted workflow for the decider prompt,
 	// from the DB (name, node types, outbound nodes).
 	WorkflowFacts func(ctx context.Context, profileID, workflowID string) string
-	Interval      time.Duration
-	Logf          func(format string, args ...interface{})
-	now           func() time.Time
+	// LoadWorkflow reads a granted workflow as it is now (file first, as
+	// execution does), so a grant whose workflow gained an outbound node
+	// routes as irreversible before any save or reconcile raises its row.
+	// Nil routes by the stored tier alone.
+	LoadWorkflow orggrant.WorkflowLoader
+	Interval     time.Duration
+	Logf         func(format string, args ...interface{})
+	now          func() time.Time
 
 	jevWarned sync.Map // profile/org → struct{}: "jev without a key" logged once
 }
@@ -239,14 +245,21 @@ func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *A
 func (s *Service) tierFacts(ctx context.Context, profileID, root, org string) TierFacts {
 	grants, _ := orggrant.NewStore(s.DB).ListGrants(ctx, profileID, org, "")
 	doc, _ := orgdesign.Load(root, org)
+	tiers := map[string]string{} // alias → tier, for this pass
 	return TierFacts{
 		GrantTier: func(alias string) string {
+			if tier, ok := tiers[alias]; ok {
+				return tier
+			}
+			tier := ""
 			for _, g := range grants {
 				if t := g.Automation(); t != nil && t.Alias == alias {
-					return t.Tier
+					tier = s.currentGrantTier(ctx, g)
+					break
 				}
 			}
-			return ""
+			tiers[alias] = tier
+			return tier
 		},
 		RoleHasGrantsAndBash: func(role string) bool {
 			held := false
@@ -270,6 +283,30 @@ func (s *Service) tierFacts(ctx context.Context, profileID, root, org string) Ti
 			return true
 		},
 	}
+}
+
+// currentGrantTier is g's stored tier, raised to irreversible when its
+// workflow now has an outbound node (#284). The raise is also stored, so the
+// display copy catches up on the next reconcile. A workflow that cannot be
+// read leaves the stored tier in force.
+func (s *Service) currentGrantTier(ctx context.Context, g orggrant.Grant) string {
+	t := g.Automation()
+	if s.LoadWorkflow == nil || t.Tier == orgdesign.TierIrreversible || !orgdesign.ValidTier(t.Tier) {
+		return t.Tier
+	}
+	wf, err := s.LoadWorkflow(ctx, t.WorkflowID)
+	if err != nil || wf == nil || len(orggrant.OutboundNodes(wf)) == 0 {
+		return t.Tier
+	}
+	raised, err := orggrant.NewStore(s.DB).RaiseTiers(ctx, []orggrant.Grant{g},
+		func(context.Context, string) (*workflow.Workflow, error) { return wf, nil })
+	if err != nil {
+		s.Logf("orgdecide: %s/%s: storing the raised tier of %q: %v", g.ProfileID, g.OrgName, t.Alias, err)
+	}
+	for _, r := range raised {
+		s.Logf("orgdecide: %s/%s: %s", r.Profile, r.Org, r)
+	}
+	return orgdesign.TierIrreversible
 }
 
 // ProcessOrg routes and resolves every pending item of one org once. An

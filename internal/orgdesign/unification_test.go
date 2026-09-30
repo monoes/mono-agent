@@ -74,6 +74,9 @@ func TestUnificationKeysAreTyped(t *testing.T) {
 	if !bot.IsEndpoint() || bot.Endpoint == nil || bot.Automation == nil || bot.Automation.WorkflowID != "wf-publish" {
 		t.Fatalf("endpoint role not typed: %+v", bot)
 	}
+	if lead.Automations[0].Tier != TierIrreversible || d.Autonomy.PausedUntil != "2099-01-01T00:00:00Z" {
+		t.Errorf("tier / paused_until not typed: %+v %+v", lead.Automations[0], d.Autonomy)
+	}
 	if d.Autonomy.Extra["future_key"] == nil {
 		t.Error("unknown nested key dropped")
 	}

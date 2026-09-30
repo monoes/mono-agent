@@ -20,6 +20,9 @@ type GenOptions struct {
 	ProfileID string
 	CLIPath   string // absolute path of monoagentcli, the provider command
 	APIAddr   string // host:port endpoint URLs point at
+	// Workflow, when set, lets Reconcile raise a grant's stored tier to
+	// match its workflow as it is now (RaiseTiers).
+	Workflow WorkflowLoader
 }
 
 // Finding is one change or problem Reconcile reports.
@@ -106,6 +109,26 @@ func Reconcile(ctx context.Context, s *Store, doc *orgdesign.Doc, opts GenOption
 			continue
 		}
 		live[g.RoleID] = append(live[g.RoleID], g)
+	}
+
+	// 1b. Raise tiers the grants' workflows have outgrown.
+	if opts.Workflow != nil {
+		var all []Grant
+		for _, gs := range live {
+			all = append(all, gs...)
+		}
+		raised, err := s.RaiseTiers(ctx, all, opts.Workflow)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range raised {
+			for i := range live[r.Role] {
+				if g := &live[r.Role][i]; g.ID == r.GrantID {
+					g.Automation().Tier = r.To
+				}
+			}
+			rep.add(FindingGrantTierRaised, r.Role, "%s", r)
+		}
 	}
 
 	// 2. Narrow org-tool scopes to the orgs doc still names.
@@ -234,8 +257,19 @@ func SpecFromTool(t Tool, prev orgdesign.GrantSpec) orgdesign.GrantSpec {
 		MaxCallsPerRun: t.MaxCallsPerRun,
 		MaxCallsPerDay: t.MaxCallsPerDay,
 		MaxOutputBytes: t.MaxOutputBytes,
+		Tier:           displayTier(t.Tier),
 		Extra:          prev.Extra,
 	}
+}
+
+// displayTier is the tier the decision service routes a grant's calls by
+// when no tier override applies: the row's tier, or irreversible when the
+// row has none it recognises (orgdecide.TierFor).
+func displayTier(tier string) string {
+	if orgdesign.ValidTier(tier) {
+		return tier
+	}
+	return orgdesign.TierIrreversible
 }
 
 // ProviderToolNames lists the MCP tool names a role's grants expose, as

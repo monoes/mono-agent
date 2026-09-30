@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -114,8 +117,22 @@ func TestOrgAutonomyCommands(t *testing.T) {
 	if paused["paused_until"] == nil || paused["effective_level"] != "manual" {
 		t.Fatalf("pause = %v", paused)
 	}
+	if got := f.load(t).Autonomy.PausedUntil; got == "" || got != paused["paused_until"] {
+		t.Fatalf("org file paused_until = %q, want %v", got, paused["paused_until"])
+	}
 	if f.mustRun(t, "autonomy", "resume", "growth")["paused_until"] != nil {
 		t.Fatal("resume left the org paused")
+	}
+	if got := f.load(t).Autonomy.PausedUntil; got != "" {
+		t.Fatalf("resume left paused_until %q in the org file", got)
+	}
+	f.mustRun(t, "autonomy", "pause", "--all")
+	if got := f.load(t).Autonomy.PausedUntil; got != "9999-01-01T00:00:00Z" {
+		t.Fatalf("pause --all paused_until = %q", got)
+	}
+	f.mustRun(t, "autonomy", "resume", "--all")
+	if got := f.load(t).Autonomy; got.PausedUntil != "" || got.Level != "mid" {
+		t.Fatalf("resume --all display copy = %+v", got)
 	}
 	if ds := f.mustRun(t, "autonomy", "decisions", "growth")["decisions"].([]interface{}); len(ds) != 0 {
 		t.Fatalf("decisions = %v", ds)
@@ -216,5 +233,49 @@ func TestAutonomyDecisionsJevView(t *testing.T) {
 	}
 	if _, ok := rows["d-model"]["probabilities"]; ok {
 		t.Fatalf("model row has probabilities: %v", rows["d-model"])
+	}
+}
+
+// One unreadable org file among several: every row is paused, every other
+// file is rewritten, the views are printed, and the command still fails
+// naming the broken file.
+func TestAutonomyPauseAllReportsBrokenFilesTogether(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	for _, name := range []string{"alpha", "zeta"} {
+		if _, err := orgdesign.Save(f.root, orgdesign.NewOrg(name, "g", orgdesign.NewOrgOptions{})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(orgdesign.OrgsDir(f.root), "broken.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"pause", "resume"} {
+		cmd := newOrgCmd(f.cfg)
+		cmd.SetArgs([]string{"autonomy", verb, "--all"})
+		var runErr error
+		out := captureStdout(t, func() { runErr = cmd.Execute() })
+		if runErr == nil || !strings.Contains(runErr.Error(), "org file(s) broken not updated") {
+			t.Fatalf("%s --all error = %v", verb, runErr)
+		}
+		var printed struct {
+			Orgs []map[string]interface{} `json:"orgs"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &printed); err != nil || len(printed.Orgs) != 4 {
+			t.Fatalf("%s --all printed %q: %v", verb, out, err)
+		}
+		for _, o := range printed.Orgs {
+			if paused := o["paused_until"] != nil; paused != (verb == "pause") {
+				t.Fatalf("%s --all view = %v", verb, o)
+			}
+		}
+		for _, name := range []string{"alpha", "growth", "zeta"} {
+			d, err := orgdesign.Load(f.root, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := d.Autonomy.PausedUntil; (got != "") != (verb == "pause") {
+				t.Fatalf("after %s --all, %s paused_until = %q", verb, name, got)
+			}
+		}
 	}
 }

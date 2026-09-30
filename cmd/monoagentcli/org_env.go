@@ -101,6 +101,7 @@ func (e *orgEnv) genOptions(profileID string) orggrant.GenOptions {
 		ProfileID: profileID,
 		CLIPath:   selfExecutable(),
 		APIAddr:   orgAPIAddr(e.db),
+		Workflow:  grantWorkflowLoader(e.db),
 	}
 }
 
