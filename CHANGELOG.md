@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Isolated writers for the dynamic org** (part of #230). `coder set --org-writers isolated` gives each writing worker its own git worktree and branch (`monoagent/<turn>/<worker>`, under `.monoagent-worktrees/` in the chat folder, excluded from git), so writers run in parallel instead of taking turns under the write lease.
+  - **Merging:** the lead merges a finished writer with the new `org_merge` tool. A conflict aborts the merge, leaves the working tree as it was, and returns an error listing the conflicting files.
+  - **In the app:** the stage drawer shows each writer's branch (`branch` on `agent.spawned`/`agent.status`).
+  - **Cleanup:** worktrees are removed when the turn ends and, for turns that died, by `chat history reconcile` and the next isolated turn in the folder. A branch with unmerged work is kept and reported, never deleted.
+  - **Fallback:** a chat folder outside git (or a repository without a commit) keeps the write lease, with a notice. The default (`shared`) is unchanged.
 - **Dynamic-org workers can ask you a question** (#256). A worker gets an `ask_user` tool.
   - **In the chat:** its row shows the question with an answer box, and the answer goes back to the worker through the new `chat turn answer`.
   - **While it waits:** the worker releases its edit and browser leases.

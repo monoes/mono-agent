@@ -162,6 +162,16 @@ describe('tolerance', () => {
     expect(s.nodes.n1).toMatchObject({ native: true, parentId: 'w1' })
   })
 
+  it('keeps an isolated writer\'s branch from agent.spawned and agent.status (#230)', () => {
+    let s = stageReducer(null, { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', branch: 'monoagent/t1/w1' } })
+    expect(s.nodes.w1.branch).toBe('monoagent/t1/w1')
+    // A status without a branch keeps it.
+    s = stageReducer(s, { seq: 2, type: 'agent.status', payload: { agentId: 'w1', from: 'queued', to: 'working' } })
+    expect(s.nodes.w1.branch).toBe('monoagent/t1/w1')
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'w2', to: 'queued', branch: 'monoagent/t1/w2' } })
+    expect(s.nodes.w2.branch).toBe('monoagent/t1/w2')
+  })
+
   it('marks limited activity when a runtime reports tool starts only', () => {
     let s = stageReducer(null, { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'R' } })
     s = stageReducer(s, { seq: 2, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:a', name: 'Read' } })
