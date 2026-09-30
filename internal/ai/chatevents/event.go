@@ -187,7 +187,10 @@ type UsageUpdatedPayload struct {
 	InputTokens  *int64   `json:"inputTokens"`
 	OutputTokens *int64   `json:"outputTokens"`
 	CostUSD      *float64 `json:"costUsd"`
-	Source       string   `json:"source"`
+	// CostEstimated: a worker's cost is (partly) estimated from its tokens,
+	// because its runtime reports none (#230).
+	CostEstimated bool   `json:"costEstimated,omitempty"`
+	Source        string `json:"source"`
 }
 
 // NoticeSeverity classifies a notice event for display — a warning/info

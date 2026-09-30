@@ -85,17 +85,38 @@ var (
 // model, and whether the table could price it. The runtime's own price is
 // used only for its "default" model.
 func TableTestCost(runtime, model string) (float64, bool) {
-	var p price
-	var ok bool
-	if model == "" || model == DefaultModel {
-		p, ok = runtimePrices[runtime]
-	} else {
-		p, ok = lookupPrice(model)
-	}
+	p, ok := modelPrice(runtime, model)
 	if !ok {
 		return 0, false
 	}
 	return (testTurnTokensIn*p.cw + testTurnTokensOut*p.out) / 1e6, true
+}
+
+// TokenCost is the built-in estimate for tokens a real turn used, at the
+// table's input and output rates, and whether the table could price it: a
+// dynamic-org worker's cost when its runtime reports none (#230). agent
+// exec reports no cache split, so all input is priced as plain input. A
+// ":free" model id is never priced (its "$0" is real), nor is one the
+// table doesn't know.
+func TokenCost(runtime, model string, in, out int64) (float64, bool) {
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(model)), ":free") {
+		return 0, false
+	}
+	p, ok := modelPrice(runtime, model)
+	if !ok {
+		return 0, false
+	}
+	return (float64(in)*p.in + float64(out)*p.out) / 1e6, true
+}
+
+// modelPrice is runtime's model's price. The runtime's own price is used
+// only for its "default" model.
+func modelPrice(runtime, model string) (price, bool) {
+	if model == "" || model == DefaultModel {
+		p, ok := runtimePrices[runtime]
+		return p, ok
+	}
+	return lookupPrice(model)
 }
 
 // lookupPrice finds a model's price: by exact id (without an "@version",

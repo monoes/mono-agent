@@ -116,13 +116,13 @@ function agentPatch(state, ev) {
       if (p.direction === 'followup' && (p.from === 'user' || p.from === 'system') && cur.question?.id === p.questionId) return put({ question: null })
       return {}
     case 'agent.finished':
-      return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
+      return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, costEstimated: !!p.costEstimated, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
     case 'tool.started':
       return { ...put({ tools: cur.tools + 1, lastTool: p.name }), agentCalls: { ...state.agentCalls, [p.callId]: { ...startedCall(p, ev.at), agentId: id } } }
     case 'tool.completed':
       return { agentCalls: { ...state.agentCalls, [p.callId]: { ...completedCall(state.agentCalls?.[p.callId], p, ev.at), agentId: id } } }
     case 'usage.updated':
-      return p.costUsd != null ? put({ costUsd: p.costUsd }) : {}
+      return p.costUsd != null ? put({ costUsd: p.costUsd, costEstimated: !!p.costEstimated }) : {}
     default:
       return {}
   }

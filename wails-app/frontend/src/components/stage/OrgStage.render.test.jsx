@@ -145,6 +145,14 @@ describe('OrgStage', () => {
     expect(within(node('w1')).getByTestId('stage-needs-you')).toHaveTextContent('needs you')
   })
 
+  it('marks an estimated worker cost with "≈" (#230)', () => {
+    let s = replayStage([{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', runtime: 'codex', model: 'gpt-5' } }])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100000, outputTokens: 10000, costUsd: 0.35, costEstimated: true } })
+    render(<OrgStage stage={s} leadInfo={lead} turnId="turn-1" onSelect={() => {}} />)
+    const cost = within(node('w1')).getByTitle('Estimated from the tokens used: this runtime reports no cost')
+    expect(cost).toHaveTextContent('≈$0.35')
+  })
+
   it('renders in Spanish', async () => {
     await i18n.changeLanguage('es')
     render(<OrgStage stage={replayStage(journal)} leadInfo={lead} onSelect={() => {}} />)

@@ -209,6 +209,7 @@ func (c *Conductor) Roster() RosterView {
 	v.Limits = map[string]any{
 		"max_agents": c.cfg.Limits.MaxAgents, "max_concurrent": c.cfg.Limits.MaxConcurrent,
 		"spawned": c.spawned, "budget_usd": c.cfg.Limits.BudgetUSD, "spent_usd": c.cost,
+		"spent_estimated": c.costEstimated,
 	}
 	v.Workers = []WorkerInfo{}
 	for _, id := range c.order {

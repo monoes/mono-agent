@@ -708,6 +708,7 @@
     "bubbleLabel": "{{name}}, {{status}}",
     "unread_one": "{{count}} new reply",
     "unread_other": "{{count}} new replies",
+    "costEstimated": "Partly estimated from the tokens used: some runtimes report no cost",
     "more": "{{count}} more coder chats",
     "closeChat": "Close this chat",
     "closeNamed": "Close {{name}}",
@@ -759,6 +760,7 @@
     "files": "Files: {{files}}",
     "toolCalls_one": "{{count}} tool call",
     "toolCalls_other": "{{count}} tool calls",
+    "costEstimated": "Estimated from the tokens used: this runtime reports no cost",
     "status": {
       "queued": "queued",
       "starting": "starting",
@@ -803,6 +805,7 @@
     "filesTouched": "Files touched",
     "tokens": "Tokens in/out",
     "cost": "Cost",
+    "costEstimated": "Estimated from the tokens used: this runtime reports no cost",
     "doing": {
       "edit": "editing {{target}}",
       "write": "writing {{target}}",
