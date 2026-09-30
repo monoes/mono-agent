@@ -471,6 +471,9 @@
     "noRuntimesTitle": "No agent runtimes detected",
     "noRuntimesDesc": "monomind is installed but found no known agent CLIs on this machine.",
     "roster": {
+      "costFromTable": "({{count}} priced from a built-in price table; the first test of a model has no cost of its own yet.)",
+      "signInNote": "{{runtime}} isn't signed in, so its model list may be incomplete: it may list more models once you sign in.",
+      "signInNoteHint": "{{runtime}} isn't signed in, so its model list may be incomplete: it may list more models once you sign in with {{hint}}.",
       "title": "Validated models",
       "subtitle": "Each model gets one test turn (“Reply with the single word: ok”). Dynamic orgs only staff workers from ready models.",
       "readyTotal": "{{count}} ready",

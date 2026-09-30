@@ -471,6 +471,9 @@
     "noRuntimesTitle": "No se detectaron entornos de agentes",
     "noRuntimesDesc": "monomind está instalado pero no encontró ninguna CLI de agente conocida en este equipo.",
     "roster": {
+      "costFromTable": "({{count}} con precio de una tabla de precios integrada; la primera prueba de un modelo aún no tiene coste propio.)",
+      "signInNote": "{{runtime}} no tiene la sesión iniciada, así que su lista de modelos puede estar incompleta: puede mostrar más modelos cuando inicies sesión.",
+      "signInNoteHint": "{{runtime}} no tiene la sesión iniciada, así que su lista de modelos puede estar incompleta: puede mostrar más modelos cuando inicies sesión con {{hint}}.",
       "auto": {
         "label": "Volver a comprobar automáticamente los modelos caducados",
         "on": "activado",

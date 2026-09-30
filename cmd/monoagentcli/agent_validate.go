@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -134,19 +135,22 @@ func validateEmitter(jsonOut bool) func(agentroster.Line) {
 			for _, s := range p.Skipped {
 				fmt.Fprintf(os.Stderr, "note: %s: %s\n", s.Runtime, s.Reason)
 			}
-			cost := fmt.Sprintf("≈ $%.4f", p.EstCostUSD)
-			if p.EstCostUSD < 0.0001 {
-				cost = "≈ <$0.0001"
+			for _, n := range p.SignIn {
+				note := fmt.Sprintf("note: %s isn't signed in, so its model list may be incomplete", n.Runtime)
+				if n.LoginHint != "" {
+					note += "; sign in with: " + n.LoginHint
+				}
+				fmt.Fprintln(os.Stderr, note)
 			}
-			if p.UnknownCost > 0 {
-				cost += fmt.Sprintf(" (+ %d with unknown cost)", p.UnknownCost)
-			}
-			fmt.Printf("%d test calls, %s\n", p.Calls, cost)
+			fmt.Printf("%d test calls, %s\n", p.Calls, planCost(p))
 		case "validate.result":
 			r := l.Result
 			line := fmt.Sprintf("%-12s %-32s %-17s %6dms", r.Runtime, r.Model, r.Status, r.LatencyMs)
 			if r.Detail != "" {
 				line += "  " + r.Detail
+			}
+			if r.LoginHint != "" {
+				line += "  (sign in: " + r.LoginHint + ")"
 			}
 			fmt.Println(line)
 		case "validate.done":
@@ -154,6 +158,27 @@ func validateEmitter(jsonOut bool) func(agentroster.Line) {
 			fmt.Printf("\n%d ok, %d failed, %d cancelled\n", s.OK, s.Failed, s.Cancelled)
 		}
 	}
+}
+
+// planCost describes a plan's estimated cost. Every figure is an estimate
+// (≈); the parts priced from the built-in table rather than earlier results
+// are counted.
+func planCost(p *agentroster.Plan) string {
+	cost := fmt.Sprintf("≈ $%.4f", p.EstCostUSD)
+	if p.EstCostUSD < 0.0001 {
+		cost = "≈ <$0.0001"
+	}
+	var parts []string
+	if p.TableEstimated > 0 {
+		parts = append(parts, fmt.Sprintf("%d priced from the built-in table", p.TableEstimated))
+	}
+	if p.UnknownCost > 0 {
+		parts = append(parts, fmt.Sprintf("+ %d with unknown cost", p.UnknownCost))
+	}
+	if len(parts) > 0 {
+		cost += " (" + strings.Join(parts, "; ") + ")"
+	}
+	return cost
 }
 
 // newAgentRosterCmd prints the stored roster; no model calls.
@@ -198,17 +223,24 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Println("No roster yet. Run `monoagentcli agent validate`.")
 				return nil
 			}
-			table := newPlainTable(os.Stdout, []string{"Runtime", "Model", "State", "Status", "Latency", "Validated"}, nil)
+			table := newPlainTable(os.Stdout, []string{"Runtime", "Model", "State", "Status", "Latency", "Validated", "Sign in"}, nil)
 			for _, rr := range roster {
 				if len(rr.Models) == 0 {
-					table.Append([]string{rr.Runtime, "—", "not validated", "", "", ""})
+					table.Append([]string{rr.Runtime, "—", "not validated", "", "", "", ""})
 				}
 				for _, e := range rr.Models {
 					validated := "never"
 					if !e.ValidatedAt.IsZero() && e.ValidatedAt.Year() > 1 {
 						validated = e.ValidatedAt.Local().Format("2006-01-02 15:04")
 					}
-					table.Append([]string{rr.Runtime, e.Model, e.State, e.Status, fmt.Sprintf("%dms", e.LatencyMs), validated})
+					hint := ""
+					if e.Status == agentroster.StatusAuth {
+						hint = e.LoginHint
+						if hint == "" {
+							hint = rr.LoginHint
+						}
+					}
+					table.Append([]string{rr.Runtime, e.Model, e.State, e.Status, fmt.Sprintf("%dms", e.LatencyMs), validated, hint})
 				}
 			}
 			table.Render()

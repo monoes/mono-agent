@@ -68,6 +68,9 @@ func Build(results []Result, scan *monomind.ScanResult, now time.Time, maxAge ti
 	}
 	for _, r := range results {
 		rr := get(r.Runtime)
+		if rr.LoginHint == "" && r.Status == StatusAuth {
+			rr.LoginHint = r.LoginHint
+		}
 		e := Entry{Result: r}
 		switch {
 		case r.Status == StatusUntested:

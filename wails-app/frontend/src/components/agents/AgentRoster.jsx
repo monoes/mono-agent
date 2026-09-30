@@ -6,7 +6,7 @@ import { confirm } from '../ConfirmDialog.jsx'
 import AutoRevalidate from './AutoRevalidate.jsx'
 import {
   emptyRun, applyValidateLine, withLiveResults, rowKey, chipFor,
-  formatLatency, formatCost, ageParts, planSummary,
+  formatLatency, formatCost, ageParts, planSummary, loginHintFor,
 } from '../../lib/agentRoster.js'
 
 // AgentRoster is the "Validated models" section of the AI agents page
@@ -93,6 +93,7 @@ function RuntimeCard({ rr, run, busy, onValidate, onAdd, onRemove }) {
   const [adding, setAdding] = useState('')
   const models = rr.models || []
   const authFailed = models.some(m => m.status === 'auth')
+  const loginHint = loginHintFor(rr)
   const testingHere = models.some(m => run.active[rowKey(rr.runtime, m.model)])
   return (
     <div data-roster-runtime={rr.runtime} style={{
@@ -110,8 +111,8 @@ function RuntimeCard({ rr, run, busy, onValidate, onAdd, onRemove }) {
         </span>
         {testingHere && <Loader2 size={11} className="spin" style={{ color: 'var(--cyan)' }} />}
         <span style={{ flex: 1 }} />
-        {authFailed && rr.login_hint && (
-          <span style={{ ...mono, fontSize: 9.5, color: 'var(--yellow)' }}>{t('agents.signIn', { hint: rr.login_hint })}</span>
+        {authFailed && loginHint && (
+          <span style={{ ...mono, fontSize: 9.5, color: 'var(--yellow)' }}>{t('agents.signIn', { hint: loginHint })}</span>
         )}
         <button className="btn btn-ghost btn-sm" disabled={busy || !rr.installed} onClick={() => onValidate(rr.runtime)} style={{ gap: 4, fontSize: 10 }}>
           <ShieldCheck size={11} /> {t('agents.roster.validate')}
@@ -170,9 +171,18 @@ export default function AgentRoster() {
     if (p.calls > 1) {
       const cost = p.unknown === p.calls
         ? t('agents.roster.costUnknown')
-        : t('agents.roster.costEstimate', { cost: p.cost < 0.0001 ? '<$0.0001' : `$${p.cost.toFixed(4)}` }) + (p.unknown ? ' ' + t('agents.roster.costPartlyUnknown', { count: p.unknown }) : '')
+        : t('agents.roster.costEstimate', { cost: p.cost < 0.0001 ? '<$0.0001' : `$${p.cost.toFixed(4)}` }) +
+          (p.table ? ' ' + t('agents.roster.costFromTable', { count: p.table }) : '') +
+          (p.unknown ? ' ' + t('agents.roster.costPartlyUnknown', { count: p.unknown }) : '')
       const ok = await confirm(
-        <span>{t('agents.roster.confirmBody', { calls: p.calls, runtimes: p.runtimes })} {cost}</span>,
+        <span>
+          {t('agents.roster.confirmBody', { calls: p.calls, runtimes: p.runtimes })} {cost}
+          {p.signIn.map(n => (
+            <span key={n.runtime} data-sign-in-note={n.runtime} style={{ display: 'block', marginTop: 6 }}>
+              {t(n.login_hint ? 'agents.roster.signInNoteHint' : 'agents.roster.signInNote', { runtime: n.runtime, hint: n.login_hint })}
+            </span>
+          ))}
+        </span>,
         { title: t('agents.roster.confirmTitle'), confirmLabel: t('agents.roster.validate'), cancelLabel: t('agents.cancel'), danger: false },
       )
       if (!ok) return

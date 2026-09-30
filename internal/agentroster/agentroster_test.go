@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -200,8 +201,12 @@ func TestBuildPlan(t *testing.T) {
 			t.Errorf("plan is missing %s (targets %v)", w, got)
 		}
 	}
-	if p.Calls != 5 || p.EstCostUSD != 0.01 || p.UnknownCost != 4 {
-		t.Errorf("cost plan = calls %d, $%v, unknown %d", p.Calls, p.EstCostUSD, p.UnknownCost)
+	// claude/opus has a stored cost; claude/haiku and codex/default are
+	// priced from the built-in table; crush's two models are unknown.
+	haiku, _ := TableTestCost("claude", "haiku")
+	codexDefault, _ := TableTestCost("codex", DefaultModel)
+	if want := 0.01 + haiku + codexDefault; p.Calls != 5 || math.Abs(p.EstCostUSD-want) > 1e-9 || p.UnknownCost != 2 || p.TableEstimated != 2 {
+		t.Errorf("cost plan = calls %d, $%v (want $%v), unknown %d, table %d", p.Calls, p.EstCostUSD, want, p.UnknownCost, p.TableEstimated)
 	}
 	if len(p.Skipped) != 1 || p.Skipped[0].Runtime != "codex" {
 		t.Errorf("skipped = %+v", p.Skipped)

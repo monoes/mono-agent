@@ -30,18 +30,32 @@ type Target struct {
 }
 
 // Plan is what a run will do: the targets, and a cost estimate from earlier
-// results (a model that never reported a cost counts in UnknownCost).
+// results. A model with no stored cost is priced from the built-in table
+// (counted in TableEstimated), or counts in UnknownCost when the table
+// can't price it either.
 type Plan struct {
-	Targets     []Target `json:"targets"`
-	Calls       int      `json:"calls"`
-	EstCostUSD  float64  `json:"est_cost_usd"`
-	UnknownCost int      `json:"unknown_cost"`
+	Targets        []Target `json:"targets"`
+	Calls          int      `json:"calls"`
+	EstCostUSD     float64  `json:"est_cost_usd"`
+	UnknownCost    int      `json:"unknown_cost"`
+	TableEstimated int      `json:"table_estimated"`
 	// Checker is how the tests run: "agent-test-json" (monomind's own
 	// structured check) or "exec" (a test turn classified here).
 	Checker string `json:"checker,omitempty"`
 	// Skipped lists runtimes that could not be planned (not installed, model
 	// listing failed); the latter still get a "default" target.
 	Skipped []SkippedRuntime `json:"skipped,omitempty"`
+	// SignIn lists planned runtimes whose last test failed to sign in: a
+	// runtime may list more models once signed in (claude goes from 5 to
+	// 12), so the plan may under-count.
+	SignIn []SignInNote `json:"sign_in,omitempty"`
+}
+
+// SignInNote is a runtime that isn't signed in, with its sign-in command
+// when known.
+type SignInNote struct {
+	Runtime   string `json:"runtime"`
+	LoginHint string `json:"login_hint,omitempty"`
 }
 
 // SkippedRuntime explains a runtime left out of, or narrowed in, a plan.
@@ -50,19 +64,54 @@ type SkippedRuntime struct {
 	Reason  string `json:"reason"`
 }
 
-// EstimateCost fills p's cost estimate from earlier results.
+// EstimateCost fills p's cost estimate from earlier results, falling back
+// to the built-in price table for a model with no stored cost.
 func (p *Plan) EstimateCost(previous []Result) {
 	byKey := map[string]Result{}
 	for _, r := range previous {
 		byKey[r.Runtime+"\x00"+r.Model] = r
 	}
-	p.Calls, p.EstCostUSD, p.UnknownCost = len(p.Targets), 0, 0
+	p.Calls, p.EstCostUSD, p.UnknownCost, p.TableEstimated = len(p.Targets), 0, 0, 0
 	for _, t := range p.Targets {
 		if r, ok := byKey[t.Runtime+"\x00"+t.Model]; ok && r.HasCost {
 			p.EstCostUSD += r.CostUSD
+		} else if c, ok := TableTestCost(t.Runtime, t.Model); ok {
+			p.EstCostUSD += c
+			p.TableEstimated++
 		} else {
 			p.UnknownCost++
 		}
+	}
+}
+
+// NoteSignIn fills p.SignIn: every planned runtime whose earlier results
+// include a failed sign-in and no working model. loginHints are the
+// runtimes' sign-in commands from `agent scan`, used when no result
+// carries one.
+func (p *Plan) NoteSignIn(previous []Result, loginHints map[string]string) {
+	p.SignIn = nil
+	auth, works := map[string]string{}, map[string]bool{}
+	for _, r := range previous {
+		switch {
+		case Works(r.Status):
+			works[r.Runtime] = true
+		case r.Status == StatusAuth:
+			if auth[r.Runtime] == "" {
+				auth[r.Runtime] = r.LoginHint
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, t := range p.Targets {
+		hint, failed := auth[t.Runtime]
+		if seen[t.Runtime] || !failed || works[t.Runtime] {
+			continue
+		}
+		seen[t.Runtime] = true
+		if hint == "" {
+			hint = loginHints[t.Runtime]
+		}
+		p.SignIn = append(p.SignIn, SignInNote{Runtime: t.Runtime, LoginHint: hint})
 	}
 }
 
@@ -348,6 +397,9 @@ func applyAgentTest(r *Result, tr *monomind.AgentTestResult) {
 				r.Status = s
 			}
 		}
+	}
+	if tr.Error != nil {
+		r.LoginHint = strings.TrimSpace(tr.Error.LoginHint)
 	}
 	if tr.Reply != nil {
 		r.Reply = clip(*tr.Reply)

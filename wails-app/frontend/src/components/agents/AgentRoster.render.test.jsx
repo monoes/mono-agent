@@ -77,6 +77,30 @@ describe('AgentRoster', () => {
     expect(mockConfirm).toHaveBeenCalledTimes(1)
   })
 
+  it("shows a failed test's login hint when the scan has none", async () => {
+    api.agentRoster.mockResolvedValue({ v: 1, runtimes: [{ runtime: 'codex', installed: true, ready: 0, models: [
+      { runtime: 'codex', model: 'gpt-5.5', state: 'failed', status: 'auth', detail: 'not signed in', login_hint: 'codex login', validated_at: new Date().toISOString(), source: 'listed' },
+    ] }] })
+    render(<AgentRoster />)
+    await waitFor(() => expect(screen.getByText('sign in: codex login')).toBeInTheDocument())
+  })
+
+  it('marks table-priced calls and notes a runtime that is not signed in', async () => {
+    api.agentValidatePlan.mockResolvedValue({ type: 'validate.plan', plan: {
+      calls: 3, est_cost_usd: 0.25, table_estimated: 2, unknown_cost: 0, targets: [{ runtime: 'claude' }],
+      sign_in: [{ runtime: 'claude', login_hint: 'claude /login' }],
+    } })
+    mockConfirm.mockResolvedValue(false)
+    render(<AgentRoster />)
+    await waitFor(() => expect(row('claude/haiku')).toBeTruthy())
+    fireEvent.click(screen.getByText('Validate all'))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    const body = render(mockConfirm.mock.calls[0][0]).container
+    expect(body).toHaveTextContent('Estimated cost ≈ $0.2500. (2 priced from a built-in price table')
+    expect(body.querySelector('[data-sign-in-note="claude"]')).toHaveTextContent("claude isn't signed in, so its model list may be incomplete: it may list more models once you sign in with claude /login.")
+    expect(api.startAgentValidation).not.toHaveBeenCalled()
+  })
+
   it('does not run when the confirmation is declined', async () => {
     api.agentValidatePlan.mockResolvedValue({ type: 'validate.plan', plan: { calls: 5, targets: [] } })
     mockConfirm.mockResolvedValue(false)
