@@ -138,7 +138,9 @@ function Scoreboard({ score, onClose }) {
 // leadInfo is the lead's {runtime, model, effort} (the conversation's);
 // leadIdle is the lead's line when it has no turn yet. selectedId and
 // onSelect are the clicked node (the overlay opens its drawer).
-export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = false, selectedId = null, onSelect, turnId = '' }) {
+// emptyHint replaces the "agents the lead brings in" line under a stage
+// with no one but the lead (a running org names its own).
+export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = false, selectedId = null, onSelect, turnId = '', emptyHint = '' }) {
   const { t } = useTranslation()
   const base = useMemo(() => liveStage || initialStage(), [liveStage])
   const stage = useThrottled(base, THROTTLE_MS)
@@ -215,7 +217,7 @@ export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = 
 
   const nameOf = useCallback((id) => {
     const n = stage.nodes[id]
-    if (!n || id === LEAD_ID) return t('bubbles.lead')
+    if (!n || id === LEAD_ID) return n?.role || t('bubbles.lead')
     return n.role || (n.native ? t('stage.subagent') : id)
   }, [stage, t])
 
@@ -264,7 +266,7 @@ export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = 
         </div>
         {!team && (
           <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', opacity: 0.7, pointerEvents: 'none' }}>
-            {t('bubbles.teamSoon')}
+            {emptyHint || t('bubbles.teamSoon')}
           </div>
         )}
         {team && latest && (

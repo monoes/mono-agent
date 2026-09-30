@@ -33,6 +33,8 @@ export function AgentValidatePlan(arg1:Array<string>,arg2:Array<string>,arg3:boo
 
 export function AnalyzeRecording(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
+export function AnswerOrgChat(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function AppSelfUpdate():Promise<main.UpdateResult>;
@@ -84,6 +86,8 @@ export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:st
 export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
+
+export function ControlOrg(arg1:string,arg2:string):Promise<string>;
 
 export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
@@ -190,6 +194,8 @@ export function GetOAuthCredentials(arg1:string):Promise<string>;
 export function GetOrgApprovals(arg1:string):Promise<string>;
 
 export function GetOrgAutonomy(arg1:string):Promise<string>;
+
+export function GetOrgChatHistory(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
 
@@ -439,6 +445,8 @@ export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
 
 export function RerecordSelector(arg1:string,arg2:string):Promise<string>;
 
+export function ResolveOrgChat(arg1:string,arg2:string,arg3:boolean,arg4:string):Promise<string>;
+
 export function RestoreAutomation(arg1:string):Promise<string>;
 
 export function ResumeOrgAutonomy(arg1:string):Promise<string>;
@@ -480,6 +488,8 @@ export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>
 export function SendApplication(arg1:string,arg2:string):Promise<void>;
 
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
+
+export function SendOrgChat(arg1:string,arg2:string):Promise<string>;
 
 export function SendOrgMessage(arg1:string,arg2:string):Promise<string>;
 

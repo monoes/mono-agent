@@ -224,6 +224,13 @@ export const api = {
   streamOrgEvents:    (orgName, streamId) => GoApp.StreamOrgEvents(orgName, streamId).then(s => JSON.parse(s)),
   stopOrgEvents:      (orgName, streamId) => GoApp.StopOrgEvents(orgName, streamId).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
   runOrg:             (orgName, task = '') => GoApp.RunOrg(orgName, task).then(s => JSON.parse(s)),
+  // Org bubbles (#229): `org chat …` and `org stop|pause|resume`. Each
+  // resolves to the CLI's JSON or {error}; they never reject.
+  getOrgChatHistory:  (org, run = '') => GoApp.GetOrgChatHistory(org, run).then(s => JSON.parse(s)).catch(asError),
+  sendOrgChat:        (org, text) => GoApp.SendOrgChat(org, text).then(s => JSON.parse(s)).catch(asError),
+  answerOrgChat:      (org, questionID, answer) => GoApp.AnswerOrgChat(org, questionID, answer).then(s => JSON.parse(s)).catch(asError),
+  resolveOrgChat:     (org, ref, approve, note = '') => GoApp.ResolveOrgChat(org, ref, approve, note).then(s => JSON.parse(s)).catch(asError),
+  controlOrg:         (org, verb) => GoApp.ControlOrg(org, verb).then(s => JSON.parse(s)).catch(asError),
   // Org Designer — direct config-file read/write, distinct from the org
   // observe/action surface above (which proxies `monoagentcli org <sub>`,
   // read-only + question/gate actions). See wails-app/app_orgs_design.go.

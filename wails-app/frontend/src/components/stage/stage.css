@@ -109,6 +109,7 @@
 .stage-ring[data-status='starting'] { border-color: var(--cyan); border-right-color: transparent; animation: bubbleSpin 900ms linear infinite; }
 .stage-ring[data-status='working'] { border-color: var(--cyan); background: rgba(0, 180, 216, 0.35); animation: stageBreathe 1.6s ease-in-out infinite; }
 .stage-ring[data-status='waiting_lease'] { border-color: #fbbf24; }
+.stage-ring[data-status='blocked'] { border-color: #fbbf24; border-style: dashed; }
 .stage-ring[data-status='done'] { border-color: var(--green-neon, #22c55e); background: var(--green-neon, #22c55e); }
 .stage-ring[data-status='failed'] { border-color: #ef4444; background: #ef4444; }
 .stage-ring[data-status='cancelled'] { border-color: var(--text-muted); background: var(--text-muted); }
@@ -142,6 +143,7 @@
 .stage-badge { position: absolute; top: -8px; right: 8px; padding: 0 6px; border-radius: 999px; font-family: var(--font-mono); font-size: 8px; line-height: 14px; }
 .stage-badge.needs { background: #fbbf24; color: #1a1300; font-weight: 700; }
 .stage-badge.limited { right: auto; left: 8px; background: var(--surface); border: 1px solid var(--border-bright); color: var(--text-muted); }
+.stage-badge.access { right: auto; left: 8px; padding: 0; line-height: normal; background: var(--surface); }
 
 .stage-flight {
   position: absolute;
