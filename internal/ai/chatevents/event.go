@@ -187,7 +187,10 @@ type UsageUpdatedPayload struct {
 	InputTokens  *int64   `json:"inputTokens"`
 	OutputTokens *int64   `json:"outputTokens"`
 	CostUSD      *float64 `json:"costUsd"`
-	Source       string   `json:"source"`
+	// CostEstimated: a worker's cost is (partly) estimated from its tokens,
+	// because its runtime reports none (#230).
+	CostEstimated bool   `json:"costEstimated,omitempty"`
+	Source        string `json:"source"`
 }
 
 // NoticeSeverity classifies a notice event for display — a warning/info
@@ -304,6 +307,8 @@ type AgentSpawnedPayload struct {
 	Why            string   `json:"why,omitempty"`
 	PickConfidence *float64 `json:"pickConfidence,omitempty"`
 	JevConfidence  *float64 `json:"jevConfidence,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
 }
 
 // Worker statuses (agent.status's To).
@@ -329,6 +334,8 @@ type AgentStatusPayload struct {
 	// "browser"): the org stage shows who holds the pen and the browser
 	// from them (#228).
 	Leases []string `json:"leases,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
 	// Confinement says what keeps a research worker from editing on its
 	// current run (Confinement* constants); "" for the other profiles.
 	Confinement string `json:"confinement,omitempty"`

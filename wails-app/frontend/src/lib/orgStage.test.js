@@ -162,6 +162,16 @@ describe('tolerance', () => {
     expect(s.nodes.n1).toMatchObject({ native: true, parentId: 'w1' })
   })
 
+  it('keeps an isolated writer\'s branch from agent.spawned and agent.status (#230)', () => {
+    let s = stageReducer(null, { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', branch: 'monoagent/t1/w1' } })
+    expect(s.nodes.w1.branch).toBe('monoagent/t1/w1')
+    // A status without a branch keeps it.
+    s = stageReducer(s, { seq: 2, type: 'agent.status', payload: { agentId: 'w1', from: 'queued', to: 'working' } })
+    expect(s.nodes.w1.branch).toBe('monoagent/t1/w1')
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'w2', to: 'queued', branch: 'monoagent/t1/w2' } })
+    expect(s.nodes.w2.branch).toBe('monoagent/t1/w2')
+  })
+
   it('marks limited activity when a runtime reports tool starts only', () => {
     let s = stageReducer(null, { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'R' } })
     s = stageReducer(s, { seq: 2, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:a', name: 'Read' } })
@@ -218,8 +228,14 @@ describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
     let s = replayStage([spawn()])
     s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100, outputTokens: 10, costUsd: 0.01 } })
     s = stageReducer(s, { seq: 3, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 150, outputTokens: 30, costUsd: 0.02 } })
-    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02 })
+    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02, costEstimated: false })
     expect(s.nodes.lead.costUsd).toBeNull()
+  })
+
+  it('marks a worker\'s live cost estimated when its runtime reports none (#230)', () => {
+    let s = replayStage([spawn()])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100000, outputTokens: 10000, costUsd: 0.35, costEstimated: true } })
+    expect(s.nodes.w1).toMatchObject({ costUsd: 0.35, costEstimated: true })
   })
 
   it('shows limited activity from the reported fidelity, from the start', () => {

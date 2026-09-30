@@ -175,7 +175,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
         <span title={t('stage.toolsUsed')}><Wrench size={8} aria-hidden="true" />{node.tools}</span>
         <span title={t('stage.filesTouched')}><FileText size={8} aria-hidden="true" />{node.files.length}</span>
         {tokens && <span title={t('stage.tokens')}>{tokens}</span>}
-        {cost && <span title={t('stage.cost')}><Coins size={8} aria-hidden="true" />{cost}</span>}
+        {cost && <span title={node.costEstimated ? t('stage.costEstimated') : t('stage.cost')}><Coins size={8} aria-hidden="true" />{cost}</span>}
       </span>
     </button>
   )

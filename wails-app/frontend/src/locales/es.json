@@ -666,6 +666,7 @@
     "bubbleLabel": "{{name}}, {{status}}",
     "unread_one": "{{count}} respuesta nueva",
     "unread_other": "{{count}} respuestas nuevas",
+    "costEstimated": "Estimado en parte a partir de los tokens usados: algunos runtimes no informan su costo",
     "more": "{{count}} chats de código más",
     "closeChat": "Cerrar este chat",
     "closeNamed": "Cerrar {{name}}",
@@ -717,6 +718,7 @@
     "files": "Archivos: {{files}}",
     "toolCalls_one": "{{count}} llamada a herramienta",
     "toolCalls_other": "{{count}} llamadas a herramientas",
+    "costEstimated": "Estimado a partir de los tokens usados: este runtime no informa su costo",
     "status": {
       "queued": "en cola",
       "starting": "iniciando",
@@ -761,6 +763,7 @@
     "filesTouched": "Archivos tocados",
     "tokens": "Tokens de entrada/salida",
     "cost": "Costo",
+    "costEstimated": "Estimado a partir de los tokens usados: este runtime no informa su costo",
     "doing": {
       "edit": "editando {{target}}",
       "write": "escribiendo {{target}}",
@@ -784,6 +787,8 @@
     "closeDrawer": "Cerrar los detalles del agente",
     "access": "acceso: {{access}}",
     "effort": "esfuerzo: {{effort}}",
+    "branch": "rama: {{branch}}",
+    "branchHelp": "Este agente escribe en su propio worktree de git, en esta rama; el líder la fusiona en la carpeta del chat.",
     "reassignedFrom": "Cambió desde {{model}}: {{reason}}",
     "brief": "Encargo",
     "why": "Por qué este agente",

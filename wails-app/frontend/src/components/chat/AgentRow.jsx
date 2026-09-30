@@ -91,7 +91,7 @@ export function AgentRow({ agent, scope }) {
           {agent.tools > 0 && (
             <div>
               {t('agentRow.toolCalls', { count: agent.tools })}
-              {agent.costUsd != null ? ` · $${agent.costUsd.toFixed(4)}` : ''}
+              {agent.costUsd != null && <span title={agent.costEstimated ? t('agentRow.costEstimated') : undefined}>{` · ${agent.costEstimated ? '≈' : ''}$${agent.costUsd.toFixed(4)}`}</span>}
             </div>
           )}
           {agent.report && <ChatMarkdown content={agent.report} />}

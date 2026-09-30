@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  STATUS, emptySummary, applyChatEvent, summaryFromTurns, totalCost, layoutBubbles, moveBubble,
+  STATUS, emptySummary, applyChatEvent, summaryFromTurns, totalCost, costEstimated, layoutBubbles, moveBubble,
   loadState, saveState, STORAGE_KEY, shouldCollapseOnBackdrop, monogram, newDraftKey, orgBubble, isOrgBubble,
 } from './coderBubbles.js'
 
@@ -162,6 +162,19 @@ describe('applyChatEvent: worker usage (#257)', () => {
     s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.03 }), false)
     s = applyChatEvent(s, ev('usage.updated', 't1', { costUsd: 0.12 }), false)
     expect(totalCost(s)).toBeCloseTo(0.15)
+    expect(costEstimated(s)).toBe(false)
+  })
+
+  it('marks the cost estimated while a worker\'s is estimated from its tokens (#230)', () => {
+    let s = applyChatEvent(emptySummary(), ev('usage.updated', 't1', { costUsd: 0.1 }), false)
+    expect(costEstimated(s)).toBe(false)
+    s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.35, costEstimated: true }), false)
+    expect(totalCost(s)).toBeCloseTo(0.45)
+    expect(costEstimated(s)).toBe(true)
+    // Its runtime reported a real cost after all: no longer estimated.
+    s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.3 }), false)
+    expect(costEstimated(s)).toBe(false)
+    expect(costEstimated(emptySummary())).toBe(false)
   })
 })
 

@@ -145,6 +145,14 @@ describe('OrgStage', () => {
     expect(within(node('w1')).getByTestId('stage-needs-you')).toHaveTextContent('needs you')
   })
 
+  it('marks an estimated worker cost with "≈" (#230)', () => {
+    let s = replayStage([{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', runtime: 'codex', model: 'gpt-5' } }])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100000, outputTokens: 10000, costUsd: 0.35, costEstimated: true } })
+    render(<OrgStage stage={s} leadInfo={lead} turnId="turn-1" onSelect={() => {}} />)
+    const cost = within(node('w1')).getByTitle('Estimated from the tokens used: this runtime reports no cost')
+    expect(cost).toHaveTextContent('≈$0.35')
+  })
+
   it('renders in Spanish', async () => {
     await i18n.changeLanguage('es')
     render(<OrgStage stage={replayStage(journal)} leadInfo={lead} onSelect={() => {}} />)
@@ -215,6 +223,15 @@ describe('StageDrawer', () => {
     expect(work).toHaveTextContent('What it did')
     expect(work).toHaveTextContent('Swapping the sleep for a fake clock.')
     expect(work.querySelector('strong')).toHaveTextContent('fake clock')
+  })
+
+  it('shows an isolated writer\'s branch, and none for a shared writer (#230)', () => {
+    expect(stage.nodes.w2.branch).toBe('')
+    const { rerender } = render(<StageDrawer node={stage.nodes.w2} calls={agentCalls} turnId="t" onClose={() => {}} />)
+    expect(screen.queryByTestId('stage-branch')).toBeNull()
+    const s = stageReducer(stage, { seq: 1000, type: 'agent.status', payload: { agentId: 'w2', to: 'working', branch: 'monoagent/t/w2' } })
+    rerender(<StageDrawer node={s.nodes.w2} calls={agentCalls} turnId="t" onClose={() => {}} />)
+    expect(screen.getByTestId('stage-branch')).toHaveTextContent('branch: monoagent/t/w2')
   })
 
   it('shows a native subagent\'s own calls flat, outside its caller\'s Task card', () => {

@@ -147,6 +147,18 @@ func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessag
 			return "", err
 		}
 		return marshal(res)
+	case ToolMerge:
+		var a struct {
+			AgentID string `json:"agent_id"`
+		}
+		if err := json.Unmarshal(orEmpty(args), &a); err != nil {
+			return "", fmt.Errorf("bad arguments: %v", err)
+		}
+		res, err := c.Merge(ctx, a.AgentID)
+		if err != nil {
+			return "", err
+		}
+		return marshal(res)
 	}
 	return "", fmt.Errorf("unknown org tool %q", name)
 }
@@ -176,6 +188,7 @@ func (c *Conductor) Roster() RosterView {
 	v.Limits = map[string]any{
 		"max_agents": c.cfg.Limits.MaxAgents, "max_concurrent": c.cfg.Limits.MaxConcurrent,
 		"spawned": c.spawned, "budget_usd": c.cfg.Limits.BudgetUSD, "spent_usd": c.cost,
+		"spent_estimated": c.costEstimated,
 	}
 	v.Workers = []WorkerInfo{}
 	for _, id := range c.order {

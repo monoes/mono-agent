@@ -26,6 +26,19 @@ describe('AgentRow in the timeline', () => {
   })
 })
 
+describe('AgentRow cost', () => {
+  it('marks an estimated cost with "≈" and says why (#230)', async () => {
+    const state = {
+      parts: [{ kind: 'agent', agentId: 'w1' }], calls: {}, notices: [],
+      agents: { w1: { agentId: 'w1', role: 'Coder', runtime: 'codex', model: 'gpt-5', status: 'done', tools: 3, costUsd: 0.35, costEstimated: true } },
+    }
+    render(<ChatTimeline state={state} isLive={false} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByTestId('agent-row-details')).toHaveTextContent('3 tool calls · ≈$0.3500')
+    expect(screen.getByTitle('Estimated from the tokens used: this runtime reports no cost')).toBeInTheDocument()
+  })
+})
+
 describe('AgentRow question', () => {
   it('shows a worker question and sends the answer through the CLI binding', async () => {
     const { api } = await import('../../services/api.js')

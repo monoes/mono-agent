@@ -85,7 +85,7 @@ func (c *Conductor) holdLease(w *worker, l *lease, name string) (release func())
 // reportLocked journals w's current status again, with the leases it
 // holds now.
 func (c *Conductor) reportLocked(w *worker) {
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: leaseNames(w.leases), Confinement: w.confinement})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: leaseNames(w.leases), Branch: w.branch, Confinement: w.confinement})
 }
 
 // LeadAgentID names the lead in the lease report the stage reads.

@@ -110,7 +110,7 @@ function newNode(id, patch = {}) {
   return {
     id,
     parentId: id === LEAD_ID ? null : LEAD_ID,
-    role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
+    role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '', branch: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
     status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null, leases: [],
     prevModel: null, reassignedSeq: 0, reassignedAt: null,
@@ -367,6 +367,8 @@ function onSpawned(d, ev, p) {
     pickConfidence: p.pickConfidence ?? n.pickConfidence, jevConfidence: p.jevConfidence ?? n.jevConfidence,
     spawnSeq: n.spawnSeq || ev.seq || 0, spawnAt: n.spawnAt || ev.at || null,
     fidelity: p.fidelity || n.fidelity,
+    // An isolated writer's own git branch (#230).
+    branch: p.branch || n.branch,
   })
   if (n.native) {
     n.reported = true
@@ -448,7 +450,9 @@ function stageApply(d, ev) {
     case 'usage.updated': {
       const usage = { tokensIn: num(p.inputTokens), tokensOut: num(p.outputTokens), costUsd: num(p.costUsd) }
       if (p.agentId && p.agentId !== LEAD_ID) {
-        Object.assign(d.node(p.agentId), usage)
+        // A worker's cost is estimated from its tokens when its runtime
+        // reports none (#230): the stage shows it with "≈".
+        Object.assign(d.node(p.agentId), usage, { costEstimated: !!p.costEstimated })
       } else {
         d.leadUsage = usage
         Object.assign(d.node(LEAD_ID), usage)
@@ -460,6 +464,7 @@ function stageApply(d, ev) {
       break
     case 'agent.status':
       if (!p.agentId || !p.to) break
+      if (p.branch) d.node(p.agentId).branch = p.branch
       // A repeat of the same status only updates the leases it holds.
       if (d.nodes[p.agentId]?.status === p.to) {
         setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
