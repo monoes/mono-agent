@@ -605,6 +605,24 @@ How workers run:
   `caller_tools_with_full_access`), the turn runs solo with an
   `org.unavailable` notice.
 
+**Questions for the user** (#256): a worker whose exec can take caller
+tools gets `ask_user`.
+- **Asking:** a question is journaled as `agent.status` `waiting_user` with
+  the question id as its detail, then `agent.message` with `direction:
+  "question"`, a `questionId` (`q1`, …) and `to: "user"`. A worker may ask
+  at most 3 questions per run.
+- **Waiting:** while it waits, the worker lets go of its leases.
+- **Answering:** `monoagentcli chat history answer <conversation> <turn>
+  --agent w1 --question q1 --text "…"` records the answer; the app's worker
+  row has an answer box that calls it. It is refused unless the turn is
+  still running and the question is open.
+- **Delivery:** the running turn passes the answer to the worker within a
+  second and journals it as `agent.message` with `direction: "followup"`,
+  `from: "user"` and the same `questionId`.
+- **Timeout and stop:** unanswered after 10 minutes, the worker is told to
+  go on with its best judgment and say what it assumed. Stopping the worker
+  or the turn ends the wait.
+
 **Journal.** New events are `agent.spawned`, `agent.status`,
 `agent.message` (brief, result, followup), `agent.reassigned` and
 `agent.finished`. A worker's own tool calls reuse

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Dynamic-org workers can ask you a question** (#256). A worker gets an `ask_user` tool.
+  - **In the chat:** its row shows the question with an answer box, and the answer goes back to the worker through the new `chat history answer`.
+  - **While it waits:** the worker releases its edit and browser leases.
+  - **Timeout:** unanswered after 10 minutes, it carries on with its best judgment.
+
+### Added
 - **Dynamic org for coder chats** (#226, phase 1 of #224).
   - **Turning it on:** `chat history create --mode coder --org dynamic`, or `chat history set-org <conversation> dynamic`.
   - **What the agent can do:** the chat's agent gets `org_roster`, `org_spawn`, `org_wait`, `org_message` and `org_stop`, to bring in worker agents. Each worker has its own role, skills, model, effort and access profile (`coding`, `qa`, `automation`, `research`). The lead chooses or leaves them open; monomind `pick` and Jev fill the gaps from the validated roster.
