@@ -112,16 +112,38 @@ func SaveAutoConfig(ctx context.Context, db *sql.DB, c AutoConfig) error {
 	return setSetting(ctx, db, autoConfigKey, string(b))
 }
 
+// ErrAutoStateCorrupt is LoadAutoState's error for a stored state that
+// isn't valid JSON, as opposed to one that couldn't be read right now.
+var ErrAutoStateCorrupt = errors.New("auto re-validation state is corrupt")
+
 // LoadAutoState reads the scheduler's state, with today's counts rolled
 // over when the stored day is past.
 func LoadAutoState(ctx context.Context, db *sql.DB, now time.Time) (AutoState, error) {
 	var s AutoState
 	raw, ok, err := getSetting(ctx, db, autoStateKey)
 	if err == nil && ok {
-		err = json.Unmarshal([]byte(raw), &s)
+		if jerr := json.Unmarshal([]byte(raw), &s); jerr != nil {
+			err = fmt.Errorf("%w: %w", ErrAutoStateCorrupt, jerr)
+		}
 	}
 	s.rollDay(now)
 	return s, err
+}
+
+// ResetCorruptAutoState replaces a corrupt stored state with an empty one
+// and reports whether it did. Any other read error (a busy database) is
+// returned and nothing is written: resetting then would wipe today's count
+// and allow more paid runs than the cap.
+func ResetCorruptAutoState(ctx context.Context, db *sql.DB, now time.Time) (bool, error) {
+	_, err := LoadAutoState(ctx, db, now)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, ErrAutoStateCorrupt):
+		return true, SaveAutoState(ctx, db, AutoState{})
+	default:
+		return false, err
+	}
 }
 
 // SaveAutoState stores the scheduler's state.
@@ -405,7 +427,12 @@ func (s *AutoScheduler) Step(ctx context.Context) string {
 	}
 	defer release()
 	if s.Repick != nil {
-		if plan, err = s.Repick(runCtx, cfg.MaxModelsPerRun); err != nil {
+		plan, err = s.Repick(runCtx, cfg.MaxModelsPerRun)
+		if cause := context.Cause(runCtx); cause != nil && ctx.Err() == nil {
+			s.markBusy(s.Now())
+			return s.record(ctx, now, withReason(AutoCheckCancelled, cause.Error()), time.Time{})
+		}
+		if err != nil {
 			s.logf("auto re-validation: planning: %v", err)
 			s.markBusy(now)
 			return s.record(ctx, now, withReason(AutoCheckFailed, err.Error()), time.Time{})

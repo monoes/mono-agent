@@ -270,9 +270,10 @@ func setAutoRevalidate(ctx context.Context, cfg *globalConfig, change func(*agen
 	return printAutoRevalidateStatus(ctx, cfg, db.DB, false)
 }
 
-// applyAutoRevalidate changes the setting. Turning it on resets a stored
-// state that can't be read: otherwise the daemon would refuse to run for
-// good, and nothing else can repair it.
+// applyAutoRevalidate changes the setting. Turning it on resets a corrupt
+// stored state: otherwise the daemon would refuse to run for good, and
+// nothing else can repair it. A state that can't be read right now (a busy
+// database) fails the command instead.
 func applyAutoRevalidate(ctx context.Context, db *sql.DB, change func(*agentroster.AutoConfig)) error {
 	c, err := agentroster.LoadAutoConfig(ctx, db)
 	if err != nil {
@@ -280,10 +281,8 @@ func applyAutoRevalidate(ctx context.Context, db *sql.DB, change func(*agentrost
 	}
 	change(&c)
 	if c.Enabled {
-		if _, err := agentroster.LoadAutoState(ctx, db, time.Now()); err != nil {
-			if err := agentroster.SaveAutoState(ctx, db, agentroster.AutoState{}); err != nil {
-				return err
-			}
+		if _, err := agentroster.ResetCorruptAutoState(ctx, db, time.Now()); err != nil {
+			return err
 		}
 	}
 	return agentroster.SaveAutoConfig(ctx, db, c)
