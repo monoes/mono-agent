@@ -9,6 +9,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // #281: the display copy carries paused_until while a pause is active, and
@@ -96,5 +97,34 @@ func TestGrantTierDisplayCopyNeverFeedsBack(t *testing.T) {
 	}
 	if got := TierFor("grant:ghost", "lead", nil, facts); got != orgdesign.TierIrreversible {
 		t.Fatalf("grant:ghost (no row) tier = %q, want irreversible", got)
+	}
+}
+
+// #284: once a granted workflow gains an outbound node and the grant's
+// tier is raised, a mid org routes its calls to a person, not the decider.
+func TestRaisedGrantTierChangesRouting(t *testing.T) {
+	db := newDB(t)
+	ctx := context.Background()
+	gs := orggrant.NewStore(db)
+	if _, err := gs.UpsertGrant(ctx, orggrant.GrantInput{ProfileID: "p", OrgName: "growth", RoleID: "lead",
+		Tool: orggrant.Tool{Alias: "summarize", WorkflowID: "wf", Tier: orgdesign.TierConsequential}}); err != nil {
+		t.Fatal(err)
+	}
+	route := func() string {
+		facts := NewService(db, nil).tierFacts(ctx, "p", t.TempDir(), "growth")
+		return Route(orgdesign.LevelMid, TierFor("grant:summarize", "lead", nil, facts))
+	}
+	if got := route(); got != RouteDecider {
+		t.Fatalf("consequential grant at mid routes to %s", got)
+	}
+	grants, _ := gs.ListGrants(ctx, "p", "growth", "")
+	load := func(context.Context, string) (*workflow.Workflow, error) {
+		return &workflow.Workflow{ID: "wf", Nodes: []workflow.WorkflowNode{{Type: "comm.email_send"}}}, nil
+	}
+	if _, err := gs.RaiseTiers(ctx, grants, load); err != nil {
+		t.Fatal(err)
+	}
+	if got := route(); got != RouteHuman {
+		t.Fatalf("raised grant at mid routes to %s, want human", got)
 	}
 }

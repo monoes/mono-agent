@@ -391,3 +391,53 @@ func TestOrgGroupInitDropsARemovedChild(t *testing.T) {
 		t.Fatalf("scope after removing support = %q, want %q", got, want)
 	}
 }
+
+// #284: saving a granted workflow with a new outbound node raises the
+// grant's stored tier and the org file's display copy; removing the node
+// again lowers neither.
+func TestWorkflowSaveRaisesGrantTier(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	f.mustRun(t, "automation", "add", "growth", "--workflow", f.plainWF, "--alias", "summarize")
+	f.mustRun(t, "grant", "add", "growth", "--role", "lead", "--automation", "summarize")
+
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	tiers := func() (stored, display string) {
+		gs, err := orggrant.NewStore(db.DB).ListGrants(ctx, "default", "growth", "lead")
+		if err != nil || len(gs) != 1 {
+			t.Fatalf("grants = %v, %v", gs, err)
+		}
+		lead, _ := f.load(t).FindRole("lead")
+		return gs[0].Automation().Tier, lead.FindGrantSpec("summarize").Tier
+	}
+	if s, d := tiers(); s != "consequential" || d != "consequential" {
+		t.Fatalf("before: stored %s, display %s", s, d)
+	}
+
+	store := newHybridStore(db)
+	wf, err := store.GetWorkflow(ctx, f.plainWF)
+	if err != nil || wf == nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	plain := append([]workflow.WorkflowNode(nil), wf.Nodes...)
+	withSlack := append(append([]workflow.WorkflowNode(nil), plain...),
+		workflow.WorkflowNode{ID: f.plainWF + "-slack", WorkflowID: f.plainWF, Type: "comm.slack", Name: "notify"})
+	if err := store.SaveWorkflowNodes(ctx, f.plainWF, withSlack); err != nil {
+		t.Fatal(err)
+	}
+	if s, d := tiers(); s != "irreversible" || d != "irreversible" {
+		t.Fatalf("after adding an outbound node: stored %s, display %s", s, d)
+	}
+
+	if err := store.SaveWorkflowNodes(ctx, f.plainWF, plain); err != nil {
+		t.Fatal(err)
+	}
+	f.mustRun(t, "reconcile")
+	if s, d := tiers(); s != "irreversible" || d != "irreversible" {
+		t.Fatalf("after removing it: stored %s, display %s (want no downgrade)", s, d)
+	}
+}

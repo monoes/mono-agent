@@ -167,6 +167,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 	}
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(s.db.DB), d, orggrant.GenOptions{
 		ProfileID: pr.ProfileID, CLIPath: selfExecutable(), APIAddr: orgAPIAddr(s.db),
+		Workflow: grantWorkflowLoader(s.db),
 	})
 	if err != nil {
 		return fail("org services: reconcile %s: %v", err)
