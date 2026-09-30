@@ -23,7 +23,19 @@ export function AddSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:s
 
 export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, any>>;
 
+export function AgentRoster():Promise<string>;
+
+export function AgentRosterAdd(arg1:string,arg2:string):Promise<string>;
+
+export function AgentRosterAutoRevalidate():Promise<string>;
+
+export function AgentRosterRemove(arg1:string,arg2:string):Promise<string>;
+
+export function AgentValidatePlan(arg1:Array<string>,arg2:Array<string>,arg3:boolean):Promise<string>;
+
 export function AnalyzeRecording(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
+export function AnswerOrgChat(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -69,7 +81,7 @@ export function CoderStopBackground(arg1:string,arg2:string):Promise<string>;
 
 export function CoderWorkspaceList():Promise<string>;
 
-export function CoderWorkspaceRoot():Promise<string>;
+export function CoderWorkspaceRoot(arg1:string):Promise<string>;
 
 export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<storage.PersonMessage>;
 
@@ -77,9 +89,11 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
+export function ControlOrg(arg1:string,arg2:string):Promise<string>;
+
 export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
-export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
+export function CreateCoderConversation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<string>;
 
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
@@ -182,6 +196,8 @@ export function GetOAuthCredentials(arg1:string):Promise<string>;
 export function GetOrgApprovals(arg1:string):Promise<string>;
 
 export function GetOrgAutonomy(arg1:string):Promise<string>;
+
+export function GetOrgChatHistory(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
 
@@ -431,6 +447,8 @@ export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
 
 export function RerecordSelector(arg1:string,arg2:string):Promise<string>;
 
+export function ResolveOrgChat(arg1:string,arg2:string,arg3:boolean,arg4:string):Promise<string>;
+
 export function RestoreAutomation(arg1:string):Promise<string>;
 
 export function ResumeOrgAutonomy(arg1:string):Promise<string>;
@@ -473,7 +491,11 @@ export function SendApplication(arg1:string,arg2:string):Promise<void>;
 
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
 
+export function SendOrgChat(arg1:string,arg2:string):Promise<string>;
+
 export function SendOrgMessage(arg1:string,arg2:string):Promise<string>;
+
+export function SetAgentRosterAutoRevalidate(arg1:boolean):Promise<string>;
 
 export function SetApplicationStatus(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -493,19 +515,25 @@ export function ShowAutomation(arg1:string):Promise<string>;
 
 export function ShowRecording(arg1:string):Promise<string>;
 
+export function StartAgentValidation(arg1:Array<string>,arg2:Array<string>,arg3:boolean):Promise<string>;
+
 export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<string>;
 
 export function StartOrgGroup(arg1:string):Promise<string>;
+
+export function StopAgentValidation():Promise<string>;
+
+export function StopChatAgent(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
 
-export function StopOrgEvents(arg1:string):Promise<string>;
+export function StopOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function StopOrgGroup(arg1:string):Promise<string>;
 
-export function StreamOrgEvents(arg1:string):Promise<string>;
+export function StreamOrgEvents(arg1:string,arg2:string):Promise<string>;
 
 export function SwitchProfile(arg1:string):Promise<void>;
 
@@ -536,3 +564,7 @@ export function ValidateOrgDesign(arg1:string):Promise<string>;
 export function ValidateOrgReport(arg1:string):Promise<string>;
 
 export function VerifyDraft(arg1:string,arg2:boolean,arg3:string):Promise<string>;
+
+export function SetChatOrgMode(arg1:string,arg2:string):Promise<string>;
+
+export function AnswerAgentQuestion(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;

@@ -22,6 +22,19 @@ const (
 	CapAgentExecSettings     = "agent-exec-settings"
 	CapAgentExecToolActivity = "agent-exec-tool-activity"
 	CapInitJSON              = "init-json"
+
+	// Coder mode on every runtime: --access full for any runtime whose
+	// scan entry has full_access, and `agent exec --effort`.
+	CapAgentExecFullAccessAny = "agent-exec-full-access-any"
+	CapAgentExecEffort        = "agent-exec-effort"
+
+	// Dynamic org (monoes/mono-agent#226): stdio caller tools alongside
+	// --access full (the lead's org_* tools, monomind#389), --access read
+	// (research workers, monomind#388), and Claude's subagent lifecycle
+	// events (monomind#387).
+	CapAgentExecFullAccessTools = "agent-exec-full-access-tools"
+	CapAgentExecAccessRead      = "agent-exec-access-read"
+	CapAgentExecSubagentEvents  = "agent-exec-subagent-events"
 )
 
 // ErrFeatureNeedsMonomind reports that the installed monomind lacks a
@@ -122,4 +135,7 @@ func ResetCapabilityCache() {
 	capCache.Lock()
 	capCache.set = nil
 	capCache.Unlock()
+	binCaps.Lock()
+	binCaps.sets, binCaps.at = nil, nil
+	binCaps.Unlock()
 }

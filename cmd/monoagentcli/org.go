@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -65,6 +69,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgLifecycleCmd(env, "pause", "Pause an org: current turns finish, no new cycles start", monomind.OrgPause),
 		newOrgLifecycleCmd(env, "resume", "Resume a paused org", monomind.OrgResume),
 		newOrgSendCmd(env),
+		newOrgChatCmd(env),
 		newOrgQueuedCmd(env),
 		newOrgRenameCmd(env),
 		newOrgDeleteCmd(env),
@@ -374,20 +379,47 @@ func newOrgEventsCmd(root func() string) *cobra.Command {
 		Short: "Stream the org's bus event log as NDJSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return monomind.OrgEvents(cmd.Context(), root(), args[0], monomind.OrgEventsOptions{
+			// A reader that went away (the app quit) must end the tail, not
+			// kill this process with SIGPIPE before it stops monomind: with
+			// SIGPIPE ignored the write fails with EPIPE, which cancels.
+			signal.Ignore(syscall.SIGPIPE)
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+			w := &eventsWriter{w: os.Stdout, cancel: cancel}
+			err := monomind.OrgEvents(ctx, root(), args[0], monomind.OrgEventsOptions{
 				Run:    run,
 				Follow: follow,
 				Since:  since,
-			}, func(line []byte) {
-				os.Stdout.Write(line)
-				os.Stdout.Write([]byte("\n"))
-			})
+			}, w.writeLine)
+			if w.err != nil {
+				return w.err
+			}
+			return err
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: current run)")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "Keep streaming as new events arrive")
 	c.Flags().StringVar(&since, "since", "", "Replay from a cursor (event id or ISO timestamp)")
 	return c
+}
+
+// eventsWriter prints `org events` lines and cancels the tail on the first
+// failed write, so monomind's follower is stopped instead of left writing
+// to nobody (monoes/mono-agent#235).
+type eventsWriter struct {
+	w      io.Writer
+	cancel context.CancelFunc
+	err    error
+}
+
+func (e *eventsWriter) writeLine(line []byte) {
+	if e.err != nil {
+		return
+	}
+	if _, err := e.w.Write(append(line, '\n')); err != nil {
+		e.err = fmt.Errorf("write events: %w", err)
+		e.cancel()
+	}
 }
 
 func newOrgValidateCmd(root func() string) *cobra.Command {

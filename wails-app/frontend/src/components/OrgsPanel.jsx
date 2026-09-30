@@ -3,12 +3,14 @@ import { useTranslation } from 'react-i18next'
 import {
   X, RefreshCw, Building2, Circle, Network, Maximize2, Plus,
   Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
-  ChevronLeft, ChevronRight, Inbox,
+  ChevronLeft, ChevronRight, Inbox, MessageCircle,
 } from 'lucide-react'
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
 import { KVBlock } from './KVBlock.jsx'
 import { OrgTemplatesButton, PublishOrgButton } from './orgs/OrgLibraryActions.jsx'
+import { acquireOrgEvents, orgEventHolders, restartOrgEvents } from '../lib/orgEventStreams.js'
+import { emitOpenOrgBubble } from '../lib/appEvents.js'
 import MonomindInitPrompt from './MonomindInitPrompt.jsx'
 import AutonomyBar from './orgs/AutonomyBar.jsx'
 import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
@@ -142,6 +144,20 @@ function OutcomeBanner({ outcome, finalMessage }) {
         </div>
       )}
     </div>
+  )
+}
+
+// OpenAsBubbleButton opens the org as a chat bubble (#229): its live stage
+// and a chat with its boss, over whatever page is open.
+function OpenAsBubbleButton({ orgName, compact = false }) {
+  const { t } = useTranslation()
+  return (
+    <button type="button" className="btn btn-ghost btn-sm" data-testid="org-open-bubble"
+      onClick={() => emitOpenOrgBubble(orgName)}
+      title={t('orgBubble.openAsBubble')} aria-label={t('orgBubble.openAsBubbleNamed', { name: orgName })}
+      style={compact ? { padding: '3px 5px', flexShrink: 0 } : { gap: 4, fontSize: 10 }}>
+      <MessageCircle size={compact ? 11 : 12} />{!compact && ` ${t('orgBubble.openAsBubble')}`}
+    </button>
   )
 }
 
@@ -383,7 +399,10 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     // panel whose page isn't active) stops streaming.
     if (!selected || !effectiveOpen) return
     setEvents([])
-    api.streamOrgEvents(selected)
+    const release = acquireOrgEvents(selected)
+    // Another view (an org bubble) already holds this org's tail: restart
+    // it, so it follows the current run and replays it into this list.
+    if (orgEventHolders(selected) > 1) restartOrgEvents(selected)
     const offEvent = onOrgEvent((payload) => {
       if (payload?.orgName !== selected) return
       setEvents(prev => {
@@ -395,7 +414,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     return () => {
       offEvent()
       offClosed()
-      api.stopOrgEvents(selected)
+      release()
     }
   }, [selected, effectiveOpen, streamGeneration])
 
@@ -689,10 +708,11 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {orgs.map(o => (
+                <div key={o.name} className="org-list-row" style={{ display: 'flex', alignItems: 'center' }}>
                 <button
-                  key={o.name}
                   onClick={() => selectOrg(o.name)}
                   style={{
+                    flex: 1, minWidth: 0,
                     display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left',
                     background: selected === o.name ? 'var(--elevated)' : 'transparent',
                     border: selected === o.name ? '1px solid var(--border-active)' : '1px solid transparent',
@@ -704,6 +724,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                   {o.kind === 'holding' && <Boxes size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} aria-label="holding org" />}
                   <Badge count={needsYouCounts[o.name] || 0} style={{ flexShrink: 0 }} />
                 </button>
+                <OpenAsBubbleButton orgName={o.name} compact />
+                </div>
               ))}
             </div>
           )}
@@ -738,6 +760,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>{selected}</span>
                 {isHolding && <Chip>holding</Chip>}
                 <PublishOrgButton orgName={selected} />
+                <OpenAsBubbleButton orgName={selected} />
                 {/* flex-basis 0 keeps the bar beside the name and lets it wrap
                     its own second line (the jev note) instead of the header's. */}
                 <div style={{ flex: '1 1 0', display: 'flex', justifyContent: 'flex-end' }}>

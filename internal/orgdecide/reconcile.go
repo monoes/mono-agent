@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
 )
@@ -52,7 +53,9 @@ func ReconcileAutonomy(ctx context.Context, s *Store, profileID string, doc *org
 }
 
 // DisplayCopy renders a row as the org JSON autonomy block, keeping keys
-// the previous block carried that mono-agent does not model.
+// the previous block carried that mono-agent does not model. paused_until
+// is written only while the pause is active, so the next reconcile after it
+// ends drops it.
 func DisplayCopy(a *Autonomy, prev *orgdesign.Autonomy) *orgdesign.Autonomy {
 	out := &orgdesign.Autonomy{
 		Level: a.Level,
@@ -65,6 +68,9 @@ func DisplayCopy(a *Autonomy, prev *orgdesign.Autonomy) *orgdesign.Autonomy {
 		Limits: &orgdesign.AutonomyLimits{
 			MaxDecisionsPerRun: a.Limits.MaxDecisionsPerRun, MaxDeciderUSDPerRun: a.Limits.MaxDeciderUSDPerRun,
 		},
+	}
+	if a.PausedUntil != nil && a.PausedUntil.After(time.Now()) {
+		out.PausedUntil = a.PausedUntil.UTC().Format(time.RFC3339)
 	}
 	if len(a.Tiers) > 0 {
 		out.Tiers = map[string]string{}

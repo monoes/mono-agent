@@ -1,0 +1,13 @@
+{
+  "questions": {"v":1,"org":"acme","items":[
+    {"questionId":"q-0900-zz99","role":"ceo","question":"Left over from the last run: keep the old changelog?","ts":900,"answer":null,"answeredAt":null},
+    {"questionId":"q-1700-ab12","role":"ceo","question":"Which version number should the notes use?","ts":1700,"answer":"1.2.0","answeredAt":2100},
+    {"questionId":"q-2250-cd34","role":"qa","question":"Should I run the e2e suite too?","ts":2250,"answer":null,"answeredAt":null}
+  ]},
+  "approvals": {"v":1,"org":"acme","items":[
+    {"roleId":"dev","action":"Bash","question":"Approval required for Bash","ts":1600,"approved":true,"requestId":null,"resolvedBy":"human"}
+  ]},
+  "gates": {"v":1,"org":"acme","items":[
+    {"id":"gate-1850-x1","name":"publish-notes","description":"Publish the v1.2 release notes to the blog?","roleId":"ceo","status":"pending","createdAt":1850}
+  ]}
+}

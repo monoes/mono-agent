@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/dynorg"
 )
 
 // `chat history …` reads and writes the desktop chat's conversation, turn
@@ -97,6 +100,10 @@ type chatFinishResult struct {
 type chatReconcileResult struct {
 	Reconciled []ai.TurnRecord `json:"reconciled"`
 	Errors     []string        `json:"errors"`
+	// Worktrees are the isolated org writers' worktrees of turns no longer
+	// active that were cleaned up, with the branches kept because their
+	// work was never merged (#230).
+	Worktrees []dynorg.TreeCleanup `json:"worktrees"`
 }
 
 func newChatHistoryCmd(cfg *globalConfig) *cobra.Command {
@@ -122,6 +129,7 @@ func newChatHistoryCmd(cfg *globalConfig) *cobra.Command {
 		newChatHistoryFinishCmd(cfg),
 		newChatHistoryReconcileCmd(cfg),
 		newChatHistoryTranscriptCmd(cfg),
+		newChatHistorySetOrgCmd(cfg),
 	)
 	return cmd
 }
@@ -200,6 +208,7 @@ func printConversation(cfg *globalConfig, c ai.ConversationRecord) error {
 func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 	var runtimeID, model, effort, workflowID, mode, cwd string
 	var newWorkspace, coderRoot bool
+	var orgMode string
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create an agent conversation",
@@ -210,16 +219,28 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 			"The folder is fixed for the conversation's life.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if runtimeID == "" {
-				return errInvalidInput("--runtime is required (see `agent scan --installed`)")
-			}
-			switch mode {
-			case ai.ModeCoder:
-				conv, err := createCoderConversation(cmd, cfg, runtimeID, model, workflowID, coderFolderChoice{cwd: cwd, root: coderRoot, newWorkspace: newWorkspace})
+			if mode == ai.ModeCoder {
+				if orgMode != ai.OrgModeSolo && orgMode != ai.OrgModeDynamic {
+					return errInvalidInput("--org must be solo or dynamic")
+				}
+				conv, err := createCoderConversation(cmd, cfg, runtimeID, model, effort, workflowID, coderFolderChoice{cwd: cwd, root: coderRoot, newWorkspace: newWorkspace})
 				if err != nil {
 					return err
 				}
+				if orgMode == ai.OrgModeDynamic {
+					if conv, err = setOrgMode(cfg, conv.ID, orgMode); err != nil {
+						return err
+					}
+				}
 				return printConversation(cfg, conv.Record())
+			}
+			if runtimeID == "" {
+				return errInvalidInput("--runtime is required (see `agent scan --installed`)")
+			}
+			if cmd.Flags().Changed("org") {
+				return errInvalidInput("--org only applies to --mode coder")
+			}
+			switch mode {
 			case ai.ModeAssistant:
 				if cwd != "" || newWorkspace || coderRoot {
 					return errInvalidInput("--cwd, --coder-root and --new-workspace only apply to --mode coder")
@@ -239,7 +260,7 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 			return printConversation(cfg, conv.Record())
 		},
 	}
-	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …)")
+	cmd.Flags().StringVar(&runtimeID, "runtime", "", "Agent runtime id (claude, codex, …); --mode coder defaults to claude (see `coder status` for the ready ones)")
 	cmd.Flags().StringVar(&model, "model", "", "Model for the runtime")
 	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort level for the model (e.g. low, medium, high, max)")
 	cmd.Flags().StringVar(&workflowID, "workflow", "general", "Workflow context")
@@ -247,6 +268,7 @@ func newChatHistoryCreateCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Coder mode: the folder the agent works in (any existing folder)")
 	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself (see `coder set --workspace-root`)")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
+	cmd.Flags().StringVar(&orgMode, "org", ai.OrgModeSolo, "Coder mode: solo, or dynamic to let the agent spawn worker agents")
 	withJSONErrors(cfg, cmd)
 	return cmd
 }
@@ -324,6 +346,7 @@ func newChatHistoryTurnCmd(cfg *globalConfig) *cobra.Command {
 func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 	var afterSeq int64
 	var limit int
+	var agent string
 	cmd := &cobra.Command{
 		Use:   "events <conversation-id> <turn-id>",
 		Short: "Show a turn's events after --after-seq, oldest first, with the turn's status",
@@ -351,7 +374,11 @@ func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 			}
 			page := chatEventPage{Items: []chatevents.Record{}, Turn: t.Record(), LastCommittedSeq: t.LastCommittedSeq, HasMore: len(evs) == n}
 			for _, ev := range evs {
-				page.Items = append(page.Items, ev.Record())
+				// --agent keeps one dynamic-org agent's events; has_more
+				// and paging still follow the unfiltered page.
+				if r := ev.Record(); agent == "" || eventAgentID(r) == agent {
+					page.Items = append(page.Items, r)
+				}
 			}
 			if cfg.JSONOutput {
 				return printJSON(page)
@@ -365,6 +392,7 @@ func newChatHistoryEventsCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&afterSeq, "after-seq", 0, "Only events with a higher seq")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum events (default 500, max 1000); has_more is true when a full page came back")
+	cmd.Flags().StringVar(&agent, "agent", "", "Dynamic org: only this agent's events (a worker id such as w1, or lead)")
 	return cmd
 }
 
@@ -465,7 +493,8 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile",
 		Short: "Mark every turn left active, in every profile, as interrupted",
-		Long: "Marks every turn still active as interrupted, across all profiles. The desktop app runs " +
+		Long: "Marks every turn still active as interrupted, across all profiles, and removes the " +
+			"`chat turn stop` mailbox folders of turn processes that are gone. The desktop app runs " +
 			"this at startup with --except-owner set to its own instance id, so turns it has already " +
 			"started are skipped. There is no liveness check: a second running app's turns are " +
 			"interrupted too.",
@@ -477,7 +506,9 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer closeDB()
 			turns, errs := store.ReconcileActiveTurns(exceptOwner)
-			res := chatReconcileResult{Reconciled: []ai.TurnRecord{}, Errors: []string{}}
+			// Mailbox folders of turns whose process died (#255).
+			sweepAgentControl(agentControlRoot(cfg), time.Now())
+			res := chatReconcileResult{Reconciled: []ai.TurnRecord{}, Errors: []string{}, Worktrees: reconcileWorktrees(cmd.Context(), store)}
 			for _, t := range turns {
 				res.Reconciled = append(res.Reconciled, t.Record())
 			}
@@ -490,6 +521,14 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 				}
 			} else {
 				fmt.Printf("interrupted %d turn(s)\n", len(res.Reconciled))
+				for _, w := range res.Worktrees {
+					switch {
+					case w.Error != "":
+						fmt.Printf("kept worktree %s: %s\n", w.Path, w.Error)
+					case w.BranchKept:
+						fmt.Printf("removed worktree %s; kept unmerged branch %s\n", w.Path, w.Branch)
+					}
+				}
 			}
 			if len(errs) > 0 {
 				return fmt.Errorf("reconcile: %d turn(s) failed: %s", len(errs), errs[0])
@@ -502,19 +541,43 @@ func newChatHistoryReconcileCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func newChatHistoryTranscriptCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
-		Use:   "transcript <history-id>",
-		Short: "Show the legacy transcript `chat --history-id`/`--canvas` saved (read-only)",
+	var byAgent bool
+	cmd := &cobra.Command{
+		Use:   "transcript <history-id> | --by-agent <conversation-id> <turn-id>",
+		Short: "Show the legacy transcript `chat --history-id`/`--canvas` saved, or a dynamic-org turn by agent",
 		Long: "Shows the messages a plain `chat --history-id <id>` (or `--canvas <id>`) turn saved to the " +
 			"legacy ai_chat_messages transcript, oldest first. Conversations run through " +
-			"`chat --conversation` are journaled as events instead and never appear here.",
-		Args: cobra.ExactArgs(1),
+			"`chat --conversation` are journaled as events instead and never appear here.\n\n" +
+			"With --by-agent it shows a journaled dynamic-org turn split by agent instead: the lead, then " +
+			"each worker with its role, model and status, the briefs and reports it exchanged, and the " +
+			"text it wrote.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if byAgent {
+				return cobra.ExactArgs(2)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, profileID, closeDB, err := openChatHistory(cfg)
 			if err != nil {
 				return err
 			}
 			defer closeDB()
+			if byAgent {
+				if _, err := turnInConversation(store, profileID, args[0], args[1]); err != nil {
+					return err
+				}
+				recs, err := allTurnEvents(store, profileID, args[0], args[1])
+				if err != nil {
+					return err
+				}
+				items := agentTranscripts(recs)
+				if cfg.JSONOutput {
+					return printJSON(map[string]any{"items": items})
+				}
+				printAgentTranscripts(items)
+				return nil
+			}
 			msgs, err := store.GetChatHistory(args[0], profileID)
 			if err != nil {
 				return err
@@ -531,6 +594,8 @@ func newChatHistoryTranscriptCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&byAgent, "by-agent", false, "Show a journaled dynamic-org turn (<conversation-id> <turn-id>) split by agent")
+	return cmd
 }
 
 func firstLineOf(s string) string {
@@ -540,4 +605,70 @@ func firstLineOf(s string) string {
 		}
 	}
 	return s
+}
+
+// newChatHistorySetOrgCmd switches a coder conversation between working
+// alone and a dynamic org (#226), from its next turn on.
+func newChatHistorySetOrgCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set-org <conversation-id> solo|dynamic",
+		Short: "Let a coder conversation's agent spawn worker agents (dynamic) or work alone (solo)",
+		Long: "In a dynamic org the coder chat's agent gets org tools to spawn worker agents, each with its own " +
+			"role, skills, model and access, within the limits in `coder set --org-*`. It takes effect from the " +
+			"next turn. The runtime must take caller tools with full access (see `agent scan --json`).",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			conv, err := setOrgMode(cfg, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			if cfg.JSONOutput {
+				return printConversation(cfg, conv.Record())
+			}
+			fmt.Printf("conversation %s: org %s\n", conv.ID, conv.OrgMode)
+			return nil
+		},
+	}
+}
+
+// setOrgMode stores a coder conversation's org mode.
+func setOrgMode(cfg *globalConfig, id, mode string) (ai.Conversation, error) {
+	if mode != ai.OrgModeSolo && mode != ai.OrgModeDynamic {
+		return ai.Conversation{}, errInvalidInput("org mode must be solo or dynamic (got %q)", mode)
+	}
+	store, profileID, closeDB, err := openChatHistory(cfg)
+	if err != nil {
+		return ai.Conversation{}, err
+	}
+	defer closeDB()
+	conv, err := store.GetConversation(id, profileID)
+	if err != nil {
+		return ai.Conversation{}, chatStoreErr(err)
+	}
+	if conv.Mode != ai.ModeCoder {
+		return ai.Conversation{}, errInvalidInput("conversation %s is not a coder conversation; only coder chats can run a dynamic org", id)
+	}
+	if err := store.SetConversationOrgMode(id, profileID, mode); err != nil {
+		return ai.Conversation{}, chatStoreErr(err)
+	}
+	conv.OrgMode = mode
+	return conv, nil
+}
+
+// reconcileWorktrees cleans up, in every coder folder, the worktrees of
+// isolated org writers whose turn is no longer active (#230).
+func reconcileWorktrees(ctx context.Context, store *ai.AIStore) []dynorg.TreeCleanup {
+	out := []dynorg.TreeCleanup{}
+	active, err := activeTurnIDs(store)
+	if err != nil {
+		return out
+	}
+	folders, err := store.CoderFolders()
+	if err != nil {
+		return out
+	}
+	for _, cwd := range folders {
+		out = append(out, dynorg.ReconcileWorktrees(ctx, cwd, func(id string) bool { return active[id] })...)
+	}
+	return out
 }

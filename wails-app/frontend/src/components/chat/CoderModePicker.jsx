@@ -1,13 +1,18 @@
 import { Bot, Code2, FolderRoot, FolderOpen, History } from 'lucide-react'
-import { folderName, missingText } from './useCoderMode.js'
+import { folderName, missingText, coderReady, coderRuntimes, runtimeReadiness } from './useCoderMode.js'
+import { runtimeLabel } from '../../lib/runtimeLabels.js'
 
 // CoderModePicker is the new-chat choice between the Assistant and Coder
 // modes (#203), plus Coder's workspace: the coder root (default), a
 // folder picked with the native dialog, or a recent one. Shown only before
 // a conversation exists, since its mode can't change once it starts. Renders
-// nothing while coder mode is off in Settings.
+// nothing while coder mode is off in Settings. runtimeId is the coding
+// runtime the chat will run on (picked in the runtime selector); the list
+// under the workspaces says which runtimes are ready.
 //
-// workspace is { kind: 'root' } or { kind: 'folder', path }.
+// workspace is { kind: 'root' } or { kind: 'folder', path }. workspaceOnly
+// hides the mode switch, for a chat that is already a coder chat (a new
+// coder bubble, #227).
 
 const mono = 'var(--font-mono)'
 const CYAN = '#00b4d8'
@@ -36,25 +41,26 @@ function optionStyle(active) {
 const optTitle = { fontFamily: mono, fontSize: 10.5, color: '#e2e8f0' }
 const optHint = { fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', wordBreak: 'break-all', marginTop: 1 }
 
-export function CoderModePicker({ status, mode, onModeChange, workspace, onWorkspaceChange, recent = [], onPickFolder, disabled = false }) {
+export function CoderModePicker({ status, mode, onModeChange, workspace, onWorkspaceChange, recent = [], onPickFolder, runtimeId = '', disabled = false, workspaceOnly = false }) {
   if (!status?.enabled) return null
-  const ready = status.ready !== false
+  const ready = coderReady(status)
+  const agent = runtimeId ? runtimeLabel(runtimeId) : 'The agent'
   const pickedPath = workspace?.kind === 'folder' ? workspace.path : ''
   const pickedIsRecent = recent.some(w => w.path === pickedPath)
 
   return (
     <div data-testid="coder-mode-picker" style={{ padding: '8px 12px', borderBottom: '1px solid rgba(0,180,216,0.06)', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-      <div role="radiogroup" aria-label="Chat mode" style={{ display: 'flex', gap: 6 }}>
+      {!workspaceOnly && <div role="radiogroup" aria-label="Chat mode" style={{ display: 'flex', gap: 6 }}>
         <button type="button" role="radio" aria-checked={mode === 'assistant'} disabled={disabled}
           onClick={() => onModeChange('assistant')} style={segStyle(mode === 'assistant', disabled)}>
           <Bot size={11} /> Assistant
         </button>
         <button type="button" role="radio" aria-checked={mode === 'coder'} disabled={disabled || !ready}
-          title={ready ? 'Claude Code with full access inside one folder' : `Coder mode ${missingText(status)}`}
+          title={ready ? 'A coding agent with full access inside one folder' : `Coder mode ${missingText(status)}`}
           onClick={() => onModeChange('coder')} style={segStyle(mode === 'coder', disabled || !ready)}>
           <Code2 size={11} /> Coder
         </button>
-      </div>
+      </div>}
       {!ready && (
         <div data-testid="coder-not-ready" style={{ fontFamily: mono, fontSize: 9.5, color: '#fbbf24', lineHeight: 1.5 }}>
           Coder mode {missingText(status)}.
@@ -94,8 +100,17 @@ export function CoderModePicker({ status, mode, onModeChange, workspace, onWorks
             </button>
           ))}
           <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 2 }}>
-            Claude Code will run commands and change files in this folder without asking.
+            {agent} will run commands and change files in this folder without asking.
           </div>
+          {Array.isArray(status.runtimes) && (
+            <div data-testid="coder-runtimes" style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              {coderRuntimes(status).map((r, i) => (
+                <span key={r.id} style={{ color: r.ready ? '#10b981' : undefined }}>
+                  {i > 0 && ' · '}{runtimeLabel(r.id)} {runtimeReadiness(r)}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

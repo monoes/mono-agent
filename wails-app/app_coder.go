@@ -16,8 +16,8 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Coder mode (issue #203): a chat conversation in which Claude Code runs with
-// full access inside one folder. Everything here shells out to
+// Coder mode (issue #203): a chat conversation in which a coding runtime
+// (claude, codex, opencode, …) runs with full access inside one folder. Everything here shells out to
 // `monoagentcli coder …` / `chat history create --mode coder` (#202) and
 // returns the CLI's stdout JSON verbatim; the only logic is building args.
 // A coder conversation's turns go through StartChatTurn like any other,
@@ -115,9 +115,16 @@ func (a *App) CoderSet(workspaceRoot string, maxTurns int, timeout string, budge
 }
 
 // CoderWorkspaceRoot sets up the coder root itself as the chat's working
-// folder, shared by every chat that picks it: {path, created, git,
+// folder, shared by every chat that picks it, with runtimeID's setup files
+// (the CLI's default runtime when empty): {path, created, git,
 // init:{created, skipped}}.
-func (a *App) CoderWorkspaceRoot() string { return a.jsonResult("coder", "workspace", "root") }
+func (a *App) CoderWorkspaceRoot(runtimeID string) string {
+	args := []string{"coder", "workspace", "root"}
+	if runtimeID != "" {
+		args = append(args, "--runtime", runtimeID)
+	}
+	return a.jsonResult(args...)
+}
 
 // CoderWorkspaceList returns the folders coder conversations used, newest
 // first.
@@ -130,10 +137,24 @@ func (a *App) CoderStopBackground(conversationID, turnID string) string {
 	return a.jsonResult("coder", "stop-background", "--conversation", conversationID, "--turn", turnID)
 }
 
+// SetChatOrgMode switches a coder conversation between working alone
+// ("solo") and a dynamic org ("dynamic", #226) from its next turn on:
+// `chat history set-org`.
+func (a *App) SetChatOrgMode(conversationID, mode string) string {
+	return a.jsonResult("chat", "history", "set-org", conversationID, mode)
+}
+
+// AnswerAgentQuestion answers a dynamic-org worker's question (#256):
+// `chat turn answer`.
+func (a *App) AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text string) string {
+	return a.jsonResult("chat", "turn", "answer", conversationID, turnID, "--agent", agentID, "--question", questionID, "--text", text)
+}
+
 // coderConversationArgs builds `chat history create` for a coder
 // conversation: either in cwd, or (newWorkspace) in a folder the CLI
-// creates. Coder chats belong to the general assistant's history.
-func coderConversationArgs(runtimeID, model, cwd string, newWorkspace bool) []string {
+// creates. Coder chats belong to the general assistant's history. An empty
+// model or effort leaves the runtime's default.
+func coderConversationArgs(runtimeID, model, effort, cwd string, newWorkspace bool) []string {
 	args := []string{"chat", "history", "create", "--runtime", runtimeID, "--workflow", "general", "--mode", "coder"}
 	if newWorkspace {
 		args = append(args, "--new-workspace")
@@ -143,16 +164,19 @@ func coderConversationArgs(runtimeID, model, cwd string, newWorkspace bool) []st
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
 	return args
 }
 
 // CreateCoderConversation creates a coder conversation and returns it in
 // CreateChatConversation's shape (mode "coder", cwd its folder).
-func (a *App) CreateCoderConversation(runtimeID, model, cwd string, newWorkspace bool) string {
+func (a *App) CreateCoderConversation(runtimeID, model, effort, cwd string, newWorkspace bool) string {
 	if !newWorkspace && cwd == "" {
 		return aiError(fmt.Errorf("choose a folder for the coder conversation"))
 	}
-	out, err := a.jsonCLI(coderConversationArgs(runtimeID, model, cwd, newWorkspace)...)
+	out, err := a.jsonCLI(coderConversationArgs(runtimeID, model, effort, cwd, newWorkspace)...)
 	if err != nil {
 		return aiError(err)
 	}

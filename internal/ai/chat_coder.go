@@ -35,3 +35,22 @@ func (s *AIStore) ListCoderWorkspaces(profileID string, limit int) ([]CoderWorks
 	}
 	return out, rows.Err()
 }
+
+// CoderFolders returns every folder a coder conversation has run in, in
+// every profile.
+func (s *AIStore) CoderFolders() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT cwd FROM ai_chat_conversations WHERE mode = ? AND cwd != ''`, ModeCoder)
+	if err != nil {
+		return nil, fmt.Errorf("list coder folders: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan coder folder: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

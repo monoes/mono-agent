@@ -642,34 +642,77 @@ body {
   flex-wrap: wrap;
 }
 
-.filter-select {
+/* ── Selects ──
+   Every <select> gets its look from here. WebKitGTK (the Linux webview)
+   draws a select with native GTK combo-box chrome — light fill, dark
+   text, black arrow — and ignores background/color unless appearance is
+   reset, so the reset and the cyan chevron live on the element rule
+   itself: a select with no class and no inline style is already dark.
+   Don't re-style this chrome inline; use a modifier class below
+   (see "UI style guide: form controls" in AGENTS.md). */
+select {
+  -webkit-appearance: none;
   appearance: none;
-  background: var(--elevated);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-family: var(--font-display);
-  font-size: 12.5px;
-  padding: 6px 28px 6px 10px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all var(--transition);
+  color-scheme: dark;
+  background-color: var(--elevated);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
+  background-size: 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 28px 6px 10px;
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--border-bright);
+}
+
+select:focus { outline: none; }
+
+select:focus-visible {
+  border-color: var(--border-bright);
+  box-shadow: 0 0 0 3px var(--cyan-glow);
+}
+
+select:disabled {
+  opacity: 0.5;
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* List boxes show their options inline — no chevron. */
+select[multiple],
+select[size]:not([size="1"]) {
+  background-image: none;
+  padding-right: 10px;
 }
 
 /* The open list is drawn by the platform (WebKitGTK paints it white);
    give it the app's colours too. */
-.filter-select option,
-.form-select option,
 select option {
   background: var(--elevated);
   color: var(--text);
 }
 
-.filter-select:focus {
-  outline: none;
-  border-color: var(--border-bright);
+/* Compact variant: dense toolbars and selector rows (the chat's
+   runtime/model/effort row). */
+.select-compact {
+  font-size: 10px;
+  padding: 4px 20px 4px 8px;
+  background-position: right 6px center;
+  background-size: 10px 10px;
+}
+
+/* Filter bars: the display face, a touch larger than the base. */
+.filter-select {
+  font-family: var(--font-display);
+  font-size: 12.5px;
 }
 
 .search-input {
@@ -1418,7 +1461,7 @@ select option {
 
 .form-input, .form-select, .form-textarea {
   width: 100%;
-  background: var(--elevated);
+  background-color: var(--elevated);
   border: 1px solid var(--border);
   color: var(--text);
   font-family: var(--font-body);
@@ -1429,10 +1472,6 @@ select option {
 }
 
 .form-select {
-  appearance: none;
-  cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 32px;
 }

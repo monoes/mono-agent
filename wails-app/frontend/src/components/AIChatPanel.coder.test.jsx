@@ -36,7 +36,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
 })
 
 import AIChatPanel from './AIChatPanel.jsx'
-import { initSummary } from './chat/CoderHeader.jsx'
+import { initSummary, keyInitFiles, CoderInitNote } from './chat/CoderHeader.jsx'
 
 const status = (over = {}) => ({
   enabled: true, workspaceRoot: '/home/u/monoagent-coder', maxTurns: 200, timeout: '60m', budgetUsd: 0,
@@ -104,8 +104,9 @@ describe('AIChatPanel coder mode', () => {
     expect(await within(workspaces).findByRole('radio', { name: /recent-proj/ })).toBeInTheDocument()
 
     await sendMessage('write hello.py and run it')
-    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', WS, false))
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '', WS, false))
     expect(m.coderWorkspaceRoot).toHaveBeenCalledTimes(1)
+    expect(m.coderWorkspaceRoot).toHaveBeenCalledWith('claude')
     expect(m.createChatConversation).not.toHaveBeenCalled()
     await waitFor(() => expect(m.startChatTurn).toHaveBeenCalledWith('coder-1', expect.any(String), 'write hello.py and run it', false, false))
 
@@ -129,7 +130,7 @@ describe('AIChatPanel coder mode', () => {
     fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
     fireEvent.click(await screen.findByRole('radio', { name: /recent-proj/ }))
     await sendMessage('go')
-    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '/w/recent-proj', false))
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '', '/w/recent-proj', false))
     expect(m.coderWorkspaceRoot).not.toHaveBeenCalled()
     await screen.findByRole('button', { name: 'Stop generating' })
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -146,23 +147,83 @@ describe('AIChatPanel coder mode', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Choose folder/ }))
     expect(await screen.findByText('/home/u/src/my-repo')).toBeInTheDocument()
     await sendMessage('hi')
-    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '/home/u/src/my-repo', false))
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '', '/home/u/src/my-repo', false))
   })
 
-  it('locks the runtime to claude in coder mode so another runtime\'s model never reaches Claude Code', async () => {
+  it('falls back to claude when coder status predates per-runtime readiness', async () => {
     m.coderStatus.mockResolvedValue(status())
     m.coderWorkspaceRoot.mockResolvedValue({ path: WS, created: false, git: true, init: { created: [], skipped: [] } })
     m.createCoderConversation.mockResolvedValue({ id: 'coder-4', backend: 'agent', mode: 'coder', cwd: WS })
+    await openPanel()
+    const runtimeSelect = screen.getByTitle('Locally installed AI agent (via monomind)')
+    expect(runtimeSelect).toHaveValue('codex')
+    fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
+    await waitFor(() => expect(runtimeSelect).toHaveValue('claude'))
+    expect([...runtimeSelect.options].map(o => o.value)).toEqual(['claude'])
+    expect(screen.queryByTestId('coder-fidelity-note')).not.toBeInTheDocument()
+    await sendMessage('who are you')
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', '', WS, false))
+  })
+
+  it('coder mode offers coder-ready runtimes and creates the conversation on the chosen one with its own model', async () => {
+    m.coderStatus.mockResolvedValue(status({ runtimes: [
+      { id: 'claude', installed: true, fullAccess: true, ready: true, toolActivity: 'full', effort: true, reportsCost: true, initTarget: 'claude' },
+      { id: 'codex', installed: true, fullAccess: true, ready: true, toolActivity: 'start-only', effort: true, reportsCost: false, initTarget: 'codex' },
+      { id: 'kimicode', installed: false, fullAccess: true, ready: false, toolActivity: 'full' },
+    ] }))
+    m.coderWorkspaceRoot.mockResolvedValue({ path: WS, created: true, git: true, init: { created: ['AGENTS.md', '.codex/config.toml', 'CLAUDE.md', '.claude/skills/x'], skipped: [] } })
+    m.createCoderConversation.mockResolvedValue({ id: 'coder-5', backend: 'agent', mode: 'coder', cwd: WS })
     const { api } = await import('../services/api.js')
-    api.getAgentRuntimeModels.mockImplementation(rt => Promise.resolve(rt === 'claude' ? [{ id: 'sonnet' }] : [{ id: 'opencode/big-pickle' }]))
+    api.getAgentRuntimeModels.mockImplementation(rt => Promise.resolve(rt === 'codex'
+      ? [{ id: 'gpt-5-codex', effort_levels: ['low', 'medium', 'high'] }]
+      : [{ id: 'sonnet', effort_levels: ['low', 'high'] }]))
     await openPanel()
     fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
-    const runtimeSelect = screen.getByTitle(/Locally installed AI agent|Coder mode runs on/)
-    await waitFor(() => expect(runtimeSelect).toHaveValue('claude'))
-    expect(runtimeSelect).toBeDisabled()
-    await sendMessage('who are you')
-    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('claude', 'sonnet', WS, false))
+    const runtimeSelect = screen.getByTitle(/Coding agent for this Coder chat/)
+    expect(runtimeSelect).not.toBeDisabled()
+    expect([...runtimeSelect.options].map(o => o.value)).toEqual(['codex', 'claude'])
+    expect(screen.getByTestId('coder-runtimes')).toHaveTextContent('kimicode not installed')
+
+    // Claude first, then back to codex: the model list follows the runtime,
+    // so claude's sonnet never reaches codex.
+    fireEvent.change(runtimeSelect, { target: { value: 'claude' } })
+    await waitFor(() => expect(screen.getByTitle('Model available for the selected agent runtime')).toHaveValue('sonnet'))
+    fireEvent.change(runtimeSelect, { target: { value: 'codex' } })
+    const modelSelect = screen.getByTitle('Model available for the selected agent runtime')
+    await waitFor(() => expect(modelSelect).toHaveValue('gpt-5-codex'))
+    expect(screen.getByTestId('coder-fidelity-note')).toHaveTextContent('codex shows commands, not every result')
+    expect(screen.getByTestId('coder-mode-picker')).toHaveTextContent('codex will run commands and change files in this folder without asking')
+    fireEvent.change(screen.getByLabelText('Effort level'), { target: { value: 'high' } })
+
+    await sendMessage('build it')
+    await waitFor(() => expect(m.createCoderConversation).toHaveBeenCalledWith('codex', 'gpt-5-codex', 'high', WS, false))
+    expect(m.coderWorkspaceRoot).toHaveBeenCalledWith('codex')
+    expect(screen.getByTestId('coder-init-note')).toHaveTextContent('created AGENTS.md, .codex/config.toml and 2 more')
     api.getAgentRuntimeModels.mockResolvedValue([{ id: 'sonnet' }])
+  })
+
+  it('switches off a runtime coder mode cannot run on', async () => {
+    m.coderStatus.mockResolvedValue(status({ runtimes: [
+      { id: 'codex', installed: true, fullAccess: false, ready: false },
+      { id: 'claude', installed: true, fullAccess: true, ready: true, toolActivity: 'full' },
+    ] }))
+    await openPanel()
+    const runtimeSelect = screen.getByTitle('Locally installed AI agent (via monomind)')
+    expect(runtimeSelect).toHaveValue('codex')
+    fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
+    await waitFor(() => expect(runtimeSelect).toHaveValue('claude'))
+    expect([...runtimeSelect.options].map(o => o.value)).toEqual(['claude'])
+    expect(screen.getByTestId('coder-runtimes')).toHaveTextContent('codex no full access in this monomind')
+    // Back to the assistant: every installed runtime again.
+    fireEvent.click(screen.getByRole('radio', { name: /Assistant/ }))
+    expect([...runtimeSelect.options].map(o => o.value)).toEqual(['codex', 'claude'])
+  })
+
+  it('offers no Coder choice when no runtime is ready', async () => {
+    m.coderStatus.mockResolvedValue(status({ ready: false, runtimes: [{ id: 'claude', installed: false, fullAccess: true, ready: false }] }))
+    await openPanel()
+    expect(await screen.findByRole('radio', { name: /Coder/ })).toBeDisabled()
+    expect(screen.getByTestId('coder-not-ready')).toHaveTextContent('needs a coding runtime')
   })
 
   it('an assistant chat still creates an assistant conversation with tools', async () => {
@@ -202,5 +263,49 @@ describe('AIChatPanel coder mode', () => {
     const created = ['.claude', '.claude/skills', ...Array.from({ length: 200 }, (_, i) => `.claude/skills/s${i}`), '.claude/settings.json', '.mcp.json', 'CLAUDE.md']
     expect(initSummary(created)).toBe('CLAUDE.md, .claude/settings.json, .mcp.json and 202 more')
     expect(initSummary(['a', 'b'])).toBe('a, b')
+    expect(initSummary(['AGENTS.md', 'opencode.json', 'x'], 'opencode')).toBe('AGENTS.md, opencode.json and 1 more')
+    expect(initSummary(['GEMINI.md', '.gemini/settings.json'], 'antigravity')).toBe('GEMINI.md, .gemini/settings.json')
+    expect(initSummary(['AGENTS.md', '.kimi-code/mcp.json'], 'kimicode')).toBe('AGENTS.md, .kimi-code/mcp.json')
+    expect(initSummary(['.clinerules/monomind.md', 'AGENTS.md', 'x'], 'cline')).toBe('.clinerules/monomind.md, AGENTS.md and 1 more')
+    expect(initSummary(['CONVENTIONS.md', '.aider.conf.yml'], 'aider')).toBe('CONVENTIONS.md, .aider.conf.yml')
+    expect(initSummary(['AGENTS.md'], 'dsh')).toBe('AGENTS.md')
+    expect(initSummary(['AGENTS.md', 'x'], 'pi')).toBe('AGENTS.md and 1 more')
+    for (const rt of ['pi', 'pi-rpc', 'dsh', 'grok', 'copilot', 'qwen', 'crush', 'hermes']) {
+      expect(keyInitFiles(rt), rt).toEqual(['AGENTS.md'])
+    }
+    render(<CoderInitNote workspace={{ path: '/w/grok', created: true, init: { created: ['AGENTS.md'], skipped: [] } }} runtime="grok" />)
+    const note = screen.getByTestId('coder-init-note')
+    expect(note).toHaveTextContent('created AGENTS.md')
+    expect(note).not.toHaveTextContent(/CLAUDE|\.claude|\.mcp\.json|show all/)
+  })
+})
+
+// With coder bubbles on (#227), the panel hands coder chats to them.
+describe('AIChatPanel with coder bubbles', () => {
+  it('opens a new coder bubble instead of switching the panel to Coder', async () => {
+    m.coderStatus.mockResolvedValue(status())
+    const onOpenCoderChat = vi.fn()
+    await openPanel({ onOpenCoderChat })
+    fireEvent.click(await screen.findByRole('radio', { name: /Coder/ }))
+    expect(onOpenCoderChat).toHaveBeenCalledWith(null)
+    expect(screen.getByRole('radio', { name: /Assistant/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.queryByRole('radiogroup', { name: 'Coder workspace' })).not.toBeInTheDocument()
+  })
+
+  it('opens a past coder session as its bubble and does not auto-continue it here', async () => {
+    m.coderStatus.mockResolvedValue(status())
+    const coderConv = { id: 'coder-9', backend: 'agent', mode: 'coder', cwd: '/w/proj', workflowContext: 'general', runtimeId: 'claude', updatedAt: '2026-09-29T10:00:00Z' }
+    const plainConv = { id: 'plain-1', backend: 'agent', mode: 'assistant', workflowContext: 'general', runtimeId: 'claude', updatedAt: '2026-09-28T10:00:00Z' }
+    m.listChatConversations.mockResolvedValue({ items: [coderConv, plainConv] })
+    const onOpenCoderChat = vi.fn()
+    await openPanel({ onOpenCoderChat })
+    // The newest non-coder conversation is the one continued here.
+    await waitFor(() => expect(m.getChatTurns).toHaveBeenCalledWith('plain-1', '', 50))
+    expect(m.getChatTurns).not.toHaveBeenCalledWith('coder-9', '', 50)
+
+    fireEvent.click(screen.getByTitle('Past sessions'))
+    const options = await screen.findAllByRole('option')
+    fireEvent.click(options.find(o => o.textContent.includes('proj')))
+    expect(onOpenCoderChat).toHaveBeenCalledWith(coderConv)
   })
 })

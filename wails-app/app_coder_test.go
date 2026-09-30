@@ -33,7 +33,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 			t.Errorf("%s = %s, want the status JSON verbatim", name, got)
 		}
 	}
-	if got := a.CoderWorkspaceRoot(); !strings.Contains(got, `"path":"/home/u/monoagent-coder"`) {
+	if got := a.CoderWorkspaceRoot("codex"); !strings.Contains(got, `"path":"/home/u/monoagent-coder"`) {
 		t.Errorf("CoderWorkspaceRoot = %s", got)
 	}
 	if got := a.CoderWorkspaceList(); !strings.HasPrefix(got, `[{"path":"/w/a"`) {
@@ -49,7 +49,7 @@ func TestApp_CoderSettings_ShellOutAndReturnTheCLIJSON(t *testing.T) {
 		"coder enable --yes-i-understand",
 		"coder disable",
 		"coder set --workspace-root /w --max-turns 50 --timeout 30m --budget-usd 2.5",
-		"coder workspace root",
+		"coder workspace root --runtime codex",
 		"coder workspace list",
 	}
 	// Map iteration above runs the four status calls in any order.
@@ -85,22 +85,22 @@ func TestCoderSetArgs_LeavesUnsetValuesAlone(t *testing.T) {
 }
 
 func TestApp_CreateCoderConversation_BuildsModeAndFolderArgs(t *testing.T) {
-	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c9","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"claude","model":"sonnet","mode":"coder","cwd":"/w/proj","created_at":"2026-09-27T10:00:00Z","updated_at":"2026-09-27T10:00:00Z"}`})
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c9","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"codex","model":"gpt-5-codex","effort":"high","mode":"coder","cwd":"/w/proj","created_at":"2026-09-27T10:00:00Z","updated_at":"2026-09-27T10:00:00Z"}`})
 	a, _ := newCLIChatApp(t, bin)
 
 	var conv struct {
 		ID, Mode, Cwd, WorkflowContext string
 	}
-	if err := json.Unmarshal([]byte(a.CreateCoderConversation("claude", "sonnet", "/w/proj", false)), &conv); err != nil {
+	if err := json.Unmarshal([]byte(a.CreateCoderConversation("codex", "gpt-5-codex", "high", "/w/proj", false)), &conv); err != nil {
 		t.Fatal(err)
 	}
 	if conv.ID != "c9" || conv.Mode != "coder" || conv.Cwd != "/w/proj" || conv.WorkflowContext != "general" {
 		t.Errorf("conversation = %+v", conv)
 	}
-	a.CreateCoderConversation("claude", "", "", true)
+	a.CreateCoderConversation("claude", "", "", "", true)
 	got := readArgsLog(t, argsLog)
 	want := []string{
-		"--profile default --json chat history create --runtime claude --workflow general --mode coder --cwd /w/proj --model sonnet",
+		"--profile default --json chat history create --runtime codex --workflow general --mode coder --cwd /w/proj --model gpt-5-codex --effort high",
 		"--profile default --json chat history create --runtime claude --workflow general --mode coder --new-workspace",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
@@ -111,7 +111,7 @@ func TestApp_CreateCoderConversation_BuildsModeAndFolderArgs(t *testing.T) {
 func TestApp_CreateCoderConversation_NeedsAFolder(t *testing.T) {
 	bin, argsLog := chatFakeCLI(t)
 	a, _ := newCLIChatApp(t, bin)
-	if got := a.CreateCoderConversation("claude", "", "", false); !strings.Contains(got, `"error"`) {
+	if got := a.CreateCoderConversation("claude", "", "", "", false); !strings.Contains(got, `"error"`) {
 		t.Errorf("CreateCoderConversation without a folder = %s, want an error", got)
 	}
 	if calls := readArgsLog(t, argsLog); len(calls) != 0 {
@@ -129,7 +129,7 @@ func TestApp_CoderCLIErrorsKeepTheCode(t *testing.T) {
 	)
 	a, _ := newCLIChatApp(t, bin)
 	var r struct{ Error, Code string }
-	if err := json.Unmarshal([]byte(a.CreateCoderConversation("claude", "", "/w", false)), &r); err != nil {
+	if err := json.Unmarshal([]byte(a.CreateCoderConversation("claude", "", "", "/w", false)), &r); err != nil {
 		t.Fatal(err)
 	}
 	if r.Code != "coder_disabled" || r.Error != "coder mode is off; enable it in Settings" {

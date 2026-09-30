@@ -673,6 +673,26 @@ func (a *App) StopChatTurn(conversationID, turnID string) string {
 	return `{"ok":true}`
 }
 
+// StopChatAgent stops one worker of a running dynamic-org turn (#255),
+// leaving the lead and the other workers running, through `monoagentcli
+// chat turn stop --agent`. That reaches the turn's process whichever
+// window runs it. It returns the CLI's result: the worker's status after
+// the stop (cancelled, or what it had already finished with) and whether a
+// stop was sent. The stage updates from the journal's agent events. The ids
+// go after "--" (and the agent as --agent=), so none can read as a flag.
+func (a *App) StopChatAgent(conversationID, turnID, agentID string) string {
+	if a.chatSup == nil {
+		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
+	}
+	var res map[string]any
+	if err := a.chatSup.cli(a.getActiveProfileID(), &res, "chat", "turn", "stop", "--agent="+agentID, "--wait", "20s", "--", conversationID, turnID); err != nil {
+		return a.chatBindingError(err)
+	}
+	res["ok"] = true
+	b, _ := json.Marshal(res)
+	return string(b)
+}
+
 type chatConversationPage struct {
 	Items      []ai.ConversationRecord `json:"items"`
 	NextCursor string                  `json:"next_cursor"`
@@ -718,8 +738,11 @@ func (a *App) GetChatTurns(conversationID, cursor string, limit int) string {
 	}
 	var page chatTurnPage
 	if err := a.chatSup.cli(a.getActiveProfileID(), &page, args...); err != nil {
-		if chatCLIExitCode(err) == 2 { // unknown conversation: no turns, as before
-			return `{"items":[],"nextCursor":""}`
+		// Unknown (or deleted) conversation: no turns, as before, plus
+		// notFound so a caller holding on to it (a restored coder bubble)
+		// can let it go.
+		if chatCLIExitCode(err) == 2 {
+			return `{"items":[],"nextCursor":"","notFound":true}`
 		}
 		return a.chatBindingError(err)
 	}

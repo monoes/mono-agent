@@ -36,6 +36,7 @@ vi.mock('../lib/health.js', () => ({
 vi.mock('../services/api.js', () => ({ api: { isMonomindInitialized: () => Promise.resolve(true) } }))
 vi.mock('../components/ConfirmDialog.jsx', () => ({ confirm: (...a) => mockConfirm(...a) }))
 vi.mock('../components/MonomindInitPrompt.jsx', () => ({ default: () => null }))
+vi.mock('../components/agents/AgentRoster.jsx', () => ({ default: () => null }))
 
 import Agents from './Agents.jsx'
 

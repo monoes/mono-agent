@@ -38,7 +38,7 @@ build-all: build-cli
 
 .PHONY: test
 test:
-	go test -race -v ./...
+	go test -race -timeout 25m -v ./...
 
 .PHONY: lint
 lint:

@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RefreshCw, Bot, MessageSquare, Download, Copy, Loader2, ArrowUpCircle } from 'lucide-react'
 import { cachedAgentScan, invalidateAgentScan, installRecipe, recipeCommand } from '../lib/agentRuntimes.js'
+import { runtimeLabel } from '../lib/runtimeLabels.js'
 import { installRuntime, runHealth } from '../lib/health.js'
 import { api } from '../services/api.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import MonomindInitPrompt from '../components/MonomindInitPrompt.jsx'
+import AgentRoster from '../components/agents/AgentRoster.jsx'
 
 function statusColor(installed) {
   return installed ? 'var(--green-neon)' : 'var(--text-muted)'
@@ -45,7 +47,7 @@ function RuntimeTile({ agent, onChat, onInstall, job }) {
     >
       <Bot size={22} style={{ color: agent.installed ? 'var(--cyan)' : 'var(--text-muted)', opacity: agent.installed ? 1 : 0.5 }} />
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: agent.installed ? 'var(--text)' : 'var(--text-secondary)', textAlign: 'center' }}>
-        {agent.id}
+        {runtimeLabel(agent.id)}
       </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor(agent.installed), boxShadow: agent.installed ? '0 0 5px var(--green-neon)' : 'none', flexShrink: 0 }} />
@@ -267,11 +269,14 @@ export default function Agents({ onOpenChat }) {
               <div className="empty-state-desc">{t('agents.noRuntimesDesc')}</div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
-              {agents.map(a => (
-                <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} onInstall={onInstall} job={jobs[a.id]} />
-              ))}
-            </div>
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+                {agents.map(a => (
+                  <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} onInstall={onInstall} job={jobs[a.id]} />
+                ))}
+              </div>
+              <AgentRoster />
+            </>
           )}
         </div>
       </div>

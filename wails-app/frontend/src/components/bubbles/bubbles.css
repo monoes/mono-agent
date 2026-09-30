@@ -1,0 +1,274 @@
+/* Coder chat bubbles (#227): the dock, the bubbles, and the expanded
+   overlay. Colors come from the tokens in index.css. Every animation here
+   is switched off under prefers-reduced-motion at the end of the file. */
+
+.bubble-dock {
+  position: fixed;
+  bottom: 44px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.bubble-dock.right { right: 18px; }
+.bubble-dock.left { left: 238px; }
+.bubble-dock > * { pointer-events: auto; }
+
+.bubble {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, var(--elevated), var(--base) 75%);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition), box-shadow var(--transition);
+  animation: bubbleIn 260ms cubic-bezier(.2, .9, .3, 1.3);
+}
+.bubble:hover, .bubble:focus-visible { transform: scale(1.08); box-shadow: 0 8px 22px rgba(0, 180, 216, 0.25); outline: none; }
+.bubble.expanded { box-shadow: 0 0 0 2px var(--cyan), 0 8px 22px rgba(0, 180, 216, 0.35); }
+.bubble.dragging { opacity: 0.4; }
+
+/* The status ring: a conic ring drawn behind the bubble's face. */
+.bubble-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  z-index: -1;
+  background: conic-gradient(var(--ring, var(--border-bright)) 0 100%);
+}
+.bubble[data-status="working"] .bubble-ring {
+  background: conic-gradient(var(--cyan) 0 30%, transparent 30% 55%, var(--teal) 55% 80%, transparent 80%);
+  animation: bubbleSpin 1.4s linear infinite;
+}
+.bubble[data-status="done"] .bubble-ring { --ring: var(--green-neon); }
+.bubble[data-status="error"] .bubble-ring { --ring: var(--red); }
+.bubble[data-status="needs"] .bubble-ring { --ring: var(--yellow); animation: bubblePulse 1.2s ease-in-out infinite; }
+.bubble[data-status="idle"] .bubble-ring { --ring: rgba(0, 180, 216, 0.35); }
+
+/* An org bubble's corner mark (#229), so it reads apart from a coder chat. */
+.bubble-kind {
+  position: absolute;
+  bottom: -2px;
+  left: -2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--elevated);
+  border: 1px solid var(--border-bright);
+  color: var(--cyan);
+}
+
+.bubble-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 17px;
+  animation: bubbleIn 200ms ease-out;
+}
+.bubble-close {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid var(--border-bright);
+  background: var(--overlay);
+  color: var(--text-secondary);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+.bubble-wrap:hover .bubble-close, .bubble-wrap:focus-within .bubble-close { display: flex; }
+.bubble-close:hover { color: var(--red); border-color: var(--red); }
+
+.bubble-wrap { position: relative; }
+.bubble-card {
+  position: absolute;
+  bottom: 4px;
+  width: 230px;
+  padding: 9px 11px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-bright);
+  background: var(--overlay);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  pointer-events: none;
+  animation: fade-in 140ms ease-out;
+}
+.bubble-dock.right .bubble-card { right: 62px; }
+.bubble-dock.left .bubble-card { left: 62px; }
+.bubble-card-title { font-size: 11.5px; font-weight: 600; color: var(--text); margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bubble-new {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px dashed var(--border-bright);
+  background: var(--surface);
+  color: var(--cyan);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bubble-new:hover { border-style: solid; background: var(--elevated); }
+.bubble-grip {
+  width: 22px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border-bright);
+  cursor: grab;
+  opacity: 0.5;
+}
+.bubble-grip:hover { opacity: 1; }
+
+.bubble-overflow {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 28px;
+  background: var(--overlay);
+  border: 1px solid var(--border-bright);
+  animation: fade-in 140ms ease-out;
+}
+.bubble-dock.right .bubble-overflow { right: 62px; }
+.bubble-dock.left .bubble-overflow { left: 62px; }
+
+/* ── Expanded overlay ── */
+.bubble-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(2, 5, 9, 0.55);
+  backdrop-filter: blur(2px);
+  animation: fade-in 180ms ease-out;
+}
+.bubble-overlay {
+  position: fixed;
+  z-index: 61;
+  top: 28px;
+  bottom: 28px;
+  left: 50%;
+  width: min(1080px, calc(100vw - 120px));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--border-bright);
+  background: #060b13;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 180, 216, 0.06);
+  overflow: hidden;
+  transform-origin: var(--origin-x, 100%) var(--origin-y, 100%);
+  animation: bubbleGrow 240ms cubic-bezier(.2, .8, .2, 1);
+}
+.bubble-overlay.closing { animation: bubbleShrink 170ms ease-in forwards; }
+.bubble-backdrop.closing { animation: fade-in 170ms ease-in reverse forwards; }
+.bubble-overlay.narrow { top: 0; bottom: 0; left: 0; width: 100vw; transform: none; border-radius: 0; }
+
+.bubble-divider {
+  height: 7px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat;
+}
+.bubble-divider:hover, .bubble-divider:focus-visible { background: linear-gradient(var(--cyan), var(--cyan)) center / 100% 1px no-repeat; outline: none; }
+
+/* ── Stage ── */
+.bubble-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(0, 180, 216, 0.07), transparent 60%),
+    repeating-linear-gradient(0deg, transparent 0 23px, rgba(0, 180, 216, 0.035) 23px 24px),
+    repeating-linear-gradient(90deg, transparent 0 23px, rgba(0, 180, 216, 0.035) 23px 24px);
+}
+.stage-node {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 220px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--border-bright);
+  background: linear-gradient(145deg, var(--elevated), var(--surface));
+  animation: stageNodeIn 320ms ease-out;
+}
+.stage-node.working { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(0, 180, 216, 0.25), 0 0 28px rgba(0, 180, 216, 0.18); }
+.stage-node.working::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 12px;
+  border: 1px solid var(--cyan);
+  animation: stageBreath 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.bubble-jump {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #0d1a28;
+  border: 1px solid rgba(0, 180, 216, 0.35);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+@keyframes bubbleIn { from { transform: scale(0.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes bubbleSpin { to { transform: rotate(360deg); } }
+@keyframes bubblePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes bubbleGrow { from { opacity: 0; transform: translateX(-50%) scale(0.2); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+@keyframes bubbleShrink { to { opacity: 0; transform: translateX(-50%) scale(0.2); } }
+@keyframes stageNodeIn { from { opacity: 0; transform: translate(-50%, -50%) scale(0.85); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes stageBreath { 0%, 100% { opacity: 0.15; } 50% { opacity: 0.8; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble, .bubble-badge, .bubble-card, .bubble-overflow, .bubble-backdrop, .bubble-overlay, .stage-node,
+  .bubble[data-status] .bubble-ring, .stage-node.working::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

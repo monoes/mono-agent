@@ -176,6 +176,7 @@ func Handshake(ctx context.Context, bin string) (*VersionInfo, error) {
 			return nil, unusable("monomind %s lacks capability %q — update it: `npm install -g @monoes/monomindcli@latest`", vi.Version, cap)
 		}
 	}
+	rememberCapabilities(bin, &vi)
 	return &vi, nil
 }
 

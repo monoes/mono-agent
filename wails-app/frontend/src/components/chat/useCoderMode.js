@@ -2,11 +2,50 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../services/api.js'
 
 // Coder mode (#203) state for the chat panel: the CLI's `coder status`
-// (enabled / ready / defaults) and the recent workspaces. Everything comes
-// from monoagentcli through the api wrappers; nothing is decided here
-// beyond what to show.
+// (enabled / ready / defaults / per-runtime readiness) and the recent
+// workspaces. Everything comes from monoagentcli through the api wrappers;
+// nothing is decided here beyond what to show.
 
-export const CODER_RUNTIME = 'claude'
+// coderRuntimes is status.runtimes ([{id, installed, fullAccess, ready,
+// toolActivity, resume, effort, maxTurns, reportsCost, initTarget}]), or —
+// from a monoagentcli that predates per-runtime coder mode — the one
+// runtime it names (claude), ready when the status is.
+export function coderRuntimes(status) {
+  if (!status) return []
+  if (Array.isArray(status.runtimes)) return status.runtimes
+  const id = status.runtime || 'claude'
+  const ready = status.ready !== false
+  return [{ id, installed: true, fullAccess: true, ready, toolActivity: 'full', resume: true, effort: true, maxTurns: true, reportsCost: true, initTarget: 'claude' }]
+}
+
+// coderReadyIds lists the runtimes a coder chat can run on now.
+export function coderReadyIds(status) {
+  return coderRuntimes(status).filter(r => r.ready).map(r => r.id)
+}
+
+// coderReady: coder chats can start (some runtime is ready). A status from
+// before per-runtime readiness keeps its own ready flag.
+export function coderReady(status) {
+  if (!status) return false
+  if (Array.isArray(status.runtimes)) return status.runtimes.some(r => r.ready)
+  return status.ready !== false
+}
+
+// runtimeReadiness is one runtime's readiness in words.
+export function runtimeReadiness(rt) {
+  if (rt.ready) return 'ready'
+  if (rt.installed === false) return 'not installed'
+  if (!rt.fullAccess) return 'no full access in this monomind'
+  return 'not ready'
+}
+
+// fidelityNote says what a runtime's tool cards leave out, or '' when it
+// reports every call with its result.
+export function fidelityNote(rt) {
+  if (!rt || !rt.toolActivity || rt.toolActivity === 'full') return ''
+  if (rt.toolActivity === 'none') return `${rt.id} shows no tool calls, only its replies`
+  return `${rt.id} shows commands, not every result`
+}
 
 // folderName is the last path segment ("…/20260927-brisk-otter").
 export function folderName(path) {
@@ -20,10 +59,13 @@ export function isCoderConversation(c) {
 }
 
 // missingText explains a not-ready status: which monomind capabilities
-// coder mode still needs.
+// coder mode still needs, or — when monomind has them all — that no coding
+// runtime is ready.
 export function missingText(status) {
   const missing = status?.missingCapabilities || []
-  return missing.length ? `needs monomind update (missing: ${missing.join(', ')})` : 'needs monomind update'
+  if (missing.length) return `needs monomind update (missing: ${missing.join(', ')})`
+  if (Array.isArray(status?.runtimes)) return 'needs a coding runtime (claude, codex, opencode, …) installed'
+  return 'needs monomind update'
 }
 
 // useCoderStatus loads `coder status` once `active` (the panel is open and
@@ -54,4 +96,25 @@ export function useRecentWorkspaces(active) {
     return () => { current = false }
   }, [active])
   return recent
+}
+
+// useCoderRuntimeChoice narrows the runtime picker for a coder chat being
+// set up: `options` are the scanned runtimes coder mode can run on now, and
+// a current runtime outside them is swapped for the first that is — so the
+// model list shown (fetched per runtime) is always the chosen runtime's
+// own. `info` is the chosen runtime's coder status entry (fidelity, cost
+// reporting, …). active is false outside coder mode and once the
+// conversation exists (its runtime is fixed then).
+export function useCoderRuntimeChoice({ active, status, runtimes, selectedRuntime, setSelectedRuntime }) {
+  const readyIds = coderReadyIds(status)
+  const options = runtimes.filter(r => readyIds.includes(r.id))
+  const optionKey = options.map(r => r.id).join(',')
+  useEffect(() => {
+    if (!active || options.length === 0 || options.some(r => r.id === selectedRuntime)) return
+    setSelectedRuntime(options[0].id)
+    // options is rebuilt every render; optionKey is its identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, optionKey, selectedRuntime, setSelectedRuntime])
+  const info = coderRuntimes(status).find(r => r.id === selectedRuntime) || null
+  return { options, readyIds, info }
 }

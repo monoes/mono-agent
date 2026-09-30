@@ -5,9 +5,15 @@ package main
 import (
 	"os/exec"
 	"syscall"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/proctree"
 )
+
+// chatKillGrace mirrors proc_unix.go's: stopRunningCmds waits up to it
+// (plus shutdownReapMargin) for reaped process groups. Windows tracks no
+// group, so nothing waits on it here; it must still exist for app.go.
+var chatKillGrace = 15 * time.Second
 
 // hideWindow configures cmd so that no visible console window is created on Windows.
 func hideWindow(cmd *exec.Cmd) {

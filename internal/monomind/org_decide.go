@@ -53,8 +53,8 @@ func OrgDenyWith(ctx context.Context, projectRoot, name, role, action string, op
 
 // OrgAnswerWith answers a pending ask_human question, attributed.
 func OrgAnswerWith(ctx context.Context, projectRoot, name, questionID, answer string, opts ResolveOptions) (json.RawMessage, error) {
-	args := append([]string{"answer", name, questionID, answer}, attributionArgs(ctx, opts, false)...)
-	return runOrgJSON(ctx, projectRoot, args...)
+	cmd := append([]string{"answer"}, attributionArgs(ctx, opts, false)...)
+	return runOrgJSONText(ctx, projectRoot, cmd, name, questionID, answer)
 }
 
 // OrgGateResolveWith approves or rejects a gate, attributed.
@@ -63,10 +63,9 @@ func OrgGateResolveWith(ctx context.Context, projectRoot, name, gateID string, a
 	if approve {
 		sub = "gate-approve"
 	}
-	args := []string{sub, name, gateID}
+	values := []string{name, gateID}
 	if resolution != "" {
-		args = append(args, resolution)
+		values = append(values, resolution)
 	}
-	args = append(args, attributionArgs(ctx, opts, false)...)
-	return runOrgJSON(ctx, projectRoot, args...)
+	return runOrgJSONText(ctx, projectRoot, append([]string{sub}, attributionArgs(ctx, opts, false)...), values...)
 }
