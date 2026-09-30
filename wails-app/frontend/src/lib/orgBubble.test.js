@@ -52,7 +52,7 @@ describe('running-org adapter over a recorded bus', () => {
     expect(nodes.dev.summary).toBe('Draft ready in NOTES.md')
     expect(feed.some(f => f.type === 'result' && f.agentId === 'dev')).toBe(true)
     // A full-access role's tool_activity pair is one completed Edit.
-    const edit = Object.values(nodes.dev.calls).find(c => c.name === 'Edit')
+    const edit = nodes.dev.callOrder.map(id => s.calls[id]).find(c => c?.name === 'Edit')
     expect(edit).toMatchObject({ status: 'completed', ok: true, native: true })
     expect(nodes.dev.files).toEqual(['/work/acme/NOTES.md'])
     // A plain `tool` call ends when the role stops working.

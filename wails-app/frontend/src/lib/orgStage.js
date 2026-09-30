@@ -17,6 +17,7 @@ export const MAX_FEED = 200
 export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
 const MAX_CALLS = 400
+const MAX_QUESTS = 100
 const MAX_FILES = 200
 
 // Statuses a node can be in (agent.status's "to", plus the lead's own).
@@ -103,14 +104,16 @@ function newNode(id, patch = {}) {
     parentId: id === LEAD_ID ? null : LEAD_ID,
     role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
-    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusSeq: 0, statusAt: null,
+    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null,
     prevModel: null, reassignedSeq: 0, reassignedAt: null,
     doing: null,
     tools: 0, toolsDone: 0, files: [], testsRun: 0, testsPassed: 0,
     tokensIn: null, tokensOut: null, costUsd: null, costEstimated: false,
     needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false,
     spawnSeq: 0, spawnAt: null, spawnedSeen: false,
-    calls: {}, callOrder: [], messages: [],
+    // callOrder is the agent's own tool calls, in order; their content is
+    // the turn's (chatReducer's agentCalls), never copied here.
+    callOrder: [], messages: [],
     ...patch,
   }
 }
@@ -195,7 +198,7 @@ function questStatus(status) {
 
 function addQuest(d, ev, agentId, text, kind = 'brief') {
   const status = questStatus(d.nodes[agentId]?.status)
-  d.quests = [...d.quests, { id: `q${ev.seq ?? d.quests.length}-${agentId}`, agentId, text: clip(text, 280), kind, status, seq: ev.seq ?? 0 }]
+  d.quests = pushCapped(d.quests, { id: `q${ev.seq ?? d.quests.length}-${agentId}`, agentId, text: clip(text, 280), kind, status, seq: ev.seq ?? 0 }, MAX_QUESTS)
 }
 
 // syncQuest moves an agent's latest quest to its status.
@@ -213,14 +216,10 @@ function syncQuest(d, agentId) {
 
 function setStatus(d, ev, id, to, detail = '') {
   const n = d.node(id)
-  // A status from before the one the node already has (a late delivery)
-  // must not move it backwards.
-  if (typeof ev.seq === 'number' && ev.seq < n.statusSeq) return
   // A question waits for an answer until the agent moves on.
   if (n.status !== to) n.needsYou = false
   n.status = to
   n.statusDetail = detail || ''
-  n.statusSeq = typeof ev.seq === 'number' ? ev.seq : n.statusSeq
   n.statusAt = ev.at || n.statusAt
   syncQuest(d, id)
 }
@@ -258,18 +257,7 @@ function onToolStarted(d, ev, p) {
     d.testCalls = { ...d.testCalls, [p.callId]: 'run' }
     n.testsRun += 1
   }
-  if (owner !== LEAD_ID && Object.keys(n.calls).length < MAX_CALLS) {
-    n.calls = {
-      ...n.calls,
-      [p.callId]: {
-        callId: p.callId, name: p.name, arguments: p.arguments ?? null, status: 'started', ok: null, result: null, startedAt: ev.at,
-        ...(p.native ? { native: true } : {}),
-        ...(p.parentCallId && n.calls[p.parentCallId] ? { parentCallId: p.parentCallId } : {}),
-        ...(p.kind ? { kind: p.kind } : {}),
-      },
-    }
-    n.callOrder = [...n.callOrder, p.callId]
-  }
+  if (owner !== LEAD_ID && n.callOrder.length < MAX_CALLS) n.callOrder = [...n.callOrder, p.callId]
   // A Claude-native Task call starts a subagent: its own node under the
   // agent that called it (#226: agent.spawned{agentType:"native"} when the
   // runner reports it; the Task call otherwise).
@@ -279,7 +267,7 @@ function onToolStarted(d, ev, p) {
     const sub = d.node(id)
     Object.assign(sub, {
       parentId: owner, native: true, agentType: 'native', role: args.subagent_type || args.description || '',
-      brief: clip(brief, 2000), status: 'working', statusSeq: ev.seq ?? 0, spawnSeq: ev.seq ?? 0, spawnAt: ev.at || null,
+      brief: clip(brief, 2000), status: 'working', spawnSeq: ev.seq ?? 0, spawnAt: ev.at || null,
       runtime: d.nodes[owner]?.runtime || '', model: d.nodes[owner]?.model || '',
     })
     d.nativeByCall = { ...d.nativeByCall, [p.callId]: id }
@@ -296,16 +284,6 @@ function onToolCompleted(d, ev, p) {
   const n = d.node(owner)
   n.toolsDone += 1
   if (n.doing?.callId === p.callId) n.doing = { ...n.doing, active: false }
-  if (n.calls[p.callId]) {
-    n.calls = {
-      ...n.calls,
-      [p.callId]: {
-        ...n.calls[p.callId], status: 'completed', ok: p.ok ?? null, result: p.result ?? '', finishedAt: ev.at,
-        ...(p.truncated ? { truncated: true } : {}), ...(p.denied ? { denied: true } : {}), ...(p.cancelled ? { cancelled: true } : {}),
-        ...(typeof p.exitCode === 'number' ? { exitCode: p.exitCode } : {}),
-      },
-    }
-  }
   if (d.testCalls[p.callId] === 'run') {
     d.testCalls = { ...d.testCalls, [p.callId]: p.ok === false ? 'failed' : 'passed' }
     if (p.ok !== false) n.testsPassed += 1

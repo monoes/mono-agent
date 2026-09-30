@@ -202,7 +202,7 @@ export function OrgBubbleOverlay({ bubble, store, originRect, onCollapse, onClos
           )}
           <OrgChatView conv={conv} nameOf={nameOf} draft={draft} onDraftChange={setDraft} />
           {selectedNode && (
-            <StageDrawer node={selectedNode} leadInfo={leadInfo} turnId={conv.bubble?.run || ''} isLive={running}
+            <StageDrawer node={selectedNode} calls={conv.bubble?.calls} leadInfo={leadInfo} turnId={conv.bubble?.run || ''} isLive={running}
               canStop={false} onClose={() => setSelected(null)} />
           )}
         </div>

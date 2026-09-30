@@ -34,6 +34,8 @@ import {
 } from '../components/orgdesigner/orgActivity.js'
 
 const MAX_SEEN = 300
+// Tool calls kept for the node drawer, oldest dropped first.
+const MAX_CALLS = 400
 // Addresses on the bus that are never roles of the org.
 const NOT_ROLES = new Set(['dag', 'human', 'autonomy', 'system'])
 
@@ -72,6 +74,10 @@ export function initialOrgBubble({ org, boss = '', roles = [] } = {}) {
     joined: {},     // role → true once its node exists
     briefed: {},    // role → true once it got its first message from above
     openCall: {},   // role → its plain `tool` call still in flight
+    // Non-lead roles' tool calls, callId → call: the stage keeps only
+    // their order, and the drawer reads them from here (as a coder
+    // bubble's drawer reads chatReducer's agentCalls).
+    calls: {},
   }
 }
 
@@ -115,9 +121,32 @@ function emitter(s, ev) {
     emit(type, payload) {
       seq += 1
       stage = stageReducer(stage, { seq, at, type, payload })
+      if (payload.agentId && (type === 'tool.started' || type === 'tool.completed')) s.calls = recordCall(s.calls, type, payload, at)
     },
     done() { return { stage, seq } },
   }
+}
+
+// recordCall keeps a role's tool call in the shape ChatTimeline renders.
+function recordCall(calls, type, p, at) {
+  const prev = calls[p.callId]
+  let call
+  if (type === 'tool.started') {
+    call = {
+      callId: p.callId, name: p.name, arguments: p.arguments ?? null, status: 'started', ok: null, result: null, startedAt: at,
+      ...(p.native ? { native: true } : {}), ...(p.parentCallId ? { parentCallId: p.parentCallId } : {}),
+    }
+  } else {
+    call = {
+      ...(prev || { callId: p.callId, name: 'unknown', arguments: null }),
+      status: 'completed', ok: p.ok ?? null, result: p.result ?? '', ...(prev ? { finishedAt: at } : {}),
+      ...(p.denied ? { denied: true } : {}), ...(p.cancelled ? { cancelled: true } : {}),
+    }
+  }
+  const next = { ...calls, [p.callId]: call }
+  const ids = Object.keys(next)
+  if (ids.length > MAX_CALLS) delete next[ids[0]]
+  return next
 }
 
 function join(s, out, role) {
@@ -283,7 +312,7 @@ export function applyOrgBusEvent(state, ev) {
   }
   // A new run on the same bus starts a fresh stage (the roles stay).
   if (ev.run && s.run && ev.run !== s.run) {
-    s = { ...s, stage: initialStage(), seq: 0, joined: {}, briefed: {}, openCall: {} }
+    s = { ...s, stage: initialStage(), seq: 0, joined: {}, briefed: {}, openCall: {}, calls: {} }
   }
   if (ev.run) s.run = ev.run
   s.activity = activityApply(s.activity, ev)

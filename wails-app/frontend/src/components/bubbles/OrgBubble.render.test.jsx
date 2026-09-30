@@ -86,6 +86,11 @@ describe('an org bubble', () => {
     expect(node('qa').querySelector('[data-testid="stage-needs-you"]')).toBeTruthy()
     expect(node('dev').querySelector('[data-testid="stage-needs-you"]')).toBeNull()
     expect(screen.getByTestId('org-bubble-status')).toHaveAttribute('data-status', 'running')
+    // A role's drawer shows its own tool calls, and no Stop (roles stop with the org).
+    fireEvent.click(node('dev'))
+    const drawer = await screen.findByTestId('stage-drawer')
+    expect(drawer.querySelector('[data-testid="stage-tools"]')).toBeTruthy()
+    expect(drawer.querySelector('[data-testid="stage-stop"]')).toBeNull()
     // The bubble holds the org's event tail while it is open.
     expect(orgEventHolders('acme')).toBe(1)
     expect(api.streamOrgEvents).toHaveBeenCalledWith('acme', expect.any(String))

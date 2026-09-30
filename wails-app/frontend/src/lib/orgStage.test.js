@@ -153,6 +153,14 @@ describe('tolerance', () => {
     expect(s.nodes.w1.limited).toBe(true)
   })
 
+  it('caps the quests on a turn with many follow-ups', () => {
+    const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
+    for (let i = 2; i < 400; i++) events.push({ seq: i, type: 'agent.message', payload: { agentId: 'w1', direction: 'followup', text: `f${i}` } })
+    const s = replayStage(events)
+    expect(s.quests.length).toBe(100)
+    expect(s.quests.at(-1).text).toBe('f399')
+  })
+
   it('caps the feed and flights on a long turn', () => {
     const events = [{ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1' } }]
     for (let i = 2; i < 3000; i++) events.push({ seq: i, type: 'agent.message', payload: { agentId: 'w1', direction: 'result', text: `r${i}` } })
@@ -178,8 +186,10 @@ describe('performance', () => {
     const s = replayStage(events)
     expect(performance.now() - t0).toBeLessThan(3000)
     expect(s.nodes.w1.tools).toBeGreaterThan(1000)
-    // Tool cards kept per agent are capped; the counters are not.
-    expect(Object.keys(s.nodes.w1.calls).length).toBeLessThanOrEqual(400)
+    // The call order kept per agent is capped; the counters are not.
+    expect(s.nodes.w1.callOrder.length).toBeLessThanOrEqual(400)
+    // The stage never copies a call's content: that stays in the turn.
+    expect(s.nodes.w1.calls).toBeUndefined()
   })
 })
 

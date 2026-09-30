@@ -190,6 +190,10 @@ export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = 
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoomBy])
 
+  // endDrag removes a drag's window listeners; also on unmount mid-drag.
+  const endDrag = useRef(null)
+  useEffect(() => () => endDrag.current?.(), [])
+
   const onPointerDown = (e) => {
     if (e.button !== 0 || e.target.closest('button')) return
     const start = { x: e.clientX, y: e.clientY }
@@ -199,11 +203,17 @@ export function OrgStage({ stage: liveStage, leadInfo, leadIdle = '', working = 
       userMoved.current = true
       setCamera({ ...cam0, x: cam0.x + ev.clientX - start.x, y: cam0.y + ev.clientY - start.y })
     }
-    const onUp = () => {
-      setDragging(false)
+    const remove = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      endDrag.current = null
     }
+    const onUp = () => {
+      setDragging(false)
+      remove()
+    }
+    endDrag.current?.()
+    endDrag.current = remove
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
