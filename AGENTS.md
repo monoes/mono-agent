@@ -711,7 +711,17 @@ login (and its bill) is what the turn uses.
   from exec either and use `agent test`. When `agent test` fails fast without
   JSON (the command itself isn't supported) the exec test runs instead; any
   other failure is the result, never a second model call. The plan
-  line's `checker` says which one ran.
+  line's `checker` says which one ran. The plan's `est_cost_usd` uses each
+  model's stored cost; a model with none yet is priced from a built-in
+  table (`internal/agentroster/prices.go`, from monomind's pricing table,
+  input at the cache-write rate) and counted in `table_estimated`; a
+  runtime's own price covers only its `default` model, and a model the
+  table can't price (or a dearer `-pro`/`-max` variant of one it can)
+  counts in `unknown_cost`. Auto re-validation's next plan has the same
+  `table_estimated`. `sign_in` lists planned runtimes
+  whose last test failed to sign in, since a runtime can list more models
+  once signed in. An `auth` result carries monomind's `login_hint`, shown by
+  `agent validate`, `agent roster` and the GUI.
   `monoagentcli agent roster [--ready-only] --json` reads the stored results
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
