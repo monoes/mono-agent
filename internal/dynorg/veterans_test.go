@@ -213,7 +213,8 @@ func TestResearchVeteranSubWorkerStaysConfined(t *testing.T) {
 				t.Errorf("an unconfined exec ran: access %q", ex.calls[0].Access)
 			}
 			for _, p := range em.find(chatevents.EventAgentStatus) {
-				if s := p.(chatevents.AgentStatusPayload); s.AgentID == "w2" && (slices.Contains(s.Leases, "write") || s.To == chatevents.AgentWaitingLease) {
+				if s := p.(chatevents.AgentStatusPayload); s.AgentID == "w2" && (slices.Contains(s.Leases, "write") || s.To == chatevents.AgentWaitingLease ||
+					s.Confinement == chatevents.ConfinementWriteLease) {
 					t.Errorf("w2 went for the write lease: %+v", s)
 				}
 			}
@@ -260,4 +261,45 @@ func TestWritingVeteranGetsAWorktreeWhenWritersAreIsolated(t *testing.T) {
 	if !branchExists(t, repo, branchName("t2", "w1")) {
 		t.Error("no branch for the veteran writer")
 	}
+}
+
+// A research worker's veteran sub-worker on a model that still confines
+// it runs with --access read and says so (agent.status confinement).
+func TestConfinedVeteranSubWorkerReportsAccessRead(t *testing.T) {
+	ex := &treeExec{}
+	em := &recEmitter{}
+	c := New(context.Background(), Config{Cwd: "/w", Limits: treeLimits, Staffer: &Staffer{Roster: []Model{treeModel, openModel}, Lead: treeModel},
+		ReadAccess: true, Exec: ex.exec, Emit: em})
+	defer c.Close()
+	c.AddVeterans([]Veteran{
+		{ID: "w1", Role: "Researcher", Access: ProfileResearch, Runtime: "claude", Model: "opus", Session: "s1", Cwd: "/w", AllowSpawn: true},
+		{ID: "w2", ParentID: "w1", Role: "Researcher", Access: ProfileResearch, Runtime: "claude", Model: "opus", Session: "s2", Cwd: "/w", Report: "r2"},
+	})
+	c.mu.Lock()
+	w1 := c.workers["w1"]
+	c.mu.Unlock()
+	if _, err := c.message(context.Background(), w1, "w2", "more"); err != nil {
+		t.Fatal(err)
+	}
+	if info := c.Wait(context.Background(), []string{"w2"}, 0)[0]; info.Status != chatevents.AgentDone {
+		t.Fatalf("w2 = %+v", info)
+	}
+	if o, _ := ex.callFor("more"); o.Access != monomind.AccessRead || o.Resume != "s2" {
+		t.Errorf("w2 exec: access %q, resume %q", o.Access, o.Resume)
+	}
+	saw := false
+	for _, p := range em.find(chatevents.EventAgentStatus) {
+		s := p.(chatevents.AgentStatusPayload)
+		if s.AgentID != "w2" {
+			continue
+		}
+		if s.Confinement == chatevents.ConfinementWriteLease || slices.Contains(s.Leases, "write") {
+			t.Errorf("w2 reported the write lease: %+v", s)
+		}
+		saw = saw || s.Confinement == chatevents.ConfinementAccessRead
+	}
+	if !saw {
+		t.Error("w2 never reported access-read confinement")
+	}
+	assertClean(t, c)
 }
