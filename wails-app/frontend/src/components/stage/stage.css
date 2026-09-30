@@ -99,6 +99,7 @@
 .stage-card[data-status='working'], .stage-card[data-status='starting'] { border-color: var(--cyan); box-shadow: 0 0 18px rgba(0, 180, 216, 0.16); }
 .stage-card[data-status='done'] { opacity: 0.62; }
 .stage-card[data-status='cancelled'] { opacity: 0.5; }
+.stage-card.veteran { opacity: 0.45; filter: grayscale(0.85); border-style: dotted; }
 .stage-card[data-status='failed'] { border-color: var(--red, #ef4444); box-shadow: 0 0 14px rgba(239, 68, 68, 0.25); }
 .stage-card[data-status='failed'].fresh-status { animation: stageShake 420ms ease-in-out; }
 .stage-card.needs { border-color: #fbbf24; animation: stageNeeds 1.4s ease-in-out infinite; }

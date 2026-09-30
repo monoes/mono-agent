@@ -187,13 +187,13 @@ func TestStaffLeadPickerRequiresModel(t *testing.T) {
 }
 
 func TestWorkerPromptCarriesContract(t *testing.T) {
-	p := workerSystemPrompt(Staff{Role: "Tester", AgentBody: "Test.", Access: ProfileQA, Skills: []Skill{{Name: "e2e", Text: "Use playwright."}, {Name: "bare"}}}, "/w", []string{"a.go"})
+	p := workerSystemPrompt(Staff{Role: "Tester", AgentBody: "Test.", Access: ProfileQA, Skills: []Skill{{Name: "e2e", Text: "Use playwright."}, {Name: "bare"}}}, "/w", []string{"a.go"}, false)
 	for _, want := range []string{"Tester", "/w", "Test.", "Use playwright.", "Use the bare skill", "monoagentcli", "a.go", "200 words", "people records"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt misses %q", want)
 		}
 	}
-	if !strings.Contains(workerSystemPrompt(Staff{Role: "R", Access: ProfileResearch}, "/w", nil), "Do not edit") {
+	if !strings.Contains(workerSystemPrompt(Staff{Role: "R", Access: ProfileResearch}, "/w", nil, false), "Do not edit") {
 		t.Error("research prompt must forbid edits")
 	}
 }

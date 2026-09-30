@@ -545,9 +545,9 @@ tools:
 | Tool | What it does |
 |---|---|
 | `org_roster` | The models, roles and access profiles it can staff with, the limits, and the workers so far. |
-| `org_spawn` | Starts a worker on a brief. The lead may choose the worker's `role`, `skills`, `runtime`/`model`, `effort` and `access`; anything left out is picked for it. With `wait` it waits up to 100s. |
+| `org_spawn` | Starts a worker on a brief. The lead may choose the worker's `role`, `skills`, `runtime`/`model`, `effort` and `access`; anything left out is picked for it. With `wait` it waits up to 100s. `allow_spawn` lets the worker start sub-workers (below). |
 | `org_wait` | Waits for workers and returns their reports. |
-| `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
+| `org_message` | Sends a follow-up to a finished worker, or to a veteran from an earlier turn (below), resuming its session when the runtime can. |
 | `org_stop` | Stops a worker. |
 | `org_rate` | Rates a worker's latest report `good` or `bad`, once per report. The rating feeds the roster's track record (below). |
 
@@ -716,7 +716,8 @@ How workers run:
   - A limit makes the tool return an error the lead can read.
 - **Names:** role and skill names from the lead must match
   `[A-Za-z0-9][A-Za-z0-9._-]*`. An unknown skill is refused.
-- **Tools and MCP servers:** workers get no caller tools. They load the
+- **Tools and MCP servers:** workers get only `ask_user` (below) and, when
+  the lead allows it, the sub-worker tools as caller tools. They load the
   user's settings like the coder chat itself (`--settings
   user,project,local`), so they see the same MCP servers the lead does. "No
   messaging or people" is a rule in their prompt, not a tool filter.
@@ -729,6 +730,55 @@ How workers run:
   access (monomind 2.19's `agent-exec-full-access-tools`, scan
   `caller_tools_with_full_access`), the turn runs solo with an
   `org.unavailable` notice.
+
+**Sub-workers** (#230): `org_spawn` with `allow_spawn: true` gives that
+worker `org_spawn`, `org_wait` and `org_message` for sub-workers of its
+own, when its exec can take caller tools. Code: `internal/dynorg/tree.go`.
+- **Depth:** at most lead → worker → sub-worker. Sub-workers never get
+  `org_spawn`, and `allow_spawn` on a sub-worker is refused.
+- **Limits:** the turn's workers, concurrency and budget count the whole
+  tree. A worker waiting in `org_wait` for its sub-workers lets go of its
+  leases and slot, like a worker waiting on the user, so its sub-workers
+  can't deadlock on them.
+- **Access:** never more than the parent's. Research takes research only;
+  coding takes coding or research; qa and automation also take their own
+  profile. An access the parent names beyond its own is refused, and one
+  staffing picks is lowered to coding. A research parent's sub-workers
+  must run confined (`--access read` or a read-only sandbox): only
+  confining models staff them, and when the sandbox isn't applied at run
+  time they fail instead of running unconfined.
+- **Scope:** a worker waits for and messages only its own sub-workers. The
+  lead can `org_wait` and `org_stop` any worker, but messages only its own.
+- **Ending:** a sub-worker's run derives from its parent's run, so it ends
+  when its parent's run ends or is stopped.
+- **Journal:** `agent.spawned.parentId` is the parent worker (and
+  `allowSpawn` marks a worker that may spawn); the brief and follow-ups
+  come `from` the parent. The stage draws the edge from it.
+
+**Veterans** (#230): workers persist per conversation. After each run the
+turn saves the worker (session id, folder, runtime and model, role and
+access, skills, last report, parent) in `ai_chat_org_workers` (migration
+060, one row per worker id, gone with the conversation). The next
+dynamic-org turn loads the latest 12 as idle **veterans**: `agent.spawned`
+with `veteran: true`, then `agent.status` `idle`. Code:
+`internal/dynorg/veterans.go`.
+- `org_roster` and `org_wait` list them (`veteran: true`, no report until
+  they run again). New workers are numbered after them.
+- `org_message` resumes a veteran's session (`agent exec --resume`) when
+  its runtime resumes and the chat's folder is the one it ran in;
+  otherwise it is re-briefed with its last report.
+- A veteran holds no slot or lease and doesn't count toward the turn's
+  workers until it runs; each run counts as a follow-up (3 per turn).
+- A veteran sub-worker comes back only with its parent, and only its
+  parent may message it.
+- A veteran runs only on a model that is still ready (in the validated
+  roster, or the lead's own); otherwise `org_message` is refused and
+  org_roster shows why, so the lead spawns a new worker. A research
+  worker's veteran sub-worker also needs a model that still confines it.
+  Any sub-worker of a research worker fails closed on a model that can't
+  confine it: no exec, and it never takes the write lease.
+- A run that ends with no report or session keeps the stored ones.
+- The stage greys out idle veterans until they run.
 
 **Questions for the user** (#256): a worker whose exec can take caller
 tools gets `ask_user`.

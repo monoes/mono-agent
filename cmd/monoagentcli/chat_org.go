@@ -158,7 +158,9 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Quality: &dynorg.Quality{Record: func(e agentroster.QualityEvent) {
 			_ = agentroster.RecordQuality(context.WithoutCancel(ctx), db.DB, e)
 		}},
+		Remember: journal.rememberWorker,
 	})
+	cond.AddVeterans(journal.veterans())
 	opts.Tools = dynorg.ToolSpecs()
 	opts.OnToolCall = cond.Handle
 	opts.ToolTimeout = dynorg.ToolTimeout

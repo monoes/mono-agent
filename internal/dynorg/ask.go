@@ -56,20 +56,32 @@ func askSpec() monomind.ToolSpec {
 	}
 }
 
-// workerTools gives the worker ask_user when its exec can take caller
-// tools in its access mode and answers can come back; otherwise none.
+// workerTools gives the worker its caller tools when its exec can take
+// them in its access mode: ask_user when answers can come back, and the
+// sub-worker tools when the lead let it spawn (tree.go); otherwise none.
 func (c *Conductor) workerTools(w *worker, m Model, opts *monomind.ExecOptions) {
 	opts.Tools, opts.OnToolCall = nil, nil
-	canTake := m.CallerTools
-	if opts.Access == monomind.AccessFull {
-		canTake = m.CallerToolsFull
-	}
-	if c.cfg.Answers == nil || !canTake {
+	if !canTakeTools(m, opts.Access) {
 		return
 	}
-	opts.Tools = []monomind.ToolSpec{askSpec()}
+	asks, spawns := c.cfg.Answers != nil, c.spawnsOn(w, m, opts.Access)
+	if !asks && !spawns {
+		return
+	}
+	if asks {
+		opts.Tools = append(opts.Tools, askSpec())
+		opts.ToolTimeout = AskTimeout + time.Minute
+		opts.SystemPrompt += askRule
+	}
+	if spawns {
+		opts.Tools = append(opts.Tools, childToolSpecs()...)
+		opts.ToolTimeout = max(opts.ToolTimeout, ToolTimeout)
+	}
 	opts.OnToolCall = func(ctx context.Context, name string, args json.RawMessage) (string, error) {
-		if name != ToolAskUser {
+		if spawns && (name == ToolSpawn || name == ToolWait || name == ToolMessage) {
+			return c.handle(ctx, w, name, args)
+		}
+		if !asks || name != ToolAskUser {
 			return "", fmt.Errorf("unknown tool %q", name)
 		}
 		var a struct {
@@ -80,7 +92,6 @@ func (c *Conductor) workerTools(w *worker, m Model, opts *monomind.ExecOptions) 
 		}
 		return c.ask(ctx, w, strings.TrimSpace(a.Question))
 	}
-	opts.ToolTimeout = AskTimeout + time.Minute
 	if m.Runtime == "claude" {
 		// Claude Code times out MCP calls on its own; let the wait run.
 		env := maps.Clone(opts.Env)
@@ -90,7 +101,6 @@ func (c *Conductor) workerTools(w *worker, m Model, opts *monomind.ExecOptions) 
 		env["MCP_TOOL_TIMEOUT"] = strconv.FormatInt(opts.ToolTimeout.Milliseconds(), 10)
 		opts.Env = env
 	}
-	opts.SystemPrompt += askRule
 }
 
 // ask journals a worker's question and waits for the user's answer.
@@ -115,7 +125,7 @@ func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string
 	// While it waits it holds nothing: its leases and its concurrency slot
 	// go to others, and it takes them back in the conductor's order
 	// (leases, then the slot), so no one can deadlock against it.
-	held := c.releaseHeld(w)
+	c.suspend(w)
 	// Status first: the stage clears "needs you" on the next status change.
 	c.setStatus(w, chatevents.AgentWaitingUser, qid)
 	bounded, cut, _ := chatevents.BoundText(question, 2000)
@@ -138,7 +148,7 @@ func (c *Conductor) ask(ctx context.Context, w *worker, question string) (string
 	default:
 		c.emitAnswer(w.id, qid, "system", fmt.Sprintf("No answer within %s; the worker went on without one.", AskTimeout))
 	}
-	if err := c.retakeHeld(ctx, w, held); err != nil {
+	if _, err := c.unsuspend(ctx, w); err != nil {
 		return "", err
 	}
 	c.setStatus(w, chatevents.AgentWorking, "")

@@ -113,6 +113,9 @@ type SpawnRequest struct {
 	Files      []string `json:"files,omitempty"`
 	NeedsWrite *bool    `json:"needs_write,omitempty"`
 	Wait       bool     `json:"wait,omitempty"`
+	// AllowSpawn gives the worker org_spawn, org_wait and org_message for
+	// sub-workers of its own (#230); only the lead may set it.
+	AllowSpawn bool `json:"allow_spawn,omitempty"`
 }
 
 // Skill is one skill given to a worker: its name and the text put in its

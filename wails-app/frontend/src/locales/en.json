@@ -878,7 +878,8 @@
       "status": "{{name}} is {{text}}",
       "reassigned": "{{name}} switched models: {{detail}}",
       "finished": "{{name}} finished ({{detail}})",
-      "message": "{{name}}: {{text}}"
+      "message": "{{name}}: {{text}}",
+      "veteran": "{{name}} is back from an earlier turn"
     },
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
@@ -892,7 +893,9 @@
       "org_message": "messaging an agent",
       "org_stop": "stopping an agent"
     },
-    "work": "What it did"
+    "work": "What it did",
+    "veteranIdle": "idle · from an earlier turn",
+    "veteranHelp": "A worker from an earlier turn of this chat. The lead can message it to continue with its context."
   },
   "orgBubble": {
     "bubbleLabel": "Org {{name}}, {{status}}",
