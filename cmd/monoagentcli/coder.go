@@ -33,6 +33,10 @@ type coderSettings struct {
 	OrgMaxConcurrent int     `json:"orgMaxConcurrent"`
 	OrgBudgetUSD     float64 `json:"orgBudgetUsd"`
 	OrgModelPicker   string  `json:"orgModelPicker"`
+	// OrgWriters is "isolated" to give each writing worker its own git
+	// worktree and branch, merged by the lead (#230), or "shared" (the
+	// default): writers take turns under the write lease.
+	OrgWriters string `json:"orgWriters"`
 }
 
 const (
@@ -62,6 +66,9 @@ func (s coderSettings) withDefaults() coderSettings {
 	}
 	if s.OrgModelPicker != dynorg.PickerLead {
 		s.OrgModelPicker = dynorg.PickerLeadThenJev
+	}
+	if s.OrgWriters != dynorg.WritersIsolated {
+		s.OrgWriters = dynorg.WritersShared
 	}
 	return s
 }
@@ -302,6 +309,7 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 		orgConc  int
 		orgBudg  float64
 		picker   string
+		writers  string
 	)
 	c := coderSettingsCmd(cfg, "set", "Change coder mode's defaults", func(cmd *cobra.Command, s *coderSettings) error {
 		f := cmd.Flags()
@@ -355,6 +363,12 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			s.OrgModelPicker = picker
 		}
+		if f.Changed("org-writers") {
+			if writers != dynorg.WritersShared && writers != dynorg.WritersIsolated {
+				return errInvalidInput("--org-writers must be %q or %q", dynorg.WritersShared, dynorg.WritersIsolated)
+			}
+			s.OrgWriters = writers
+		}
 		return nil
 	})
 	c.Flags().StringVar(&root, "workspace-root", "", "Folder new test workspaces are created in")
@@ -365,6 +379,7 @@ func newCoderSetCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().IntVar(&orgConc, "org-max-concurrent", 0, "Dynamic org: workers running at once (default 3)")
 	c.Flags().Float64Var(&orgBudg, "org-budget-usd", 0, "Dynamic org: worker cost cap per message in USD, estimated for runtimes that report none (0 = none)")
 	c.Flags().StringVar(&picker, "org-model-picker", "", "Dynamic org: who picks a worker's model when the lead doesn't: lead-then-jev (default) or lead")
+	c.Flags().StringVar(&writers, "org-writers", "", "Dynamic org: shared (default; one writer at a time under the write lease) or isolated (each writer gets its own git worktree and branch, merged by the lead; its checkpoint commits skip git hooks, so merged work never passed pre-commit, and the worktrees under .monoagent-worktrees/ are visible to tools that ignore git excludes)")
 	return c
 }
 

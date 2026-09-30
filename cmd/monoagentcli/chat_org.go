@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"slices"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/agentroster"
+	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
 	"github.com/monoes/mono-agent/internal/dynorg"
 	"github.com/monoes/mono-agent/internal/jev/jevconf"
@@ -141,8 +143,12 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Bin: opts.Bin, Settings: monomind.CoderSettings, MaxTurns: settings.MaxTurns, Timeout: settings.timeout(),
 		EffortFlag: opts.EffortFlag,
 	}
+	if settings.OrgWriters == dynorg.WritersIsolated {
+		reconcileTurnWorktrees(ctx, journal, t.cwd)
+	}
 	cond := dynorg.New(ctx, dynorg.Config{
 		Cwd: t.cwd, Limits: limits, Staffer: staffer, Base: base,
+		Writers: settings.OrgWriters, TurnID: journal.turnID,
 		ReadAccess: st.caps.Has(monomind.CapAgentExecAccessRead),
 		Emit:       journal,
 		Answers:    journalAnswers{journal},
@@ -157,6 +163,10 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 	opts.OnToolCall = cond.Handle
 	opts.ToolTimeout = dynorg.ToolTimeout
 	opts.SystemPrompt += dynorg.LeadPrompt(limits)
+	if cond.Isolated() {
+		opts.Tools = append(opts.Tools, dynorg.MergeToolSpec())
+		opts.SystemPrompt += dynorg.IsolatedLeadPrompt
+	}
 	// `chat turn stop --agent` reaches this turn's workers through its
 	// mailbox folder (#255). An unknown agent id is a no-op.
 	stopWatch := func() {}
@@ -187,4 +197,35 @@ func (j *turnJournal) Emit(typ chatevents.EventType, payload any) {
 		return
 	}
 	_ = j.appendLocked(typ, payload)
+}
+
+// reconcileTurnWorktrees removes the worktrees earlier turns in this folder
+// left behind (a crash, a killed process) before an isolated turn starts,
+// and journals the branches it kept because their work was never merged.
+func reconcileTurnWorktrees(ctx context.Context, journal *turnJournal, cwd string) {
+	active, err := activeTurnIDs(journal.store)
+	if err != nil {
+		return
+	}
+	for _, r := range dynorg.ReconcileWorktrees(context.WithoutCancel(ctx), cwd, func(id string) bool { return active[id] }) {
+		switch {
+		case r.Error != "":
+			journal.notice(dynorg.NoticeBranchKept, fmt.Sprintf("A worktree an earlier turn left (%s) was kept: %s", r.Path, r.Error), chatevents.SeverityWarning)
+		case r.BranchKept:
+			journal.notice(dynorg.NoticeBranchKept, fmt.Sprintf("An earlier turn's worker %s left unmerged work; it is kept on branch %s.", r.Agent, r.Branch), chatevents.SeverityInfo)
+		}
+	}
+}
+
+// activeTurnIDs is the set of turns still running, in every profile.
+func activeTurnIDs(store *ai.AIStore) (map[string]bool, error) {
+	turns, err := store.QueryActiveTurns()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(turns))
+	for _, t := range turns {
+		out[t.ID] = true
+	}
+	return out, nil
 }

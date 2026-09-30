@@ -307,6 +307,8 @@ type AgentSpawnedPayload struct {
 	Why            string   `json:"why,omitempty"`
 	PickConfidence *float64 `json:"pickConfidence,omitempty"`
 	JevConfidence  *float64 `json:"jevConfidence,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
 }
 
 // Worker statuses (agent.status's To).
@@ -332,6 +334,8 @@ type AgentStatusPayload struct {
 	// "browser"): the org stage shows who holds the pen and the browser
 	// from them (#228).
 	Leases []string `json:"leases,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
 }
 
 // AgentMessagePayload is agent.message's payload: a brief, a result, a

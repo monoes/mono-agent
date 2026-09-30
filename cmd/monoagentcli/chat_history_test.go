@@ -2,11 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/dynorg"
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
@@ -302,6 +306,58 @@ func TestChatHistoryReconcileSkipsTheCallersOwnTurns(t *testing.T) {
 	out, _ = runChatHistory(t, dbPath, "default", "reconcile")
 	if !strings.Contains(out, `"id": "mine"`) {
 		t.Errorf("reconcile without --except-owner must take every active turn: %s", out)
+	}
+}
+
+func TestChatHistoryReconcileCleansStaleWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dbPath := newChatCLITestDB(t)
+	store := openTestChatStore(t, dbPath)
+	repo := t.TempDir()
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git(repo, "init", "--quiet")
+	git(repo, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "base")
+	conv, err := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateConversationMode("default", "agent", "general", "claude", "", "", ai.ModeCoder, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreateTurn(conv.ID, "default", "dead", "dead-instance", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreateTurn(other.ID, "default", "mine", "me", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(repo, dynorg.WorktreeDirName)
+	for _, turn := range []string{"dead", "mine"} {
+		git(repo, "worktree", "add", "--quiet", "-b", "monoagent/"+turn+"/w1", filepath.Join(base, turn, "w1"), "HEAD")
+	}
+
+	out, code := runChatHistory(t, dbPath, "default", "reconcile", "--except-owner", "me")
+	if code != 0 {
+		t.Fatalf("reconcile exit %d: %s", code, out)
+	}
+	var res chatReconcileResult
+	decodeChatJSON(t, out, &res)
+	if len(res.Worktrees) != 1 || res.Worktrees[0].Turn != "dead" || !res.Worktrees[0].Removed {
+		t.Fatalf("worktrees = %+v, want only the dead turn's", res.Worktrees)
+	}
+	if _, err := os.Stat(filepath.Join(base, "dead")); !os.IsNotExist(err) {
+		t.Errorf("the dead turn's worktree is still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "mine", "w1")); err != nil {
+		t.Errorf("the running turn's worktree is gone: %v", err)
 	}
 }
 
