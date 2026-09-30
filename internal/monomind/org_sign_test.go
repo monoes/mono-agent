@@ -166,3 +166,37 @@ func TestOrgSignExpectHashOnlyWhenOffered(t *testing.T) {
 	}
 	ResetCapabilityCache()
 }
+
+// 2.22's review JSON: the reviewText and the hash of what was reviewed.
+// Any other shape, or an older monomind, gives the human review instead.
+func TestOrgSignReviewJSON(t *testing.T) {
+	root := t.TempDir()
+	h := strings.Repeat("ab", 32)
+	for _, c := range []struct {
+		version, jsonOut, wantHash, wantText string
+		wantErr                              bool
+	}{
+		{"2.22.0", `{"org":"growth","state":"changed","hash":"` + strings.ToUpper(h) + `","review":{"authority":[]},"reviewText":"org growth (changed):"}`, h, "org growth (changed):", false},
+		{"2.22.0", `{"org":"growth","error":"org not found: growth"}`, "", "", true},
+		{"2.22.0", `{"org":"growth","state":"changed","reviewText":"no hash here"}`, "", "text review", false},
+		{"2.22.0", `{"org":"growth","hash":"xyz","reviewText":"bad hash"}`, "", "text review", false},
+		{"2.21.0", `{"org":"growth","hash":"` + h + `","reviewText":"never read"}`, "", "text review", false},
+	} {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "monomind")
+		script := "#!/bin/sh\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + c.version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+			`if [ "$4" = "--format" ]; then echo '` + c.jsonOut + `'; exit 0; fi` + "\n" +
+			"echo 'text review'\necho 'Not signed. Review the above, then sign it yourself in a terminal: monomind org sign <org> (or pass --yes).'\nexit 1\n"
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(EnvOverride, bin)
+		ResetCapabilityCache()
+		rv, err := OrgSignReview(context.Background(), root, "growth")
+		if (err != nil) != c.wantErr || rv.Hash != c.wantHash || rv.Text != c.wantText {
+			t.Errorf("%s %s: %+v, %v", c.version, c.jsonOut, rv, err)
+		}
+	}
+	ResetCapabilityCache()
+}

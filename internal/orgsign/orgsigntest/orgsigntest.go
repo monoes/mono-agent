@@ -53,6 +53,13 @@ func Sign(t testing.TB, root, org string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	SignHash(t, root, org, h)
+}
+
+// SignHash writes org's signature for hash, as monomind does when it
+// signs content whose hash this package can't compute (--expect-hash).
+func SignHash(t testing.TB, root, org, h string) {
+	t.Helper()
 	dir := orgsign.OperatorDir(root)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

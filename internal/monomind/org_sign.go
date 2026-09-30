@@ -123,7 +123,7 @@ func OrgSignCheckAll(ctx context.Context, projectRoot string) (map[string]orgsig
 // for 2.22) it is passed, so monomind refuses to sign anything else.
 func OrgSign(ctx context.Context, projectRoot, name, hash string) (string, error) {
 	args := []string{"sign", name, "--yes"}
-	if hash != "" && orgSignExpectsHash(ctx) {
+	if hash != "" && OrgSignExpectsHash(ctx) {
 		args = append(args, "--expect-hash", hash)
 	}
 	return runOrgText(ctx, projectRoot, args...)
@@ -135,9 +135,10 @@ var expectHashCache struct {
 	ok  bool
 }
 
-// orgSignExpectsHash reports whether the installed monomind's `org sign`
-// has --expect-hash: 2.22+ whose help lists it (cached per binary).
-func orgSignExpectsHash(ctx context.Context) bool {
+// OrgSignExpectsHash reports whether the installed monomind's `org sign`
+// has --expect-hash: 2.22+ whose help lists it (cached per binary). Then
+// monomind itself refuses to sign content other than the hash it is given.
+func OrgSignExpectsHash(ctx context.Context) bool {
 	set, err := Capabilities(ctx)
 	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
 		return false
@@ -159,15 +160,72 @@ func orgSignExpectsHash(ctx context.Context) bool {
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
-// OrgSignReview returns monomind's review of an org definition — its
-// state, the authority every role gets, and what changed since the last
-// signature — by running `monomind org sign <name>` without --yes and
-// without a terminal, which prints the review and signs nothing.
-func OrgSignReview(ctx context.Context, projectRoot, name string) (string, error) {
+// OrgReview is monomind's review of one org definition.
+type OrgReview struct {
+	// Text is the review shown to the user: the state, each role's
+	// authority, what changed since the last signature.
+	Text string
+	// Hash is the signable hash of exactly the content monomind reviewed,
+	// from the same read (2.22's review JSON), or "" when this monomind
+	// gives none. Signing with --expect-hash <Hash> then signs nothing else.
+	Hash string
+}
+
+var hexHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// OrgSignReview returns monomind's review of an org definition. On a
+// monomind whose `org sign <name> --format json` (no --yes: never prompts,
+// never signs) carries a `hash`, that JSON is used (feature-detected, never
+// assumed: 2.22+, and only if the answer has the shape); otherwise the
+// human review `monomind org sign <name>` prints without a terminal.
+func OrgSignReview(ctx context.Context, projectRoot, name string) (OrgReview, error) {
 	bin, _, err := Ensure(ctx)
 	if err != nil {
-		return "", err
+		return OrgReview{}, err
 	}
+	if rv, ok, err := orgSignReviewJSON(ctx, bin, projectRoot, name); ok || err != nil {
+		return rv, err
+	}
+	text, err := orgSignReviewText(ctx, bin, projectRoot, name)
+	return OrgReview{Text: text}, err
+}
+
+// orgSignReviewJSON is 2.22's review JSON. ok is false when this monomind
+// has none (or answers in another shape); err is a clear refusal from it
+// (the org is missing or unreadable).
+func orgSignReviewJSON(ctx context.Context, bin, projectRoot, name string) (OrgReview, bool, error) {
+	set, err := Capabilities(ctx)
+	if err != nil || !versionAtLeast(set.Version, orgSignCheckMinVersion) {
+		return OrgReview{}, false, nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, "org", "sign", name, "--format", "json")
+	cmd.Dir = projectRoot
+	out, _ := cmd.Output()
+	var res struct {
+		Org        string          `json:"org"`
+		Hash       string          `json:"hash"`
+		ReviewText string          `json:"reviewText"`
+		Review     json.RawMessage `json:"review"`
+		Error      string          `json:"error"`
+	}
+	if json.Unmarshal(lastJSONDocument(out), &res) != nil || res.Org != name {
+		return OrgReview{}, false, nil
+	}
+	if res.Error != "" {
+		return OrgReview{}, true, fmt.Errorf("monomind org sign %s: %s", name, res.Error)
+	}
+	h := strings.ToLower(res.Hash)
+	if !hexHash.MatchString(h) || strings.TrimSpace(res.ReviewText) == "" {
+		return OrgReview{}, false, nil
+	}
+	return OrgReview{Text: strings.TrimSpace(ansiRe.ReplaceAllString(res.ReviewText, "")), Hash: h}, true, nil
+}
+
+// orgSignReviewText is the human review `monomind org sign <name>` prints
+// without --yes and without a terminal (it signs nothing).
+func orgSignReviewText(ctx context.Context, bin, projectRoot, name string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, bin, "org", "sign", name)

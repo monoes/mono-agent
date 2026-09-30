@@ -1,10 +1,12 @@
 package orgsign
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -230,5 +232,46 @@ func TestMonomindDocumentedHashVectors(t *testing.T) {
 		if got, err := Hash(root, []byte(c.raw)); err != nil || got != c.hash {
 			t.Errorf("%s: hash %s (%v), monomind %s", c.name, got, err, c.hash)
 		}
+	}
+}
+
+// Key order and negative zero, with hashes from monomind's own
+// computeOrgDefHash (2.21.0, and #568's documented vectors): array-index
+// keys ("0" to "4294967294", no sign or leading zero) come first in
+// numeric order, the rest by UTF-16 code units; JSON.stringify writes -0
+// as 0 (Go's strconv would write "-0").
+func TestMonomindKeyOrderAndNegativeZeroVectors(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"9":1,"10":1,"a":1,"b":1}`:                                "7730e4e01fd746abc3ff48aba427bd2f794534d137ff7ad01463a347faadf6e9",
+		`{"10":1,"4294967294":1,"01":1,"4294967295":1,"a":1,"b":1}`: "42003f4c98a3d30c373a90b3fc40179cf7c58411c477f1b11c83285a78ba8113",
+		`{"x":-0}`: "5bff452c5ed93f2e87a23984db5a15050c6477335fdec955b70063bb2d692bf1",
+		`{"name":"z","roles":[],"run_config":{"n":-0,"m":[-0,-0.0,0]}}`: "b930cc4e090bd65320ce63d85698fe54b676027aa90d4739afa0a9b9e0aee831",
+	} {
+		if got, err := Hash(t.TempDir(), []byte(raw)); err != nil || got != want {
+			t.Errorf("%s: %s (%v), monomind %s", raw, got, err, want)
+		}
+	}
+	if got := jsNumber(math.Copysign(0, -1)); got != "0" {
+		t.Errorf("-0 prints %q", got)
+	}
+}
+
+// monomind#571 may sign blueprint digests too: until that is settled, a
+// role with a blueprint gets no Go hash, so it is never re-signed
+// automatically (fail closed).
+func TestBlueprintRoleIsUnknown(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	body := `{"name":"growth","roles":[{"id":"lead","blueprint":"researcher"}]}`
+	if _, err := Hash(root, []byte(body)); err == nil {
+		t.Fatal("hashed a blueprint role")
+	}
+	loaded := writeOrg(t, root, "growth", body)
+	signFixture(t, root, "growth", []byte(signedBody)) // a sidecar exists
+	if st := Verify(root, "growth", []byte(body)); st.State != StateUnknown {
+		t.Fatalf("state %+v", st)
+	}
+	if Before(context.Background(), nil, root, "growth", loaded, false).Eligible() {
+		t.Fatal("a blueprint org is eligible for automatic re-signing")
 	}
 }

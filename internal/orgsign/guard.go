@@ -16,6 +16,14 @@ type Signer interface {
 	Sign(ctx context.Context, root, org, hash string) error
 }
 
+// HashEnforcer is a Signer whose monomind refuses to sign unless the hash
+// of the content it reads equals the one it was given (2.22's
+// --expect-hash, reading the files once). Only then may a hash this
+// package can't compute itself — monomind's own reviewed hash — be signed.
+type HashEnforcer interface {
+	EnforcesHash(ctx context.Context) bool
+}
+
 // Checker is a Signer that can also ask monomind itself whether the
 // definition on disk verifies (2.22+ `org sign <org> --check --format
 // json`). ok is false when monomind can't answer; this package's own Go
@@ -182,6 +190,11 @@ func (p Pre) After(ctx context.Context, s Signer, org, sha string) Outcome {
 	return SignExact(ctx, s, p.root, org, want)
 }
 
+func enforcesHash(ctx context.Context, s Signer) bool {
+	e, ok := s.(HashEnforcer)
+	return ok && e.EnforcesHash(ctx)
+}
+
 func notSigned(org, state, why string) Outcome {
 	return Outcome{State: state, Notice: fmt.Sprintf("org %s is not signed: %s — review it, then sign it: monoagentcli org sign %s", org, why, org)}
 }
@@ -207,8 +220,14 @@ func SignExact(ctx context.Context, s Signer, root, org, want string) Outcome {
 	if want == "" {
 		return notSigned(org, StateUnknown, "its hash can't be computed here — sign it with `monomind org sign "+org+"` in a terminal")
 	}
-	if now, err := Hash(root, raw); err != nil || now != want {
+	now, err := Hash(root, raw)
+	switch {
+	case err == nil && now != want:
 		return notSigned(org, Verify(root, org, raw).State, "it changed after it was written or reviewed")
+	case err != nil && !enforcesHash(ctx, s):
+		// No Go hash to check want against, and a monomind that would sign
+		// whatever it reads: never sign on its word (#295 review).
+		return notSigned(org, StateUnknown, "its hash can't be computed here — sign it with `monomind org sign "+org+"` in a terminal")
 	}
 	if st := verifyNow(ctx, s, root, org, raw, sha); st.OK() {
 		return Outcome{Signed: true, State: StateSigned}

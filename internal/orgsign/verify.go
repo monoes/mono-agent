@@ -415,7 +415,25 @@ func parseOrgJSON(raw []byte) (interface{}, error) {
 	return parseJSON(raw)
 }
 
+// hasBlueprintRole reports a role with a `blueprint`: monomind#571 may add
+// blueprint digests to the signed projection, as instructions files are,
+// and this package doesn't compute them, so such a definition gets no Go
+// hash (never signed automatically, which fails closed).
+func hasBlueprintRole(v interface{}) bool {
+	def, _ := v.(map[string]interface{})
+	roles, _ := def["roles"].([]interface{})
+	for _, r := range roles {
+		if role, ok := r.(map[string]interface{}); ok && hasKey(role, "blueprint") {
+			return true
+		}
+	}
+	return false
+}
+
 func hashValue(v interface{}, dig digestFunc) (string, error) {
+	if hasBlueprintRole(v) {
+		return "", fmt.Errorf("%w: a role uses a blueprint", errUnknown)
+	}
 	proj := projection(v)
 	digests, err := instructionsDigests(v, dig)
 	if err != nil {

@@ -35,6 +35,8 @@ if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
   exit 0
 fi
 if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
+  if [ "$3" = "--help" ]; then echo "${FAKE_SIGN_HELP:-  --yes  Skip the confirmation}"; exit 0; fi
+  if [ "$4" = "--format" ] && [ -n "$FAKE_REVIEW_JSON" ]; then echo "$FAKE_REVIEW_JSON"; exit 0; fi
   if [ "$4" = "--check" ]; then
     echo '{"orgs":[{"org":"'"$3"'","state":"'"${FAKE_CHECK_STATE:-changed}"'","message":"from monomind"}]}'
     exit 1
@@ -81,8 +83,28 @@ func (s *recordingSigner) Sign(ctx context.Context, root, org, hash string) erro
 		return err
 	}
 	s.calls = append(s.calls, org)
+	if _, err := orgsign.Hash(root, mustRead(s.t, root, org)); err != nil {
+		// Content this package can't hash: monomind signs the hash it was
+		// given (--expect-hash) after checking its own read.
+		orgsigntest.SignHash(s.t, root, org, hash)
+		return nil
+	}
 	orgsigntest.Sign(s.t, root, org)
 	return nil
+}
+
+// EnforcesHash is the production signer's (monomind 2.22 --expect-hash).
+func (s *recordingSigner) EnforcesHash(ctx context.Context) bool {
+	return monomindOrgSigner{}.EnforcesHash(ctx)
+}
+
+func mustRead(t *testing.T, root, org string) []byte {
+	t.Helper()
+	raw, _, err := orgsign.ReadFile(root, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // Check uses monomind's own --check, as the production signer does.
@@ -517,5 +539,56 @@ func TestAgentContextMarkersMatchMonomind(t *testing.T) {
 		"PI_CODING_AGENT QWEN_CODE PI_SESSION_ID DSH_SHELL DSH_SESSION_ID MONOMIND_CLINE_TURN MONOMIND_AIDER"
 	if got := strings.Join(orgsign.AgentContextMarkers(), " "); got != want {
 		t.Fatalf("markers\n got %s\nwant %s", got, want)
+	}
+}
+
+// monomind 2.22's review JSON carries the hash of exactly what it
+// reviewed, from one read: that is the signing target, with the stamps
+// still guarding the read. Where Go can hash the definition too, the two
+// must agree.
+func TestReviewUsesMonomindsReviewedHash(t *testing.T) {
+	f, s, _ := newSigningFixture(t, "2.22.0")
+	t.Setenv("FAKE_SIGN_HELP", "  --expect-hash <hex>  Sign only if the signable hash is <hex>")
+	// A blueprint role: Go has no hash for it (monomind#571), monomind does.
+	f.editOutside(t, func(m map[string]interface{}) {
+		m["roles"].([]interface{})[0].(map[string]interface{})["blueprint"] = "researcher"
+	})
+	const mmHash = "abababababababababababababababababababababababababababababababab"
+	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+strings.ToUpper(mmHash)+`","review":{"authority":["lead: runtime claude"],"diff":null},"reviewText":"org growth (unsigned):\n  lead: runtime claude · git read"}`)
+	rev := f.mustRun(t, "sign", "growth")
+	if rev["hash"] != mmHash || !strings.Contains(rev["review"].(string), "git read") {
+		t.Fatalf("review = %v", rev)
+	}
+	signed := f.mustRun(t, "sign", "growth", "--yes", "--expect-hash", mmHash)
+	if signed["signed"] != true || len(s.calls) != 1 {
+		t.Fatalf("sign = %v (calls %v)", signed, s.calls)
+	}
+
+	// Without --expect-hash in this monomind, a hash Go can't check is
+	// never signed on monomind's word.
+	t.Setenv("FAKE_SIGN_HELP", "")
+	monomind.ResetCapabilityCache()
+	f.editOutside(t, func(m map[string]interface{}) { m["runtime"] = "codex" })
+	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-hash", mmHash); err == nil {
+		t.Fatal("signed a hash nothing here could check")
+	}
+	if len(s.calls) != 1 {
+		t.Fatalf("calls %v", s.calls)
+	}
+}
+
+// Where Go can hash the definition, monomind's reviewed hash must equal
+// it; any disagreement leaves the review without a hash to sign.
+func TestReviewHashDisagreementSignsNothing(t *testing.T) {
+	f, _, _ := newSigningFixture(t, "2.22.0")
+	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+strings.Repeat("cd", 32)+`","review":{},"reviewText":"org growth (unsigned):"}`)
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != nil && rev["hash"] != "" {
+		t.Fatalf("review = %v", rev)
+	}
+	raw := mustRead(t, f.root, "growth")
+	goHash, _ := orgsign.Hash(f.root, raw)
+	t.Setenv("FAKE_REVIEW_JSON", `{"org":"growth","state":"unsigned","hash":"`+goHash+`","review":{},"reviewText":"org growth (unsigned):"}`)
+	if rev := f.mustRun(t, "sign", "growth"); rev["hash"] != goHash {
+		t.Fatalf("agreeing review = %v", rev)
 	}
 }

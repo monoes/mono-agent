@@ -36,6 +36,11 @@ func (monomindOrgSigner) Sign(ctx context.Context, root, org, hash string) error
 	return err
 }
 
+// EnforcesHash: monomind's own --expect-hash (2.22) refuses other content.
+func (monomindOrgSigner) EnforcesHash(ctx context.Context) bool {
+	return monomind.OrgSignExpectsHash(ctx)
+}
+
 // Check is monomind's own verdict where it has one (2.22 --check).
 func (monomindOrgSigner) Check(ctx context.Context, root, org string) (orgsign.Status, bool) {
 	return monomind.OrgSignCheck(ctx, root, org)
@@ -212,27 +217,42 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 }
 
 // reviewOrg is monomind's review of org and the hash of exactly the
-// definition it reviewed — or "" when that can't be told: monomind reads
-// the files itself, so a file swapped in for its read and restored after
-// would show one definition and hash another (#295 review). The org JSON
-// and every instructions file are stamped (identity, size, mtime, ctime)
-// before the hash and after the review, and must not have moved.
+// definition it reviewed — or "" when that can't be told (#295 review).
+//   - monomind 2.22 reports that hash itself, from the same read as the
+//     review; it is the signing target (its --expect-hash refuses anything
+//     else).
+//   - On 2.21 it is this package's hash, taken around monomind's read.
+//
+// Either way the org JSON, every instructions file and the directories
+// above them are stamped before and after the review and must not have
+// moved: a file or folder swapped in for monomind's read and put back
+// after would otherwise show one definition and sign another.
 func reviewOrg(ctx context.Context, root, name string) (hash, review string, err error) {
 	before, stampErr := orgsign.StampDefinition(root, name)
 	raw, _, readErr := orgsign.ReadFile(root, name)
 	h, hashErr := orgsign.Hash(root, raw)
-	review, err = monomind.OrgSignReview(ctx, root, name)
+	rv, err := monomind.OrgSignReview(ctx, root, name)
 	if err != nil {
 		return "", "", err
 	}
 	after, stampErr2 := orgsign.StampDefinition(root, name)
 	raw2, _, readErr2 := orgsign.ReadFile(root, name)
 	h2, hashErr2 := orgsign.Hash(root, raw2)
-	if stampErr != nil || stampErr2 != nil || readErr != nil || readErr2 != nil || hashErr != nil || hashErr2 != nil ||
-		!before.Same(after) || h != h2 {
-		return "", review, nil
+	if stampErr != nil || stampErr2 != nil || readErr != nil || readErr2 != nil || !before.Same(after) {
+		return "", rv.Text, nil
 	}
-	return h, review, nil
+	if rv.Hash != "" {
+		// monomind's reviewed hash. Where Go can hash it too, the two must
+		// agree (and not have changed), or nothing is signed from it.
+		if (hashErr == nil) != (hashErr2 == nil) || (hashErr == nil && (h != rv.Hash || h2 != rv.Hash)) {
+			return "", rv.Text, nil
+		}
+		return rv.Hash, rv.Text, nil
+	}
+	if hashErr != nil || hashErr2 != nil || h != h2 {
+		return "", rv.Text, nil
+	}
+	return h, rv.Text, nil
 }
 
 // errOrgSigningUnsupported: the installed monomind predates signed org
