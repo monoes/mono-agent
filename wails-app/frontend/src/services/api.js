@@ -172,6 +172,10 @@ export const api = {
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>
     GoApp.StopChatTurn(conversationID, turnID).then(parseStreamResult),
+  // One worker of a dynamic-org turn; the lead and the other workers keep
+  // running (#255).
+  stopChatAgent: (conversationID, turnID, agentID) =>
+    GoApp.StopChatAgent(conversationID, turnID, agentID).then(parseStreamResult),
   listChatConversations: (cursor = '', limit = 50) =>
     GoApp.ListChatConversations(cursor, limit).then(parseStreamResult),
   getChatTurns: (conversationID, cursor = '', limit = 50) =>
