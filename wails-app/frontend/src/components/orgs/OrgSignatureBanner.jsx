@@ -75,6 +75,7 @@ function ReviewText({ review }) {
 // true when signed, false when cancelled; rejects with the CLI's refusal.
 export async function reviewAndSign(orgName) {
   const review = await api.orgSignatureReview(orgName)
+  if (review.blocked_by) throw new Error(`This app was started from an AI-agent shell (${review.blocked_by}); start it normally to sign.`)
   // No hash: the definition changed while monomind reviewed it, so the
   // review may not show what would be signed.
   if (!review.hash) throw new Error(review.message || `org ${orgName} changed during the review; review it again`)
@@ -93,7 +94,10 @@ export default function OrgSignatureBanner({ orgName, refreshKey = '' }) {
   const [busy, setBusy] = useState(false)
   const text = status?.supported ? STATE_TEXT[status.state] : null
   if (!text) return null
-  const canSign = !NO_SIGN.has(status.state)
+  // The app inherited an AI agent's marker (started from its shell): the
+  // CLI refuses to sign, so say why instead of offering the button.
+  const blocked = status.blocked_by
+  const canSign = !NO_SIGN.has(status.state) && !blocked
   const onSign = async () => {
     setBusy(true)
     try {
@@ -111,7 +115,14 @@ export default function OrgSignatureBanner({ orgName, refreshKey = '' }) {
       background: '#f59e0b14', borderBottom: '1px solid #f59e0b66', color: 'var(--text)', fontSize: 11.5,
     }}>
       <ShieldAlert size={13} style={{ color: '#f59e0b', flexShrink: 0 }} />
-      <span style={{ flex: 1 }} title={status.detail || status.message || ''}>{text}</span>
+      <span style={{ flex: 1 }} title={status.detail || status.message || ''}>
+        {text}
+        {blocked && (
+          <span data-testid="org-sign-blocked" style={{ display: 'block', color: 'var(--text-muted)' }}>
+            This app was started from an AI-agent shell ({blocked}); start it normally to sign.
+          </span>
+        )}
+      </span>
       {canSign && (
         <button type="button" onClick={onSign} disabled={busy} style={{
           fontFamily: 'var(--font-mono)', fontSize: 10.5, padding: '3px 8px', borderRadius: 4, cursor: busy ? 'default' : 'pointer',

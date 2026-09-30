@@ -45,3 +45,14 @@ func idOf(st fs.FileInfo) fileID {
 	}
 	return id
 }
+
+// dirIDOf is what a directory swap changes: device, inode and ctime (its
+// mtime moves with every file created in it, so it is left out).
+func dirIDOf(st fs.FileInfo) fileID {
+	var id fileID
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		id.dev, id.ino = uint64(sys.Dev), uint64(sys.Ino)
+		id.ctimeNs = ctimeNs(sys)
+	}
+	return id
+}

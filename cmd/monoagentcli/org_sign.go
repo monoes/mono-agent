@@ -102,10 +102,14 @@ type orgSignResult struct {
 	SHA256    string `json:"sha256,omitempty"`
 	// Hash is the reviewed definition's projection hash (instructions
 	// files included): what --expect-hash signs.
-	Hash    string `json:"hash,omitempty"`
-	Review  string `json:"review,omitempty"`
-	Signed  bool   `json:"signed,omitempty"` // this call signed it
-	Message string `json:"message,omitempty"`
+	Hash string `json:"hash,omitempty"`
+	// BlockedBy names the agent-context marker (CLAUDECODE, ...) this
+	// process inherited with no terminal: it can't sign here (the app
+	// started from an AI-agent shell), so callers say so up front.
+	BlockedBy string `json:"blocked_by,omitempty"`
+	Review    string `json:"review,omitempty"`
+	Signed    bool   `json:"signed,omitempty"` // this call signed it
+	Message   string `json:"message,omitempty"`
 }
 
 func newOrgSignCmd(env *orgEnv) *cobra.Command {
@@ -144,6 +148,9 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				return errOrgSigningUnsupported
 			}
 			res.Supported = true
+			if !stdinIsTerminal() {
+				res.BlockedBy = orgsign.AgentContextMarker()
+			}
 			st := orgSignStatus(ctx, root, name, raw)
 			res.State, res.Detail = st.State, st.Detail
 			if statusOnly {
@@ -179,7 +186,7 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 			// A coding agent (the chat assistant included) runs commands with
 			// no terminal: under its markers, --yes needs a person at a TTY.
 			if m := orgsign.AgentContextMarker(); m != "" && yes && !stdinIsTerminal() {
-				return errInvalidInput("refusing to sign with --yes: %s is set and there is no terminal — a coding agent is running this. Review and sign it yourself: in the app (Review & sign), or `monoagentcli org sign %s` in your terminal", m, name)
+				return &orgSignBlocked{marker: m, org: name}
 			}
 			if cmd.Flags().Changed("expect-hash") && expect == "" {
 				// A review that couldn't vouch for its hash hands over "":
@@ -240,6 +247,21 @@ func (*orgSigningUnsupported) Error() string {
 
 func (*orgSigningUnsupported) JSONErrorFields() map[string]any {
 	return map[string]any{"code": "org_signing_unsupported"}
+}
+
+// orgSignBlocked is `org sign --yes` refused under an agent-context marker
+// with no terminal: a coding agent runs it, or the app was started from an
+// AI-agent shell and inherited the marker (it is never stripped).
+type orgSignBlocked struct{ marker, org string }
+
+func (e *orgSignBlocked) Error() string {
+	return fmt.Sprintf("refusing to sign: %s is set and there is no terminal, so an AI agent may be running this "+
+		"(or the app was started from an AI-agent shell). Sign it yourself: `monoagentcli org sign %s` in a normal terminal, "+
+		"or the app started normally", e.marker, e.org)
+}
+
+func (e *orgSignBlocked) JSONErrorFields() map[string]any {
+	return map[string]any{"code": "org_sign_agent_context", "org": e.org, "blocked_by": e.marker}
 }
 
 // orgSignFailed is an `org sign --yes` that did not sign: the notice says

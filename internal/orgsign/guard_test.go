@@ -477,3 +477,56 @@ func TestStampSeesARestoredSwap(t *testing.T) {
 		a = b
 	}
 }
+
+// A directory swapped away and back (#295, fourth review): the files'
+// own stamps survive it, the directory chain's do not. Covers
+// .monomind/orgs, .monomind and an instructions file's folder.
+func TestStampSeesADirectorySwap(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "prompts", "lead.md"), []byte("Be careful.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeOrg(t, root, "growth", `{"name":"growth","roles":[{"id":"lead","instructions_file":"prompts/lead.md"}]}`)
+	for _, rel := range []string{".monomind/orgs", ".monomind", "prompts"} {
+		before, err := StampDefinition(root, "growth")
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(root, rel)
+		aside := dir + ".real"
+		// Move the real folder away, put a copy in its place (what
+		// monomind would read), then move the real one back.
+		if err := os.Rename(dir, aside); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.CopyFS(dir, os.DirFS(aside)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(aside, dir); err != nil {
+			t.Fatal(err)
+		}
+		after, err := StampDefinition(root, "growth")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if before.Same(after) {
+			t.Errorf("%s swapped away and back: stamps still equal", rel)
+		}
+	}
+	// Unrelated work in the project root (a new file there) is no reason to
+	// review again.
+	a, _ := StampDefinition(root, "growth")
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := StampDefinition(root, "growth"); !a.Same(b) {
+		t.Error("a new file in the project root changed the stamps")
+	}
+}

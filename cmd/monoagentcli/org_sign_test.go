@@ -40,6 +40,11 @@ if [ "$1" = "org" ] && [ "$2" = "sign" ]; then
     exit 1
   fi
   if [ "$4" = "--yes" ]; then echo "org $3: signed"; exit 0; fi
+  if [ -n "$FAKE_REVIEW_DIRSWAP" ]; then
+    # A role moves a whole folder away, puts a copy there for the read, and
+    # moves the real one back (the copy is moved aside, not deleted).
+    d="$FAKE_REVIEW_DIRSWAP"; mv "$d" "$d.real"; cp -R "$d.real" "$d"; mv "$d" "$d.copy"; mv "$d.real" "$d"
+  fi
   if [ -n "$FAKE_REVIEW_SWAP" ]; then
     # A role swaps a file in for monomind's read and restores it after.
     f="$FAKE_REVIEW_SWAP"; cp "$f" "$f.bak"; echo '{"swapped":true}' > "$f"; cat "$f.bak" > "$f"; rm "$f.bak"
@@ -413,8 +418,14 @@ func TestNoAutomaticSigningUnderAgentContext(t *testing.T) {
 	for _, m := range []string{"CLAUDECODE", "CODEX_THREAD_ID", "OPENCODE"} {
 		t.Setenv("CLAUDECODE", "")
 		t.Setenv(m, "1")
-		if _, err := f.run(t, "sign", "growth", "--yes"); err == nil || !strings.Contains(err.Error(), "no terminal") {
+		_, err := f.run(t, "sign", "growth", "--yes")
+		blocked, ok := err.(*orgSignBlocked)
+		if !ok || blocked.marker != m || blocked.JSONErrorFields()["code"] != "org_sign_agent_context" || !strings.Contains(err.Error(), "AI-agent shell") {
 			t.Fatalf("%s: sign --yes without a terminal: %v", m, err)
+		}
+		// The app shows the reason before anyone clicks Sign.
+		if st := f.mustRun(t, "sign", "growth", "--status"); st["blocked_by"] != m {
+			t.Fatalf("%s: status = %v", m, st)
 		}
 		t.Setenv(m, "")
 	}
@@ -480,11 +491,31 @@ func TestReviewDetectsASwapDuringTheRead(t *testing.T) {
 			t.Fatalf("%s swapped during the review: %v", filepath.Base(swapped), rev)
 		}
 	}
+	t.Setenv("FAKE_REVIEW_SWAP", "")
+	for _, dir := range []string{orgdesign.OrgsDir(f.root), filepath.Join(f.root, ".monomind")} {
+		t.Setenv("FAKE_REVIEW_DIRSWAP", dir)
+		if h, _ := f.mustRun(t, "sign", "growth")["hash"].(string); h != "" {
+			t.Fatalf("%s swapped during the review, hash %s", dir, h)
+		}
+	}
+	t.Setenv("FAKE_REVIEW_DIRSWAP", "")
 	// And an empty --expect-hash (what such a review hands over) never signs.
 	if _, err := f.run(t, "sign", "growth", "--yes", "--expect-hash", ""); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("signed with an empty --expect-hash: %v", err)
 	}
 	if len(s.calls) != 0 {
 		t.Fatalf("calls %v", s.calls)
+	}
+}
+
+// monoagent's agent-context markers are monomind's AGENT_CONTEXT_ENV_MARKERS
+// exactly (orgrt/agent-context.ts, 2.21.0 and #568), bare AGENT included.
+func TestAgentContextMarkersMatchMonomind(t *testing.T) {
+	want := "CLAUDECODE CLAUDE_CODE_ENTRYPOINT MONOMIND_ORG_ROLE MONOMIND_SDK_AGENT MONOMIND_AGENT_EXEC AI_AGENT AGENT " +
+		"CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED CODEX_THREAD_ID CODEX_CI OPENCODE OPENCODE_PID ANTIGRAVITY_AGENT " +
+		"GEMINI_CLI GROK_SESSION_ID GROK_MANAGED_BY_NPM COPILOT_CLI_BINARY_VERSION COPILOT_AGENT_SESSION_ID CRUSH " +
+		"PI_CODING_AGENT QWEN_CODE PI_SESSION_ID DSH_SHELL DSH_SESSION_ID MONOMIND_CLINE_TURN MONOMIND_AIDER"
+	if got := strings.Join(orgsign.AgentContextMarkers(), " "); got != want {
+		t.Fatalf("markers\n got %s\nwant %s", got, want)
 	}
 }

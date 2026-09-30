@@ -12,6 +12,14 @@ import (
 // set back from user space). Two equal stamps around monomind's review
 // mean nobody swapped a file in for that read and restored it after (#295
 // review): the review then showed the content the hash is taken from.
+//
+// Every directory between the project root (exclusive) and each stamped
+// file is stamped too (device, inode, ctime): renaming `.monomind/orgs`,
+// `.monomind` or an instructions file's folder away, putting a fresh one
+// with benign files in its place for monomind's read, and renaming the
+// real one back leaves the files' own stamps as they were. The root itself
+// is stamped by identity only (device, inode), since unrelated work in the
+// project changes its times.
 type Stamp map[string]fileStamp
 
 // fileStamp is one path's lstat and stat identity; exists is false for a
@@ -33,11 +41,46 @@ func stampPath(path string) fileStamp {
 	return fs
 }
 
+// stampDir stamps a directory by what a swap of it changes.
+func stampDir(path string) fileStamp {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{exists: true, link: dirIDOf(st)}
+}
+
+// stampRoot stamps the project root by identity alone.
+func stampRoot(path string) fileStamp {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	id := dirIDOf(st)
+	id.ctimeNs = 0
+	return fileStamp{exists: true, link: id}
+}
+
+// addParents stamps each directory from file's parent up to root
+// (exclusive). A file outside root gets no parent stamps: such a file
+// can't be hashed here, so nothing is signed from it anyway.
+func (s Stamp) addParents(root, file string) {
+	for dir := filepath.Dir(file); dir != root && within(root, dir); dir = filepath.Dir(dir) {
+		s["dir:"+dir] = stampDir(dir)
+	}
+}
+
 // StampDefinition stamps org's JSON under root and each instructions file
-// the JSON names now (resolved as instructionsDigest resolves them).
+// the JSON names now (resolved as instructionsDigest resolves them), with
+// the directories above them and the root's identity.
 func StampDefinition(root, org string) (Stamp, error) {
-	path := filepath.Join(root, ".monomind", "orgs", org+".json")
-	s := Stamp{path: stampPath(path)}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(absRoot, ".monomind", "orgs", org+".json")
+	s := Stamp{path: stampPath(path), "root:" + absRoot: stampRoot(absRoot)}
+	s.addParents(absRoot, path)
 	raw, _, err := ReadFile(root, org)
 	if err != nil {
 		return nil, err
@@ -51,14 +94,17 @@ func StampDefinition(root, org string) (Stamp, error) {
 	}
 	sort.Strings(files)
 	rroot := realRoot(root)
+	s["root:"+rroot] = stampRoot(rroot)
 	for _, f := range files {
 		p := f
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(rroot, p)
 		}
 		s[p] = stampPath(p)
+		s.addParents(rroot, p)
 		if real, err := filepath.EvalSymlinks(p); err == nil && real != p {
 			s[real] = stampPath(real)
+			s.addParents(rroot, real)
 		}
 	}
 	return s, nil

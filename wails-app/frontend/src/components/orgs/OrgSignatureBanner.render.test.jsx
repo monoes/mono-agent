@@ -109,3 +109,22 @@ describe('reviewAndSign', () => {
     expect(api.orgSign).not.toHaveBeenCalled()
   })
 })
+
+describe('an app started from an AI-agent shell', () => {
+  it('says why it can not sign instead of offering the button', async () => {
+    api.orgSignatureStatus.mockResolvedValue({ ...CHANGED, blocked_by: 'CLAUDECODE' })
+    renderBanner()
+    expect(await screen.findByTestId('org-sign-blocked')).toHaveTextContent('started from an AI-agent shell (CLAUDECODE); start it normally to sign')
+    expect(screen.queryByRole('button', { name: 'Review & sign' })).toBeNull()
+  })
+
+  it('refuses in the review too, before any dialog', async () => {
+    api.orgSignatureStatus.mockResolvedValue(CHANGED)
+    api.orgSignatureReview.mockResolvedValue({ ...REVIEW, blocked_by: 'CLAUDECODE' })
+    renderBanner()
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sign org', expect.stringContaining('AI-agent shell (CLAUDECODE)'), undefined))
+    expect(screen.queryByTestId('org-sign-review')).toBeNull()
+    expect(api.orgSign).not.toHaveBeenCalled()
+  })
+})
