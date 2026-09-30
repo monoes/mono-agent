@@ -826,6 +826,18 @@ export function OrgRoleSetAccess(arg1, arg2, arg3) {
   return window['go']['main']['App']['OrgRoleSetAccess'](arg1, arg2, arg3);
 }
 
+export function OrgSign(arg1, arg2) {
+  return window['go']['main']['App']['OrgSign'](arg1, arg2);
+}
+
+export function OrgSignatureReview(arg1) {
+  return window['go']['main']['App']['OrgSignatureReview'](arg1);
+}
+
+export function OrgSignatureStatus(arg1) {
+  return window['go']['main']['App']['OrgSignatureStatus'](arg1);
+}
+
 export function PauseOrgAutonomy(arg1, arg2) {
   return window['go']['main']['App']['PauseOrgAutonomy'](arg1, arg2);
 }

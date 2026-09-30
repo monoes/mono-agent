@@ -21,6 +21,7 @@ import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
 import useQueuedCount from './orgs/useQueuedCount.js'
 import { Badge, Chip } from './orgs/ui.jsx'
 import FullAccessSummary from './orgs/FullAccessSummary.jsx'
+import OrgSignatureBanner, { isSignatureRefusal, requestSignatureRefresh } from './orgs/OrgSignatureBanner.jsx'
 import OrgToolActivity from './orgs/OrgToolActivity.jsx'
 import { isToolActivity } from './orgs/orgToolActivity.js'
 
@@ -452,6 +453,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
       // misleadingly reads as a crash. The Overview view (Running… badge
       // clearing, run picker updating) already communicates completion.
       if (payload.status === 'error') notify('org run', payload.message || `${payload.orgName} exited with an error`)
+      // monomind 2.21 refused an unsigned or changed org: bring up the
+      // Review & sign banner.
+      if (payload.status === 'error' && isSignatureRefusal(payload.message)) requestSignatureRefresh(payload.orgName)
       // A run actually starting/stopping is the moment the "Live" view's
       // data (status card, run dropdown) goes stale — refresh it right
       // then, not just on tab/org switch. Scoped to "currently looking at
@@ -768,6 +772,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 </div>
               </div>
               )}
+              {/* The designer shows its own, refreshed with each edit. */}
+              {tab !== 'design' && <OrgSignatureBanner orgName={selected} />}
               {!(designerFullscreen && tab === 'design') && (
               <div style={{ display: 'flex', gap: 4, padding: '8px', borderBottom: '1px solid var(--border)', overflowX: 'auto', flexShrink: 0 }}>
                 {TABS.filter(tabDef => !tabDef.holdingOnly || isHolding).map(tabDef => {

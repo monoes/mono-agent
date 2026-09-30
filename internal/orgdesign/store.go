@@ -140,6 +140,8 @@ func LoadPath(path string) (*Doc, error) {
 	if err := json.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
+	sum := sha256.Sum256(b)
+	d.loadedSHA = hex.EncodeToString(sum[:])
 	return &d, nil
 }
 
@@ -190,7 +192,8 @@ func Save(profileRoot string, d *Doc) (sha string, err error) {
 	}
 
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	d.loadedSHA = hex.EncodeToString(sum[:])
+	return d.loadedSHA, nil
 }
 
 // Delete removes an org's config file only — never its run-data

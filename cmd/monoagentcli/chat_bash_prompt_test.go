@@ -6,10 +6,12 @@ import (
 	"testing"
 )
 
-// promptCommand matches a command the Bash prompt shows: a binary name
-// followed by its first argument (a bare mention such as "monomind"/"x"
-// or the "monomind" binary is quoted and does not match).
-var promptCommand = regexp.MustCompile(`\b(?:monomind|monoagentcli) [^\s"]+`)
+// promptCommand matches a command the Bash prompt shows: a binary name,
+// its command group and the subcommand (a scope mention such as
+// "monoagentcli org ..." or a quoted "monomind" does not match). Since
+// #288 the org allowlist is per subcommand, so the subcommand must be
+// part of the match.
+var promptCommand = regexp.MustCompile(`\b(?:monomind|monoagentcli) (?:org|workflow) [a-z][a-z-]*`)
 
 // allowedBashCommand reports whether cmd starts with one of
 // chatBashPrefixes. It is this test's copy of the real check, which
@@ -33,7 +35,8 @@ func allowedBashCommand(cmd string) bool {
 func TestChatBashPromptCommandsAreAllowed(t *testing.T) {
 	prompt := chatBashPrompt("/home/u/project", "prof-123")
 	cmds := promptCommand.FindAllString(prompt, -1)
-	if len(cmds) < 5 {
+	// The prompt's concrete commands: org create-json and workflow create.
+	if len(cmds) < 2 {
 		t.Fatalf("found only %d commands in the prompt: %v", len(cmds), cmds)
 	}
 	for _, c := range cmds {
@@ -56,5 +59,35 @@ func TestChatBashPromptCommandsAreAllowed(t *testing.T) {
 	}
 	if strings.Contains(prompt, "%!") {
 		t.Fatalf("prompt has a formatting error: %s", prompt)
+	}
+}
+
+// #288 (review of #295): the chat assistant can't reach the operator's own
+// org commands — signing, full-access grants, quarantine approvals, and
+// monomind's create (it signs what it writes) — through either binary,
+// while the org work it does is still allowed.
+func TestChatBashCantSignOrGrant(t *testing.T) {
+	for _, cmd := range []string{
+		"monomind org sign growth --yes", "monomind org sign --all --yes", "monomind org sign growth",
+		"monomind org role set-access growth lead full --yes-i-understand",
+		"monomind org approve-paths .mcp.json", "monomind org create growth",
+		"monoagentcli org sign growth --yes --expect-hash abc", "monoagentcli org sign growth",
+		"monoagentcli org role set-access growth lead full", "monoagentcli org --project /p sign growth --yes",
+		"monomind org", "monoagentcli org",
+	} {
+		if allowedBashCommand(cmd) {
+			t.Errorf("chat Bash allows %q", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"monoagentcli org create-json x --project /p --json {}", "monoagentcli org status growth",
+		"monoagentcli org automation add growth --workflow w --alias a", "monoagentcli org automation-role add growth",
+		"monoagentcli org grant add growth --role r --automation a", "monoagentcli org autonomy set growth --level mid",
+		"monomind org approve growth lead act", "monomind org status", "monomind org run growth",
+		"monoagentcli workflow create x --profile p",
+	} {
+		if !allowedBashCommand(cmd) {
+			t.Errorf("chat Bash denies %q", cmd)
+		}
 	}
 }

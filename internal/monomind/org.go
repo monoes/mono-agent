@@ -94,6 +94,11 @@ func runOrgText(ctx context.Context, projectRoot string, args ...string) (string
 	if err != nil {
 		return "", err
 	}
+	return runOrgTextWith(ctx, bin, projectRoot, args...)
+}
+
+// runOrgTextWith is runOrgText through a given monomind binary.
+func runOrgTextWith(ctx context.Context, bin, projectRoot string, args ...string) (string, error) {
 	full := append([]string{"org"}, args...)
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
@@ -204,6 +209,9 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	if err != nil {
 		return nil, err
 	}
+	if err := checkOrgSigned(ctx, projectRoot, name); err != nil {
+		return nil, err
+	}
 	args := []string{"run", name, "--yes"}
 	if task != "" {
 		args = append(args, "--task", task)
@@ -248,7 +256,11 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 			if msg == "" {
 				msg = err.Error()
 			}
-			return nil, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg)
+			if signatureRefusalReason(msg) == "" && signatureRefusalReason(stdout.String()) != "" {
+				// org run prints a signature refusal on stdout.
+				msg = strings.TrimSpace(msg + "\n" + stdout.String())
+			}
+			return nil, asSignatureRefusal(name, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg))
 		}
 		trimmed := bytes.TrimSpace(stdout.Bytes())
 		if len(trimmed) == 0 {
@@ -271,6 +283,9 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
+		return err
+	}
+	if err := checkOrgSigned(ctx, projectRoot, name); err != nil {
 		return err
 	}
 	args := []string{"org", "run", name, "--yes"}

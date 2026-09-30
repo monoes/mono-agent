@@ -679,6 +679,41 @@ exit 0
 			t.Errorf("HasInputTokens = true, want false — tokens were never reported")
 		}
 	})
+	// Protocol rev 28 (agent-exec-cost-null): an unknown cost is null, never
+	// 0 — it must read as unavailable, and must not wipe a cost an earlier
+	// event of the turn reported.
+	t.Run("null", func(t *testing.T) {
+		bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"usage","input_tokens":10,"output_tokens":5,"cost_usd":null}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok","input_tokens":10,"output_tokens":5,"cost_usd":null}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if res.HasCostUSD || res.CostUSD != 0 {
+			t.Errorf("HasCostUSD=%v CostUSD=%v, want false/0 — a null cost is unknown", res.HasCostUSD, res.CostUSD)
+		}
+		if !res.HasInputTokens || res.InputTokens != 10 {
+			t.Errorf("HasInputTokens=%v InputTokens=%v, want true/10", res.HasInputTokens, res.InputTokens)
+		}
+
+		bin = writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"usage","input_tokens":10,"output_tokens":5,"cost_usd":0.004}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok","cost_usd":null}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err = Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if !res.HasCostUSD || res.CostUSD != 0.004 {
+			t.Errorf("HasCostUSD=%v CostUSD=%v, want the earlier 0.004 kept", res.HasCostUSD, res.CostUSD)
+		}
+	})
 }
 
 // TestExecNonzeroDoneWithZeroProcessExit is the plan's "nonzero done with a

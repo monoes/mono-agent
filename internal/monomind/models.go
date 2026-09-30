@@ -17,6 +17,10 @@ type RuntimeModel struct {
 	Label        string   `json:"label"`
 	Description  string   `json:"description,omitempty"`
 	EffortLevels []string `json:"effort_levels,omitempty"`
+	// AliasOf is set when `agent models` lists this id as another name for
+	// an earlier entry's model (protocol rev 28, capability
+	// agent-models-alias-of): the canonical id.
+	AliasOf string `json:"alias_of,omitempty"`
 }
 
 // claudeModels is curated by hand: unlike antigravity and codex (see
@@ -267,6 +271,7 @@ type agentModelsResult struct {
 		Description  string   `json:"description"`
 		Default      bool     `json:"default"`
 		EffortLevels []string `json:"effort_levels"`
+		AliasOf      string   `json:"alias_of"`
 	} `json:"models"`
 	Error *struct {
 		Code    string `json:"code"`
@@ -313,6 +318,7 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 			Label:        modelLabel(m.Label, m.Description, m.ID, m.Default),
 			Description:  m.Description,
 			EffortLevels: execEfforts(m.EffortLevels),
+			AliasOf:      m.AliasOf,
 		})
 	}
 	return models, res.Supported, nil

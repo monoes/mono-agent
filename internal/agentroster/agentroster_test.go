@@ -57,6 +57,13 @@ func TestClassify(t *testing.T) {
 		{"grok not signed in", failed(monomind.ErrRunnerError, "GrokAgentRunner: grok failed (exit 1): Not signed in. To authenticate without a browser, run:\n  grok login --device-code"), nil, StatusAuth},
 		{"crush no provider", failed(monomind.ErrRunnerError, "CrushAgentRunner: crush run failed (exit 1)\nstderr: ERROR No providers configured - please run 'crush' to set up a provider interactively."), nil, StatusAuth},
 		{"pi no api key", failed(monomind.ErrRunnerError, "PiAgentRunner: pi failed (exit 1)\nstderr: No API key found for the selected model.\n\nUse /login to log into a provider"), nil, StatusAuth},
+		// Protocol rev 27 (monomind 2.21): a key that was never set is
+		// auth/fatal on every runtime; before, some came as runner-error.
+		{"rev 27 missing key", &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrAuth, Fatal: true, Message: "OpenCodeAgentRunner: missing API key for provider openrouter"}}, nil, StatusAuth},
+		{"missing key as runner error", failed(monomind.ErrRunnerError, "missing API key for provider openrouter"), nil, StatusAuth},
+		{"hermes no provider", failed(monomind.ErrRunnerError, "hermes: no inference provider configured"), nil, StatusAuth},
+		// Text a runner only attached never decides the class.
+		{"unclassified model text", failed(monomind.ErrRunnerError, "HermesAgentRunner: exit 1\n[output below is not classified]\nThe API returned 401 unauthorized"), nil, StatusError},
 		{"quota code", failed(monomind.ErrQuota, "x"), nil, StatusQuota},
 		{"rate-limited code", failed(monomind.ErrRateLimited, "slow down"), nil, StatusRateLimited},
 		{"rate limit text", failed(monomind.ErrRunnerError, "429 Too Many Requests"), nil, StatusRateLimited},
@@ -457,5 +464,55 @@ func TestApplyAgentTestRateLimited(t *testing.T) {
 	applyAgentTest(&r, &monomind.AgentTestResult{Status: monomind.ErrRateLimited})
 	if r.Status != StatusRateLimited {
 		t.Errorf("status = %q, want %q", r.Status, StatusRateLimited)
+	}
+}
+
+// An alias of a model already listed (monomind 2.21's alias_of) is not
+// tested again: it runs, and bills, the same model (M1: claude default and
+// opus were both tested and paid). It rides along with its canonical
+// target, so its roster row is stored from that one test and a lookup by
+// the alias id (a lead running "opus") still finds the model.
+func TestBuildPlanSkipsAliases(t *testing.T) {
+	scan := scanOf(monomind.ScanEntry{ID: "claude", Installed: true})
+	list := func(context.Context, string, string) ([]monomind.RuntimeModel, error) {
+		return []monomind.RuntimeModel{{ID: "default", Label: "Default"}, {ID: "opus", Label: "Opus", AliasOf: "default"}, {ID: "haiku", Label: "Haiku"}}, nil
+	}
+	p := BuildPlan(context.Background(), scan, list, nil, PlanFilter{Now: time.Now()})
+	var got []string
+	for _, tg := range p.Targets {
+		got = append(got, tg.Model)
+	}
+	if strings.Join(got, ",") != "default,haiku" || p.Calls != 2 {
+		t.Fatalf("targets = %v (calls %d), want default and haiku only", got, p.Calls)
+	}
+	if a := p.Targets[0].Aliases; len(a) != 1 || a[0].Model != "opus" {
+		t.Fatalf("default's aliases = %+v", a)
+	}
+
+	// Asking for the alias by id tests its canonical model.
+	p = BuildPlan(context.Background(), scan, list, nil, PlanFilter{Now: time.Now(), Runtimes: []string{"claude"}, Models: []string{"opus"}})
+	if len(p.Targets) != 1 || p.Targets[0].Model != "default" {
+		t.Fatalf("--model opus plan = %+v", p.Targets)
+	}
+
+	calls := 0
+	var saved []Result
+	exec := func(context.Context, monomind.ExecOptions, func(monomind.Event)) (*monomind.TurnResult, error) {
+		calls++
+		return done("ok"), nil
+	}
+	Run(context.Background(), p.Targets, RunOptions{Exec: exec, Save: func(r Result) error { saved = append(saved, r); return nil }}, func(Line) {})
+	if calls != 1 || len(saved) != 2 || saved[1].Model != "opus" || saved[1].Status != StatusOK {
+		t.Fatalf("exec calls %d, saved %+v", calls, saved)
+	}
+	roster := Build(saved, scan, time.Now(), 0)
+	var opus *Entry
+	for i := range roster[0].Models {
+		if roster[0].Models[i].Model == "opus" {
+			opus = &roster[0].Models[i]
+		}
+	}
+	if opus == nil || opus.State != StateReady {
+		t.Fatalf("roster lookup of the alias = %+v", opus)
 	}
 }
