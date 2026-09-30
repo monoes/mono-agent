@@ -5,6 +5,7 @@ import { suggestIcon, iconUrl, CAT_COLOR } from '../orgdesigner/roleIcons.js'
 import { runtimeLabel } from '../../lib/runtimeLabels.js'
 import { LEAD_ID } from '../../lib/orgStage.js'
 import { isFresh } from './useStageMotion.js'
+import { FullAccessBadge } from '../orgdesigner/fullAccess.jsx'
 
 export const CARD_W = 180
 export const CARD_H = 92
@@ -128,7 +129,8 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
   const icon = useRoleIcon(node)
   const color = roleColor(node)
   const isLead = node.id === LEAD_ID
-  const title = isLead ? t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
+  // A running org's lead is its boss, named after the role (#229).
+  const title = isLead ? node.role || t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
   const statusLabel = t(`stage.status.${node.status}`, { defaultValue: node.status })
   const working = node.status === 'working' || node.status === 'starting'
   let line = ''
@@ -154,6 +156,7 @@ export const StageNode = memo(function StageNode({ node, x, y, selected, leadInf
       style={{ left: x, top: y, borderTopColor: color }}>
       {node.needsYou && <span className="stage-badge needs" data-testid="stage-needs-you">{t('stage.needsYou')}</span>}
       {node.limited && <span className="stage-badge limited" title={t('stage.limitedHelp')}>{t('stage.limited')}</span>}
+      {node.fullAccess && <span className="stage-badge access"><FullAccessBadge entry={node.fullAccess} compact /></span>}
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         <span style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${color}22`, color }}>
           {icon ? <img src={iconUrl(icon)} alt="" width={16} height={16} /> : <Fallback size={12} />}

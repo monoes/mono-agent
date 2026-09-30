@@ -3,7 +3,8 @@
 // cross-org message arcs drawn between cards (deduped, C-43).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Play, Square, RefreshCw, Boxes, ExternalLink } from 'lucide-react'
-import { api, newOrgEventsStreamId, notify, onOrgEvent } from '../../services/api.js'
+import { api, notify, onOrgEvent } from '../../services/api.js'
+import { acquireOrgEvents } from '../../lib/orgEventStreams.js'
 import { confirm } from '../ConfirmDialog.jsx'
 import { initialGroupTraffic, applyGroupEvent, recentArcs, arcPath, ARC_RECENT_MS } from './groupTraffic.js'
 import { Card, Chip, mono, mutedText, sectionLabel, smallBtn } from './ui.jsx'
@@ -90,8 +91,7 @@ export default function GroupView({ holding, onOpenOrg }) {
     const names = membersKey.split('\u0000').filter(Boolean)
     setTraffic(initialGroupTraffic(names))
     const childNames = names.filter(n => n !== holding)
-    const streamIds = childNames.map(() => newOrgEventsStreamId())
-    childNames.forEach((n, i) => { api.streamOrgEvents(n, streamIds[i])?.catch?.(() => {}) })
+    const releases = childNames.map(n => acquireOrgEvents(n))
     const off = onOrgEvent((payload) => {
       if (!payload?.orgName || !names.includes(payload.orgName)) return
       setTraffic(prev => applyGroupEvent(prev, payload.event, payload.orgName))
@@ -100,7 +100,7 @@ export default function GroupView({ holding, onOpenOrg }) {
     return () => {
       off()
       clearInterval(tick)
-      childNames.forEach((n, i) => api.stopOrgEvents(n, streamIds[i]))
+      releases.forEach(release => release())
     }
   }, [membersKey, holding])
 

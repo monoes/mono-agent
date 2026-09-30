@@ -359,6 +359,19 @@ func OrgGates(ctx context.Context, projectRoot, name string) (json.RawMessage, e
 	return runOrgJSON(ctx, projectRoot, "gates", name)
 }
 
+// OrgHumanItemsAll returns every question, approval or gate of the org,
+// resolved ones included (`org questions|approvals|gates <name> --all`):
+// kind is "questions", "approvals" or "gates". Resolving an item twice is
+// only safe when the caller can tell "already resolved" from "unknown".
+func OrgHumanItemsAll(ctx context.Context, projectRoot, name, kind string) (json.RawMessage, error) {
+	switch kind {
+	case "questions", "approvals", "gates":
+	default:
+		return nil, fmt.Errorf("monomind org: unknown item kind %q", kind)
+	}
+	return runOrgJSON(ctx, projectRoot, kind, name, "--all")
+}
+
 // OrgDecisions returns the org's decision trace (`org decisions <name>`).
 // run, when non-empty, scopes to that specific run id (`--run <id>`) instead
 // of monomind's own default of "the most recent run".

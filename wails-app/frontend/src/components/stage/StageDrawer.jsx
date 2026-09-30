@@ -5,6 +5,7 @@ import { ChatMarkdown } from '../chat/ChatMarkdown.jsx'
 import { ChatTimeline } from '../chat/ChatTimeline.jsx'
 import { LEAD_ID } from '../../lib/orgStage.js'
 import { ModelChip, formatCost, formatTokens, roleColor } from './StageNode.jsx'
+import { FullAccessBadge } from '../orgdesigner/fullAccess.jsx'
 
 // agentTimeline is an agent's own tool calls as chatReducer-shaped state,
 // so ChatTimeline (and NativeToolCard under it) renders them exactly as it
@@ -28,12 +29,13 @@ function pct(v) {
 // staffed the way it was, model, effort and access, the messages it got and
 // sent, and its tool cards (from calls, the turn's agentCalls). onStop
 // stops just this agent; without it the button explains that only the
-// whole turn can be stopped.
-export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, onStop }) {
+// whole turn can be stopped. canStop false leaves the button out (a
+// running org's roles stop with the org).
+export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, onStop, canStop = true }) {
   const { t } = useTranslation()
   const timeline = useMemo(() => agentTimeline(node, calls), [node, calls])
   const isLead = node.id === LEAD_ID
-  const title = isLead ? t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
+  const title = isLead ? node.role || t('bubbles.lead') : node.role || (node.native ? t('stage.subagent') : node.id)
   const running = ['queued', 'starting', 'working', 'waiting_lease'].includes(node.status)
   const cost = formatCost(node.costUsd, node.costEstimated)
   const confidences = [
@@ -46,7 +48,8 @@ export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, on
         <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)' }}>{t(`stage.status.${node.status}`, { defaultValue: node.status })}</span>
         <span style={{ flex: 1 }} />
-        {!isLead && !node.native && (
+        {node.fullAccess && <FullAccessBadge entry={node.fullAccess} />}
+        {canStop && !isLead && !node.native && (
           <button type="button" className="btn btn-ghost btn-sm" data-testid="stage-stop"
             disabled={!onStop || !running} onClick={() => onStop?.(node.id)}
             title={onStop ? t('stage.stopAgent') : t('stage.stopUnavailable')} style={{ gap: 4, fontSize: 10 }}>
