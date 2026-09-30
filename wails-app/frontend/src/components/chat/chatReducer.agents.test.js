@@ -32,3 +32,16 @@ describe('dynamic org events (#226)', () => {
     expect(s.parts.filter(p => p.kind === 'agent')).toHaveLength(1)
   })
 })
+
+describe('worker questions (#256)', () => {
+  it('opens a question and clears it on the user answer', () => {
+    let s = run(
+      ev('agent.spawned', { agentId: 'w2', role: 'Coder' }),
+      ev('agent.status', { agentId: 'w2', to: 'waiting_user', detail: 'q1' }),
+      ev('agent.message', { agentId: 'w2', direction: 'question', questionId: 'q1', from: 'w2', to: 'user', text: 'Which DB?' }),
+    )
+    expect(s.agents.w2.question).toEqual({ id: 'q1', text: 'Which DB?' })
+    s = chatReducer(s, ev('agent.message', { agentId: 'w2', direction: 'followup', questionId: 'q1', from: 'user', to: 'w2', text: 'Postgres' }))
+    expect(s.agents.w2.question).toBeNull()
+  })
+})

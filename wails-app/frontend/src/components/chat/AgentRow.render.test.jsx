@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import '../../i18n.js'
 import { ChatTimeline } from './ChatTimeline.jsx'
 
@@ -23,5 +23,23 @@ describe('AgentRow in the timeline', () => {
     fireEvent.click(screen.getByRole('button', { expanded: false }))
     expect(screen.getByTestId('agent-row-details')).toHaveTextContent('find the cache')
     expect(screen.getByTestId('agent-row-details')).toHaveTextContent('2 tool calls · $0.0020')
+  })
+})
+
+describe('AgentRow question', () => {
+  it('shows a worker question and sends the answer through the CLI binding', async () => {
+    const { api } = await import('../../services/api.js')
+    api.answerAgentQuestion = vi.fn().mockResolvedValue({ answered: true })
+    const state = {
+      scope: { conversationId: 'c1', turnId: 't1' },
+      parts: [{ kind: 'agent', agentId: 'w1' }], calls: {}, notices: [],
+      agents: { w1: { agentId: 'w1', role: 'Coder', status: 'waiting_user', question: { id: 'q1', text: 'Which database?' } } },
+    }
+    render(<ChatTimeline state={state} isLive />)
+    expect(screen.getByTestId('agent-question')).toHaveTextContent('Which database?')
+    expect(screen.getByTestId('agent-row')).toHaveTextContent('waiting for you')
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Postgres' } })
+    fireEvent.click(screen.getByText('Answer'))
+    await waitFor(() => expect(api.answerAgentQuestion).toHaveBeenCalledWith('c1', 't1', 'w1', 'q1', 'Postgres'))
   })
 })

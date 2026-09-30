@@ -144,6 +144,12 @@ func (a *App) SetChatOrgMode(conversationID, mode string) string {
 	return a.jsonResult("chat", "history", "set-org", conversationID, mode)
 }
 
+// AnswerAgentQuestion answers a dynamic-org worker's question (#256):
+// `chat history answer`.
+func (a *App) AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text string) string {
+	return a.jsonResult("chat", "history", "answer", conversationID, turnID, "--agent", agentID, "--question", questionID, "--text", text)
+}
+
 // coderConversationArgs builds `chat history create` for a coder
 // conversation: either in cwd, or (newWorkspace) in a folder the CLI
 // creates. Coder chats belong to the general assistant's history. An empty

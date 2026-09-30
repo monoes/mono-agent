@@ -1093,3 +1093,7 @@ export function VerifyDraft(arg1, arg2, arg3) {
 export function SetChatOrgMode(arg1, arg2) {
   return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
 }
+
+export function AnswerAgentQuestion(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AnswerAgentQuestion'](arg1, arg2, arg3, arg4, arg5);
+}

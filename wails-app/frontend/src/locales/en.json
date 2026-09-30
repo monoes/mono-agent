@@ -738,7 +738,12 @@
       "done": "done",
       "failed": "failed",
       "cancelled": "stopped",
-      "idle": "idle"
-    }
+      "idle": "idle",
+      "waiting_user": "waiting for you"
+    },
+    "questionFor": "Question for you:",
+    "answer": "Answer",
+    "answerLabel": "Your answer",
+    "answerPlaceholder": "Type your answer…"
   }
 }

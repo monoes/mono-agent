@@ -692,7 +692,12 @@
       "done": "hecho",
       "failed": "falló",
       "cancelled": "detenido",
-      "idle": "inactivo"
-    }
+      "idle": "inactivo",
+      "waiting_user": "esperando tu respuesta"
+    },
+    "questionFor": "Pregunta para ti:",
+    "answer": "Responder",
+    "answerLabel": "Tu respuesta",
+    "answerPlaceholder": "Escribe tu respuesta…"
   }
 }
