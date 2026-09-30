@@ -354,6 +354,10 @@ func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 		}
 		defer c.write.release()
 	}
+	// From here git runs to the end even if the turn is stopped (gitTimeout
+	// still bounds each command): a merge killed halfway leaves
+	// .git/index.lock and a half-updated tree that `merge --abort` can't fix.
+	ctx = context.WithoutCancel(ctx)
 	res := MergeResult{AgentID: id, Branch: branch}
 	if err := c.commitWorktree(w); err != nil {
 		return res, fmt.Errorf("%s's latest changes could not be committed on %s, so nothing was merged: %v", id, branch, err)
@@ -361,11 +365,10 @@ func (c *Conductor) Merge(ctx context.Context, id string) (MergeResult, error) {
 	before, _ := gitRun(ctx, c.iso.cwd, "rev-parse", "HEAD")
 	msg := fmt.Sprintf("Merge %s (%s)", branch, id)
 	if _, err := gitRun(ctx, c.iso.cwd, withIdentity(ctx, c.iso.cwd, "merge", "--no-ff", "--no-edit", "-m", msg, "refs/heads/"+branch)...); err != nil {
-		bg := context.WithoutCancel(ctx)
-		out, _ := gitRun(bg, c.iso.cwd, "diff", "--name-only", "--diff-filter=U")
+		out, _ := gitRun(ctx, c.iso.cwd, "diff", "--name-only", "--diff-filter=U")
 		conflicts := strings.Fields(out)
-		if _, merging := gitRun(bg, c.iso.cwd, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); merging == nil {
-			if _, aerr := gitRun(bg, c.iso.cwd, "merge", "--abort"); aerr != nil {
+		if _, merging := gitRun(ctx, c.iso.cwd, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); merging == nil {
+			if _, aerr := gitRun(ctx, c.iso.cwd, "merge", "--abort"); aerr != nil {
 				return res, fmt.Errorf("merging %s failed and the merge could not be aborted (%v); run `git merge --abort` in the chat folder", branch, aerr)
 			}
 		}
@@ -485,7 +488,8 @@ func removeTree(ctx context.Context, repo, base, path, branch string) TreeCleanu
 				return r
 			}
 			if strings.TrimSpace(dirty) != "" {
-				r.Error = "it has changes that could not be committed: " + err.Error()
+				r.Error = "it has changes that could not be committed: " + err.Error() +
+					". Commit them on a branch there to keep them, or drop them with `git worktree remove --force " + path + "`"
 				return r
 			}
 		}
@@ -577,8 +581,12 @@ func ReconcileWorktrees(ctx context.Context, cwd string, active func(turnID stri
 		}
 		turnDir := filepath.Join(base, t.Name())
 		unlock, err := daemonhb.LockFile(filepath.Join(turnDir, turnLockName))
-		if err != nil {
+		if errors.Is(err, daemonhb.ErrHeld) {
 			continue // its turn is still running in some process
+		}
+		if err != nil {
+			out = append(out, TreeCleanup{Turn: t.Name(), Path: turnDir, Error: "skipped: its lock could not be taken: " + err.Error()})
+			continue
 		}
 		trees, _ := os.ReadDir(turnDir)
 		for _, w := range trees {

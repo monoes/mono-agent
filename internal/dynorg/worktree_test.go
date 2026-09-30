@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -594,6 +595,10 @@ func TestWorkerOnAnotherBranchIsNeverCommittedFor(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wt, "one.txt")); err != nil {
 		t.Errorf("the uncommitted work was removed: %v", err)
 	}
+	kept := notices(em, NoticeBranchKept)
+	if len(kept) != 1 || !strings.Contains(kept[0], "git worktree remove --force "+wt) {
+		t.Errorf("the kept notice must say how to clean up: %q", kept)
+	}
 }
 
 func TestRemoveTreeKeepsAWorktreeWhoseStateCantBeRead(t *testing.T) {
@@ -813,5 +818,65 @@ func TestWithIdentityRespectsTheEnvironment(t *testing.T) {
 		if strings.Join(got, " ") != want {
 			t.Errorf("%q set: identity = %q, want %q", k, got, want)
 		}
+	}
+}
+
+func TestStoppingTheTurnMidMergeLeavesTheRepoConsistent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook")
+	}
+	repo := newRepo(t)
+	c, _ := newWriterConductor(t, &fileExec{}, repo, WritersIsolated, "m10")
+	defer c.Close()
+	spawnWriter(t, c, "write one.txt x")
+	c.Wait(context.Background(), nil, 10*time.Second)
+	// A slow hook keeps git inside the merge while the turn is stopped.
+	hooks := gitT(t, repo, "rev-parse", "--git-path", "hooks")
+	if !filepath.IsAbs(hooks) {
+		hooks = filepath.Join(repo, hooks)
+	}
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-merge-commit"), []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	res, err := c.Merge(ctx, "w1")
+	if ctx.Err() == nil {
+		t.Fatal("the turn was not stopped during the merge")
+	}
+	if err != nil || !res.Merged {
+		t.Errorf("merge = %+v, %v; want it to finish", res, err)
+	}
+	gitDir := gitT(t, repo, "rev-parse", "--absolute-git-dir")
+	if _, err := os.Stat(filepath.Join(gitDir, "index.lock")); !os.IsNotExist(err) {
+		t.Errorf("index.lock left behind: %v", err)
+	}
+	if _, err := gitRun(context.Background(), repo, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"); err == nil {
+		t.Error("a merge is still in progress")
+	}
+	if st := gitT(t, repo, "status", "--porcelain"); st != "" {
+		t.Errorf("tree not clean:\n%s", st)
+	}
+}
+
+func TestReconcileReportsATurnItCantLock(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	repo := newRepo(t)
+	turnDir := filepath.Join(repo, WorktreeDirName, "locked")
+	if err := os.MkdirAll(turnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(turnDir, 0o555); err != nil { // the lock file can't be created
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(turnDir, 0o755) })
+	res := ReconcileWorktrees(context.Background(), repo, func(string) bool { return false })
+	if len(res) != 1 || res[0].Turn != "locked" || !strings.Contains(res[0].Error, "lock could not be taken") {
+		t.Errorf("reconcile = %+v, want the skip reported", res)
 	}
 }
