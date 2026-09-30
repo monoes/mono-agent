@@ -14,11 +14,12 @@ import (
 
 func TestTrackRecordCell(t *testing.T) {
 	rates := []agentroster.Rate{
-		{Category: "engineering", Rate: 0.821, Samples: 11, Known: true},
-		{Category: "research", Rate: 0.2, Samples: 2},
-		{Category: "testing", Rate: 0.4, Samples: 5, Known: true},
+		{Category: "engineering", Rate: 0.821, Results: 11, Succeeded: 9, Ratings: 2, RatedGood: 2, Known: true},
+		{Category: "research", Rate: 0.2, Results: 2},
+		{Category: "testing", Rate: 0.4, Results: 5, Succeeded: 1, Ratings: 1, Known: true},
 	}
-	if got := trackRecordCell(rates); got != "engineering 82% (11), testing 40% (5) low" {
+	want := "engineering score 82% (9 of 11 succeeded, 2 rated good), testing score 40% (1 of 5 succeeded, 1 rated bad) low"
+	if got := trackRecordCell(rates); got != want {
 		t.Errorf("cell = %q", got)
 	}
 	if got := trackRecordCell(rates[1:2]); got != "—" {
@@ -67,10 +68,10 @@ func TestAgentRosterShowsTrackRecord(t *testing.T) {
 	if len(got.Runtimes) != 1 || len(got.Runtimes[0].Models) != 1 {
 		t.Fatalf("roster = %+v", got)
 	}
-	if tr := got.Runtimes[0].Models[0].TrackRecord; len(tr) != 1 || tr[0].Category != "engineering" || tr[0].Samples != 3 || !tr[0].Known || !tr[0].BadFit() {
+	if tr := got.Runtimes[0].Models[0].TrackRecord; len(tr) != 1 || tr[0].Category != "engineering" || tr[0].Results != 3 || tr[0].Succeeded != 0 || !tr[0].Known || !tr[0].BadFit() {
 		t.Errorf("track record = %+v", tr)
 	}
-	if out := runAgentRoster(t, dbPath, false); !strings.Contains(strings.ToLower(out), "track record") || !strings.Contains(out, "engineering 43% (3) low") {
+	if out := runAgentRoster(t, dbPath, false); !strings.Contains(strings.ToLower(out), "track record") || !strings.Contains(out, "engineering score 43% (0 of 3 succeeded) low") {
 		t.Errorf("table = %s", out)
 	}
 }

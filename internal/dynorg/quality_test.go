@@ -3,6 +3,7 @@ package dynorg
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -101,10 +102,10 @@ func TestJevSeesTheTrackRecord(t *testing.T) {
 		t.Fatalf("model = %s, %v", st.Model.Key(), err)
 	}
 	b, _ := json.Marshal(jev.state)
-	if !strings.Contains(string(b), `"track_record":{"claude/opus":{"bad_fit":true,"samples":4,"success_rate":0.38}}`) {
+	if !strings.Contains(string(b), `"track_record":{"claude/opus":{"bad_fit":true,"rated_bad":0,"rated_good":0,"results":4,"score":0.38,"succeeded":0}}`) {
 		t.Errorf("Jev's state = %s", b)
 	}
-	if !strings.Contains(jev.opts["claude/opus"], "succeeded in 38% of 4 recent engineering jobs") || strings.Contains(jev.opts["claude/haiku"], "succeeded") {
+	if !strings.Contains(jev.opts["claude/opus"], "engineering score 38% (0 of 4 succeeded)") || strings.Contains(jev.opts["claude/haiku"], "succeeded") {
 		t.Errorf("options = %v", jev.opts)
 	}
 }
@@ -220,14 +221,15 @@ func TestResultsAndRatingsAreRecorded(t *testing.T) {
 func TestBudgetStopIsNotAQualityEvent(t *testing.T) {
 	ctx := context.Background()
 	ex := &execScript{answers: map[string]*monomind.TurnResult{
-		"claude/opus": {SawDone: true, ResultText: "half done", Err: &monomind.ProtocolError{Code: monomind.ErrBudget, Message: "budget exceeded"}},
+		// monomind's real budget stop: the message never says "budget".
+		"claude/opus": {SawDone: true, ResultText: "half done", Err: &monomind.ProtocolError{Code: monomind.ErrBudget, Message: "spend cap exceeded: $0.51 > --budget-usd 0.5"}},
 	}}
 	c, log := newQualityConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 1})
 	info, err := c.Spawn(ctx, SpawnRequest{Brief: "implement it", Wait: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Status != chatevents.AgentFailed {
+	if info.Status != chatevents.AgentFailed || !strings.HasPrefix(info.Error, "budget: spend cap exceeded") {
 		t.Fatalf("info = %+v", info)
 	}
 	if got := log.all(); len(got) != 0 {
@@ -235,5 +237,66 @@ func TestBudgetStopIsNotAQualityEvent(t *testing.T) {
 	}
 	if _, err := c.Rate("w1", RatingBad); err == nil || !strings.Contains(err.Error(), "nothing to rate") {
 		t.Errorf("rating a budget stop: %v", err)
+	}
+}
+
+// A rate limit that agent exec gave up on says nothing about the model's
+// fit, whatever its message: the code alone keeps it out, and the worker
+// falls back to the next model.
+func TestRateLimitIsNotAQualityEvent(t *testing.T) {
+	ctx := context.Background()
+	ex := &execScript{answers: map[string]*monomind.TurnResult{
+		"claude/opus": {SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrRateLimited, Message: "provider said slow down (3 attempts)"}},
+	}}
+	c, log := newQualityConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 1})
+	info, err := c.Spawn(ctx, SpawnRequest{Brief: "implement it", Runtime: "claude", Model: "opus", Wait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Status != chatevents.AgentDone || info.Model != "haiku" {
+		t.Fatalf("info = %+v; want haiku to take over", info)
+	}
+	got := log.all()
+	if len(got) != 1 || got[0].Model != "haiku" || !got[0].Success {
+		t.Errorf("events = %+v; want only haiku's result", got)
+	}
+}
+
+// One turn adds at most QualityTurnCap results per model and category,
+// and ratings only of those, so a single bad turn can't bench a model.
+func TestTurnCapLimitsQualityEvents(t *testing.T) {
+	ctx := context.Background()
+	ex := &execScript{answers: map[string]*monomind.TurnResult{
+		"claude/opus": {SawDone: true, Err: &monomind.ProtocolError{Code: "internal", Message: "crashed"}},
+	}}
+	c, log := newQualityConductor(t, ex, Limits{MaxAgents: 5, MaxConcurrent: 1})
+	for range agentroster.QualityTurnCap + 1 {
+		if _, err := c.Spawn(ctx, SpawnRequest{Brief: "implement it", Role: "engineering-code-reviewer", Runtime: "claude", Model: "opus", Wait: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(log.all()); n != agentroster.QualityTurnCap {
+		t.Errorf("results recorded = %d, want %d", n, agentroster.QualityTurnCap)
+	}
+	last := fmt.Sprintf("w%d", agentroster.QualityTurnCap+1)
+	res, err := c.Rate(last, RatingBad)
+	if err != nil || res.Recorded {
+		t.Errorf("rating a capped result = %+v, %v; want not recorded", res, err)
+	}
+	if res, err := c.Rate("w1", RatingBad); err != nil || !res.Recorded {
+		t.Errorf("rating a counted result = %+v, %v", res, err)
+	}
+	events := log.all()
+	if len(events) != agentroster.QualityTurnCap+1 {
+		t.Fatalf("events = %+v", events)
+	}
+	if _, ok := track(events).Get("claude", "opus", "engineering"); ok {
+		t.Error("one turn's failures must not make a known rate")
+	}
+}
+
+func TestLeadPromptMentionsRate(t *testing.T) {
+	if p := LeadPrompt(Limits{MaxAgents: 3, MaxConcurrent: 2}); !strings.Contains(p, "org_rate (rate a worker's result)") || !strings.Contains(p, "org_rate it once") {
+		t.Errorf("lead prompt = %s", p)
 	}
 }

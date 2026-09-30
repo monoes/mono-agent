@@ -579,17 +579,26 @@ How the conductor staffs a worker:
 - **Track record (#230):** every worker result and every `org_rate`
   rating is stored in `agent_model_outcome_events` with the runtime, model
   and the worker's role category. A result counts when it is `done`
-  (success) or `failed` on the worker's own error or timeout (failure). A
-  cancelled run, a budget refusal or budget stop, and a model that couldn't
-  run at all (auth, quota, model unavailable, missing binary) are not
+  (success) or `failed` on the worker's own error or timeout (failure; the
+  timeout is the turn's exec timeout, `cfg.Base.Timeout`, so a model too
+  slow for it counts as failing). A cancelled run, a budget refusal or
+  budget stop (`ErrBudget`), and a model that couldn't run at all (auth,
+  quota, `rate-limited`, model unavailable, missing binary) are not
   counted, and the lead can't rate them. A rating weighs twice as much as a
-  bare result. Each event's weight halves every 30 days, and the success
-  rate is smoothed with a Beta prior of 4 events at 75%. A rate counts only
-  from 3 events per model and category. Below 50% the model is a **bad fit**
-  for that category: the rules pick it only when nothing else can run the
-  worker, fallbacks try it last, and Jev gets each rate in its state and in
-  the option text. The lead's own choice of model still wins. `agent roster`
-  shows the rates (`track_record` in `--json`).
+  bare result. Each event's weight halves every 30 days, and the score is
+  smoothed with a Beta prior of 4 events at 75%, so it is not the plain
+  share of results that succeeded. A score counts only from 3 **results**
+  per model and category (ratings don't add to that count). One turn
+  records at most 2 results per model and category (`QualityTurnCap`), and
+  ratings only of those, so a single bad turn can't bench a model. Below
+  50% the model is a **bad fit** for that category: the rules pick it only
+  when nothing else can run the worker, fallbacks try it last, and Jev gets
+  each score and the plain counts in its state and in the option text
+  ("engineering score 38% (0 of 4 succeeded)"). The lead's own choice of
+  model still wins. A bad fit recovers only as its failures decay (about
+  18 days for 3 fresh failures), or through new results when Jev or the
+  lead still picks it. `agent roster` shows the scores
+  (`track_record` in `--json`).
 
 Each worker's access profile is set by the lead, and none goes past the
 coder chat's own full access. A `research` worker is confined, in order of

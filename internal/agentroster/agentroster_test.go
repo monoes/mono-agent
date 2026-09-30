@@ -57,6 +57,7 @@ func TestClassify(t *testing.T) {
 		{"crush no provider", failed(monomind.ErrRunnerError, "CrushAgentRunner: crush run failed (exit 1)\nstderr: ERROR No providers configured - please run 'crush' to set up a provider interactively."), nil, StatusAuth},
 		{"pi no api key", failed(monomind.ErrRunnerError, "PiAgentRunner: pi failed (exit 1)\nstderr: No API key found for the selected model.\n\nUse /login to log into a provider"), nil, StatusAuth},
 		{"quota code", failed(monomind.ErrQuota, "x"), nil, StatusQuota},
+		{"rate-limited code", failed(monomind.ErrRateLimited, "slow down"), nil, StatusQuota},
 		{"rate limit text", failed(monomind.ErrRunnerError, "429 Too Many Requests"), nil, StatusQuota},
 		{"unknown model", failed(monomind.ErrRunnerError, "The model `gpt-9` does not exist or you do not have access to it"), nil, StatusModelUnavailable},
 		{"model not found", failed(monomind.ErrRunnerError, "model_not_found"), nil, StatusModelUnavailable},

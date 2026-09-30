@@ -164,8 +164,8 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Show which runtime models passed validation (no model calls)",
 		Long: "Lists the stored `agent validate` results per runtime with each model's state: " +
 			"ready (answered within --max-age on the current runtime version), stale, failed or untested. " +
-			"Track record is each model's success rate per role category from real dynamic-org workers and the lead's ratings " +
-			"(decaying, smoothed; shown from 3 results, \"low\" under 50%, which staffing ranks last). " +
+			"Track record is each model's score per role category from real dynamic-org workers and the lead's ratings " +
+			"(decaying and smoothed, so not the plain share; shown from 3 results with the plain counts, \"low\" under 50%, which staffing ranks last). " +
 			"It runs `agent scan` to check versions and installs unless --no-scan.",
 		Example: `  monoagentcli agent roster
   monoagentcli agent roster --ready-only --json
@@ -226,14 +226,15 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 }
 
 // trackRecordCell is a model's known success rates per role category from
-// real dynamic-org workers, bad fits flagged: "engineering 82% (11), testing 40% (5) low".
+// real dynamic-org workers, bad fits flagged: "engineering score 82%
+// (9 of 11 succeeded), testing score 40% (1 of 5 succeeded) low".
 func trackRecordCell(rates []agentroster.Rate) string {
 	var parts []string
 	for _, r := range rates {
 		if !r.Known {
 			continue
 		}
-		p := fmt.Sprintf("%s %.0f%% (%d)", r.Category, r.Rate*100, r.Samples)
+		p := fmt.Sprintf("%s score %.0f%% (%s)", r.Category, r.Rate*100, agentroster.TrackRecordCounts(r))
 		if r.BadFit() {
 			p += " low"
 		}

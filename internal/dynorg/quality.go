@@ -12,12 +12,15 @@ import (
 )
 
 // Quality records each worker result and the lead's rating of it as
-// roster quality events (#230). One per turn; nil records nothing.
+// roster quality events (#230). One per turn; nil records nothing. A turn
+// records at most agentroster.QualityTurnCap results per model and
+// category, and ratings only of those.
 type Quality struct {
 	Record func(agentroster.QualityEvent)
 
-	mu   sync.Mutex
-	last map[string]*result // agent id → its latest result
+	mu      sync.Mutex
+	last    map[string]*result // agent id → its latest result
+	results map[string]int     // model and category → results recorded
 }
 
 // result is a worker's latest result: what ran it, and whether the lead
@@ -26,6 +29,7 @@ type result struct {
 	runtime, model, category string
 	seq                      int  // results so far
 	rateable                 bool // done or failed for a reason about the model
+	capped                   bool // past the turn's cap: not recorded
 	rated                    bool
 }
 
@@ -55,8 +59,19 @@ func (c *Conductor) recordResult(w *worker, outcome, errText string) {
 		q.last[w.id] = r
 	}
 	*r = result{runtime: m.Runtime, model: m.Model, category: cat, seq: r.seq + 1, rateable: counts}
+	if counts {
+		if q.results == nil {
+			q.results = map[string]int{}
+		}
+		k := m.Key() + "\x00" + agentroster.NormalizeCategory(cat)
+		r.capped = q.results[k] >= agentroster.QualityTurnCap
+		if !r.capped {
+			q.results[k]++
+		}
+	}
+	capped := r.capped
 	q.mu.Unlock()
-	if counts && q.Record != nil {
+	if counts && !capped && q.Record != nil {
 		q.Record(agentroster.QualityEvent{Runtime: m.Runtime, Model: m.Model, Category: cat,
 			Kind: agentroster.KindOutcome, Success: outcome == chatevents.AgentDone, At: c.cfg.Now()})
 	}
@@ -64,9 +79,11 @@ func (c *Conductor) recordResult(w *worker, outcome, errText string) {
 
 // countsAsQuality reports whether a finished run says something about how
 // well its model fits the work: done, or failed on the worker's own error
-// or timeout. A cancelled run, a budget refusal (#265: the org's cap, not
-// the model) and a model that couldn't run at all (auth, quota, …: the
-// roster's validation state covers those) don't count.
+// or timeout (the worker's own timeout, cfg.Base.Timeout, counts against
+// the model: it didn't finish in time). A cancelled run, a budget refusal
+// (#265: the org's cap, not the model) and a model that couldn't run at
+// all (auth, quota, rate-limited, …: the roster's validation state covers
+// those) don't count.
 func countsAsQuality(outcome, errText string) bool {
 	switch outcome {
 	case chatevents.AgentDone:
@@ -128,14 +145,15 @@ func (c *Conductor) Rate(agentID, rating string) (RateResult, error) {
 		return RateResult{}, fmt.Errorf("%s's latest result is already rated", agentID)
 	}
 	r.rated = true
+	capped := r.capped
 	ev := agentroster.QualityEvent{Runtime: r.runtime, Model: r.model, Category: r.category,
 		Kind: agentroster.KindRating, Success: rating == RatingGood, At: c.cfg.Now()}
 	q.mu.Unlock()
-	if q.Record != nil {
+	if q.Record != nil && !capped {
 		q.Record(ev)
 	}
 	return RateResult{AgentID: agentID, Rating: rating, Model: Model{Runtime: ev.Runtime, Model: ev.Model}.Key(),
-		Category: agentroster.NormalizeCategory(ev.Category), Recorded: true}, nil
+		Category: agentroster.NormalizeCategory(ev.Category), Recorded: !capped}, nil
 }
 
 // trackRecord is a model's known rate for a category.
@@ -176,14 +194,17 @@ func (s *Staffer) trackRecordState(eligible []Model, category string) map[string
 	out := map[string]any{}
 	for _, m := range eligible {
 		if r, ok := s.trackRecord(m, category); ok {
-			out[m.Key()] = map[string]any{"success_rate": round2(r.Rate), "samples": r.Samples, "bad_fit": r.BadFit()}
+			out[m.Key()] = map[string]any{"score": round2(r.Rate), "results": r.Results, "succeeded": r.Succeeded,
+				"rated_good": r.RatedGood, "rated_bad": r.Ratings - r.RatedGood, "bad_fit": r.BadFit()}
 		}
 	}
 	return out
 }
 
+// trackRecordText: "engineering score 38% (0 of 4 succeeded, 1 rated
+// bad)". The score is smoothed and decayed, so it's not the plain share.
 func trackRecordText(r agentroster.Rate) string {
-	return fmt.Sprintf("succeeded in %.0f%% of %d recent %s jobs", r.Rate*100, r.Samples, r.Category)
+	return fmt.Sprintf("%s score %.0f%% (%s)", r.Category, r.Rate*100, agentroster.TrackRecordCounts(r))
 }
 
 func round2(f float64) float64 { return float64(int(f*100+0.5)) / 100 }

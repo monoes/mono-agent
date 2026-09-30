@@ -27,9 +27,14 @@ const (
 	// QualityHalfLife: an event's weight halves every 30 days, so a model
 	// that got better (or worse) shows it within a few weeks.
 	QualityHalfLife = 30 * 24 * time.Hour
-	// QualityMinSamples: below this many events a rate is not known and
-	// has no effect, so one failure never punishes a model.
-	QualityMinSamples = 3
+	// QualityMinResults: below this many worker results (ratings don't
+	// count) a rate is not known and has no effect, so one or two failures
+	// never punish a model.
+	QualityMinResults = 3
+	// QualityTurnCap: one turn records at most this many results per
+	// model and category (and ratings only of those), so a single bad turn
+	// can't bench a model: it takes results from at least two turns.
+	QualityTurnCap = 2
 	// QualityPriorRate and QualityPriorWeight are a Beta prior: every rate
 	// starts as QualityPriorWeight pseudo-events at QualityPriorRate, and
 	// real events pull it away from there.
@@ -111,17 +116,33 @@ type Rate struct {
 	Runtime   string  `json:"runtime"`
 	Model     string  `json:"model"`
 	Category  string  `json:"category"`
-	Samples   int     `json:"samples"`   // events, undecayed
-	Successes int     `json:"successes"` // successful events, undecayed
-	Weight    float64 `json:"weight"`    // decayed, rating-weighted events
-	Rate      float64 `json:"success_rate"`
-	// Known: Samples reached QualityMinSamples; only a known rate affects
+	Results   int     `json:"results"`    // worker results, undecayed
+	Succeeded int     `json:"succeeded"`  // results that finished done
+	Ratings   int     `json:"ratings"`    // the lead's ratings of results
+	RatedGood int     `json:"rated_good"` // ratings that were good
+	Weight    float64 `json:"weight"`     // decayed, rating-weighted events
+	// Rate is the smoothed score: decayed, rating-weighted successes
+	// with the prior, not the plain share of results that succeeded.
+	Rate float64 `json:"score"`
+	// Known: Results reached QualityMinResults; only a known rate affects
 	// staffing.
 	Known bool `json:"known"`
 }
 
 // BadFit reports whether r is a known rate under BadFit.
 func (r Rate) BadFit() bool { return r.Known && r.Rate < BadFit }
+
+// TrackRecordCounts is r's plain counts: "0 of 4 succeeded, 1 rated bad".
+func TrackRecordCounts(r Rate) string {
+	out := fmt.Sprintf("%d of %d succeeded", r.Succeeded, r.Results)
+	if r.RatedGood > 0 {
+		out += fmt.Sprintf(", %d rated good", r.RatedGood)
+	}
+	if bad := r.Ratings - r.RatedGood; bad > 0 {
+		out += fmt.Sprintf(", %d rated bad", bad)
+	}
+	return out
+}
 
 // Quality is the aggregated track record, by runtime, model and category.
 type Quality map[string]Rate
@@ -147,24 +168,33 @@ func Aggregate(events []QualityEvent, now time.Time) Quality {
 		if e.Kind == KindRating {
 			w *= RatingWeight
 		}
-		a.r.Samples++
+		if e.Kind == KindRating {
+			a.r.Ratings++
+			if e.Success {
+				a.r.RatedGood++
+			}
+		} else {
+			a.r.Results++
+			if e.Success {
+				a.r.Succeeded++
+			}
+		}
 		a.r.Weight += w
 		if e.Success {
-			a.r.Successes++
 			a.wins += w
 		}
 	}
 	q := make(Quality, len(accs))
 	for k, a := range accs {
 		a.r.Rate = (a.wins + QualityPriorRate*QualityPriorWeight) / (a.r.Weight + QualityPriorWeight)
-		a.r.Known = a.r.Samples >= QualityMinSamples
+		a.r.Known = a.r.Results >= QualityMinResults
 		q[k] = a.r
 	}
 	return q
 }
 
 // Get returns a model's rate in a category; ok is false when there is no
-// known rate (no events, or fewer than QualityMinSamples).
+// known rate (no events, or fewer than QualityMinResults results).
 func (q Quality) Get(runtime, model, category string) (Rate, bool) {
 	r, ok := q[qualityKey(runtime, modelKey(model), NormalizeCategory(category))]
 	if !ok || !r.Known {

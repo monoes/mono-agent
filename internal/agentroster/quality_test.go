@@ -20,9 +20,11 @@ func TestAggregateMath(t *testing.T) {
 		ev("opus", "engineering", KindOutcome, false, now),
 		ev("opus", "engineering", KindOutcome, false, now),
 		ev("opus", "engineering", KindOutcome, false, now),
-		// opus/testing: a success a half-life ago, and a fresh "good"
-		// rating that counts RatingWeight times.
+		// opus/testing: a success a half-life ago, two fresh ones, and
+		// fresh ratings that count RatingWeight times each.
 		ev("opus", "Testing", KindOutcome, true, now.Add(-QualityHalfLife)),
+		ev("opus", "testing", KindOutcome, true, now),
+		ev("opus", "testing", KindOutcome, true, now),
 		ev("opus", "testing", KindRating, true, now),
 		ev("opus", "testing", KindRating, false, now),
 		// default model, no category.
@@ -31,13 +33,15 @@ func TestAggregateMath(t *testing.T) {
 
 	r, ok := q.Get("claude", "opus", "engineering")
 	// (0 + 0.75*4) / (3 + 4)
-	if !ok || r.Samples != 3 || r.Successes != 0 || !near(r.Rate, 3.0/7) || !r.BadFit() {
+	if !ok || r.Results != 3 || r.Succeeded != 0 || r.Ratings != 0 || !near(r.Rate, 3.0/7) || !r.BadFit() {
 		t.Errorf("engineering = %+v, %v; want rate 3/7, a bad fit", r, ok)
 	}
 	r, ok = q.Get("claude", "opus", "TESTING ")
-	// weight 0.5 + 2 + 2 = 4.5, wins 0.5 + 2 = 2.5 → (2.5 + 3) / (4.5 + 4)
-	if !ok || r.Samples != 3 || !near(r.Weight, 4.5) || !near(r.Rate, 5.5/8.5) || r.BadFit() {
-		t.Errorf("testing = %+v, %v; want weight 4.5, rate 5.5/8.5", r, ok)
+	// weight 0.5 + 1 + 1 + 2 + 2 = 6.5, wins 0.5 + 1 + 1 + 2 = 4.5
+	// → (4.5 + 3) / (6.5 + 4)
+	if !ok || r.Results != 3 || r.Succeeded != 3 || r.Ratings != 2 || r.RatedGood != 1 ||
+		!near(r.Weight, 6.5) || !near(r.Rate, 7.5/10.5) || r.BadFit() {
+		t.Errorf("testing = %+v, %v; want weight 6.5, rate 7.5/10.5", r, ok)
 	}
 	if _, ok := q.Get("claude", "", ""); ok {
 		t.Error("one event is below the minimum sample: no known rate")
@@ -55,9 +59,11 @@ func TestAggregateMinimumSampleAndDecay(t *testing.T) {
 	two := Aggregate([]QualityEvent{
 		ev("haiku", "research", KindOutcome, false, now),
 		ev("haiku", "research", KindRating, false, now),
+		ev("haiku", "research", KindOutcome, false, now),
 	}, now)
+	// Three events, but only two results: a rating is not a result.
 	if _, ok := two.Get("claude", "haiku", "research"); ok {
-		t.Error("two bad results must not count yet")
+		t.Error("two bad results (one rated bad) must not count yet")
 	}
 	// Three failures long ago barely move the rate from the prior, and
 	// three fresh successes outweigh them.
@@ -85,6 +91,7 @@ func TestQualityStoreRoundTrip(t *testing.T) {
 		ev("opus", "engineering", KindOutcome, false, now),
 		ev("opus", "engineering", KindRating, false, now),
 		ev("opus", "engineering", KindOutcome, true, now),
+		ev("opus", "engineering", KindOutcome, true, now),
 		ev("", "", KindOutcome, true, now),
 	} {
 		if err := RecordQuality(ctx, db, e); err != nil {
@@ -98,7 +105,7 @@ func TestQualityStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 4 || all[3].Model != DefaultModel || all[3].Category != CategoryGeneral || !all[3].At.Equal(now) {
+	if len(all) != 5 || all[4].Model != DefaultModel || all[4].Category != CategoryGeneral || !all[4].At.Equal(now) {
 		t.Fatalf("events = %+v", all)
 	}
 	q, err := LoadQuality(ctx, db, now)
@@ -106,8 +113,8 @@ func TestQualityStoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, ok := q.Get("claude", "opus", "engineering")
-	// weight 1 + 2 + 1 = 4, wins 1 → (1 + 3) / 8
-	if !ok || !near(r.Rate, 0.5) || r.BadFit() {
+	// weight 1 + 2 + 1 + 1 = 5, wins 2 → (2 + 3) / 9
+	if !ok || !near(r.Rate, 5.0/9) || r.BadFit() {
 		t.Errorf("rate = %+v, %v", r, ok)
 	}
 	roster := []RuntimeRoster{{Runtime: "claude", Models: []Entry{{Result: Result{Model: "opus"}}, {Result: Result{Model: "haiku"}}}}}

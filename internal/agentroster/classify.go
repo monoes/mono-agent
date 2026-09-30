@@ -54,7 +54,8 @@ func Classify(res *monomind.TurnResult, execErr error) (status, detail string) {
 		switch pe.Code {
 		case monomind.ErrAuth:
 			return StatusAuth, msg
-		case monomind.ErrQuota:
+		case monomind.ErrQuota, monomind.ErrRateLimited:
+			// A 429 agent exec already retried: the model can't run now.
 			return StatusQuota, msg
 		case monomind.ErrMissingBinary, monomind.ErrNoRunner:
 			return StatusMissingBinary, msg
