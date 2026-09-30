@@ -1287,6 +1287,37 @@ regardless of where the binary runs from.
 | `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
 | `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
 
+### UI style guide: form controls
+
+The GUI (`wails-app/frontend`) runs in WebKitGTK on Linux. There, a
+`<select>` whose `appearance` is not reset renders as a light native GTK
+combo box and ignores the page's colours. To keep every control dark:
+
+- **Selects get their look from the global `select` rule** in
+  `src/index.css`: appearance reset, `--elevated` fill, `--border`, the cyan
+  chevron, hover, focus ring, dimmed `:disabled`, and `color-scheme: dark`.
+  A bare `<select>` with no class and no style is already correct.
+  Inputs use the token classes (`.form-input`, `.search-input`).
+- **Modifier classes** (on top of the base rule):
+  - `.select-compact`: 10px, tight padding, for dense rows such as the chat
+    runtime/model/effort row. Override `fontSize` inline if you need 11px.
+  - `.form-select`: full width, form typography; use it inside `.form-group` forms.
+  - `.filter-select`: the display face, for filter bars.
+  - `select[multiple]` and `select[size]` list boxes drop the chevron
+    automatically.
+- **Never re-style the chrome inline.** Inline `style` on a select is for
+  layout only (`flex`, `width`, `minWidth`, `maxWidth`, margins, `fontSize`).
+  Don't set `appearance`, colours, borders, or the chevron there. If a new
+  look is needed, add a modifier class next to the rule in `index.css`.
+- **Never use the `background` shorthand** in an inline style on a form
+  control, and don't spread a shared input style that contains one. Inline
+  styles beat the stylesheet, and the shorthand resets `background-image`,
+  so it wipes the chevron. Use `backgroundColor` if you really must.
+
+`src/selectStyle.test.js` enforces this. It fails when a `<select>`'s
+inline style (or a `const` style object it spreads) sets `appearance` or
+`background`, or when `index.css` loses the global rule.
+
 ## Resource limits
 
 Runs are capped to bound the blast radius of an imported or misbehaving
