@@ -662,8 +662,8 @@ login (and its bill) is what the turn uses.
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
 - **Validated roster.** `monoagentcli agent validate` sends the one-word test
-  turn to every listed model of every installed runtime (or only
-  `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
+  turn to every listed model of every installed runtime (`--all`, the
+  default, or only `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
   `auth`, `quota`, `model_unavailable`, `timeout`, `missing_binary` or `error`,
   with latency and cost. Each test is a real model call, so `--dry-run` prints
   the call count and estimated cost first, and `--stale-only` skips models
