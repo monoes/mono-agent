@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -31,7 +32,10 @@ func RegisterBrowserNodes(r *workflow.NodeTypeRegistry) {
 		}
 		automationID, actionType := parts[0], parts[1]
 		nodeType := automationID + "." + actionType
-		if registered[nodeType] || !compiledIn(automationID) {
+		// A built-in namespace (a legacy ~/.monoagent/actions/<dir>, or a
+		// package installed before ids were reserved) never registers: it
+		// would collide with a built-in type or pass as one.
+		if registered[nodeType] || !compiledIn(automationID) || automation.ReservedID(strings.ToLower(automationID)) || r.Has(nodeType) {
 			continue
 		}
 		p, a := automationID, actionType

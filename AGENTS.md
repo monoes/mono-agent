@@ -1020,8 +1020,49 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   row, and never create one from the file.
 - A role's first grant pre-fills `denyTools: ["Bash"]`: Bash can run
   `monoagentcli` directly and bypass every grant. Workflows with outbound
-  nodes (email, chat, social, service writes, non-GET HTTP, shell) default
-  to `--approval required`.
+  nodes default to `--approval required` and tier `irreversible`, so a
+  person approves their calls at `mid`.
+- Outbound is deny-by-default (`internal/orggrant/outbound.go`): every
+  node type counts except the reviewed `readOnlyNodes`: the engine's four
+  triggers (`trigger.manual|org|schedule|webhook`), control flow, data and
+  image transforms, `*_read`-style reads, mono-agent's own stores (people,
+  applications, documents), `ai.choose` and the deprecated `ai.*` stubs.
+  `http.request` counts only for methods other than GET/HEAD, and
+  `data.spreadsheet` only for writes. So `comm.*`/`service.*` sends,
+  `db.*`, `org.*`, every social write (DMs, posts, comments, likes,
+  follows, `instagram.watch_stories`), `gemini.*`, `browser.jev`,
+  `agent.ask`/`ai.agent`, `ai.extract_page`, `applications.evaluate`,
+  `system.execute_command`, `http.ftp`/`ssh`, `data.write_binary_file`,
+  `vault.secret_save`, installed packages' actions and any unknown type
+  need a person at `mid`.
+- "Not outbound" is not "harmless". A GET can still act (some APIs change
+  state on GET) and its URL and query string can carry workflow data
+  out, and `ai.choose` sends its input to TypeSafe's API. These stay in
+  the `consequential` tier, which the decider may approve at `mid`.
+- The official browser read actions (find/list/scrape/export/metrics,
+  `readOnlyActions`) are verified on every check against the INSTALLED
+  definition, not trusted by name: the package must have `builtin` trust,
+  the action must declare `sideEffects` read or none, and every step
+  (nested, and in called fragments) must be a read step or a bot method
+  listed for that action, with none marked `sideEffect`. Anything that
+  can't be loaded or verified (no registry, `-tags nosocial`, an edited or
+  updated package) counts as outbound.
+- Automation package ids may not be a built-in node namespace (`trigger`,
+  `core`, `data`, `http`, `image`, …; `automation.ReservedID`). Install
+  refuses them, an already installed one is unavailable, and a legacy
+  `~/.monoagent/actions/<dir>` with such a name registers no nodes (it
+  used to panic at startup on a collision like `image.resize`).
+- A new node type fails `TestEveryRegisteredNodeTypeIsClassified` (run it
+  with and without `-tags nosocial`) until it is classified: add it to
+  `readOnlyNodes` only if its implementation can't act outside mono-agent,
+  otherwise to `outboundNodes`. A new official browser read action goes in
+  `readOnlyActions` with the bot methods it calls
+  (`TestReadOnlyActionsVerifiedAgainstInstalledPackages` checks it). A new
+  built-in namespace goes in `automation.reservedIDs`
+  (`TestBuiltinNamespacesAreReserved`). When in doubt, outbound.
+- After upgrading, grants whose workflows use a node that is now outbound
+  are raised to `irreversible` at the next save or reconcile (#286; never
+  lowered), so expect more approvals for a person at `mid`.
 - A waiting granted call (`wait`, mode `run`) returns as soon as the run
   is final. It stops waiting at the tool's timeout, or `postEOFGrace` (3 s)
   after the client closes stdin. It then reads the run once more and, if
