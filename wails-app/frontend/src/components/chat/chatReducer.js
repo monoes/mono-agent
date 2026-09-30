@@ -93,6 +93,8 @@ function completedCall(existing, payload, at) {
 function agentPatch(state, ev) {
   const p = ev.payload || {}
   const id = p.agentId
+  // The lead's lease reports (agent.status for "lead") are the stage's.
+  if (id === 'lead') return {}
   const agents = state.agents || {}
   const cur = agents[id] || { agentId: id, tools: 0, status: 'queued' }
   const put = (next) => ({ agents: { ...agents, [id]: { ...cur, ...next } } })

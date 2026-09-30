@@ -27,6 +27,12 @@ describe('dynamic org events (#226)', () => {
     expect(w.reassigned).toContain('claude/opus')
   })
 
+  it('leaves the lead\'s lease reports to the stage', () => {
+    const s = run(ev('agent.status', { agentId: 'lead', from: 'working', to: 'working', leases: ['write'] }))
+    expect(s.agents).toEqual({})
+    expect(s.stage.nodes.lead.leases).toEqual(['write'])
+  })
+
   it('adds one agent part per worker even if spawned is replayed', () => {
     const spawn = { agentId: 'w1', role: 'Coder' }
     let s = run(ev('agent.spawned', spawn))

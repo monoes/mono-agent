@@ -34,7 +34,10 @@ func (c *Conductor) LeadEvent(ev monomind.Event) {
 		}
 		c.mu.Lock()
 		if c.leadHolds || c.write.tryAcquire() {
-			c.leadHolds = true
+			if !c.leadHolds {
+				c.leadHolds = true
+				c.reportLeadLocked()
+			}
 			c.leadEdits[ev.ID] = true
 			c.mu.Unlock()
 			return
@@ -61,6 +64,7 @@ func (c *Conductor) LeadEvent(ev monomind.Event) {
 		if len(c.leadEdits) == 0 && c.leadHolds {
 			c.leadHolds = false
 			c.write.release()
+			c.reportLeadLocked()
 		}
 	}
 }
@@ -75,6 +79,7 @@ func (c *Conductor) leadStopsEditing() {
 	if c.leadHolds {
 		c.leadHolds = false
 		c.write.release()
+		c.reportLeadLocked()
 	}
 }
 

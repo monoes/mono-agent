@@ -213,3 +213,26 @@ func TestLeaseHeldWhileWaitingForASlotIsReported(t *testing.T) {
 	}
 	t.Fatalf("w2 never reported holding the write lease while queued: %v", em.types("w2"))
 }
+
+// The lead's own write lease (#260) is reported as agent.status for
+// "lead", when it takes it and when it lets it go.
+func TestLeadLeaseIsReported(t *testing.T) {
+	c, em := newTestConductor(t, &execScript{}, Limits{MaxAgents: 1, MaxConcurrent: 1})
+	c.LeadEvent(leadEdit("start", "e1"))
+	c.LeadEvent(leadEdit("start", "e2")) // already held: no second report
+	c.LeadEvent(leadEdit("end", "e1"))
+	c.LeadEvent(leadEdit("end", "e2"))
+	c.LeadEvent(leadEdit("start", "e3"))
+	c.leadStopsEditing() // it waits for workers
+	var got []string
+	for _, p := range em.find(chatevents.EventAgentStatus) {
+		s := p.(chatevents.AgentStatusPayload)
+		if s.AgentID != LeadAgentID || s.To != chatevents.AgentWorking {
+			t.Fatalf("lead status = %+v", s)
+		}
+		got = append(got, "["+strings.Join(s.Leases, "+")+"]")
+	}
+	if strings.Join(got, " ") != "[write] [] [write] []" {
+		t.Errorf("lead lease reports = %v", got)
+	}
+}

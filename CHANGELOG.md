@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A worker's own text is journaled as `assistant.delta` with its `agentId` (part ids `w1:p1`, …; at most 64 KB per worker), and the app shows it in the org stage's node drawer, not in the lead's timeline.
   - A worker's tokens and cost are journaled live as `usage.updated` with its `agentId`, so the stage's meters move while it works. The lead's own usage stays separate; the bubble's cost adds the workers' in explicitly.
   - `agent.spawned` and `agent.reassigned` carry the runtime's tool-activity `fidelity`, so the stage shows "limited activity" from the start instead of guessing at the end.
-  - Each `agent.status` lists the leases its worker holds (`write`, `browser`), and the org stage's pen and browser indicators read them instead of guessing from access profiles.
+  - Each `agent.status` lists the leases its worker holds (`write`, `browser`), and the org stage's pen and browser indicators read them instead of guessing from access profiles. The lead's own write lease is reported as `agent.status` for `lead`.
   - `chat history events --agent <id|lead>` and `chat history transcript --by-agent <conversation> <turn>`.
 
 ### Fixed

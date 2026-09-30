@@ -61,3 +61,19 @@ func (c *Conductor) holdLease(w *worker, l *lease, name string) (release func())
 func (c *Conductor) reportLocked(w *worker) {
 	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: w.status, To: w.status, Leases: slices.Clone(w.leases)})
 }
+
+// LeadAgentID names the lead in the lease report the stage reads.
+const LeadAgentID = "lead"
+
+// reportLeadLocked journals whether the lead holds the write lease: an
+// agent.status for "lead" (working, as the lead is while it edits) with
+// its leases, so the stage shows the lead holding the pen too.
+func (c *Conductor) reportLeadLocked() {
+	var leases []string
+	if c.leadHolds {
+		leases = []string{"write"}
+	}
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{
+		AgentID: LeadAgentID, From: chatevents.AgentWorking, To: chatevents.AgentWorking, Leases: leases,
+	})
+}

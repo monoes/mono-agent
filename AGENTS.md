@@ -647,7 +647,9 @@ a running total across its execs, never part of the lead's usage.
 `agent.spawned` and `agent.reassigned` carry the runtime's tool-activity
 `fidelity` (`full`, `start-only`, `none`). Each `agent.status` lists the
 `leases` its worker holds (`write`, `browser`), which is where the app's
-pen and browser indicators come from. The lead's own events carry no
+pen and browser indicators come from. The lead's own write lease is
+reported the same way, as `agent.status` for `lead` (`working`, with
+`leases`). The lead's own events carry no
 `agentId`. `chat history events --agent <id|lead>` filters a turn's
 events, and `chat history transcript --by-agent <conversation> <turn>`
 shows the turn split by agent.

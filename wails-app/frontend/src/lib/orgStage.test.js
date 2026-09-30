@@ -239,6 +239,18 @@ describe('lease holders come from the conductor', () => {
     expect(leasesOf(s)).toEqual({ pen: 'w2', browser: null, waiting: [{ id: 'w2', lease: 'browser' }] })
   })
 
+  it('shows the lead holding the pen when the conductor reports it', () => {
+    let s = replayStage([
+      { seq: 1, type: 'turn.started', payload: {} },
+      { seq: 2, type: 'agent.status', payload: { agentId: 'lead', from: 'working', to: 'working', leases: ['write'] } },
+    ])
+    expect(leasesOf(s).pen).toBe('lead')
+    expect(s.order).toEqual(['lead'])
+    s = stageReducer(s, { seq: 3, type: 'agent.status', payload: { agentId: 'lead', from: 'working', to: 'working' } })
+    expect(leasesOf(s).pen).toBeNull()
+    expect(s.nodes.lead.status).toBe('working')
+  })
+
   it('takes a repeated status as a lease update: the pen shows held while the worker still waits for a slot', () => {
     let s = replayStage([
       { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', access: 'coding' } },
