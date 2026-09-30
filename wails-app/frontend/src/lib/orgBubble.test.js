@@ -171,6 +171,25 @@ describe('running-org adapter over a recorded bus', () => {
     expect(s.stage.nodes.qa.callOrder).toEqual(['ta:tu-qa-0'])
   })
 
+  it('files a native subagent\'s calls under its own node, capped like the stage', () => {
+    const evs = [
+      { id: 'tu-task', ts: 6000, org: 'acme', run: 'run-a', type: 'tool_activity', from: 'acme:dev', phase: 'start', name: 'Task', input: { description: 'check docs', prompt: 'Read the docs' } },
+    ]
+    for (let i = 0; i < 405; i++) {
+      evs.push({ id: `tu-sub-${i}`, ts: 6001 + i, org: 'acme', run: 'run-a', type: 'tool_activity', from: 'acme:dev', phase: 'start', name: 'Read', input: { file_path: `/w/d${i}` }, parent_tool_use_id: 'tu-task' })
+    }
+    const s = replayOrgBubble([...ACME, ...evs], acme())
+    const native = s.stage.nativeByCall['ta:tu-task']
+    expect(native).toBeTruthy()
+    const order = s.stage.nodes[native].callOrder
+    expect(order).toHaveLength(400)
+    expect(s.callIds[native]).toEqual(order)
+    for (const id of order) expect(s.calls[id]).toBeTruthy()
+    // dev keeps its own calls (the fixture's Edit and the Task itself).
+    expect(s.callIds.dev).toEqual(s.stage.nodes.dev.callOrder)
+    expect(s.callIds.dev).toContain('ta:tu-task')
+  })
+
   it('shows full-access entries on their nodes', () => {
     const s = replayOrgBubble(ACME, acme())
     const entry = { role: 'dev', access: 'full', access_state: 'active' }

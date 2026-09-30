@@ -47,14 +47,21 @@ describe('shared org event tails', () => {
     expect(api.streamOrgEvents).toHaveBeenCalledTimes(2)
   })
 
-  it('forgets the ids a registered restart superseded', async () => {
+  it('stops the older tail when it registers after the newer one', async () => {
+    // Go registers tails in the order their calls land: here the restart's
+    // s2 registers first, then s1 registers and supersedes it, so s1 is
+    // the one running. The last release must still stop s1.
+    const pending = []
+    const later = () => new Promise(r => pending.push(r))
+    api.streamOrgEvents.mockImplementationOnce(later).mockImplementationOnce(later)
     const release = acquireOrgEvents('acme')
     restartOrgEvents('acme')
-    restartOrgEvents('acme')
+    const [first, second] = api.streamOrgEvents.mock.calls.map(c => c[1])
+    pending[1]({ ok: true })
     await Promise.resolve()
+    pending[0]({ ok: true })
     await Promise.resolve()
-    const ids = api.streamOrgEvents.mock.calls.map(c => c[1])
     release()
-    expect(api.stopOrgEvents.mock.calls).toEqual([['acme', ids[2]]])
+    expect(api.stopOrgEvents.mock.calls).toEqual([['acme', first], ['acme', second]])
   })
 })

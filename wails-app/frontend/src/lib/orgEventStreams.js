@@ -25,17 +25,14 @@ function call(fn) {
   }
 }
 
-// start runs a new tail for entry. Once it registers, the Go side has
-// killed the ones it superseded, so their ids are dropped; until then they
-// stay, for the last release to stop.
+// start runs a new tail for entry. Its id joins every earlier one: the Go
+// side registers tails in whatever order their calls land, so an older
+// one can register after (and kill) a newer one, and only stopping every
+// id on the last release is sure to end whichever runs.
 function start(org, entry) {
   const id = newOrgEventsStreamId()
   entry.ids.push(id)
-  call(() => api.streamOrgEvents(org, id)?.then?.(res => {
-    if (res?.error || res?.stopped) return
-    const at = entry.ids.indexOf(id)
-    if (at > 0) entry.ids.splice(0, at)
-  }))
+  call(() => api.streamOrgEvents(org, id))
 }
 
 // acquireOrgEvents makes sure org's events flow and returns the release.

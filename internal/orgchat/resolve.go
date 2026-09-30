@@ -244,16 +244,5 @@ func lockOrg(ctx context.Context, root, org string) (func(), error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "orgchat-"+org+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockFile(ctx, f); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() {
-		_ = unlockFile(f)
-		f.Close()
-	}, nil
+	return lockPath(ctx, filepath.Join(dir, "orgchat-"+org+".lock"))
 }

@@ -12,30 +12,37 @@ import (
 	"time"
 )
 
-// lockFile takes an exclusive flock on the open lock file without blocking
+// lockPath takes an exclusive flock on the file at path without blocking
 // in the kernel: it retries until the holder (another process resolving in
-// the same org) lets go, ctx ends, or lockWaitTimeout passes.
-func lockFile(ctx context.Context, f *os.File) error {
+// the same org) lets go, ctx ends, or lockWaitTimeout passes. The kernel
+// drops the lock if the holder dies.
+func lockPath(ctx context.Context, path string) (func(), error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(lockWaitTimeout)
 	for {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
-			return nil
+			return func() {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				f.Close()
+			}, nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
-			return err
+			f.Close()
+			return nil, err
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("another process has held %s for %s", filepath.Base(f.Name()), lockWaitTimeout)
+			f.Close()
+			return nil, fmt.Errorf("another process has held %s for %s", filepath.Base(path), lockWaitTimeout)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			f.Close()
+			return nil, ctx.Err()
 		case <-time.After(lockPollInterval):
 		}
 	}
-}
-
-func unlockFile(f *os.File) error {
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }

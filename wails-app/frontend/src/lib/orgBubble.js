@@ -75,7 +75,7 @@ export function initialOrgBubble({ org, boss = '', roles = [] } = {}) {
     // Non-lead roles' tool calls, callId → call: the stage keeps only
     // their order, and the drawer reads them from here (as a coder
     // bubble's drawer reads chatReducer's agentCalls). Like the stage, each
-    // role keeps its latest MAX_CALLS (callIds: role → their ids, oldest
+    // node keeps its latest MAX_CALLS (callIds: node → their ids, oldest
     // first).
     calls: {},
     callIds: {},
@@ -122,15 +122,25 @@ function emitter(s, ev) {
     emit(type, payload) {
       seq += 1
       stage = stageReducer(stage, { seq, at, type, payload })
-      if (payload.agentId && (type === 'tool.started' || type === 'tool.completed')) recordCall(s, type, payload, at)
+      if (type === 'tool.started' || type === 'tool.completed') recordCall(s, stage, type, payload, at)
     },
     done() { return { stage, seq } },
   }
 }
 
-// recordCall keeps a role's tool call in the shape ChatTimeline renders,
-// dropping that role's oldest once it has more than MAX_CALLS.
-function recordCall(s, type, p, at) {
+// ownerOf is the node a call belongs to, as the stage decides it: a call
+// made inside a native subagent belongs to that subagent's node.
+function ownerOf(stage, p) {
+  return (p.parentCallId && stage.nativeByCall[p.parentCallId]) || stage.callOwner[p.callId] || p.agentId || LEAD_ID
+}
+
+// recordCall keeps a call in the shape ChatTimeline renders, under the node
+// the stage files it under, dropping that node's oldest once it has more
+// than MAX_CALLS, exactly as the stage caps the node's callOrder. The
+// lead's own calls aren't kept (the stage keeps no order for them).
+function recordCall(s, stage, type, p, at) {
+  const owner = ownerOf(stage, p)
+  if (owner === LEAD_ID) return
   const prev = s.calls[p.callId]
   if (type === 'tool.completed' && !prev) return // dropped already, or never seen
   let call
@@ -147,9 +157,9 @@ function recordCall(s, type, p, at) {
   }
   const calls = { ...s.calls, [p.callId]: call }
   if (type === 'tool.started' && !prev) {
-    const ids = [...(s.callIds[p.agentId] || []), p.callId]
+    const ids = [...(s.callIds[owner] || []), p.callId]
     while (ids.length > MAX_CALLS) delete calls[ids.shift()]
-    s.callIds = { ...s.callIds, [p.agentId]: ids }
+    s.callIds = { ...s.callIds, [owner]: ids }
   }
   s.calls = calls
 }
