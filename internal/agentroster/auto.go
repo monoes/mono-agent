@@ -155,6 +155,8 @@ type AutoPlan struct {
 	Targets     []Target `json:"targets"`
 	EstCostUSD  float64  `json:"est_cost_usd"`
 	UnknownCost int      `json:"unknown_cost"`
+	// TableEstimated counts targets priced from the built-in table.
+	TableEstimated int `json:"table_estimated"`
 }
 
 // PickStale chooses the next automatic run from a built roster: the
@@ -203,7 +205,7 @@ func PickStale(roster []RuntimeRoster, previous []Result, maxModels int) *AutoPl
 	}
 	plan := Plan{Targets: p.Targets}
 	plan.EstimateCost(previous)
-	p.EstCostUSD, p.UnknownCost = plan.EstCostUSD, plan.UnknownCost
+	p.EstCostUSD, p.UnknownCost, p.TableEstimated = plan.EstCostUSD, plan.UnknownCost, plan.TableEstimated
 	return p
 }
 

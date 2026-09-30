@@ -20,6 +20,13 @@ export function formatUSD(t, usd, unknown) {
   return s
 }
 
+// nextCost is the next run's estimate, saying how many of its calls were
+// priced from the CLI's built-in price table.
+function nextCost(t, next) {
+  const s = formatUSD(t, next.est_cost_usd, next.unknown_cost)
+  return next.table_estimated > 0 ? s + ' ' + t('agents.roster.auto.fromTable', { count: next.table_estimated }) : s
+}
+
 // ceilingText is the most a day can cost, priced at the priciest model
 // with a known cost.
 function ceilingText(t, st) {
@@ -49,7 +56,7 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
     if (on) {
       const next = st?.next
       const cost = next
-        ? t('agents.roster.auto.confirmNext', { count: next.targets?.length || 0, runtime: next.runtime, cost: formatUSD(t, next.est_cost_usd, next.unknown_cost) })
+        ? t('agents.roster.auto.confirmNext', { count: next.targets?.length || 0, runtime: next.runtime, cost: nextCost(t, next) })
         : t('agents.roster.auto.confirmNothing')
       const ok = await confirm(
         <span>{t('agents.roster.auto.confirmBody', { perDay: st?.max_runtimes_per_day ?? 1, models: st?.max_models_per_run ?? 3 })} {cost} {ceilingText(t, st)}</span>,
@@ -88,7 +95,7 @@ export default function AutoRevalidate({ refreshKey = 0 }) {
       {st && (
         <div role="status" style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: '2px 12px' }}>
           <span>{next
-            ? t('agents.roster.auto.next', { count: next.targets?.length || 0, runtime: next.runtime, cost: formatUSD(t, next.est_cost_usd, next.unknown_cost) })
+            ? t('agents.roster.auto.next', { count: next.targets?.length || 0, runtime: next.runtime, cost: nextCost(t, next) })
             : t('agents.roster.auto.nothingStale')}</span>
           <span>{ceilingText(t, st)}</span>
           <span>{t('agents.roster.auto.today', { count: state.runtimes_today || 0, spent: formatUSD(t, state.spent_today_usd, state.unknown_cost_calls_today) })}</span>

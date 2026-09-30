@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Minimize2, X, ChevronUp, ChevronDown } from 'lucide-react'
-import { api } from '../../services/api.js'
+import { api, notify } from '../../services/api.js'
 import { CoderHeader, CoderBadge } from '../chat/CoderHeader.jsx'
 import { folderName } from '../chat/useCoderMode.js'
 import { runtimeLabel } from '../../lib/runtimeLabels.js'
@@ -158,6 +158,19 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
   const selectAgent = useCallback(id => setSelectedAgent(cur => (cur === id ? null : id)), [])
   const agentFilter = selectedNode ? chatAgentOf(stage, selectedNode.id) : null
   const filterName = selectedNode ? (selectedNode.id === LEAD_ID ? t('bubbles.lead') : stage.nodes[agentFilter]?.role || agentFilter) : ''
+  // stopAgent stops one node of the running turn (#255): a worker alone,
+  // or the lead, which is the whole turn. The stage then updates from the
+  // journal's agent events. A finished turn has nothing to stop.
+  const liveConvId = conv.conversationId
+  const liveTurnId = shown?.isLive ? shownTurnId : ''
+  const stopAgent = useCallback(async (id) => {
+    try {
+      if (id === LEAD_ID) await api.stopChatTurn(liveConvId, liveTurnId)
+      else await api.stopChatAgent(liveConvId, liveTurnId, id)
+    } catch (err) {
+      notify('chat', t('bubbles.couldNotStop', { error: String(err?.message || err) }))
+    }
+  }, [liveConvId, liveTurnId, t])
 
   const title = bubble.cwd ? folderName(bubble.cwd) : t('bubbles.newChat')
   const runtime = bubble.conversationId ? bubble.runtime : setup.runtime
@@ -234,7 +247,8 @@ export function CoderChatOverlay({ bubble, store, originRect, onCollapse, onClos
           />
           {selectedNode && (
             <StageDrawer node={selectedNode} calls={shown?.state?.agentCalls} leadInfo={{ runtime, model, effort: bubble.effort || setup.effort }}
-              turnId={shown?.turnId || ''} isLive={!!shown?.isLive} onClose={() => setSelectedAgent(null)} />
+              turnId={shown?.turnId || ''} isLive={!!shown?.isLive} onClose={() => setSelectedAgent(null)}
+              onStop={liveConvId && liveTurnId ? stopAgent : undefined} />
           )}
         </div>
       </div>

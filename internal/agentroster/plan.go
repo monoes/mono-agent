@@ -112,5 +112,12 @@ func BuildPlan(ctx context.Context, scan *monomind.ScanResult, list Lister, prev
 		}
 	}
 	plan.EstimateCost(previous)
+	hints := map[string]string{}
+	for _, a := range runtimes {
+		if a.LoginHint != nil {
+			hints[a.ID] = *a.LoginHint
+		}
+	}
+	plan.NoteSignIn(previous, hints)
 	return plan
 }

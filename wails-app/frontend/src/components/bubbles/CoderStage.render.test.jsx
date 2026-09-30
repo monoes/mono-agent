@@ -16,6 +16,7 @@ const { api, listeners } = vi.hoisted(() => ({
     getChatEvents: vi.fn(),
     startChatTurn: vi.fn(),
     stopChatTurn: vi.fn(),
+    stopChatAgent: vi.fn(),
     coderStatus: vi.fn(),
     coderWorkspaceList: vi.fn(),
     coderWorkspaceRoot: vi.fn(),
@@ -25,9 +26,10 @@ const { api, listeners } = vi.hoisted(() => ({
     openPathWithOS: vi.fn(),
   },
 }))
+const { notify } = vi.hoisted(() => ({ notify: vi.fn() }))
 vi.mock('../../services/api.js', () => ({
   api,
-  notify: vi.fn(),
+  notify,
   onChatEvent: cb => { listeners.chat.add(cb); return () => listeners.chat.delete(cb) },
   onOrgEvent: () => () => {},
   newOrgEventsStreamId: () => 'stream',
@@ -138,5 +140,45 @@ describe('the org stage in a coder bubble', () => {
     expect(screen.getByTestId('stage-drawer')).toBeInTheDocument()
     fireEvent.click(node('w1'))
     expect(screen.queryByTestId('stage-drawer')).toBeNull()
+  })
+
+  // A running turn: the journal up to seq 40, where w1 and w2 are working.
+  const runningTurn = () => {
+    api.getChatTurns.mockResolvedValue({ items: [{ id: 'turn-1', prompt: 'Fix the flaky cache test', status: 'active' }] })
+    api.getChatEvents.mockImplementation((c, t, after) => Promise.resolve({ items: journal.filter(e => e.seq > after && e.seq <= 40), hasMore: false }))
+  }
+
+  it('Stop in a running worker\'s drawer stops just that worker (#255)', async () => {
+    runningTurn()
+    api.stopChatAgent.mockResolvedValue({ ok: true, status: 'cancelled', requested: true })
+    render(<Harness open={conv} />)
+    await waitFor(() => expect(node('w2')).toBeInTheDocument())
+    fireEvent.click(node('w2'))
+    const stop = await screen.findByTestId('stage-stop')
+    await waitFor(() => expect(stop).toBeEnabled())
+    fireEvent.click(stop)
+    await waitFor(() => expect(api.stopChatAgent).toHaveBeenCalledWith('conv-org', 'turn-1', 'w2'))
+    expect(api.stopChatTurn).not.toHaveBeenCalled()
+  })
+
+  it('a failed stop is reported, and a finished turn\'s Stop stays disabled', async () => {
+    runningTurn()
+    api.stopChatAgent.mockRejectedValue(new Error('turn not found'))
+    const { unmount } = render(<Harness open={conv} />)
+    await waitFor(() => expect(node('w1')).toBeInTheDocument())
+    fireEvent.click(node('w1'))
+    const stop = await screen.findByTestId('stage-stop')
+    await waitFor(() => expect(stop).toBeEnabled())
+    fireEvent.click(stop)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('chat', expect.stringContaining('turn not found')))
+    unmount()
+
+    // The recorded (finished) turn: nothing runs, so nothing to stop.
+    api.getChatTurns.mockResolvedValue({ items: [{ id: 'turn-1', prompt: 'Fix the flaky cache test', status: 'completed' }] })
+    api.getChatEvents.mockImplementation((c, t, after) => Promise.resolve({ items: journal.filter(e => e.seq > after), hasMore: false }))
+    render(<Harness open={conv} />)
+    await waitFor(() => expect(node('w2')).toBeInTheDocument())
+    fireEvent.click(node('w2'))
+    expect(screen.getByTestId('stage-stop')).toBeDisabled()
   })
 })

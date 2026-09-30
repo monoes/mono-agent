@@ -29,9 +29,9 @@ function pct(v) {
 // StageDrawer is a clicked node's detail (#228): its brief, why it was
 // staffed the way it was, model, effort and access, the messages it got and
 // sent, and its tool cards (from calls, the turn's agentCalls). onStop
-// stops just this agent; without it the button explains that only the
-// whole turn can be stopped. canStop false leaves the button out (a
-// running org's roles stop with the org).
+// stops just this agent; without it (a finished turn) the button is
+// disabled and says so. canStop false leaves the button out (a running
+// org's roles stop with the org).
 export function StageDrawer({ node, calls, leadInfo, turnId, isLive, onClose, onStop, canStop = true }) {
   const { t } = useTranslation()
   const timeline = useMemo(() => agentTimeline(node, calls), [node, calls])
