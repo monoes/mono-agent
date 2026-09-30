@@ -545,6 +545,20 @@ tools:
 | `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
 | `org_stop` | Stops a worker. |
 
+Outside the turn, `monoagentcli chat turn stop <conversation> <turn> --agent
+<id> [--wait 20s] --json` stops one worker and leaves the lead and the other
+workers running (#255); the app's stage drawer calls it through
+`App.StopChatAgent`. The control path is a mailbox folder next to the
+database, `<db dir>/chat-control/<turn-id>/`: the command drops a
+`stop-<agent-id>` file, and the turn process, which polls the folder while
+its conductor runs, calls `Conductor.Stop` and removes the file (that removal
+is the acknowledgement). A file works from any process of the same user, on
+every OS, whichever window owns the turn. The journal then shows the usual
+`agent.status` to `cancelled` and `agent.finished` with outcome `cancelled`,
+and the command reports the worker's status from it. A worker or turn that
+already finished is a no-op (`requested: false`), and an agent the turn
+doesn't have reports `unknown`. The turn removes its folder when it ends.
+
 How the conductor staffs a worker:
 
 - **The lead's choices win.** They are only checked: a model must be in the

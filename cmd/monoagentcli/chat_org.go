@@ -145,7 +145,14 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 	opts.OnToolCall = cond.Handle
 	opts.ToolTimeout = dynorg.ToolTimeout
 	opts.SystemPrompt += dynorg.LeadPrompt(limits)
+	// `chat turn stop --agent` reaches this turn's workers through its
+	// mailbox folder (#255). An unknown agent id is a no-op.
+	stopWatch := func() {}
+	if controlID.MatchString(journal.turnID) {
+		stopWatch = watchAgentStops(agentControlDir(cfg, journal.turnID), func(id string) { _, _ = cond.Stop(id) })
+	}
 	return func() {
+		stopWatch()
 		cond.Close()
 		db.Close()
 	}

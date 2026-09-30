@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
   - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
   - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+- **Stop a single worker** (#255): `chat turn stop <conversation> <turn> --agent <id>` cancels one worker of a running dynamic-org turn, and the lead and the other workers keep running. It reaches the turn's process through a small mailbox folder next to the database, so it works whichever window runs the turn. Stopping a worker that already finished is a no-op. The app binding is `StopChatAgent`.
 
 ### Fixed
 - **Chat with monoagent tools lost a turn to a denied workflow command (#247).** The system prompt showed `monoagentcli --profile <id> workflow create <name>`, but Bash in a tools turn only runs commands that start with `monomind org`, `monoagentcli org` or `monoagentcli workflow`, so that form was always denied. The prompt now puts `--profile` after the subcommand (`monoagentcli workflow create <name> --profile <id>`), and a test checks that every command the prompt shows is allowed.
