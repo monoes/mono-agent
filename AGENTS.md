@@ -860,8 +860,9 @@ login (and its bill) is what the turn uses.
   version. When a manager can't list its global tools (Volta, or a failing
   `mise bin-paths`), its shims dir is appended last instead, with a
   one-line notice in the log. Residual risk: a tool found nowhere else is
-  then still picked by the project's version files; the pinned agent CLIs
-  are not affected.
+  then still picked by the project's version files. The agent CLIs are not:
+  one that can't be pinned is pointed at a file that never exists
+  (`~/.monoagent/unpinned/<name>`), so monomind reports it missing.
 - **Validated roster.** `monoagentcli agent validate` sends the one-word test
   turn to every listed model of every installed runtime (`--all`, the
   default, or only `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,

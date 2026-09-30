@@ -311,6 +311,11 @@ func TestFindResolvesVoltaShim(t *testing.T) {
 // than running the project's. rev278 reproduced a planted codex run with
 // --sandbox danger-full-access through `agent exec --runtime codex`.
 func TestAgentRuntimesPinnedAndShimsDropped(t *testing.T) {
+	t.Run("bin-paths", func(t *testing.T) { testAgentRuntimesPinned(t, false) })
+	t.Run("fallback", func(t *testing.T) { testAgentRuntimesPinned(t, true) })
+}
+
+func testAgentRuntimesPinned(t *testing.T, fallback bool) {
 	f := newShimFixture(t, "node/22.0.0")
 	codex := filepath.Join(f.data, "installs", "npm-openai-codex", "1.0.0", "bin", "codex")
 	if err := os.MkdirAll(filepath.Dir(codex), 0o755); err != nil {
@@ -320,6 +325,11 @@ func TestAgentRuntimesPinnedAndShimsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_RUNTIMES", "codex opencode")
+	if fallback {
+		// mise can't list its global tools: its shims dir stays on PATH,
+		// last, and the unpinnable opencode must still not reach it.
+		t.Setenv("FAKE_MISE_NO_BIN_PATHS", "1")
+	}
 	ctx := context.Background()
 	for name, run := range map[string]func() error{
 		"org status": func() error { _, err := OrgStatus(ctx, f.project, "growth"); return err },
@@ -352,12 +362,14 @@ func TestAgentRuntimesPinnedAndShimsDropped(t *testing.T) {
 	if got["CODEX_CLI_BIN"] != codex {
 		t.Errorf("CODEX_CLI_BIN = %q, want %s", got["CODEX_CLI_BIN"], codex)
 	}
-	if v, ok := got["OPENCODE_BIN"]; ok {
-		t.Errorf("OPENCODE_BIN = %q, want it unset (not pinnable)", v)
+	if v, ok := got["OPENCODE_BIN"]; ok != fallback || (fallback && v != filepath.Join(f.home, ".monoagent", "unpinned", "opencode")) {
+		t.Errorf("OPENCODE_BIN = %q (set %v), want it unset, or the unpinned path in the fallback", v, ok)
 	}
-	for _, p := range filepath.SplitList(got["PATH"]) {
-		if p == f.shims {
-			t.Errorf("PATH still has the shims dir: %s", got["PATH"])
+	if !fallback {
+		for _, p := range filepath.SplitList(got["PATH"]) {
+			if p == f.shims {
+				t.Errorf("PATH still has the shims dir: %s", got["PATH"])
+			}
 		}
 	}
 }
@@ -413,6 +425,9 @@ func TestPinEnvGlobalToolDirs(t *testing.T) {
 	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(codexDir, "codex") {
 		t.Fatalf("CODEX_CLI_BIN = %q", v)
 	}
+	if v, ok := envValue(env, "OPENCODE_BIN"); ok {
+		t.Fatalf("OPENCODE_BIN = %q, want it unset (no shims on PATH)", v)
+	}
 
 	t.Setenv("FAKE_MISE_NO_BIN_PATHS", "1")
 	ResetCapabilityCache()
@@ -423,6 +438,14 @@ func TestPinEnvGlobalToolDirs(t *testing.T) {
 	}
 	if v, _ := envValue(env, "CODEX_CLI_BIN"); v != filepath.Join(codexDir, "codex") {
 		t.Fatalf("fallback CODEX_CLI_BIN = %q", v)
+	}
+	// opencode (a shim, but not installed) would reach the shim at the end
+	// of PATH: it is pointed at a file that doesn't exist instead.
+	if v, _ := envValue(env, "OPENCODE_BIN"); v != filepath.Join(f.home, ".monoagent", "unpinned", "opencode") {
+		t.Fatalf("fallback OPENCODE_BIN = %q", v)
+	}
+	if _, err := os.Stat(filepath.Join(f.home, ".monoagent", "unpinned")); !os.IsNotExist(err) {
+		t.Fatalf("the unpinned dir exists: %v", err)
 	}
 }
 
@@ -508,6 +531,54 @@ func TestProtoShimFailsClosed(t *testing.T) {
 	t.Cleanup(ResetCapabilityCache)
 	if _, err := Find(); err == nil || !strings.Contains(err.Error(), "proto shim") {
 		t.Fatalf("Find() err = %v, want a proto refusal", err)
+	}
+}
+
+// asdf's global tools come from `asdf current` (0.14's bash output, and
+// 0.16's Go output with its header and Installed column) and `asdf where
+// <tool>`; a tool that is set but not installed (where fails) is skipped.
+func TestAsdfBinPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake asdf is a shell script")
+	}
+	for format, current := range map[string]string{
+		"0.14": "nodejs          22.0.0          /home/u/.tool-versions\n" +
+			"python          3.12.0          /home/u/.tool-versions\n" +
+			"ruby            3.3.0           Not installed. Run \"asdf install ruby 3.3.0\"\n" +
+			"golang          ______          No version is set. Run \"asdf <global|shell|local> golang <version>\"\n",
+		"0.16": "Name            Version         Source                   Installed\n" +
+			"nodejs          22.0.0          /home/u/.tool-versions   true\n" +
+			"python          3.12.0          /home/u/.tool-versions   true\n" +
+			"ruby            3.3.0           /home/u/.tool-versions   false\n",
+	} {
+		t.Run(format, func(t *testing.T) {
+			data := t.TempDir()
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("ASDF_DATA_DIR", data)
+			t.Setenv("PATH", "/usr/bin"+string(os.PathListSeparator)+"/bin")
+			want := []string{}
+			for _, tv := range []string{"nodejs/22.0.0", "python/3.12.0"} {
+				d := filepath.Join(data, "installs", filepath.FromSlash(tv), "bin")
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				want = append(want, d)
+			}
+			script := "#!/bin/sh\ncase \"$1\" in\n" +
+				"current) cat <<'OUT'\n" + current + "OUT\n;;\n" +
+				"where) for d in \"$ASDF_DATA_DIR\"/installs/$2/*; do [ -d \"$d\" ] && { echo \"$d\"; exit 0; }; done\n" +
+				"echo \"Version not installed\" >&2; exit 1 ;;\n*) exit 2 ;;\nesac\n"
+			if err := os.MkdirAll(filepath.Join(data, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(data, "bin", "asdf"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			got, err := listBinPaths(managerAsdf, "")
+			if err != nil || strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Fatalf("listBinPaths = %v, %v; want %v", got, err, want)
+			}
+		})
 	}
 }
 

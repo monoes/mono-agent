@@ -1,6 +1,7 @@
 package monomind
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -44,8 +45,12 @@ type pinnedRuntime struct {
 // absolute path: the operator's own value when set, else the first match
 // on searchPath, resolved through any shim. A runtime that can't be found
 // or pinned has its variable removed; with the shims gone from PATH it
-// then fails to start instead of running whatever a project picks.
-func pinRuntimes(env []string, searchPath string) []string {
+// then fails to start instead of running whatever a project picks. When
+// shims are still on PATH (shimsOnPath: globalToolDirs' fallback), its
+// variable names a file that doesn't exist (unpinnedPath) instead: monomind
+// runs a set <X>_CLI_BIN as given, and reports it missing, with no PATH
+// lookup that could reach a shim.
+func pinRuntimes(env []string, searchPath string, shimsOnPath bool) []string {
 	set := map[string]string{}
 	out := make([]string, 0, len(env)+len(runtimeBinEnv))
 	for _, kv := range env {
@@ -57,11 +62,26 @@ func pinRuntimes(env []string, searchPath string) []string {
 		out = append(out, kv)
 	}
 	for _, rt := range runtimeBinEnv {
-		if p := pinRuntime(rt.name, strings.TrimSpace(set[rt.env]), searchPath); p != "" {
+		p := pinRuntime(rt.name, strings.TrimSpace(set[rt.env]), searchPath)
+		if p == "" && shimsOnPath {
+			p = unpinnedPath(rt.name)
+		}
+		if p != "" {
 			out = append(out, rt.env+"="+p)
 		}
 	}
 	return out
+}
+
+// unpinnedPath is where an unpinnable agent CLI is pointed while shims are
+// on PATH: a path in mono-agent's own data dir that is never created, so
+// the CLI is reported missing. "" without a home directory.
+func unpinnedPath(name string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".monoagent", "unpinned", name)
 }
 
 func isRuntimeBinEnv(key string) bool {

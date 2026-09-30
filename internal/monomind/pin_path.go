@@ -52,11 +52,12 @@ func PinEnv(env []string, bin string) []string {
 		}
 		parts = appendNew(parts, p)
 	}
-	for _, p := range globalToolDirs(shims) {
+	global, shimsKept := globalToolDirs(shims)
+	for _, p := range global {
 		parts = appendNew(parts, p)
 	}
 	out = append(out, key+"="+strings.Join(parts, string(os.PathListSeparator)))
-	return pinRuntimes(out, cur)
+	return pinRuntimes(out, cur, shimsKept)
 }
 
 // PinEnvIn is PinEnv for a command that runs in roots: PATH entries and
@@ -163,8 +164,8 @@ func shimDirMatcher() func(dir string) string {
 // When a manager can't list them, its shims dir goes last instead, after
 // the system dirs, and a one-line notice is logged: tools keep working,
 // with the residual risk that one not found anywhere else is still picked
-// per project.
-func globalToolDirs(shims []shimDir) []string {
+// per project (the agent CLIs aren't: pinRuntimes). kept reports that.
+func globalToolDirs(shims []shimDir) (dirs []string, kept bool) {
 	var bins, fallback []string
 	done := map[string]bool{}
 	for _, s := range shims {
@@ -180,7 +181,7 @@ func globalToolDirs(shims []shimDir) []string {
 		noticeFallback(s.kind, err)
 		fallback = append(fallback, s.dir)
 	}
-	return append(bins, fallback...)
+	return append(bins, fallback...), len(fallback) > 0
 }
 
 var fallbackNotices sync.Map
