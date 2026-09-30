@@ -159,6 +159,9 @@ export const api = {
   stopAgentValidation:  () => GoApp.StopAgentValidation().then(parseRosterJSON).catch(e => ({ error: String(e) })),
   agentRosterAdd:       (runtimeID, model) => GoApp.AgentRosterAdd(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   agentRosterRemove:    (runtimeID, model) => GoApp.AgentRosterRemove(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  // Automatic re-validation (#230): `agent roster auto-revalidate status|on|off --json`.
+  agentRosterAutoRevalidate:    () => GoApp.AgentRosterAutoRevalidate().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  setAgentRosterAutoRevalidate: on => GoApp.SetAgentRosterAutoRevalidate(!!on).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
   // bindings"). Every call goes through parseStreamResult: a synchronous
   // {"error":...} shape
@@ -172,6 +175,10 @@ export const api = {
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>
     GoApp.StopChatTurn(conversationID, turnID).then(parseStreamResult),
+  // One worker of a dynamic-org turn; the lead and the other workers keep
+  // running (#255).
+  stopChatAgent: (conversationID, turnID, agentID) =>
+    GoApp.StopChatAgent(conversationID, turnID, agentID).then(parseStreamResult),
   listChatConversations: (cursor = '', limit = 50) =>
     GoApp.ListChatConversations(cursor, limit).then(parseStreamResult),
   getChatTurns: (conversationID, cursor = '', limit = 50) =>
@@ -190,6 +197,12 @@ export const api = {
   coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
     GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
   // {stopped, gone, refused} pids of a turn's leftover background processes.
+  // Dynamic org (#226): 'solo' or 'dynamic', from the next turn on.
+  // Answer a dynamic-org worker's question (#256).
+  answerAgentQuestion: (conversationID, turnID, agentID, questionID, text) =>
+    GoApp.AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text).then(parseStreamResult),
+  setChatOrgMode: (conversationID, mode) =>
+    GoApp.SetChatOrgMode(conversationID, mode).then(parseStreamResult),
   coderStopBackground: (conversationID, turnID) =>
     GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
   coderWorkspaceRoot: (runtimeID = '') => GoApp.CoderWorkspaceRoot(runtimeID).then(parseStreamResult),
@@ -221,6 +234,13 @@ export const api = {
   streamOrgEvents:    (orgName, streamId) => GoApp.StreamOrgEvents(orgName, streamId).then(s => JSON.parse(s)),
   stopOrgEvents:      (orgName, streamId) => GoApp.StopOrgEvents(orgName, streamId).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
   runOrg:             (orgName, task = '') => GoApp.RunOrg(orgName, task).then(s => JSON.parse(s)),
+  // Org bubbles (#229): `org chat …` and `org stop|pause|resume`. Each
+  // resolves to the CLI's JSON or {error}; they never reject.
+  getOrgChatHistory:  (org, run = '') => GoApp.GetOrgChatHistory(org, run).then(s => JSON.parse(s)).catch(asError),
+  sendOrgChat:        (org, text) => GoApp.SendOrgChat(org, text).then(s => JSON.parse(s)).catch(asError),
+  answerOrgChat:      (org, questionID, answer) => GoApp.AnswerOrgChat(org, questionID, answer).then(s => JSON.parse(s)).catch(asError),
+  resolveOrgChat:     (org, ref, approve, note = '') => GoApp.ResolveOrgChat(org, ref, approve, note).then(s => JSON.parse(s)).catch(asError),
+  controlOrg:         (org, verb) => GoApp.ControlOrg(org, verb).then(s => JSON.parse(s)).catch(asError),
   // Org Designer — direct config-file read/write, distinct from the org
   // observe/action surface above (which proxies `monoagentcli org <sub>`,
   // read-only + question/gate actions). See wails-app/app_orgs_design.go.

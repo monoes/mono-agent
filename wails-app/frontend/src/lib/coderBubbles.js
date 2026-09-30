@@ -30,9 +30,15 @@ export function emptySummary() {
 }
 
 // totalCost sums each turn's latest cost snapshot (usage.updated reports a
-// running total per turn, never a delta).
+// running total per turn, never a delta), and each worker's.
 export function totalCost(summary) {
   return Object.values(summary?.costByTurn || {}).reduce((n, c) => n + (Number(c) || 0), 0)
+}
+
+// costEstimated reports whether any of totalCost is a worker's estimate
+// from its tokens (#230), shown as "≈".
+export function costEstimated(summary) {
+  return Object.values(summary?.estimatedByTurn || {}).some(Boolean)
 }
 
 // applyChatEvent folds one chat:event envelope into a bubble's summary.
@@ -44,9 +50,22 @@ export function applyChatEvent(summary, ev, expanded) {
   switch (ev?.type) {
     case 'turn.started':
       return { ...s, status: STATUS.working, activeTurnId: ev.turnId || '', turnStartedAt: ev.at || '' }
-    case 'usage.updated':
+    case 'usage.updated': {
       if (p.costUsd == null || !ev.turnId) return s
-      return { ...s, costByTurn: { ...s.costByTurn, [ev.turnId]: p.costUsd } }
+      // A dynamic-org worker's running total (#257) is kept under its own
+      // key, so the chat's cost adds it to the lead's instead of replacing it.
+      const key = p.agentId ? `${ev.turnId}:${p.agentId}` : ev.turnId
+      return { ...s, costByTurn: { ...s.costByTurn, [key]: p.costUsd }, estimatedByTurn: { ...s.estimatedByTurn, [key]: !!p.costEstimated } }
+    }
+    // A dynamic-org agent asking the user something (#228) makes the
+    // bubble pulse until that agent moves on.
+    case 'agent.message':
+      if (p.direction !== 'question' || (s.activeTurnId && ev.turnId && ev.turnId !== s.activeTurnId)) return s
+      return { ...s, status: STATUS.needs, needsAgent: p.agentId || '' }
+    case 'agent.status':
+    case 'agent.finished':
+      if (s.status !== STATUS.needs || !s.needsAgent || p.agentId !== s.needsAgent) return s
+      return { ...s, status: STATUS.working, needsAgent: '' }
     case 'turn.finished': {
       // A turn other than the running one finishing (a late event for an
       // older turn) must not clear the running one.
@@ -99,18 +118,34 @@ export function moveBubble(bubbles, fromKey, toKey) {
   return next
 }
 
+// orgBubble is a running org opened as a bubble (#229): chatted with
+// through its boss. Its key can never collide with a conversation id.
+export function orgBubble(orgName) {
+  return { key: `org:${orgName}`, kind: 'org', orgName, conversationId: '', cwd: '', model: '', runtime: '' }
+}
+
+export function isOrgBubble(b) {
+  return b?.kind === 'org'
+}
+
 // ── Persistence ─────────────────────────────────────────────────────────────
-// Only real conversations are kept across restarts: a draft (no message
-// sent yet) has nothing to come back to. The storage accessors can throw
-// (private windows, blocked storage), and the app must work without them.
+// Only real conversations and org bubbles are kept across restarts: a
+// draft (no message sent yet) has nothing to come back to. The storage
+// accessors can throw (private windows, blocked storage), and the app must
+// work without them.
 
 export function loadState(storage = globalThis.localStorage) {
   try {
     const raw = storage?.getItem(STORAGE_KEY)
     const parsed = raw ? JSON.parse(raw) : null
     const bubbles = Array.isArray(parsed?.bubbles)
-      ? parsed.bubbles.filter(b => b && typeof b.conversationId === 'string' && b.conversationId)
-        .map(b => ({ key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || ''), runtime: String(b.runtime || '') }))
+      ? parsed.bubbles.map(b => {
+        if (b?.kind === 'org' && typeof b.orgName === 'string' && b.orgName) return orgBubble(b.orgName)
+        if (b && typeof b.conversationId === 'string' && b.conversationId) {
+          return { key: b.conversationId, conversationId: b.conversationId, cwd: String(b.cwd || ''), model: String(b.model || ''), runtime: String(b.runtime || '') }
+        }
+        return null
+      }).filter(Boolean)
       : []
     const side = parsed?.side === 'left' ? 'left' : 'right'
     return { bubbles, side }
@@ -121,8 +156,10 @@ export function loadState(storage = globalThis.localStorage) {
 
 export function saveState(state, storage = globalThis.localStorage) {
   try {
-    const bubbles = state.bubbles.filter(b => b.conversationId)
-      .map(b => ({ conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '', runtime: b.runtime || '' }))
+    const bubbles = state.bubbles.filter(b => b.conversationId || (b.kind === 'org' && b.orgName))
+      .map(b => (b.kind === 'org'
+        ? { kind: 'org', orgName: b.orgName }
+        : { conversationId: b.conversationId, cwd: b.cwd || '', model: b.model || '', runtime: b.runtime || '' }))
     storage?.setItem(STORAGE_KEY, JSON.stringify({ bubbles, side: state.side === 'left' ? 'left' : 'right' }))
   } catch {
     // Storage unavailable: bubbles just won't come back after a restart.

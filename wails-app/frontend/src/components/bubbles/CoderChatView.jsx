@@ -16,9 +16,12 @@ import AgentSetupLink from '../AgentSetupLink.jsx'
 import '../chat/chat.css'
 
 const mono = 'var(--font-mono)'
-const selectStyle = {
+// Box style for the loading placeholder in the selector row. The
+// <select>s themselves use the global `select` rule plus `.select-compact`
+// (index.css); inline chrome here would override it.
+const placeholderStyle = {
   background: '#020509', border: '1px solid rgba(0,180,216,0.15)', borderRadius: 6,
-  padding: '4px 8px', color: '#e2e8f0', fontFamily: mono, fontSize: 10, outline: 'none', minWidth: 0,
+  padding: '4px 8px', color: '#e2e8f0', fontFamily: mono, fontSize: 10, minWidth: 0,
 }
 
 // CoderSetup is a new coder bubble's choices before its first message: the
@@ -79,20 +82,20 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
         workspace={setup.workspace} onWorkspaceChange={workspace => onChange({ workspace })}
         recent={recent} onPickFolder={pickFolder} runtimeId={runtime} />
       <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid rgba(0,180,216,0.06)' }}>
-        <select aria-label={t('bubbles.runtime')} value={runtime} onChange={e => setRuntime(e.target.value)} style={{ ...selectStyle, minWidth: 90 }}>
+        <select aria-label={t('bubbles.runtime')} value={runtime} onChange={e => setRuntime(e.target.value)} className="select-compact" style={{ minWidth: 90 }}>
           {choice.options.map(r => <option key={r.id} value={r.id}>{runtimeLabel(r.id)}</option>)}
         </select>
         {models === null ? (
-          <span style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...placeholderStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader size={11} className="chat-spin" /> {t('bubbles.loadingModels')}
           </span>
         ) : (
-          <select aria-label={t('bubbles.model')} value={setup.model} onChange={e => onChange({ model: e.target.value, effort: '' })} style={{ ...selectStyle, flex: 1 }}>
+          <select aria-label={t('bubbles.model')} value={setup.model} onChange={e => onChange({ model: e.target.value, effort: '' })} className="select-compact" style={{ flex: 1, minWidth: 0 }}>
             {models.map(m => <option key={m.id} value={m.id}>{m.label || m.id}</option>)}
           </select>
         )}
         {efforts.length > 0 && (
-          <select aria-label={t('bubbles.effort')} value={setup.effort} onChange={e => onChange({ effort: e.target.value })} style={{ ...selectStyle, minWidth: 72 }}>
+          <select aria-label={t('bubbles.effort')} value={setup.effort} onChange={e => onChange({ effort: e.target.value })} className="select-compact" style={{ minWidth: 72 }}>
             <option value="">{t('bubbles.effortAuto')}</option>
             {efforts.map(eff => <option key={eff} value={eff}>{eff}</option>)}
           </select>
@@ -108,7 +111,7 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
 // CoderChatView is the chat half of an expanded coder bubble: the
 // transcript, the live turn and the composer. conv is useCoderConversation's
 // result; draft/onDraftChange keep the unsent text across collapses.
-export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDraftChange, initialScrollTop, onScroll, onNavigate }) {
+export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDraftChange, initialScrollTop, onScroll, onNavigate, agentFilter = null, agentFilterTurnId = '', agentFilterName = '', onClearAgentFilter }) {
   const { t } = useTranslation()
   const { status } = useCoderStatus(isDraft)
   const scroll = useChatScroll(`${conv.messages.length}:${conv.liveTurn.lastSeq}`)
@@ -134,6 +137,13 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      {agentFilter && (
+        <div className="stage-filter" data-testid="chat-agent-filter">
+          <span>{t('stage.filterShowing', { name: agentFilterName })}</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClearAgentFilter} style={{ fontSize: 10 }}>{t('stage.filterClear')}</button>
+        </div>
+      )}
       {isDraft && empty && <CoderSetup status={status} setup={setup} onChange={onSetupChange} onNavigate={onNavigate} />}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div ref={scroll.containerRef} onScroll={e => onScroll?.(e.currentTarget.scrollTop)} data-testid="bubble-transcript"
@@ -151,7 +161,7 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
             msg.role === 'coder-init' ? <CoderInitNote key={i} workspace={msg.workspace} />
               : msg.role === 'turn' ? (
                 <div key={i} className="chat-assistant-turn">
-                  <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} />
+                  <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} agentFilter={msg.turnId === agentFilterTurnId ? agentFilter : null} />
                   <TurnStatus state={msg.state} stopRequested={false} ownedByThisInstance={msg.ownedByThisInstance} />
                   {isAgentNotSetup(msg.state.terminal?.code) && <AgentSetupLink onNavigate={onNavigate} />}
                 </div>
@@ -161,7 +171,7 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
           ))}
           {conv.streaming && (
             <div className="chat-assistant-turn">
-              <ChatTimeline state={conv.liveTurn} turnId={conv.activeTurnId} isLive />
+              <ChatTimeline state={conv.liveTurn} turnId={conv.activeTurnId} isLive agentFilter={conv.activeTurnId === agentFilterTurnId ? agentFilter : null} />
               <TurnStatus state={conv.liveTurn} stopRequested={conv.stopRequested} />
             </div>
           )}

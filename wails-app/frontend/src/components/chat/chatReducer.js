@@ -4,6 +4,7 @@
 // hydration/live merge/gap catch-up and dispatches events here in
 // ascending-sequence order. Kept pure so it is directly unit-testable
 // without mocking Wails.
+import { stageReducer } from '../../lib/orgStage.js'
 
 export function initialChatState() {
   return {
@@ -15,6 +16,9 @@ export function initialChatState() {
     session: null,          // { runtime, sessionId } once session.bound fires
     terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
     sandbox: null,           // the CLI's monomind.SandboxStatus* verdict ('sandboxed', 'scoped', …); null = none asked for
+    stage: null,             // the org stage (#228, lib/orgStage.js); null until an event it uses
+    agents: {},              // dynamic org (#226): agentId -> { role, runtime, model, access, status, brief, report, tools, lastTool, … }
+    agentCalls: {},          // their tool calls, callId -> call (the org stage's drawer shows them)
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
     lastSeq: 0,
@@ -43,8 +47,99 @@ function completionFlags(payload) {
   return flags
 }
 
+// startedCall is a tool call as tool.started opens it.
+function startedCall(payload, at) {
+  return {
+    callId: payload.callId,
+    name: payload.name,
+    arguments: payload.arguments ?? null,
+    status: 'started',
+    ok: null,
+    result: null,
+    startedAt: at,
+    // Coder turns (#202): native marks one of the coding agent's own tools
+    // (Bash, Edit, …); parentCallId nests a call made inside a
+    // subagent (Task/Agent) call. Only set when present, so other
+    // calls keep their exact shape.
+    ...(payload.native ? { native: true } : {}),
+    ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
+    // The normalized tool kind (shell, edit, patch, mcp, …) every
+    // coder runtime reports; NativeToolCard renders by it.
+    ...(payload.kind ? { kind: payload.kind } : {}),
+    // Write/Edit: whether file_path existed when the call started
+    // ("new file" vs "overwrite"); absent when unknown.
+    ...(typeof payload.fileExisted === 'boolean' ? { fileExisted: payload.fileExisted } : {}),
+  }
+}
+
+// completedCall is a call as tool.completed closes it; existing is its
+// started call, if one was seen.
+function completedCall(existing, payload, at) {
+  const flags = completionFlags(payload)
+  // No startedAt/finishedAt on the unmatched-completion fallback: a
+  // completion with no observed start has no duration to show, so leaving
+  // both undefined (rather than fabricating finishedAt alone) keeps "both
+  // timestamps present" the one signal ToolActivityCard needs to decide
+  // whether elapsed time can be shown at all.
+  return existing
+    ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: at, ...flags }
+    : { callId: payload.callId, name: 'unknown', arguments: null, status: 'completed', ok: payload.ok, result: payload.result, ...flags }
+}
+
+// agentPatch folds a dynamic-org worker's events (#226) into state.agents.
+// A worker's own tool calls carry agentId and stay out of the lead's
+// timeline; the worker shows as one row (a part of kind 'agent'). Its calls
+// are kept once, in state.agentCalls, for the org stage's drawer (#228).
+function agentPatch(state, ev) {
+  const p = ev.payload || {}
+  const id = p.agentId
+  // The lead's lease reports (agent.status for "lead") are the stage's.
+  if (id === 'lead') return {}
+  const agents = state.agents || {}
+  const cur = agents[id] || { agentId: id, tools: 0, status: 'queued' }
+  const put = (next) => ({ agents: { ...agents, [id]: { ...cur, ...next } } })
+  switch (ev.type) {
+    case 'agent.spawned':
+      // A native subagent (#230) already shows as its Task call's card: no
+      // row of its own in the timeline, only the stage's node.
+      if (p.agentType === 'native') return put({ role: p.role, agentType: p.agentType, brief: p.brief, startedAt: ev.at })
+      return {
+        ...put({ role: p.role, agentType: p.agentType, runtime: p.runtime, model: p.model, effort: p.effort, access: p.access, skills: p.skills || [], brief: p.brief, why: p.why, startedAt: ev.at }),
+        parts: state.parts.some(x => x.kind === 'agent' && x.agentId === id) ? state.parts : [...state.parts, { kind: 'agent', agentId: id }],
+      }
+    case 'agent.status':
+      return put({ status: p.to, statusDetail: p.detail || '' })
+    case 'agent.reassigned':
+      return put({ runtime: p.toRuntime, model: p.toModel, reassigned: `${p.fromRuntime}/${p.fromModel || 'default'}: ${p.reason}` })
+    case 'agent.message':
+      if (p.direction === 'result') return put({ report: p.text })
+      // A worker's question for the user (#256), open until answered.
+      if (p.direction === 'question') return put({ question: { id: p.questionId, text: p.text } })
+      // Closed by the user's answer, or by the system (timed out, stopped).
+      if (p.direction === 'followup' && (p.from === 'user' || p.from === 'system') && cur.question?.id === p.questionId) return put({ question: null })
+      return {}
+    case 'agent.finished':
+      return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, costEstimated: !!p.costEstimated, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
+    case 'tool.started':
+      return { ...put({ tools: cur.tools + 1, lastTool: p.name }), agentCalls: { ...state.agentCalls, [p.callId]: { ...startedCall(p, ev.at), agentId: id } } }
+    case 'tool.completed':
+      return { agentCalls: { ...state.agentCalls, [p.callId]: { ...completedCall(state.agentCalls?.[p.callId], p, ev.at), agentId: id } } }
+    case 'usage.updated':
+      return p.costUsd != null ? put({ costUsd: p.costUsd, costEstimated: !!p.costEstimated }) : {}
+    default:
+      return {}
+  }
+}
+
+// A worker's tool calls, text (#258) and usage (#257) carry its agentId and
+// never land in the lead's timeline or usage.
+const AGENT_EVENTS = new Set(['tool.started', 'tool.completed', 'assistant.delta', 'usage.updated'])
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
+  if (payload.agentId && (ev.type.startsWith('agent.') || AGENT_EVENTS.has(ev.type))) {
+    return agentPatch(state, ev)
+  }
   switch (ev.type) {
     case 'turn.started':
       return { startedAt: ev.at }
@@ -56,55 +151,12 @@ function eventPatch(state, ev) {
       return { parts: upsertTextPart(state.parts, payload.partId, payload.text) }
 
     case 'tool.started': {
-      const calls = {
-        ...state.calls,
-        [payload.callId]: {
-          callId: payload.callId,
-          name: payload.name,
-          arguments: payload.arguments ?? null,
-          status: 'started',
-          ok: null,
-          result: null,
-          startedAt: ev.at,
-          // Coder turns (#202): native marks one of the coding agent's own tools
-          // (Bash, Edit, …); parentCallId nests a call made inside a
-          // subagent (Task/Agent) call. Only set when present, so other
-          // calls keep their exact shape.
-          ...(payload.native ? { native: true } : {}),
-          ...(payload.parentCallId ? { parentCallId: payload.parentCallId } : {}),
-          // The normalized tool kind (shell, edit, patch, mcp, …) every
-          // coder runtime reports; NativeToolCard renders by it.
-          ...(payload.kind ? { kind: payload.kind } : {}),
-          // Write/Edit: whether file_path existed when the call started
-          // ("new file" vs "overwrite"); absent when unknown.
-          ...(typeof payload.fileExisted === 'boolean' ? { fileExisted: payload.fileExisted } : {}),
-        },
-      }
+      const calls = { ...state.calls, [payload.callId]: startedCall(payload, ev.at) }
       return { calls, parts: [...state.parts, { kind: 'tool', callId: payload.callId }] }
     }
 
     case 'tool.completed': {
-      const existing = state.calls[payload.callId]
-      const flags = completionFlags(payload)
-      const calls = {
-        ...state.calls,
-        // No startedAt/finishedAt on the unmatched-completion fallback below:
-        // a completion with no observed start has no duration to show, so
-        // leaving both undefined (rather than fabricating finishedAt alone)
-        // keeps "both timestamps present" the one signal ToolActivityCard
-        // needs to decide whether elapsed time can be shown at all.
-        [payload.callId]: existing
-          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at, ...flags }
-          : {
-              callId: payload.callId,
-              name: 'unknown',
-              arguments: null,
-              status: 'completed',
-              ok: payload.ok,
-              result: payload.result,
-              ...flags,
-            },
-      }
+      const calls = { ...state.calls, [payload.callId]: completedCall(state.calls[payload.callId], payload, ev.at) }
       // Retain an unmatched result as its own step (plan: "retain unmatched
       // results") rather than silently dropping a completion whose start
       // was never seen (e.g. hydration started mid-turn).
@@ -164,7 +216,7 @@ function eventPatch(state, ev) {
 function applyEvent(state, ev) {
   const lastSeq = typeof ev.seq === 'number' ? ev.seq : state.lastSeq
   const lastEventAt = ev.at || state.lastEventAt
-  return { ...state, ...eventPatch(state, ev), lastSeq, lastEventAt }
+  return { ...state, ...eventPatch(state, ev), stage: stageReducer(state.stage, ev), lastSeq, lastEventAt }
 }
 
 export function chatReducer(state, action) {

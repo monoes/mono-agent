@@ -9,6 +9,9 @@ import (
 // ErrLocked is returned by Lock when another daemon holds the lock.
 var ErrLocked = errors.New("another monoagentcli daemon is already running for this home")
 
+// ErrHeld is returned by LockFile when another process holds that lock.
+var ErrHeld = errors.New("lock is held by another process")
+
 // LockPath is the daemon's single-instance lock, next to its heartbeat.
 func LockPath() string { return filepath.Join(filepath.Dir(Path()), "daemon.lock") }
 
@@ -17,7 +20,16 @@ func LockPath() string { return filepath.Join(filepath.Dir(Path()), "daemon.lock
 // stale lock). A second daemon gets ErrLocked. Taken before anything else
 // starts: two daemons would both fire the same schedules.
 func Lock() (release func(), err error) {
-	path := LockPath()
+	release, err = LockFile(LockPath())
+	if errors.Is(err, ErrHeld) {
+		return nil, ErrLocked
+	}
+	return release, err
+}
+
+// LockFile takes an exclusive lock on path without waiting, held until
+// release is called or the process exits. Another holder gives ErrHeld.
+func LockFile(path string) (release func(), err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}

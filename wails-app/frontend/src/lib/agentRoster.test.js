@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { emptyRun, applyValidateLine, withLiveResults, chipFor, rowKey, ageParts, formatLatency, formatCost, planSummary } from './agentRoster.js'
+import { emptyRun, applyValidateLine, withLiveResults, chipFor, rowKey, ageParts, formatLatency, formatCost, planSummary, loginHintFor } from './agentRoster.js'
 
 describe('applyValidateLine', () => {
   it('tracks a run from plan to done', () => {
@@ -32,6 +32,13 @@ describe('withLiveResults', () => {
     const out = withLiveResults(roster, { k: { runtime: 'codex', model: 'x', status: 'quota' } })
     expect(out.find(r => r.runtime === 'codex').models[0].state).toBe('failed')
   })
+  it('shows a live rate_limited result as stale, not failed', () => {
+    const out = withLiveResults(roster, { k: { runtime: 'claude', model: 'haiku', status: 'rate_limited' } })
+    const m = out[0].models[0]
+    expect(m.state).toBe('stale')
+    expect(chipFor(m)).toEqual({ key: 'rateLimited', tone: 'warn' })
+    expect(out[0].ready).toBe(0)
+  })
 })
 
 describe('chipFor', () => {
@@ -40,6 +47,7 @@ describe('chipFor', () => {
     [{ state: 'ready', status: 'ok_unexpected' }, 'okUnexpected', 'warn'],
     [{ state: 'stale', stale_reason: 'age' }, 'stale', 'warn'],
     [{ state: 'stale', stale_reason: 'version' }, 'staleVersion', 'warn'],
+    [{ state: 'stale', stale_reason: 'rate_limited', status: 'rate_limited' }, 'rateLimited', 'warn'],
     [{ state: 'untested' }, 'untested', 'muted'],
     [{ state: 'failed', status: 'auth' }, 'auth', 'bad'],
     [{ state: 'failed', status: 'weird' }, 'error', 'bad'],
@@ -61,6 +69,16 @@ describe('formatting', () => {
     expect(ageParts('2026-09-29T11:00:00Z', now)).toEqual({ n: 1, unit: 'h' })
     expect(ageParts('2026-09-20T12:00:00Z', now)).toEqual({ n: 9, unit: 'd' })
     expect(planSummary({ calls: 3, est_cost_usd: 0.01, unknown_cost: 1, targets: [{ runtime: 'a' }, { runtime: 'a' }, { runtime: 'b' }] }))
-      .toEqual({ calls: 3, cost: 0.01, unknown: 1, runtimes: 2 })
+      .toEqual({ calls: 3, cost: 0.01, unknown: 1, table: 0, signIn: [], runtimes: 2 })
+    expect(planSummary({ calls: 2, est_cost_usd: 0.2, table_estimated: 2, sign_in: [{ runtime: 'claude', login_hint: 'claude /login' }] }))
+      .toEqual({ calls: 2, cost: 0.2, unknown: 0, table: 2, signIn: [{ runtime: 'claude', login_hint: 'claude /login' }], runtimes: 0 })
+  })
+})
+
+describe('loginHintFor', () => {
+  it("prefers monomind's hint from an auth row over the scan's", () => {
+    expect(loginHintFor({ login_hint: 'scan', models: [{ status: 'auth', login_hint: 'claude /login' }] })).toBe('claude /login')
+    expect(loginHintFor({ login_hint: 'scan', models: [{ status: 'auth' }] })).toBe('scan')
+    expect(loginHintFor({ models: [{ status: 'ok', login_hint: 'stale' }] })).toBe('')
   })
 })

@@ -21,24 +21,17 @@ import { CoderModePicker } from './chat/CoderModePicker.jsx'
 import { CoderHeader, CoderBadge, CoderInitNote } from './chat/CoderHeader.jsx'
 import { useCoderStatus, useRecentWorkspaces, useCoderRuntimeChoice, folderName, coderReady, fidelityNote } from './chat/useCoderMode.js'
 
-// Shared style for the runtime/model <select>s in the selector row.
-// Without `appearance: none`, WebKitGTK draws the closed box with native
-// GTK combo-box chrome — light background, dark text — ignoring the
-// inline background/color below entirely; the custom chevron replaces
-// the native dropdown arrow that appearance:none also removes. Same SVG
-// arrow index.css already uses for .filter-select/.form-select.
-const selectStyle = {
+// The runtime/model/effort <select>s take their look from the global
+// `select` rule plus `.select-compact` in index.css (WebKitGTK paints
+// native light chrome otherwise). This box style is only for the
+// loading placeholder that stands in for the row, matched to that look.
+const placeholderStyle = {
   background: '#020509',
   border: '1px solid rgba(0,180,216,0.15)',
   borderRadius: 6,
-  padding: '4px 20px 4px 8px',
+  padding: '4px 8px',
   color: '#e2e8f0',
   fontFamily: 'var(--font-mono)', fontSize: 10,
-  outline: 'none',
-  appearance: 'none',
-  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 6px center',
   minWidth: 0,
 }
 
@@ -1128,7 +1121,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             loading placeholder instead of the real selector row until the
             scan settles, rather than a misleading "No agent runtimes". */}
         {(runtimesLoading && !hasBackend) ? (
-          <div style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(226,232,240,0.55)' }}>
+          <div style={{ ...placeholderStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(226,232,240,0.55)' }}>
             <Loader size={13} className="chat-spin" style={{ color: '#00b4d8', flexShrink: 0 }} />
             Loading AI systems…
           </div>
@@ -1147,7 +1140,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             startNewSession()
           }}
           title={isCoder ? 'Coding agent for this Coder chat (runtimes ready for full access)' : 'Locally installed AI agent (via monomind)'}
-          style={{ ...selectStyle, flex: 1 }}
+          className="select-compact"
+            style={{ flex: 1, minWidth: 0 }}
         >
           {runtimes.length === 0 && (
             <option value="">
@@ -1193,7 +1187,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             }}
             disabled={runtimeModelsLoading}
             title="Model available for the selected agent runtime"
-            style={{ ...selectStyle, flex: 1 }}
+            className="select-compact"
+            style={{ flex: 1, minWidth: 0 }}
           >
             {runtimeModelsLoading && <option value="">Loading models…</option>}
             {!runtimeModelsLoading && runtimeModels.map(m => (
@@ -1227,7 +1222,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             disabled={runtimeModelsLoading}
             title="Reasoning effort level for the selected model"
             aria-label="Effort level"
-            style={{ ...selectStyle, flex: '0 0 auto', minWidth: 72 }}
+            className="select-compact"
+            style={{ flex: '0 0 auto', minWidth: 72 }}
           >
             <option value="">Auto</option>
             {availableEfforts.map(eff => (

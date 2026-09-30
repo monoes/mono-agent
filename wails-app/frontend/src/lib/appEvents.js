@@ -16,3 +16,17 @@ export function onAutomationsChanged(cb) {
   window.addEventListener(AUTOMATIONS_CHANGED, h)
   return () => window.removeEventListener(AUTOMATIONS_CHANGED, h)
 }
+
+const OPEN_ORG_BUBBLE = 'monoagent:open-org-bubble'
+
+// emitOpenOrgBubble: open (or bring up) org's bubble, to chat with its boss
+// (#229). App's bubble store listens.
+export function emitOpenOrgBubble(org) {
+  window.dispatchEvent(new CustomEvent(OPEN_ORG_BUBBLE, { detail: { org } }))
+}
+
+export function onOpenOrgBubble(cb) {
+  const h = (e) => cb(e.detail || {})
+  window.addEventListener(OPEN_ORG_BUBBLE, h)
+  return () => window.removeEventListener(OPEN_ORG_BUBBLE, h)
+}

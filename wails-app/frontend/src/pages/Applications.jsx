@@ -34,19 +34,6 @@ const inputStyle = {
   background: '#060b11', border: '1px solid #1e3a4f', borderRadius: 5,
   padding: '6px 8px', color: '#e2e8f0', fontFamily: 'var(--font-mono)', fontSize: 11,
 }
-// WebKitGTK draws <select> with native GTK chrome (light bg, dark text)
-// unless appearance is explicitly reset — see AIChatPanel.jsx / Settings.jsx.
-const selectStyle = {
-  ...inputStyle,
-  backgroundColor: '#060b11',
-  appearance: 'none',
-  padding: '6px 26px 6px 8px',
-  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 8px center',
-  cursor: 'pointer',
-  outline: 'none',
-}
 const headerBtnStyle = {
   background: 'rgba(0,180,216,0.1)', border: '1px solid rgba(0,180,216,0.3)',
   borderRadius: 6, padding: '6px 12px', color: '#00b4d8',
@@ -229,7 +216,7 @@ export default function Applications() {
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowAdd(false)} style={{ position: 'fixed', inset: 0, zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)' }}>
           <form onSubmit={handleAdd} style={{ background: 'var(--surface, #0d1520)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: 20, width: 400, fontFamily: 'var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <h3 style={{ margin: 0, fontSize: 14 }}>Add Application</h3>
-            <select style={selectStyle} value={addForm.kind} onChange={e => setAddForm(f => ({ ...f, kind: e.target.value }))}>
+            <select className="select-compact" style={{ fontSize: 11 }} value={addForm.kind} onChange={e => setAddForm(f => ({ ...f, kind: e.target.value }))}>
               <option value="job">Job</option>
               <option value="tender">Tender</option>
             </select>

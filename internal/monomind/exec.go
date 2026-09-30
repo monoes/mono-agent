@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,6 +71,13 @@ type ExecOptions struct {
 	// that can do neither runs the turn exactly as without it. "" asks for
 	// nothing (coder mode, which has its own full-access contract).
 	Sandbox string
+	// RequireSandbox fails closed: when Sandbox is set but this runtime and
+	// monomind can't apply it now (SandboxArgs' verdict isn't
+	// SandboxStatusSandboxed), Exec starts nothing and returns
+	// ErrSandboxRequired instead of running the turn unconfined. A caller
+	// that decided from an older scan (a dynamic-org research worker) relies
+	// on it.
+	RequireSandbox bool
 	// WorkspacePurpose names the SandboxWorkspaceDir a sandboxed turn with
 	// no Cwd runs in, so workspace-write has a real folder. Ignored when
 	// no sandbox args are passed, when Cwd is set, and for the claude runtime:
@@ -159,8 +167,10 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 		// come back empty. An incremental runtime (start's
 		// streams_incrementally) sends the reply as deltas, so they are
 		// joined; otherwise each event is a whole message and the latest one
-		// is the answer. A result event with its own text still wins.
-		if ev.Text == "" || res.resultText {
+		// is the answer. A result event with its own text still wins. A
+		// native subagent's text (parent_tool_use_id, monomind#387) is not
+		// the agent's answer.
+		if ev.Text == "" || res.resultText || ev.ParentToolUseID != "" {
 			break
 		}
 		if res.incremental {
@@ -282,11 +292,15 @@ type toolResultFrame struct {
 // for tests.
 var KillGrace = 5 * time.Second
 
-// FullAccessKillGrace is KillGrace for an --access full turn. monomind runs
+// FullAccessKillGrace is KillGrace for an --access full (or read) turn. monomind runs
 // that agent in its own process group and kills the whole tree itself on
 // SIGTERM (SIGTERM, then SIGKILL after 5s), so it needs more than 6s; a
 // group kill of monomind alone never reaches the agent (protocol §3).
 var FullAccessKillGrace = 12 * time.Second
+
+// ErrSandboxRequired is returned, wrapped, when ExecOptions.RequireSandbox
+// is set and the sandbox can't be applied.
+var ErrSandboxRequired = errors.New("the required sandbox is not available")
 
 // Exec runs one agent turn and invokes onEvent for every protocol event in
 // arrival order. It returns the turn's terminal state: a *ProtocolError for
@@ -335,6 +349,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			modes = SandboxModesFor(ctx, opts.Runtime)
 		}
 		sandboxArgs, sandboxEffective = SandboxArgs(caps, modes, opts.Runtime, opts.Sandbox)
+		if opts.RequireSandbox && sandboxEffective != SandboxStatusSandboxed {
+			return nil, fmt.Errorf("%w: %s sandbox for %s is %s", ErrSandboxRequired, opts.Sandbox, opts.Runtime, sandboxEffective)
+		}
 	}
 	if len(sandboxArgs) > 0 && cwd == "" && opts.WorkspacePurpose != "" && opts.Runtime != "claude" {
 		dir, err := SandboxWorkspaceDir(opts.WorkspacePurpose)
@@ -601,10 +618,11 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		writeLine([]byte(`{"v":1,"type":"cancel"}`))
 		closeStdin()
 		grace := KillGrace
-		if opts.Access == AccessFull {
+		if opts.Access == AccessFull || opts.Access == AccessRead {
 			// Under --tools none monomind doesn't read the cancel frame; a
-			// full-access turn is stopped by SIGTERM, which monomind turns
-			// into a kill of the agent's whole process tree.
+			// full- or read-access turn (a dynamic-org worker) is stopped by
+			// SIGTERM, which monomind turns into a kill of the agent's whole
+			// process tree.
 			terminateProcessGroup(cmd)
 			grace = max(grace, FullAccessKillGrace)
 		}

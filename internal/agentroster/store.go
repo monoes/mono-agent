@@ -10,20 +10,23 @@ import (
 
 // Result is one runtime × model test outcome, as stored.
 type Result struct {
-	Runtime        string    `json:"runtime"`
-	Model          string    `json:"model"`
-	Label          string    `json:"label,omitempty"`
-	EffortLevels   []string  `json:"effort_levels,omitempty"`
-	Status         string    `json:"status"`
-	Detail         string    `json:"detail,omitempty"`
-	Reply          string    `json:"reply,omitempty"`
-	LatencyFirstMs int64     `json:"latency_first_ms"`
-	LatencyMs      int64     `json:"latency_ms"`
-	TokensIn       int64     `json:"tokens_in"`
-	TokensOut      int64     `json:"tokens_out"`
-	CostUSD        float64   `json:"cost_usd"`
-	HasCost        bool      `json:"has_cost"`
-	CostEstimated  bool      `json:"cost_estimated"`
+	Runtime        string   `json:"runtime"`
+	Model          string   `json:"model"`
+	Label          string   `json:"label,omitempty"`
+	EffortLevels   []string `json:"effort_levels,omitempty"`
+	Status         string   `json:"status"`
+	Detail         string   `json:"detail,omitempty"`
+	Reply          string   `json:"reply,omitempty"`
+	LatencyFirstMs int64    `json:"latency_first_ms"`
+	LatencyMs      int64    `json:"latency_ms"`
+	TokensIn       int64    `json:"tokens_in"`
+	TokensOut      int64    `json:"tokens_out"`
+	CostUSD        float64  `json:"cost_usd"`
+	HasCost        bool     `json:"has_cost"`
+	CostEstimated  bool     `json:"cost_estimated"`
+	// LoginHint is the runtime's sign-in command monomind reported with an
+	// auth failure (error.login_hint), when any.
+	LoginHint      string    `json:"login_hint,omitempty"`
 	RuntimeVersion string    `json:"runtime_version,omitempty"`
 	Source         string    `json:"source"`
 	RunID          string    `json:"run_id,omitempty"`
@@ -44,18 +47,18 @@ func Save(ctx context.Context, db *sql.DB, r Result) error {
 	_, err := db.ExecContext(ctx, `
 INSERT INTO agent_model_validations
   (runtime, model, label, effort_levels, status, detail, reply, latency_first_ms, latency_ms,
-   tokens_in, tokens_out, cost_usd, has_cost, cost_estimated, runtime_version, source, run_id, validated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   tokens_in, tokens_out, cost_usd, has_cost, cost_estimated, login_hint, runtime_version, source, run_id, validated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(runtime, model) DO UPDATE SET
   label=excluded.label, effort_levels=excluded.effort_levels, status=excluded.status, detail=excluded.detail, reply=excluded.reply,
   latency_first_ms=excluded.latency_first_ms, latency_ms=excluded.latency_ms,
   tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out,
   cost_usd=excluded.cost_usd, has_cost=excluded.has_cost, cost_estimated=excluded.cost_estimated,
-  runtime_version=excluded.runtime_version,
+  login_hint=excluded.login_hint, runtime_version=excluded.runtime_version,
   source=CASE WHEN agent_model_validations.source='manual' THEN 'manual' ELSE excluded.source END,
   run_id=excluded.run_id, validated_at=excluded.validated_at`,
 		r.Runtime, r.Model, r.Label, effortJSON(r.EffortLevels), r.Status, r.Detail, r.Reply, r.LatencyFirstMs, r.LatencyMs,
-		r.TokensIn, r.TokensOut, r.CostUSD, boolInt(r.HasCost), boolInt(r.CostEstimated), r.RuntimeVersion, orDefault(r.Source, SourceListed),
+		r.TokensIn, r.TokensOut, r.CostUSD, boolInt(r.HasCost), boolInt(r.CostEstimated), r.LoginHint, r.RuntimeVersion, orDefault(r.Source, SourceListed),
 		r.RunID, r.ValidatedAt.UTC().Format(timeLayout))
 	if err != nil {
 		return fmt.Errorf("saving validation for %s/%s: %w", r.Runtime, r.Model, err)
@@ -67,7 +70,7 @@ ON CONFLICT(runtime, model) DO UPDATE SET
 func List(ctx context.Context, db *sql.DB) ([]Result, error) {
 	rows, err := db.QueryContext(ctx, `
 SELECT runtime, model, label, effort_levels, status, detail, reply, latency_first_ms, latency_ms,
-       tokens_in, tokens_out, cost_usd, has_cost, cost_estimated, runtime_version, source, run_id, validated_at
+       tokens_in, tokens_out, cost_usd, has_cost, cost_estimated, login_hint, runtime_version, source, run_id, validated_at
 FROM agent_model_validations ORDER BY runtime, model`)
 	if err != nil {
 		return nil, fmt.Errorf("listing validations: %w", err)
@@ -80,7 +83,7 @@ FROM agent_model_validations ORDER BY runtime, model`)
 		var at, efforts string
 		if err := rows.Scan(&r.Runtime, &r.Model, &r.Label, &efforts, &r.Status, &r.Detail, &r.Reply,
 			&r.LatencyFirstMs, &r.LatencyMs, &r.TokensIn, &r.TokensOut, &r.CostUSD, &hasCost, &costEstimated,
-			&r.RuntimeVersion, &r.Source, &r.RunID, &at); err != nil {
+			&r.LoginHint, &r.RuntimeVersion, &r.Source, &r.RunID, &at); err != nil {
 			return nil, fmt.Errorf("reading validation: %w", err)
 		}
 		r.HasCost = hasCost != 0

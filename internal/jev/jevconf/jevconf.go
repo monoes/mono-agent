@@ -39,6 +39,9 @@ const (
 	Decider Surface = "decider"
 	// CLI marks raw `monoagentcli jev ask` calls.
 	CLI Surface = "cli"
+	// DynamicOrg is recorded for usage only: a dynamic-org coder chat
+	// (#226) asks Jev whenever a key is set, to staff its workers.
+	DynamicOrg Surface = "dynorg"
 )
 
 // NodeSurface is the usage label for a workflow node type (always enabled:

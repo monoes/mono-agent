@@ -179,6 +179,27 @@ describe('org unification in OrgsPanel', () => {
     for (const [name] of api.stopOrgEvents.mock.calls) expect(name).toBe('test-org')
   })
 
+  // #229: the org list and the selected org's header open the org as a
+  // chat bubble, through the app-wide event the bubble store listens to.
+  it('opens an org as a bubble from its list row and from its header', async () => {
+    api.listOrgDesigns.mockResolvedValue({ items: [{ name: 'test-org', goal: 'a goal', status: 'active', roleCount: 1 }] })
+    const opened = []
+    const onOpen = e => opened.push(e.detail.org)
+    window.addEventListener('monoagent:open-org-bubble', onOpen)
+    try {
+      render(<OrgsPanel />)
+      await screen.findByText('test-org')
+      fireEvent.click(screen.getByRole('button', { name: 'Open test-org as a chat bubble' }))
+      expect(opened).toEqual(['test-org'])
+      fireEvent.click(screen.getByText('test-org'))
+      await waitFor(() => expect(screen.getAllByTestId('org-open-bubble')).toHaveLength(2))
+      fireEvent.click(screen.getAllByTestId('org-open-bubble')[0])
+      expect(opened).toEqual(['test-org', 'test-org'])
+    } finally {
+      window.removeEventListener('monoagent:open-org-bubble', onOpen)
+    }
+  })
+
   it('has every tab-bar string in both locales', () => {
     const tabs = ['design', 'overview', 'group', 'needs', 'queued', 'decisions', 'logs', 'costs', 'flow', 'trace']
     const bar = ['running', 'run', 'runTitle', 'fullscreen', 'exitFullscreen']
