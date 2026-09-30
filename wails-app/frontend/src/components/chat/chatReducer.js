@@ -71,14 +71,20 @@ function agentPatch(state, ev) {
       return put({ status: p.outcome, summary: p.summary, costUsd: p.costUsd ?? null, filesChanged: p.filesChanged || [], durationMs: p.durationMs || 0 })
     case 'tool.started':
       return put({ tools: cur.tools + 1, lastTool: p.name })
+    case 'usage.updated':
+      return p.costUsd != null ? put({ costUsd: p.costUsd }) : {}
     default:
       return {}
   }
 }
 
+// A worker's tool calls, text (#258) and usage (#257) carry its agentId and
+// never land in the lead's timeline or usage.
+const AGENT_EVENTS = new Set(['tool.started', 'tool.completed', 'assistant.delta', 'usage.updated'])
+
 function eventPatch(state, ev) {
   const payload = ev.payload || {}
-  if (payload.agentId && (ev.type.startsWith('agent.') || ev.type === 'tool.started' || ev.type === 'tool.completed')) {
+  if (payload.agentId && (ev.type.startsWith('agent.') || AGENT_EVENTS.has(ev.type))) {
     return agentPatch(state, ev)
   }
   switch (ev.type) {

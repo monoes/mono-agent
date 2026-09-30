@@ -6,11 +6,11 @@ import { ChatTimeline } from '../chat/ChatTimeline.jsx'
 import { LEAD_ID } from '../../lib/orgStage.js'
 import { ModelChip, formatCost, formatTokens, roleColor } from './StageNode.jsx'
 
-// agentTimeline is a worker's own tool calls as chatReducer-shaped state,
-// so ChatTimeline (and NativeToolCard under it) renders them exactly as it
-// renders the lead's.
+// agentTimeline is a worker's own text and tool calls as chatReducer-shaped
+// state, so ChatTimeline (and NativeToolCard under it) renders them exactly
+// as it renders the lead's.
 function agentTimeline(node) {
-  return { parts: node.callOrder.map(callId => ({ kind: 'tool', callId })), calls: node.calls, notices: [] }
+  return { parts: node.parts, calls: node.calls, notices: [] }
 }
 
 function pct(v) {
@@ -98,7 +98,7 @@ export function StageDrawer({ node, leadInfo, turnId, isLive, onClose, onStop })
         )}
         {timeline.parts.length > 0 && (
           <section data-testid="stage-tools">
-            <h4>{t('stage.tools')}</h4>
+            <h4>{t('stage.work')}</h4>
             <ChatTimeline state={timeline} turnId={`${turnId}-${node.id}`} isLive={isLive} />
           </section>
         )}

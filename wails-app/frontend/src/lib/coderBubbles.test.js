@@ -153,3 +153,14 @@ describe('applyChatEvent: a dynamic-org agent asking the user (#228)', () => {
     expect(s.status).toBe(STATUS.working)
   })
 })
+
+describe('applyChatEvent: worker usage (#257)', () => {
+  it('adds a worker\'s cost to the lead\'s instead of replacing it', () => {
+    let s = applyChatEvent(emptySummary(), ev('turn.started', 't1'), false)
+    s = applyChatEvent(s, ev('usage.updated', 't1', { costUsd: 0.1 }), false)
+    s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.02 }), false)
+    s = applyChatEvent(s, ev('usage.updated', 't1', { agentId: 'w1', costUsd: 0.03 }), false)
+    s = applyChatEvent(s, ev('usage.updated', 't1', { costUsd: 0.12 }), false)
+    expect(totalCost(s)).toBeCloseTo(0.15)
+  })
+})

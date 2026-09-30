@@ -175,6 +175,15 @@ describe('StageDrawer', () => {
     expect(screen.getByTestId('stage-tools')).toHaveTextContent('go test ./internal/cache/...')
   })
 
+  it('shows a worker\'s own text between its tool cards (#258)', () => {
+    const s = stageReducer(stage, { seq: 1000, type: 'assistant.delta', payload: { agentId: 'w2', partId: 'w2:p9', text: 'Swapping the sleep for a **fake clock**.' } })
+    render(<StageDrawer node={s.nodes.w2} turnId="turn-1" isLive={false} onClose={() => {}} />)
+    const work = screen.getByTestId('stage-tools')
+    expect(work).toHaveTextContent('What it did')
+    expect(work).toHaveTextContent('Swapping the sleep for a fake clock.')
+    expect(work.querySelector('strong')).toHaveTextContent('fake clock')
+  })
+
   it('nests a native subagent card in its caller and offers Stop only when it can', () => {
     const onClose = vi.fn()
     const onStop = vi.fn()

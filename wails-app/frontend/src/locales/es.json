@@ -762,7 +762,6 @@
       "followup": "seguimiento de {{from}}",
       "question": "pregunta para ti"
     },
-    "tools": "Llamadas a herramientas",
     "leadInChat": "El trabajo propio del líder está en el chat de abajo.",
     "quests": "Misiones",
     "questProgress": "{{done}} de {{total}} encargos terminados",
@@ -804,6 +803,7 @@
       "org_wait": "esperando al equipo",
       "org_message": "escribiendo a un agente",
       "org_stop": "deteniendo a un agente"
-    }
+    },
+    "work": "Lo que hizo"
   }
 }

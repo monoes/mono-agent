@@ -808,7 +808,6 @@
       "followup": "follow-up from {{from}}",
       "question": "question for you"
     },
-    "tools": "Tool calls",
     "leadInChat": "The lead's own work is in the chat below.",
     "quests": "Quests",
     "questProgress": "{{done}} of {{total}} briefs finished",
@@ -850,6 +849,7 @@
       "org_wait": "waiting for the team",
       "org_message": "messaging an agent",
       "org_stop": "stopping an agent"
-    }
+    },
+    "work": "What it did"
   }
 }

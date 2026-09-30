@@ -163,6 +163,51 @@ describe('tolerance', () => {
   })
 })
 
+describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
+  const spawn = (fidelity) => ({ seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', role: 'Coder', ...(fidelity ? { fidelity } : {}) } })
+
+  it('interleaves a worker\'s text parts with its tool calls, and leaves the lead\'s text to the chat', () => {
+    const s = replayStage([
+      spawn(),
+      { seq: 2, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'Look' } },
+      { seq: 3, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p1', text: 'ing.' } },
+      { seq: 4, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:t1', name: 'Read', native: true } },
+      { seq: 5, type: 'assistant.delta', payload: { agentId: 'w1', partId: 'w1:p2', text: 'Found it.' } },
+      { seq: 6, type: 'assistant.delta', payload: { partId: 'part-1', text: 'lead text' } },
+    ])
+    expect(s.nodes.w1.parts).toEqual([
+      { kind: 'text', partId: 'w1:p1', text: 'Looking.' },
+      { kind: 'tool', callId: 'w1:t1' },
+      { kind: 'text', partId: 'w1:p2', text: 'Found it.' },
+    ])
+    expect(s.nodes.lead.parts).toEqual([])
+    expect(stageReducer(s, { seq: 7, type: 'assistant.delta', payload: { text: 'more lead' } })).toBe(s)
+  })
+
+  it('moves a worker\'s meters live from its usage.updated', () => {
+    let s = replayStage([spawn()])
+    s = stageReducer(s, { seq: 2, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 100, outputTokens: 10, costUsd: 0.01 } })
+    s = stageReducer(s, { seq: 3, type: 'usage.updated', payload: { agentId: 'w1', inputTokens: 150, outputTokens: 30, costUsd: 0.02 } })
+    expect(s.nodes.w1).toMatchObject({ tokensIn: 150, tokensOut: 30, costUsd: 0.02 })
+    expect(s.nodes.lead.costUsd).toBeNull()
+  })
+
+  it('shows limited activity from the reported fidelity, from the start', () => {
+    expect(replayStage([spawn('start-only')]).nodes.w1.limited).toBe(true)
+    expect(replayStage([spawn('none')]).nodes.w1.limited).toBe(true)
+    // A full-fidelity runtime isn't limited even when its ends never came.
+    const full = replayStage([
+      spawn('full'),
+      { seq: 2, type: 'tool.started', payload: { agentId: 'w1', callId: 'w1:a', name: 'Read' } },
+      { seq: 3, type: 'agent.finished', payload: { agentId: 'w1', outcome: 'done' } },
+    ])
+    expect(full.nodes.w1.limited).toBe(false)
+    // A reassignment to another runtime brings its fidelity.
+    const moved = stageReducer(full, { seq: 4, type: 'agent.reassigned', payload: { agentId: 'w1', toRuntime: 'x', toModel: 'm', fidelity: 'start-only' } })
+    expect(moved.nodes.w1).toMatchObject({ fidelity: 'start-only', limited: true })
+  })
+})
+
 describe('performance', () => {
   it('folds a 20,000-event journal of six busy workers quickly', () => {
     const events = []

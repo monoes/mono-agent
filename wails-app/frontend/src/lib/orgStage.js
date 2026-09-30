@@ -17,6 +17,7 @@ export const MAX_FEED = 200
 export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
 const MAX_CALLS = 400
+const MAX_PARTS = 800
 const MAX_FILES = 200
 
 // Statuses a node can be in (agent.status's "to", plus the lead's own).
@@ -108,9 +109,11 @@ function newNode(id, patch = {}) {
     doing: null,
     tools: 0, toolsDone: 0, files: [], testsRun: 0, testsPassed: 0,
     tokensIn: null, tokensOut: null, costUsd: null, costEstimated: false,
-    needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false,
+    needsYou: false, summary: '', outcome: '', durationMs: 0, limited: false, fidelity: '',
     spawnSeq: 0, spawnAt: null, spawnedSeen: false,
-    calls: {}, callOrder: [], messages: [],
+    // parts is the agent's own timeline in chatReducer's shape: its text
+    // ({kind:'text', partId, text}) and tool calls ({kind:'tool', callId}).
+    calls: {}, callOrder: [], parts: [], messages: [],
     ...patch,
   }
 }
@@ -138,7 +141,7 @@ export function initialStage() {
 }
 
 const RELEVANT = new Set([
-  'turn.started', 'turn.finished', 'session.bound', 'tool.started', 'tool.completed', 'usage.updated',
+  'assistant.delta', 'turn.started', 'turn.finished', 'session.bound', 'tool.started', 'tool.completed', 'usage.updated',
   'agent.spawned', 'agent.status', 'agent.message', 'agent.reassigned', 'agent.finished',
 ])
 
@@ -269,6 +272,7 @@ function onToolStarted(d, ev, p) {
       },
     }
     n.callOrder = [...n.callOrder, p.callId]
+    if (n.parts.length < MAX_PARTS) n.parts = [...n.parts, { kind: 'tool', callId: p.callId }]
   }
   // A Claude-native Task call starts a subagent: its own node under the
   // agent that called it (#226: agent.spawned{agentType:"native"} when the
@@ -317,10 +321,31 @@ function onToolCompleted(d, ev, p) {
     setStatus(d, ev, nativeId, p.cancelled ? 'cancelled' : failed ? 'failed' : 'done')
     sub.outcome = sub.status
     sub.summary = clip(p.result, 600)
-    sub.limited = sub.tools > 0 && sub.toolsDone === 0
+    sub.limited = limitedOf(sub)
     if (sub.spawnAt && ev.at) sub.durationMs = Math.max(0, Date.parse(ev.at) - Date.parse(sub.spawnAt)) || 0
     if (p.result) addFlight(d, ev, 'result', nativeId, sub.parentId || LEAD_ID, p.result)
     addFeed(d, ev, nativeId, 'finished', sub.summary, sub.status)
+  }
+}
+
+// limitedOf says whether an agent's runtime shows its work only partly:
+// the fidelity the journal reports (#259), else, once it has finished,
+// tool starts that never ended.
+function limitedOf(n) {
+  if (n.fidelity) return n.fidelity !== 'full'
+  return FINISHED.has(n.status) && n.tools > 0 && n.toolsDone === 0
+}
+
+// onText adds a worker's own text (assistant.delta with its agentId, #258)
+// to its timeline: a delta for the part it is writing extends that part.
+function onText(d, p) {
+  if (!p.agentId || !p.text) return
+  const n = d.node(p.agentId)
+  const last = n.parts[n.parts.length - 1]
+  if (last && last.kind === 'text' && last.partId === p.partId) {
+    n.parts = [...n.parts.slice(0, -1), { ...last, text: last.text + p.text }]
+  } else if (n.parts.length < MAX_PARTS) {
+    n.parts = [...n.parts, { kind: 'text', partId: p.partId || `t${n.parts.length}`, text: p.text }]
   }
 }
 
@@ -335,7 +360,9 @@ function onSpawned(d, ev, p) {
     brief: p.brief || n.brief, why: p.why || n.why,
     pickConfidence: p.pickConfidence ?? n.pickConfidence, jevConfidence: p.jevConfidence ?? n.jevConfidence,
     spawnSeq: n.spawnSeq || ev.seq || 0, spawnAt: n.spawnAt || ev.at || null,
+    fidelity: p.fidelity || n.fidelity,
   })
+  n.limited = limitedOf(n)
   addEdge(d, n.parentId, id)
   if (!n.spawnedSeen) {
     n.spawnedSeen = true
@@ -392,6 +419,9 @@ function stageApply(d, ev) {
     case 'session.bound':
       if (p.runtime) d.node(LEAD_ID).runtime = p.runtime
       break
+    case 'assistant.delta':
+      onText(d, p)
+      break
     case 'tool.started':
       onToolStarted(d, ev, p)
       break
@@ -427,6 +457,8 @@ function stageApply(d, ev) {
       n.model = p.toModel ?? n.model
       n.reassignedSeq = ev.seq ?? 0
       n.reassignedAt = ev.at || null
+      if (p.fidelity) n.fidelity = p.fidelity
+      n.limited = limitedOf(n)
       addFeed(d, ev, p.agentId, 'reassigned', p.reason || '', `${n.prevModel.runtime}/${n.prevModel.model || 'default'} → ${n.runtime}/${n.model || 'default'}`)
       break
     }
@@ -447,7 +479,7 @@ function stageApply(d, ev) {
       addFiles(n, p.filesChanged)
       // A runtime that reports tool starts but never their ends shows its
       // activity only partly: the stage says so.
-      n.limited = n.tools > 0 && n.toolsDone === 0
+      n.limited = limitedOf(n)
       addFeed(d, ev, p.agentId, 'finished', n.summary, outcome)
       break
     }
@@ -510,6 +542,8 @@ export function buildScoreboard(s) {
 // applied seq (a re-delivery) is ignored.
 export function stageReducer(state, ev) {
   if (!ev || !RELEVANT.has(ev.type)) return state
+  // The lead's own text is the chat's, not the stage's.
+  if (ev.type === 'assistant.delta' && !ev.payload?.agentId) return state
   const s = state || initialStage()
   if (typeof ev.seq === 'number' && ev.seq <= s.lastSeq) return s
   const d = draft(s)

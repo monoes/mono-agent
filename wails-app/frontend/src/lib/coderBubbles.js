@@ -30,7 +30,7 @@ export function emptySummary() {
 }
 
 // totalCost sums each turn's latest cost snapshot (usage.updated reports a
-// running total per turn, never a delta).
+// running total per turn, never a delta), and each worker's.
 export function totalCost(summary) {
   return Object.values(summary?.costByTurn || {}).reduce((n, c) => n + (Number(c) || 0), 0)
 }
@@ -44,9 +44,13 @@ export function applyChatEvent(summary, ev, expanded) {
   switch (ev?.type) {
     case 'turn.started':
       return { ...s, status: STATUS.working, activeTurnId: ev.turnId || '', turnStartedAt: ev.at || '' }
-    case 'usage.updated':
+    case 'usage.updated': {
       if (p.costUsd == null || !ev.turnId) return s
-      return { ...s, costByTurn: { ...s.costByTurn, [ev.turnId]: p.costUsd } }
+      // A dynamic-org worker's running total (#257) is kept under its own
+      // key, so the chat's cost adds it to the lead's instead of replacing it.
+      const key = p.agentId ? `${ev.turnId}:${p.agentId}` : ev.turnId
+      return { ...s, costByTurn: { ...s.costByTurn, [key]: p.costUsd } }
+    }
     // A dynamic-org agent asking the user something (#228) makes the
     // bubble pulse until that agent moves on.
     case 'agent.message':
