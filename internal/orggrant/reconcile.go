@@ -234,8 +234,19 @@ func SpecFromTool(t Tool, prev orgdesign.GrantSpec) orgdesign.GrantSpec {
 		MaxCallsPerRun: t.MaxCallsPerRun,
 		MaxCallsPerDay: t.MaxCallsPerDay,
 		MaxOutputBytes: t.MaxOutputBytes,
+		Tier:           displayTier(t.Tier),
 		Extra:          prev.Extra,
 	}
+}
+
+// displayTier is the tier the decision service routes a grant's calls by
+// when no tier override applies: the row's tier, or irreversible when the
+// row has none it recognises (orgdecide.TierFor).
+func displayTier(tier string) string {
+	if orgdesign.ValidTier(tier) {
+		return tier
+	}
+	return orgdesign.TierIrreversible
 }
 
 // ProviderToolNames lists the MCP tool names a role's grants expose, as

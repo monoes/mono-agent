@@ -49,6 +49,10 @@ type GrantSpec struct {
 	MaxCallsPerRun int             `json:"max_calls_per_run,omitempty"`
 	MaxCallsPerDay int             `json:"max_calls_per_day,omitempty"`
 	MaxOutputBytes int             `json:"max_output_bytes,omitempty"`
+	// Tier is the grant's decision tier (routine | consequential |
+	// irreversible), so monomind can route a grant:<alias> call the way the
+	// decision service does. Display only: routing reads the grant row.
+	Tier string `json:"tier,omitempty"`
 
 	Extra map[string]json.RawMessage `json:"-"`
 }
@@ -121,6 +125,10 @@ type Autonomy struct {
 	Policy           string            `json:"policy,omitempty"`
 	OnDeciderFailure string            `json:"on_decider_failure,omitempty"` // deny | human
 	Limits           *AutonomyLimits   `json:"limits,omitempty"`
+	// PausedUntil is when an active pause ends (RFC 3339, UTC); empty when
+	// the org is not paused. Display only: the row's paused_until is what
+	// routes decisions to a person.
+	PausedUntil string `json:"paused_until,omitempty"`
 
 	Extra map[string]json.RawMessage `json:"-"`
 }

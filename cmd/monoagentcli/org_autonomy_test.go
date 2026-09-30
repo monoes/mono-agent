@@ -114,8 +114,22 @@ func TestOrgAutonomyCommands(t *testing.T) {
 	if paused["paused_until"] == nil || paused["effective_level"] != "manual" {
 		t.Fatalf("pause = %v", paused)
 	}
+	if got := f.load(t).Autonomy.PausedUntil; got == "" || got != paused["paused_until"] {
+		t.Fatalf("org file paused_until = %q, want %v", got, paused["paused_until"])
+	}
 	if f.mustRun(t, "autonomy", "resume", "growth")["paused_until"] != nil {
 		t.Fatal("resume left the org paused")
+	}
+	if got := f.load(t).Autonomy.PausedUntil; got != "" {
+		t.Fatalf("resume left paused_until %q in the org file", got)
+	}
+	f.mustRun(t, "autonomy", "pause", "--all")
+	if got := f.load(t).Autonomy.PausedUntil; got != "9999-01-01T00:00:00Z" {
+		t.Fatalf("pause --all paused_until = %q", got)
+	}
+	f.mustRun(t, "autonomy", "resume", "--all")
+	if got := f.load(t).Autonomy; got.PausedUntil != "" || got.Level != "mid" {
+		t.Fatalf("resume --all display copy = %+v", got)
 	}
 	if ds := f.mustRun(t, "autonomy", "decisions", "growth")["decisions"].([]interface{}); len(ds) != 0 {
 		t.Fatalf("decisions = %v", ds)
