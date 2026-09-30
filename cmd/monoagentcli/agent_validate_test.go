@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -179,7 +180,7 @@ func TestAgentValidateAllEndToEnd(t *testing.T) {
 
 	// Now the dry run prices alpha from its last call; beta is unknown.
 	out, _ = runAgentCLI(t, dbPath, "validate", "--dry-run")
-	if p := validateLines(t, out)[0].Plan; p.Calls != 2 || p.EstCostUSD != 0.002 || p.UnknownCost != 1 {
+	if p := validateLines(t, out)[0].Plan; p.Calls != 2 || math.Abs(p.EstCostUSD-0.002) > 1e-9 || p.UnknownCost != 1 {
 		t.Errorf("second plan = calls %d, $%v, unknown %d; want 2, 0.002, 1", p.Calls, p.EstCostUSD, p.UnknownCost)
 	}
 	// --stale-only skips the ready alpha.

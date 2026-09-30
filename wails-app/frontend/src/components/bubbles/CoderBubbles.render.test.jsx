@@ -454,17 +454,33 @@ describe('verification matrix (#231)', () => {
 
   it('switches every bubble animation off under prefers-reduced-motion', () => {
     const css = readFileSync(join(__dirname, 'bubbles.css'), 'utf8')
-    const block = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
-    expect(block).toMatch(/animation:\s*none\s*!important/)
-    expect(block).toMatch(/transition:\s*none\s*!important/)
+    // Every rule inside the reduced-motion block(s) that switches animation
+    // and transition off, whatever its selector list looks like.
+    const reduceAt = [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g)].map(m => m.index + m[0].length)
+    expect(reduceAt.length).toBeGreaterThan(0)
+    const blockBody = start => {
+      let depth = 1, i = start
+      for (; i < css.length && depth > 0; i++) depth += css[i] === '{' ? 1 : css[i] === '}' ? -1 : 0
+      return css.slice(start, i - 1)
+    }
+    const reduceBodies = reduceAt.map(blockBody)
     // The element a selector styles: the first class of its last compound,
     // plus any pseudo-element (".bubble-overlay.closing" -> ".bubble-overlay").
     const subject = sel => {
       const last = sel.trim().split(/\s+/).pop()
       return (last.match(/^\.[\w-]+/)?.[0] || last) + (last.match(/::[\w-]+$/)?.[0] || '')
     }
-    const covered = new Set(block.slice(block.indexOf('{') + 1, block.indexOf('{', block.indexOf('{') + 1)).split(',').map(subject))
-    const rules = css.slice(0, css.indexOf('@media (prefers-reduced-motion: reduce)'))
+    const covered = new Set()
+    for (const body of reduceBodies) {
+      for (const [, sels, decl] of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        if (/animation:\s*none\s*!important/.test(decl) && /transition:\s*none\s*!important/.test(decl)) {
+          for (const sel of sels.split(',')) covered.add(subject(sel))
+        }
+      }
+    }
+    let outside = css
+    for (const body of reduceBodies) outside = outside.replace(body, '')
+    const rules = outside
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .matchAll(/([^{}]+)\{([^}]*)\}/g)
     let checked = 0
