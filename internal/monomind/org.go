@@ -31,11 +31,24 @@ var orgTimeout = 60 * time.Second
 // runOrgJSON runs `monomind org <args...> --format json` with cwd=projectRoot
 // and returns the raw stdout payload.
 func runOrgJSON(ctx context.Context, projectRoot string, args ...string) (json.RawMessage, error) {
+	return runOrgJSONFull(ctx, projectRoot, args, append(append([]string{"org"}, args...), "--format", "json"))
+}
+
+// runOrgJSONText is runOrgJSON for a subcommand whose trailing values are
+// free text (an answer, a gate's resolution) or ids: cmd is the subcommand
+// and its flags, and values go after "--", so a value like "--by=rule" is
+// never read as a flag.
+func runOrgJSONText(ctx context.Context, projectRoot string, cmd []string, values ...string) (json.RawMessage, error) {
+	full := append(append([]string{"org"}, cmd...), "--format", "json", "--")
+	return runOrgJSONFull(ctx, projectRoot, append(append([]string(nil), cmd...), values...), append(full, values...))
+}
+
+// runOrgJSONFull runs `monomind <full...>`; args names the command in errors.
+func runOrgJSONFull(ctx context.Context, projectRoot string, args, full []string) (json.RawMessage, error) {
 	bin, _, err := Ensure(ctx)
 	if err != nil {
 		return nil, err
 	}
-	full := append(append([]string{"org"}, args...), "--format", "json")
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
@@ -391,7 +404,7 @@ func OrgMemoryStats(ctx context.Context, projectRoot, name string) (json.RawMess
 // OrgAnswer answers a pending human-input question
 // (`org answer <name> <questionID> <answer...>`).
 func OrgAnswer(ctx context.Context, projectRoot, name, questionID, answer string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "answer", name, questionID, answer)
+	return runOrgJSONText(ctx, projectRoot, []string{"answer"}, name, questionID, answer)
 }
 
 // OrgApprove approves a pending tool-approval request
@@ -408,20 +421,20 @@ func OrgDeny(ctx context.Context, projectRoot, name, role, action string) (json.
 // OrgGateApprove approves a decision gate
 // (`org gate-approve <name> <gateID> [resolution...]`).
 func OrgGateApprove(ctx context.Context, projectRoot, name, gateID, resolution string) (json.RawMessage, error) {
-	args := []string{"gate-approve", name, gateID}
+	values := []string{name, gateID}
 	if resolution != "" {
-		args = append(args, resolution)
+		values = append(values, resolution)
 	}
-	return runOrgJSON(ctx, projectRoot, args...)
+	return runOrgJSONText(ctx, projectRoot, []string{"gate-approve"}, values...)
 }
 
 // OrgGateReject rejects a decision gate (`org gate-reject <name> <gateID> [resolution...]`).
 func OrgGateReject(ctx context.Context, projectRoot, name, gateID, resolution string) (json.RawMessage, error) {
-	args := []string{"gate-reject", name, gateID}
+	values := []string{name, gateID}
 	if resolution != "" {
-		args = append(args, resolution)
+		values = append(values, resolution)
 	}
-	return runOrgJSON(ctx, projectRoot, args...)
+	return runOrgJSONText(ctx, projectRoot, []string{"gate-reject"}, values...)
 }
 
 // OrgEventsOptions configures OrgEvents.

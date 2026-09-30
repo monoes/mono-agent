@@ -16,7 +16,8 @@ export const LEAD_ID = 'lead'
 export const MAX_FEED = 200
 export const MAX_FLIGHTS = 24
 const MAX_MESSAGES = 50
-const MAX_CALLS = 400
+// A node keeps the order of its latest MAX_CALLS tool calls.
+export const MAX_CALLS = 400
 const MAX_QUESTS = 100
 const MAX_FILES = 200
 
@@ -257,7 +258,7 @@ function onToolStarted(d, ev, p) {
     d.testCalls = { ...d.testCalls, [p.callId]: 'run' }
     n.testsRun += 1
   }
-  if (owner !== LEAD_ID && n.callOrder.length < MAX_CALLS) n.callOrder = [...n.callOrder, p.callId]
+  if (owner !== LEAD_ID) n.callOrder = pushCapped(n.callOrder, p.callId, MAX_CALLS)
   // A Claude-native Task call starts a subagent: its own node under the
   // agent that called it (#226: agent.spawned{agentType:"native"} when the
   // runner reports it; the Task call otherwise).

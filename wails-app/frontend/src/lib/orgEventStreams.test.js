@@ -46,4 +46,15 @@ describe('shared org event tails', () => {
     restartOrgEvents('acme') // nobody holds it: nothing starts
     expect(api.streamOrgEvents).toHaveBeenCalledTimes(2)
   })
+
+  it('forgets the ids a registered restart superseded', async () => {
+    const release = acquireOrgEvents('acme')
+    restartOrgEvents('acme')
+    restartOrgEvents('acme')
+    await Promise.resolve()
+    await Promise.resolve()
+    const ids = api.streamOrgEvents.mock.calls.map(c => c[1])
+    release()
+    expect(api.stopOrgEvents.mock.calls).toEqual([['acme', ids[2]]])
+  })
 })

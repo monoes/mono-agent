@@ -186,8 +186,11 @@ describe('performance', () => {
     const s = replayStage(events)
     expect(performance.now() - t0).toBeLessThan(3000)
     expect(s.nodes.w1.tools).toBeGreaterThan(1000)
-    // The call order kept per agent is capped; the counters are not.
-    expect(s.nodes.w1.callOrder.length).toBeLessThanOrEqual(400)
+    // The call order kept per agent is capped at its latest calls; the
+    // counters are not.
+    expect(s.nodes.w1.callOrder.length).toBe(400)
+    const w1Last = events.filter(e => e.type === 'tool.started' && e.payload.agentId === 'w1').at(-1).payload.callId
+    expect(s.nodes.w1.callOrder.at(-1)).toBe(w1Last)
     // The stage never copies a call's content: that stays in the turn.
     expect(s.nodes.w1.calls).toBeUndefined()
   })

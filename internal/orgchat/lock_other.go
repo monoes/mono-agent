@@ -12,8 +12,9 @@ import (
 )
 
 // Without flock the lock is a claim file created with O_EXCL; a claim
-// older than staleLockAge belongs to a crashed holder and is broken.
-const staleLockAge = 5 * time.Minute
+// older than staleLockAge belongs to a crashed holder and is broken. It is
+// no longer than the wait, so a crashed holder never outlasts a waiter.
+const staleLockAge = lockWaitTimeout
 
 func lockFile(ctx context.Context, f *os.File) error {
 	claim := f.Name() + ".claim"

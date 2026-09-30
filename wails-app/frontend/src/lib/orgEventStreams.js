@@ -25,10 +25,17 @@ function call(fn) {
   }
 }
 
+// start runs a new tail for entry. Once it registers, the Go side has
+// killed the ones it superseded, so their ids are dropped; until then they
+// stay, for the last release to stop.
 function start(org, entry) {
   const id = newOrgEventsStreamId()
   entry.ids.push(id)
-  call(() => api.streamOrgEvents(org, id))
+  call(() => api.streamOrgEvents(org, id)?.then?.(res => {
+    if (res?.error || res?.stopped) return
+    const at = entry.ids.indexOf(id)
+    if (at > 0) entry.ids.splice(0, at)
+  }))
 }
 
 // acquireOrgEvents makes sure org's events flow and returns the release.
