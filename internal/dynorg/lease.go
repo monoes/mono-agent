@@ -1,6 +1,9 @@
 package dynorg
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // lease is a first-come, first-served lock that can be waited for with a
 // context: the write lease (one worker edits the chat folder at a time) and
@@ -30,3 +33,19 @@ func (l *lease) acquire(ctx context.Context) error {
 }
 
 func (l *lease) release() { <-l.ch }
+
+// holdLease records that w holds l (named name) until the returned func
+// releases it. Every agent.status reports the leases its worker holds, so
+// the org stage reads who holds the pen and the browser from the journal
+// instead of re-deriving the rules (#228).
+func (c *Conductor) holdLease(w *worker, l *lease, name string) (release func()) {
+	c.mu.Lock()
+	w.leases = append(w.leases, name)
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		w.leases = slices.DeleteFunc(w.leases, func(n string) bool { return n == name })
+		c.mu.Unlock()
+		l.release()
+	}
+}

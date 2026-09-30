@@ -74,6 +74,7 @@ type worker struct {
 	// followups counts org_message runs, capped at MaxFollowups.
 	followups int
 	stream    workerStream // its text and live usage (workerstream.go)
+	leases    []string     // the leases it holds, for agent.status (lease.go)
 }
 
 // MaxFollowups caps org_message runs per worker, so follow-ups can't stand
@@ -361,7 +362,7 @@ func (c *Conductor) run(ctx context.Context, w *worker, prompt, resume string, f
 				return chatevents.AgentCancelled, "", "cancelled while waiting for the " + need.name + " lease"
 			}
 		}
-		defer need.l.release()
+		defer c.holdLease(w, need.l, need.name)()
 	}
 	select {
 	case c.slots <- struct{}{}:
@@ -593,7 +594,7 @@ func (c *Conductor) setStatusLocked(w *worker, to, detail string) {
 	}
 	from := w.status
 	w.status = to
-	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail})
+	c.cfg.Emit.Emit(chatevents.EventAgentStatus, chatevents.AgentStatusPayload{AgentID: w.id, From: from, To: to, Detail: detail, Leases: slices.Clone(w.leases)})
 }
 
 func (c *Conductor) finish(w *worker, outcome, report, errText string) {

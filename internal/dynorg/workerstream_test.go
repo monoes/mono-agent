@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
@@ -145,5 +146,25 @@ func TestSpawnedAndReassignedCarryFidelity(t *testing.T) {
 	re := em.find(chatevents.EventAgentReassigned)[0].(chatevents.AgentReassignedPayload)
 	if sp.Fidelity != "full" || re.Fidelity != "start-only" || re.ToModel != "haiku" {
 		t.Errorf("spawned fidelity %q, reassigned %+v", sp.Fidelity, re)
+	}
+}
+
+func TestStatusReportsHeldLeases(t *testing.T) {
+	ex := &execScript{hold: 60 * time.Millisecond}
+	c, em := newTestConductor(t, ex, Limits{MaxAgents: 3, MaxConcurrent: 3})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "implement a", Access: ProfileCoding})
+	c.Spawn(context.Background(), SpawnRequest{Brief: "check the page", Access: ProfileQA})
+	c.Wait(context.Background(), nil, 5*time.Second)
+	got := map[string][]string{}
+	for _, p := range em.find(chatevents.EventAgentStatus) {
+		s := p.(chatevents.AgentStatusPayload)
+		got[s.AgentID] = append(got[s.AgentID], s.To+"="+strings.Join(s.Leases, "+"))
+	}
+	if w1 := strings.Join(got["w1"], " "); w1 != "queued= starting=write working=write done=" {
+		t.Errorf("w1 statuses = %s", w1)
+	}
+	// The QA worker waits for the pen holding nothing, then holds both.
+	if w2 := strings.Join(got["w2"], " "); w2 != "queued= waiting_lease= starting=write+browser working=write+browser done=" {
+		t.Errorf("w2 statuses = %s", w2)
 	}
 }

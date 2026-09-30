@@ -216,6 +216,24 @@ describe('worker text, live usage and fidelity (#257, #258, #259)', () => {
   })
 })
 
+describe('lease holders come from the conductor', () => {
+  it('shows what agent.status reports, whatever the access profile', () => {
+    let s = replayStage([
+      { seq: 1, type: 'agent.spawned', payload: { agentId: 'w1', access: 'research' } },
+      { seq: 2, type: 'agent.spawned', payload: { agentId: 'w2', access: 'qa' } },
+      // An unconfined research worker takes the write lease.
+      { seq: 3, type: 'agent.status', payload: { agentId: 'w1', to: 'working', leases: ['write'] } },
+      // A QA worker keeps nothing while it waits for the pen.
+      { seq: 4, type: 'agent.status', payload: { agentId: 'w2', to: 'waiting_lease', detail: 'write' } },
+    ])
+    expect(leasesOf(s)).toEqual({ pen: 'w1', browser: null, waiting: [{ id: 'w2', lease: 'write' }] })
+    // Holding the pen while it waits for the browser.
+    s = stageReducer(s, { seq: 5, type: 'agent.status', payload: { agentId: 'w1', to: 'done' } })
+    s = stageReducer(s, { seq: 6, type: 'agent.status', payload: { agentId: 'w2', to: 'waiting_lease', detail: 'browser', leases: ['write'] } })
+    expect(leasesOf(s)).toEqual({ pen: 'w2', browser: null, waiting: [{ id: 'w2', lease: 'browser' }] })
+  })
+})
+
 describe('performance', () => {
   it('folds a 20,000-event journal of six busy workers quickly', () => {
     const events = []

@@ -324,6 +324,10 @@ type AgentStatusPayload struct {
 	From    string `json:"from,omitempty"`
 	To      string `json:"to"`
 	Detail  string `json:"detail,omitempty"` // e.g. which lease it waits for
+	// Leases are the leases the worker holds at this status ("write",
+	// "browser"): the org stage shows who holds the pen and the browser
+	// from them (#228).
+	Leases []string `json:"leases,omitempty"`
 }
 
 // AgentMessagePayload is agent.message's payload: a brief, a result, a

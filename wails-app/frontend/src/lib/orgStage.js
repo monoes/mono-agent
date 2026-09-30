@@ -105,7 +105,7 @@ function newNode(id, patch = {}) {
     parentId: id === LEAD_ID ? null : LEAD_ID,
     role: '', agentType: '', native: false, skills: [], runtime: '', model: '', effort: '', access: '',
     brief: '', why: '', pickConfidence: null, jevConfidence: null,
-    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null,
+    status: id === LEAD_ID ? 'idle' : 'queued', statusDetail: '', statusAt: null, leases: [],
     prevModel: null, reassignedSeq: 0, reassignedAt: null,
     doing: null,
     tools: 0, toolsDone: 0, files: [], testsRun: 0, testsPassed: 0,
@@ -217,12 +217,13 @@ function syncQuest(d, agentId) {
   }
 }
 
-function setStatus(d, ev, id, to, detail = '') {
+function setStatus(d, ev, id, to, detail = '', leases = []) {
   const n = d.node(id)
   // A question waits for an answer until the agent moves on.
   if (n.status !== to) n.needsYou = false
   n.status = to
   n.statusDetail = detail || ''
+  n.leases = Array.isArray(leases) ? leases : []
   n.statusAt = ev.at || n.statusAt
   syncQuest(d, id)
 }
@@ -423,7 +424,7 @@ function stageApply(d, ev) {
       break
     case 'agent.status':
       if (!p.agentId || !p.to) break
-      setStatus(d, ev, p.agentId, p.to, p.detail)
+      setStatus(d, ev, p.agentId, p.to, p.detail, p.leases)
       if (p.to === 'waiting_lease' || p.to === 'failed' || p.to === 'cancelled') addFeed(d, ev, p.agentId, 'status', p.to, p.detail || '')
       break
     case 'agent.message':
@@ -547,25 +548,17 @@ export function hasTeam(stage) {
 }
 
 // leasesOf says who holds the pen (the write lease) and the browser, and
-// who waits for which. A worker holds a lease from the moment it starts
-// until it finishes (the conductor takes leases before a slot); the lead
-// holds the pen only while one of its edits runs.
+// who waits for which, as the conductor reports them on agent.status
+// (leases and a waiting_lease detail): the stage never re-derives them.
 export function leasesOf(stage) {
   const out = { pen: null, browser: null, waiting: [] }
   if (!stage) return out
   for (const id of stage.order) {
     const n = stage.nodes[id]
-    if (n.status === 'waiting_lease') {
-      out.waiting.push({ id, lease: n.statusDetail || 'write' })
-      continue
-    }
-    if (id === LEAD_ID || n.native) continue
-    if (n.status !== 'starting' && n.status !== 'working') continue
-    if (n.access && n.access !== 'research' && !out.pen) out.pen = id
-    if ((n.access === 'qa' || n.access === 'automation') && !out.browser) out.browser = id
+    if (n.status === 'waiting_lease') out.waiting.push({ id, lease: n.statusDetail || 'write' })
+    if (n.leases.includes('write') && !out.pen) out.pen = id
+    if (n.leases.includes('browser') && !out.browser) out.browser = id
   }
-  const lead = stage.nodes[LEAD_ID]
-  if (!out.pen && lead?.doing?.active && WRITE_KINDS.has(lead.doing.kind)) out.pen = LEAD_ID
   return out
 }
 
