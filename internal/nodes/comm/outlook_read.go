@@ -81,17 +81,23 @@ func (n *OutlookReadNode) Execute(ctx context.Context, input workflow.NodeInput,
 	return []workflow.NodeOutput{{Handle: "main", Items: out}}, nil
 }
 
-// fetchOutlookMail performs a minimal IMAP fetch using raw text protocol.
-// This avoids a third-party IMAP library dependency while still being functional
-// for simple cases. For production use, replace with go-imap or similar.
-func fetchOutlookMail(ctx context.Context, host string, port int, username, password, mailbox string, limit int, unreadOnly bool) ([]map[string]interface{}, error) {
-	addr := fmt.Sprintf("%s:%d", host, port)
-
+// dialOutlookIMAP opens the TLS connection to the IMAP server; tests swap
+// it for a fake server.
+var dialOutlookIMAP = func(ctx context.Context, host string, port int) (net.Conn, error) {
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 15 * time.Second},
 		Config:    &tls.Config{ServerName: host},
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	return dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", host, port))
+}
+
+// fetchOutlookMail performs a minimal IMAP fetch using raw text protocol.
+// This avoids a third-party IMAP library dependency while still being functional
+// for simple cases. For production use, replace with go-imap or similar.
+// It only reads: the mailbox is opened with EXAMINE (read-only) and bodies
+// are fetched with BODY.PEEK, so no message gets the \Seen flag.
+func fetchOutlookMail(ctx context.Context, host string, port int, username, password, mailbox string, limit int, unreadOnly bool) ([]map[string]interface{}, error) {
+	conn, err := dialOutlookIMAP(ctx, host, port)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
@@ -150,8 +156,8 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 		return nil, fmt.Errorf("login: %w", err)
 	}
 
-	// SELECT mailbox
-	if err := send("A2", fmt.Sprintf("SELECT %q", mailbox)); err != nil {
+	// EXAMINE mailbox (SELECT, but read-only)
+	if err := send("A2", fmt.Sprintf("EXAMINE %q", mailbox)); err != nil {
 		return nil, err
 	}
 	var totalMessages int
@@ -164,7 +170,7 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 			break
 		}
 		if strings.HasPrefix(line, "A2 NO") || strings.HasPrefix(line, "A2 BAD") {
-			return nil, fmt.Errorf("SELECT: %s", line)
+			return nil, fmt.Errorf("EXAMINE: %s", line)
 		}
 		// Parse EXISTS count
 		var n int
@@ -188,8 +194,8 @@ func fetchOutlookMail(ctx context.Context, host string, port int, username, pass
 		searchSpec = fmt.Sprintf("%d:*", start)
 	}
 
-	// FETCH envelope and body
-	fetchCmd := fmt.Sprintf("FETCH %s (FLAGS ENVELOPE BODY[TEXT]<0.2048>)", searchSpec)
+	// FETCH envelope and body; the response still says BODY[TEXT]
+	fetchCmd := fmt.Sprintf("FETCH %s (FLAGS ENVELOPE BODY.PEEK[TEXT]<0.2048>)", searchSpec)
 	if err := send("A3", fetchCmd); err != nil {
 		return nil, err
 	}
