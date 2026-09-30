@@ -1,0 +1,34 @@
+{
+  "basic": {
+    "json": "{\"name\":\"growth\",\"goal\":\"g\",\"status\":\"running\",\"schedule\":null,\"roles\":[{\"id\":\"lead\",\"title\":\"Lead\",\"type\":\"lead\",\"reports_to\":null,\"responsibilities\":[\"a\"],\"ui\":{\"x\":1,\"y\":2},\"policy\":{\"git\":\"read\"}}]}",
+    "hash": "7f8011a97099d29bbb064fb9f4f9e53d5085f5a0b43366c1c79e9710b2890281"
+  },
+  "numbers": {
+    "json": "{\"name\":\"n\",\"roles\":[],\"run_config\":{\"a\":1.0,\"b\":1e2,\"c\":0.1,\"d\":1e21,\"e\":123456789012345678901,\"f\":-0,\"g\":1.5e-7,\"h\":0.000001,\"i\":12345678901234567890,\"j\":2.50,\"k\":1E-400,\"l\":-3.14159e+5}}",
+    "hash": "9fbde8a1f096af3ad310ed7c4cb6a6f46b82a948cc9f1f02f1488d5d7d5435d1"
+  },
+  "strings": {
+    "json": "{\"name\":\"s\",\"roles\":[],\"x\":\"quote\\\" back\\\\ nl\\n tab\\t ctl\\u0001 del\\u007f lt< gt> amp& ls\\u2028 emoji 😀 bmp \\uffff\"}",
+    "hash": "acf5a27e068e8bfb07f449907394f52ed55829f1e3c266d34875f707caede94a"
+  },
+  "keys": {
+    "json": "{\"name\":\"k\",\"roles\":[],\"m\":{\"b\":1,\"a\":2,\"10\":3,\"9\":4,\"01\":5,\"B\":6,\"é\":7,\"😀\":8,\"\\uffff\":9,\"4294967294\":10,\"4294967295\":11,\"\":12}}",
+    "hash": "a8fcdf8b58a320a7223691e24bd9220204281e2802861c69277b0b720f57acf6"
+  },
+  "roleshapes": {
+    "json": "{\"name\":\"r\",\"goal\":\"x\",\"roles\":[\"str\",null,{\"id\":\"a\",\"title\":\"T\",\"responsibilities\":[],\"skills\":[\"x\"],\"ui\":null}],\"loadouts\":{\"q\":{\"x\":1}}}",
+    "hash": "dbe5bb3e532d811cee1e39f998ecb3c866b5857cd7a218bd29a1d828f6d5d58b"
+  },
+  "dup": {
+    "json": "{\"name\":\"d\",\"roles\":[],\"a\":1,\"a\":2}",
+    "hash": "3f90922224862f2515e5f48929391a4001cb4911cedf2b778e0af65be8eaa404"
+  },
+  "nested": {
+    "json": "{\"name\":\"z\",\"roles\":[{\"id\":\"x\",\"policy\":{\"z\":[{\"b\":true,\"a\":false}],\"a\":null}}],\"federation\":{\"allow\":[\"p\"]}}",
+    "hash": "2cd8c928d2261bd711a723d55f79059ae810b2b6d895857ef3ac2e61bd2da865"
+  },
+  "instructions": {
+    "json": "{\"name\":\"i\",\"roles\":[{\"id\":\"lead\",\"instructions_file\":\"prompts/lead.md\"}],\"loadouts\":{\"deep\":{\"instructions_file\":\"prompts/lead.md\"}}}",
+    "hash": "803f7f486bdca7fc2c9fe7fefbb878dc98b8f1fa90fadf63931caca8570c5452"
+  }
+}

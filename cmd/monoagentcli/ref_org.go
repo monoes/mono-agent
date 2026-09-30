@@ -34,6 +34,31 @@ PROCESSES
   roles cannot run, and every org behaves as autonomy level manual.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SIGNED DEFINITIONS (monomind 2.21+)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  org sign <org> --status           signed | unsigned | changed | ...
+  org sign <org>                    monomind's review; signs nothing
+                                    (asks first on a terminal)
+  org sign <org> --yes [--expect-hash <hash>]    sign (only that definition)
+
+  monomind runs or reloads an org only when the operator signed its
+  definition (everything but goal, status and role titles,
+  responsibilities and layout). monoagentcli re-signs its own edits of
+  a signed org; an org edited any other way, imported, written whole
+  with create-json, or changed from inside a coding agent is left
+  unsigned with a warning until you review and sign it (the review's
+  "hash" is what --expect-hash signs). org run refuses such an org with
+  code org_not_signed, and
+  org status shows each org's "signature".
+
+  Orgs under a symlinked .monomind (or with a symlink on the way to an
+  instructions file), on a network or FUSE/FAT filesystem, or on Windows
+  are never re-signed automatically, and their review hands over no hash
+  unless monomind 2.22 reviews and signs them itself: sign those with
+  "monomind org sign <org>" in a terminal.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATIONS AND GRANTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

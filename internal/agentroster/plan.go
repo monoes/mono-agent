@@ -84,8 +84,21 @@ func BuildPlan(ctx context.Context, scan *monomind.ScanResult, list Lister, prev
 		if len(listed[i]) == 0 {
 			add(Target{Model: DefaultModel, Label: "Default model", Source: SourceListed})
 		}
+		var aliases []monomind.RuntimeModel
 		for _, m := range listed[i] {
+			// Another name for a model already listed (monomind 2.21's
+			// alias_of): testing it would run, and bill, the same model
+			// twice, so it rides along with its canonical target instead.
+			if m.AliasOf != "" {
+				aliases = append(aliases, m)
+				continue
+			}
 			add(Target{Model: m.ID, Label: m.Label, EffortLevels: m.EffortLevels, Source: SourceListed})
+		}
+		for _, al := range aliases {
+			if idx := slices.IndexFunc(targets, func(t Target) bool { return t.Model == al.AliasOf }); idx >= 0 {
+				targets[idx].Aliases = append(targets[idx].Aliases, Alias{Model: al.ID, Label: al.Label})
+			}
 		}
 		for _, r := range previous {
 			if r.Runtime == a.ID && r.Source == SourceManual {
@@ -95,7 +108,10 @@ func BuildPlan(ctx context.Context, scan *monomind.ScanResult, list Lister, prev
 		if len(f.Models) > 0 {
 			var kept []Target
 			for _, want := range f.Models {
-				idx := slices.IndexFunc(targets, func(t Target) bool { return t.Model == want })
+				// An alias asked for by id tests its canonical model.
+				idx := slices.IndexFunc(targets, func(t Target) bool {
+					return t.Model == want || slices.ContainsFunc(t.Aliases, func(a Alias) bool { return a.Model == want })
+				})
 				if idx >= 0 {
 					kept = append(kept, targets[idx])
 				} else {

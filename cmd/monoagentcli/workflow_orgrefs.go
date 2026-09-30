@@ -79,7 +79,7 @@ func checkWorkflowOrgReferences(ctx context.Context, cfg *globalConfig, workflow
 			return err
 		}
 		if rep.Changed {
-			if _, err := orgdesign.Save(root, doc); err != nil {
+			if _, err := saveOrgDoc(ctx, root, doc); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: org %s: %v (grants were revoked; its JSON was not updated)\n", k.org, err)
 			}
 		}

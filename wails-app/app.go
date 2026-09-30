@@ -51,6 +51,8 @@ type App struct {
 
 	orgWatchMu sync.Mutex
 	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
+	// orgSignSupport caches whether monomind requires signed orgs (#288).
+	orgSignSupport orgSignSupport
 
 	docWatchMu sync.Mutex
 	docWatcher *docscan.Watcher     // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher

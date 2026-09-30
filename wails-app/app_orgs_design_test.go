@@ -85,7 +85,7 @@ func TestSaveOrgDoc_RejectedSaveNeverReconciles(t *testing.T) {
 	// Drop the worker role — the change monomind's validate will reject.
 	next := twoRoleDoc()
 	next.Roles = next.Roles[:1]
-	if _, err := a.saveOrgDoc(root, next); err == nil || !strings.Contains(err.Error(), "monomind says no") {
+	if _, err := a.saveOrgDoc(root, next, false); err == nil || !strings.Contains(err.Error(), "monomind says no") {
 		t.Fatalf("saveOrgDoc = %v, want the CLI validate rejection", err)
 	}
 	for _, call := range loggedArgs(t, log) {
@@ -112,7 +112,7 @@ func TestSaveOrgDoc_ReconcilesThroughTheCLI(t *testing.T) {
 	a, root := newOrgDesignApp(t)
 
 	d := twoRoleDoc()
-	if _, err := a.saveOrgDoc(root, d); err != nil {
+	if _, err := a.saveOrgDoc(root, d, false); err != nil {
 		t.Fatalf("saveOrgDoc: %v", err)
 	}
 	calls := loggedArgs(t, log)
