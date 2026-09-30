@@ -12,16 +12,6 @@ import (
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
 )
 
-// newChatTurnCmd groups commands that act on a running chat turn.
-func newChatTurnCmd(cfg *globalConfig) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "turn",
-		Short: "Act on a running chat turn",
-	}
-	cmd.AddCommand(newChatTurnAnswerCmd(cfg))
-	return cmd
-}
-
 // newChatTurnAnswerCmd answers a dynamic-org worker's question (#256): the
 // running turn picks the answer up, journals it, and hands it to the
 // worker.

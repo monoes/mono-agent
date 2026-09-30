@@ -107,6 +107,25 @@ func (a *App) AgentRosterRemove(runtimeID, model string) string {
 	return a.jsonResult("agent", "roster", "remove", runtimeID, model)
 }
 
+// AgentRosterAutoRevalidate returns `agent roster auto-revalidate status
+// --json` (#230): the setting, today's runs and spend, and what the next
+// automatic run would test with its estimated cost. No model calls, and no
+// scan (the roster refresh already runs one), so the estimate covers
+// age staleness only.
+func (a *App) AgentRosterAutoRevalidate() string {
+	return a.jsonResult("agent", "roster", "auto-revalidate", "status", "--no-scan")
+}
+
+// SetAgentRosterAutoRevalidate turns automatic re-validation on or off. The
+// frontend turns it on only after the user confirmed that it costs money.
+func (a *App) SetAgentRosterAutoRevalidate(on bool) string {
+	state := "off"
+	if on {
+		state = "on"
+	}
+	return a.jsonResult("agent", "roster", "auto-revalidate", state)
+}
+
 func validateArgs(runtimes, models []string, staleOnly, dry bool) []string {
 	args := []string{"agent", "validate"}
 	for _, r := range runtimes {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -16,6 +17,7 @@ const (
 	ToolWait    = "org_wait"
 	ToolMessage = "org_message"
 	ToolStop    = "org_stop"
+	ToolRate    = "org_rate"
 )
 
 // ToolTimeout is the lead's --tool-timeout: above MaxWait, so a wait
@@ -63,6 +65,8 @@ func ToolSpecs() []monomind.ToolSpec {
 			Schema: obj(map[string]any{"agent_id": str("The worker."), "text": str("The follow-up.")}, "agent_id", "text")},
 		{Name: ToolStop, Description: "Stop a running worker.",
 			Schema: obj(map[string]any{"agent_id": str("The worker.")}, "agent_id")},
+		{Name: ToolRate, Description: "Rate a worker's latest report after you read it: good if it did the job, bad if it didn't. Ratings teach staffing which models fit which kind of work; rate each report once.",
+			Schema: obj(map[string]any{"agent_id": str("The worker."), "rating": str("good or bad.")}, "agent_id", "rating")},
 	}
 }
 
@@ -70,6 +74,19 @@ func ToolSpecs() []monomind.ToolSpec {
 // unknown model) is returned as an error, which the lead reads as the
 // tool's failed result.
 func (c *Conductor) Handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	out, err := c.handle(ctx, name, args)
+	// Edits the lead made while a writer held the write lease (LeadEvent)
+	// are reported with its next org tool call, which it reads.
+	if warnings := c.takeLeadWarnings(); len(warnings) > 0 {
+		if err != nil {
+			return "", fmt.Errorf("%w (warning: %s)", err, strings.Join(warnings, " "))
+		}
+		return marshal(map[string]any{"warnings": warnings, "result": json.RawMessage(out)})
+	}
+	return out, err
+}
+
+func (c *Conductor) handle(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	switch name {
 	case ToolRoster:
 		return marshal(c.Roster())
@@ -117,6 +134,19 @@ func (c *Conductor) Handle(ctx context.Context, name string, args json.RawMessag
 			return "", err
 		}
 		return marshal(info)
+	case ToolRate:
+		var a struct {
+			AgentID string `json:"agent_id"`
+			Rating  string `json:"rating"`
+		}
+		if err := json.Unmarshal(orEmpty(args), &a); err != nil {
+			return "", fmt.Errorf("bad arguments: %v", err)
+		}
+		res, err := c.Rate(a.AgentID, a.Rating)
+		if err != nil {
+			return "", err
+		}
+		return marshal(res)
 	}
 	return "", fmt.Errorf("unknown org tool %q", name)
 }

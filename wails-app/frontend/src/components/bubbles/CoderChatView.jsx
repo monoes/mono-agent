@@ -108,7 +108,7 @@ function CoderSetup({ status, setup, onChange, onNavigate }) {
 // CoderChatView is the chat half of an expanded coder bubble: the
 // transcript, the live turn and the composer. conv is useCoderConversation's
 // result; draft/onDraftChange keep the unsent text across collapses.
-export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDraftChange, initialScrollTop, onScroll, onNavigate }) {
+export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDraftChange, initialScrollTop, onScroll, onNavigate, agentFilter = null, agentFilterTurnId = '', agentFilterName = '', onClearAgentFilter }) {
   const { t } = useTranslation()
   const { status } = useCoderStatus(isDraft)
   const scroll = useChatScroll(`${conv.messages.length}:${conv.liveTurn.lastSeq}`)
@@ -134,6 +134,13 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      {agentFilter && (
+        <div className="stage-filter" data-testid="chat-agent-filter">
+          <span>{t('stage.filterShowing', { name: agentFilterName })}</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClearAgentFilter} style={{ fontSize: 10 }}>{t('stage.filterClear')}</button>
+        </div>
+      )}
       {isDraft && empty && <CoderSetup status={status} setup={setup} onChange={onSetupChange} onNavigate={onNavigate} />}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div ref={scroll.containerRef} onScroll={e => onScroll?.(e.currentTarget.scrollTop)} data-testid="bubble-transcript"
@@ -151,7 +158,7 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
             msg.role === 'coder-init' ? <CoderInitNote key={i} workspace={msg.workspace} />
               : msg.role === 'turn' ? (
                 <div key={i} className="chat-assistant-turn">
-                  <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} />
+                  <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} agentFilter={msg.turnId === agentFilterTurnId ? agentFilter : null} />
                   <TurnStatus state={msg.state} stopRequested={false} ownedByThisInstance={msg.ownedByThisInstance} />
                   {isAgentNotSetup(msg.state.terminal?.code) && <AgentSetupLink onNavigate={onNavigate} />}
                 </div>
@@ -161,7 +168,7 @@ export function CoderChatView({ conv, isDraft, setup, onSetupChange, draft, onDr
           ))}
           {conv.streaming && (
             <div className="chat-assistant-turn">
-              <ChatTimeline state={conv.liveTurn} turnId={conv.activeTurnId} isLive />
+              <ChatTimeline state={conv.liveTurn} turnId={conv.activeTurnId} isLive agentFilter={conv.activeTurnId === agentFilterTurnId ? agentFilter : null} />
               <TurnStatus state={conv.liveTurn} stopRequested={conv.stopRequested} />
             </div>
           )}

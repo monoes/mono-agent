@@ -88,7 +88,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"`chat history`): its runtime, model and session come from the conversation, and the turn " +
 			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
 			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
-			"`history` subcommand.",
+			"`history` or `turn` subcommand.",
 		Args: cobra.MinimumNArgs(1),
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"

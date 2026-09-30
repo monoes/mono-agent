@@ -67,12 +67,15 @@ type Model struct {
 	// CallerTools / CallerToolsFull: the runtime gives stdio caller tools
 	// to the model, and also under --access full. A worker gets ask_user
 	// (#256) only when its exec can take it.
-	CallerTools     bool    `json:"caller_tools,omitempty"`
-	CallerToolsFull bool    `json:"caller_tools_full,omitempty"`
-	Resume          bool    `json:"resume"`
-	CostUSD         float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
-	LatencyMs       int64   `json:"latency_ms,omitempty"`
-	Stale           bool    `json:"stale,omitempty"`
+	CallerTools     bool `json:"caller_tools,omitempty"`
+	CallerToolsFull bool `json:"caller_tools_full,omitempty"`
+	// Fidelity is the runtime's tool-activity fidelity from the scan
+	// ("full", "start-only" or "none"); "" when unknown.
+	Fidelity  string  `json:"tool_activity_fidelity,omitempty"`
+	Resume    bool    `json:"resume"`
+	CostUSD   float64 `json:"test_cost_usd,omitempty"` // cost of its one-word validation turn: a relative price signal
+	LatencyMs int64   `json:"latency_ms,omitempty"`
+	Stale     bool    `json:"stale,omitempty"`
 }
 
 // Key names a model as "runtime/model".

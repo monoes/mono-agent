@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		runtimes, models []string
 		staleOnly, dry   bool
+		all              bool
 		concurrency      int
 		timeoutRaw       string
 		maxAge           time.Duration
@@ -30,16 +32,19 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "validate",
 		Short: "Test every installed runtime's models with a one-word turn and store the roster",
 		Long: "Sends \"Reply with the single word: ok\" to each model of each installed agent runtime " +
-			"(or only the --runtime/--model given) and stores what answered: ok, auth, quota, " +
+			"(or only the --runtime/--model given; --all says so explicitly) and stores what answered: ok, auth, quota, " +
 			"model_unavailable, timeout, … with latency and cost. Each test is a real model call. " +
 			"Tests of one runtime run one at a time; up to --concurrency runtimes run at once. " +
 			"--dry-run lists the calls and the estimated cost without running them. " +
 			"With --json, progress is NDJSON: validate.plan, validate.started, validate.result, validate.done.",
 		Example: `  monoagentcli agent validate --dry-run --json
-  monoagentcli agent validate
+  monoagentcli agent validate --all
   monoagentcli agent validate --runtime codex --model gpt-5.5
   monoagentcli agent validate --stale-only --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && (len(runtimes) > 0 || len(models) > 0) {
+				return errInvalidInput("--all tests every installed runtime; drop --runtime/--model or --all")
+			}
 			if len(models) > 0 && len(runtimes) != 1 {
 				return errInvalidInput("--model needs exactly one --runtime")
 			}
@@ -85,6 +90,11 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			if dry || len(plan.Targets) == 0 {
 				return nil
 			}
+			release, err := lockValidation()
+			if err != nil {
+				return err
+			}
+			defer release()
 
 			if err := agentroster.StartRun(ctx, db.DB, runID, len(plan.Targets), time.Now()); err != nil {
 				return err
@@ -105,6 +115,7 @@ func newAgentValidateCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Every installed runtime and its models (the default without --runtime)")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only these runtimes (repeatable)")
 	cmd.Flags().StringSliceVar(&models, "model", nil, "Only these model ids of the one --runtime; ids it doesn't list are added as manual")
 	cmd.Flags().BoolVar(&staleOnly, "stale-only", false, "Skip models that are already ready")
@@ -129,19 +140,22 @@ func validateEmitter(jsonOut bool) func(agentroster.Line) {
 			for _, s := range p.Skipped {
 				fmt.Fprintf(os.Stderr, "note: %s: %s\n", s.Runtime, s.Reason)
 			}
-			cost := fmt.Sprintf("≈ $%.4f", p.EstCostUSD)
-			if p.EstCostUSD < 0.0001 {
-				cost = "≈ <$0.0001"
+			for _, n := range p.SignIn {
+				note := fmt.Sprintf("note: %s isn't signed in, so its model list may be incomplete", n.Runtime)
+				if n.LoginHint != "" {
+					note += "; sign in with: " + n.LoginHint
+				}
+				fmt.Fprintln(os.Stderr, note)
 			}
-			if p.UnknownCost > 0 {
-				cost += fmt.Sprintf(" (+ %d with unknown cost)", p.UnknownCost)
-			}
-			fmt.Printf("%d test calls, %s\n", p.Calls, cost)
+			fmt.Printf("%d test calls, %s\n", p.Calls, planCost(p))
 		case "validate.result":
 			r := l.Result
 			line := fmt.Sprintf("%-12s %-32s %-17s %6dms", r.Runtime, r.Model, r.Status, r.LatencyMs)
 			if r.Detail != "" {
 				line += "  " + r.Detail
+			}
+			if r.LoginHint != "" {
+				line += "  (sign in: " + r.LoginHint + ")"
 			}
 			fmt.Println(line)
 		case "validate.done":
@@ -149,6 +163,27 @@ func validateEmitter(jsonOut bool) func(agentroster.Line) {
 			fmt.Printf("\n%d ok, %d failed, %d cancelled\n", s.OK, s.Failed, s.Cancelled)
 		}
 	}
+}
+
+// planCost describes a plan's estimated cost. Every figure is an estimate
+// (≈); the parts priced from the built-in table rather than earlier results
+// are counted.
+func planCost(p *agentroster.Plan) string {
+	cost := fmt.Sprintf("≈ $%.4f", p.EstCostUSD)
+	if p.EstCostUSD < 0.0001 {
+		cost = "≈ <$0.0001"
+	}
+	var parts []string
+	if p.TableEstimated > 0 {
+		parts = append(parts, fmt.Sprintf("%d priced from the built-in table", p.TableEstimated))
+	}
+	if p.UnknownCost > 0 {
+		parts = append(parts, fmt.Sprintf("+ %d with unknown cost", p.UnknownCost))
+	}
+	if len(parts) > 0 {
+		cost += " (" + strings.Join(parts, "; ") + ")"
+	}
+	return cost
 }
 
 // newAgentRosterCmd prints the stored roster; no model calls.
@@ -163,6 +198,8 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Show which runtime models passed validation (no model calls)",
 		Long: "Lists the stored `agent validate` results per runtime with each model's state: " +
 			"ready (answered within --max-age on the current runtime version), stale, failed or untested. " +
+			"Track record is each model's score per role category from real dynamic-org workers and the lead's ratings " +
+			"(decaying and smoothed, so not the plain share; shown from 3 results with the plain counts, \"low\" under 50%, which staffing ranks last). " +
 			"It runs `agent scan` to check versions and installs unless --no-scan.",
 		Example: `  monoagentcli agent roster
   monoagentcli agent roster --ready-only --json
@@ -186,6 +223,10 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 			roster := filterRoster(agentroster.Build(results, scan, time.Now(), maxAge), runtimes, readyOnly)
+			// The track record is extra: a read error leaves it out.
+			if q, err := agentroster.LoadQuality(ctx, db.DB, time.Now()); err == nil {
+				agentroster.AttachQuality(roster, q)
+			}
 			if cfg.JSONOutput {
 				return printJSON(map[string]any{"v": 1, "runtimes": roster})
 			}
@@ -193,17 +234,24 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Println("No roster yet. Run `monoagentcli agent validate`.")
 				return nil
 			}
-			table := newPlainTable(os.Stdout, []string{"Runtime", "Model", "State", "Status", "Latency", "Validated"}, nil)
+			table := newPlainTable(os.Stdout, []string{"Runtime", "Model", "State", "Status", "Latency", "Validated", "Track record", "Sign in"}, nil)
 			for _, rr := range roster {
 				if len(rr.Models) == 0 {
-					table.Append([]string{rr.Runtime, "—", "not validated", "", "", ""})
+					table.Append([]string{rr.Runtime, "—", "not validated", "", "", "", "", ""})
 				}
 				for _, e := range rr.Models {
 					validated := "never"
 					if !e.ValidatedAt.IsZero() && e.ValidatedAt.Year() > 1 {
 						validated = e.ValidatedAt.Local().Format("2006-01-02 15:04")
 					}
-					table.Append([]string{rr.Runtime, e.Model, e.State, e.Status, fmt.Sprintf("%dms", e.LatencyMs), validated})
+					hint := ""
+					if e.Status == agentroster.StatusAuth {
+						hint = e.LoginHint
+						if hint == "" {
+							hint = rr.LoginHint
+						}
+					}
+					table.Append([]string{rr.Runtime, e.Model, e.State, e.Status, fmt.Sprintf("%dms", e.LatencyMs), validated, trackRecordCell(e.TrackRecord), hint})
 				}
 			}
 			table.Render()
@@ -214,8 +262,29 @@ func newAgentRosterCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&noScan, "no-scan", false, "Skip `agent scan` (no version or install checks)")
 	cmd.Flags().StringSliceVar(&runtimes, "runtime", nil, "Only these runtimes")
 	cmd.Flags().DurationVar(&maxAge, "max-age", agentroster.DefaultMaxAge, "How long a passing result counts as ready")
-	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg))
+	cmd.AddCommand(newAgentRosterAddCmd(cfg), newAgentRosterRemoveCmd(cfg), newAgentRosterAutoCmd(cfg))
 	return cmd
+}
+
+// trackRecordCell is a model's known success rates per role category from
+// real dynamic-org workers, bad fits flagged: "engineering score 82%
+// (9 of 11 succeeded), testing score 40% (1 of 5 succeeded) low".
+func trackRecordCell(rates []agentroster.Rate) string {
+	var parts []string
+	for _, r := range rates {
+		if !r.Known {
+			continue
+		}
+		p := fmt.Sprintf("%s score %.0f%% (%s)", r.Category, r.Rate*100, agentroster.TrackRecordCounts(r))
+		if r.BadFit() {
+			p += " low"
+		}
+		parts = append(parts, p)
+	}
+	if len(parts) == 0 {
+		return "—"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func filterRoster(in []agentroster.RuntimeRoster, runtimes []string, readyOnly bool) []agentroster.RuntimeRoster {

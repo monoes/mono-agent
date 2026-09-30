@@ -4,13 +4,17 @@ import { api, notify } from '../../services/api.js'
 import { confirm } from '../ConfirmDialog.jsx'
 import { BubbleDock } from './BubbleDock.jsx'
 import { CoderChatOverlay } from './CoderChatOverlay.jsx'
+import { OrgBubbleOverlay } from './OrgBubbleOverlay.jsx'
+import { isOrgBubble } from '../../lib/coderBubbles.js'
 import { useCoderStatus } from '../chat/useCoderMode.js'
 
 // CoderBubbles puts the bubble dock and the expanded coder chat on screen
 // (#227). store is useCoderBubbles(), held by App so the assistant panel
 // can open coder chats into it. Only the expanded chat is mounted as a
 // full chat; collapsed ones live as summaries in the store.
-export default function CoderBubbles({ store, onNavigate }) {
+// onCloseOrg(org, needs) hears that the person closed an org bubble while
+// needs items waited, so it isn't reopened for the same ones.
+export default function CoderBubbles({ store, onNavigate, onCloseOrg }) {
   const { t } = useTranslation()
   // The dock's "+" only shows while coder mode is on in Settings.
   const { status } = useCoderStatus(true)
@@ -30,9 +34,11 @@ export default function CoderBubbles({ store, onNavigate }) {
   // turn: a closed bubble has nowhere left to show it. Collapsing keeps a
   // chat running instead.
   // A new chat with an unsent draft asks too: closing it loses the text.
+  // Closing an org bubble only closes the bubble: the org keeps running.
   const closeChat = useCallback(async (key) => {
     const summary = store.summaryOf(key)
     const bubble = store.bubbles.find(b => b.key === key)
+    if (isOrgBubble(bubble)) { onCloseOrg?.(bubble.orgName, summary.needs || 0); store.close(key); return }
     if (bubble && !bubble.conversationId && String(store.getView(key).draft || '').trim()) {
       const ok = await confirm(t('bubbles.confirmDiscardBody'), {
         title: t('bubbles.confirmDiscardTitle'), confirmLabel: t('bubbles.discard'), cancelLabel: t('bubbles.keepOpen'), danger: true,
@@ -50,13 +56,13 @@ export default function CoderBubbles({ store, onNavigate }) {
       }
     }
     store.close(key)
-  }, [store, t])
+  }, [store, t, onCloseOrg])
 
   // Collapsing a new chat that never got a message or any typed text
   // discards it, so trying Coder and changing your mind leaves no bubble.
   const collapse = useCallback(() => {
     const b = store.bubbles.find(x => x.key === store.expandedKey)
-    if (b && !b.conversationId && !String(store.getView(b.key).draft || '').trim()) store.close(b.key)
+    if (b && !isOrgBubble(b) && !b.conversationId && !String(store.getView(b.key).draft || '').trim()) store.close(b.key)
     else store.collapse()
   }, [store])
 
@@ -66,7 +72,18 @@ export default function CoderBubbles({ store, onNavigate }) {
 
   return (
     <>
-      {expanded && (
+      {expanded && isOrgBubble(expanded) && (
+        <OrgBubbleOverlay
+          key={expanded.key}
+          bubble={expanded}
+          store={store}
+          originRect={originRect}
+          onCollapse={collapse}
+          onClose={() => closeChat(expanded.key)}
+          onNavigate={(page, params) => { collapse(); onNavigate?.(page, params) }}
+        />
+      )}
+      {expanded && !isOrgBubble(expanded) && (
         <CoderChatOverlay
           key={expanded.key}
           bubble={expanded}

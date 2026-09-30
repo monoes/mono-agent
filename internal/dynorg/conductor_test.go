@@ -93,7 +93,12 @@ func (e *execScript) exec(ctx context.Context, o monomind.ExecOptions, on func(m
 		}
 	}
 	defer atomic.AddInt32(&e.running, -1)
-	on(monomind.Event{Type: monomind.EventStart})
+	start := monomind.Event{Type: monomind.EventStart}
+	if o.Sandbox != "" {
+		// Exec reports the sandbox it applied on the start event.
+		start.SandboxStatus = monomind.SandboxStatusSandboxed
+	}
+	on(start)
 	on(monomind.Event{Type: monomind.EventSession, SessionID: "sess-" + o.Model})
 	on(monomind.Event{Type: monomind.EventToolActivity, CoderFields: monomind.CoderFields{Phase: "start", Input: json.RawMessage(`{"file_path":"a.go"}`)}, ID: "t1", Name: "Edit"})
 	on(monomind.Event{Type: monomind.EventToolActivity, CoderFields: monomind.CoderFields{Phase: "end"}, ID: "t1", Name: "Edit"})
@@ -133,7 +138,7 @@ func TestSpawnRunsAndJournals(t *testing.T) {
 		t.Errorf("info = %+v", info)
 	}
 	got := strings.Join(em.types("w1"), " ")
-	want := "agent.spawned agent.message agent.status:queued agent.status:starting agent.status:working tool.started tool.completed agent.status:done agent.message agent.finished"
+	want := "agent.spawned agent.message agent.status:queued agent.status:queued agent.status:starting agent.status:working tool.started tool.completed agent.status:done agent.message agent.finished"
 	if got != want {
 		t.Errorf("events\n got %s\nwant %s", got, want)
 	}
@@ -309,8 +314,8 @@ func TestHandleTools(t *testing.T) {
 	if _, err := c.Handle(context.Background(), "org_nope", nil); err == nil {
 		t.Error("unknown tool must fail")
 	}
-	if len(ToolSpecs()) != 5 {
-		t.Error("five org tools")
+	if len(ToolSpecs()) != 6 {
+		t.Error("six org tools")
 	}
 }
 

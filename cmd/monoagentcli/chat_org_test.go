@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
   if [ -n "$sys" ] && grep -q "a worker in a team" "$sys"; then
     echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":2,"access":"read"}'
     echo '{"v":1,"type":"session","session_id":"th_worker"}'
+    echo '{"v":1,"type":"assistant","text":"Checking the cache."}'
     echo '{"v":1,"type":"tool_activity","id":"r1","phase":"start","name":"Read","input":{"file_path":"/w/cache.go"}}'
     echo '{"v":1,"type":"tool_activity","id":"r1","phase":"end","name":"Read","ok":true,"output":"package cache"}'
     echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"The cache is in cache.go.","cost_usd":0.002}'
@@ -128,7 +130,7 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 	} else {
 		json.Unmarshal(evs[0].Payload, &spawned)
 	}
-	if spawned.AgentID != "w1" || spawned.Role != "Researcher" || spawned.Access != "research" || spawned.Runtime != "claude" {
+	if spawned.AgentID != "w1" || spawned.Role != "Researcher" || spawned.Access != "research" || spawned.Runtime != "claude" || spawned.Fidelity != "full" {
 		t.Errorf("spawned = %+v", spawned)
 	}
 	var finished chatevents.AgentFinishedPayload
@@ -149,6 +151,59 @@ func TestDynamicOrgTurnSpawnsAndJournalsWorkers(t *testing.T) {
 	}
 	if p := j.finished(t); p.Status != chatevents.StatusCompleted {
 		t.Errorf("turn.finished = %+v", p)
+	}
+	// The worker's text and usage carry its agentId (#257, #258); the
+	// lead's text doesn't.
+	var texts []string
+	for _, e := range j.byType(chatevents.EventAssistantDelta) {
+		var p chatevents.AssistantDeltaPayload
+		json.Unmarshal(e.Payload, &p)
+		texts = append(texts, p.AgentID+"|"+p.PartID+"|"+p.Text)
+	}
+	if !slices.Contains(texts, "w1|w1:p1|Checking the cache.") || slices.ContainsFunc(texts, func(s string) bool { return strings.HasPrefix(s, "|w1") }) {
+		t.Errorf("assistant.delta = %v", texts)
+	}
+	workerUsage := false
+	for _, e := range j.byType(chatevents.EventUsageUpdated) {
+		var p chatevents.UsageUpdatedPayload
+		json.Unmarshal(e.Payload, &p)
+		if p.AgentID == "w1" && p.CostUSD != nil && *p.CostUSD == 0.002 {
+			workerUsage = true
+		}
+	}
+	if !workerUsage {
+		t.Error("no usage.updated for w1")
+	}
+
+	// chat history events --agent and transcript --by-agent.
+	out, code = runChatHistory(t, dbPath, "default", "events", conv.ID, "turn-1", "--agent", "w1")
+	var page chatEventPage
+	decodeChatJSON(t, out, &page)
+	if code != 0 || len(page.Items) == 0 {
+		t.Fatalf("events --agent: exit %d %s", code, out)
+	}
+	for _, r := range page.Items {
+		if eventAgentID(r) != "w1" {
+			t.Errorf("events --agent w1 returned %s %s", r.Type, r.Payload)
+		}
+	}
+	out, code = runChatHistory(t, dbPath, "default", "transcript", "--by-agent", conv.ID, "turn-1")
+	var tr struct {
+		Items []agentTranscript `json:"items"`
+	}
+	decodeChatJSON(t, out, &tr)
+	if code != 0 || len(tr.Items) != 2 || tr.Items[0].AgentID != "lead" || tr.Items[1].AgentID != "w1" {
+		t.Fatalf("transcript --by-agent: exit %d %s", code, out)
+	}
+	w := tr.Items[1]
+	if w.Role != "Researcher" || w.Status != chatevents.AgentDone || w.Text != "Checking the cache." || w.Tools != 1 || len(w.Messages) != 2 || w.Messages[0].Direction != "brief" {
+		t.Errorf("w1 transcript = %+v", w)
+	}
+	if !strings.Contains(tr.Items[0].Text, "The team found it.") {
+		t.Errorf("lead transcript = %+v", tr.Items[0])
+	}
+	if _, code := runChatHistory(t, dbPath, "default", "transcript", "--by-agent", conv.ID); code == 0 {
+		t.Error("--by-agent needs a conversation and a turn")
 	}
 }
 
@@ -215,6 +270,95 @@ func TestCoderSetOrgSettings(t *testing.T) {
 	}
 	if _, code := runCoderCLI(t, dbPath, "set", "--org-max-agents", "0"); code != 3 {
 		t.Errorf("zero agents: exit %d", code)
+	}
+}
+
+// writeLeadEditMonomind is a fake monomind whose lead starts a writing
+// worker, edits a file itself while the worker runs, then org_waits. The
+// worker holds the write lease for about a second.
+func writeLeadEditMonomind(t *testing.T) (bin, reply string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "monomind")
+	reply = filepath.Join(dir, "wait-reply.json")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '{"v":1,"version":"9.0.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi
+if [ "$1" = "pick" ]; then echo '{"agents":{"confident":false,"ranked":[]},"skills":{"confident":false,"ranked":[]}}'; exit 0; fi
+if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
+  sys=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--system-file" ]; then sys="$a"; fi
+    prev="$a"
+  done
+  if [ -n "$sys" ] && grep -q "a worker in a team" "$sys"; then
+    echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":2,"access":"full"}'
+    sleep 1
+    echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Fixed it.","cost_usd":0.002}'
+    echo '{"v":1,"type":"done","exit_code":0}'
+    exit 0
+  fi
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/w","pid":1,"access":"full"}'
+  echo '{"v":1,"type":"tool_call","id":"c1","name":"org_spawn","args":{"brief":"implement the fix","access":"coding"}}'
+  read -r spawned
+  sleep 0.3
+  echo '{"v":1,"type":"tool_activity","id":"e1","phase":"start","name":"Edit","input":{"file_path":"/w/main.go"}}'
+  echo '{"v":1,"type":"tool_activity","id":"e1","phase":"end","name":"Edit","ok":true}'
+  echo '{"v":1,"type":"tool_call","id":"c2","name":"org_wait","args":{"timeout_s":10}}'
+  read -r waited
+  printf '%s\n' "$waited" > '` + reply + `'
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"Done."}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+echo "unsupported: $*" >&2
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(monomind.EnvOverride, bin)
+	return bin, reply
+}
+
+// #260 end to end: the lead's Edit event goes through the coder turn's
+// onEvent chain into the conductor. Made while a writer holds the write
+// lease, it is journaled as a warning notice and reported in the lead's
+// next org tool result.
+func TestDynamicOrgLeadEditWhileAWriterRunsIsReported(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	dbPath := newChatCLITestDB(t)
+	bin, replyPath := writeLeadEditMonomind(t)
+	withCoderCaps(t, append(monomind.CoderCapabilities, monomind.CapAgentExecFullAccessTools, monomind.CapAgentExecAccessRead)...)
+	withCoderScan(t, orgScan(true))
+	setCoderSettings(t, dbPath, coderSettings{Enabled: true})
+	store := openTestChatStore(t, dbPath)
+	conv, err := store.CreateConversationMode("default", "agent", "general", "claude", "", "opus", ai.ModeCoder, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runChatHistory(t, dbPath, "default", "set-org", conv.ID, "dynamic"); code != 0 {
+		t.Fatalf("set-org: %s", out)
+	}
+	out, err := runChatCmd(t, dbPath, bin, "--conversation", conv.ID, "--turn", "turn-1", "--", "fix the bug")
+	if err != nil {
+		t.Fatalf("turn: %v\n%s", err, out)
+	}
+	j := parseJournaledTurn(t, out)
+	conflict := false
+	for _, e := range j.byType(chatevents.EventNotice) {
+		var p chatevents.NoticePayload
+		json.Unmarshal(e.Payload, &p)
+		if p.Code == "org_lead_edit_conflict" && strings.Contains(p.Message, "/w/main.go") && strings.Contains(p.Message, "w1") {
+			conflict = true
+		}
+	}
+	if !conflict {
+		t.Errorf("no org_lead_edit_conflict notice in the journal:\n%s", out)
+	}
+	reply, _ := os.ReadFile(replyPath)
+	if !strings.Contains(string(reply), "warnings") || !strings.Contains(string(reply), "main.go") || !strings.Contains(string(reply), "Fixed it.") {
+		t.Errorf("the lead's org_wait result = %s", reply)
 	}
 }
 

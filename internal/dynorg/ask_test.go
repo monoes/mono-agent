@@ -3,6 +3,7 @@ package dynorg
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -137,10 +138,24 @@ func TestAskUserAnswerPath(t *testing.T) {
 	if infos[0].Status != chatevents.AgentDone || !strings.Contains(infos[0].Report, "The user answered: Postgres") {
 		t.Fatalf("after answer = %+v", infos[0])
 	}
-	got := strings.Join(em.types("w1"), " ")
-	want := "agent.status:waiting_user agent.message agent.message agent.status:working"
-	if !strings.Contains(got, want) {
-		t.Errorf("events\n got %s\nwant …%s…", got, want)
+	// waiting_user, the question, the answer, then working again; lease
+	// reports (agent.status with the same status) may fall in between.
+	order := []string{"agent.status:waiting_user", "agent.message", "agent.message", "agent.status:working"}
+	events := em.types("w1")
+	from := slices.Index(events, "agent.status:waiting_user")
+	for _, want := range order {
+		if from < 0 {
+			break
+		}
+		i := slices.Index(events[from:], want)
+		if i < 0 {
+			from = -1
+			break
+		}
+		from += i + 1
+	}
+	if from < 0 {
+		t.Errorf("events\n got %s\nwant %v in that order", strings.Join(events, " "), order)
 	}
 	var q, a chatevents.AgentMessagePayload
 	for _, p := range em.find(chatevents.EventAgentMessage) {

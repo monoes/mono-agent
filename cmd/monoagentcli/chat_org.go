@@ -66,7 +66,7 @@ func orgRoster(ctx context.Context, db *sql.DB, st coderStatus, lead dynorg.Mode
 			}
 			models = append(models, dynorg.Model{
 				Runtime: rr.Runtime, Model: model, Label: m.Label, Efforts: m.EffortLevels,
-				FullAccess: e.FullAccess, Read: read, Resume: e.Resume, ReadOnlySandbox: readOnlySandbox(st, e),
+				FullAccess: e.FullAccess, Read: read, Resume: e.Resume, ReadOnlySandbox: readOnlySandbox(st, e), Fidelity: e.ToolActivityFidelity,
 				CallerTools: e.CallerTools, CallerToolsFull: e.CallerToolsWithFullAccess,
 				CostUSD: m.CostUSD, LatencyMs: m.LatencyMs, Stale: m.State == agentroster.StateStale,
 			})
@@ -104,28 +104,33 @@ func readOnlySandbox(st coderStatus, e *monomind.ScanEntry) bool {
 
 // startDynamicOrg wires a conductor into a dynamic-org coder turn: the lead
 // gets the org tools and the org part of its system prompt. It returns a
-// close func that ends every worker (call it before the turn finishes), or
-// nil with the journal told why the turn runs solo.
-func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJournal, settings coderSettings, st coderStatus, rt monomind.CoderRuntime, t coderTurn, opts *monomind.ExecOptions) func() {
+// close func that ends every worker (call it before the turn finishes) and
+// the func the lead's own events go through (its file edits take the write
+// lease), or nils with the journal told why the turn runs solo.
+func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJournal, settings coderSettings, st coderStatus, rt monomind.CoderRuntime, t coderTurn, opts *monomind.ExecOptions) (func(), func(monomind.Event)) {
 	if reason := orgUnavailableReason(st, rt.ID); reason != "" {
 		journal.notice(noticeOrgUnavailable, reason, chatevents.SeverityWarning)
-		return nil
+		return nil, nil
 	}
 	db, err := initDB(cfg)
 	if err != nil {
 		journal.notice(noticeOrgUnavailable, "the agent works alone this turn: "+err.Error(), chatevents.SeverityWarning)
-		return nil
+		return nil, nil
 	}
 	lead := dynorg.Model{Runtime: rt.ID, Model: t.model, FullAccess: true, Resume: rt.Resume}
 	if e := st.scan.Find(rt.ID); e != nil {
 		lead.Read = st.caps.Has(monomind.CapAgentExecAccessRead) && slices.Contains(e.AccessModes, monomind.AccessRead)
 		lead.ReadOnlySandbox = readOnlySandbox(st, e)
 		lead.CallerTools, lead.CallerToolsFull = e.CallerTools, e.CallerToolsWithFullAccess
+		lead.Fidelity = e.ToolActivityFidelity
 	}
 	lib := &dynorg.MonomindLibrary{Bin: opts.Bin, Cwd: t.cwd}
 	staffer := &dynorg.Staffer{
 		Roster: orgRoster(ctx, db.DB, st, lead), Lead: lead, ModelPicker: settings.OrgModelPicker,
 		Picker: lib, Library: lib,
+	}
+	if q, err := agentroster.LoadQuality(ctx, db.DB, time.Now()); err == nil {
+		staffer.Quality = q
 	}
 	if client, err := jevconf.NewClient(ctx, db.DB, cfg.ProfileID, "", "", jevconf.DynamicOrg); err == nil {
 		staffer.Chooser = dynorg.JevChooser{Client: client}
@@ -143,15 +148,25 @@ func startDynamicOrg(ctx context.Context, cfg *globalConfig, journal *turnJourna
 		Outcome: func(runtime, model, status, detail string, at time.Time) {
 			_ = agentroster.RecordOutcome(context.WithoutCancel(ctx), db.DB, runtime, model, status, detail, at)
 		},
+		Quality: &dynorg.Quality{Record: func(e agentroster.QualityEvent) {
+			_ = agentroster.RecordQuality(context.WithoutCancel(ctx), db.DB, e)
+		}},
 	})
 	opts.Tools = dynorg.ToolSpecs()
 	opts.OnToolCall = cond.Handle
 	opts.ToolTimeout = dynorg.ToolTimeout
 	opts.SystemPrompt += dynorg.LeadPrompt(limits)
+	// `chat turn stop --agent` reaches this turn's workers through its
+	// mailbox folder (#255). An unknown agent id is a no-op.
+	stopWatch := func() {}
+	if controlID.MatchString(journal.turnID) {
+		stopWatch = watchAgentStops(agentControlDir(cfg, journal.turnID), func(id string) { _, _ = cond.Stop(id) })
+	}
 	return func() {
+		stopWatch()
 		cond.Close()
 		db.Close()
-	}
+	}, cond.LeadEvent
 }
 
 // journalAnswers hands a turn's conductor the answers `chat turn answer`

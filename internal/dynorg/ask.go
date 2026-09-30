@@ -179,31 +179,34 @@ func (c *Conductor) waitAnswer(ctx context.Context, agentID, qid string) (string
 }
 
 // releaseHeld lets go of the leases and the concurrency slot w holds and
-// returns the leases.
-func (c *Conductor) releaseHeld(w *worker) []*lease {
+// returns the leases. The journal reports the hand-off (agent.status with
+// the leases it holds now), so the stage shows the pen changing hands.
+func (c *Conductor) releaseHeld(w *worker) []heldLease {
 	c.mu.Lock()
 	held := w.leases
 	w.leases = nil
+	c.reportLocked(w)
 	c.mu.Unlock()
-	for _, l := range held {
-		l.release()
+	for _, h := range held {
+		h.l.release()
 	}
 	c.dropSlot(w)
 	return held
 }
 
 // retakeHeld takes the leases back in their original order, then a slot:
-// the same order run takes them in.
-func (c *Conductor) retakeHeld(ctx context.Context, w *worker, held []*lease) error {
-	for _, l := range held {
-		if !l.tryAcquire() {
-			c.setStatus(w, chatevents.AgentWaitingLease, "")
-			if err := l.acquire(ctx); err != nil {
+// the same order runLeased takes them in.
+func (c *Conductor) retakeHeld(ctx context.Context, w *worker, held []heldLease) error {
+	for _, h := range held {
+		if !h.l.tryAcquire() {
+			c.setStatus(w, chatevents.AgentWaitingLease, h.name)
+			if err := h.l.acquire(ctx); err != nil {
 				return err
 			}
 		}
 		c.mu.Lock()
-		w.leases = append(w.leases, l)
+		w.leases = append(w.leases, h)
+		c.reportLocked(w)
 		c.mu.Unlock()
 	}
 	select {
