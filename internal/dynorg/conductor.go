@@ -33,6 +33,10 @@ type Config struct {
 	Emit       Emitter
 	Outcome    Outcome // nil = don't record
 	Now        func() time.Time
+
+	// Quality records worker results and the lead's ratings (#230); nil
+	// records nothing.
+	Quality *Quality
 }
 
 // Conductor runs one lead turn's workers.
@@ -610,6 +614,7 @@ func (c *Conductor) finish(w *worker, outcome, report, errText string) {
 	}
 	c.setStatusLocked(w, outcome, "")
 	c.mu.Unlock()
+	c.recordResult(w, outcome, errText)
 	if report != "" {
 		c.emitMessage(w.id, "result", w.id, "lead", report)
 	}

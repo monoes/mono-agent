@@ -534,7 +534,7 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 
 `chat history create --mode coder --org dynamic`, or `chat history set-org
 <conversation> dynamic` on an existing coder conversation, lets the chat's
-agent (the **lead**) bring in **worker** agents. The lead gets five caller
+agent (the **lead**) bring in **worker** agents. The lead gets six caller
 tools:
 
 | Tool | What it does |
@@ -544,6 +544,7 @@ tools:
 | `org_wait` | Waits for workers and returns their reports. |
 | `org_message` | Sends a follow-up to a finished worker, resuming its session when the runtime can. |
 | `org_stop` | Stops a worker. |
+| `org_rate` | Rates a worker's latest report `good` or `bad`, once per report. The rating feeds the roster's track record (below). |
 
 How the conductor staffs a worker:
 
@@ -558,6 +559,20 @@ How the conductor staffs a worker:
   rules decide. Research goes to the cheapest, fastest ready model, and
   writing work to the lead's own model. `coder set --org-model-picker lead`
   makes the lead name every model itself.
+- **Track record (#230):** every worker result and every `org_rate`
+  rating is stored in `agent_model_outcome_events` with the runtime, model
+  and the worker's role category. A result counts when it is `done`
+  (success) or `failed` on the worker's own error or timeout (failure). A
+  cancelled run, a budget refusal or budget stop, and a model that couldn't
+  run at all (auth, quota, model unavailable, missing binary) are not
+  counted, and the lead can't rate them. A rating weighs twice as much as a
+  bare result. Each event's weight halves every 30 days, and the success
+  rate is smoothed with a Beta prior of 4 events at 75%. A rate counts only
+  from 3 events per model and category. Below 50% the model is a **bad fit**
+  for that category: the rules pick it only when nothing else can run the
+  worker, fallbacks try it last, and Jev gets each rate in its state and in
+  the option text. The lead's own choice of model still wins. `agent roster`
+  shows the rates (`track_record` in `--json`).
 
 Each worker's access profile is set by the lead, and none goes past the
 coder chat's own full access. A `research` worker is confined, in order of
@@ -654,7 +669,9 @@ login (and its bill) is what the turn uses.
   without calling any model. A model is **ready** when it answered within
   `--max-age` (7 days) on the current runtime version, **stale** when older
   or when the runtime has been updated, and **failed** otherwise. `agent roster add <runtime> <model>`
-  adds a model id that the runtime doesn't list. The roster is machine-wide,
+  adds a model id that the runtime doesn't list. Each model's **track
+  record** column (`track_record` in JSON) is its success rate per role
+  category from real dynamic-org workers (see "Dynamic org"). The roster is machine-wide,
   not per profile, and the AI agents page shows it with live validation.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,

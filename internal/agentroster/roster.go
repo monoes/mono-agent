@@ -23,6 +23,9 @@ type Entry struct {
 	Result
 	State       string `json:"state"`
 	StaleReason string `json:"stale_reason,omitempty"` // age|version
+	// TrackRecord is the model's success rate per role category from real
+	// dynamic-org workers (AttachQuality); empty until it has run one.
+	TrackRecord []Rate `json:"track_record,omitempty"`
 }
 
 // RuntimeRoster is one runtime and its models.

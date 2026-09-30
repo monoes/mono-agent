@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Limits:** set with `coder set --org-max-agents`, `--org-max-concurrent`, `--org-budget-usd` and `--org-model-picker`.
   - **In the journal and the app:** workers are journaled as `agent.*` events, and in the app each one shows as a row in the chat (brief, report, cost, files).
   - **Requirement:** monomind 2.19 or newer (`agent-exec-full-access-tools`); older versions run the turn solo with a notice.
+- **Roster quality from outcomes** (part of #230). Dynamic-org staffing now learns which models fit which kind of work.
+  - **What counts:** each worker result, and the lead's `good`/`bad` rating of it with the new `org_rate` tool, count toward the model's success rate for the worker's role category. Budget refusals, cancelled runs and models that couldn't run at all don't count.
+  - **How it's scored:** ratings weigh twice as much as results, and older events count less (the weight halves every 30 days). Rates are smoothed and only apply after 3 results.
+  - **What changes:** a model under 50% for a category drops to the bottom of the ranking for that kind of work, and Jev sees every rate when it picks a model.
+  - **Where to see it:** `agent roster` shows the rates in a "Track record" column (`track_record` in `--json`).
 
 ### Fixed
 - **Chat with monoagent tools lost a turn to a denied workflow command (#247).** The system prompt showed `monoagentcli --profile <id> workflow create <name>`, but Bash in a tools turn only runs commands that start with `monomind org`, `monoagentcli org` or `monoagentcli workflow`, so that form was always denied. The prompt now puts `--profile` after the subcommand (`monoagentcli workflow create <name> --profile <id>`), and a test checks that every command the prompt shows is allowed.
