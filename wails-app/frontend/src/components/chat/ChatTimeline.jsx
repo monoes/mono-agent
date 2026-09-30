@@ -43,7 +43,10 @@ function NoticeBanner({ notice }) {
 // coder.status (startup progress) is a transient line shown only while the
 // live turn has produced nothing yet, coder.workspace a compact folder
 // line, and coder.background a warning banner with "Stop all".
-export function ChatTimeline({ state, turnId = '', isLive = true }) {
+//
+// agentFilter narrows a dynamic-org turn (#228) to one agent: "lead" keeps
+// the lead's own text and tools, a worker id keeps only that worker's row.
+export function ChatTimeline({ state, turnId = '', isLive = true, agentFilter = null }) {
   const { parts, calls } = state
   const notices = state.notices || []
   if (parts.length === 0 && notices.length === 0 && !state.sandbox) return null
@@ -92,6 +95,7 @@ export function ChatTimeline({ state, turnId = '', isLive = true }) {
         </div>
       )}
       {parts.map((part, i) => {
+        if (agentFilter && (part.kind === 'agent' ? agentFilter === 'lead' || part.agentId !== agentFilter : agentFilter !== 'lead')) return null
         if (part.kind === 'text') {
           return part.text ? <ChatMarkdown key={`text-${part.partId}-${i}`} content={part.text} /> : null
         }

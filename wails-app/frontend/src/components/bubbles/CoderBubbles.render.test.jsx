@@ -121,7 +121,7 @@ describe('coder bubbles', () => {
     api.getChatTurns.mockResolvedValue({ items: [{ id: 't1', prompt: 'fix the build', status: 'active', ownedByThisInstance: true }] })
     render(<Harness open={conv} />)
     await waitFor(() => expect(screen.getByText('fix the build')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('stage-lead')).toHaveAttribute('data-working', 'true'))
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-node"][data-agent="lead"]')).toHaveAttribute('data-status', 'working'))
     expect(bubble('c1')).toHaveAttribute('data-status', 'working')
 
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -271,7 +271,8 @@ describe('restored bubbles', () => {
     render(<Harness />)
     await waitFor(() => expect(bubble('gone')).toBeNull())
     expect(bubble('c1')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1'])
+    // Saved by an effect after the render that dropped it.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('monoagent:coderBubbles:v1')).bubbles.map(b => b.conversationId)).toEqual(['c1']))
   })
 })
 

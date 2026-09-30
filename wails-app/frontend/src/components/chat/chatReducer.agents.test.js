@@ -19,6 +19,8 @@ describe('dynamic org events (#226)', () => {
       ev('agent.finished', { agentId: 'w1', outcome: 'done', summary: 'It is in cache.go.', costUsd: 0.002, filesChanged: [] }),
     )
     expect(Object.keys(s.calls)).toEqual(['lead1'])
+    // Kept once, for the org stage's drawer.
+    expect(s.agentCalls['w1:r1']).toMatchObject({ agentId: 'w1', name: 'Read', status: 'completed', ok: true })
     expect(s.parts.map(p => p.kind)).toEqual(['tool', 'agent'])
     const w = s.agents.w1
     expect(w).toMatchObject({ role: 'Researcher', status: 'done', tools: 1, lastTool: 'Read', report: 'It is in cache.go.', costUsd: 0.002, model: 'haiku' })
