@@ -314,3 +314,55 @@ func TestSignToolPinsTheBinaryAShimPicks(t *testing.T) {
 		t.Error("signed through an unresolvable shim")
 	}
 }
+
+// OrgSigningEnforced asks the monomind that runs in each project: behind a
+// shim that picks 2.20 globally and 2.21 in one project, only that project
+// enforces (and is re-signed). The handshake runs once per (binary, root).
+func TestOrgSigningEnforcedPerProjectRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake binaries are shell scripts")
+	}
+	base := t.TempDir()
+	log := filepath.Join(base, "calls")
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := func(name, version string) string {
+		return `echo "` + name + ` $*" >> '` + log + "'\n" +
+			`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"` + version + `","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n"
+	}
+	global := filepath.Join(base, "installs", "2.20", "monomind")
+	project := filepath.Join(base, "installs", "2.21", "monomind")
+	write(global, fake("G220", "2.20.3"))
+	write(project, fake("P221", "2.21.0"))
+	shim := filepath.Join(base, "mise", "shims", "monomind")
+	write(shim, "exit 3\n")
+	write(filepath.Join(base, "bin", "mise"),
+		`if [ -f .tool-versions ]; then echo '`+project+`'; else echo '`+global+`'; fi`+"\n")
+	t.Setenv("PATH", filepath.Join(base, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvOverride, shim)
+	ResetCapabilityCache()
+	t.Cleanup(ResetCapabilityCache)
+
+	onProject, plain := t.TempDir(), t.TempDir()
+	_ = os.WriteFile(filepath.Join(onProject, ".tool-versions"), []byte("monomind 2.21.0\n"), 0o644)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if !OrgSigningEnforced(ctx, onProject) {
+			t.Fatal("the project on 2.21 does not enforce")
+		}
+		if OrgSigningEnforced(ctx, plain) {
+			t.Fatal("the global 2.20 enforces")
+		}
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Count(string(calls), "P221 --version") != 1 || strings.Count(string(calls), "G220 --version") != 1 {
+		t.Fatalf("handshakes not cached per root:\n%s", calls)
+	}
+}

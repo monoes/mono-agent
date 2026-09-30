@@ -26,7 +26,8 @@ import (
 // org, a chat assistant's change — is left for the operator to review and
 // sign with `org sign`, which shows monomind's own review first.
 
-// orgSigningOn reports whether the installed monomind enforces signatures.
+// orgSigningOn reports whether the monomind that runs in a project root
+// enforces signatures (its own handshake, run in that root).
 // A var so tests can switch it without a monomind.
 var orgSigningOn = monomind.OrgSigningEnforced
 
@@ -71,7 +72,7 @@ var orgSigner orgsign.Signer = monomindOrgSigner{}
 // chat assistant included — so the user reviews it with `org sign`.
 // The outcome is nil when monomind does not enforce signatures.
 func saveOrgSigned(ctx context.Context, root, from string, doc *orgdesign.Doc) (string, *orgsign.Outcome, error) {
-	if !orgSigningOn(ctx) {
+	if !orgSigningOn(ctx, root) {
 		sha, err := orgdesign.Save(root, doc)
 		return sha, nil, err
 	}
@@ -146,7 +147,7 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				return err
 			}
 			res := orgSignResult{V: 1, Org: name, SHA256: sha}
-			if !orgSigningOn(ctx) {
+			if !orgSigningOn(ctx, root) {
 				if statusOnly {
 					res.Message = "the installed monomind does not require signed org definitions (2.21+)"
 					return printJSONValue(res)
@@ -350,7 +351,7 @@ func confirmOrgSign(w io.Writer, in io.Reader, name, review string) bool {
 // single {name,...} object or a {items:[...]} list) when monomind enforces
 // signatures. The payload is returned unchanged on any decode problem.
 func withOrgSignature(ctx context.Context, root string, payload json.RawMessage) json.RawMessage {
-	if !orgSigningOn(ctx) {
+	if !orgSigningOn(ctx, root) {
 		return payload
 	}
 	// One monomind run answers for every org (2.22 --check --all).

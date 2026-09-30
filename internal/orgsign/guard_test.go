@@ -664,3 +664,23 @@ func TestStampWithSymlinkIsNeverSame(t *testing.T) {
 		t.Fatal("a symlinked path counted as busy")
 	}
 }
+
+// The post-check and withdraw run even when the signer claims to enforce
+// the hash: a monomind that says so and signs something else anyway is
+// caught, not trusted.
+func TestPostCheckEvenWhenEnforcementIsClaimed(t *testing.T) {
+	operatorDirForTest(t)
+	root := t.TempDir()
+	loaded := writeOrg(t, root, "growth", signedBody)
+	signFixture(t, root, "growth", []byte(signedBody))
+	s := &enforcingSigner{fakeSigner{t: t, before: func() { writeOrg(t, root, "growth", evilBody) }}}
+	pre := Before(context.Background(), s, root, "growth", loaded, false)
+	sha := writeOrg(t, root, "growth", ownBody)
+	out := pre.After(context.Background(), s, "growth", sha)
+	if out.Signed || !strings.Contains(out.Notice, "withdrawn") {
+		t.Fatalf("outcome %+v", out)
+	}
+	if st, _, _ := VerifyFile(root, "growth"); st.OK() {
+		t.Fatal("the other content stayed signed")
+	}
+}

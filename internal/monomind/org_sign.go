@@ -22,12 +22,15 @@ func (c *CapabilitySet) OrgSigning() bool {
 	return c != nil && versionAtLeast(c.Version, orgSigningMinVersion)
 }
 
-// OrgSigningEnforced runs (or reuses) the handshake and reports whether the
-// installed monomind enforces signed org definitions. False when monomind
-// is missing.
-func OrgSigningEnforced(ctx context.Context) bool {
-	set, err := Capabilities(ctx)
-	return err == nil && set.OrgSigning()
+// OrgSigningEnforced reports whether the monomind that runs in
+// projectRoot enforces signed org definitions (2.21+). Its handshake runs
+// in the root through the binary pinned there (signToolFor: a mise/asdf
+// shim resolved in the root), cached per (binary, root), so a project on
+// 2.21 behind a global 2.20 is still signed. False when monomind is
+// missing.
+func OrgSigningEnforced(ctx context.Context, projectRoot string) bool {
+	tool, err := signToolFor(ctx, projectRoot)
+	return err == nil && versionAtLeast(tool.version, orgSigningMinVersion)
 }
 
 // orgCheckResult is `org sign --check --format json` (monomind 2.22).
@@ -270,7 +273,7 @@ func signatureRefusalReason(text string) string {
 // in a log nobody reads (a detached start) or a bare exit status. An org
 // this code can't judge (StateUnknown) is left to monomind.
 func checkOrgSigned(ctx context.Context, projectRoot, name string) error {
-	if !OrgSigningEnforced(ctx) {
+	if !OrgSigningEnforced(ctx, projectRoot) {
 		return nil
 	}
 	st, ok := OrgSignCheck(ctx, projectRoot, name)

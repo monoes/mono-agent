@@ -570,7 +570,7 @@ func newOrgReloadCmd(root func() string) *cobra.Command {
 			}
 			// monomind 2.21 keeps a running org on its last verified
 			// definition until this one is signed: say so, with the fix.
-			if orgSigningOn(cmd.Context()) {
+			if orgSigningOn(cmd.Context(), root()) {
 				if raw, _, err := orgsign.ReadFile(root(), name); err == nil {
 					if st := orgSignStatus(cmd.Context(), root(), name, raw); st.Refused() {
 						payload["signature"] = st
