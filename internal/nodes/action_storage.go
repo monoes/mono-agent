@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type workflowActionStorage struct {
 	executionID string
 	nodeID      string
 	platform    string
+	saved       bool // SaveExtractedData has stored items
 }
 
 func (s *workflowActionStorage) UpdateActionState(id, state string) error { return nil }
@@ -48,6 +50,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 	if s.db == nil || len(items) == 0 {
 		return nil
 	}
+	s.saved = true
 	if s.executionID == "" || s.nodeID == "" {
 		// No workflow context to attach targets to (e.g. Execute called
 		// outside a real workflow run) — nothing sensible to persist.
@@ -81,8 +84,9 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 	upsertPerson, err := tx.Prepare(`
 		INSERT INTO people (id, platform_username, platform, full_name, image_url,
 		        website, is_verified, job_title, headline, location, about,
-		        experience, education, profile_details, profile_url, profile_id, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		        experience, education, profile_details, profile_url, profile_id, created_at, updated_at,
+		        follower_count, following_count, content_count)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(platform_username, platform, profile_id)
 		DO UPDATE SET
 		  full_name    = COALESCE(excluded.full_name, people.full_name),
@@ -97,6 +101,9 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		  education    = COALESCE(excluded.education, people.education),
 		  profile_details = ` + personitem.DetailsMergeSQL + `,
 		  profile_url  = COALESCE(people.profile_url, excluded.profile_url),
+		  follower_count  = COALESCE(excluded.follower_count,  people.follower_count),
+		  following_count = COALESCE(excluded.following_count, people.following_count),
+		  content_count   = COALESCE(excluded.content_count,   people.content_count),
 		  updated_at   = excluded.updated_at`)
 	if err != nil {
 		return fmt.Errorf("nodes: preparing person upsert: %w", err)
@@ -137,7 +144,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 			// Extracted items never carry an introduction (the outreach
 			// draft): a profile's bio is its About.
 			var prof personitem.Profile
-			var isVerified interface{}
+			var isVerified, followers, following, posts interface{}
 			if ref.Author {
 				prof.FullName = ref.FullName
 			} else {
@@ -145,6 +152,9 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 				if v, ok := item["is_verified"].(bool); ok && v {
 					isVerified = 1
 				}
+				followers = itemCount(item, "followers_count", "follower_count")
+				following = itemCount(item, "following_count")
+				posts = itemCount(item, "content_count")
 			}
 			platformUpper := strings.ToUpper(platform)
 			if _, err := upsertPerson.Exec(
@@ -155,6 +165,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 				nullIfEmpty(prof.Experience), nullIfEmpty(prof.Education), nullIfEmpty(prof.Details),
 				nullIfEmpty(ref.ProfileURL),
 				profileID, now, now,
+				followers, following, posts,
 			); err != nil {
 				return fmt.Errorf("nodes: upserting person %s: %w", ref.Username, err)
 			}
@@ -248,4 +259,24 @@ func nullIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// itemCount reads a count an extractor returned (a number, or text such as
+// "176697"); nil when the item has none, so a stored count is left alone.
+func itemCount(item map[string]interface{}, keys ...string) interface{} {
+	for _, k := range keys {
+		switch v := item[k].(type) {
+		case int:
+			return int64(v)
+		case int64:
+			return v
+		case float64:
+			return int64(v)
+		case string:
+			if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return nil
 }
