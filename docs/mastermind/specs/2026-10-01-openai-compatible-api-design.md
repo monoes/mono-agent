@@ -59,6 +59,7 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 - **MCP.** Tool struct in `internal/mcp/tools.go:20-27`. Mutating tools are gated (`server.go:48-54`). Every listed tool needs annotations (`server_concurrency_test.go:121-143`). Cross-profile lookups must say "not found" (`server_profile_isolation_test.go:27-101`). Tool names are also hand-listed in `AGENTS.md:316-346` and `cmd/monoagentcli/mcp.go:22-42`.
 - **Jev.**
   - `dynorg.JevChooser.Choose(ctx, state, question, options)` (`monomindlib.go:250-268`) is generic, with a 15 s cap.
+  - `jevconf.ResolveKey` (`jevconf.go:103`) decrypts the vault on every call; `KeySource` (`:140`) does not.
   - A new surface needs a constant, `Surfaces`, `Egress`, `Describe`, `DefaultThreshold` (`jevconf.go:28-87`), gating at the call site and docs. No migration; the GUI row is automatic.
   - `jev enable` prints the egress list and asks (`jev.go:195-209`).
 - **CLI and GUI.**
@@ -77,7 +78,7 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 | `internal/openaiapi` | `Gateway`: auth, request translation, policy, limits, catalog, handlers (models, chat, stream, images), OpenAI error shapes, adapters over `monomind`, `agentroster`, `dynorg`, `jevconf`. Interfaces (`Runner`, `Catalog`, `Chooser`, `Knowledge`) keep it testable. |
 | `internal/workflow` | The webhook TLS rules are extracted into an exported helper reused by the gateway; the webhook tests are the safety net. |
 | `internal/mcp` | Five tools (§8.3). |
-| `cmd/monoagentcli` | `api` command group; flags on `httpapi` and `daemon`; mounting and the dedicated listener. |
+| `cmd/monoagentcli` | `api` command group; flags on `httpapi` and `daemon`; mounting and the dedicated listener. The daemon's single `ExtraRoutes` slot must compose the org receiver and the gateway mount, or one of them is lost. |
 | `internal/jev/jevconf`, `internal/dynorg` | Surface `api_auto`; `JevChooser` reused. |
 | `wails-app` | `app_api.go` and `components/settings/ApiSection.jsx`. |
 | `data/migrations` | `061_api_keys.sql`. |
@@ -156,7 +157,7 @@ Base `…/v1`. Auth `Authorization: Bearer sk-ma-…`. Errors use the OpenAI sha
 
 - `GET /v1/models` and `GET /v1/models/{id}`. Entries: `{"id":"codex/gpt-6-astra","object":"model","created":0,"owned_by":"codex","monoagent":{"runtime","model","label","confinement","validated","capabilities":["text","image"]}}`.
 - Only models the listener's policy allows are listed, and a model the policy disallows is 404 on retrieve. Using one in a completion or image request gives 403 `policy_denied`, so operators see why. `auto` is listed only when §9 holds.
-- The list is the installed runtimes' own model lists (catalog cache 5 min, single-flight, scan cache 60 s). `validated` comes from the roster when a row exists.
+- The list is the installed runtimes' own model lists, fetched in parallel (catalog cache 5 min, single-flight, scan cache 60 s). A runtime without a listing command uses `ListModels`' built-in list, or just `<runtime>/default`. `validated` comes from the roster when a row exists.
 - Ids match `^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$`, never start with `-`, and must be in the catalog or roster. `<runtime>/default` omits `--model`.
 - `capabilities` includes `image` for runtimes in `MONOAGENT_API_IMAGE_RUNTIMES` (default `codex,antigravity`; monomind does not advertise image output).
 
@@ -292,11 +293,12 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
 - It needs no GUI and no keyring: `monoagentcli api key create --name app`, then `monoagentcli daemon` or `httpapi`, with the env from §6.
 - The generated systemd user unit has no environment, so the docs show a `systemctl --user edit monoagent-daemon` drop-in (it survives reinstall) and `loginctl enable-linger`.
 - The agent CLIs must be installed and logged in on that machine; `monoagentcli doctor` reports it.
+- `auto` on a server without a keyring needs the Jev key in `TYPESAFE_API_KEY`; the vault entry would need the file keyring and its passphrase file.
 
 ## 9. Jev auto
 
 - **Surface.** New `api_auto`, opt-in per profile through `jev enable api_auto`. The egress list says that the first 4,000 characters of the last user message and the candidate model names, descriptions and any validation cost and latency leave the machine. The surface's threshold is the minimum top-option probability Jev's pick must reach; its default is 0 (always accept the top pick), and below a raised threshold the rule fallback is used.
-- **Availability.** `auto` is listed and accepted only when `jevconf.ResolveKey` succeeds and the surface is enabled for the key's profile. Otherwise 404 `model_not_found` with a hint.
+- **Availability.** `auto` is listed and accepted only when the profile has a Jev key and the surface is enabled for it. Otherwise 404 `model_not_found` with a hint. Listing is gated on the non-decrypting `jevconf.KeySource`; the key itself is resolved (`ResolveKey`, which decrypts the vault on every call) only when a pick actually runs.
 - **Choice.** One `choice` question through `dynorg.JevChooser`, using a client built for surface `api_auto` so `jev_usage` records it. Options are the models the policy allows (for images only runtimes in the image list) with label, description and validated stats. The prompt text goes in `untrusted_prompt`.
 - **Fallback.** On an error, timeout or empty answer: the cheapest and fastest validated candidate; otherwise the runtime default in the order claude, codex, antigravity, then the rest alphabetically. The header `X-Monoagent-Auto` records `jev` or `rule`.
 
@@ -307,8 +309,10 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
   - Native tools stay off and confinement is unchanged.
 - When the agent calls a tool, the response ends with one `tool_calls` entry (id `call_<random>`) and `finish_reason: "tool_calls"`. A second simultaneous call gets an error result asking for one at a time.
 - The turn is parked (`parkedTurn`: key, profile, call id, resume channel, expiry; TTL 10 min). Parked turns hold no concurrency slot; at most 16 in total and 4 per key.
+  - The parked `Exec` runs on a detached context owned by the registry, not the request's, because ending the response would otherwise cancel the turn (Exec sends a cancel frame, then kills the process group).
+  - `ExecOptions.ToolTimeout` and `Timeout` are set to cover the TTL and the whole loop; monomind's `--tool-timeout` defaults to 120 s, which would end a parked turn after two minutes.
 - The follow-up carrying the `tool` message resumes the parked turn if the key and call id match, so a long coding loop does not re-pay the per-turn overhead. If it is gone, the transcript is replayed statelessly with the tools declared again.
-- **Go/no-go spike:** claude, codex and agy each call a declared tool in at least 9 of 10 trials; park and resume works; resume cost is measured against replay. The result is recorded in the plan before the build.
+- **Go/no-go spike:** claude, codex and agy each call a declared tool in at least 9 of 10 trials; a parked turn survives the response ending and a tool wait longer than 120 s; resume works; resume cost is measured against replay. The result is recorded in the plan before the build.
 
 ## 11. Verification
 
