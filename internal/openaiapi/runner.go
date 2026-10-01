@@ -139,6 +139,16 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 	tctx, cancel := context.WithTimeout(ctx, g.cfg.TurnTimeout+turnGrace)
 	defer cancel()
 	defer context.AfterFunc(g.shutdownCtx, cancel)() // the server is stopping: end the turn
+	// Between turnStarted and here the server may have begun to stop, or the
+	// client may have left, and tctx is already cancelled. Starting an agent CLI
+	// only to cancel it a moment later wastes a process and holds a shutdown up
+	// for the kill grace.
+	if g.stopping() {
+		return nil, errShuttingDown
+	}
+	if ctx.Err() != nil {
+		return &monomind.TurnResult{ExitCode: 130, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled by caller", ExitCode: 130}}, nil
+	}
 
 	opts := monomind.ExecOptions{
 		Runtime:          t.Runtime,

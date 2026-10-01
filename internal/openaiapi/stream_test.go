@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -306,6 +308,33 @@ func TestStreamEndedByShutdownAfterTheCommitIsAnErrorEvent(t *testing.T) {
 	}
 	if len(data) < 2 || data[len(data)-1] != "[DONE]" || json.Unmarshal([]byte(data[len(data)-2]), &e) != nil || e.Error["code"] != "runtime_not_available" {
 		t.Fatalf("a stream cut short by the server stopping must end with an error event and [DONE]: %q", data)
+	}
+}
+
+// flushFailingWriter is what net/http gives a handler: Write only fills a buffer,
+// and the network write, which is where a dead connection first fails, happens
+// in the flush.
+type flushFailingWriter struct {
+	header http.Header
+	buf    bytes.Buffer
+}
+
+func (w *flushFailingWriter) Header() http.Header         { return w.header }
+func (w *flushFailingWriter) WriteHeader(int)             {}
+func (w *flushFailingWriter) Write(b []byte) (int, error) { return w.buf.Write(b) }
+func (w *flushFailingWriter) FlushError() error           { return errors.New("write: broken pipe") }
+
+// A failed flush is a dead client like a failed write: the turn must end at the
+// first one, not a keep-alive later.
+func TestStreamTreatsAFailedFlushAsABrokenConnection(t *testing.T) {
+	w := &flushFailingWriter{header: http.Header{}}
+	sw := newSSE(w, "chatcmpl-x", "claude/default")
+	var broken atomic.Int32
+	sw.onBroken = func() { broken.Add(1) }
+
+	sw.delta("hello") // commits, and flushes
+	if !sw.isBroken() || broken.Load() != 1 {
+		t.Errorf("a failed flush must mark the writer broken once: broken=%v, onBroken called %d times", sw.isBroken(), broken.Load())
 	}
 }
 

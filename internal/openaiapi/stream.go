@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -54,13 +55,26 @@ func (s *sseWriter) write(payload string) {
 	}
 	_ = s.rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
 	if _, err := io.WriteString(s.w, payload); err != nil {
-		s.broken = true
-		if s.onBroken != nil {
-			s.onBroken()
-		}
+		s.markBrokenLocked()
 		return
 	}
-	_ = s.rc.Flush()
+	// On a real connection WriteString only fills a buffer: the network write,
+	// where a dead or stalled client first fails, is the flush.
+	if err := s.rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		s.markBrokenLocked()
+	}
+}
+
+// markBrokenLocked records that a write to the client failed and tells the
+// caller, once, so that it ends the turn. Callers hold s.mu.
+func (s *sseWriter) markBrokenLocked() {
+	if s.broken {
+		return
+	}
+	s.broken = true
+	if s.onBroken != nil {
+		s.onBroken()
+	}
 }
 
 // isBroken reports whether a write to the client has failed.

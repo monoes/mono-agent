@@ -53,6 +53,12 @@ func decodeBody(w http.ResponseWriter, r *http.Request, limit int64, dst any) *a
 		}
 		return errInvalid("invalid_json", "", "the request body is not valid JSON")
 	}
+	// net/http notices that a client has gone only once the body has been read to
+	// its end, and a decoder stops at the closing brace: the end of a chunked body
+	// comes after it. Without this a client that leaves while its turn runs goes
+	// unnoticed, and the turn runs for nobody until its timeout. What the limit
+	// allows is read and dropped.
+	_, _ = io.Copy(io.Discard, r.Body)
 	return nil
 }
 
