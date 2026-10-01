@@ -248,3 +248,20 @@ func download(ctx context.Context, url string) (string, error) {
 	}
 	return filepath.Clean(f.Name()), nil
 }
+
+// Delete removes the saved photos of the given people, ahead of deleting the
+// people themselves. Only a photo this package saved (its photo_image_id) is
+// touched.
+func Delete(ctx context.Context, db *sql.DB, profileID string, personIDs []string) {
+	for _, id := range personIDs {
+		var imageID string
+		err := db.QueryRowContext(ctx, `SELECT COALESCE(CASE WHEN json_valid(profile_details) THEN json_extract(profile_details, '$.photo_image_id') END, '')
+			FROM people WHERE id = ? AND profile_id = ?`, id, profileID).Scan(&imageID)
+		if err != nil || imageID == "" {
+			continue
+		}
+		if im, err := vault.GetImage(ctx, db, profileID, imageID); err == nil && im.Source == Source {
+			_ = vault.DeleteImage(ctx, db, profileID, imageID)
+		}
+	}
+}

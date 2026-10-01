@@ -301,6 +301,20 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	if err != nil {
 		return nil, fmt.Errorf("nodes: BrowserNode execute %s/%s: %w", b.platform, b.actionType, err)
 	}
+	// A profile read is kept: the packages' scrape_profile_info actions only
+	// return what they read (TikTok's also saves it itself), so without this
+	// the people it names never got their photo, bio or extras.
+	if b.actionType == "scrape_profile_info" && !storage.saved {
+		var profiles []map[string]interface{}
+		for _, raw := range result.ExtractedItems {
+			if rec := OutputRecord(raw, b.platform); rec != nil {
+				profiles = append(profiles, rec)
+			}
+		}
+		if err := storage.SaveExtractedData(storageAction.ID, profiles); err != nil {
+			logger.Warn().Err(err).Msg("could not save the profiles read")
+		}
+	}
 
 	// 7. Convert and normalize ExtractedItems to a single output item.
 	// All extracted items (one per bot method step) are merged together so the

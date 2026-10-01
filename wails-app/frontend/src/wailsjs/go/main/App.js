@@ -442,6 +442,10 @@ export function GetPeople(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetPeople'](arg1, arg2, arg3, arg4);
 }
 
+export function DeletePeople(arg1) {
+  return window['go']['main']['App']['DeletePeople'](arg1);
+}
+
 export function GetPeopleCount(arg1, arg2) {
   return window['go']['main']['App']['GetPeopleCount'](arg1, arg2);
 }

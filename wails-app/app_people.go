@@ -161,6 +161,15 @@ func (a *App) GetPeopleCount(platform, search string) int {
 	return res.Count
 }
 
+// DeletePeople deletes people (and their saved photos) from the active
+// profile — `people delete`.
+func (a *App) DeletePeople(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return a.runMonoCLI("", nil, append([]string{"people", "delete"}, ids...)...)
+}
+
 // GetPersonDetail returns one person, or nil when not in the active
 // profile — `people get`.
 func (a *App) GetPersonDetail(id string) *PersonDetailInfo {

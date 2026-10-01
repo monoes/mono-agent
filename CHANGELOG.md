@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.100.0] - 2026-10-01
+
+### Added
+- **Delete people in the app** (#311). The People page has row checkboxes and a Delete button that asks first. `people delete` now takes several ids and removes each person's saved photo too.
+
+### Fixed
+- **A profile read now reaches the people table** (#312). The X, Instagram and LinkedIn `scrape_profile_info` actions only returned what they read, so the people they named got no photo, bio or extras (TikTok's saved its own). The browser node now saves the result, and the save keeps follower, following and post counts as well.
+
 ## [0.99.0] - 2026-10-01
 
 ### Added
