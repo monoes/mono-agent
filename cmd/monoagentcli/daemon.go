@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -92,11 +93,15 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			sigCh := make(chan os.Signal, 2)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sigCh)
+			var forcedExitAPI atomic.Pointer[apiRuntime] // set once the API runtime exists
 			go func() {
 				<-sigCh // first signal — also observed by the NotifyContext above
 				select {
 				case <-sigCh:
 					fmt.Fprintln(os.Stderr, "Second interrupt received — forcing immediate exit.")
+					if rt := forcedExitAPI.Load(); rt != nil {
+						rt.killTurns() // the agent CLIs must not outlive the daemon
+					}
 					os.Exit(130)
 				case <-shutdownDone:
 				}
@@ -109,10 +114,11 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 			orgs := newOrgServices(db, engine)
-			apiRT, err := newAPIRuntime(db.DB, api, orgs.logf)
+			apiRT, err := newAPIRuntime(db.DB, api, func(format string, args ...any) { orgs.logf("api: "+format, args...) })
 			if err != nil {
 				return err
 			}
+			forcedExitAPI.Store(apiRT)
 			defer apiRT.drain() // runs before the database closes: no agent CLI outlives the daemon
 
 			if err := engine.Start(ctx); err != nil {
@@ -174,6 +180,9 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			fmt.Fprintln(os.Stdout, msg+" Press Ctrl+C to stop.")
 			<-ctx.Done()
 			fmt.Fprintln(os.Stdout, "Shutting down...")
+			// The API's turns end now, not after the engine has drained: a long
+			// workflow must not keep an agent CLI running for a client that is gone.
+			apiRT.drain()
 			return nil
 		},
 	}

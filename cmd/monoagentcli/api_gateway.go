@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,7 +32,32 @@ type apiFlags struct {
 	confinement        string
 	contextConfinement string
 	maxConcurrent      int
+	maxConcurrentSet   bool // --max-concurrent was given, so an explicit 0 is an error and not "the default"
 }
+
+// optInt is an int flag that remembers whether it was given.
+type optInt struct {
+	v   *int
+	set *bool
+}
+
+func (o optInt) String() string {
+	if o.v == nil {
+		return "0"
+	}
+	return strconv.Itoa(*o.v)
+}
+
+func (o optInt) Set(s string) error {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	*o.v, *o.set = n, true
+	return nil
+}
+
+func (optInt) Type() string { return "int" }
 
 func (f *apiFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.v1Addr, "v1-addr", "",
@@ -42,8 +68,8 @@ func (f *apiFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.contextConfinement, "context-confinement", "",
 		"Strongest runtime class a key created with --context may use: chat-only, sandboxed or any (default chat-only, never above --confinement). "+
 			"Its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted. Also MONOAGENT_API_CONTEXT_CONFINEMENT")
-	cmd.Flags().IntVar(&f.maxConcurrent, "max-concurrent", 0,
-		"Maximum number of API turns running at once (default 4). Also MONOAGENT_API_MAX_CONCURRENT")
+	cmd.Flags().Var(optInt{&f.maxConcurrent, &f.maxConcurrentSet}, "max-concurrent",
+		fmt.Sprintf("Maximum number of API turns running at once, 1 to %d (default 4). Also MONOAGENT_API_MAX_CONCURRENT", openaiapi.MaxConcurrentLimit))
 }
 
 // apiRuntime is the gateway's settings and how its listeners are set up. The
@@ -60,10 +86,11 @@ type apiRuntime struct {
 	v1Addr     string
 	logf       func(format string, args ...any)
 
-	mu     sync.Mutex
-	gw     *openaiapi.Gateway // nil until built, and when it could not be
-	gwErr  error
-	v1Done chan struct{} // closed when the dedicated listener has stopped; nil without one
+	mu       sync.Mutex
+	gw       *openaiapi.Gateway // nil until built, and when it could not be
+	gwErr    error
+	v1Done   chan struct{}      // closed when the dedicated listener has stopped; nil without one
+	cancelV1 context.CancelFunc // stops the dedicated listener
 }
 
 // newAPIRuntime reads the flags, falling back to the environment. Bad values
@@ -73,8 +100,8 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 	if err != nil {
 		return nil, errInvalidInput("%v", err)
 	}
-	if f.maxConcurrent < 0 {
-		return nil, errInvalidInput("--max-concurrent must be a positive number, got %d", f.maxConcurrent)
+	if f.maxConcurrent < 0 || (f.maxConcurrentSet && f.maxConcurrent == 0) || f.maxConcurrent > openaiapi.MaxConcurrentLimit {
+		return nil, errInvalidInput("--max-concurrent must be a number from 1 to %d, got %d", openaiapi.MaxConcurrentLimit, f.maxConcurrent)
 	}
 	if f.maxConcurrent > 0 {
 		conf.MaxConcurrent = f.maxConcurrent
@@ -97,10 +124,28 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 	if v1 == "" {
 		v1 = os.Getenv("MONOAGENT_API_V1_ADDR")
 	}
+	if v1 != "" {
+		if err := validListenAddr(v1); err != nil {
+			return nil, errInvalidInput("--v1-addr (MONOAGENT_API_V1_ADDR) must be host:port, such as 127.0.0.1:9443 or :9443: %v", err)
+		}
+	}
 
 	deps := openaiapi.DefaultDeps(db, getVersion())
 	deps.Logf = logf
 	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, v1Addr: v1, logf: logf}, nil
+}
+
+// validListenAddr checks the shape of a listen address: host:port with a
+// numeric port. The host may be empty, as in :9443.
+func validListenAddr(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("%q is not a port number", port)
+	}
+	return nil
 }
 
 // gateway builds the gateway on first use. A process that cannot (another one
@@ -181,13 +226,17 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("listen on %s: %w", a.v1Addr, err)
 	}
 	p := a.policy(a.v1Addr)
+	// The listener gets a context of its own: a command whose other listener
+	// failed to bind never ends the one it was started with, and drain must
+	// still be able to stop this one.
+	lctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	a.mu.Lock()
-	a.v1Done = done
+	a.v1Done, a.cancelV1 = done, cancel
 	a.mu.Unlock()
 	go func() {
 		defer close(done)
-		if err := gw.Serve(ctx, ln, p, tlsCfg); err != nil && ctx.Err() == nil {
+		if err := gw.Serve(lctx, ln, p, tlsCfg); err != nil && lctx.Err() == nil {
 			a.logf("the /v1 listener stopped: %v", err)
 		}
 	}()
@@ -203,18 +252,32 @@ const apiDrainWait = 30 * time.Second
 // calls it after its servers were told to stop, so that no agent CLI outlives
 // the process that was supposed to supervise it.
 func (a *apiRuntime) drain() {
-	if gw := a.built(); gw != nil && !gw.Shutdown(apiDrainWait) {
-		a.logf("turns of the OpenAI-compatible API were still running %s after the server stopped", apiDrainWait)
-	}
+	// The dedicated listener first: it gives its requests their grace, then
+	// ends the turns it still has.
 	a.mu.Lock()
-	done := a.v1Done
+	done, cancel := a.v1Done, a.cancelV1
 	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if done != nil {
 		select {
 		case <-done:
 		case <-time.After(apiDrainWait):
 			a.logf("the /v1 listener did not stop within %s", apiDrainWait)
 		}
+	}
+	if gw := a.built(); gw != nil && !gw.Shutdown(apiDrainWait) {
+		a.logf("turns of the OpenAI-compatible API were still running %s after the server stopped", apiDrainWait)
+	}
+}
+
+// killTurns ends the turns in flight and gives their processes a few seconds to
+// be killed. A command about to exit at once (a second Ctrl+C) calls it first,
+// so the agent CLIs do not outlive it.
+func (a *apiRuntime) killTurns() {
+	if gw := a.built(); gw != nil {
+		gw.Shutdown(5 * time.Second)
 	}
 }
 

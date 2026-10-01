@@ -41,6 +41,10 @@ type Config struct {
 	KeepAlive time.Duration
 }
 
+// MaxConcurrentLimit is the most turns a gateway may run at once. Every turn is
+// a real agent process, and the limiter allocates a slot per turn.
+const MaxConcurrentLimit = 64
+
 func (c Config) withDefaults() (Config, error) {
 	if c.MaxConcurrent <= 0 {
 		c.MaxConcurrent = defaultMaxConcurrent
@@ -77,8 +81,8 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	var c Config
 	if v := getenv("MONOAGENT_API_MAX_CONCURRENT"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("MONOAGENT_API_MAX_CONCURRENT must be a positive integer, got %q", v)
+		if err != nil || n < 1 || n > MaxConcurrentLimit {
+			return Config{}, fmt.Errorf("MONOAGENT_API_MAX_CONCURRENT must be an integer from 1 to %d, got %q", MaxConcurrentLimit, v)
 		}
 		c.MaxConcurrent = n
 	}

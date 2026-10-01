@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/monoes/mono-agent/internal/openaiapi"
 	"github.com/monoes/mono-agent/internal/storage"
 )
@@ -150,9 +152,14 @@ func TestMainMountOnlyOnLoopback(t *testing.T) {
 
 func TestAPIRuntimeRejectsBadSettingsAsInvalidInput(t *testing.T) {
 	for name, f := range map[string]apiFlags{
-		"unknown confinement":         {confinement: "everything"},
-		"unknown context confinement": {contextConfinement: "everything"},
-		"negative max":                {maxConcurrent: -1},
+		"unknown confinement":           {confinement: "everything"},
+		"unknown context confinement":   {contextConfinement: "everything"},
+		"negative max":                  {maxConcurrent: -1},
+		"an explicit zero max":          {maxConcurrent: 0, maxConcurrentSet: true},
+		"an absurd max":                 {maxConcurrent: 1 << 40},
+		"v1 address without a port":     {v1Addr: "9443"},
+		"v1 address, port not a number": {v1Addr: "0.0.0.0:abc"},
+		"v1 address, port out of range": {v1Addr: "0.0.0.0:99999"},
 	} {
 		if _, err := newAPIRuntimeForTest(t, f); exitCode(err) != 3 {
 			t.Errorf("%s: exit %d (%v), want 3", name, exitCode(err), err)
@@ -221,6 +228,92 @@ func TestAPIRuntimeContextConfinement(t *testing.T) {
 	}
 	if got := rt.contextReport(); got != "sandboxed" {
 		t.Errorf("contextReport = %q, want sandboxed", got)
+	}
+}
+
+// --max-concurrent 0 (as opposed to leaving the flag out) is an explicit
+// request for no turns at all, so it is refused rather than read as the default.
+func TestMaxConcurrentFlagRemembersWhetherItWasGiven(t *testing.T) {
+	var f apiFlags
+	cmd := &cobra.Command{Use: "x"}
+	f.bind(cmd)
+	if err := cmd.ParseFlags([]string{"--max-concurrent", "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.maxConcurrentSet || f.maxConcurrent != 0 {
+		t.Fatalf("an explicit 0 must be remembered as given: %+v", f)
+	}
+	var g apiFlags
+	cmd2 := &cobra.Command{Use: "y"}
+	g.bind(cmd2)
+	if err := cmd2.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if g.maxConcurrentSet {
+		t.Error("a flag that was left out must not count as given")
+	}
+}
+
+func TestMaxConcurrentEnvironmentIsBoundedToo(t *testing.T) {
+	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "100000")
+	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_ = db.ApplyMigrations()
+	if _, err := newAPIRuntime(db.DB, apiFlags{}, func(string, ...any) {}); exitCode(err) != 3 {
+		t.Errorf("an absurd MONOAGENT_API_MAX_CONCURRENT: exit %d (%v), want 3", exitCode(err), err)
+	}
+}
+
+// The command opens the database for the gateway, and initDB resolves the
+// profile to the active one when none was given: the HTTP API server must keep
+// seeing what it always saw, or its own fallback (MONOAGENT_PROFILE) is lost.
+func TestOpenGatewayDBLeavesTheServersProfileAlone(t *testing.T) {
+	dbPath := newAPITestDB(t)
+	probe := &globalConfig{DBPath: dbPath}
+	pdb, err := initDB(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdb.Close()
+	if probe.ProfileID == "" {
+		t.Fatal("precondition: initDB resolves the profile, which is why the command must not hand it its own config")
+	}
+
+	cfg := &globalConfig{DBPath: dbPath}
+	db, err := openGatewayDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if cfg.ProfileID != "" {
+		t.Errorf("opening the database for the gateway changed the profile the server will serve: %q", cfg.ProfileID)
+	}
+}
+
+// drain must stop the dedicated listener itself: a command whose main bind failed
+// never cancels the context the listener was started with.
+func TestDrainStopsTheDedicatedListenerWithoutItsContextEnding(t *testing.T) {
+	rt, err := newAPIRuntimeForTest(t, apiFlags{v1Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := rt.startV1(context.Background()) // a context that never ends
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { rt.drain(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("drain waited for a listener whose context never ends")
+	}
+	if resp, err := http.Get("http://" + addr + "/health"); err == nil {
+		resp.Body.Close()
+		t.Error("the dedicated listener still answers after drain")
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,7 +11,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/httpapi"
+	"github.com/monoes/mono-agent/internal/storage"
 )
+
+// openGatewayDB opens the database for the OpenAI-compatible API on a copy of
+// the configuration. initDB resolves cfg.ProfileID to the active profile when
+// no --profile was given, and the HTTP API server must keep seeing what it
+// always saw, or its own fallback (MONOAGENT_PROFILE) is lost.
+func openGatewayDB(cfg *globalConfig) (*storage.Database, error) {
+	c := *cfg
+	return initDB(&c)
+}
 
 // newHTTPAPICmd runs the REST/JSON HTTP API server in the foreground,
 // mirroring `monoagentcli daemon`'s signal handling. Unlike daemon (which
@@ -45,7 +56,7 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The OpenAI-compatible API (/v1) reads API keys and the roster
 			// from the database, so this command opens it for the gateway.
-			db, err := initDB(cfg)
+			db, err := openGatewayDB(cfg)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
@@ -92,6 +103,7 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 				select {
 				case <-sigCh:
 					fmt.Fprintln(os.Stderr, "Second interrupt received — forcing immediate exit.")
+					apiRT.killTurns() // the agent CLIs must not outlive this command
 					os.Exit(130)
 				case <-shutdownDone:
 				}
@@ -102,6 +114,11 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 				srv.Addr(), mutationsLabel(srv.AllowsMutations()))
 			err = srv.ListenAndServe(ctx)
 			apiRT.drain() // no agent CLI outlives the command
+			// An interrupt with a turn still running outlasts the server's grace
+			// period; that is the interrupt working, not a failure.
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
+				err = nil
+			}
 			return err
 		},
 	}
