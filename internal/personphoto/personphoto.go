@@ -10,12 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/vault"
@@ -30,12 +32,45 @@ const (
 	userAgent   = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 
-var client = &http.Client{Timeout: 20 * time.Second}
+// budget bounds one Localize call, so a big batch can't hold a scrape up.
+const budget = 2 * time.Minute
+
+// allowPrivate lets tests fetch from a loopback server.
+var allowPrivate bool
+
+// client refuses to connect to a non-public address (loopback, private,
+// link-local), after redirects and DNS answers included: photo URLs come
+// from scraped pages.
+var client = &http.Client{
+	Timeout: 20 * time.Second,
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 10 * time.Second,
+			Control: func(_, address string, _ syscall.RawConn) error {
+				host, _, err := net.SplitHostPort(address)
+				if err != nil {
+					return err
+				}
+				ip := net.ParseIP(host)
+				if ip == nil || !allowPrivate && (!ip.IsGlobalUnicast() || ip.IsPrivate()) {
+					return errors.New("refusing to fetch from a non-public address")
+				}
+				return nil
+			},
+		}).DialContext,
+	},
+	CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("too many redirects")
+		}
+		return nil
+	},
+}
 
 // Ref names a person by platform and username (platform in upper case).
 type Ref struct{ Platform, Username string }
 
-type target struct{ id, url, oldImageID string }
+type target struct{ id, url, oldImageID, oldSource string }
 
 // Localize downloads the remote photo of each person in refs (every person
 // of the profile when refs is nil) and points the person at the saved copy.
@@ -50,7 +85,8 @@ func Localize(ctx context.Context, db *sql.DB, profileID string, refs []Ref) (in
 	if err != nil {
 		return 0, []error{err}
 	}
-	ctx = vault.ContextWithProfileID(ctx, profileID)
+	ctx, cancel := context.WithTimeout(vault.ContextWithProfileID(ctx, profileID), budget)
+	defer cancel()
 
 	var (
 		mu    sync.Mutex
@@ -65,6 +101,13 @@ func Localize(ctx context.Context, db *sql.DB, profileID string, refs []Ref) (in
 		go func(t target) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("personphoto: %s: %v", hostOf(t.url), r))
+					mu.Unlock()
+				}
+			}()
 			err := save(ctx, db, profileID, t)
 			mu.Lock()
 			defer mu.Unlock()
@@ -80,7 +123,8 @@ func Localize(ctx context.Context, db *sql.DB, profileID string, refs []Ref) (in
 }
 
 func load(ctx context.Context, db *sql.DB, profileID string, refs []Ref) ([]target, error) {
-	const cols = `SELECT id, image_url, COALESCE(CASE WHEN json_valid(profile_details) THEN json_extract(profile_details, '$.photo_image_id') END, '')
+	const cols = `SELECT id, image_url, COALESCE(CASE WHEN json_valid(profile_details) THEN json_extract(profile_details, '$.photo_image_id') END, ''),
+		COALESCE(CASE WHEN json_valid(profile_details) THEN json_extract(profile_details, '$.photo_source_url') END, '')
 		FROM people WHERE profile_id = ? AND (image_url LIKE 'http://%' OR image_url LIKE 'https://%')`
 	query, args := cols, []interface{}{profileID}
 	if refs != nil {
@@ -102,7 +146,7 @@ func load(ctx context.Context, db *sql.DB, profileID string, refs []Ref) ([]targ
 	var out []target
 	for rows.Next() {
 		var t target
-		if err := rows.Scan(&t.id, &t.url, &t.oldImageID); err != nil {
+		if err := rows.Scan(&t.id, &t.url, &t.oldImageID, &t.oldSource); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -110,9 +154,29 @@ func load(ctx context.Context, db *sql.DB, profileID string, refs []Ref) ([]targ
 	return out, rows.Err()
 }
 
+// restore points the person back at the photo already saved for it, if that
+// image still exists.
+func restore(ctx context.Context, db *sql.DB, profileID string, t target) bool {
+	if t.oldImageID == "" {
+		return false
+	}
+	if _, err := vault.GetImage(ctx, db, profileID, t.oldImageID); err != nil {
+		return false
+	}
+	_, err := db.ExecContext(ctx, `UPDATE people SET image_url = ? WHERE id = ?`, "/vault-image/"+t.oldImageID, t.id)
+	return err == nil
+}
+
 func save(ctx context.Context, db *sql.DB, profileID string, t target) error {
+	// A re-read of an unchanged photo URL keeps the copy already saved.
+	if t.oldSource == t.url && restore(ctx, db, profileID, t) {
+		return nil
+	}
 	path, err := download(ctx, t.url)
 	if err != nil {
+		if restore(ctx, db, profileID, t) { // a failed fetch must not lose the saved photo
+			return nil
+		}
 		return err
 	}
 	defer os.Remove(path)
@@ -174,10 +238,13 @@ func download(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if _, err := f.Write(body); err != nil {
+	_, werr := f.Write(body)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
 		os.Remove(f.Name())
-		return "", err
+		return "", werr
 	}
 	return filepath.Clean(f.Name()), nil
 }
