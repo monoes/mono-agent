@@ -17,36 +17,58 @@ import (
 // digestFunc gives an instructions_file's digest ("sha256:<hex>").
 type digestFunc func(file string) (string, error)
 
-// readDigests digests each file as it is on disk now.
-func readDigests(root string) digestFunc {
-	return func(file string) (string, error) { return instructionsDigest(file, root) }
+// digester gives the digests a hash is built from: of an instructions
+// file by its path, and of a catalog blueprint by its name.
+type digester struct{ file, blueprint digestFunc }
+
+// readDigests digests each file and blueprint as it is on disk now.
+func readDigests(root string) digester {
+	return digester{
+		file:      func(file string) (string, error) { return instructionsDigest(file, root) },
+		blueprint: func(name string) (string, error) { return blueprintDigest(root, name) },
+	}
 }
 
-// Pins are the instructions-file digests a verified definition was
-// checked with, keyed by the instructions_file value. Signing with them,
-// rather than with the files as they are when monomind signs, is what
-// keeps a file edited in between from being signed (monomind hashes the
-// file itself, so the result then differs and the signature is withdrawn).
-type Pins map[string]string
+// Pins are the digests a verified definition was checked with: of the
+// instructions files (keyed by the instructions_file value) and of the
+// catalog blueprints (keyed by name). Signing with them, rather than with
+// the files as they are when monomind signs, is what keeps a file edited
+// in between from being signed (monomind hashes the file itself, so the
+// result then differs and the signature is withdrawn).
+type Pins struct {
+	files, blueprints map[string]string
+}
 
-// pinned digests only files in p; any other is a reference this package
-// never verified.
-func (p Pins) pinned(file string) (string, error) {
-	if d, ok := p[file]; ok {
-		return d, nil
+func newPins() Pins { return Pins{files: map[string]string{}, blueprints: map[string]string{}} }
+
+func pinnedFrom(m map[string]string, what string) digestFunc {
+	return func(key string) (string, error) {
+		if d, ok := m[key]; ok {
+			return d, nil
+		}
+		return "", fmt.Errorf("%s %s was not part of the verified definition", what, key)
 	}
-	return "", fmt.Errorf("instructions_file %s was not part of the verified definition", file)
+}
+
+// pinned digests only what p recorded; any other is a reference this
+// package never verified.
+func (p Pins) pinned() digester {
+	return digester{file: pinnedFrom(p.files, "instructions_file"), blueprint: pinnedFrom(p.blueprints, "blueprint")}
 }
 
 // recordingDigests is readDigests that also records each digest in pins.
-func recordingDigests(root string, pins Pins) digestFunc {
-	return func(file string) (string, error) {
-		d, err := instructionsDigest(file, root)
-		if err == nil {
-			pins[file] = d
+func recordingDigests(root string, pins Pins) digester {
+	read := readDigests(root)
+	rec := func(dig digestFunc, into map[string]string) digestFunc {
+		return func(key string) (string, error) {
+			d, err := dig(key)
+			if err == nil {
+				into[key] = d
+			}
+			return d, err
 		}
-		return d, err
 	}
+	return digester{file: rec(read.file, pins.files), blueprint: rec(read.blueprint, pins.blueprints)}
 }
 
 // instructionsDigests is monomind's instructionsDigests: "role:<id>" and

@@ -119,7 +119,7 @@ func (p Pre) PinnedHash(raw []byte) (string, error) { return HashPinned(raw, p.p
 // s is the signer the write will use (its Checker, if any, decides); nil
 // means this package's own check.
 func Before(ctx context.Context, s Signer, root, org, loadedSHA string, signNew bool) Pre {
-	p := Pre{root: root, org: org, pins: Pins{}}
+	p := Pre{root: root, org: org, pins: newPins()}
 	if m := AgentContextMarker(); m != "" {
 		p.why = fmt.Sprintf("%s is set: an agent or org role made this change, and only the operator signs", m)
 		return p

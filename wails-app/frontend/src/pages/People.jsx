@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Users, Search, RefreshCw, CheckCircle, ExternalLink, Plus, X, Tag, Check, Palette } from 'lucide-react'
 import { api, subscribeEvent } from '../services/api.js'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
 // ── Tag colour palette ────────────────────────────────────────
 export const TAG_COLORS = [
@@ -814,7 +815,7 @@ function TagsCell({ personId, username, fullName, initialTags }) {
 }
 
 // ── Main People page ──────────────────────────────────────────
-export default function People({ onProfile }) {
+export default function People({ onProfile, isActive = true }) {
   const [people, setPeople]   = useState([])
   const [tagsMap, setTagsMap] = useState({})
   const [count, setCount]     = useState(0)
@@ -836,8 +837,8 @@ export default function People({ onProfile }) {
     }, 300)
   }, [search])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (opts) => {
+    if (opts?.silent !== true) setLoading(true)
     try {
       setError(null)
       const [data, total] = await Promise.all([
@@ -864,6 +865,7 @@ export default function People({ onProfile }) {
   }, [platform, debouncedSearch, offset])
 
   useEffect(() => { load() }, [load])
+  useReloadOnActivate(isActive, () => load({ silent: true }))
 
   // Reload whenever a workflow finishes (may have saved new people).
   useEffect(() => {

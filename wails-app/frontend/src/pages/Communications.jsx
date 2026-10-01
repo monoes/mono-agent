@@ -3,8 +3,9 @@ import { RefreshCw, Mail } from 'lucide-react'
 import { api } from '../services/api.js'
 import MessageDetailModal from '../components/MessageDetailModal.jsx'
 import { isUnread, UnreadDot } from '../lib/unread.jsx'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
-export default function Communications({ onProfile }) {
+export default function Communications({ onProfile, isActive = true }) {
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -12,8 +13,8 @@ export default function Communications({ onProfile }) {
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [openMessage, setOpenMessage] = useState(null)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async (opts) => {
+    if (opts?.silent !== true) setLoading(true)
     try {
       setError(null)
       const data = await api.getAllPersonMessages(200)
@@ -26,6 +27,7 @@ export default function Communications({ onProfile }) {
   }
 
   useEffect(() => { load() }, [])
+  useReloadOnActivate(isActive, () => load({ silent: true }))
 
   const sources = [...new Set(messages.map(m => m.source).filter(Boolean))]
   const unreadCount = messages.filter(isUnread).length

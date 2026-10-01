@@ -338,7 +338,7 @@ func Hash(root string, raw []byte) (string, error) {
 
 // HashPins is Hash that also returns the instructions-file digests it used.
 func HashPins(root string, raw []byte) (string, Pins, error) {
-	pins := Pins{}
+	pins := newPins()
 	h, err := hashWith(raw, recordingDigests(root, pins))
 	return h, pins, err
 }
@@ -346,10 +346,10 @@ func HashPins(root string, raw []byte) (string, Pins, error) {
 // HashPinned is Hash with the instructions files taken as pins recorded,
 // not as they are on disk now; a file not in pins is an error.
 func HashPinned(raw []byte, pins Pins) (string, error) {
-	return hashWith(raw, pins.pinned)
+	return hashWith(raw, pins.pinned())
 }
 
-func hashWith(raw []byte, dig digestFunc) (string, error) {
+func hashWith(raw []byte, dig digester) (string, error) {
 	v, err := parseOrgJSON(raw)
 	if err != nil {
 		return "", err
@@ -415,32 +415,25 @@ func parseOrgJSON(raw []byte) (interface{}, error) {
 	return parseJSON(raw)
 }
 
-// hasBlueprintRole reports a role with a `blueprint`: monomind#571 may add
-// blueprint digests to the signed projection, as instructions files are,
-// and this package doesn't compute them, so such a definition gets no Go
-// hash (never signed automatically, which fails closed).
-func hasBlueprintRole(v interface{}) bool {
-	def, _ := v.(map[string]interface{})
-	roles, _ := def["roles"].([]interface{})
-	for _, r := range roles {
-		if role, ok := r.(map[string]interface{}); ok && hasKey(role, "blueprint") {
-			return true
-		}
-	}
-	return false
-}
-
-func hashValue(v interface{}, dig digestFunc) (string, error) {
-	if hasBlueprintRole(v) {
-		return "", fmt.Errorf("%w: a role uses a blueprint", errUnknown)
-	}
+func hashValue(v interface{}, dig digester) (string, error) {
 	proj := projection(v)
-	digests, err := instructionsDigests(v, dig)
+	digests, err := instructionsDigests(v, dig.file)
 	if err != nil {
 		return "", err
 	}
-	if len(digests) > 0 {
-		proj = map[string]interface{}{"definition": proj, "instructions": digests}
+	blueprints, err := blueprintDigests(v, dig.blueprint)
+	if err != nil {
+		return "", err
+	}
+	if len(digests) > 0 || len(blueprints) > 0 {
+		wrapped := map[string]interface{}{"definition": proj}
+		if len(digests) > 0 {
+			wrapped["instructions"] = digests
+		}
+		if len(blueprints) > 0 {
+			wrapped["blueprints"] = blueprints
+		}
+		proj = wrapped
 	}
 	sum := sha256.Sum256([]byte(stringify(proj)))
 	return hex.EncodeToString(sum[:]), nil

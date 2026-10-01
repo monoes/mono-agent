@@ -4,6 +4,7 @@ import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { notify } from '../services/api.js'
 import ApplicationsProcessPendingFlow from './ApplicationsProcessPendingFlow.jsx'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
 const STATUS_TABS = ['pending', 'applied', 'rejected', 'cancelled', 'all']
 
@@ -54,7 +55,7 @@ function emptyAddForm() {
   return { kind: 'job', title: '', company: '', url: '', issuingOrg: '', submissionDeadline: '' }
 }
 
-export default function Applications() {
+export default function Applications({ isActive = true }) {
   const [applications, setApplications] = useState([])
   const [statusTab, setStatusTab] = useState('pending')
   const [search, setSearch] = useState('')
@@ -75,6 +76,7 @@ export default function Applications() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useReloadOnActivate(isActive, load)
 
   const visible = useMemo(
     () => filterApplications(applications, { statusTab, search }),
