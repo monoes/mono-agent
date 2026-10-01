@@ -338,6 +338,32 @@ func TestAPIStatusReachesAListenerWhicheverSchemeItSpeaks(t *testing.T) {
 	}
 }
 
+// A listener off loopback is TLS only. A plaintext probe of it would put a
+// handshake error in the server's log on every `api status`, so it is probed
+// over TLS first. Both schemes are always tried: the certificate may be set
+// only in the server's own environment, which makes a loopback listener speak
+// TLS too.
+func TestProbeSchemesTryTLSFirstOffLoopback(t *testing.T) {
+	if got := probeSchemes(false); len(got) != 2 || got[0] != "https://" {
+		t.Errorf("a network listener is probed over TLS first, then in the clear: %v", got)
+	}
+	if got := probeSchemes(true); len(got) != 2 || got[0] != "http://" {
+		t.Errorf("a loopback listener is probed in the clear first, then over TLS: %v", got)
+	}
+}
+
+// Whether /v1 is asked is the caller's call: the main listener off loopback is
+// not expected to serve it, so it is not probed for it.
+func TestProbeAddrAsksForV1OnlyWhenWanted(t *testing.T) {
+	addr := apiServer(t, true) // answers 401 on /v1/models
+	if reachable, v1 := probeAddr(addr, true, false); !reachable || v1 {
+		t.Errorf("a listener not expected to serve /v1 is not asked: reachable=%v v1=%v", reachable, v1)
+	}
+	if reachable, v1 := probeAddr(addr, true, true); !reachable || !v1 {
+		t.Errorf("a listener expected to serve /v1 is asked: reachable=%v v1=%v", reachable, v1)
+	}
+}
+
 func TestAPIStatusReadsTheDaemonHeartbeat(t *testing.T) {
 	db := newAPITestDB(t)
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))

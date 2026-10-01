@@ -104,7 +104,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
 				}
 				main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
-				main.Reachable, main.V1Answers = probeAddr(mainAddr, main.V1)
+				main.Reachable, main.V1Answers = probeAddr(mainAddr, mainLoop, main.V1)
 				st.Listeners = append(st.Listeners, main)
 			}
 			if v1Addr != "" {
@@ -118,7 +118,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					dedicated.Confinement, dedicated.ConfinementSource = hb.V1Confinement, "daemon"
 				}
 				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
-				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, true)
+				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, loop, true)
 				st.Listeners = append(st.Listeners, dedicated)
 			}
 
@@ -171,17 +171,23 @@ func listenerNote(l apiListenerJSON) string {
 	return "answers /health but not /v1: a server that predates the API may still be running, restart it"
 }
 
-// probeAddr probes a listener at addr without knowing whether it speaks TLS:
-// the certificate may be set only in the server's own environment, so a
-// loopback listener can speak it too. The scheme more likely for the address
-// goes first.
-func probeAddr(addr string, loopback bool) (reachable, v1Answers bool) {
-	schemes := []string{"https://", "http://"}
+// probeSchemes is the order to try a listener's schemes in: the one it more
+// likely speaks first. A listener off loopback is TLS only, and a plaintext
+// request to it would put a handshake error in its log on every `api status`.
+// Both are always tried: the certificate may be set only in the server's own
+// environment, which makes a loopback listener speak TLS too.
+func probeSchemes(loopback bool) []string {
 	if loopback {
-		schemes = []string{"http://", "https://"}
+		return []string{"http://", "https://"}
 	}
-	for _, scheme := range schemes {
-		if reachable, v1Answers = probeListener(scheme+addr, true); reachable {
+	return []string{"https://", "http://"}
+}
+
+// probeAddr probes a listener at addr without knowing whether it speaks TLS
+// (see probeSchemes), and, when wantV1, whether it answers /v1.
+func probeAddr(addr string, loopback, wantV1 bool) (reachable, v1Answers bool) {
+	for _, scheme := range probeSchemes(loopback) {
+		if reachable, v1Answers = probeListener(scheme+addr, wantV1); reachable {
 			return reachable, v1Answers
 		}
 	}
