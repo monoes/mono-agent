@@ -121,6 +121,36 @@ func TestChatIsAnsweredWith503WhileTheServerIsStopping(t *testing.T) {
 	}
 }
 
+// A turn that is running when the server stops is cut short by the server, not
+// by the runtime: the client gets the same retryable 503 as a request that
+// arrives a moment later, not a 502 that blames the runtime.
+func TestChatCutShortByShutdownIsA503(t *testing.T) {
+	started := make(chan struct{})
+	h := newHarness(t, func(ctx context.Context, _ monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
+		close(started)
+		<-ctx.Done()
+		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
+	})
+	secret := h.key(t, "default", "app", false)
+
+	got := make(chan *httpRecorder, 1)
+	go func() { got <- post(h, anyPolicy, secret, chatBody) }()
+	<-started
+	h.g.Shutdown(5 * time.Second)
+
+	select {
+	case rec := <-got:
+		if rec.Code != http.StatusServiceUnavailable || decodeErrorBody(t, rec)["code"] != "runtime_not_available" {
+			t.Fatalf("status %d body %s", rec.Code, rec.Body)
+		}
+		if lines := strings.Join(h.logged(), "\n"); !strings.Contains(lines, "status=503") {
+			t.Errorf("the log line must carry the status the client got: %q", lines)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not return after Shutdown")
+	}
+}
+
 func TestChatRejectsBeforeSpawningAnything(t *testing.T) {
 	var spawned atomic.Int32
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {

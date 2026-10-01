@@ -257,6 +257,10 @@ func (g *Gateway) turnStarted() bool {
 	return true
 }
 
+// stopping reports whether the server is shutting down. A turn that ends
+// cancelled while its caller is still there was cut short by that.
+func (g *Gateway) stopping() bool { return g.shutdownCtx.Err() != nil }
+
 func (g *Gateway) turnEnded() {
 	g.mu.Lock()
 	g.running--

@@ -96,6 +96,12 @@ func errRuntimeUnavailable(msg string) *apiError {
 	return &apiError{Status: http.StatusServiceUnavailable, Type: "api_error", Code: "runtime_not_available", Message: msg}
 }
 
+// errStopping is the answer to a request the server's shutdown refused or cut
+// short: a 503 the client can retry, here a moment later or on another instance.
+func errStopping() *apiError {
+	return errRuntimeUnavailable("The server is shutting down. Retry shortly, or on another instance.")
+}
+
 // errSetup is the answer to a monomind or a runtime that is not set up on the
 // server. The caller gets a sentence, not the error: monomind's discovery
 // error lists every path it tried, which is the server's home directory and
@@ -121,7 +127,7 @@ func turnError(res *monomind.TurnResult, execErr error) *apiError {
 	if execErr != nil {
 		switch {
 		case errors.Is(execErr, errShuttingDown):
-			return errRuntimeUnavailable("The server is shutting down. Retry shortly, or on another instance.")
+			return errStopping()
 		case monomind.IsAgentNotSetup(execErr):
 			return errSetup(execErr)
 		case errors.Is(execErr, monomind.ErrSandboxRequired):

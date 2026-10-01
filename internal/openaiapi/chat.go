@@ -117,7 +117,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 				status = 499 // the caller left; there is nobody to answer
 				return
 			}
-			fail(&apiError{Status: http.StatusBadGateway, Type: "api_error", Code: "runtime_error", Message: "The turn was cancelled. " + quoteRequestID})
+			fail(g.cancelledError())
 			return
 		}
 		if res.SandboxStatus != "" {
@@ -129,6 +129,18 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			Usage:   usageFrom(res),
 		})
 	}
+}
+
+// cancelledError is the answer to a turn that ended cancelled although its
+// caller is still there: the server cut it short, because it is stopping.
+func (g *Gateway) cancelledError() *apiError {
+	if g.stopping() {
+		e := errStopping()
+		e.detail = "the turn was cancelled by the server stopping"
+		return e
+	}
+	return &apiError{Status: http.StatusBadGateway, Type: "api_error", Code: "runtime_error",
+		Message: "The turn was cancelled. " + quoteRequestID, detail: "the turn was cancelled by the server"}
 }
 
 func policyDeniedAtStart(m ModelInfo, p Policy) *apiError {
@@ -199,8 +211,7 @@ func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id,
 	case r.Context().Err() != nil || sw.isBroken(): // the caller left, or stopped reading
 		return 499, ""
 	case res.Err != nil: // cancelled by the server itself, which is stopping
-		return failure(&apiError{Status: http.StatusBadGateway, Type: "api_error", Code: "runtime_error",
-			Message: "The turn was cancelled. " + quoteRequestID, detail: "the turn was cancelled by the server"})
+		return failure(g.cancelledError())
 	}
 	sw.finish(res, includeUsage)
 	return http.StatusOK, ""

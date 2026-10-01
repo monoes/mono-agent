@@ -263,7 +263,7 @@ func TestStreamGatewayDeadlineAfterCommitIsATimeoutEvent(t *testing.T) {
 }
 
 // The server stopping ends the turn, which is not the client leaving: before the
-// 200 it is a 502 the client can see, and after it an error event and [DONE],
+// 200 it is a 503 the client can retry, and after it an error event and [DONE],
 // never a stream that just stops.
 func TestStreamEndedByShutdownBeforeTheCommitIsAnHTTPError(t *testing.T) {
 	started := make(chan struct{})
@@ -281,7 +281,7 @@ func TestStreamEndedByShutdownBeforeTheCommitIsAnHTTPError(t *testing.T) {
 
 	select {
 	case rec := <-got:
-		if rec.Code != http.StatusBadGateway || decodeErrorBody(t, rec)["code"] != "runtime_error" {
+		if rec.Code != http.StatusServiceUnavailable || decodeErrorBody(t, rec)["code"] != "runtime_not_available" {
 			t.Fatalf("status %d body %s", rec.Code, rec.Body)
 		}
 	case <-time.After(10 * time.Second):
@@ -304,7 +304,7 @@ func TestStreamEndedByShutdownAfterTheCommitIsAnErrorEvent(t *testing.T) {
 	var e struct {
 		Error map[string]any `json:"error"`
 	}
-	if len(data) < 2 || data[len(data)-1] != "[DONE]" || json.Unmarshal([]byte(data[len(data)-2]), &e) != nil || e.Error["code"] != "runtime_error" {
+	if len(data) < 2 || data[len(data)-1] != "[DONE]" || json.Unmarshal([]byte(data[len(data)-2]), &e) != nil || e.Error["code"] != "runtime_not_available" {
 		t.Fatalf("a stream cut short by the server stopping must end with an error event and [DONE]: %q", data)
 	}
 }
