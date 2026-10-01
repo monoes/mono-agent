@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 (`go.mod`: `go 1.26.0`), `net/http` method patterns, `database/sql` over the repo's SQLite (`internal/storage`), `spf13/cobra`, the existing `internal/monomind` and `internal/agentroster` packages. No new module dependency.
 
-**Spec:** `docs/mastermind/specs/2026-10-01-openai-compatible-api-design.md` (approved 2026-10-01, then amended the same day after two independent reviews of the phase 1 code; its status line lists what changed). This is phase 1 of 5. Phases 2 to 5 (MCP tools and the GUI, Jev `auto`, images, tool calling) get their own plans, written when each is next.
+**Spec:** `docs/mastermind/specs/2026-10-01-openai-compatible-api-design.md` (approved 2026-10-01, then amended the same day after two independent reviews of the phase 1 code and two decisions of the user; its status line lists what changed). This is phase 1 of 5. Phases 2 to 5 (MCP tools and the GUI, Jev `auto`, images, tool calling) get their own plans, written when each is next.
 
 **Out of phase 1, and rejected cleanly meanwhile:** the model name `auto` is a 404 `model_not_found`; a non-empty `tools`, `tool_choice`, `functions` or `function_call` is a 400 `unsupported_parameter`; there are no `/v1/images` routes.
 
@@ -34,7 +34,7 @@ Every task's requirements include this section. Values are copied from the spec.
 - Never commit secrets or `.env` files. Never print or log API keys or prompts, in code, tests or output.
 - No real model call in a default test. Live canaries run only with `MONOAGENT_LIVE_API_TESTS=1`, and are not run unless the owner asks.
 - Run the tests with and without `-tags nosocial` (Task 21).
-- Known failures on a clean macOS tree, not caused by this work: `TestCaptureTaskFilesOnTheBoard`, `TestCoderConversationFolders`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks` (`cmd/monoagentcli`); `TestCreateAttachesEveryArtifact`, `TestCreateRecordsTheRealPathNotASymlink` (`internal/capturetask`); `TestGenerateConfigFailsFastWhenMonomindMissing` (`internal/config`); `TestFindAll_ListsShadowedCopies` (`internal/monomind`). A red package run is compared against this list, not re-investigated.
+- Known failures on a clean macOS tree, not caused by this work: `TestCaptureTaskFilesOnTheBoard`, `TestCoderConversationFolders`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks` (`cmd/monoagentcli`); `TestCreateAttachesEveryArtifact`, `TestCreateRecordsTheRealPathNotASymlink` (`internal/capturetask`); `TestGenerateConfigFailsFastWhenMonomindMissing` (`internal/config`); `TestFindAll_ListsShadowedCopies` (`internal/monomind`). A red package run is compared against this list, not re-investigated. One timing-dependent test, `TestIsolatedWritersRunInParallelInTheirOwnWorktrees` (`internal/dynorg`), can also fail under the load of a whole-suite run and passes alone; run a name that is not on the list by itself before calling it a regression.
 - The migration number `061` is the next free one on master `c612d46d`. It is re-checked against the branch being merged into before merge (Task 21).
 - The Wails bindings and `wails-app/` are not touched in phase 1.
 
@@ -46,11 +46,11 @@ Every task's requirements include this section. Values are copied from the spec.
 
 **Keys** (spec 8.1): `sk-ma-` + base64url of 32 random bytes (49 characters); only the SHA-256 (hex) and the first 12 characters (`prefix`) are stored; ids are `key_` + random base32; names match `^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$` and are unique per profile among active keys; `last_used_at` is written at most once a minute per key; revocation is immediate (no authentication cache); another profile's key is "not found".
 
-**Models and requests** (spec 7.1, 7.2): ids are `<runtime>/<model>`; a bare runtime means its `default` model (no `--model`); `agy` is an alias of `antigravity`; runtime `^[a-z0-9][a-z0-9-]{0,31}$`, model `^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$`; a model must be in the catalog. Sampling parameters are accepted and ignored. Rejected with 400 `unsupported_parameter`: `n > 1`, `logprobs`, `audio`, image or audio content parts, and (until phase 5) a non-empty `tools`, `tool_choice`, `functions`, `function_call`. Exec options: `Runtime`, `Model`, `Prompt`, `SystemPrompt`, `Cwd` = the folder of the turn's limiter slot, `Sandbox: monomind.TurnSandboxMode`, `RequireSandbox` for a sandboxed model, `WorkspacePurpose: "api"`, `Timeout`, `Bin`, and `Effort` when the model lists it; never `Access`, `Tools`, `Settings`, `Env` or bash prefixes. Context block: top 5 excerpts of at most 1,200 characters, base names only, query = the first 500 characters of the last user message, framed as data. **A context key is served only by `chat-only` models** (its policy is capped at chat-only).
+**Models and requests** (spec 7.1, 7.2): ids are `<runtime>/<model>`; a bare runtime means its `default` model (no `--model`); `agy` is an alias of `antigravity`; runtime `^[a-z0-9][a-z0-9-]{0,31}$`, model `^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$`; a model must be in the catalog. Sampling parameters are accepted and ignored. Rejected with 400 `unsupported_parameter`: `n > 1`, `logprobs`, `audio`, image or audio content parts, and (until phase 5) a non-empty `tools`, `tool_choice`, `functions`, `function_call`. Exec options: `Runtime`, `Model`, `Prompt`, `SystemPrompt`, `Cwd` = the turn's slot folder inside its profile's folder, `Sandbox: monomind.TurnSandboxMode`, `RequireSandbox` for a sandboxed model, `WorkspacePurpose: "api"`, `Timeout`, `Bin`, and `Effort` when the model lists it; never `Access`, `Tools`, `Settings`, `Env` or bash prefixes. Context block: top 5 excerpts of at most 1,200 characters, base names only, query = the first 500 characters of the last user message, framed as data. **A context key is served only by models at or below the context maximum**: `--context-confinement chat-only|sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`), default `chat-only`, never above the listener's own maximum.
 
 **Confinement and exposure** (spec 6): classes `chat-only` < `sandboxed` < `unconfined` (the zero class is invalid and allowed by no policy); the classifier fails closed; the start event's `native_sandbox` is checked again (`monomind` is chat-only; `workspace-write` and `read-only` are sandboxed; anything else is unconfined); `--confinement chat-only|sandboxed|any` (`MONOAGENT_API_CONFINEMENT`), default `any` on a loopback bind and `chat-only` otherwise. `/v1` is mounted on the main HTTP API listener only when it is loopback (default `127.0.0.1:9322`). `--v1-addr` (`MONOAGENT_API_V1_ADDR`) is a dedicated listener that serves only `/v1/*` and `GET /health`; any non-loopback bind is served only over TLS (`MONOAGENT_API_TLS_CERT`/`_KEY`, else a self-signed certificate cached under `~/.monoagent/api-tls/`).
 
-**Limits** (spec 6.4): request body 2 MiB; 4 concurrent turns (`--max-concurrent`, `MONOAGENT_API_MAX_CONCURRENT`), a full gateway answers 429 with `Retry-After: 2`; turn timeout 10 minutes (`MONOAGENT_API_TURN_TIMEOUT`, at least 10 s); catalog cache 5 minutes; a stream commits after 5 s of silence and sends `: keep-alive` every 15 s; each SSE write has a 30 s deadline; per-response write deadline of the turn timeout plus 60 s (the request context itself ends at the turn timeout plus 30 s; there is no server-wide `WriteTimeout`); a fixed working folder per concurrency slot, `slot-N` under `~/.monoagent/workspaces/api` (mode 0700), emptied before and after every turn and at start (agent CLIs keep per-folder session state, so a folder per request would pile it up); stopping the server ends the turns in flight and waits up to 30 s for their processes to be killed; no CORS.
+**Limits** (spec 6.4): request body 2 MiB; 4 concurrent turns (`--max-concurrent`, `MONOAGENT_API_MAX_CONCURRENT`), a full gateway answers 429 with `Retry-After: 2`; turn timeout 10 minutes (`MONOAGENT_API_TURN_TIMEOUT`, at least 10 s); catalog cache 5 minutes; a stream commits after 5 s of silence and sends `: keep-alive` every 15 s; each SSE write has a 30 s deadline; per-response write deadline of the turn timeout plus 60 s (the request context itself ends at the turn timeout plus 30 s; there is no server-wide `WriteTimeout`); a fixed working folder per profile and concurrency slot, `p-<hash of the profile id>/slot-N` under `~/.monoagent/workspaces/api` (mode 0700), emptied before and after every turn and at start (agent CLIs keep per-folder session state, so a folder per request would pile it up, and a folder per profile keeps it apart between profiles); stopping the server ends the turns in flight and waits up to 30 s for their processes to be killed; no CORS.
 
 **Errors** (spec 7.4) use `{"error":{"message","type","param","code"}}`: 401 `invalid_api_key`; 400 `invalid_json` / `invalid_value` / `missing_required_parameter` / `unsupported_parameter`; 413 `request_too_large`; 404 `model_not_found`; 403 `policy_denied`; 429 `rate_limit_exceeded` (and `insufficient_quota` for runtime quota or budget); 503 `runtime_not_available`; 504 `timeout`; 502 `runtime_error`; 500 `internal_error`; `max_turns` and `tool_round_cap` are 200 with `finish_reason: "length"`. Messages for 500 and for runtime errors other than setup hints, rate limits, quota and timeouts are generic and name the `X-Request-Id` header; the detail goes to the log. Headers: `X-Request-Id` (every response, errors and 401 included) and `X-Monoagent-Model` always, `X-Monoagent-Sandbox` on a non-stream response, `X-Monoagent-Context` for context keys. Logs hold the request id, key id, profile, model, status, duration and the context count (and, for a failure, the operator-only detail), never a prompt, an answer or a key.
 
@@ -102,7 +102,7 @@ Test helpers shared across `internal/openaiapi` tests: `helpers_test.go` (the ha
 | 14 | httpapi and daemonhb: two seams for the CLI | |
 | 15 | CLI: `api key` | 3 |
 | 16 | CLI: `api models` and `api status` | 6, 8, 14, 15 |
-| 17 | CLI: serve `/v1` from `httpapi` and `daemon` | 12, 13, 14 |
+| 17 | CLI: serve `/v1` from `httpapi` and `daemon` | 12, 13, 14, 16 |
 | 18 | `org teardown-profile` revokes API keys | 3 |
 | 19 | End-to-end test and the opt-in live canaries | 12, 13 |
 | 20 | Documentation | all |
@@ -116,7 +116,7 @@ Where each phase 1 requirement of the spec is built and tested. Items marked "la
 
 | Spec | Requirement | Task |
 |---|---|---|
-| 1, D2 | `context` per key adds only the profile's own knowledge, no folder, no tools; served only by chat-only models | 3 (column), 5 (cap), 7 (block), 10, 11 (search inside the slot) |
+| 1, D2 | `context` per key adds only the profile's own knowledge, no folder, no tools; served only up to the context maximum (`--context-confinement`, default chat-only), by D15 | 3 (column), 5 (cap), 7 (block), 10, 11 (search inside the slot), 16, 17 (flag, models, status) |
 | 1, D4 | Streaming chat from phase 1 | 12 |
 | 1, D1, D9, D12 | Images, MCP tools, Jev `auto` | later (phases 4, 2, 3) |
 | 2, D3, D13 | Off-loopback exposure only on a dedicated TLS-only `/v1` listener, default `chat-only` | 5, 13, 17 |
@@ -126,7 +126,7 @@ Where each phase 1 requirement of the spec is built and tested. Items marked "la
 | 2, D10 | CLI first | 15, 16 |
 | 2, D14 | A key never opens legacy routes; the legacy token never opens `/v1` | 10, 13, 17 |
 | 4.2 | Request flow: auth, policy, validate, resolve, slot, context, slot folder, `Exec`, map, headers | 10, 5, 7, 6, 8, 11, 9, 4 |
-| 5 | Isolation: profile-scoped keys, an exclusive emptied folder per slot, teardown revokes keys, context keys chat-only | 3, 9, 8, 18 |
+| 5, D16 | Isolation: profile-scoped keys, an exclusive emptied folder per profile and slot, teardown revokes keys, context keys capped | 3, 9, 8, 18 |
 | 6.1, 6.2 | Classes, fail-closed classifier, start-event check | 1, 5, 9 |
 | 6.3 | Main listener mounts `/v1` only on loopback; dedicated listener; TLS; confinement flag | 2, 13, 17 |
 | 6.4 | Body, concurrency, timeout, write deadline, no CORS | 8, 11, 12 |
@@ -141,7 +141,7 @@ Where each phase 1 requirement of the spec is built and tested. Items marked "la
 | 15 | The stale sandbox paragraph in AGENTS.md | 20 |
 | 16 | Docs (the phase 1 share) | 20 |
 
-**Where the plan refines the spec** (the spec has been updated to match, and its status line lists the changes made after approval): a context key is served only by chat-only models; each concurrency slot has a fixed working folder instead of one folder per request; a sandbox that cannot be applied refuses the turn; stopping the server ends the turns in flight; error messages are generic; the daemon records its dedicated listener in its heartbeat file instead of a `settings` row, because `api status` already reads that file for the HTTP API address (Task 14); the per-response write deadline is the turn timeout plus 60 s, because the request context itself lasts the turn timeout plus 30 s (Tasks 9, 11); `api models` takes `--for loopback|network` and `--confinement` so an operator can see what each kind of listener would serve (Task 16).
+**Where the plan refines the spec** (the spec has been updated to match, and its status line lists the changes made after approval): a context key is served only by chat-only models unless the operator raises `--context-confinement` (D15), and each concurrency slot has a fixed working folder per profile instead of one folder per request (D16), both decided by the user on 2026-10-01 after the plan was first written; a sandbox that cannot be applied refuses the turn; stopping the server ends the turns in flight; error messages are generic; the daemon records its dedicated listener in its heartbeat file instead of a `settings` row, because `api status` already reads that file for the HTTP API address (Task 14); the per-response write deadline is the turn timeout plus 60 s, because the request context itself lasts the turn timeout plus 30 s (Tasks 9, 11); `api models` takes `--for loopback|network` and `--confinement` so an operator can see what each kind of listener would serve (Task 16).
 
 ---
 
@@ -219,7 +219,7 @@ func TestStartEventDecodesNativeSandbox(t *testing.T) {
 
 Run: `go test ./internal/monomind -run 'TestScanEntryDecodesNativeSandbox|TestStartEventDecodesNativeSandbox' -count=1`
 
-Expected: FAIL with a build error: `unknown field NativeSandbox` / `has no field or method NativeSandbox`.
+Expected: FAIL with build errors such as `a.NativeSandbox undefined (type ScanEntry has no field or method NativeSandbox)`.
 
 Output (abridged):
 
@@ -1990,7 +1990,7 @@ func TestFinishReason(t *testing.T) {
 
 Run: `go test ./internal/openaiapi -count=1`
 
-Expected: FAIL with build errors such as `undefined: Content`, `undefined: apiError`.
+Expected: FAIL with build errors such as `undefined: writeError`, `undefined: errUnsupported`, `undefined: apiError`.
 
 Output (abridged):
 
@@ -2397,8 +2397,9 @@ Spec section 6. A runtime's *class* says how much its turn can do on this machin
 
 The classifier decides from `agent scan --json` and fails closed: whatever it cannot vouch for is `unconfined`. A `Policy` is the
 strongest class a listener serves. Its default depends on the bind address (loopback: any, otherwise chat-only), and `ParsePolicy`
-reads the `--confinement chat-only|sandboxed|any` flag. A request made with a context key is held to at most chat-only (`ForContextKey`,
-used in Task 10), and the zero `Class` is invalid and allowed by no policy, so a class that was never set fails closed. The classifier is table-tested against a real scan captured from monomind
+reads the `--confinement chat-only|sandboxed|any` flag. A request made with a context key is held to the context maximum (`Policy.ContextMax`: chat-only unless the operator raises
+`--context-confinement`; `ForContextKey`, used in Task 10), never above the listener's own limit, and the zero `Class` is invalid and
+allowed by no policy, so a class that was never set fails closed. The classifier is table-tested against a real scan captured from monomind
 2.22.0 on 2026-10-01 (`testdata/scan-2.22.0.json`: claude, codex, antigravity and hermes, binary paths scrubbed).
 
 **Files:**
@@ -2417,11 +2418,11 @@ func (c Class) String() string
 func ClassifyRuntime(e monomind.ScanEntry, caps *monomind.CapabilitySet) Class   // from a scan entry; fails closed
 func ClassFromNativeSandbox(native string) Class   // from a start event: "monomind" chat-only; "workspace-write","read-only" sandboxed; else unconfined
 
-type Policy struct{ Max Class }                    // the strongest class the listener serves
+type Policy struct{ Max, ContextMax Class }        // Max: the strongest class the listener serves; ContextMax: the strongest a key created with --context may use (zero means chat-only)
 func ParsePolicy(s string) (Policy, error)         // "chat-only" | "sandboxed" | "any"
 func DefaultPolicy(addr string) Policy             // loopback bind: any; any other bind: chat-only
 func (p Policy) Allows(c Class) bool              // false for the zero Class
-func (p Policy) ForContextKey() Policy         // capped at chat-only: a key created with --context may only use chat-only models
+func (p Policy) ForContextKey() Policy         // the listener's policy capped at ContextMax, chat-only when unset: what a key created with --context may use
 func (p Policy) String() string                    // "chat-only" | "sandboxed" | "any"
 ```
 
@@ -2653,14 +2654,32 @@ func TestPolicy(t *testing.T) {
 	}
 }
 
-func TestPolicyForContextKeyIsCappedAtChatOnly(t *testing.T) {
-	for in, want := range map[Class]Class{ChatOnly: ChatOnly, Sandboxed: ChatOnly, Unconfined: ChatOnly} {
-		if got := (Policy{Max: in}).ForContextKey().Max; got != want {
-			t.Errorf("a %s listener serves a context key up to %v, want %v", Policy{Max: in}, got, want)
+// A key created with --context is held to chat-only unless the operator raised
+// the context maximum, and that maximum never raises what the listener serves.
+func TestPolicyForContextKeyIsCappedByTheContextMax(t *testing.T) {
+	for _, c := range []struct{ listener, contextMax, want Class }{
+		{Unconfined, 0, ChatOnly}, // nothing set: chat-only
+		{Sandboxed, 0, ChatOnly},
+		{ChatOnly, 0, ChatOnly},
+		{Unconfined, ChatOnly, ChatOnly},
+		{Unconfined, Sandboxed, Sandboxed},
+		{Unconfined, Unconfined, Unconfined},
+		{Sandboxed, Unconfined, Sandboxed}, // never above the listener
+		{ChatOnly, Unconfined, ChatOnly},
+	} {
+		p := Policy{Max: c.listener, ContextMax: c.contextMax}
+		if got := p.ForContextKey().Max; got != c.want {
+			t.Errorf("a %s listener with context maximum %d serves a context key up to %v, want %v", p, c.contextMax, got, c.want)
 		}
 	}
-	if got := (Policy{Max: Unconfined}).ForContextKey().Allows(Sandboxed); got {
-		t.Error("a context key must not reach a sandboxed runtime")
+	if (Policy{Max: Unconfined}).ForContextKey().Allows(Sandboxed) {
+		t.Error("by default a context key must not reach a sandboxed runtime")
+	}
+	if !(Policy{Max: Unconfined, ContextMax: Sandboxed}).ForContextKey().Allows(Sandboxed) {
+		t.Error("with the context maximum raised, a context key may reach a sandboxed runtime")
+	}
+	if (Policy{}).ForContextKey().Allows(ChatOnly) {
+		t.Error("the zero policy serves nothing, for a context key too")
 	}
 }
 
@@ -2692,7 +2711,7 @@ func TestClassString(t *testing.T) {
 
 Run: `go test ./internal/openaiapi -run 'TestClassify|TestClassFromNativeSandbox|TestPolicy|TestDefaultPolicy|TestClassString' -count=1`
 
-Expected: FAIL with build errors: `undefined: ClassifyRuntime`, `undefined: Policy`.
+Expected: FAIL with build errors, the first ones `undefined: Class`, `undefined: ChatOnly` and `undefined: ClassifyRuntime`.
 
 Output (abridged):
 
@@ -2780,8 +2799,17 @@ func ClassFromNativeSandbox(native string) Class {
 	return Unconfined
 }
 
-// Policy is the strongest class a listener serves.
-type Policy struct{ Max Class }
+// Policy is what a listener serves.
+type Policy struct {
+	// Max is the strongest class the listener serves.
+	Max Class
+	// ContextMax is the strongest class a key created with --context may use.
+	// Such a request puts excerpts of the profile's own knowledge, which
+	// includes captured web pages nobody vetted, into the system prompt, and
+	// only a runtime with no native tools can safely read that, so the zero
+	// value means chat-only. It never raises Max.
+	ContextMax Class
+}
 
 // ParsePolicy reads a --confinement value: chat-only, sandboxed or any.
 func ParsePolicy(s string) (Policy, error) {
@@ -2810,12 +2838,14 @@ func DefaultPolicy(addr string) Policy {
 func (p Policy) Allows(c Class) bool { return c >= ChatOnly && c <= p.Max }
 
 // ForContextKey is the policy for a request made with a key created with
-// --context: at most chat-only. Such a request puts excerpts of the profile's
-// own knowledge, which includes captured web pages nobody vetted, into the
-// system prompt, and only a runtime with no native tools can safely read that.
+// --context: the listener's, capped at ContextMax (chat-only when unset).
 func (p Policy) ForContextKey() Policy {
-	if p.Max > ChatOnly {
-		p.Max = ChatOnly
+	limit := p.ContextMax
+	if limit == 0 {
+		limit = ChatOnly
+	}
+	if p.Max > limit {
+		p.Max = limit
 	}
 	return p
 }
@@ -4135,11 +4165,13 @@ a process, a network or a real monomind. This task adds:
   4 concurrent turns, 10 minute turn timeout, 2 MiB body, 5 minute catalog cache, a stream commits after 5 s of silence, keep-alive
   every 15 s;
 - the limiter (a full gateway answers 429, never queues) hands out **numbered slots**, and the slot number names the turn's working folder
-  (Task 9): `slot-0` up to the limit minus one. The folders are fixed rather than one per request, because agent CLIs keep per-folder
-  session state (claude's `~/.claude/projects/<folder>`) that a folder per request would pile up without bound. The body decoder (413 over the cap, 400 on bad JSON) and the per-response
+  (Task 9): `slot-0` up to the limit minus one, inside a folder of the turn's profile (`p-` and a hash of the profile id, so two profiles never
+  share a folder and an id never reaches a path as such). The folders are fixed rather than one per request, because agent CLIs keep
+  per-folder session state (claude's `~/.claude/projects/<folder>`) that a folder per request would pile up without bound, and they are per
+  profile so that state is never shared between profiles. The body decoder (413 over the cap, 400 on bad JSON) and the per-response
   write deadline (`http.ResponseController`; the server-wide 5 minute `WriteTimeout` of the legacy API would cut a long stream);
-- `New`, which refuses missing dependencies and empties the slot folders a crash may have left files in (the folders of slots above the
-  limit are removed);
+- `New`, which refuses missing dependencies and empties the slot folders of every profile that a crash may have left files in (the folders
+  of slots above the limit are removed; nothing but `slot-N` inside a profile folder is touched);
 - `Shutdown` and `Drain`: stopping a server ends every turn in flight (each is cancelled and its process group killed) and waits for them
   to be gone, so no agent CLI outlives the server. Every turn watches a shutdown context for that. Task 8 tests the counting (`Drain`); the
   tests that end a real turn in flight are in Task 9, where turns exist;
@@ -4187,7 +4219,9 @@ func newLimiter(n int) *limiter
 func (l *limiter) tryAcquire() (slot int, release func(), ok bool)   // slot is 0..limit-1, exclusive until release
 func decodeBody(w http.ResponseWriter, r *http.Request, limit int64, dst any) *apiError
 func extendWriteDeadline(w http.ResponseWriter, d time.Duration)
-const slotPrefix = "slot-"; const scratchPurpose = "api"
+const slotPrefix = "slot-"; const scratchPurpose = "api"; const profilePrefix = "p-"
+func profileFolder(profileID string) string   // "p-" and 16 hex characters of the id's SHA-256: a profile id never reaches a path as such
+func isProfileFolder(name string) bool
 func (g *Gateway) Shutdown(timeout time.Duration) bool   // cancels every turn in flight and waits for them to end
 func (g *Gateway) Drain(timeout time.Duration) bool      // waits for them without cancelling
 func emptyDir(dir string) bool                           // removes everything inside dir, keeps dir; reports whether it is empty
@@ -4416,6 +4450,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -4445,10 +4481,28 @@ func TestNewRequiresItsDependencies(t *testing.T) {
 	}
 }
 
+// A profile's folders are named by a hash of its id: the id is an arbitrary
+// string and must never steer a path.
+func TestProfileFolderIsStableDistinctAndSafe(t *testing.T) {
+	if profileFolder("alice") != profileFolder("alice") || profileFolder("alice") == profileFolder("bob") {
+		t.Errorf("a profile must always get the same folder and two profiles different ones: %q %q %q",
+			profileFolder("alice"), profileFolder("alice"), profileFolder("bob"))
+	}
+	shape := regexp.MustCompile(`^p-[0-9a-f]{16}$`)
+	for _, id := range []string{"alice", "", "..", ".", "../../etc", "a/b", `a\b`, "with space", "ünï", strings.Repeat("x", 500)} {
+		if f := profileFolder(id); !shape.MatchString(f) {
+			t.Errorf("profileFolder(%q) = %q: a profile id must never reach a path as such", id, f)
+		}
+	}
+}
+
 func TestNewEmptiesLeftoverSlotFoldersAndNothingElse(t *testing.T) {
 	root := t.TempDir()
-	inSlot, aboveLimit, other := filepath.Join(root, "slot-1"), filepath.Join(root, "slot-9"), filepath.Join(root, "keep-me")
-	for _, d := range []string{inSlot, aboveLimit, other} {
+	profile := filepath.Join(root, profileFolder("alice"))
+	inSlot, aboveLimit := filepath.Join(profile, "slot-1"), filepath.Join(profile, "slot-9")
+	notASlot, notAProfile := filepath.Join(profile, "keep-me"), filepath.Join(root, "keep-me")
+	foreignSlot := filepath.Join(notAProfile, "slot-1") // a slot-looking folder in a folder that is not a profile's
+	for _, d := range []string{inSlot, aboveLimit, notASlot, notAProfile, foreignSlot} {
 		if err := os.MkdirAll(filepath.Join(d, "sub"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -4464,8 +4518,13 @@ func TestNewEmptiesLeftoverSlotFoldersAndNothingElse(t *testing.T) {
 	if _, err := os.Stat(aboveLimit); !os.IsNotExist(err) {
 		t.Error("the folder of a slot above the limit must be removed")
 	}
-	if entries, _ := os.ReadDir(other); len(entries) != 2 {
-		t.Error("only slot-* folders may be touched")
+	for _, untouched := range []string{notASlot, foreignSlot} {
+		if entries, _ := os.ReadDir(untouched); len(entries) != 2 {
+			t.Errorf("only slot-* folders inside a profile folder may be touched: %s", untouched)
+		}
+	}
+	if entries, _ := os.ReadDir(notAProfile); len(entries) != 3 { // sub, the file, slot-1
+		t.Errorf("a folder that is not a profile's must be left alone: %d entries", len(entries))
 	}
 }
 
@@ -4557,9 +4616,9 @@ func TestConfigDefaultsAndEnv(t *testing.T) {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/openaiapi -run 'TestLimiter|TestDecodeBody|TestNew|TestBin|TestConfig|TestDrain' -count=1`
+Run: `go test ./internal/openaiapi -run 'TestLimiter|TestDecodeBody|TestNew|TestBin|TestConfig|TestDrain|TestProfileFolder' -count=1`
 
-Expected: FAIL with build errors: `undefined: Gateway`, `undefined: newLimiter`, `undefined: Deps`.
+Expected: FAIL with build errors: `undefined: Gateway`, `undefined: Deps`, `undefined: Config`.
 
 Output (abridged):
 
@@ -4567,9 +4626,9 @@ Output (abridged):
 internal/openaiapi/helpers_test.go:21:11: undefined: Gateway
 internal/openaiapi/helpers_test.go:37:62: undefined: Deps
 internal/openaiapi/helpers_test.go:37:69: undefined: Config
-internal/openaiapi/gateway_test.go:14:30: undefined: Deps
-internal/openaiapi/gateway_test.go:14:36: undefined: Config
-internal/openaiapi/gateway_test.go:16:20: undefined: Config
+internal/openaiapi/gateway_test.go:16:30: undefined: Deps
+internal/openaiapi/gateway_test.go:16:36: undefined: Config
+internal/openaiapi/gateway_test.go:18:20: undefined: Config
 FAIL  github.com/monoes/mono-agent/internal/openaiapi [build failed]
 ```
 
@@ -4748,7 +4807,9 @@ package openaiapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -4858,33 +4919,66 @@ func New(d Deps, c Config) (*Gateway, error) {
 }
 
 const (
-	// slotPrefix names a turn's working folder: slot-0 up to the concurrency limit.
+	// slotPrefix names a turn's working folder: slot-0 up to the concurrency
+	// limit, inside the folder of the profile the turn runs for.
 	slotPrefix     = "slot-"
 	scratchPurpose = "api"
+	// profilePrefix starts the name of a profile's folder under the scratch root.
+	profilePrefix = "p-"
 )
 
-// cleanSlots empties every slot folder at start, since a crash may have left
-// files in one, and removes the folders of slots above the current limit.
-// Nothing runs yet, so no turn can be using them.
+// profileFolder names the folder that holds a profile's slot folders: a hash
+// of its id, so an id, an arbitrary string, never reaches a path as such. A
+// profile's turns keep their working folders, and so the per-folder session
+// state of the agent CLIs, apart from every other profile's.
+func profileFolder(profileID string) string {
+	sum := sha256.Sum256([]byte(profileID))
+	return profilePrefix + hex.EncodeToString(sum[:8])
+}
+
+// isProfileFolder reports whether name has the shape profileFolder gives.
+func isProfileFolder(name string) bool {
+	raw, ok := strings.CutPrefix(name, profilePrefix)
+	if !ok || len(raw) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(raw)
+	return err == nil
+}
+
+// cleanSlots empties every slot folder of every profile at start, since a
+// crash may have left files in one, and removes the folders of slots above
+// the current limit. Nothing runs yet, so no turn can be using them. Only
+// slot-N folders inside a profile folder are touched.
 func (g *Gateway) cleanSlots() {
-	entries, err := os.ReadDir(g.cfg.ScratchRoot)
+	profiles, err := os.ReadDir(g.cfg.ScratchRoot)
 	if err != nil {
 		return
 	}
-	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), slotPrefix) {
+	for _, p := range profiles {
+		if !p.IsDir() || !isProfileFolder(p.Name()) {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimPrefix(e.Name(), slotPrefix))
+		profileDir := filepath.Join(g.cfg.ScratchRoot, p.Name())
+		slots, err := os.ReadDir(profileDir)
 		if err != nil {
 			continue
 		}
-		dir := filepath.Join(g.cfg.ScratchRoot, e.Name())
-		if n >= g.cfg.MaxConcurrent {
-			_ = os.RemoveAll(dir)
-			continue
+		for _, e := range slots {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), slotPrefix) {
+				continue
+			}
+			n, err := strconv.Atoi(strings.TrimPrefix(e.Name(), slotPrefix))
+			if err != nil {
+				continue
+			}
+			dir := filepath.Join(profileDir, e.Name())
+			if n >= g.cfg.MaxConcurrent {
+				_ = os.RemoveAll(dir)
+				continue
+			}
+			emptyDir(dir)
 		}
-		emptyDir(dir)
 	}
 }
 
@@ -4977,7 +5071,7 @@ func (b *binCache) get(ctx context.Context) (string, error) {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `go test ./internal/openaiapi -run 'TestLimiter|TestDecodeBody|TestNew|TestBin|TestConfig|TestDrain' -race -count=1`
+Run: `go test ./internal/openaiapi -run 'TestLimiter|TestDecodeBody|TestNew|TestBin|TestConfig|TestDrain|TestProfileFolder' -race -count=1`
 
 Expected: `ok  github.com/monoes/mono-agent/internal/openaiapi`.
 
@@ -5015,9 +5109,9 @@ git commit -m "feat(openaiapi): add the gateway core with config, limits and inj
 `runTurn` is the one place a request becomes a `monomind.Exec` call, so it is where the isolation promises of spec section 5 are
 kept. Each turn gets:
 
-- the **folder of the turn's limiter slot**, `slot-N` under the scratch root (mode 0700): fixed per slot, exclusive while the turn runs,
-  emptied before and after it, never the profile folder. A folder that cannot be emptied fails the turn instead of running it among what an
-  earlier request left;
+- the **folder of the turn's profile and limiter slot**, `p-<hash>/slot-N` under the scratch root (mode 0700): fixed per profile and slot,
+  exclusive while the turn runs, emptied before and after it, never the profile's own folder and never shared with another profile. A folder
+  that cannot be emptied fails the turn instead of running it among what an earlier request left;
 - exactly the posture of `agent.ask` and chat without tools: `Sandbox: monomind.TurnSandboxMode` (`workspace-write` where the runtime
   has it), `WorkspacePurpose: "api"`, no `Access` (monomind's default `scoped`), no `Tools`, no `Settings`, no `Env`, no bash prefixes;
 - the model, and the effort only when the model lists it, both already validated by the catalog;
@@ -5037,7 +5131,7 @@ kept. Each turn gets:
 - Test: `internal/openaiapi/runner_test.go`
 
 **Interfaces:**
-- Consumes: `Gateway` fields (`deps`, `cfg`, `bin`), `Deps.Exec`, `Config.TurnTimeout`, `Config.ScratchRoot`, `slotPrefix`, `scratchPurpose`, `emptyDir`, `turnStarted`, `turnEnded`, `Gateway.Shutdown` (Task 8); `Policy.Allows`, `ClassFromNativeSandbox` (Task 5); `errPolicyDenied` (Task 4); `ev.NativeSandbox` (Task 1); the test harness (Task 8).
+- Consumes: `Gateway` fields (`deps`, `cfg`, `bin`), `Deps.Exec`, `Config.TurnTimeout`, `Config.ScratchRoot`, `slotPrefix`, `scratchPurpose`, `profileFolder`, `emptyDir`, `turnStarted`, `turnEnded`, `Gateway.Shutdown` (Task 8); `Policy.Allows`, `ClassFromNativeSandbox` (Task 5); `errPolicyDenied` (Task 4); `ev.NativeSandbox` (Task 1); the test harness (Task 8).
 - Produces:
 
 ```go
@@ -5047,11 +5141,12 @@ type turn struct {
 	Runtime, Model, Effort string
 	System, Prompt         string
 	Policy                 Policy             // the listener's, capped for a context key
-	Slot                   int                // the limiter slot held; its folder is the working directory
+	ProfileID              string             // the profile the request authenticated as; its folder holds the slot folders
+	Slot                   int                // the limiter slot held; its folder inside the profile's is the working directory
 	RequireSandbox         bool               // Exec refuses to start the turn if its sandbox cannot be applied
 	OnDelta                func(text string)  // incremental assistant text; nil when not streaming
 }
-func (g *Gateway) slotDir(slot int) (string, error)   // the slot's folder, created and emptied; an error if it cannot be emptied
+func (g *Gateway) slotDir(profileID string, slot int) (string, error)   // the profile's slot folder, created and emptied; an error if it cannot be emptied
 func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, error)
 // returns Exec's own error as is (the turn never started), or errPolicyDenied after cancelling a turn whose start event is too weak
 func (g *Gateway) caps(ctx context.Context) *monomind.CapabilitySet   // nil when the handshake can't be read
@@ -5091,7 +5186,7 @@ func TestRunTurnBuildsTheLockedDownExecOptions(t *testing.T) {
 	})
 
 	res, err := h.g.runTurn(context.Background(), turn{
-		Runtime: "codex", Model: "gpt-6-astra", Effort: "high", System: "sys", Prompt: "hello", Policy: anyPolicy,
+		Runtime: "codex", Model: "gpt-6-astra", Effort: "high", System: "sys", Prompt: "hello", Policy: anyPolicy, ProfileID: "alice",
 	})
 	if err != nil || res == nil || res.ResultText != "ok" {
 		t.Fatalf("runTurn = %+v, %v", res, err)
@@ -5121,8 +5216,8 @@ func TestRunTurnBuildsTheLockedDownExecOptions(t *testing.T) {
 	if !scratchExisted {
 		t.Error("the turn's folder did not exist while the turn ran")
 	}
-	if got.Cwd != filepath.Join(h.scratch, "slot-0") {
-		t.Errorf("Cwd %q is not the turn's slot folder under %s", got.Cwd, h.scratch)
+	if got.Cwd != filepath.Join(h.scratch, profileFolder("alice"), "slot-0") {
+		t.Errorf("Cwd %q is not the profile's slot folder under %s", got.Cwd, h.scratch)
 	}
 	if entries, err := os.ReadDir(got.Cwd); err != nil || len(entries) != 0 {
 		t.Errorf("the slot folder must be left empty (%d entries, err = %v)", len(entries), err)
@@ -5190,6 +5285,29 @@ func TestRunTurnReusesTheSlotFolderAndEmptiesItAroundEveryTurn(t *testing.T) {
 	}
 }
 
+// Two profiles never share a working folder, so nothing one profile's turn
+// leaves, and none of an agent CLI's per-folder session state, reaches the other.
+func TestRunTurnKeepsEachProfilesFolderApart(t *testing.T) {
+	var dirs []string
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		dirs = append(dirs, opts.Cwd)
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	for _, profile := range []string{"alice", "bob", "alice"} {
+		if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: profile, Slot: 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(dirs) != 3 || dirs[0] == dirs[1] || dirs[0] != dirs[2] {
+		t.Fatalf("one slot gives each profile its own folder, and the same profile the same one: %v", dirs)
+	}
+	for _, d := range dirs {
+		if filepath.Dir(filepath.Dir(d)) != h.scratch || filepath.Base(d) != "slot-0" {
+			t.Errorf("%s is not <scratch>/<profile folder>/slot-0", d)
+		}
+	}
+}
+
 func TestRunTurnSlotsWorkInDifferentFolders(t *testing.T) {
 	var dirs []string
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
@@ -5215,7 +5333,7 @@ func TestRunTurnRefusesAFolderItCannotEmpty(t *testing.T) {
 		ran.Store(true)
 		return okTurn("ok")(ctx, opts, onEvent)
 	})
-	locked := filepath.Join(h.scratch, "slot-0", "locked")
+	locked := filepath.Join(h.scratch, profileFolder(""), "slot-0", "locked")
 	if err := os.MkdirAll(locked, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -5300,7 +5418,7 @@ func TestRunTurnPropagatesBinAndExecErrors(t *testing.T) {
 	if _, err := h2.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy}); !errors.Is(err, execErr) {
 		t.Fatalf("err = %v, want Exec's error", err)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(h2.scratch, "slot-0")); len(entries) != 0 {
+	if entries, _ := os.ReadDir(filepath.Join(h2.scratch, profileFolder(""), "slot-0")); len(entries) != 0 {
 		t.Errorf("a failed turn left %d entries in its folder", len(entries))
 	}
 }
@@ -5446,8 +5564,12 @@ type turn struct {
 	// cancelled if its start event reports a confinement the policy does not
 	// allow.
 	Policy Policy
-	// Slot is the limiter slot the turn holds. Its folder is the turn's
-	// working directory, and nothing else runs in it meanwhile.
+	// ProfileID is the profile the request authenticated as. The turn works in
+	// that profile's folder, so no two profiles share one.
+	ProfileID string
+	// Slot is the limiter slot the turn holds. Its folder inside the
+	// profile's is the turn's working directory, and nothing else runs in it
+	// meanwhile.
 	Slot int
 	// RequireSandbox makes Exec refuse to start the turn when the sandbox the
 	// model's class depends on cannot be applied right now, instead of
@@ -5458,14 +5580,15 @@ type turn struct {
 	OnDelta func(text string)
 }
 
-// slotDir returns the working folder of a limiter slot, created empty. A turn
-// gets a fixed folder per slot rather than a new one per request: agent CLIs
-// keep per-folder session state (claude's ~/.claude/projects/<folder>), which
-// would pile up without bound under a folder per request. The folder is
-// emptied before and after every turn, so nothing one request leaves can
+// slotDir returns the working folder of a profile's limiter slot, created
+// empty. A turn gets a fixed folder per profile and slot rather than a new one
+// per request: agent CLIs keep per-folder session state (claude's
+// ~/.claude/projects/<folder>), which would pile up without bound under a
+// folder per request, and which this keeps apart between profiles. The folder
+// is emptied before and after every turn, so nothing one request leaves can
 // reach the next. A folder that cannot be emptied fails the request.
-func (g *Gateway) slotDir(slot int) (string, error) {
-	dir := filepath.Join(g.cfg.ScratchRoot, fmt.Sprintf("%s%d", slotPrefix, slot))
+func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
+	dir := filepath.Join(g.cfg.ScratchRoot, profileFolder(profileID), fmt.Sprintf("%s%d", slotPrefix, slot))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating the turn's folder: %w", err)
 	}
@@ -5475,7 +5598,7 @@ func (g *Gateway) slotDir(slot int) (string, error) {
 	return dir, nil
 }
 
-// runTurn runs t through monomind.Exec in its slot's folder, with exactly the
+// runTurn runs t through monomind.Exec in its profile's slot folder, with exactly the
 // posture of agent.ask and chat without tools: default (scoped) access, the
 // workspace-write sandbox where the runtime has one, no caller tools, no
 // settings, nothing from the client but the prompt, the model and the effort
@@ -5493,7 +5616,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 	if err != nil {
 		return nil, err
 	}
-	dir, err := g.slotDir(t.Slot)
+	dir, err := g.slotDir(t.ProfileID, t.Slot)
 	if err != nil {
 		return nil, err
 	}
@@ -5606,8 +5729,8 @@ completion says why (403, Task 11). Entries carry a `monoagent` block (`runtime`
 mux for one listener's policy.
 
 Every response, an error or a 401 included, carries an `X-Request-Id`, and a failed authentication is logged with the caller's address and
-never the key it sent. A key created with `--context` is held to **at most chat-only** (`policyFor`): it is listed only the chat-only models,
-and the others are 404 on retrieve.
+never the key it sent. A key created with `--context` is held to the policy's **context maximum** (`policyFor`: chat-only unless the operator raised
+`--context-confinement`, never above the listener's own limit): it is listed only the models at or below it, and the others are 404 on retrieve.
 
 **Files:**
 - Create: `internal/openaiapi/auth.go`
@@ -5624,7 +5747,7 @@ and the others are 404 on retrieve.
 type Principal struct{ KeyID, ProfileID string; Context bool; RequestID string }   // RequestID is also the X-Request-Id header and the log's req=
 func (g *Gateway) auth(next func(w http.ResponseWriter, r *http.Request, p Principal)) http.Handler   // 401 invalid_api_key, WWW-Authenticate: Bearer
 func newRequestID(prefix string) string      // prefix + 16 lowercase base32 characters, e.g. "req_k3j2h1g4f5d6s7a8"
-func policyFor(p Policy, pr Principal) Policy   // the listener's policy, capped at chat-only for a context key
+func policyFor(p Policy, pr Principal) Policy   // the listener's policy, capped at the context maximum for a context key
 func writeJSON(w http.ResponseWriter, status int, v any)
 func objectFor(m ModelInfo) modelObject
 func catalogError(err error) *apiError       // 503 runtime_not_available when monomind is missing, else 500
@@ -5854,8 +5977,8 @@ func TestEveryResponseCarriesARequestIDAndAFailedAuthIsLogged(t *testing.T) {
 }
 
 // A key created with --context puts the profile's knowledge, which includes
-// captured web pages nobody vetted, into the prompt, so only models with no
-// native tools may receive it.
+// captured web pages nobody vetted, into the prompt, so by default only models
+// with no native tools may receive it.
 func TestModelsForAContextKeyAreChatOnlyModels(t *testing.T) {
 	h := newHarness(t, okTurn("x"))
 	plain, withContext := h.key(t, "default", "plain", false), h.key(t, "default", "ctx", true)
@@ -5877,6 +6000,29 @@ func TestModelsForAContextKeyAreChatOnlyModels(t *testing.T) {
 	}
 	if rec := h.serve(anyPolicy, http.MethodGet, "/v1/models/codex/gpt-6-astra", plain, ""); rec.Code != http.StatusOK {
 		t.Errorf("the same model is there for a plain key: %d", rec.Code)
+	}
+}
+
+// The operator can raise that maximum, and it never goes above the listener.
+func TestModelsForAContextKeyFollowTheContextMax(t *testing.T) {
+	h := newHarness(t, okTurn("x"))
+	withContext := h.key(t, "default", "ctx", true)
+	classes := func(p Policy) map[string]bool {
+		seen := map[string]bool{}
+		for _, m := range decodeModelList(t, h.serve(p, http.MethodGet, "/v1/models", withContext, "")).Data {
+			seen[m.Monoagent.Confinement] = true
+		}
+		return seen
+	}
+
+	if got := classes(Policy{Max: Unconfined, ContextMax: Sandboxed}); !got["chat-only"] || !got["sandboxed"] || got["unconfined"] {
+		t.Errorf("a context maximum of sandboxed offers chat-only and sandboxed models: %v", got)
+	}
+	if got := classes(Policy{Max: ChatOnly, ContextMax: Unconfined}); len(got) != 1 || !got["chat-only"] {
+		t.Errorf("a context maximum never raises what the listener serves: %v", got)
+	}
+	if rec := h.serve(Policy{Max: Unconfined, ContextMax: Sandboxed}, http.MethodGet, "/v1/models/codex/gpt-6-astra", withContext, ""); rec.Code != http.StatusOK {
+		t.Errorf("a sandboxed model is found for a context key once the maximum allows it: %d", rec.Code)
 	}
 }
 ```
@@ -5924,8 +6070,8 @@ type Principal struct {
 	RequestID string
 }
 
-// policyFor is the policy a request is held to: the listener's, capped at
-// chat-only for a key created with --context.
+// policyFor is the policy a request is held to: the listener's, capped at the
+// context maximum for a key created with --context.
 func policyFor(p Policy, pr Principal) Policy {
 	if pr.Context {
 		return p.ForContextKey()
@@ -6025,7 +6171,7 @@ func catalogError(err error) *apiError {
 }
 
 // handleModels is GET /v1/models: the models this listener's policy allows
-// the key (a context key is held to chat-only).
+// the key (a context key is held to the context maximum).
 func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request, Principal) {
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		models, err := g.catalog.Visible(r.Context(), policyFor(p, pr))
@@ -6107,12 +6253,12 @@ starts until the request is valid, allowed and has a slot:
 
 1. decode the body (413 over the cap, 400 on bad JSON), require `model`, `validateChat` (400);
 2. resolve the model against the catalog (404 `model_not_found`), then check its class against the listener's policy (403
-   `policy_denied` with the reason, which is why this comes after the lookup and not as a 404). A context key is held to at most chat-only and
-   gets its own explanation: the knowledge it adds includes captured web pages nobody vetted;
+   `policy_denied` with the reason, which is why this comes after the lookup and not as a 404). A context key is held to the context maximum and
+   gets its own explanation, which names `--context-confinement`: the knowledge it adds includes captured web pages nobody vetted;
 3. take a concurrency slot without waiting (429 + `Retry-After: 2`);
 4. for a key created with `--context`, search the profile's knowledge inside the slot; a failed or empty search never fails the request
    (`X-Monoagent-Context: <n>|none|unavailable`);
-5. run the turn (Task 9; a `sandboxed` model's turn requires its sandbox) and map the result: `turnError` gives the 429/503/504/502 rows of spec 7.4, `max_turns` and `tool_round_cap` are a
+5. run the turn (Task 9: in a slot folder of the key's profile; a `sandboxed` model's turn requires its sandbox) and map the result: `turnError` gives the 429/503/504/502 rows of spec 7.4, `max_turns` and `tool_round_cap` are a
    `finish_reason` of `length`, and a start event weaker than the policy is a 403.
 
 Headers: `X-Request-Id` always, `X-Monoagent-Model` (the runtime/model that answered), `X-Monoagent-Sandbox` (the turn's `SandboxStatus`).
@@ -6154,6 +6300,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -6214,6 +6361,32 @@ func TestChatSandboxStatusHeader(t *testing.T) {
 	rec := post(h, anyPolicy, h.key(t, "default", "app", false), `{"model":"codex/gpt-6-astra","messages":[{"role":"user","content":"x"}]}`)
 	if rec.Header().Get("X-Monoagent-Sandbox") != "sandboxed" {
 		t.Fatalf("X-Monoagent-Sandbox = %q", rec.Header().Get("X-Monoagent-Sandbox"))
+	}
+}
+
+// A request works in the folder of the profile its key belongs to, never in
+// another profile's.
+func TestChatRunsInTheKeysProfileFolder(t *testing.T) {
+	cwds := map[string]string{}
+	var current string
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		cwds[current] = o.Cwd
+		return okTurn("pong")(ctx, o, onEvent)
+	})
+	for _, profile := range []string{"alice", "bob"} {
+		current = profile
+		if rec := post(h, anyPolicy, h.key(t, profile, "app", false), chatBody); rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d, body %s", profile, rec.Code, rec.Body)
+		}
+	}
+	for profile, cwd := range cwds {
+		// Which slot a request gets does not matter, the profile's folder does.
+		if want := filepath.Join(h.scratch, profileFolder(profile)); filepath.Dir(cwd) != want || !strings.HasPrefix(filepath.Base(cwd), "slot-") {
+			t.Errorf("profile %s worked in %s, want a slot folder inside %s", profile, cwd, want)
+		}
+	}
+	if len(cwds) != 2 || cwds["alice"] == cwds["bob"] {
+		t.Errorf("two profiles must never share a working folder: %v", cwds)
 	}
 }
 
@@ -6501,7 +6674,7 @@ func TestChatContextKeyIsServedOnlyByChatOnlyModels(t *testing.T) {
 	for _, model := range []string{"codex/gpt-6-astra", "antigravity"} {
 		rec := post(h, anyPolicy, withContext, body(model))
 		if rec.Code != http.StatusForbidden || decodeErrorBody(t, rec)["code"] != "policy_denied" ||
-			!strings.Contains(fmt.Sprint(decodeErrorBody(t, rec)["message"]), "--context") {
+			!strings.Contains(fmt.Sprint(decodeErrorBody(t, rec)["message"]), "--context-confinement") {
 			t.Errorf("%s with a context key: status %d body %s", model, rec.Code, rec.Body)
 		}
 	}
@@ -6514,6 +6687,48 @@ func TestChatContextKeyIsServedOnlyByChatOnlyModels(t *testing.T) {
 	// A key without context is held only to the listener's policy.
 	if rec := post(h, anyPolicy, h.key(t, "default", "plain", false), body("codex/gpt-6-astra")); rec.Code != http.StatusOK {
 		t.Errorf("a plain key may use a sandboxed model on a loopback listener: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestChatContextKeyFollowsTheContextMax(t *testing.T) {
+	var spawned atomic.Int32
+	var required []bool
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		spawned.Add(1)
+		required = append(required, o.RequireSandbox)
+		return okTurn("x")(ctx, o, onEvent)
+	}, func(d *Deps, _ *Config) {
+		d.Knowledge = func(context.Context, string, string) ([]monomind.KnowledgeResult, error) {
+			return []monomind.KnowledgeResult{{Path: "/a/b.md", Excerpt: "e", Score: 1}}, nil
+		}
+	})
+	body := func(model string) string {
+		return `{"model":"` + model + `","messages":[{"role":"user","content":"x"}]}`
+	}
+	withContext := h.key(t, "default", "ctx", true)
+
+	// The operator raised the context maximum to sandboxed.
+	raised := Policy{Max: Unconfined, ContextMax: Sandboxed}
+	if rec := post(h, raised, withContext, body("codex/gpt-6-astra")); rec.Code != http.StatusOK || rec.Header().Get("X-Monoagent-Context") != "1" {
+		t.Fatalf("a sandboxed model serves a context key when the maximum allows it: status %d header %q body %s", rec.Code, rec.Header().Get("X-Monoagent-Context"), rec.Body)
+	}
+	if len(required) != 1 || !required[0] {
+		t.Errorf("a sandboxed model still requires its sandbox for a context key: %v", required)
+	}
+	rec := post(h, raised, withContext, body("antigravity"))
+	if rec.Code != http.StatusForbidden || decodeErrorBody(t, rec)["code"] != "policy_denied" ||
+		!strings.Contains(fmt.Sprint(decodeErrorBody(t, rec)["message"]), "--context-confinement") {
+		t.Errorf("an unconfined model is still above the raised maximum: status %d body %s", rec.Code, rec.Body)
+	}
+	if spawned.Load() != 1 {
+		t.Errorf("%d turns started, want only the allowed one", spawned.Load())
+	}
+
+	// The context maximum never raises what the listener itself serves.
+	network := Policy{Max: ChatOnly, ContextMax: Unconfined}
+	rec = post(h, network, withContext, body("codex/gpt-6-astra"))
+	if rec.Code != http.StatusForbidden || !strings.Contains(fmt.Sprint(decodeErrorBody(t, rec)["message"]), "confinement policy") {
+		t.Errorf("a chat-only listener refuses a sandboxed model even for a context key: status %d body %s", rec.Code, rec.Body)
 	}
 }
 
@@ -6641,11 +6856,11 @@ Output (abridged):
 
 ```
 --- FAIL: TestChatCompletionHappyPath
-chat_test.go:35: status 404, body 404 page not found
+chat_test.go:36: status 404, body 404 page not found
 --- FAIL: TestChatSandboxStatusHeader
-chat_test.go:70: X-Monoagent-Sandbox = ""
---- FAIL: TestChatRejectsBeforeSpawningAnything
-chat_test.go:105: body "404 page not found\n" is not an OpenAI error: invalid character 'p' after top-level value
+chat_test.go:71: X-Monoagent-Sandbox = ""
+--- FAIL: TestChatRunsInTheKeysProfileFolder
+chat_test.go:87: alice: status 404, body 404 page not found
 FAIL  github.com/monoes/mono-agent/internal/openaiapi  <time>
 ```
 
@@ -6719,7 +6934,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		eff := policyFor(p, pr)
 		if !eff.Allows(m.Class) {
 			if p.Allows(m.Class) { // only the cap on a context key refuses it
-				fail(errPolicy(fmt.Sprintf("model %s runs as %s, and a key created with --context is served only by chat-only models: its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted", m.ID, m.Class)))
+				fail(errPolicy(fmt.Sprintf("model %s runs as %s, which is above what a key created with --context may use here (%s): its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted; the operator can raise this with --context-confinement", m.ID, m.Class, eff)))
 			} else {
 				fail(errPolicy(fmt.Sprintf("model %s runs as %s, which this server's confinement policy (%s) does not allow; the operator can raise it with --confinement", m.ID, m.Class, p)))
 			}
@@ -6746,7 +6961,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		tr := translateChat(&req, ctxBlock)
 		t := turn{
 			Runtime: m.Runtime, Model: m.Model, Effort: effort, System: tr.System, Prompt: tr.Prompt,
-			Policy: eff, Slot: slot, RequireSandbox: m.Class == Sandboxed,
+			Policy: eff, ProfileID: pr.ProfileID, Slot: slot, RequireSandbox: m.Class == Sandboxed,
 		}
 
 		w.Header().Set("X-Monoagent-Model", m.ID)
@@ -7227,7 +7442,7 @@ Output (abridged):
 
 ```
 --- FAIL: TestStreamIncrementalRuntime
-stream_test.go:66: status 400 headers map[Content-Type:[application/json] X-Monoagent-Model:[claude/default] X-Request-Id:[req_3lddxkssjqbx7ryz]]
+stream_test.go:66: status 400 headers map[Content-Type:[application/json] X-Monoagent-Model:[claude/default] X-Request-Id:[req_rmd5trc5p4rhzjrs]]
 --- FAIL: TestStreamNonIncrementalRuntimeSendsOneChunkAtTheEnd
 stream_test.go:110: status 400, events: []
 --- FAIL: TestStreamIncludeUsageAddsAFinalUsageChunk
@@ -7878,8 +8093,8 @@ The daemon builds the gateway's `/v1` mount *before* it builds the HTTP API serv
 whether the main listener is loopback (Task 17). So the address resolution (`--api-addr`, else `MONOAGENT_HTTPAPI_ADDR`, else
 `127.0.0.1:9322`) is exported from the one place that implements it, and `NewServer` calls it, so there is still a single definition.
 `api status` (Task 16) shows where the daemon listens from its heartbeat file, which now also records the dedicated listener's address and the
-confinement policy the daemon applies on each listener: `api status` cannot work that out from its own environment, because a server started with
-`--confinement` need not share it.
+confinement policy the daemon applies on each listener, and the strongest class a key created with `--context` may use: `api status` cannot work
+that out from its own environment, because a server started with `--confinement` or `--context-confinement` need not share it.
 
 **Files:**
 - Modify: `internal/httpapi/server.go`
@@ -7889,7 +8104,7 @@ confinement policy the daemon applies on each listener: `api status` cannot work
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `httpapi.ResolveAddr(addr string) string` and three string fields of `daemonhb.Heartbeat`: `V1Addr` (JSON `v1_addr`), `APIConfinement` (`api_confinement`) and `V1Confinement` (`v1_confinement`), each omitted when empty.
+- Produces: `httpapi.ResolveAddr(addr string) string` and four string fields of `daemonhb.Heartbeat`: `V1Addr` (JSON `v1_addr`), `APIConfinement` (`api_confinement`), `V1Confinement` (`v1_confinement`) and `ContextConfinement` (`context_confinement`), each omitted when empty.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7942,11 +8157,11 @@ import (
 func TestHeartbeatCarriesTheV1AddrAndTheConfinementPolicies(t *testing.T) {
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
 
-	if err := Write(Heartbeat{PID: os.Getpid(), APIAddr: "127.0.0.1:9322", V1Addr: "0.0.0.0:9443", APIConfinement: "any", V1Confinement: "chat-only"}); err != nil {
+	if err := Write(Heartbeat{PID: os.Getpid(), APIAddr: "127.0.0.1:9322", V1Addr: "0.0.0.0:9443", APIConfinement: "any", V1Confinement: "chat-only", ContextConfinement: "sandboxed"}); err != nil {
 		t.Fatal(err)
 	}
 	hb, live := Read()
-	if !live || hb.APIAddr != "127.0.0.1:9322" || hb.V1Addr != "0.0.0.0:9443" || hb.APIConfinement != "any" || hb.V1Confinement != "chat-only" {
+	if !live || hb.APIAddr != "127.0.0.1:9322" || hb.V1Addr != "0.0.0.0:9443" || hb.APIConfinement != "any" || hb.V1Confinement != "chat-only" || hb.ContextConfinement != "sandboxed" {
 		t.Fatalf("Read = %+v, live=%v", hb, live)
 	}
 
@@ -7958,7 +8173,7 @@ func TestHeartbeatCarriesTheV1AddrAndTheConfinementPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"v1_addr", "api_confinement", "v1_confinement"} {
+	for _, key := range []string{"v1_addr", "api_confinement", "v1_confinement", "context_confinement"} {
 		if strings.Contains(string(raw), key) {
 			t.Errorf("%s must be omitted when empty: %s", key, raw)
 		}
@@ -7970,17 +8185,17 @@ func TestHeartbeatCarriesTheV1AddrAndTheConfinementPolicies(t *testing.T) {
 
 Run: `go test ./internal/httpapi ./internal/daemonhb -run 'TestResolveAddr|TestNewServerAppliesResolveAddr|TestHeartbeatCarriesTheV1Addr' -count=1`
 
-Expected: FAIL with build errors: `undefined: ResolveAddr`, `unknown field V1Addr`.
+Expected: FAIL with build errors such as `unknown field V1Addr in struct literal of type Heartbeat` (and `undefined: ResolveAddr` for `httpapi`).
 
 Output (abridged):
 
 ```
-internal/httpapi/addr_test.go:7:12: undefined: ResolveAddr
-internal/httpapi/addr_test.go:11:12: undefined: ResolveAddr
-internal/httpapi/addr_test.go:14:12: undefined: ResolveAddr
 internal/daemonhb/v1addr_test.go:13:73: unknown field V1Addr in struct literal of type Heartbeat
 internal/daemonhb/v1addr_test.go:13:97: unknown field APIConfinement in struct literal of type Heartbeat
 internal/daemonhb/v1addr_test.go:13:120: unknown field V1Confinement in struct literal of type Heartbeat
+internal/daemonhb/v1addr_test.go:13:148: unknown field ContextConfinement in struct literal of type Heartbeat
+internal/daemonhb/v1addr_test.go:17:51: hb.V1Addr undefined (type Heartbeat has no field or method V1Addr)
+internal/daemonhb/v1addr_test.go:17:82: hb.APIConfinement undefined (type Heartbeat has no field or method APIConfinement)
 FAIL  github.com/monoes/mono-agent/internal/httpapi [build failed]
 ```
 
@@ -8036,10 +8251,12 @@ with:
 	// APIConfinement and V1Confinement are the confinement policies the daemon
 	// really applies on the OpenAI-compatible API of its HTTP API listener and
 	// of its dedicated listener ("" where that listener does not serve it).
-	// `api status` cannot work them out from its own environment.
-	APIConfinement string `json:"api_confinement,omitempty"`
-	V1Confinement  string `json:"v1_confinement,omitempty"`
-	Version        string `json:"version,omitempty"`
+	// ContextConfinement is the strongest class a key created with --context
+	// may use. `api status` cannot work any of them out from its own environment.
+	APIConfinement     string `json:"api_confinement,omitempty"`
+	V1Confinement      string `json:"v1_confinement,omitempty"`
+	ContextConfinement string `json:"context_confinement,omitempty"`
+	Version            string `json:"version,omitempty"`
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -8075,7 +8292,7 @@ headless Linux server.
 
 - `create --name N [--context]` prints the key **once**. With `--json` it is the `key` field of the key's metadata. Without it, stdout is the
   key alone and the notes go to stderr, so `KEY=$(monoagentcli api key create --name app)` works in a script. A `--context` key also says there
-  that only chat-only models serve it.
+  that only chat-only models serve it unless the server raises `--context-confinement`.
 - `list [--all-profiles] [--include-revoked]`, `show <id|name>` (metadata only, never the key).
 - `update <id|name> [--name N] [--context | --no-context]` renames a key or switches its knowledge context. A flag's own value counts, so
   `--context=false` turns context off.
@@ -8126,6 +8343,7 @@ import (
 func newAPITestDB(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONOAGENT_API_CONTEXT_CONFINEMENT", "")
 	dbPath := filepath.Join(t.TempDir(), "api.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
@@ -8290,8 +8508,8 @@ func TestAPIKeyUpdateHonoursExplicitFlagValues(t *testing.T) {
 func TestAPIKeyCreateWithContextSaysWhichModelsServeIt(t *testing.T) {
 	db := newAPITestDB(t)
 	_, withNote, err := runAPI(t, db, "default", false, "key", "create", "--name", "notes", "--context")
-	if err != nil || !strings.Contains(withNote, "chat-only") {
-		t.Errorf("a context key must say it is served by chat-only models only: %q (%v)", withNote, err)
+	if err != nil || !strings.Contains(withNote, "chat-only") || !strings.Contains(withNote, "--context-confinement") {
+		t.Errorf("a context key must say it is served by chat-only models unless the server raises --context-confinement: %q (%v)", withNote, err)
 	}
 	_, plainNote, err := runAPI(t, db, "default", false, "key", "create", "--name", "plain")
 	if err != nil || strings.Contains(plainNote, "chat-only") {
@@ -8357,10 +8575,10 @@ Expected: FAIL with a build error: `undefined: newAPICmd`.
 Output (abridged):
 
 ```
-cmd/monoagentcli/api_key_test.go:36:17: undefined: apiStdinIsTerminal
-cmd/monoagentcli/api_key_test.go:37:2: undefined: apiStdinIsTerminal
-cmd/monoagentcli/api_key_test.go:38:17: undefined: apiStdinIsTerminal
-cmd/monoagentcli/api_key_test.go:40:9: undefined: newAPICmd
+cmd/monoagentcli/api_key_test.go:37:17: undefined: apiStdinIsTerminal
+cmd/monoagentcli/api_key_test.go:38:2: undefined: apiStdinIsTerminal
+cmd/monoagentcli/api_key_test.go:39:17: undefined: apiStdinIsTerminal
+cmd/monoagentcli/api_key_test.go:41:9: undefined: newAPICmd
 FAIL  github.com/monoes/mono-agent/cmd/monoagentcli [build failed]
 ```
 
@@ -8487,14 +8705,14 @@ func newAPIKeyCreateCmd(cfg *globalConfig) *cobra.Command {
 					key.Name, key.ID, key.ProfileID)
 				if key.Context {
 					fmt.Fprintln(cmd.ErrOrStderr(),
-						"This key adds the profile's knowledge to requests, so only chat-only models serve it (see `monoagentcli api models`).")
+						"This key adds the profile's knowledge to requests, so it is served only by chat-only models unless the server was started with --context-confinement (see `monoagentcli api models`).")
 				}
 				return nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Key name: 1-64 characters, unique among the profile's active keys")
-	cmd.Flags().BoolVar(&withContext, "context", false, "Add the profile's knowledge to requests made with this key (served by chat-only models only)")
+	cmd.Flags().BoolVar(&withContext, "context", false, "Add the profile's knowledge to requests made with this key (served by chat-only models unless the server raises --context-confinement)")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
@@ -8723,15 +8941,17 @@ git commit -m "feat(cli): add api key create, list, show, update and revoke" -m 
 
 Spec section 8.2. Two read-only commands that make the server's behaviour inspectable without starting it:
 
-- `api models [--for loopback|network] [--confinement C]` lists every model of the installed runtimes with its confinement class, whether
-  the policy of a loopback or a network listener serves it, and `validated`. It is what an operator checks before exposing the API: on
+- `api models [--for loopback|network] [--confinement C] [--context-confinement C]` lists every model of the installed runtimes with its
+  confinement class, whether the policy of a loopback or a network listener serves it, whether a key created with `--context` may use it, and
+  `validated`. It is what an operator checks before exposing the API: on
   this machine claude is `chat-only`, codex `sandboxed`, antigravity `unconfined`. The policy is `--confinement`, else
-  `MONOAGENT_API_CONFINEMENT`, else the listener's default (any on loopback, chat-only on a network bind).
+  `MONOAGENT_API_CONFINEMENT`, else the listener's default (any on loopback, chat-only on a network bind). A context key is held to
+  `--context-confinement`, else `MONOAGENT_API_CONTEXT_CONFINEMENT`, else chat-only, and never above that policy.
 - `api status` shows the profile's active key count, whether a daemon runs (from its heartbeat), and each listener: the main HTTP API one
   (which serves `/v1` only when loopback) and the dedicated `--v1-addr` one, with the confinement it applies, whether
-  `GET /health` answers within 2 s, and whether `GET /v1/models` sent without a key is refused with 401. The confinement comes from the daemon's
-  heartbeat when one runs; otherwise it is worked out from this shell's environment, and the output says so (`confinement_source`), because a
-  server started with `--confinement` may differ. Only the API answers 401 there, so this tells
+  `GET /health` answers within 2 s, and whether `GET /v1/models` sent without a key is refused with 401. The confinement and the context maximum come from the
+  daemon's heartbeat when one runs; otherwise they are worked out from this shell's environment, and the output says so (`confinement_source`),
+  because a server started with `--confinement` or `--context-confinement` may differ. Only the API answers 401 there, so this tells
   a server that really mounts `/v1` from one that predates it: a daemon left running across an upgrade answers `/health` and 404s on `/v1`, and
   `api status` says to restart it. Neither request carries a secret, so the dedicated listener's self-signed certificate is not verified.
 
@@ -8742,19 +8962,21 @@ Spec section 8.2. Two read-only commands that make the server's behaviour inspec
 - Test: `cmd/monoagentcli/api_models_status_test.go`
 
 **Interfaces:**
-- Consumes: `newAPICmd` and `runAPI` (Task 15); `openaiapi.NewCatalog`, `DefaultDeps`, `DefaultPolicy`, `ParsePolicy`, `Policy`, `Class` (Tasks 5, 6, 8); `httpapi.ResolveAddr`, `daemonhb.Read()` and `Heartbeat.V1Addr`, `.APIConfinement`, `.V1Confinement` (Task 14); `tlsserve.IsLoopbackAddr` (Task 2); `apikeys.Store.CountActive` (Task 3).
+- Consumes: `newAPICmd` and `runAPI` (Task 15); `openaiapi.NewCatalog`, `DefaultDeps`, `DefaultPolicy`, `ParsePolicy`, `Policy`, `Class` (Tasks 5, 6, 8); `httpapi.ResolveAddr`, `daemonhb.Read()` and `Heartbeat.V1Addr`, `.APIConfinement`, `.V1Confinement`, `.ContextConfinement` (Task 14); `tlsserve.IsLoopbackAddr` (Task 2); `apikeys.Store.CountActive` (Task 3).
 - Produces:
 
 ```go
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command
 func newAPIStatusCmd(cfg *globalConfig) *cobra.Command
 func effectivePolicy(addr, explicit string, getenv func(string) string) (openaiapi.Policy, error)  // flag, else env, else DefaultPolicy(addr); bad value -> exit 3
+func effectiveContextMax(explicit string, getenv func(string) string) (openaiapi.Class, error)   // flag, else MONOAGENT_API_CONTEXT_CONFINEMENT, else chat-only; bad value -> exit 3
+func contextConfinementFor(confinement string, contextMax openaiapi.Class) string   // what a --context key may use on a listener that serves confinement
 func representativeAddr(kind string) (string, error)                        // "loopback" -> "127.0.0.1:0", "network" -> "0.0.0.0:0"
 func listenerNote(l apiListenerJSON) string                                 // the one-line human summary of a listener
 func probeListener(base string, wantV1 bool) (reachable, v1Answers bool)    // GET /health is 200; GET /v1/models without a key is 401
 ```
-`api models --json`: `{"v":1,"policy":{"for","confinement"},"models":[{"id","runtime","model","label","confinement","validated","allowed"}]}`.
-`api status --json`: `{"v":1,"profile","keys":{"active"},"daemon":{"running","api_addr","v1_addr"},"listeners":[{"name","addr","loopback","v1","confinement","confinement_source","reachable","v1_answers"}]}`; `confinement_source` is `"daemon"` or `"environment"`.
+`api models --json`: `{"v":1,"policy":{"for","confinement","context_confinement"},"models":[{"id","runtime","model","label","confinement","validated","allowed","context_allowed"}]}`.
+`api status --json`: `{"v":1,"profile","keys":{"active"},"daemon":{"running","api_addr","v1_addr"},"listeners":[{"name","addr","loopback","v1","confinement","context_confinement","confinement_source","reachable","v1_answers"}]}`; `confinement_source` is `"daemon"` or `"environment"`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -8775,6 +8997,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/openaiapi"
 )
 
 // fakeAPIMonomind points monomind at a script that lists three runtimes (the
@@ -8833,6 +9056,14 @@ func allowedByID(m apiModelsJSON) map[string]bool {
 	return out
 }
 
+func contextAllowedByID(m apiModelsJSON) map[string]bool {
+	out := map[string]bool{}
+	for _, x := range m.Models {
+		out[x.ID] = x.ContextAllowed
+	}
+	return out
+}
+
 func TestAPIModelsMarksWhatEachPolicyAllows(t *testing.T) {
 	db := newAPITestDB(t)
 	fakeAPIMonomind(t)
@@ -8856,6 +9087,24 @@ func TestAPIModelsMarksWhatEachPolicyAllows(t *testing.T) {
 	if classes["claude/default"] != "chat-only" || classes["codex/gpt-6-astra"] != "sandboxed" ||
 		classes["antigravity/default"] != "unconfined" || classes["codex/default"] != "sandboxed" {
 		t.Errorf("classes: %v", classes)
+	}
+
+	// A key created with --context is held to chat-only unless raised.
+	if loopback.Policy.ContextConfinement != "chat-only" {
+		t.Errorf("context confinement: %+v", loopback.Policy)
+	}
+	if c := contextAllowedByID(loopback); !c["claude/default"] || c["codex/gpt-6-astra"] || c["antigravity/default"] {
+		t.Errorf("models a context key may use by default: %v", c)
+	}
+	out, _, _ = runAPI(t, db, "default", true, "models", "--context-confinement", "sandboxed")
+	raised := decodeModels(t, out)
+	if c := contextAllowedByID(raised); !c["claude/default"] || !c["codex/gpt-6-astra"] || c["antigravity/default"] || raised.Policy.ContextConfinement != "sandboxed" {
+		t.Errorf("--context-confinement sandboxed: %v %+v", c, raised.Policy)
+	}
+	// ... and never above what the listener serves.
+	out, _, _ = runAPI(t, db, "default", true, "models", "--for", "network", "--context-confinement", "any")
+	if capped := decodeModels(t, out); capped.Policy.ContextConfinement != "chat-only" || contextAllowedByID(capped)["codex/gpt-6-astra"] {
+		t.Errorf("a network listener serves chat-only whatever the context maximum: %+v", capped.Policy)
 	}
 
 	out, _, _ = runAPI(t, db, "default", true, "models", "--for", "network")
@@ -8887,7 +9136,7 @@ func TestAPIModelsMarksWhatEachPolicyAllows(t *testing.T) {
 func TestAPIModelsRejectsBadValuesWithExit3(t *testing.T) {
 	db := newAPITestDB(t)
 	fakeAPIMonomind(t)
-	for _, args := range [][]string{{"models", "--for", "moon"}, {"models", "--confinement", "everything"}} {
+	for _, args := range [][]string{{"models", "--for", "moon"}, {"models", "--confinement", "everything"}, {"models", "--context-confinement", "everything"}} {
 		if _, _, err := runAPI(t, db, "default", true, args...); exitCode(err) != 3 {
 			t.Errorf("%v: exit %d (%v), want 3", args, exitCode(err), err)
 		}
@@ -8902,7 +9151,7 @@ func TestAPIModelsHumanTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"MODEL", "CONFINEMENT", "claude/default", "chat-only", "no (policy)", "yes"} {
+	for _, want := range []string{"MODEL", "CONFINEMENT", "CONTEXT KEY", "claude/default", "chat-only", "no (policy)", "yes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table lacks %q:\n%s", want, out)
 		}
@@ -8961,7 +9210,7 @@ func TestAPIStatusWithoutADaemon(t *testing.T) {
 		t.Fatalf("listeners: %+v", st.Listeners)
 	}
 	main, v1 := st.Listeners[0], st.Listeners[1]
-	if main.Name != "main" || !main.Loopback || !main.V1 || !main.Reachable || !main.V1Answers || main.Confinement != "any" || main.ConfinementSource != "environment" {
+	if main.Name != "main" || !main.Loopback || !main.V1 || !main.Reachable || !main.V1Answers || main.Confinement != "any" || main.ConfinementSource != "environment" || main.ContextConfinement != "chat-only" {
 		t.Errorf("main listener: %+v", main)
 	}
 	if v1.Name != "v1" || v1.Addr != "127.0.0.1:1" || !v1.V1 || v1.Reachable || v1.V1Answers {
@@ -9016,7 +9265,7 @@ func TestAPIStatusReadsTheDaemonHeartbeat(t *testing.T) {
 	t.Setenv("MONOAGENT_HTTPAPI_ADDR", "")
 	t.Setenv("MONOAGENT_API_V1_ADDR", "")
 	addr := apiServer(t, true)
-	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: addr, V1Addr: "127.0.0.1:2", APIConfinement: "sandboxed", V1Confinement: "chat-only"}); err != nil {
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: addr, V1Addr: "127.0.0.1:2", APIConfinement: "sandboxed", V1Confinement: "chat-only", ContextConfinement: "sandboxed"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -9033,11 +9282,32 @@ func TestAPIStatusReadsTheDaemonHeartbeat(t *testing.T) {
 	}
 	// The policies are what the daemon applies, not what this shell's
 	// environment would give (any on loopback, chat-only elsewhere).
-	if l := st.Listeners[0]; l.Confinement != "sandboxed" || l.ConfinementSource != "daemon" {
+	if l := st.Listeners[0]; l.Confinement != "sandboxed" || l.ConfinementSource != "daemon" || l.ContextConfinement != "sandboxed" {
 		t.Errorf("main: %+v", l)
 	}
-	if l := st.Listeners[1]; l.Confinement != "chat-only" || l.ConfinementSource != "daemon" {
+	// The context maximum never goes above what the listener serves.
+	if l := st.Listeners[1]; l.Confinement != "chat-only" || l.ConfinementSource != "daemon" || l.ContextConfinement != "chat-only" {
 		t.Errorf("v1: %+v", l)
+	}
+}
+
+func TestEffectiveContextMaxPrecedence(t *testing.T) {
+	env := func(v string) func(string) string { return func(string) string { return v } }
+	for _, c := range []struct {
+		flag, env string
+		want      openaiapi.Class
+	}{
+		{"", "", openaiapi.ChatOnly}, // nothing set: chat-only
+		{"", "sandboxed", openaiapi.Sandboxed},
+		{"any", "chat-only", openaiapi.Unconfined}, // the flag beats the environment
+	} {
+		got, err := effectiveContextMax(c.flag, env(c.env))
+		if err != nil || got != c.want {
+			t.Errorf("effectiveContextMax(%q, env=%q) = %v, %v; want %v", c.flag, c.env, got, err, c.want)
+		}
+	}
+	if _, err := effectiveContextMax("nope", env("")); exitCode(err) != 3 {
+		t.Errorf("a bad value must be invalid input, got exit %d", exitCode(err))
 	}
 }
 
@@ -9064,19 +9334,19 @@ func TestEffectivePolicyPrecedence(t *testing.T) {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./cmd/monoagentcli -run 'TestAPIModels|TestAPIStatus|TestEffectivePolicy' -count=1`
+Run: `go test ./cmd/monoagentcli -run 'TestAPIModels|TestAPIStatus|TestEffective' -count=1`
 
-Expected: FAIL with build errors: `undefined: apiModelsJSON`, `undefined: effectivePolicy`.
+Expected: FAIL with build errors: `undefined: apiModelsJSON`, `undefined: apiStatusJSON`.
 
 Output (abridged):
 
 ```
-cmd/monoagentcli/api_models_status_test.go:56:45: undefined: apiModelsJSON
-cmd/monoagentcli/api_models_status_test.go:58:10: undefined: apiModelsJSON
-cmd/monoagentcli/api_models_status_test.go:65:20: undefined: apiModelsJSON
-cmd/monoagentcli/api_models_status_test.go:149:45: undefined: apiStatusJSON
-cmd/monoagentcli/api_models_status_test.go:151:9: undefined: apiStatusJSON
-cmd/monoagentcli/api_models_status_test.go:291:15: undefined: effectivePolicy
+cmd/monoagentcli/api_models_status_test.go:57:45: undefined: apiModelsJSON
+cmd/monoagentcli/api_models_status_test.go:59:10: undefined: apiModelsJSON
+cmd/monoagentcli/api_models_status_test.go:66:20: undefined: apiModelsJSON
+cmd/monoagentcli/api_models_status_test.go:74:27: undefined: apiModelsJSON
+cmd/monoagentcli/api_models_status_test.go:176:45: undefined: apiStatusJSON
+cmd/monoagentcli/api_models_status_test.go:178:9: undefined: apiStatusJSON
 FAIL  github.com/monoes/mono-agent/cmd/monoagentcli [build failed]
 ```
 
@@ -9106,6 +9376,8 @@ type apiModelJSON struct {
 	Confinement string `json:"confinement"`
 	Validated   bool   `json:"validated"`
 	Allowed     bool   `json:"allowed"`
+	// ContextAllowed is true when a key created with --context may use the model.
+	ContextAllowed bool `json:"context_allowed"`
 }
 
 type apiModelsJSON struct {
@@ -9113,19 +9385,24 @@ type apiModelsJSON struct {
 	Policy struct {
 		For         string `json:"for"`
 		Confinement string `json:"confinement"`
+		// ContextConfinement is the strongest class a key created with
+		// --context may use on this listener: the context maximum, never
+		// above Confinement.
+		ContextConfinement string `json:"context_confinement"`
 	} `json:"policy"`
 	Models []apiModelJSON `json:"models"`
 }
 
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
-	var forListener, confinement string
+	var forListener, confinement, contextConfinement string
 	cmd := &cobra.Command{
 		Use:   "models",
 		Short: "List the models /v1/models would serve, with each one's confinement class",
 		Long: "Lists every model of the installed agent runtimes with its confinement class (chat-only, sandboxed or " +
 			"unconfined) and whether the confinement policy of a loopback or a network listener allows it. " +
 			"The policy is --confinement, else MONOAGENT_API_CONFINEMENT, else the listener's default: any on " +
-			"loopback, chat-only on a network bind.",
+			"loopback, chat-only on a network bind. A key created with --context is held to --context-confinement, " +
+			"else MONOAGENT_API_CONTEXT_CONFINEMENT, else chat-only, and never above the listener's policy.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			addr, err := representativeAddr(forListener)
@@ -9136,6 +9413,10 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if policy.ContextMax, err = effectiveContextMax(contextConfinement, os.Getenv); err != nil {
+				return err
+			}
+			forContext := policy.ForContextKey()
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
@@ -9148,7 +9429,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			out := apiModelsJSON{V: 1, Models: []apiModelJSON{}}
-			out.Policy.For, out.Policy.Confinement = forListener, policy.String()
+			out.Policy.For, out.Policy.Confinement, out.Policy.ContextConfinement = forListener, policy.String(), forContext.String()
 			for _, m := range models {
 				if m.Alias {
 					continue
@@ -9156,27 +9437,32 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				out.Models = append(out.Models, apiModelJSON{
 					ID: m.ID, Runtime: m.Runtime, Model: m.Model, Label: m.Label,
 					Confinement: m.Class.String(), Validated: m.Validated, Allowed: policy.Allows(m.Class),
+					ContextAllowed: forContext.Allows(m.Class),
 				})
 			}
 			if cfg.JSONOutput {
 				return writeJSONTo(cmd.OutOrStdout(), out)
 			}
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "Confinement policy for a %s listener: %s\n\n", forListener, policy)
+			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n\n", forListener, policy, forContext)
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED")
+			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY")
 			for _, m := range out.Models {
-				served := "yes"
+				served, withContext := "yes", "yes"
 				if !m.Allowed {
 					served = "no (policy)"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\n", m.ID, m.Confinement, m.Validated, served)
+				if !m.ContextAllowed {
+					withContext = "no"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext)
 			}
 			return tw.Flush()
 		},
 	}
 	cmd.Flags().StringVar(&forListener, "for", "loopback", "Evaluate the policy of a loopback or a network listener")
 	cmd.Flags().StringVar(&confinement, "confinement", "", "Confinement maximum: chat-only, sandboxed or any")
+	cmd.Flags().StringVar(&contextConfinement, "context-confinement", "", "Strongest class a key created with --context may use: chat-only, sandboxed or any")
 	return cmd
 }
 
@@ -9190,6 +9476,26 @@ func representativeAddr(kind string) (string, error) {
 		return "0.0.0.0:0", nil
 	}
 	return "", errInvalidInput("--for must be loopback or network, got %q", kind)
+}
+
+// effectiveContextMax is the strongest class a key created with --context may
+// use: the explicit value (a flag), else MONOAGENT_API_CONTEXT_CONFINEMENT,
+// else chat-only. Such a request carries excerpts of the profile's knowledge,
+// which includes captured web pages nobody vetted, so raising it is a choice
+// the operator makes on purpose.
+func effectiveContextMax(explicit string, getenv func(string) string) (openaiapi.Class, error) {
+	v := explicit
+	if v == "" {
+		v = getenv("MONOAGENT_API_CONTEXT_CONFINEMENT")
+	}
+	if v == "" {
+		return openaiapi.ChatOnly, nil
+	}
+	p, err := openaiapi.ParsePolicy(v)
+	if err != nil {
+		return 0, errInvalidInput("--context-confinement (MONOAGENT_API_CONTEXT_CONFINEMENT): %v", err)
+	}
+	return p.Max, nil
 }
 
 // effectivePolicy is the confinement policy of a listener bound to addr: the
@@ -9229,6 +9535,7 @@ import (
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/httpapi"
+	"github.com/monoes/mono-agent/internal/openaiapi"
 	"github.com/monoes/mono-agent/internal/tlsserve"
 )
 
@@ -9238,6 +9545,9 @@ type apiListenerJSON struct {
 	Loopback    bool   `json:"loopback"`
 	V1          bool   `json:"v1"` // the listener is meant to serve /v1
 	Confinement string `json:"confinement"`
+	// ContextConfinement is the strongest class a key created with --context
+	// may use here: the context maximum, never above Confinement.
+	ContextConfinement string `json:"context_confinement"`
 	// ConfinementSource is "daemon" when the running daemon reported the
 	// policy, "environment" when it is worked out from this shell's
 	// environment and the defaults, which a server started with
@@ -9297,6 +9607,16 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 			override := os.Getenv
+			// The context maximum is the daemon's when it reported one.
+			contextMax, err := effectiveContextMax("", os.Getenv)
+			if err != nil {
+				return err
+			}
+			if live && hb.ContextConfinement != "" {
+				if p, perr := openaiapi.ParsePolicy(hb.ContextConfinement); perr == nil {
+					contextMax = p.Max
+				}
+			}
 			mainPolicy, err := effectivePolicy(mainAddr, "", override)
 			if err != nil {
 				return err
@@ -9306,6 +9626,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			if live && hb.APIConfinement != "" {
 				main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
 			}
+			main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
 			main.Reachable, main.V1Answers = probeListener("http://"+mainAddr, main.V1)
 			st.Listeners = append(st.Listeners, main)
 			if v1Addr != "" {
@@ -9322,6 +9643,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				if live && hb.V1Confinement != "" {
 					dedicated.Confinement, dedicated.ConfinementSource = hb.V1Confinement, "daemon"
 				}
+				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
 				dedicated.Reachable, dedicated.V1Answers = probeListener(scheme+v1Addr, true)
 				st.Listeners = append(st.Listeners, dedicated)
 			}
@@ -9344,6 +9666,17 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 	}
 }
 
+// contextConfinementFor is what a key created with --context may use on a
+// listener that serves confinement, given the context maximum.
+func contextConfinementFor(confinement string, contextMax openaiapi.Class) string {
+	p, err := openaiapi.ParsePolicy(confinement)
+	if err != nil {
+		return ""
+	}
+	p.ContextMax = contextMax
+	return p.ForContextKey().String()
+}
+
 // listenerNote says in a sentence what `api status` found at a listener.
 func listenerNote(l apiListenerJSON) string {
 	switch {
@@ -9352,10 +9685,11 @@ func listenerNote(l apiListenerJSON) string {
 	case !l.V1:
 		return "reachable, but does not serve /v1 (bound off-loopback; use --v1-addr)"
 	case l.V1Answers:
+		note := "serves /v1, confinement " + l.Confinement + ", keys created with --context: " + l.ContextConfinement
 		if l.ConfinementSource != "daemon" {
-			return "serves /v1, confinement " + l.Confinement + " (assumed from this shell's environment: a server started with --confinement may differ)"
+			note += " (assumed from this shell's environment: a server started with --confinement or --context-confinement may differ)"
 		}
-		return "serves /v1, confinement " + l.Confinement
+		return note
 	}
 	return "answers /health but not /v1: a server that predates the API may still be running, restart it"
 }
@@ -9400,7 +9734,7 @@ cmd.AddCommand(newAPIKeyCmd(cfg), newAPIModelsCmd(cfg), newAPIStatusCmd(cfg))
 
 - [ ] **Step 4: Run the tests**
 
-Run: `go test ./cmd/monoagentcli -run 'TestAPI|TestEffectivePolicy' -count=1`
+Run: `go test ./cmd/monoagentcli -run 'TestAPI|TestEffective' -count=1`
 
 Expected: `ok  github.com/monoes/mono-agent/cmd/monoagentcli`. The model tests run against a fake `monomind` script listing the three runtime shapes a real monomind 2.22 reports; nothing calls a real model.
 
@@ -9436,12 +9770,13 @@ role. `composeRoutes` mounts several registrars on one mux, in order, skipping n
 - `startV1(ctx)` binds the dedicated `--v1-addr` listener, which serves only `/v1` and `/health`. Off-loopback it is TLS only:
   `MONOAGENT_API_TLS_CERT` and `_KEY`, else a self-signed certificate cached under `~/.monoagent/api-tls` (valid for localhost only, so a
   remote client must trust it explicitly or the operator supplies a real certificate or terminates TLS in a proxy).
-- `policy(addr)` is `--confinement`, else `MONOAGENT_API_CONFINEMENT`, else the listener's default.
-- Flags on both commands: `--v1-addr` (`MONOAGENT_API_V1_ADDR`), `--confinement` (`MONOAGENT_API_CONFINEMENT`), `--max-concurrent`
-  (`MONOAGENT_API_MAX_CONCURRENT`); `MONOAGENT_API_TURN_TIMEOUT` has no flag. A bad value is invalid input (exit 3), reported before anything starts.
+- `policy(addr)` is `--confinement`, else `MONOAGENT_API_CONFINEMENT`, else the listener's default, and carries the context maximum
+  (`--context-confinement`, else its environment variable, else chat-only).
+- Flags on both commands: `--v1-addr` (`MONOAGENT_API_V1_ADDR`), `--confinement` (`MONOAGENT_API_CONFINEMENT`), `--context-confinement`
+  (`MONOAGENT_API_CONTEXT_CONFINEMENT`), `--max-concurrent` (`MONOAGENT_API_MAX_CONCURRENT`); `MONOAGENT_API_TURN_TIMEOUT` has no flag. A bad value is invalid input (exit 3), reported before anything starts.
 
-`httpapi` now opens the database for the gateway, since keys and the roster live in it. The daemon records the dedicated listener and both
-listeners' confinement in its heartbeat (Task 14), so `api status` reports what the daemon really applies.
+`httpapi` now opens the database for the gateway, since keys and the roster live in it. The daemon records the dedicated listener, both
+listeners' confinement and the context maximum in its heartbeat (Task 14), so `api status` reports what the daemon really applies.
 
 **Shutdown.** `apiRuntime.drain` ends every API turn still running and waits for them and for the dedicated listener, so no agent CLI outlives
 the command that was meant to supervise it. `httpapi` calls it after its server has stopped; the daemon defers it right after building the
@@ -9454,16 +9789,17 @@ runtime, so it runs before the database closes.
 - Test: `cmd/monoagentcli/api_gateway_test.go`
 
 **Interfaces:**
-- Consumes: `openaiapi.DefaultDeps`, `New`, `ConfigFromEnv`, `ParsePolicy`, `DefaultPolicy`, `Gateway.Mount`, `Gateway.Serve` (Tasks 5, 8, 10, 13); `tlsserve.Resolve`, `tlsserve.IsLoopbackAddr` (Task 2); `httpapi.ResolveAddr` (Task 14); `daemonhb.Heartbeat.V1Addr`, `.APIConfinement`, `.V1Confinement` (Task 14); `Gateway.Shutdown` (Task 8); existing `orgServices.logf`, `orgServices.registerRoutes`, `startDaemonAPI`, `errInvalidInput`.
+- Consumes: `openaiapi.DefaultDeps`, `New`, `ConfigFromEnv`, `ParsePolicy`, `DefaultPolicy`, `Gateway.Mount`, `Gateway.Serve` (Tasks 5, 8, 10, 13); `tlsserve.Resolve`, `tlsserve.IsLoopbackAddr` (Task 2); `httpapi.ResolveAddr` (Task 14); `daemonhb.Heartbeat.V1Addr`, `.APIConfinement`, `.V1Confinement`, `.ContextConfinement` (Task 14); `effectiveContextMax` (Task 16); `Gateway.Shutdown` (Task 8); existing `orgServices.logf`, `orgServices.registerRoutes`, `startDaemonAPI`, `errInvalidInput`.
 - Produces:
 
 ```go
 const apiTLSCertEnv = "MONOAGENT_API_TLS_CERT"; const apiTLSKeyEnv = "MONOAGENT_API_TLS_KEY"
-type apiFlags struct{ v1Addr, confinement string; maxConcurrent int }
-func (f *apiFlags) bind(cmd *cobra.Command)                       // --v1-addr, --confinement, --max-concurrent
-type apiRuntime struct{ /* gw, override, v1Addr, logf, v1Done */ }
+type apiFlags struct{ v1Addr, confinement, contextConfinement string; maxConcurrent int }
+func (f *apiFlags) bind(cmd *cobra.Command)                       // --v1-addr, --confinement, --context-confinement, --max-concurrent
+type apiRuntime struct{ /* gw, override, contextMax, v1Addr, logf, v1Done */ }
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error)  // bad settings -> exit 3
-func (a *apiRuntime) policy(addr string) openaiapi.Policy
+func (a *apiRuntime) policy(addr string) openaiapi.Policy              // the listener's policy, with the context maximum
+func (a *apiRuntime) contextReport() string                            // the context maximum for the daemon's heartbeat
 func (a *apiRuntime) mainMount(mainAddr string) func(*http.ServeMux)   // nil when mainAddr is not loopback
 func (a *apiRuntime) startV1(ctx context.Context) (string, error)      // "" when no --v1-addr; else the bound address
 func (a *apiRuntime) drain()                                           // ends the turns still running, waits for them and for the dedicated listener (30 s)
@@ -9498,6 +9834,7 @@ func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_CONTEXT_CONFINEMENT", "")
 	t.Setenv("MONOAGENT_API_V1_ADDR", "")
 	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "")
 	t.Setenv("MONOAGENT_API_TURN_TIMEOUT", "")
@@ -9556,8 +9893,9 @@ func TestMainMountOnlyOnLoopback(t *testing.T) {
 
 func TestAPIRuntimeRejectsBadSettingsAsInvalidInput(t *testing.T) {
 	for name, f := range map[string]apiFlags{
-		"unknown confinement": {confinement: "everything"},
-		"negative max":        {maxConcurrent: -1},
+		"unknown confinement":         {confinement: "everything"},
+		"unknown context confinement": {contextConfinement: "everything"},
+		"negative max":                {maxConcurrent: -1},
 	} {
 		if _, err := newAPIRuntimeForTest(t, f); exitCode(err) != 3 {
 			t.Errorf("%s: exit %d (%v), want 3", name, exitCode(err), err)
@@ -9570,6 +9908,12 @@ func TestAPIRuntimeRejectsBadSettingsAsInvalidInput(t *testing.T) {
 	_ = db.ApplyMigrations()
 	if _, err := newAPIRuntime(db.DB, apiFlags{}, func(string, ...any) {}); exitCode(err) != 3 {
 		t.Errorf("a bad MONOAGENT_API_MAX_CONCURRENT: exit %d (%v), want 3", exitCode(err), err)
+	}
+
+	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "")
+	t.Setenv("MONOAGENT_API_CONTEXT_CONFINEMENT", "nope")
+	if _, err := newAPIRuntime(db.DB, apiFlags{}, func(string, ...any) {}); exitCode(err) != 3 {
+		t.Errorf("a bad MONOAGENT_API_CONTEXT_CONFINEMENT: exit %d (%v), want 3", exitCode(err), err)
 	}
 }
 
@@ -9591,6 +9935,35 @@ func TestAPIRuntimePolicyDefaultsAndOverride(t *testing.T) {
 	}
 	if rt.policy("127.0.0.1:9322").String() != "sandboxed" || rt.policy("0.0.0.0:9443").String() != "sandboxed" {
 		t.Error("an explicit confinement must apply to every listener")
+	}
+}
+
+// A key created with --context is held to chat-only unless the operator raises
+// it with --context-confinement, and never above the listener's own policy.
+func TestAPIRuntimeContextConfinement(t *testing.T) {
+	rt, err := newAPIRuntimeForTest(t, apiFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.policy("127.0.0.1:9322").ForContextKey().String(); got != "chat-only" {
+		t.Errorf("a context key on a loopback listener by default: %s, want chat-only", got)
+	}
+	if got := rt.contextReport(); got != "chat-only" {
+		t.Errorf("contextReport = %q, want chat-only", got)
+	}
+
+	rt, err = newAPIRuntimeForTest(t, apiFlags{contextConfinement: "sandboxed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.policy("127.0.0.1:9322").ForContextKey().String(); got != "sandboxed" {
+		t.Errorf("--context-confinement sandboxed on loopback: %s", got)
+	}
+	if got := rt.policy("0.0.0.0:9443").ForContextKey().String(); got != "chat-only" {
+		t.Errorf("a chat-only network listener must stay chat-only for a context key: %s", got)
+	}
+	if got := rt.contextReport(); got != "sandboxed" {
+		t.Errorf("contextReport = %q, want sandboxed", got)
 	}
 }
 
@@ -9783,10 +10156,10 @@ Output (abridged):
 ```
 cmd/monoagentcli/api_gateway_test.go:17:43: undefined: apiFlags
 cmd/monoagentcli/api_gateway_test.go:17:55: undefined: apiRuntime
-cmd/monoagentcli/api_gateway_test.go:32:9: undefined: newAPIRuntime
-cmd/monoagentcli/api_gateway_test.go:42:2: undefined: composeRoutes
-cmd/monoagentcli/api_gateway_test.go:53:37: undefined: apiFlags
-cmd/monoagentcli/api_gateway_test.go:78:34: undefined: apiFlags
+cmd/monoagentcli/api_gateway_test.go:33:9: undefined: newAPIRuntime
+cmd/monoagentcli/api_gateway_test.go:43:2: undefined: composeRoutes
+cmd/monoagentcli/api_gateway_test.go:54:37: undefined: apiFlags
+cmd/monoagentcli/api_gateway_test.go:79:34: undefined: apiFlags
 FAIL  github.com/monoes/mono-agent/cmd/monoagentcli [build failed]
 ```
 
@@ -9822,9 +10195,10 @@ const (
 // apiFlags are the options `httpapi` and `daemon` share for the
 // OpenAI-compatible API (/v1).
 type apiFlags struct {
-	v1Addr        string
-	confinement   string
-	maxConcurrent int
+	v1Addr             string
+	confinement        string
+	contextConfinement string
+	maxConcurrent      int
 }
 
 func (f *apiFlags) bind(cmd *cobra.Command) {
@@ -9833,6 +10207,9 @@ func (f *apiFlags) bind(cmd *cobra.Command) {
 			apiTLSCertEnv+"/"+apiTLSKeyEnv+", else a self-signed certificate. Also MONOAGENT_API_V1_ADDR")
 	cmd.Flags().StringVar(&f.confinement, "confinement", "",
 		"Strongest runtime class the API serves: chat-only, sandboxed or any (default: any on loopback, chat-only off-loopback). Also MONOAGENT_API_CONFINEMENT")
+	cmd.Flags().StringVar(&f.contextConfinement, "context-confinement", "",
+		"Strongest runtime class a key created with --context may use: chat-only, sandboxed or any (default chat-only, never above --confinement). "+
+			"Its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted. Also MONOAGENT_API_CONTEXT_CONFINEMENT")
 	cmd.Flags().IntVar(&f.maxConcurrent, "max-concurrent", 0,
 		"Maximum number of API turns running at once (default 4). Also MONOAGENT_API_MAX_CONCURRENT")
 }
@@ -9841,9 +10218,11 @@ func (f *apiFlags) bind(cmd *cobra.Command) {
 type apiRuntime struct {
 	gw       *openaiapi.Gateway
 	override string // an explicit confinement; "" means each listener's default
-	v1Addr   string
-	logf     func(format string, args ...any)
-	v1Done   chan struct{} // closed when the dedicated listener has stopped; nil without one
+	// contextMax is the strongest class a key created with --context may use.
+	contextMax openaiapi.Class
+	v1Addr     string
+	logf       func(format string, args ...any)
+	v1Done     chan struct{} // closed when the dedicated listener has stopped; nil without one
 }
 
 // newAPIRuntime builds the gateway from the flags, falling back to the
@@ -9869,6 +10248,10 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 			return nil, errInvalidInput("%v", err)
 		}
 	}
+	contextMax, err := effectiveContextMax(f.contextConfinement, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	v1 := f.v1Addr
 	if v1 == "" {
 		v1 = os.Getenv("MONOAGENT_API_V1_ADDR")
@@ -9880,16 +10263,23 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 	if err != nil {
 		return nil, fmt.Errorf("starting the OpenAI-compatible API: %w", err)
 	}
-	return &apiRuntime{gw: gw, override: override, v1Addr: v1, logf: logf}, nil
+	return &apiRuntime{gw: gw, override: override, contextMax: contextMax, v1Addr: v1, logf: logf}, nil
 }
 
-// policy is the confinement policy of a listener bound to addr.
+// policy is the confinement policy of a listener bound to addr: what it
+// serves, and what a key created with --context may use of that.
 func (a *apiRuntime) policy(addr string) openaiapi.Policy {
+	p := openaiapi.DefaultPolicy(addr)
 	if a.override != "" {
-		p, _ := openaiapi.ParsePolicy(a.override) // validated in newAPIRuntime
-		return p
+		p, _ = openaiapi.ParsePolicy(a.override) // validated in newAPIRuntime
 	}
-	return openaiapi.DefaultPolicy(addr)
+	p.ContextMax = a.contextMax
+	return p
+}
+
+// contextReport is the context maximum to record in the daemon's heartbeat.
+func (a *apiRuntime) contextReport() string {
+	return openaiapi.Policy{Max: a.contextMax}.String()
 }
 
 // mainMount returns the route registrar that serves /v1 on the main HTTP API
@@ -10068,6 +10458,7 @@ with:
 daemonhb.Heartbeat{
 				APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, V1Addr: v1ServingAddr, Version: getVersion(),
 				APIConfinement: apiRT.confinementReport(servingAddr, false), V1Confinement: apiRT.confinementReport(v1ServingAddr, true),
+				ContextConfinement: apiRT.contextReport(),
 			}
 ```
 
@@ -10497,7 +10888,7 @@ pass on the first run (everything they check is already implemented); if one fai
 - `TestEndToEndThroughTheRealExec` runs the gateway's default wiring (the real `monomind.Exec`, `Scan` and `ListModels`) against a tiny fake
   `monomind` shell script that speaks the handshake, `agent scan`, `agent models` and `agent exec`. It records the argv of the exec call and
   asserts the posture: `--runtime`, `--model`, `--tools none`, `--system-file`, `--prompt-file`, `--cwd` the slot folder under the scratch root, and **none of**
-  `--access`, `--settings`, `--allow-bash-prefix`, `--tools-file`, `--env`. It also asserts that `--cwd` is the turn's slot folder, `slot-0`, and
+  `--access`, `--settings`, `--allow-bash-prefix`, `--tools-file`, `--env`. It also asserts that `--cwd` is the turn's slot folder, `slot-0` inside the folder of the key's profile, and
   that the folder is left empty afterwards.
 - The live canaries run the same gateway against the runtimes really installed on this machine (a claude turn must expose no native tool;
   one real chat per installed runtime; a streamed chat through a real TLS listener). They call real models, so they are **skipped unless
@@ -10658,8 +11049,8 @@ func TestEndToEndThroughTheRealExec(t *testing.T) {
 			cwd = argv[i+1]
 		}
 	}
-	if cwd != filepath.Join(home, "scratch", "slot-0") {
-		t.Errorf("--cwd = %q, want the slot folder under the scratch root", cwd)
+	if cwd != filepath.Join(home, "scratch", profileFolder("default"), "slot-0") {
+		t.Errorf("--cwd = %q, want the profile's slot folder under the scratch root", cwd)
 	}
 	if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 0 {
 		t.Errorf("the turn's folder must be left empty afterwards (%d entries, err = %v)", len(entries), err)
@@ -10867,8 +11258,8 @@ Expected: `--- PASS: TestEndToEndThroughTheRealExec` and `--- PASS: TestDefaultD
 Output (abridged):
 
 ```
---- PASS: TestEndToEndThroughTheRealExec (2.39s)
---- PASS: TestDefaultDepsReadTheRosterFromTheDatabase (2.10s)
+--- PASS: TestEndToEndThroughTheRealExec (2.43s)
+--- PASS: TestDefaultDepsReadTheRosterFromTheDatabase (2.37s)
 ok    github.com/monoes/mono-agent/internal/openaiapi  <time>
 ```
 
@@ -10899,7 +11290,7 @@ git commit -m "test(openaiapi): add an end-to-end test through the real Exec and
 
 Spec section 16 (the phase 1 share). Everything an operator or an agent needs to use and to expose the API safely:
 
-- **AGENTS.md:** a subsection under "HTTP API", the five new environment variables, the `ref api` index row, and a fix to the stale
+- **AGENTS.md:** a subsection under "HTTP API", the six new environment variables, the `ref api` index row, and a fix to the stale
   sandbox paragraph (it still described claude as `scoped` and listed codex and grok "on 2.19.0"; on monomind 2.22.0 claude and codex list
   `workspace-write` and are `sandboxed`, while antigravity and hermes list no such mode, which the scan fixture of Task 5 shows).
 - **`monoagentcli ref api`:** the offline copy of that subsection. The text lives in a Go raw string, so it contains no backticks.
@@ -10965,19 +11356,22 @@ a key. It lives in `internal/openaiapi/`; the spec is
   headless server. A key belongs to one profile and reaches nothing of any
   other; `--context` adds excerpts of that profile's own knowledge (documents
   and captures) to the prompt, otherwise the key reaches a plain model. A
-  context key is served only by chat-only models, because the excerpts
-  include captured web pages nobody vetted.
+  context key is served only by chat-only models unless the operator raises
+  `--context-confinement` (`MONOAGENT_API_CONTEXT_CONFINEMENT`), because the
+  excerpts include captured web pages nobody vetted.
   `api key list|show|update|revoke`, `api models` and `api status` complete
   the group (all take `--json`; exit 2 not found, 3 invalid input).
   `org teardown-profile` revokes a profile's keys. A key never opens the
   legacy routes, and the legacy token never opens `/v1`. Revoking applies to
   the next request: a turn already running finishes, within its timeout.
-- **Isolation.** Every request is one `monomind agent exec` turn in the folder
-  of its concurrency slot, `~/.monoagent/workspaces/api/slot-N` (never the
-  profile folder; emptied before and after every turn), with no tools, no
-  settings and the workspace-write sandbox where the runtime has one. The
-  folders are fixed because agent CLIs keep per-folder session state that a
-  folder per request would pile up. Requests are stateless.
+- **Isolation.** Every request is one `monomind agent exec` turn in a slot
+  folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+  (`<hash>` is a hash of the profile id; never the profile's own folder;
+  emptied before and after every turn), with no tools, no settings and the
+  workspace-write sandbox where the runtime has one. The folders are fixed
+  because agent CLIs keep per-folder session state that a folder per request
+  would pile up, and per profile so that state is never shared between
+  profiles. Requests are stateless.
 - **Confinement.** A runtime's class is `chat-only` (claude: monomind's
   allow-list gate is the only tool gate), `sandboxed` (codex: writes confined
   to the turn's folder, reads and the runtime's own MCP tools open) or
@@ -10986,6 +11380,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `--confinement chat-only|sandboxed|any` (`MONOAGENT_API_CONFINEMENT`) is the
   strongest class a listener serves; a model above it is unlisted and a
   completion that names it gets 403 `policy_denied`.
+  `--context-confinement chat-only|sandboxed|any`
+  (`MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest
+  class a key created with `--context` may use, never above the listener's.
 - **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
   is loopback (default `127.0.0.1:9322`, every runtime allowed). To serve it
   beyond the machine, give it its own listener with `--v1-addr`
@@ -11015,6 +11412,7 @@ In `AGENTS.md`, insert immediately before the line starting `| `MONOAGENT_ALLOW_
 | `MONOAGENT_API_V1_ADDR` | Bind address (`host:port`) of the OpenAI-compatible API's dedicated listener (`--v1-addr` wins). It serves only `/v1` and `/health`, and any non-loopback bind is served only over TLS. Default: unset — no dedicated listener; `/v1` is served on the main HTTP API listener when that is loopback. |
 | `MONOAGENT_API_TLS_CERT` / `MONOAGENT_API_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback `--v1-addr` bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/api-tls/`. |
 | `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). Default: unset — `any` on a loopback listener, `chat-only` on any other. |
+| `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 ```
@@ -11087,15 +11485,17 @@ OPENAI-COMPATIBLE API (/v1)
     monoagentcli api status        listeners, key count, reachability
 
   --context adds excerpts of the profile's own knowledge to requests made
-  with the key; only chat-only models serve such a key. A key never opens
-  the routes above, and the credential above never opens /v1.
+  with the key; only chat-only models serve such a key unless the server
+  raises --context-confinement. A key never opens the routes above, and
+  the credential above never opens /v1.
   org teardown-profile revokes a profile's keys.
 
   Confinement: chat-only (claude), sandboxed (codex: writes confined, reads
   open), unconfined (antigravity: native tools run as the OS user).
   --confinement chat-only|sandboxed|any (MONOAGENT_API_CONFINEMENT) caps what
   a listener serves; a model above it is unlisted and answers 403
-  policy_denied.
+  policy_denied. --context-confinement (MONOAGENT_API_CONTEXT_CONFINEMENT,
+  default chat-only) caps what a --context key may use, never above that.
 
   Exposure: /v1 is served on the main listener only while it is loopback.
   Beyond the machine use --v1-addr (MONOAGENT_API_V1_ADDR) on httpapi or
@@ -11148,7 +11548,8 @@ In `internal/httpapi/openapi.yaml`, insert immediately before the line starting 
         the dedicated `--v1-addr` listener. Lists the models of the installed
         agent runtimes as `<runtime>/<model>` ids (for example `claude/claude-sonnet-5`
         or `codex/gpt-6-astra`), only those the listener's confinement policy
-        allows. For a key created with `--context` only the chat-only models.
+        allows. For a key created with `--context` only those at or below
+        `--context-confinement` (chat-only unless the operator raised it).
       security:
         - apiKeyAuth: []
       responses:
@@ -11193,10 +11594,11 @@ In `internal/httpapi/openapi.yaml`, insert immediately before the line starting 
       description: |
         Runs one turn of the chosen agent runtime and returns its answer.
         `model` is `<runtime>/<model>`, a bare runtime (its default model) or
-        `agy` for `antigravity`. Requests are stateless: each one runs in its
-        own working folder with no tools. A key created with `--context` also
-        gets excerpts of its profile's knowledge added to the prompt, and is
-        served only by chat-only models.
+        `agy` for `antigravity`. Requests are stateless: each one runs with no
+        tools in an emptied working folder that belongs to its key's profile.
+        A key created with `--context` also gets excerpts of its profile's
+        knowledge added to the prompt, and is served only by models at or
+        below `--context-confinement` (chat-only by default).
 
         Sampling parameters (`temperature`, `top_p`, `max_tokens`,
         `max_completion_tokens`, `stop`, `seed`, `presence_penalty`,
@@ -11221,7 +11623,7 @@ In `internal/httpapi/openapi.yaml`, insert immediately before the line starting 
         |---|---|---|
         | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter |
         | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
-        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above chat-only for a context key, or its sandbox could not be applied |
+        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context`, or its sandbox could not be applied |
         | 404 | `invalid_request_error` / `model_not_found` | Unknown model |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
         | 429 | `rate_limit_error` / `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
@@ -11449,11 +11851,15 @@ KEY=$(monoagentcli api key create --name my-app)
 
 Add `--context` to give requests made with the key excerpts of the profile's
 own knowledge (its documents and captures); without it the key reaches a
-plain model. A context key is served only by the chat-only models (see
-`api models`), because the excerpts include captured web pages that nobody
-vetted. Manage keys with `api key list`, `show`, `update` and `revoke`
-(revoking takes effect on the next request). No GUI and no keyring are
-needed.
+plain model. By default a context key is served only by the chat-only models
+(see `api models`), because the excerpts include captured web pages that
+nobody vetted and a runtime with native tools could be steered by them. When
+you want a coding agent on your own machine to have your notes, raise the
+limit on purpose when you start the server: `--context-confinement
+sandboxed` (or `any`, or `MONOAGENT_API_CONTEXT_CONFINEMENT`). It never goes
+above what the listener itself serves. Manage keys with `api key list`,
+`show`, `update` and `revoke` (revoking takes effect on the next request). No
+GUI and no keyring are needed.
 
 ## 2. Start the server
 
@@ -11473,16 +11879,17 @@ monoagentcli api models     # every model, with its confinement class
 the ids come from each runtime's own model list, so yours will differ):
 
 ```
-Confinement policy for a loopback listener: any
+Confinement policy for a loopback listener: any (keys created with --context: chat-only)
 
-MODEL                    CONFINEMENT  VALIDATED  SERVED
-claude/default           chat-only    false      yes
-claude/claude-sonnet-5   chat-only    false      yes
-codex/gpt-6-astra        sandboxed    false      yes
-antigravity/default      unconfined   false      yes
+MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY
+claude/default           chat-only    false      yes     yes
+claude/claude-sonnet-5   chat-only    false      yes     yes
+codex/gpt-6-astra        sandboxed    false      yes     no
+antigravity/default      unconfined   false      yes     no
 ```
 
-The ids are `<runtime>/<model>`. A bare runtime (`codex`) is its default
+`SERVED` is what the listener serves and `CONTEXT KEY` what a key created
+with `--context` may use of that. The ids are `<runtime>/<model>`. A bare runtime (`codex`) is its default
 model, and `agy` is accepted for `antigravity`. A model that is not in this
 list is a 404: the server only runs models the runtime itself lists.
 
@@ -11609,7 +12016,7 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 |---|---|---|
 | 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (`tools`, `n > 1`, image parts, …) |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
-| 403 | `policy_denied` | The model's confinement class is above the listener's `--confinement` |
+| 403 | `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`, or its sandbox could not be applied |
 | 404 | `model_not_found` | Unknown model, or one the listener does not serve (see `api models`) |
 | 413 | `request_too_large` | Body over 2 MiB |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
@@ -11642,8 +12049,9 @@ credential for the other routes: a key never opens them and the token never
 opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
 
 **What a key can make this machine do.** Every request starts one agent turn
-in the folder of its concurrency slot, `~/.monoagent/workspaces/api/slot-N`
-(never the profile folder; emptied before and after every turn), with no
+in a slot folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+(`<hash>` is a hash of the profile id, so two profiles never share a folder;
+never the profile's own folder; emptied before and after every turn), with no
 tools, no settings and the workspace-write sandbox where the runtime has
 one. What that confines depends on the runtime, and
 `monoagentcli api models` reports it per model instead of pretending
@@ -11707,10 +12115,14 @@ before giving a key to anyone you would not give a shell.
 profile's own documents and captures to the system prompt, framed as data
 whose instructions must be ignored. Captured web pages are in that knowledge
 and nobody vetted them, and the framing reduces prompt injection without
-removing it, so **a context key is served only by `chat-only` models**: a
-runtime with native tools could be steered into using them. The excerpts
-leave the machine like any prompt, to the runtime's provider. The personal
-brain and other profiles are never searched.
+removing it, so **by default a context key is served only by `chat-only`
+models**: a runtime with native tools could be steered into using them.
+`--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
+raises that on purpose, for example to give a coding agent on your own
+machine your notes. It never goes above the listener's own `--confinement`,
+and raising it accepts that a captured page could steer that runtime. The
+excerpts leave the machine like any prompt, to the runtime's provider. The
+personal brain and other profiles are never searched.
 
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost.
@@ -11735,7 +12147,8 @@ carries an `X-Request-Id` to quote to the operator.
 - The agent CLIs keep session transcripts of their turns in their own stores
   (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
   they do for any use. The fixed slot folders keep the number of those
-  folders bounded, not their content.
+  folders bounded (one per profile and slot), not their content, and keep
+  one profile's apart from another's.
 - Some runtimes (antigravity) pass the prompt on their command line, which
   other local users can read with `ps` while the turn runs. On a shared host,
   run the server on a machine or an OS user of its own.
@@ -11761,8 +12174,8 @@ with:
 
 ### Added
 - **OpenAI-compatible API, phase 1.** `monoagentcli httpapi` and `monoagentcli daemon` now serve `GET /v1/models`, `GET /v1/models/{id}` and `POST /v1/chat/completions` (JSON and streaming) over the installed agent runtimes (claude, codex, antigravity, …), so any OpenAI SDK works with just a `base_url` and a key. Design: `docs/mastermind/specs/2026-10-01-openai-compatible-api-design.md`; walkthrough: `examples/openai-api-quickstart.md`.
-  - **Keys:** `api key create|list|show|update|revoke`, per profile, shown once and stored only as a SHA-256 (new table `api_keys`, migration 061), so it needs no vault or keyring and runs on a headless server. A key reaches nothing of any other profile. `--context` adds the profile's own knowledge to the requests made with it, and such a key is served only by chat-only models because that knowledge includes captured web pages nobody vetted. `org teardown-profile` revokes a profile's keys. The legacy HTTP API token and the keys are separate credentials: neither opens the other's routes.
-  - **Isolation and confinement:** each request is one `monomind agent exec` turn with no tools, in the fixed folder of its concurrency slot (`~/.monoagent/workspaces/api/slot-N`, emptied before and after, so agent CLIs do not pile up session state per request). Every runtime has a class: `chat-only` (claude), `sandboxed` (codex), `unconfined` (antigravity). `api models` shows it, `X-Monoagent-Sandbox` carries each turn's verdict, a sandbox that cannot be applied refuses the turn, and `--confinement chat-only|sandboxed|any` caps what a listener serves.
+  - **Keys:** `api key create|list|show|update|revoke`, per profile, shown once and stored only as a SHA-256 (new table `api_keys`, migration 061), so it needs no vault or keyring and runs on a headless server. A key reaches nothing of any other profile. `--context` adds the profile's own knowledge to the requests made with it, and such a key is served only by chat-only models unless the operator raises `--context-confinement`, because that knowledge includes captured web pages nobody vetted. `org teardown-profile` revokes a profile's keys. The legacy HTTP API token and the keys are separate credentials: neither opens the other's routes.
+  - **Isolation and confinement:** each request is one `monomind agent exec` turn with no tools, in a fixed folder of its profile and concurrency slot (`~/.monoagent/workspaces/api/p-<hash>/slot-N`, emptied before and after, so agent CLIs neither pile up session state per request nor share it between profiles). Every runtime has a class: `chat-only` (claude), `sandboxed` (codex), `unconfined` (antigravity). `api models` shows it, `X-Monoagent-Sandbox` carries each turn's verdict, a sandbox that cannot be applied refuses the turn, and `--confinement chat-only|sandboxed|any` caps what a listener serves.
   - **Exposure:** `/v1` rides the HTTP API listener only on loopback. `--v1-addr` (or `MONOAGENT_API_V1_ADDR`) gives it a dedicated listener that serves only `/v1` and `/health`, is TLS only off-loopback (`MONOAGENT_API_TLS_CERT`/`_KEY`, else a cached self-signed certificate) and defaults to `chat-only`. The daemon records it in its heartbeat (`v1_addr`) for `api status`.
   - **Limits:** 2 MiB request body, 4 concurrent turns (`--max-concurrent`; 429 beyond), a 10 minute turn timeout (`MONOAGENT_API_TURN_TIMEOUT`), OpenAI-shaped errors with generic messages and an `X-Request-Id` on every response, and no prompts, answers or keys in logs. Stopping the daemon or `httpapi` ends the turns in flight and waits for their processes to be killed.
   - **Also:** the webhook server's TLS rules moved into a shared `internal/tlsserve` package (the webhook server now also tightens a cached key file or folder that someone loosened), monomind's `native_sandbox` field is decoded, and AGENTS.md's sandbox paragraph now matches monomind 2.22.
@@ -11852,7 +12265,7 @@ TestGenerateConfigFailsFastWhenMonomindMissing
 TestWorkflowCancelSignalsAndMarks
 ```
 
-Any other name is a regression from this work. It can take ten minutes or more; if the shell tool times out, run it in the background and read its output when it ends.
+Any other name is a regression from this work, unless it is a test that depends on timing and passes when run alone: `TestIsolatedWritersRunInParallelInTheirOwnWorktrees` (`internal/dynorg`, which this work does not touch) failed once under the load of the whole run while this plan was being replayed, and passed three times alone. Run a name that is not on the list by itself, `go test ./<package> -run '^<name>$' -count=3`: it is a regression only if it fails there too. The run can take ten minutes or more; if the shell tool times out, run it in the background and read its output when it ends.
 
 - [ ] **Step 5: The touched packages again without the social platform nodes**
 
@@ -11926,5 +12339,4 @@ Expected: The last entry must be older than `061_api_keys.sql`. If master has a 
 - **Finish the branch.** Run the whole-branch review and then merge or open a pull request. Re-check the migration number first (Task 21).
 - **File an issue** for the existing gap found while writing the spec. It is independent of `/v1` and is not fixed here: in daemon mode with `--allow-mutations`, the legacy HTTP API token can run, activate or deactivate another profile's workflow by id, because the engine allows all profiles (`internal/workflow/engine.go:808-811`) and the handlers add no profile check (`internal/httpapi/handlers.go:173,296,315`).
 - **Run the live claude canary once** on a real machine: `MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run TestLiveClaudeIsChatOnly -v -count=1`. If it passes, reword the sentence in `SECURITY.md` that calls claude's `chat-only` "the design, not a measured guarantee". If it fails, change claude's class in `ClassifyRuntime` before anything else ships.
-- **Context keys and sandboxed models.** A key created with `--context` is served only by `chat-only` models (spec decision D2, tightened after review: the knowledge it adds includes captured web pages nobody vetted). If an operator later needs context keys on a `sandboxed` model, a separate `--context-confinement` flag could allow it. It is deliberately not built in phase 1.
 - **Next plans**, each written when it is next: phase 2 (MCP tools `api_key_list`, `api_models_list`, `api_key_create`, `api_key_update` and `api_key_revoke` with annotations and the `--allow-mutations` gate, then the Settings section and Wails bindings), phase 3 (the Jev surface `api_auto`), phase 4 (images), phase 5 (tool calling, spike first).
