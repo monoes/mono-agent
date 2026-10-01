@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/personphoto"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +38,7 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 		newPeopleReviewCmd(cfg),
 		newPeopleTagCmd(cfg),
 		newPeopleLinksCmd(cfg),
+		newPeoplePhotosCmd(cfg),
 	)
 
 	return cmd
@@ -220,6 +223,39 @@ func newPeopleCountCmd(cfg *globalConfig) *cobra.Command {
 	}
 	filter.addFlags(cmd)
 	return cmd
+}
+
+func newPeoplePhotosCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:   "photos",
+		Short: "Download the profile photos still stored as remote URLs",
+		Long: "Saves a local copy (in the image vault) of every person's photo that is still a remote URL, " +
+			"and points the person at it. Photos that can no longer be fetched keep their URL.",
+		Example: `  monoagentcli --json people photos`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing database: %w", err)
+			}
+			defer db.Close()
+
+			saved, errs := personphoto.Localize(cmd.Context(), db.DB, cfg.ProfileID, nil)
+			vault.Wait()
+			if cfg.JSONOutput {
+				failed := make([]string, len(errs))
+				for i, e := range errs {
+					failed[i] = e.Error()
+				}
+				return printReviewJSON(map[string]interface{}{"saved": saved, "failed": failed})
+			}
+			fmt.Printf("saved %d photos, %d could not be fetched\n", saved, len(errs))
+			for _, e := range errs {
+				fmt.Fprintln(cmd.ErrOrStderr(), e)
+			}
+			return nil
+		},
+	}
 }
 
 func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
