@@ -386,29 +386,34 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 
 func newPeopleDeleteCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a person from the database",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <id>...",
+		Short:   "Delete people from the database, with their saved photos",
+		Example: `  monoagentcli --json people delete <id> [<id>...]`,
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			personID := args[0]
-
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
 
-			result, err := db.DB.Exec("DELETE FROM people WHERE id = ? AND profile_id = ?", personID, cfg.ProfileID)
-			if err != nil {
-				return fmt.Errorf("deleting person: %w", err)
+			personphoto.Delete(cmd.Context(), db.DB, cfg.ProfileID, args)
+			vault.Wait()
+			deleted := 0
+			for _, personID := range args {
+				result, err := db.DB.Exec("DELETE FROM people WHERE id = ? AND profile_id = ?", personID, cfg.ProfileID)
+				if err != nil {
+					return fmt.Errorf("deleting person %s: %w", personID, err)
+				}
+				if n, _ := result.RowsAffected(); n == 0 {
+					return fmt.Errorf("person %q not found (%d deleted)", personID, deleted)
+				}
+				deleted++
 			}
-
-			affected, _ := result.RowsAffected()
-			if affected == 0 {
-				return fmt.Errorf("person %q not found", personID)
+			if cfg.JSONOutput {
+				return printReviewJSON(map[string]int{"deleted": deleted})
 			}
-
-			fmt.Fprintf(os.Stdout, "Deleted person %s.\n", personID)
+			fmt.Fprintf(os.Stdout, "Deleted %d people.\n", deleted)
 			return nil
 		},
 	}
