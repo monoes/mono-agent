@@ -98,6 +98,29 @@ func TestChatRunsInTheKeysProfileFolder(t *testing.T) {
 	}
 }
 
+// While the server is stopping a request gets a clean 503 it can retry, for a
+// stream as well as for a plain completion, and no process is started.
+func TestChatIsAnsweredWith503WhileTheServerIsStopping(t *testing.T) {
+	var spawned atomic.Int32
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		spawned.Add(1)
+		return okTurn("x")(ctx, o, onEvent)
+	})
+	secret := h.key(t, "default", "app", false)
+	if !h.g.Shutdown(time.Second) {
+		t.Fatal("Shutdown must report that nothing is running")
+	}
+	for name, body := range map[string]string{"plain": chatBody, "stream": streamBody} {
+		rec := post(h, anyPolicy, secret, body)
+		if rec.Code != http.StatusServiceUnavailable || decodeErrorBody(t, rec)["code"] != "runtime_not_available" {
+			t.Errorf("%s: status %d body %s", name, rec.Code, rec.Body)
+		}
+	}
+	if spawned.Load() != 0 {
+		t.Errorf("%d turns started while the server was stopping", spawned.Load())
+	}
+}
+
 func TestChatRejectsBeforeSpawningAnything(t *testing.T) {
 	var spawned atomic.Int32
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {

@@ -27,6 +27,11 @@ type sseWriter struct {
 	model   string
 	created int64
 
+	// onBroken runs once, when a write fails: the connection broke, or the
+	// client stopped reading and the write deadline fired. The caller uses it to
+	// end the turn, which would otherwise run to its timeout for nobody.
+	onBroken func()
+
 	mu          sync.Mutex
 	committed   bool
 	sentContent bool
@@ -50,9 +55,19 @@ func (s *sseWriter) write(payload string) {
 	_ = s.rc.SetWriteDeadline(time.Now().Add(sseWriteDeadline))
 	if _, err := io.WriteString(s.w, payload); err != nil {
 		s.broken = true
+		if s.onBroken != nil {
+			s.onBroken()
+		}
 		return
 	}
 	_ = s.rc.Flush()
+}
+
+// isBroken reports whether a write to the client has failed.
+func (s *sseWriter) isBroken() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.broken
 }
 
 func (s *sseWriter) data(v any) {

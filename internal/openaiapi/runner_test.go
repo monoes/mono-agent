@@ -129,6 +129,27 @@ func TestRunTurnReusesTheSlotFolderAndEmptiesItAroundEveryTurn(t *testing.T) {
 
 // Two profiles never share a working folder, so nothing one profile's turn
 // leaves, and none of an agent CLI's per-folder session state, reaches the other.
+// A request that was between the slot and the turn when the server began to stop
+// (a context key's knowledge search takes a while) must not start a process
+// nobody is left to stop.
+func TestRunTurnRefusesToStartOnceShutdownHasBegun(t *testing.T) {
+	var ran atomic.Bool
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		ran.Store(true)
+		return okTurn("x")(ctx, opts, onEvent)
+	})
+	if !h.g.Shutdown(time.Second) {
+		t.Fatal("with nothing running, Shutdown returns at once")
+	}
+	_, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy})
+	if !errors.Is(err, errShuttingDown) {
+		t.Fatalf("err = %v, want errShuttingDown", err)
+	}
+	if ran.Load() {
+		t.Error("no process may start after Shutdown")
+	}
+}
+
 func TestRunTurnKeepsEachProfilesFolderApart(t *testing.T) {
 	var dirs []string
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {

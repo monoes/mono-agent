@@ -239,10 +239,19 @@ func openUp(dir string) {
 	}
 }
 
-func (g *Gateway) turnStarted() {
+// turnStarted counts a turn in, and refuses once the gateway is shutting down:
+// Shutdown has returned, or is about to, so a process started now would have
+// nobody left to stop it. Shutdown cancels the context before it waits, and
+// both sides hold the mutex, so a turn is either counted (and waited for) or
+// refused.
+func (g *Gateway) turnStarted() bool {
 	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.shutdownCtx.Err() != nil {
+		return false
+	}
 	g.running++
-	g.mu.Unlock()
+	return true
 }
 
 func (g *Gateway) turnEnded() {

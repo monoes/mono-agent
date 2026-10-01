@@ -138,7 +138,12 @@ func policyDeniedAtStart(m ModelInfo, p Policy) *apiError {
 // streamChat runs the turn and streams it. It returns the HTTP status the
 // request ended with and the operator-only detail of a failure.
 func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id, model string, includeUsage bool) (int, string) {
+	// A write that fails (the connection broke, or the client stopped reading
+	// and the write deadline fired) ends the turn.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	sw := newSSE(w, id, model)
+	sw.onBroken = cancel
 	t.OnDelta = sw.delta
 
 	// Commit the stream if the turn stays silent, then keep it alive. However
@@ -175,7 +180,7 @@ func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id,
 		}
 	}()
 
-	res, err := g.runTurn(r.Context(), t)
+	res, err := g.runTurn(ctx, t)
 	stopKeepAlive()
 
 	failure := func(e *apiError) (int, string) {
@@ -190,8 +195,12 @@ func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id,
 	if e := turnError(res, err); e != nil {
 		return failure(e)
 	}
-	if res.Err != nil || r.Context().Err() != nil { // cancelled: the caller left
+	switch {
+	case r.Context().Err() != nil || sw.isBroken(): // the caller left, or stopped reading
 		return 499, ""
+	case res.Err != nil: // cancelled by the server itself, which is stopping
+		return failure(&apiError{Status: http.StatusBadGateway, Type: "api_error", Code: "runtime_error",
+			Message: "The turn was cancelled. " + quoteRequestID, detail: "the turn was cancelled by the server"})
 	}
 	sw.finish(res, includeUsage)
 	return http.StatusOK, ""

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -241,14 +242,14 @@ func TestStreamSendsKeepAlivesWhileTheTurnIsSilent(t *testing.T) {
 
 func TestStreamGatewayDeadlineAfterCommitIsATimeoutEvent(t *testing.T) {
 	old := turnGrace
-	turnGrace = 30 * time.Millisecond
+	turnGrace = 100 * time.Millisecond
 	t.Cleanup(func() { turnGrace = old })
 
 	h := newHarness(t, func(ctx context.Context, _ monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
 		<-ctx.Done()
 		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
 	}, func(_ *Deps, c *Config) {
-		c.TurnTimeout, c.StreamCommitAfter = 100*time.Millisecond, 10*time.Millisecond
+		c.TurnTimeout, c.StreamCommitAfter = 500*time.Millisecond, 10*time.Millisecond
 	})
 	r := openStream(t, h, h.key(t, "default", "app", false), streamBody)
 	rest, _ := io.ReadAll(r)
@@ -258,6 +259,108 @@ func TestStreamGatewayDeadlineAfterCommitIsATimeoutEvent(t *testing.T) {
 	}
 	if len(data) < 2 || data[len(data)-1] != "[DONE]" || json.Unmarshal([]byte(data[len(data)-2]), &e) != nil || e.Error["code"] != "timeout" {
 		t.Fatalf("a stream ended by the gateway's deadline must end with a timeout event and [DONE]: %q", data)
+	}
+}
+
+// The server stopping ends the turn, which is not the client leaving: before the
+// 200 it is a 502 the client can see, and after it an error event and [DONE],
+// never a stream that just stops.
+func TestStreamEndedByShutdownBeforeTheCommitIsAnHTTPError(t *testing.T) {
+	started := make(chan struct{})
+	h := newHarness(t, func(ctx context.Context, _ monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
+		close(started)
+		<-ctx.Done()
+		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
+	}, func(_ *Deps, c *Config) { c.StreamCommitAfter = time.Minute })
+	secret := h.key(t, "default", "app", false)
+
+	got := make(chan *httpRecorder, 1)
+	go func() { got <- post(h, anyPolicy, secret, streamBody) }()
+	<-started
+	h.g.Shutdown(5 * time.Second)
+
+	select {
+	case rec := <-got:
+		if rec.Code != http.StatusBadGateway || decodeErrorBody(t, rec)["code"] != "runtime_error" {
+			t.Fatalf("status %d body %s", rec.Code, rec.Body)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not return after Shutdown")
+	}
+}
+
+func TestStreamEndedByShutdownAfterTheCommitIsAnErrorEvent(t *testing.T) {
+	h := newHarness(t, func(ctx context.Context, _ monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		onEvent(evStart(true, "monomind"))
+		onEvent(evText("first words"))
+		<-ctx.Done()
+		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
+	})
+	r := openStream(t, h, h.key(t, "default", "app", false), streamBody) // the 200 is committed
+	h.g.Shutdown(5 * time.Second)
+
+	rest, _ := io.ReadAll(r)
+	data, _ := sseEvents(string(rest))
+	var e struct {
+		Error map[string]any `json:"error"`
+	}
+	if len(data) < 2 || data[len(data)-1] != "[DONE]" || json.Unmarshal([]byte(data[len(data)-2]), &e) != nil || e.Error["code"] != "runtime_error" {
+		t.Fatalf("a stream cut short by the server stopping must end with an error event and [DONE]: %q", data)
+	}
+}
+
+// brokenWriter is a client whose connection dies after a few writes.
+type brokenWriter struct {
+	header    http.Header
+	writes    int
+	failAfter int
+}
+
+func (w *brokenWriter) Header() http.Header { return w.header }
+func (w *brokenWriter) WriteHeader(int)     {}
+func (w *brokenWriter) Flush()              {}
+func (w *brokenWriter) Write(b []byte) (int, error) {
+	w.writes++
+	if w.writes > w.failAfter {
+		return 0, errors.New("broken pipe")
+	}
+	return len(b), nil
+}
+
+// A client that stops reading (the write deadline fires) or whose connection
+// breaks must not leave the turn running to its timeout for nobody.
+func TestStreamStopsTheTurnWhenAWriteToTheClientFails(t *testing.T) {
+	cancelled := make(chan struct{})
+	h := newHarness(t, func(ctx context.Context, _ monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		onEvent(evStart(true, "monomind"))
+		onEvent(evText("these words cannot be delivered"))
+		select {
+		case <-ctx.Done():
+			close(cancelled)
+		case <-time.After(10 * time.Second):
+		}
+		return &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
+	})
+	w := &brokenWriter{header: http.Header{}, failAfter: 1} // the role chunk goes out, the first delta does not
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	done := make(chan int, 1)
+	go func() {
+		status, _ := h.g.streamChat(w, req, turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy}, "chatcmpl-x", "claude/default", false)
+		done <- status
+	}()
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn kept running after a write to the client failed")
+	}
+	select {
+	case status := <-done:
+		if status != 499 {
+			t.Errorf("status = %d, want 499 (the client is gone)", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("streamChat did not return")
 	}
 }
 

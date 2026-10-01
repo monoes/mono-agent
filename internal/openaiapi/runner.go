@@ -17,6 +17,9 @@ import (
 // so a test can shorten it.
 var turnGrace = 30 * time.Second
 
+// errShuttingDown is runTurn's answer once the gateway is shutting down.
+var errShuttingDown = errors.New("the server is shutting down")
+
 // turn is one validated request ready to run.
 type turn struct {
 	Runtime, Model, Effort string
@@ -78,7 +81,9 @@ func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
 // is cancelled and errPolicyDenied returned. A turn ended by the gateway's
 // own deadline reports a timeout, not a cancellation.
 func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, error) {
-	g.turnStarted()
+	if !g.turnStarted() {
+		return nil, errShuttingDown
+	}
 	defer g.turnEnded()
 
 	bin, err := g.bin.get(ctx)

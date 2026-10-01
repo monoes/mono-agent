@@ -110,6 +110,8 @@ func errInternal(msg string) *apiError {
 func turnError(res *monomind.TurnResult, execErr error) *apiError {
 	if execErr != nil {
 		switch {
+		case errors.Is(execErr, errShuttingDown):
+			return errRuntimeUnavailable("The server is shutting down. Retry shortly, or on another instance.")
 		case monomind.IsAgentNotSetup(execErr):
 			return errRuntimeUnavailable(execErr.Error())
 		case errors.Is(execErr, monomind.ErrSandboxRequired):
