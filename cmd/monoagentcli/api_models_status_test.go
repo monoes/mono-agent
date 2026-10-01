@@ -92,6 +92,10 @@ func TestAPIModelsMarksWhatEachPolicyAllows(t *testing.T) {
 	if loopback.Policy.For != "loopback" || loopback.Policy.Confinement != "any" {
 		t.Errorf("loopback policy: %+v", loopback.Policy)
 	}
+	// It evaluates this shell's flags and environment, not a running server: say so.
+	if loopback.Policy.Source != "shell" {
+		t.Errorf("policy.source = %q, want shell", loopback.Policy.Source)
+	}
 	classes := map[string]string{}
 	for _, m := range loopback.Models {
 		classes[m.ID] = m.Confinement
@@ -166,7 +170,7 @@ func TestAPIModelsHumanTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"MODEL", "CONFINEMENT", "CONTEXT KEY", "claude/default", "chat-only", "no (policy)", "yes"} {
+	for _, want := range []string{"MODEL", "CONFINEMENT", "CONTEXT KEY", "claude/default", "chat-only", "no (policy)", "yes", "this shell"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table lacks %q:\n%s", want, out)
 		}
@@ -270,6 +274,67 @@ func TestAPIStatusOffLoopbackMainListenerDoesNotServeV1(t *testing.T) {
 	main := decodeStatus(t, out).Listeners[0]
 	if main.Loopback || main.V1 || main.Confinement != "chat-only" {
 		t.Errorf("an off-loopback main listener must not serve /v1: %+v", main)
+	}
+}
+
+// A running daemon serves what it reports: one started with --api=false and no
+// --v1-addr serves no /v1 at all, whatever this shell's environment says.
+func TestAPIStatusListsNothingWhenTheDaemonServesNoAPI(t *testing.T) {
+	db := newAPITestDB(t)
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", apiServer(t, true))                       // this shell's environment says there is a main listener...
+	t.Setenv("MONOAGENT_API_V1_ADDR", apiServer(t, true))                        // ...and a dedicated one
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid()}); err != nil { // the daemon reports neither
+		t.Fatal(err)
+	}
+
+	out, _, err := runAPI(t, db, "default", true, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := decodeStatus(t, out)
+	if !st.Daemon.Running || len(st.Listeners) != 0 {
+		t.Fatalf("a daemon that serves no API has no listener, whatever the shell's environment says: %+v", st)
+	}
+	human, _, _ := runAPI(t, db, "default", false, "status")
+	if !strings.Contains(human, "serves no") {
+		t.Errorf("the output must say so:\n%s", human)
+	}
+}
+
+// The scheme is not the shell's to guess: the daemon's certificate may be set
+// only in its own environment, so a loopback listener can speak TLS.
+func TestAPIStatusReachesAListenerWhicheverSchemeItSpeaks(t *testing.T) {
+	db := newAPITestDB(t)
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_TLS_CERT", "") // not set in this shell
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", "")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/models":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), V1Addr: addr, V1Confinement: "chat-only"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runAPI(t, db, "default", true, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range decodeStatus(t, out).Listeners {
+		if l.Name == "v1" && (!l.Reachable || !l.V1Answers) {
+			t.Errorf("a loopback listener that speaks TLS must be found: %+v", l)
+		}
 	}
 }
 

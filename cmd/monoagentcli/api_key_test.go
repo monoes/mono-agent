@@ -174,8 +174,21 @@ func TestAPIKeyUpdateHonoursExplicitFlagValues(t *testing.T) {
 	if contextAfter("--no-context") {
 		t.Error("--no-context must turn context off")
 	}
-	if !contextAfter("--no-context=false") {
-		t.Error("--no-context=false means context stays on")
+	// --no-context=false is not "turn context on": on its own it changes
+	// nothing, and next to a rename it leaves the context as it was.
+	if _, _, err := runAPI(t, db, "default", true, "key", "update", "app", "--no-context=false"); exitCode(err) != 3 {
+		t.Errorf("--no-context=false alone has nothing to change: exit %d (%v), want 3", exitCode(err), err)
+	}
+	if _, _, err := runAPI(t, db, "default", true, "key", "create", "--name", "plain"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runAPI(t, db, "default", true, "key", "update", "plain", "--no-context=false", "--name", "renamed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k apikeys.Key
+	if err := json.Unmarshal([]byte(out), &k); err != nil || k.Context {
+		t.Errorf("--no-context=false turned context on: %+v (%v)", k, err)
 	}
 }
 

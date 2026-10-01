@@ -74,15 +74,13 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			st := apiStatusJSON{V: 1, Profile: cfg.ProfileID, Listeners: []apiListenerJSON{}}
 			st.Keys.Active = active
 			hb, live := daemonhb.Read()
-			mainAddr, v1Addr := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR")
+			mainAddr, v1Addr, serveMain := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR"), true
 			if live {
 				st.Daemon.Running, st.Daemon.APIAddr, st.Daemon.V1Addr = true, hb.APIAddr, hb.V1Addr
-				if hb.APIAddr != "" {
-					mainAddr = hb.APIAddr
-				}
-				if hb.V1Addr != "" {
-					v1Addr = hb.V1Addr
-				}
+				// A running daemon serves what it reports, whatever this shell's
+				// environment says: one started with --api=false and no --v1-addr
+				// serves no /v1 at all.
+				mainAddr, v1Addr, serveMain = hb.APIAddr, hb.V1Addr, hb.APIAddr != ""
 			}
 			override := os.Getenv
 			// The context maximum is the daemon's when it reported one.
@@ -95,34 +93,32 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					contextMax = p.Max
 				}
 			}
-			mainPolicy, err := effectivePolicy(mainAddr, "", override)
-			if err != nil {
-				return err
+			if serveMain {
+				mainPolicy, err := effectivePolicy(mainAddr, "", override)
+				if err != nil {
+					return err
+				}
+				mainLoop := tlsserve.IsLoopbackAddr(mainAddr)
+				main := apiListenerJSON{Name: "main", Addr: mainAddr, Loopback: mainLoop, V1: mainLoop, Confinement: mainPolicy.String(), ConfinementSource: "environment"}
+				if live && hb.APIConfinement != "" {
+					main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
+				}
+				main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
+				main.Reachable, main.V1Answers = probeAddr(mainAddr, main.V1)
+				st.Listeners = append(st.Listeners, main)
 			}
-			mainLoop := tlsserve.IsLoopbackAddr(mainAddr)
-			main := apiListenerJSON{Name: "main", Addr: mainAddr, Loopback: mainLoop, V1: mainLoop, Confinement: mainPolicy.String(), ConfinementSource: "environment"}
-			if live && hb.APIConfinement != "" {
-				main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
-			}
-			main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
-			main.Reachable, main.V1Answers = probeListener("http://"+mainAddr, main.V1)
-			st.Listeners = append(st.Listeners, main)
 			if v1Addr != "" {
 				v1Policy, err := effectivePolicy(v1Addr, "", override)
 				if err != nil {
 					return err
 				}
 				loop := tlsserve.IsLoopbackAddr(v1Addr)
-				scheme := "https://"
-				if loop && os.Getenv("MONOAGENT_API_TLS_CERT") == "" {
-					scheme = "http://"
-				}
 				dedicated := apiListenerJSON{Name: "v1", Addr: v1Addr, Loopback: loop, V1: true, Confinement: v1Policy.String(), ConfinementSource: "environment"}
 				if live && hb.V1Confinement != "" {
 					dedicated.Confinement, dedicated.ConfinementSource = hb.V1Confinement, "daemon"
 				}
 				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
-				dedicated.Reachable, dedicated.V1Answers = probeListener(scheme+v1Addr, true)
+				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, true)
 				st.Listeners = append(st.Listeners, dedicated)
 			}
 
@@ -138,6 +134,9 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			for _, l := range st.Listeners {
 				fmt.Fprintf(w, "  %-4s %s  %s\n", l.Name, l.Addr, listenerNote(l))
+			}
+			if len(st.Listeners) == 0 {
+				fmt.Fprintln(w, "  The running daemon serves no HTTP API and no dedicated /v1 listener (see --api, --api-addr and --v1-addr).")
 			}
 			return nil
 		},
@@ -170,6 +169,23 @@ func listenerNote(l apiListenerJSON) string {
 		return note
 	}
 	return "answers /health but not /v1: a server that predates the API may still be running, restart it"
+}
+
+// probeAddr probes a listener at addr without knowing whether it speaks TLS:
+// the certificate may be set only in the server's own environment, so a
+// loopback listener can speak it too. The scheme more likely for the address
+// goes first.
+func probeAddr(addr string, loopback bool) (reachable, v1Answers bool) {
+	schemes := []string{"https://", "http://"}
+	if loopback {
+		schemes = []string{"http://", "https://"}
+	}
+	for _, scheme := range schemes {
+		if reachable, v1Answers = probeListener(scheme+addr, true); reachable {
+			return reachable, v1Answers
+		}
+	}
+	return false, false
 }
 
 // probeListener asks a listener, with a 2 s timeout each, whether GET /health

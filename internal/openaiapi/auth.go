@@ -54,8 +54,12 @@ func (g *Gateway) auth(next func(w http.ResponseWriter, r *http.Request, p Princ
 		key, err := g.deps.Keys.Authenticate(r.Context(), bearer(r))
 		switch {
 		case errors.Is(err, apikeys.ErrInvalidKey):
-			// The caller's address, never the key it sent, so attempts are visible.
-			g.deps.Logf("req=%s status=401 remote=%s", id, remoteHost(r))
+			// The caller's address, never the key it sent, so attempts are
+			// visible. A request that sent no credential at all (`api status`
+			// probing a listener) is not an attempt and is not logged.
+			if r.Header.Get("Authorization") != "" {
+				g.deps.Logf("req=%s status=401 remote=%s", id, remoteHost(r))
+			}
 			w.Header().Set("WWW-Authenticate", `Bearer realm="monoagentcli-api"`)
 			writeError(w, errAuth())
 			return

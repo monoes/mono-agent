@@ -181,6 +181,32 @@ func TestEveryResponseCarriesARequestIDAndAFailedAuthIsLogged(t *testing.T) {
 	}
 }
 
+// `api status` probes a listener with no credential at all: that is not a failed
+// login, and must not fill the log with lines that look like one. A request that
+// did send a credential, of whatever kind, still is an attempt.
+func TestARequestWithoutACredentialIsNotLoggedAsAFailedLogin(t *testing.T) {
+	h := newHarness(t, okTurn("x"))
+	rec := h.serve(anyPolicy, http.MethodGet, "/v1/models", "", "")
+	if rec.Code != http.StatusUnauthorized || !strings.HasPrefix(rec.Header().Get("X-Request-Id"), "req_") {
+		t.Fatalf("a keyless request is still a 401 with a request id: %d %q", rec.Code, rec.Header().Get("X-Request-Id"))
+	}
+	if lines := h.logged(); len(lines) != 0 {
+		t.Errorf("a request with no credential must not be logged as a failed login: %q", lines)
+	}
+
+	if rec := h.serve(anyPolicy, http.MethodGet, "/v1/models", "sk-ma-"+strings.Repeat("q", 43), ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d", rec.Code)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+	if rec := h.do(anyPolicy, r); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if lines := h.logged(); len(lines) != 2 {
+		t.Errorf("a wrong key and a credential of the wrong kind are each logged once: %q", lines)
+	}
+}
+
 // A key created with --context puts the profile's knowledge, which includes
 // captured web pages nobody vetted, into the prompt, so by default only models
 // with no native tools may receive it.

@@ -172,9 +172,9 @@ func newAPIKeyUpdateCmd(cfg *globalConfig) *cobra.Command {
 			switch {
 			case cmd.Flags().Changed("context"):
 				u.Context = &withContext
-			case cmd.Flags().Changed("no-context"):
-				on := !noContext
-				u.Context = &on
+			case noContext: // --no-context=false asks for nothing
+				off := false
+				u.Context = &off
 			}
 			if u.Name == nil && u.Context == nil {
 				return errInvalidInput("nothing to change: pass --name, --context or --no-context")

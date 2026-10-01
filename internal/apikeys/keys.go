@@ -39,10 +39,14 @@ var (
 	// ErrNameTaken means an active key of the profile already has the name.
 	ErrNameTaken = errors.New("an active key with that name already exists in this profile")
 	// ErrInvalidName means the name breaks the naming rule.
-	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit")
+	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit, and not the shape of a key id (key_ and 12 letters or digits)")
 )
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
+
+// idShapeRE is what a key id looks like. A key may not be named like one: Get
+// resolves an id before a name, so the name would shadow the other key.
+var idShapeRE = regexp.MustCompile(`(?i)^` + idPrefix + `[a-z2-7]{12}$`)
 
 // Key is a key's metadata. The key itself is never part of it.
 type Key struct {
@@ -92,4 +96,4 @@ func newID() (string, error) {
 	return idPrefix + strings.ToLower(enc)[:idRandom], nil
 }
 
-func validName(name string) bool { return nameRE.MatchString(name) }
+func validName(name string) bool { return nameRE.MatchString(name) && !idShapeRE.MatchString(name) }

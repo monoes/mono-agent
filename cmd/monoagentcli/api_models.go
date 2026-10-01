@@ -32,6 +32,9 @@ type apiModelsJSON struct {
 		// --context may use on this listener: the context maximum, never
 		// above Confinement.
 		ContextConfinement string `json:"context_confinement"`
+		// Source says whose settings these are: "shell", this command's own flags
+		// and environment, which a running server may not share.
+		Source string `json:"source"`
 	} `json:"policy"`
 	Models []apiModelJSON `json:"models"`
 }
@@ -73,6 +76,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 
 			out := apiModelsJSON{V: 1, Models: []apiModelJSON{}}
 			out.Policy.For, out.Policy.Confinement, out.Policy.ContextConfinement = forListener, policy.String(), forContext.String()
+			out.Policy.Source = "shell"
 			for _, m := range models {
 				if m.Alias {
 					continue
@@ -87,7 +91,8 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				return writeJSONTo(cmd.OutOrStdout(), out)
 			}
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n\n", forListener, policy, forContext)
+			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n", forListener, policy, forContext)
+			fmt.Fprint(w, "From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what it applies).\n\n")
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY")
 			for _, m := range out.Models {

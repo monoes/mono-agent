@@ -87,6 +87,26 @@ func TestCreateReturnsKeyOnceAndStoresOnlyItsHash(t *testing.T) {
 	}
 }
 
+// Get resolves an id before a name, so a key named like another key's id would
+// shadow it: `api key revoke key_…` would hit the wrong key.
+func TestNamesThatLookLikeKeyIDsAreRefused(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	for _, bad := range []string{"key_isqzhh2a5itg", "KEY_ISQZHH2A5ITG", "key_abcdefghijkl"} {
+		if _, _, err := s.Create(ctx, "default", bad, false); !errors.Is(err, ErrInvalidName) {
+			t.Errorf("Create(%q) err = %v, want ErrInvalidName", bad, err)
+		}
+	}
+	k, _, err := s.Create(ctx, "default", "key_prod", false) // not the shape of an id
+	if err != nil {
+		t.Fatalf("a name that merely starts with key_ is fine: %v", err)
+	}
+	shadow := "key_isqzhh2a5itg"
+	if _, err := s.Update(ctx, "default", k.ID, Update{Name: &shadow}); !errors.Is(err, ErrInvalidName) {
+		t.Errorf("renaming to the shape of an id: err = %v, want ErrInvalidName", err)
+	}
+}
+
 func TestCreateValidatesAndRejectsDuplicateActiveNames(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
