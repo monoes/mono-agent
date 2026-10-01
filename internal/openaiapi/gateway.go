@@ -55,7 +55,7 @@ func DefaultDeps(db *sql.DB, version string) Deps {
 		},
 		Catalog: CatalogFuncs{
 			Scan:   monomind.Scan,
-			Models: monomind.ListModels,
+			Models: monomind.ListModelsStrict,
 			Caps:   monomind.Capabilities,
 			Roster: func(ctx context.Context) ([]agentroster.Result, error) { return agentroster.List(ctx, db) },
 		},

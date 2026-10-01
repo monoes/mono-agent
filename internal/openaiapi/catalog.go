@@ -146,6 +146,9 @@ func (c *Catalog) refreshInBackground(fl *catalogFlight, stale []ModelInfo) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.logf("refreshing the model list panicked, serving the previous one: %v", r)
+			c.mu.Lock()
+			c.retrySoonLocked() // like any failed refresh: not again on the very next request
+			c.mu.Unlock()
 		}
 	}()
 	c.runLoad(context.Background(), fl, stale, true)
@@ -175,10 +178,20 @@ func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelI
 	if err == nil {
 		c.mu.Lock()
 		c.cached, c.loaded, c.at = models, true, c.now()
-		if retrySoon && c.ttl > staleRetryAfter {
-			c.at = c.at.Add(-(c.ttl - staleRetryAfter))
+		if retrySoon {
+			c.retrySoonLocked()
 		}
 		c.mu.Unlock()
+	}
+}
+
+// retrySoonLocked makes the cached list expire staleRetryAfter from now instead
+// of a whole TTL from when it was loaded: the last refresh did not give a good
+// list. Callers hold c.mu.
+func (c *Catalog) retrySoonLocked() {
+	c.at = c.now()
+	if c.ttl > staleRetryAfter {
+		c.at = c.at.Add(-(c.ttl - staleRetryAfter))
 	}
 }
 
@@ -226,11 +239,13 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 			// monomind.ListModels answers a listing that ran out of time with its
 			// built-in fallback and no error, so a timeout counts as a failure
 			// like an error does: the fallback must not replace the live list.
+			// The strict variant the gateway uses says the same of a listing that
+			// failed (ErrBuiltinModels): its list stands in, and is not trusted.
 			if err != nil || lctx.Err() != nil {
 				failed[i] = true
 				if last, ok := previous[e.ID]; ok {
 					lists[i] = last
-				} else if err == nil {
+				} else if err == nil || errors.Is(err, monomind.ErrBuiltinModels) {
 					lists[i] = models
 				} // else the runtime keeps its default model only
 				return

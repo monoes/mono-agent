@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,12 +120,18 @@ func TestCatalogServesTheCachedListWhileItRefreshes(t *testing.T) {
 
 	slow.Store(true)
 	clock = clock.Add(2 * time.Minute)
+	// A request that waits for the reload must fail this test, not hang it.
+	var once sync.Once
+	releaseNow := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseNow)
+	safety := time.AfterFunc(5*time.Second, releaseNow)
+	defer safety.Stop()
 	begin := time.Now()
 	got, err := c.Models(context.Background())
 	if err != nil || len(got) != len(first) || time.Since(begin) > time.Second {
 		t.Fatalf("an expired list must be served at once while the reload runs: %d models, %v after %v", len(got), err, time.Since(begin))
 	}
-	close(release)
+	releaseNow()
 	waitForRefresh(t, c)
 }
 
@@ -176,10 +183,6 @@ func TestCatalogKeepsARuntimesLastGoodListWhenItsListingFailsAtARefresh(t *testi
 // fallback and no error, so a timeout counts as a failure like an error does:
 // the fallback must not replace the live list.
 func TestCatalogTreatsAListingThatRanOutOfTimeAsFailed(t *testing.T) {
-	old := listTimeout
-	listTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { listTimeout = old })
-
 	f := testFuncs(t)
 	models := f.Models
 	var hung atomic.Bool
@@ -198,6 +201,10 @@ func TestCatalogTreatsAListingThatRanOutOfTimeAsFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Only now is the timeout short: a stall on the first load must not count.
+	old := listTimeout
+	listTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { listTimeout = old })
 	hung.Store(true)
 	clock = clock.Add(2 * time.Minute)
 	_, _ = c.Models(ctx)
@@ -262,5 +269,132 @@ func TestCatalogALoadThatPanicsDoesNotWedgeLaterCallers(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a call after a panicking load is stuck behind the dead leader")
+	}
+}
+
+// monomind.ListModels answers a failed listing with a built-in list, silently.
+// The gateway asks for the strict variant, which says so (ErrBuiltinModels): a
+// list that is only standing in must neither replace a runtime's good list, nor
+// be kept for a whole TTL.
+func TestCatalogDoesNotTrustABuiltInListThatStandsInForAFailedListing(t *testing.T) {
+	f := testFuncs(t)
+	models := f.Models
+	var down atomic.Bool
+	f.Models = func(ctx context.Context, runtime, bin string) ([]monomind.RuntimeModel, error) {
+		if runtime == "claude" && down.Load() {
+			return []monomind.RuntimeModel{{ID: "claude-sonnet-5"}}, monomind.ErrBuiltinModels
+		}
+		return models(ctx, runtime, bin)
+	}
+	var scans atomic.Int32
+	scan := f.Scan
+	f.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+		scans.Add(1)
+		return scan(ctx)
+	}
+	c := NewCatalog(f, 5*time.Minute)
+	clock := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	ctx := context.Background()
+	if _, err := c.Resolve(ctx, "claude/opus[1m]"); err != nil {
+		t.Fatal(err)
+	}
+
+	down.Store(true)
+	clock = clock.Add(10 * time.Minute)
+	_, _ = c.Models(ctx)
+	waitForRefresh(t, c)
+	if _, err := c.Resolve(ctx, "claude/opus[1m]"); err != nil {
+		t.Errorf("a stand-in list replaced the runtime's good list: %v", err)
+	}
+	if _, err := c.Resolve(ctx, "claude/claude-sonnet-5"); err == nil {
+		t.Error("the stand-in's ids must not appear next to the live list")
+	}
+
+	before := scans.Load()
+	clock = clock.Add(40 * time.Second)
+	_, _ = c.Models(ctx)
+	waitForRefresh(t, c)
+	if scans.Load() != before+1 {
+		t.Errorf("a refresh that only got a stand-in must be retried within seconds: scans %d -> %d", before, scans.Load())
+	}
+}
+
+// With nothing else to serve, the stand-in list is better than a lone default
+// model, and it is looked at again soon.
+func TestCatalogServesAStandInListOnlyWhenItIsAllThereIs(t *testing.T) {
+	f := testFuncs(t)
+	models := f.Models
+	f.Models = func(ctx context.Context, runtime, bin string) ([]monomind.RuntimeModel, error) {
+		if runtime == "claude" {
+			return []monomind.RuntimeModel{{ID: "claude-sonnet-5"}}, monomind.ErrBuiltinModels
+		}
+		return models(ctx, runtime, bin)
+	}
+	var scans atomic.Int32
+	scan := f.Scan
+	f.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+		scans.Add(1)
+		return scan(ctx)
+	}
+	c := NewCatalog(f, 5*time.Minute)
+	clock := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	ctx := context.Background()
+
+	if _, err := c.Resolve(ctx, "claude/claude-sonnet-5"); err != nil {
+		t.Fatalf("with no good list the stand-in is what there is: %v", err)
+	}
+	before := scans.Load()
+	clock = clock.Add(40 * time.Second)
+	_, _ = c.Models(ctx)
+	waitForRefresh(t, c)
+	if scans.Load() != before+1 {
+		t.Errorf("a stand-in list must be retried within seconds, not kept for a TTL: scans %d -> %d", before, scans.Load())
+	}
+}
+
+// A refresh that panics is recovered and the previous list keeps being served,
+// but it is not tried again on every request: like any failed refresh it waits
+// out the retry delay.
+func TestCatalogARefreshThatPanicsIsRetriedLaterNotOnEveryRequest(t *testing.T) {
+	f := testFuncs(t)
+	var scans atomic.Int32
+	var boom atomic.Bool
+	scan := f.Scan
+	f.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+		scans.Add(1)
+		if boom.Load() {
+			panic("scan blew up")
+		}
+		return scan(ctx)
+	}
+	c := NewCatalog(f, 5*time.Minute)
+	clock := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	ctx := context.Background()
+	if _, err := c.Models(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	boom.Store(true)
+	clock = clock.Add(10 * time.Minute)
+	_, _ = c.Models(ctx) // the refresh starts, and panics
+	waitForRefresh(t, c)
+	after := scans.Load()
+	for i := 0; i < 3; i++ {
+		if _, err := c.Models(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitForRefresh(t, c)
+	}
+	if scans.Load() != after {
+		t.Errorf("a refresh that panicked was started again on the next requests: scans %d -> %d", after, scans.Load())
+	}
+	clock = clock.Add(40 * time.Second)
+	_, _ = c.Models(ctx)
+	waitForRefresh(t, c)
+	if scans.Load() != after+1 {
+		t.Errorf("it must be tried again once the retry delay has passed: scans %d -> %d", after, scans.Load())
 	}
 }

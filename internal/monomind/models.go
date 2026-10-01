@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -111,6 +112,25 @@ var curatedModels = map[string][]RuntimeModel{
 // returns a nil, nil slice so callers can fall back to a plain free-text
 // model field.
 func ListModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
+	models, err := ListModelsStrict(ctx, runtimeID, binary)
+	if errors.Is(err, ErrBuiltinModels) {
+		err = nil
+	}
+	return models, err
+}
+
+// ErrBuiltinModels accompanies the models ListModelsStrict returns when the
+// runtime's own listing failed and a built-in list stands in for it. The models
+// are usable, but they are not what the runtime said (claude's curated ids are
+// not the aliases it lists), so a caller that serves them to clients should
+// look again soon rather than keep them.
+var ErrBuiltinModels = errors.New("the runtime's model listing failed: these are the built-in models")
+
+// ListModelsStrict is ListModels, except that it returns ErrBuiltinModels along
+// with the list when a built-in list stands in for a listing that failed. A
+// runtime with no listing command, or a monomind without agent models, is not
+// a failure: its built-in list is the answer.
+func ListModelsStrict(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
 	if set, err := Capabilities(ctx); err == nil && set.Has(CapAgentModels) {
 		models, supported, err := listAgentModels(ctx, runtimeID)
 		switch {
@@ -123,8 +143,24 @@ func ListModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, 
 		}
 		// A failed listing (runtime not logged in, timed out) falls back to
 		// the built-in sources rather than leaving the picker empty.
+		fallback, berr := builtinModels(ctx, runtimeID, binary)
+		if berr == nil && len(fallback) > 0 && hasStaticList(runtimeID) {
+			return fallback, ErrBuiltinModels
+		}
+		return fallback, berr
 	}
 	return builtinModels(ctx, runtimeID, binary)
+}
+
+// hasStaticList reports whether runtimeID's built-in models are a curated list
+// written into this package, as opposed to the runtime's own listing command
+// (antigravity, codex), which is as live as monomind's.
+func hasStaticList(runtimeID string) bool {
+	if runtimeID == "claude" {
+		return true
+	}
+	_, ok := curatedModels[runtimeID]
+	return ok
 }
 
 // builtinModels is ListModels without monomind's agent models: the

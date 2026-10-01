@@ -5,11 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 func TestNewRequiresItsDependencies(t *testing.T) {
@@ -122,6 +125,17 @@ func TestEmptyDirOpensUpReadOnlyDirectoriesAndStaysInside(t *testing.T) {
 	}
 	if _, err := os.Stat(precious); err != nil {
 		t.Errorf("emptyDir followed a symlink out of the folder: %v", err)
+	}
+}
+
+// monomind.ListModels answers a failed listing with a built-in list and no
+// error, which would stay in the catalog for a whole TTL under ids the runtime
+// does not list. The production catalog asks for the strict variant, which says
+// when the list is only standing in.
+func TestDefaultDepsListModelsStrictly(t *testing.T) {
+	deps := DefaultDeps(nil, "test")
+	if reflect.ValueOf(deps.Catalog.Models).Pointer() != reflect.ValueOf(monomind.ListModelsStrict).Pointer() {
+		t.Error("the catalog must list models with monomind.ListModelsStrict")
 	}
 }
 
