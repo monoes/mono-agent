@@ -1,7 +1,7 @@
 # OpenAI-Compatible API — Design Spec
 
 Date: 2026-10-01
-Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3). Amended the same day after two independent reviews of the phase 1 code, and awaiting the user's look at the amendments: a context key is served only by `chat-only` models (D2, §5, §7.2), each concurrency slot has a fixed working folder instead of one folder per request (§4.2, §5), a sandbox that cannot be applied refuses the turn (§6.1), stopping the server ends the turns in flight (§6.4), and error messages stay generic (§7.4).
+Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3). Amended the same day after two independent reviews of the phase 1 code, and the user then decided the two open points: a context key is served only by `chat-only` models unless the operator raises `--context-confinement` (D2, §5, §6.3, §7.2), and each concurrency slot has a fixed working folder per profile instead of one folder per request (§4.2, §5). The other amendments: a sandbox that cannot be applied refuses the turn (§6.1), stopping the server ends the turns in flight (§6.4), and error messages stay generic (§7.4).
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
 
 ## 1. Goal
@@ -19,7 +19,7 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 | # | Decision | From |
 |---|---|---|
 | D1 | Images go through the agent runtimes: a turn in a scratch folder is told to save the image there and the API returns the files. Verified on codex and agy (App. A). Gemini-in-browser and Hugging Face are not API backends. | user |
-| D2 | `context` ON adds excerpts from the profile's own knowledge (`monomind.SearchKnowledge`) to the system prompt. No profile folder, no tools; the turn is as locked down as with OFF. Because the excerpts include captured web pages nobody vetted, a context key is served **only by `chat-only` models**: a runtime with native tools could be steered by injected instructions. | user, tightened after review |
+| D2 | `context` ON adds excerpts from the profile's own knowledge (`monomind.SearchKnowledge`) to the system prompt. No profile folder, no tools; the turn is as locked down as with OFF. Because the excerpts include captured web pages nobody vetted, a context key is served **only by `chat-only` models** by default: a runtime with native tools could be steered by injected instructions. The operator can raise that on purpose with `--context-confinement` (D15), never above the listener's own limit. | user, tightened after review |
 | D3 | Hardened exposure: off-loopback, `/v1` is served only on a dedicated listener that requires TLS, serves nothing but `/v1` and `/health`, and defaults to `--confinement chat-only`. Loopback keeps everything on. | user (listener form: D13) |
 | D4 | Coding use: streaming chat from phase 1, OpenAI tool calling as phase 5 (spike first), all runtimes selectable on loopback. | user |
 | D5 | The gateway runs inside the existing `httpapi` process (daemon or `httpapi`); the key resolves the profile per request. | design |
@@ -32,6 +32,8 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 | D12 | Jev `api_auto` is a new opt-in surface; Jev only picks among options the code lists; any failure falls back to a rule. | Jev doctrine |
 | D13 | Network exposure uses a dedicated `--v1-addr` listener. `/v1` is never served in plaintext off-loopback. | design refinement |
 | D14 | Existing legacy-token routes are unchanged. A key never opens them; the legacy token never opens `/v1`. | design |
+| D15 | `--context-confinement chat-only|sandboxed|any` (env `MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest class a key created with `--context` may use. It never goes above the listener's own `--confinement`. | user (2026-10-01, after review) |
+| D16 | Working folders are per profile and per concurrency slot: `~/.monoagent/workspaces/api/p-<hash of the profile id>/slot-N`. A profile id never reaches a path as such. | user (2026-10-01, after review) |
 
 ## 3. Verified facts (master `c612d46d`, monomind 2.22.0, checked 2026-10-01)
 
@@ -88,10 +90,10 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 1. `Authorization: Bearer sk-ma-…` goes to `apikeys.Authenticate`, which yields a `Principal{KeyID, ProfileID, Context}`; otherwise 401.
 2. The listener's policy (confinement maximum, network flag) applies.
 3. Parse and validate the body (§7.2).
-4. Resolve the model: `auto` (§9), alias and default expansion, membership in the catalog, then its confinement class must be within the policy maximum (for a context key the maximum is capped at `chat-only`), else 403 `policy_denied`.
+4. Resolve the model: `auto` (§9), alias and default expansion, membership in the catalog, then its confinement class must be within the policy maximum (for a context key the maximum is capped at `--context-confinement`, `chat-only` unless raised), else 403 `policy_denied`.
 5. Take a concurrency slot without blocking, else 429.
 6. If `Principal.Context`, run `SearchKnowledge` and build the context block.
-7. Work in the folder of the slot taken in step 5, `~/.monoagent/workspaces/api/slot-N` (0700, N below the concurrency limit), emptied before and after the turn.
+7. Work in the folder of the slot taken in step 5 inside the key's profile folder, `~/.monoagent/workspaces/api/p-<hash>/slot-N` (0700, N below the concurrency limit, `<hash>` a hash of the profile id), emptied before and after the turn.
 8. Call `monomind.Exec`. Events become SSE chunks or are buffered.
 9. Map the result (§7.4) and set headers.
 10. Empty the slot's folder and release the slot.
@@ -101,8 +103,8 @@ Files stay under 500 lines: `auth.go`, `catalog.go`, `confinement.go`, `translat
 ## 5. Isolation model
 
 - A key row holds one `profile_id`. Authentication yields that profile and nothing else. An unknown or revoked key gives the same 401. Another profile's key id is "not found" in the CLI, MCP and GUI.
-- Every request works in the folder of its concurrency slot (`slot-N`), never the profile folder. A slot's folder is fixed rather than one per request, because agent CLIs keep per-folder session state (claude's `~/.claude/projects/<folder>`) that a folder per request would pile up without bound. It is exclusive to the running turn and emptied before and after it, and at start; a folder that cannot be emptied fails the request. The CLIs' own session stores still keep the prompts of past turns, as they do for any use of them.
-- With `context` ON the only profile data in the turn is the excerpts: documents and captures of that profile only. File paths are not included, only base names. Like any prompt, the excerpts go to the runtime's provider. Only `chat-only` models receive them (D2).
+- Every request works in the folder of its concurrency slot inside its profile's folder (`p-<hash>/slot-N`), never the profile's own folder. A slot's folder is fixed rather than one per request, because agent CLIs keep per-folder session state (claude's `~/.claude/projects/<folder>`) that a folder per request would pile up without bound, and it is per profile so that state, and anything else a CLI keeps by folder, is never shared between profiles (D16). It is exclusive to the running turn and emptied before and after it, and at start; a folder that cannot be emptied fails the request. The CLIs' own session stores still keep the prompts of past turns, as they do for any use of them.
+- With `context` ON the only profile data in the turn is the excerpts: documents and captures of that profile only. File paths are not included, only base names. Like any prompt, the excerpts go to the runtime's provider. Only models at or below `--context-confinement` (`chat-only` unless the operator raised it) receive them (D2, D15).
 - Revocation applies to the next request. A turn already running finishes, within the turn timeout.
 - The legacy token (vault `httpapi-token`) and `sk-ma-` keys are separate credentials for separate routes.
 - `org teardown-profile` also revokes the profile's keys.
@@ -139,6 +141,7 @@ A class nobody set is invalid and allowed by no policy. Exec is called with `Req
   - Off-loopback it requires TLS using the webhook rules: `MONOAGENT_API_TLS_CERT` and `_KEY`, else the cached self-signed certificate (localhost only, so remote clients reject it).
   - Real deployments set a certificate or terminate TLS in a proxy. A loopback bind is plain HTTP.
 - **Confinement maximum:** `--confinement chat-only|sandboxed|any` (env `MONOAGENT_API_CONFINEMENT`). Unset, the default is per listener: off-loopback `chat-only`, loopback `any`. Behind a reverse proxy the bind is loopback, so set it explicitly.
+- **Context maximum:** `--context-confinement chat-only|sandboxed|any` (env `MONOAGENT_API_CONTEXT_CONFINEMENT`). Unset, `chat-only`. It is the strongest class a key created with `--context` may use, and it never goes above the listener's own maximum. A context key is listed, and may use, only the models at or below it (D15).
 
 ### 6.4 Limits
 
@@ -210,7 +213,7 @@ Response:
 | Bad body or parameter | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` |
 | Body too large | 413 | `invalid_request_error` / `request_too_large` |
 | Unknown model, or `auto` unavailable | 404 | `invalid_request_error` / `model_not_found` |
-| Class above policy, a context key asking for a model above `chat-only`, or a sandbox that cannot be applied | 403 | `permission_error` / `policy_denied` |
+| Class above policy, a context key asking for a model above `--context-confinement`, or a sandbox that cannot be applied | 403 | `permission_error` / `policy_denied` |
 | Gateway full | 429 | `rate_limit_error` / `rate_limit_exceeded` + `Retry-After` |
 | Runtime rate limited (`rate-limited`) | 429 | `rate_limit_error` / `rate_limit_exceeded` |
 | Runtime quota or budget | 429 | `rate_limit_error` / `insufficient_quota` |
@@ -264,11 +267,11 @@ api key list [--all-profiles] [--include-revoked]
 api key show <id|name>
 api key update <id|name> [--name N] [--context | --no-context]
 api key revoke <id|name> [--yes]
-api models [--for loopback|network] [--confinement C]   # every model with its confinement class and whether that listener kind serves it
+api models [--for loopback|network] [--confinement C] [--context-confinement C]   # every model with its confinement class, whether that listener kind serves it, and whether a context key may use it
 api status [--json]                         # listeners, exposure, confinement, key counts, auto availability, reachability
 ```
 
-`httpapi` and `daemon` gain `--v1-addr`, `--confinement` and `--max-concurrent`. Settings otherwise come from env (§6). The daemon records its dedicated `/v1` address in its heartbeat file (`daemonhb`, which already carries the HTTP API address), and `api status` reads it from there, together with the confinement policies the daemon applies; without a daemon it says its policies are assumed from its own environment. `auto` availability joins `api status` and `api models` in phase 3.
+`httpapi` and `daemon` gain `--v1-addr`, `--confinement`, `--context-confinement` and `--max-concurrent`. Settings otherwise come from env (§6). The daemon records its dedicated `/v1` address in its heartbeat file (`daemonhb`, which already carries the HTTP API address), and `api status` reads it from there, together with the confinement policies and the context maximum the daemon applies; without a daemon it says its policies are assumed from its own environment. `auto` availability joins `api status` and `api models` in phase 3.
 
 ### 8.3 MCP
 
@@ -366,8 +369,8 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
 | Parked-turn design is unverified | Spike gate (§10) before any build. |
 | Wails bindings conflict with uncommitted regenerated diffs in the main checkout | The GUI phase rebases last. |
 | Migration number 061 may be taken | The integrator re-checks before merge. |
-| Captured web pages in the knowledge base carry prompt injection into a context key's prompt | A context key is served only by `chat-only` models (D2); excerpts are fenced as data. |
-| Agent CLIs keep session transcripts of API turns in their own stores | Slot folders bound the directories, not the content; documented. |
+| Captured web pages in the knowledge base carry prompt injection into a context key's prompt | A context key is served only by `chat-only` models unless the operator raises `--context-confinement` (D2, D15); excerpts are fenced as data. |
+| Agent CLIs keep session transcripts of API turns in their own stores | Slot folders bound the directories (one per profile and slot) and keep profiles apart, not the content; documented. |
 | Some runtimes (antigravity) put the prompt on their command line, visible to other local users | Documented; run the server on a dedicated host or OS user. |
 | monomind changes `native_sandbox` semantics | The classifier fails closed (unknown → unconfined) and the start-event check cancels. |
 | antigravity lists a `restricted` sandbox mode that Go does not use today | Untested option, recorded for a later hardening step; v1 treats agy as unconfined. |
