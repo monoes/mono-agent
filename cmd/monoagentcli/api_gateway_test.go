@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/openaiapi"
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
@@ -31,6 +34,76 @@ func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
 	}
 	t.Cleanup(func() { db.Close() })
 	return newAPIRuntime(db.DB, f, func(string, ...any) {})
+}
+
+// newAPIRuntimeSharingHome is a second process over the same home: it does not
+// reset HOME, so it sees the working folders the first one holds.
+func newAPIRuntimeSharingHome(t *testing.T, f apiFlags, logf func(string, ...any)) *apiRuntime {
+	t.Helper()
+	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "gw2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	rt, err := newAPIRuntime(db.DB, f, logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt
+}
+
+// A process that serves no /v1 must not touch the working folders of one that
+// does: the gateway is built only when something is going to serve it.
+func TestGatewayIsBuiltOnlyWhenSomethingServesIt(t *testing.T) {
+	rt, err := newAPIRuntimeForTest(t, apiFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.built() != nil {
+		t.Fatal("newAPIRuntime must not build the gateway")
+	}
+	if rt.mainMount("0.0.0.0:9322") != nil || rt.built() != nil {
+		t.Error("an off-loopback main listener serves no /v1, so no gateway is needed")
+	}
+	if rt.mainMount("127.0.0.1:9322") == nil || rt.built() == nil {
+		t.Error("serving /v1 on a loopback main listener builds the gateway")
+	}
+}
+
+// Two server processes over one home would share the working folders and empty
+// each other's files, so the second serves no /v1 and says why.
+func TestSecondProcessDoesNotServeV1WhileAnotherOwnsTheFolders(t *testing.T) {
+	first, err := newAPIRuntimeForTest(t, apiFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.mainMount("127.0.0.1:9322") == nil {
+		t.Fatal("the first process must serve /v1")
+	}
+
+	var logs []string
+	second := newAPIRuntimeSharingHome(t, apiFlags{v1Addr: "127.0.0.1:0"}, func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) })
+	if second.mainMount("127.0.0.1:9322") != nil {
+		t.Error("a second process must not serve /v1 over the same folders")
+	}
+	if joined := strings.Join(logs, "\n"); !strings.Contains(joined, "already") {
+		t.Errorf("it must say why: %q", joined)
+	}
+	if _, err := second.startV1(context.Background()); !errors.Is(err, openaiapi.ErrScratchBusy) {
+		t.Errorf("an explicit --v1-addr must fail when another process owns the folders: %v", err)
+	}
+	if got := second.confinementReport("127.0.0.1:9322", false); got != "" {
+		t.Errorf("a process that serves no /v1 reports no confinement: %q", got)
+	}
+
+	first.drain() // the first process stops; the folders are free again
+	third := newAPIRuntimeSharingHome(t, apiFlags{}, func(string, ...any) {})
+	if third.mainMount("127.0.0.1:9322") == nil {
+		t.Error("a process that starts after the first has stopped serves /v1")
+	}
 }
 
 func TestComposeRoutesKeepsEveryRegistrar(t *testing.T) {

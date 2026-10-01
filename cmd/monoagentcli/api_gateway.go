@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -44,19 +46,28 @@ func (f *apiFlags) bind(cmd *cobra.Command) {
 		"Maximum number of API turns running at once (default 4). Also MONOAGENT_API_MAX_CONCURRENT")
 }
 
-// apiRuntime is the gateway and how its listeners are set up.
+// apiRuntime is the gateway's settings and how its listeners are set up. The
+// gateway itself is built when something is going to serve it: building it
+// takes the lock on the working folders and empties them, which a process that
+// serves no /v1 (a daemon started with --api=false, a second server over the
+// same home) must not do to one that does.
 type apiRuntime struct {
-	gw       *openaiapi.Gateway
+	deps     openaiapi.Deps
+	conf     openaiapi.Config
 	override string // an explicit confinement; "" means each listener's default
 	// contextMax is the strongest class a key created with --context may use.
 	contextMax openaiapi.Class
 	v1Addr     string
 	logf       func(format string, args ...any)
-	v1Done     chan struct{} // closed when the dedicated listener has stopped; nil without one
+
+	mu     sync.Mutex
+	gw     *openaiapi.Gateway // nil until built, and when it could not be
+	gwErr  error
+	v1Done chan struct{} // closed when the dedicated listener has stopped; nil without one
 }
 
-// newAPIRuntime builds the gateway from the flags, falling back to the
-// environment. Bad values are invalid input (exit 3).
+// newAPIRuntime reads the flags, falling back to the environment. Bad values
+// are invalid input (exit 3).
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
 	conf, err := openaiapi.ConfigFromEnv(os.Getenv)
 	if err != nil {
@@ -89,11 +100,28 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 
 	deps := openaiapi.DefaultDeps(db, getVersion())
 	deps.Logf = logf
-	gw, err := openaiapi.New(deps, conf)
-	if err != nil {
-		return nil, fmt.Errorf("starting the OpenAI-compatible API: %w", err)
+	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, v1Addr: v1, logf: logf}, nil
+}
+
+// gateway builds the gateway on first use. A process that cannot (another one
+// owns the working folders) gets the error every time.
+func (a *apiRuntime) gateway() (*openaiapi.Gateway, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.gw == nil && a.gwErr == nil {
+		a.gw, a.gwErr = openaiapi.New(a.deps, a.conf)
+		if a.gwErr != nil && !errors.Is(a.gwErr, openaiapi.ErrScratchBusy) {
+			a.gwErr = fmt.Errorf("starting the OpenAI-compatible API: %w", a.gwErr)
+		}
 	}
-	return &apiRuntime{gw: gw, override: override, contextMax: contextMax, v1Addr: v1, logf: logf}, nil
+	return a.gw, a.gwErr
+}
+
+// built is the gateway if it has been built, nil otherwise.
+func (a *apiRuntime) built() *openaiapi.Gateway {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gw
 }
 
 // policy is the confinement policy of a listener bound to addr: what it
@@ -120,8 +148,13 @@ func (a *apiRuntime) mainMount(mainAddr string) func(*http.ServeMux) {
 		a.logf("the HTTP API listener %s is not loopback, so it does not serve /v1: give the OpenAI-compatible API its own listener with --v1-addr", mainAddr)
 		return nil
 	}
+	gw, err := a.gateway()
+	if err != nil {
+		a.logf("this process does not serve /v1: %v", err)
+		return nil
+	}
 	p := a.policy(mainAddr)
-	return func(mux *http.ServeMux) { a.gw.Mount(mux, p) }
+	return func(mux *http.ServeMux) { gw.Mount(mux, p) }
 }
 
 // startV1 binds the dedicated /v1 listener, when one is configured, and
@@ -130,6 +163,10 @@ func (a *apiRuntime) mainMount(mainAddr string) func(*http.ServeMux) {
 func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 	if a.v1Addr == "" {
 		return "", nil
+	}
+	gw, err := a.gateway()
+	if err != nil {
+		return "", err
 	}
 	tlsCfg, err := tlsserve.Resolve(tlsserve.Config{
 		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv,
@@ -144,10 +181,13 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("listen on %s: %w", a.v1Addr, err)
 	}
 	p := a.policy(a.v1Addr)
-	a.v1Done = make(chan struct{})
+	done := make(chan struct{})
+	a.mu.Lock()
+	a.v1Done = done
+	a.mu.Unlock()
 	go func() {
-		defer close(a.v1Done)
-		if err := a.gw.Serve(ctx, ln, p, tlsCfg); err != nil && ctx.Err() == nil {
+		defer close(done)
+		if err := gw.Serve(ctx, ln, p, tlsCfg); err != nil && ctx.Err() == nil {
 			a.logf("the /v1 listener stopped: %v", err)
 		}
 	}()
@@ -163,12 +203,15 @@ const apiDrainWait = 30 * time.Second
 // calls it after its servers were told to stop, so that no agent CLI outlives
 // the process that was supposed to supervise it.
 func (a *apiRuntime) drain() {
-	if !a.gw.Shutdown(apiDrainWait) {
+	if gw := a.built(); gw != nil && !gw.Shutdown(apiDrainWait) {
 		a.logf("turns of the OpenAI-compatible API were still running %s after the server stopped", apiDrainWait)
 	}
-	if a.v1Done != nil {
+	a.mu.Lock()
+	done := a.v1Done
+	a.mu.Unlock()
+	if done != nil {
 		select {
-		case <-a.v1Done:
+		case <-done:
 		case <-time.After(apiDrainWait):
 			a.logf("the /v1 listener did not stop within %s", apiDrainWait)
 		}
@@ -177,9 +220,13 @@ func (a *apiRuntime) drain() {
 
 // confinementReport is the policy to record in the daemon's heartbeat for a
 // listener at addr: "" when there is no such listener, or when it does not
-// serve /v1 (the main listener serves it only on loopback).
+// serve /v1 (the main listener serves it only on loopback, and nothing serves
+// it in a process that could not build the gateway).
 func (a *apiRuntime) confinementReport(addr string, dedicated bool) string {
-	if addr == "" || (!dedicated && !tlsserve.IsLoopbackAddr(addr)) {
+	a.mu.Lock()
+	failed := a.gwErr != nil
+	a.mu.Unlock()
+	if failed || addr == "" || (!dedicated && !tlsserve.IsLoopbackAddr(addr)) {
 		return ""
 	}
 	return a.policy(addr).String()

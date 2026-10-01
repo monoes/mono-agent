@@ -125,6 +125,44 @@ func TestEmptyDirOpensUpReadOnlyDirectoriesAndStaysInside(t *testing.T) {
 	}
 }
 
+// Two gateways over one scratch root would hand the same slot folder to two
+// turns of one profile, and each would empty the other's files. The second
+// refuses to start, before it touches anything.
+func TestNewRefusesASecondGatewayOverTheSameFolders(t *testing.T) {
+	root := t.TempDir()
+	first := newHarness(t, okTurn("x"), func(_ *Deps, c *Config) { c.ScratchRoot = root })
+	slot := filepath.Join(root, profileFolder("alice"), "slot-0")
+	if err := os.MkdirAll(slot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inUse := filepath.Join(slot, "in-use.txt") // what a running turn of the first gateway is working with
+	if err := os.WriteFile(inUse, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	second := func() (*Gateway, error) { return New(first.g.deps, Config{ScratchRoot: root}) }
+	if _, err := second(); !errors.Is(err, ErrScratchBusy) {
+		t.Fatalf("a second gateway over the same folders: err = %v, want ErrScratchBusy", err)
+	}
+	if _, err := os.Stat(inUse); err != nil {
+		t.Fatalf("the refused gateway emptied the first one's folder: %v", err)
+	}
+
+	// Once the first has stopped, the folders are free again, and a gateway
+	// that starts then cleans what a crash left behind.
+	if !first.g.Shutdown(5 * time.Second) {
+		t.Fatal("Shutdown must report that nothing is running")
+	}
+	g2, err := second()
+	if err != nil {
+		t.Fatalf("a gateway must be able to start once the first has stopped: %v", err)
+	}
+	defer g2.Shutdown(time.Second)
+	if _, err := os.Stat(inUse); !os.IsNotExist(err) {
+		t.Error("the new gateway must empty what the stopped one left behind")
+	}
+}
+
 func TestDrainWaitsUntilEveryStartedTurnHasEnded(t *testing.T) {
 	h := newHarness(t, okTurn("x"))
 	if !h.g.Drain(time.Second) {

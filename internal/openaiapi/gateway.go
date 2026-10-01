@@ -16,8 +16,15 @@ import (
 
 	"github.com/monoes/mono-agent/internal/agentroster"
 	"github.com/monoes/mono-agent/internal/apikeys"
+	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
+
+// ErrScratchBusy is New's answer when another process already serves the
+// OpenAI-compatible API from the same working folders. Two gateways over one
+// home would hand the same slot folder to two turns of a profile, and each
+// would empty the other's files.
+var ErrScratchBusy = errors.New("another monoagentcli process is already serving the OpenAI-compatible API from this home (its working folders are in use)")
 
 // ExecFunc runs one agent turn: monomind.Exec in production.
 type ExecFunc func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error)
@@ -76,10 +83,16 @@ type Gateway struct {
 	// watches it, so closing a listener cannot leave an agent CLI running.
 	shutdownCtx context.Context
 	shutdown    context.CancelFunc
+
+	// unlock releases the lock on the scratch root, once the turns are gone.
+	unlock     func()
+	unlockOnce sync.Once
 }
 
 // New builds a Gateway and empties the slot folders an earlier crash may have
-// left files in.
+// left files in. It holds an exclusive lock on the scratch root until Shutdown
+// (or the process's end), so a second gateway over the same home gets
+// ErrScratchBusy instead of emptying folders a running turn is working in.
 func New(d Deps, c Config) (*Gateway, error) {
 	cfg, err := c.withDefaults()
 	if err != nil {
@@ -101,15 +114,23 @@ func New(d Deps, c Config) (*Gateway, error) {
 	if d.Catalog.Logf == nil {
 		d.Catalog.Logf = d.Logf
 	}
+	unlock, err := daemonhb.LockFile(filepath.Join(cfg.ScratchRoot, ".lock"))
+	if errors.Is(err, daemonhb.ErrHeld) {
+		return nil, ErrScratchBusy
+	}
+	if err != nil {
+		return nil, fmt.Errorf("openaiapi: locking the working folders: %w", err)
+	}
 	g := &Gateway{
 		deps:    d,
 		cfg:     cfg,
 		catalog: NewCatalog(d.Catalog, cfg.CatalogTTL),
 		limiter: newLimiter(cfg.MaxConcurrent),
 		bin:     &binCache{f: d.Bin},
+		unlock:  unlock,
 	}
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
-	g.cleanSlots()
+	g.cleanSlots() // only now: nothing of another process can be running in them
 	return g, nil
 }
 
@@ -243,7 +264,13 @@ func (g *Gateway) turnEnded() {
 // useful afterwards.
 func (g *Gateway) Shutdown(timeout time.Duration) bool {
 	g.shutdown()
-	return g.Drain(timeout)
+	drained := g.Drain(timeout)
+	if drained {
+		// Another gateway may use the folders now. With turns still alive the
+		// lock stays until the process ends.
+		g.unlockOnce.Do(g.unlock)
+	}
+	return drained
 }
 
 // Drain waits up to timeout for the turns in flight to end, without ending
