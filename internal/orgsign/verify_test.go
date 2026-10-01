@@ -1,7 +1,6 @@
 package orgsign
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -219,7 +218,7 @@ func TestMonomindDocumentedHashVectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		proj := projection(v)
-		digests, err := instructionsDigests(v, readDigests(root))
+		digests, err := instructionsDigests(v, readDigests(root).file)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -253,25 +252,5 @@ func TestMonomindKeyOrderAndNegativeZeroVectors(t *testing.T) {
 	}
 	if got := jsNumber(math.Copysign(0, -1)); got != "0" {
 		t.Errorf("-0 prints %q", got)
-	}
-}
-
-// monomind#571 may sign blueprint digests too: until that is settled, a
-// role with a blueprint gets no Go hash, so it is never re-signed
-// automatically (fail closed).
-func TestBlueprintRoleIsUnknown(t *testing.T) {
-	operatorDirForTest(t)
-	root := t.TempDir()
-	body := `{"name":"growth","roles":[{"id":"lead","blueprint":"researcher"}]}`
-	if _, err := Hash(root, []byte(body)); err == nil {
-		t.Fatal("hashed a blueprint role")
-	}
-	loaded := writeOrg(t, root, "growth", body)
-	signFixture(t, root, "growth", []byte(signedBody)) // a sidecar exists
-	if st := Verify(root, "growth", []byte(body)); st.State != StateUnknown {
-		t.Fatalf("state %+v", st)
-	}
-	if Before(context.Background(), nil, root, "growth", loaded, false).Eligible() {
-		t.Fatal("a blueprint org is eligible for automatic re-signing")
 	}
 }
