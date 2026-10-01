@@ -70,6 +70,19 @@ func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
 	return dir, nil
 }
 
+// turnTempDir makes the private folder for the files Exec writes for one turn:
+// its prompt and system prompt (which carry a context key's excerpts). They
+// must not sit in the system temp directory, which a sandboxed runtime can
+// write, where another turn could rewrite them between Exec creating them and
+// monomind reading them. This folder is outside every turn's writable area.
+func (g *Gateway) turnTempDir() (string, error) {
+	root := filepath.Join(g.cfg.ScratchRoot, tmpDirName)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", fmt.Errorf("creating the private folder of the turn's files: %w", err)
+	}
+	return os.MkdirTemp(root, "turn-") // mode 0700
+}
+
 // runTurn runs t through monomind.Exec in its profile's slot folder, with exactly the
 // posture of agent.ask and chat without tools: default (scoped) access, the
 // workspace-write sandbox where the runtime has one, no caller tools, no
@@ -95,6 +108,11 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		return nil, err
 	}
 	defer emptyDir(dir)
+	tmp, err := g.turnTempDir()
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
 
 	tctx, cancel := context.WithTimeout(ctx, g.cfg.TurnTimeout+turnGrace)
 	defer cancel()
@@ -106,6 +124,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		SystemPrompt:     t.System,
 		Cwd:              dir,
 		Bin:              bin,
+		TempDir:          tmp,
 		Sandbox:          monomind.TurnSandboxMode,
 		RequireSandbox:   t.RequireSandbox,
 		WorkspacePurpose: scratchPurpose,

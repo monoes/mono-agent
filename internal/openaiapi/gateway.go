@@ -131,6 +131,7 @@ func New(d Deps, c Config) (*Gateway, error) {
 	}
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
 	g.cleanSlots() // only now: nothing of another process can be running in them
+	_ = os.RemoveAll(filepath.Join(cfg.ScratchRoot, tmpDirName))
 	return g, nil
 }
 
@@ -141,6 +142,8 @@ const (
 	scratchPurpose = "api"
 	// profilePrefix starts the name of a profile's folder under the scratch root.
 	profilePrefix = "p-"
+	// tmpDirName holds the private folders of the turns' prompt files.
+	tmpDirName = ".tmp"
 )
 
 // profileFolder names the folder that holds a profile's slot folders: a hash

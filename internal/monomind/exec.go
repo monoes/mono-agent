@@ -85,6 +85,12 @@ type ExecOptions struct {
 	// keys its resumable sessions by folder, so moving it would orphan
 	// every existing conversation.
 	WorkspacePurpose string
+	// TempDir is where the prompt, system-prompt and tools files Exec writes for
+	// monomind are created; empty means the system temp directory. A caller
+	// whose turn runs in a sandbox that can write the system temp directory
+	// gives Exec a private one, so another turn cannot rewrite the files
+	// between their creation and monomind reading them.
+	TempDir string
 	// Stderr receives monomind's diagnostics; nil means os.Stderr.
 	Stderr io.Writer
 }
@@ -405,7 +411,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// The prompt always travels via --prompt-file (written to a temp file),
 	// mirroring --system-file: large prompts (e.g. agentgen's HTML payload)
 	// must never hit argv limits.
-	promptF, err := os.CreateTemp("", "monoagent-prompt-*.md")
+	promptF, err := os.CreateTemp(opts.TempDir, "monoagent-prompt-*.md")
 	if err != nil {
 		return nil, fmt.Errorf("write prompt file: %w", err)
 	}
@@ -420,7 +426,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	args = append(args, "--prompt-file", promptName)
 
 	if opts.SystemPrompt != "" {
-		f, err := os.CreateTemp("", "monoagent-system-*.md")
+		f, err := os.CreateTemp(opts.TempDir, "monoagent-system-*.md")
 		if err != nil {
 			return nil, fmt.Errorf("write system prompt: %w", err)
 		}
@@ -440,7 +446,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		if err != nil {
 			return nil, fmt.Errorf("marshal tools: %w", err)
 		}
-		f, err := os.CreateTemp("", "monoagent-tools-*.json")
+		f, err := os.CreateTemp(opts.TempDir, "monoagent-tools-*.json")
 		if err != nil {
 			return nil, fmt.Errorf("write tools file: %w", err)
 		}

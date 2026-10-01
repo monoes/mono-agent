@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -184,6 +185,38 @@ func TestRunTurnSlotsWorkInDifferentFolders(t *testing.T) {
 	}
 	if len(dirs) != 2 || dirs[0] != "slot-0" || dirs[1] != "slot-1" {
 		t.Fatalf("each slot works in its own folder: %v", dirs)
+	}
+}
+
+// The prompt and the system prompt (with a context key's excerpts) are written to
+// files for monomind. They must not sit in the system temp directory, which a
+// sandboxed runtime can write, so another turn could rewrite them before
+// monomind reads them: each turn gets a private folder outside every turn's
+// writable area.
+func TestRunTurnWritesItsPromptFilesInAPrivateFolder(t *testing.T) {
+	var tmp string
+	var mode os.FileMode
+	var existed bool
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		tmp = opts.TempDir
+		info, err := os.Stat(tmp)
+		existed, mode = err == nil && info.IsDir(), info.Mode().Perm()
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if tmp == "" || tmp == os.TempDir() || filepath.Dir(filepath.Dir(tmp)) != h.scratch {
+		t.Fatalf("TempDir = %q, want a folder of its own under the scratch root %s", tmp, h.scratch)
+	}
+	if strings.HasPrefix(tmp, filepath.Join(h.scratch, profileFolder("alice"))) {
+		t.Errorf("TempDir %s is inside the turn's writable folder", tmp)
+	}
+	if !existed || mode != 0o700 {
+		t.Errorf("TempDir must exist during the turn with mode 0700: existed=%v mode=%v", existed, mode)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Error("the private folder must be removed when the turn ends")
 	}
 }
 

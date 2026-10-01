@@ -138,6 +138,10 @@ func TestEndToEndThroughTheRealExec(t *testing.T) {
 		if a == "--cwd" && i+1 < len(argv) {
 			cwd = argv[i+1]
 		}
+		// The prompt files are in a private folder, not in the temp directory.
+		if (a == "--prompt-file" || a == "--system-file") && i+1 < len(argv) && !strings.HasPrefix(argv[i+1], filepath.Join(home, "scratch", ".tmp")+string(filepath.Separator)) {
+			t.Errorf("%s = %q, want a file in the private folder under %s", a, argv[i+1], filepath.Join(home, "scratch", ".tmp"))
+		}
 	}
 	if cwd != filepath.Join(home, "scratch", profileFolder("default"), "slot-0") {
 		t.Errorf("--cwd = %q, want the profile's slot folder under the scratch root", cwd)

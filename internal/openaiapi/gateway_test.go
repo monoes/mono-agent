@@ -163,6 +163,22 @@ func TestNewRefusesASecondGatewayOverTheSameFolders(t *testing.T) {
 	}
 }
 
+// What a crash left in the private folders of the turns goes at start.
+func TestNewRemovesPrivateFoldersACrashLeft(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, ".tmp", "turn-123")
+	if err := os.MkdirAll(left, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(left, "monoagent-prompt.md"), []byte("a prompt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = newHarness(t, okTurn("x"), func(_ *Deps, c *Config) { c.ScratchRoot = root })
+	if _, err := os.Stat(left); !os.IsNotExist(err) {
+		t.Error("a crashed turn's prompt files must not stay on disk")
+	}
+}
+
 func TestDrainWaitsUntilEveryStartedTurnHasEnded(t *testing.T) {
 	h := newHarness(t, okTurn("x"))
 	if !h.g.Drain(time.Second) {
