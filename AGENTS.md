@@ -61,7 +61,7 @@ monoagentcli --help         # command list; the root help includes an agents not
 | `ref templates` | The bundled ready-to-run workflow templates |
 | `ref connections` | Profiles, OAuth, credential resolution — **read before touching `--profile` or credentials** |
 | `ref crawling` | Automating sites with no built-in node type |
-| `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping |
+| `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping, and the OpenAI-compatible `/v1` API |
 
 Prefer `ref` over guessing from `--help` alone.
 
@@ -398,6 +398,77 @@ No endpoint ever returns a generic 500 for a condition the CLI classifies
 more specifically — this repo prefers honest, mapped statuses (see the
 README's Feature Highlights on `SUCCESS_WITH_ERRORS` runs) over collapsing
 everything to 200/500.
+
+### OpenAI-compatible API (`/v1`)
+
+The same `httpapi` and `daemon` processes also serve standard OpenAI-style
+endpoints over the agent runtimes installed on the machine (claude, codex,
+antigravity, …), so any OpenAI SDK or tool works with just a `base_url` and
+a key. It lives in `internal/openaiapi/`; the spec is
+`docs/mastermind/specs/2026-10-01-openai-compatible-api-design.md`.
+
+- **Endpoints.** `GET /v1/models`, `GET /v1/models/{id}` and
+  `POST /v1/chat/completions` (JSON, or `"stream": true` for server-sent
+  events). Model ids are `<runtime>/<model>` (`claude/claude-sonnet-5`,
+  `codex/gpt-6-astra`); a bare runtime (`codex`) is its default model and
+  `agy` is accepted for `antigravity`. Sampling parameters are accepted and
+  ignored, because `agent exec` has none. `n > 1`, `logprobs`, `audio`,
+  image or audio content parts and `tools`/`tool_choice` are rejected with
+  400 `unsupported_parameter`. Images, tool calling and an `auto` model that
+  lets Jev pick are not available yet.
+- **Auth is a per-profile API key** (`sk-ma-…`), never the legacy token above.
+  `monoagentcli api key create --name <n> [--context]` prints the key once and
+  stores only its SHA-256, so it needs no vault and no keyring and works on a
+  headless server. A key belongs to one profile and reaches nothing of any
+  other; `--context` adds excerpts of that profile's own knowledge (documents
+  and captures) to the prompt, otherwise the key reaches a plain model. A
+  context key is served only by chat-only models unless the operator raises
+  `--context-confinement` (`MONOAGENT_API_CONTEXT_CONFINEMENT`), because the
+  excerpts include captured web pages nobody vetted.
+  `api key list|show|update|revoke`, `api models` and `api status` complete
+  the group (all take `--json`; exit 2 not found, 3 invalid input).
+  `org teardown-profile` revokes a profile's keys. A key never opens the
+  legacy routes, and the legacy token never opens `/v1`. Revoking applies to
+  the next request: a turn already running finishes, within its timeout.
+- **Isolation.** Every request is one `monomind agent exec` turn in a slot
+  folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+  (`<hash>` is a hash of the profile id; never the profile's own folder;
+  emptied before and after every turn), with no tools, no settings and the
+  workspace-write sandbox where the runtime has one. The folders are fixed
+  because agent CLIs keep per-folder session state that a folder per request
+  would pile up, and per profile so that state is never shared between
+  profiles. Requests are stateless.
+- **Confinement.** A runtime's class is `chat-only` (claude: monomind's
+  allow-list gate is the only tool gate), `sandboxed` (codex: writes confined
+  to the turn's folder, reads and the runtime's own MCP tools open) or
+  `unconfined` (antigravity: its native tools run as the OS user). `api models` shows each model's class, and the
+  `X-Monoagent-Sandbox` response header the turn's verdict.
+  `--confinement chat-only|sandboxed|any` (`MONOAGENT_API_CONFINEMENT`) is the
+  strongest class a listener serves; a model above it is unlisted and a
+  completion that names it gets 403 `policy_denied`.
+  `--context-confinement chat-only|sandboxed|any`
+  (`MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest
+  class a key created with `--context` may use, never above the listener's.
+- **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
+  is loopback (default `127.0.0.1:9322`, every runtime allowed). To serve it
+  beyond the machine, give it its own listener with `--v1-addr`
+  (`MONOAGENT_API_V1_ADDR`) on `httpapi` or `daemon`: it serves only `/v1` and
+  `/health`, is TLS only off-loopback (`MONOAGENT_API_TLS_CERT`/`_KEY`, else a
+  self-signed certificate cached under `~/.monoagent/api-tls/` that remote
+  clients must trust explicitly) and defaults to `--confinement chat-only`.
+  Behind a reverse proxy the bind is loopback, so set `--confinement`
+  explicitly. Read [SECURITY.md](SECURITY.md#openai-compatible-api-surface)
+  before exposing it.
+- **Limits.** 2 MiB request body, 4 concurrent turns (`--max-concurrent`,
+  `MONOAGENT_API_MAX_CONCURRENT`; a full server answers 429 with
+  `Retry-After: 2`), a 10 minute turn timeout (`MONOAGENT_API_TURN_TIMEOUT`)
+  and no CORS. Errors use the OpenAI shape
+  `{"error":{"message","type","param","code"}}`. Nothing logs a prompt, an
+  answer or a key.
+
+Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
+`examples/openai-api-quickstart.md`; paths and schemas:
+`internal/httpapi/openapi.yaml`.
 
 ## Assistant chat & tools
 
@@ -954,9 +1025,13 @@ login (and its bill) is what the turn uses.
   place that decides what that means:
   - monomind advertises `agent-exec-sandbox` (monomind#396): `agent exec
     --sandbox workspace-write`, only for a runtime whose `agent scan --json`
-    `sandbox_modes` lists the mode (codex, grok on 2.19.0; monomind refuses
-    any other mode as fatal). A runtime listing only `full` gets no flag:
-    claude reports `scoped`, the others `unsupported`. With the scan failed,
+    `sandbox_modes` lists the mode (monomind refuses any other mode as
+    fatal). On monomind 2.22.0 claude and codex list it, so their turns are
+    `sandboxed`; antigravity (`restricted`, `full`) and hermes (`full`) do
+    not, and run unsandboxed (`unsupported`). Where claude lists no such
+    mode it keeps its `scoped` access. Whether a runtime's native tools are
+    confined is a separate question, which the OpenAI-compatible API
+    answers per runtime (see [HTTP API](#http-api)). With the scan failed,
     no flag is passed and the env path below applies;
   - otherwise, monomind >= 2.11.1 and runtime `codex` or `grok`:
     `--env MONOMIND_GIT_LEVEL=read`. The runner reads that level from the
@@ -1381,6 +1456,12 @@ regardless of where the binary runs from.
 | `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only, plain HTTP). Override it under Docker/VMs so published ports actually forward — any non-loopback bind is always served over TLS (see [SECURITY.md](SECURITY.md#webhook-trigger-surface)), never plaintext. |
 | `MONOAGENT_WEBHOOK_TLS_CERT` / `MONOAGENT_WEBHOOK_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback webhook bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/webhook-tls/` instead. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
+| `MONOAGENT_API_V1_ADDR` | Bind address (`host:port`) of the OpenAI-compatible API's dedicated listener (`--v1-addr` wins). It serves only `/v1` and `/health`, and any non-loopback bind is served only over TLS. Default: unset — no dedicated listener; `/v1` is served on the main HTTP API listener when that is loopback. |
+| `MONOAGENT_API_TLS_CERT` / `MONOAGENT_API_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback `--v1-addr` bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/api-tls/`. |
+| `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). Default: unset — `any` on a loopback listener, `chat-only` on any other. |
+| `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
+| `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
+| `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
 | `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` | Path to a chmod-600 file whose first line is the file-keyring passphrase — the non-interactive source for the desktop app and services (a path, never the passphrase itself). Default: unset — use `~/.monoagent/keyring-passphrase` when `secret keyring set-passphrase` wrote one, else prompt on stdin, or on `/dev/tty` when stdin carries the command's input. |
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |

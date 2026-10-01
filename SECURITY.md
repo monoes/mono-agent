@@ -435,3 +435,131 @@ allowlist) if browser-based callers need to reach it; without it the
 server emits no CORS headers at all, so cross-origin browser requests are
 blocked outright — see [Runtime environment variables in
 AGENTS.md](AGENTS.md#runtime-environment-variables).
+
+## OpenAI-compatible API surface
+
+`monoagentcli httpapi` and `monoagentcli daemon` serve `GET /v1/models`,
+`GET /v1/models/{id}` and `POST /v1/chat/completions` over the agent
+runtimes installed on the machine (`internal/openaiapi/`). A request is a
+real agent turn run through `monomind agent exec`; this section is what that
+means for exposure. Setup: `examples/openai-api-quickstart.md`.
+
+**Credentials.** A key is `sk-ma-` plus 32 random bytes and belongs to one
+profile. Only its SHA-256 is stored (table `api_keys`), so it is shown once,
+at creation, and verifying a request needs no vault and no keyring. There is
+no authentication cache: `api key revoke` and `org teardown-profile` take
+effect on the next request. A request authenticates as the key's profile and
+as nothing else; a key of another profile is "not found" in every command.
+The legacy HTTP API token (vault entry `httpapi-token`) is a separate
+credential for the other routes: a key never opens them and the token never
+opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
+
+**What a key can make this machine do.** Every request starts one agent turn
+in a slot folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+(`<hash>` is a hash of the profile id, so two profiles never share a folder;
+never the profile's own folder; emptied before and after every turn), with no
+tools, no settings and the workspace-write sandbox where the runtime has
+one. What that confines depends on the runtime, and
+`monoagentcli api models` reports it per model instead of pretending
+otherwise:
+
+| Class | Meaning | For example |
+|---|---|---|
+| `chat-only` | monomind's allow-list gate is the only tool gate, and a request carries no caller tools, so no native tool is reachable | claude |
+| `sandboxed` | writes are confined to the turn's folder; reads and the network are open, and the runtime's own configuration still applies | codex |
+| `unconfined` | the runtime's native tools run as the OS user | antigravity, and any runtime monomind does not vouch for |
+
+Which runtime lands in which class follows what monomind reports, so it can
+change with a monomind upgrade. `sandboxed` confines writes, nothing more: a
+runtime keeps the MCP servers and instructions files of the OS user it runs
+as, so a key holder can ask codex to use any tool you configured for it.
+
+The class is decided from `monomind agent scan` and fails closed: anything
+not vouched for is `unconfined`. A `sandboxed` model's turn is started with the sandbox required, so one
+whose sandbox cannot be applied is refused (403) instead of running
+unconfined. The class is checked again when the turn starts, against the
+confinement the `start` event reports (monomind 2.22 reports it), and a turn
+that is weaker than the listener's policy is cancelled (403
+`policy_denied`) before any of its text reaches the caller. The turn's verdict is also the `X-Monoagent-Sandbox`
+response header.
+
+Be precise about what is and is not guaranteed. claude's `chat-only` rests on
+monomind's design (its allow-list gate); the live check
+`MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run TestLiveClaudeIsChatOnly`
+tries to make it do otherwise, and until you have run it on your machine, read
+the class as the design, not a measured guarantee. codex under
+`workspace-write` can still read files outside its folder, and antigravity
+can run a shell command with the permissions of the OS user. **Run the server
+as a dedicated unprivileged OS user**, with nothing of value readable by it,
+before giving a key to anyone you would not give a shell.
+
+**Exposure.**
+
+- `/v1` rides the main HTTP API listener only while that bind is loopback
+  (default `127.0.0.1:9322`), where every runtime is served. Off-loopback the
+  main listener never serves `/v1`; it logs a pointer to `--v1-addr`.
+- `--v1-addr` (`MONOAGENT_API_V1_ADDR`) starts a dedicated listener that
+  serves only `/v1/*` and `GET /health`: no workflow, node, HIL or org
+  endpoint exists on it. Any non-loopback bind is served only over TLS, with
+  no way to serve it in the clear: `MONOAGENT_API_TLS_CERT` and `_KEY`, else
+  a self-signed certificate cached under `~/.monoagent/api-tls/` (key file
+  mode 0600) that covers `localhost` only, so remote clients reject it until
+  they trust it explicitly. Set a real certificate, or terminate TLS in a
+  reverse proxy. The webhook server follows the same rules (see above).
+- The default confinement is `chat-only` off-loopback and `any` on loopback.
+  Behind a reverse proxy the bind is loopback, so **set `--confinement`
+  (`MONOAGENT_API_CONFINEMENT`) explicitly**. A model above the policy is not
+  listed and answers 403.
+- TLS protects the key in transit; it does not limit who may try one. There
+  is no rate limit per caller and no lockout, so a key is only as safe as it
+  is long and secret (256 bits). Put a proxy or a firewall in front of a
+  listener that faces the internet. There is no CORS: browser clients are out
+  of scope.
+
+**Context keys.** A key created with `--context` adds up to five excerpts
+(1,200 characters each, source base names only, never paths) from that
+profile's own documents and captures to the system prompt, framed as data
+whose instructions must be ignored. Captured web pages are in that knowledge
+and nobody vetted them, and the framing reduces prompt injection without
+removing it, so **by default a context key is served only by `chat-only`
+models**: a runtime with native tools could be steered into using them.
+`--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
+raises that on purpose, for example to give a coding agent on your own
+machine your notes. It never goes above the listener's own `--confinement`,
+and raising it accepts that a captured page could steer that runtime. The
+excerpts leave the machine like any prompt, to the runtime's provider. The
+personal brain and other profiles are never searched.
+
+**Cost and abuse limits.** There are no per-key quotas: every request is a real
+model turn on your subscription or account, and some runtimes report no cost.
+The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
+the 2 MiB request body and the 10 minute turn timeout. A request that is
+rejected (invalid, over policy, or busy) starts nothing.
+
+**Logs and errors.** One line per request names the request id, key id,
+profile, model, status, duration and how many knowledge excerpts were added,
+plus, for a failure, the operator-only detail (a Go error or a runtime's error
+code). It never holds a prompt, an answer or a key. A failed authentication is
+logged with the caller's address, never the key it sent. Error messages sent
+to callers are generic for internal failures and for a runtime error other
+than a setup hint, a rate limit, quota or a timeout, and every response
+carries an `X-Request-Id` to quote to the operator.
+
+**What this does not cover.**
+
+- Revocation applies to the next request: a turn already running finishes,
+  within the turn timeout. Stopping the daemon or `httpapi` ends the turns in
+  flight and waits for their processes to be killed.
+- The agent CLIs keep session transcripts of their turns in their own stores
+  (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
+  they do for any use. The fixed slot folders keep the number of those
+  folders bounded (one per profile and slot), not their content, and keep
+  one profile's apart from another's.
+- Some runtimes (antigravity) pass the prompt on their command line, which
+  other local users can read with `ps` while the turn runs. On a shared host,
+  run the server on a machine or an OS user of its own.
+
+**Not part of this surface (yet).** Image generation, OpenAI tool calling and
+Jev's `auto` model are later phases. Today a request cannot hand the agent
+tools of the caller's own (`tools` is rejected); the runtime's native tools are
+a separate matter, covered by the classes above.

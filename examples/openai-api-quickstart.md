@@ -1,0 +1,202 @@
+# OpenAI-compatible API quickstart
+
+`monoagentcli` can serve the agent runtimes installed on your machine
+(claude, codex, antigravity, …) through standard OpenAI endpoints, so any
+OpenAI SDK or tool works by changing its base URL and key. This guide
+creates a key, starts the server, calls it with curl and the SDKs, and runs
+it on a headless Linux server. Paths and schemas:
+`internal/httpapi/openapi.yaml`. Threat model: `SECURITY.md`.
+
+Today it serves `GET /v1/models`, `GET /v1/models/{id}` and
+`POST /v1/chat/completions` (JSON and `"stream": true`). Images, tool
+calling and an `auto` model that picks for you are not available yet.
+
+## 1. Create a key
+
+```bash
+monoagentcli api key create --name my-app
+# sk-ma-…            ← printed once; only its SHA-256 is stored
+```
+
+A key belongs to the active profile (`--profile`, or `profile switch`) and
+reaches nothing of any other profile. In a script, stdout is the key alone:
+
+```bash
+KEY=$(monoagentcli api key create --name my-app)
+```
+
+Add `--context` to give requests made with the key excerpts of the profile's
+own knowledge (its documents and captures); without it the key reaches a
+plain model. By default a context key is served only by the chat-only models
+(see `api models`), because the excerpts include captured web pages that
+nobody vetted and a runtime with native tools could be steered by them. When
+you want a coding agent on your own machine to have your notes, raise the
+limit on purpose when you start the server: `--context-confinement
+sandboxed` (or `any`, or `MONOAGENT_API_CONTEXT_CONFINEMENT`). It never goes
+above what the listener itself serves. Manage keys with `api key list`,
+`show`, `update` and `revoke` (revoking takes effect on the next request). No
+GUI and no keyring are needed.
+
+## 2. Start the server
+
+```bash
+monoagentcli httpapi        # or: monoagentcli daemon
+```
+
+The API is served at `http://127.0.0.1:9322/v1` while the HTTP API listener
+is loopback, which is the default. Check what it serves:
+
+```bash
+monoagentcli api status     # listeners, key count, whether they answer
+monoagentcli api models     # every model, with its confinement class
+```
+
+`api models` prints the policy and then one row per model (shortened here;
+the ids come from each runtime's own model list, so yours will differ):
+
+```
+Confinement policy for a loopback listener: any (keys created with --context: chat-only)
+
+MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY
+claude/default           chat-only    false      yes     yes
+claude/claude-sonnet-5   chat-only    false      yes     yes
+codex/gpt-6-astra        sandboxed    false      yes     no
+antigravity/default      unconfined   false      yes     no
+```
+
+`SERVED` is what the listener serves and `CONTEXT KEY` what a key created
+with `--context` may use of that. The ids are `<runtime>/<model>`. A bare runtime (`codex`) is its default
+model, and `agy` is accepted for `antigravity`. A model that is not in this
+list is a 404: the server only runs models the runtime itself lists.
+
+## 3. Call it
+
+```bash
+curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" | jq '.data[].id'
+
+curl -s http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"claude","messages":[{"role":"user","content":"Say hello in five words."}]}' \
+  | jq -r '.choices[0].message.content'
+
+# streaming: server-sent events, ending with "data: [DONE]"
+curl -sN http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"codex","stream":true,"messages":[{"role":"user","content":"Count to five."}]}'
+```
+
+Python:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:9322/v1", api_key=KEY)
+
+reply = client.chat.completions.create(
+    model="claude", messages=[{"role": "user", "content": "Say hello in five words."}]
+)
+print(reply.choices[0].message.content)
+
+for chunk in client.chat.completions.create(
+    model="codex", stream=True, messages=[{"role": "user", "content": "Count to five."}]
+):
+    print(chunk.choices[0].delta.content or "", end="")
+```
+
+JavaScript:
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "http://127.0.0.1:9322/v1", apiKey: process.env.KEY });
+const reply = await client.chat.completions.create({
+  model: "claude",
+  messages: [{ role: "user", content: "Say hello in five words." }],
+});
+console.log(reply.choices[0].message.content);
+```
+
+What to expect:
+
+- Each request is one agent turn on your own subscription or account:
+  a few seconds to a minute, and billed or rate limited like any use of that
+  runtime. There are no per-key quotas; at most 4 turns run at once (a full
+  server answers 429 with `Retry-After`).
+- Requests are stateless. Sampling parameters (`temperature`, `max_tokens`,
+  `stop`, …) are accepted and ignored, because the agent runtimes have none.
+  `n > 1`, `tools`, image and audio parts are rejected with 400.
+- `curl -i` shows `X-Monoagent-Model` (the model that answered),
+  `X-Monoagent-Sandbox` (how that turn was confined) and, for a `--context`
+  key, `X-Monoagent-Context` (how many knowledge excerpts were added).
+
+## 4. Serve it beyond this machine
+
+The main listener serves `/v1` only on loopback. To reach it from another
+machine, give it its own listener. It serves nothing but `/v1` and `/health`
+and is TLS only:
+
+```bash
+export MONOAGENT_API_TLS_CERT=/etc/monoagent/fullchain.pem
+export MONOAGENT_API_TLS_KEY=/etc/monoagent/privkey.pem
+monoagentcli daemon --v1-addr 0.0.0.0:9443
+```
+
+- Without a certificate in the environment, a self-signed one valid for
+  `localhost` only is generated and cached under `~/.monoagent/api-tls/`;
+  remote clients must trust it explicitly (`curl -k` for a test). For real use
+  set the two variables, or terminate TLS in a reverse proxy.
+- An off-loopback listener defaults to `--confinement chat-only`, so it
+  lists and serves only the chat-only runtimes (claude here).
+  `--confinement sandboxed` adds the sandboxed ones (codex and copilot here)
+  and `--confinement any` adds the rest. Read `SECURITY.md` first: a key then
+  lets its holder use that runtime's native tools on this machine.
+- Behind a reverse proxy, bind the listener to loopback
+  (`--v1-addr 127.0.0.1:9443`) and set `--confinement` explicitly, since a
+  loopback bind defaults to `any`. Turn proxy buffering off for streaming
+  (the server already sends `X-Accel-Buffering: no`).
+
+## 5. A headless Linux server
+
+1. Install monomind and the agent CLIs you want to serve, and sign them in as
+   the user that will run the service. `monoagentcli doctor` shows what is
+   missing. Use a dedicated unprivileged OS user: a key is the runtime's
+   capabilities, and a runtime with a shell runs it as that user.
+2. Create a key: `monoagentcli api key create --name app`. It needs no
+   keyring and no GUI.
+3. Install the service: `monoagentcli daemon install` writes the systemd user
+   unit `monoagent-daemon.service`. The unit has no environment or flags, so
+   add a drop-in that survives a reinstall:
+
+   ```bash
+   systemctl --user edit monoagent-daemon
+   ```
+
+   ```ini
+   [Service]
+   Environment=MONOAGENT_API_V1_ADDR=0.0.0.0:9443
+   Environment=MONOAGENT_API_TLS_CERT=/etc/monoagent/fullchain.pem
+   Environment=MONOAGENT_API_TLS_KEY=/etc/monoagent/privkey.pem
+   Environment=MONOAGENT_API_CONFINEMENT=chat-only
+   ```
+
+   If monomind or an agent CLI is not found under systemd's minimal `PATH`, add
+   an `Environment=PATH=…` line too. Then `systemctl --user restart
+   monoagent-daemon`, and as root `loginctl enable-linger <user>` so the
+   service starts at boot. Logs: `journalctl --user -u monoagent-daemon -f`.
+4. From another machine: `curl https://server:9443/v1/models -H "Authorization:
+   Bearer $KEY"`.
+
+## Errors
+
+| Status | `code` | Meaning |
+|---|---|---|
+| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (`tools`, `n > 1`, image parts, …) |
+| 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
+| 403 | `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`, or its sandbox could not be applied |
+| 404 | `model_not_found` | Unknown model, or one the listener does not serve (see `api models`) |
+| 413 | `request_too_large` | Body over 2 MiB |
+| 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
+| 503 | `runtime_not_available` | monomind or the runtime is not installed or not signed in |
+| 504 | `timeout` | The turn exceeded 10 minutes (`MONOAGENT_API_TURN_TIMEOUT`) |
+
+Every error body is `{"error":{"message","type","param","code"}}`.

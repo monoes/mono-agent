@@ -2710,6 +2710,61 @@ AUTH
   with --addr or MONOAGENT_HTTPAPI_ADDR.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPENAI-COMPATIBLE API (/v1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  The same process also serves standard OpenAI-style endpoints over the
+  agent runtimes installed on this machine (claude, codex, antigravity,
+  ...), so an OpenAI SDK or tool works with just a base URL and a key:
+
+    GET  /v1/models                 models as <runtime>/<model> ids
+    GET  /v1/models/{id}            one model
+    POST /v1/chat/completions       chat, JSON or "stream": true (SSE)
+
+  Model ids look like "claude/claude-sonnet-5" or "codex/gpt-6-astra"; a
+  bare runtime ("codex") is its default model, and "agy" is an alias of
+  "antigravity".
+  Sampling parameters are accepted and ignored. n > 1, logprobs, audio,
+  image/audio content parts and tools are rejected with 400
+  unsupported_parameter. Not available yet: images, tool calling and the
+  "auto" model.
+
+  Auth is an API key, not the credential above. One profile each, shown
+  once, only its SHA-256 is stored (no vault, no keyring, so it works on a
+  headless server):
+
+    monoagentcli api key create --name NAME [--context]
+    monoagentcli api key list | show | update | revoke
+    monoagentcli api models        each model with its confinement class
+    monoagentcli api status        listeners, key count, reachability
+
+  --context adds excerpts of the profile's own knowledge to requests made
+  with the key; only chat-only models serve such a key unless the server
+  raises --context-confinement. A key never opens the routes above, and
+  the credential above never opens /v1.
+  org teardown-profile revokes a profile's keys.
+
+  Confinement: chat-only (claude), sandboxed (codex: writes confined, reads
+  open), unconfined (antigravity: native tools run as the OS user).
+  --confinement chat-only|sandboxed|any (MONOAGENT_API_CONFINEMENT) caps what
+  a listener serves; a model above it is unlisted and answers 403
+  policy_denied. --context-confinement (MONOAGENT_API_CONTEXT_CONFINEMENT,
+  default chat-only) caps what a --context key may use, never above that.
+
+  Exposure: /v1 is served on the main listener only while it is loopback.
+  Beyond the machine use --v1-addr (MONOAGENT_API_V1_ADDR) on httpapi or
+  daemon: its own listener, only /v1 and /health, TLS only off-loopback
+  (MONOAGENT_API_TLS_CERT and _KEY, else a self-signed certificate that
+  remote clients must trust), default confinement chat-only.
+
+  Limits: 2 MiB body; 4 concurrent turns (--max-concurrent; 429 with
+  Retry-After when full); 10 minute turn timeout (MONOAGENT_API_TURN_TIMEOUT);
+  no CORS. Errors are OpenAI-shaped:
+  {"error":{"message","type","param","code"}}.
+
+  Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT REDACTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
