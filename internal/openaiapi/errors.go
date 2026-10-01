@@ -96,6 +96,16 @@ func errRuntimeUnavailable(msg string) *apiError {
 	return &apiError{Status: http.StatusServiceUnavailable, Type: "api_error", Code: "runtime_not_available", Message: msg}
 }
 
+// errSetup is the answer to a monomind or a runtime that is not set up on the
+// server. The caller gets a sentence, not the error: monomind's discovery
+// error lists every path it tried, which is the server's home directory and
+// install layout. The error itself goes to the log.
+func errSetup(err error) *apiError {
+	e := errRuntimeUnavailable("The agent runtime is not available on this server (not installed, not found or not signed in). " + quoteRequestID)
+	e.detail = err.Error()
+	return e
+}
+
 func errInternal(msg string) *apiError {
 	return &apiError{Status: http.StatusInternalServerError, Type: "api_error", Code: "internal_error", Message: msg}
 }
@@ -113,7 +123,7 @@ func turnError(res *monomind.TurnResult, execErr error) *apiError {
 		case errors.Is(execErr, errShuttingDown):
 			return errRuntimeUnavailable("The server is shutting down. Retry shortly, or on another instance.")
 		case monomind.IsAgentNotSetup(execErr):
-			return errRuntimeUnavailable(execErr.Error())
+			return errSetup(execErr)
 		case errors.Is(execErr, monomind.ErrSandboxRequired):
 			e := errPolicy("The sandbox this model runs in could not be applied, so the turn was not run.")
 			e.detail = execErr.Error()

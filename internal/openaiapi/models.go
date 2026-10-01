@@ -1,6 +1,7 @@
 package openaiapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -25,12 +26,24 @@ func objectFor(m ModelInfo) modelObject {
 	}
 }
 
-// catalogError turns a failure to list models into a response.
+// catalogError turns a failure to list models into a response. The error goes
+// to the log (apiError.detail), never to the caller.
 func catalogError(err error) *apiError {
-	if monomind.IsAgentNotSetup(err) {
-		return errRuntimeUnavailable(err.Error())
+	switch {
+	case monomind.IsAgentNotSetup(err):
+		return errSetup(err)
+	case errors.Is(err, context.Canceled): // the caller left while the list loaded
+		return &apiError{Status: 499, Type: "api_error", Code: "request_cancelled", Message: "The request was cancelled.", detail: err.Error()}
 	}
-	return errInternal("could not list the models: " + err.Error())
+	e := errInternal("The model list could not be loaded. " + quoteRequestID)
+	e.detail = err.Error()
+	return e
+}
+
+// logFailure writes the line an error response leaves in the server log: who
+// asked, and the detail the caller was not given.
+func (g *Gateway) logFailure(pr Principal, what string, e *apiError) {
+	g.deps.Logf("req=%s key=%s profile=%s %s status=%d detail=%q", pr.RequestID, pr.KeyID, pr.ProfileID, what, e.Status, e.detail)
 }
 
 // handleModels is GET /v1/models: the models this listener's policy allows
@@ -39,7 +52,9 @@ func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		models, err := g.catalog.Visible(r.Context(), policyFor(p, pr))
 		if err != nil {
-			writeError(w, catalogError(err))
+			e := catalogError(err)
+			g.logFailure(pr, "list models", e)
+			writeError(w, e)
 			return
 		}
 		out := modelList{Object: "list", Data: make([]modelObject, 0, len(models))}
@@ -60,7 +75,9 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 		case errors.Is(err, ErrUnknownModel):
 			writeError(w, errModelNotFound(id))
 		case err != nil:
-			writeError(w, catalogError(err))
+			e := catalogError(err)
+			g.logFailure(pr, "get model", e)
+			writeError(w, e)
 		case !policyFor(p, pr).Allows(m.Class):
 			writeError(w, errModelNotFound(id))
 		default:

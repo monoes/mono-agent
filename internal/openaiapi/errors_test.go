@@ -149,6 +149,31 @@ func TestInternalDetailsStayOutOfTheResponse(t *testing.T) {
 	}
 }
 
+// monomind's discovery error lists every path it tried, which is the server's
+// home directory and install layout: the caller gets a sentence, the log gets
+// the error. The same goes for any error of the model catalog.
+func TestSetupAndCatalogErrorsKeepPathsOutOfTheResponse(t *testing.T) {
+	notFound := &monomind.ErrNotFound{Tried: []string{"/home/svc/.nvm/bin/monomind", "/home/svc/.npm-global/bin/monomind"}}
+	for name, e := range map[string]*apiError{
+		"turn, monomind not found":  turnError(nil, notFound),
+		"catalog, monomind missing": catalogError(notFound),
+		"catalog, any other error":  catalogError(errors.New("exec: /home/svc/bin/monomind: permission denied")),
+	} {
+		if strings.Contains(e.Message, "/home/svc") || !strings.Contains(e.Message, "X-Request-Id") {
+			t.Errorf("%s: the client message must hold no path and name the request id header, got %q", name, e.Message)
+		}
+		if !strings.Contains(e.detail, "/home/svc") {
+			t.Errorf("%s: the log keeps the detail, got %q", name, e.detail)
+		}
+	}
+	if e := turnError(nil, notFound); e.Status != http.StatusServiceUnavailable || e.Code != "runtime_not_available" {
+		t.Errorf("a monomind that is not installed is a 503 runtime_not_available, got %d %s", e.Status, e.Code)
+	}
+	if e := catalogError(errors.New("boom")); e.Status != http.StatusInternalServerError || e.Code != "internal_error" {
+		t.Errorf("any other catalog error is a 500 internal_error, got %d %s", e.Status, e.Code)
+	}
+}
+
 func TestFinishReason(t *testing.T) {
 	for stop, want := range map[string]string{
 		monomind.StopEndTurn:      "stop",

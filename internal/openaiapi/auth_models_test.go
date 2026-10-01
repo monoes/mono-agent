@@ -137,12 +137,22 @@ func TestModelRetrieve(t *testing.T) {
 
 func TestModelsWhenMonomindIsMissing(t *testing.T) {
 	h := newHarness(t, okTurn("x"), func(d *Deps, _ *Config) {
-		d.Catalog.Scan = func(context.Context) (*monomind.ScanResult, error) { return nil, &monomind.ErrNotFound{} }
+		d.Catalog.Scan = func(context.Context) (*monomind.ScanResult, error) {
+			return nil, &monomind.ErrNotFound{Tried: []string{"/home/svc/.nvm/bin/monomind"}}
+		}
 	})
 	secret := h.key(t, "default", "app", false)
 	rec := h.serve(anyPolicy, http.MethodGet, "/v1/models", secret, "")
 	if rec.Code != http.StatusServiceUnavailable || decodeErrorBody(t, rec)["code"] != "runtime_not_available" {
 		t.Fatalf("status %d, body %s", rec.Code, rec.Body)
+	}
+	// The caller learns it, not where monomind was looked for; the operator's log has both.
+	if strings.Contains(rec.Body.String(), "/home/svc") {
+		t.Errorf("the response leaks a path of the server: %s", rec.Body)
+	}
+	id := rec.Header().Get("X-Request-Id")
+	if joined := strings.Join(h.logged(), "\n"); !strings.Contains(joined, "/home/svc") || !strings.Contains(joined, id) {
+		t.Errorf("the log must hold the request id and the detail: %q", joined)
 	}
 }
 
