@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.100.1] - 2026-10-01
+
+### Fixed
+- **A profile batch keeps the profiles it read when one fails** (#314). v0.100.0 saved a `scrape_profile_info` result only if the whole action succeeded, so one account that no longer exists ("This account doesn't exist") cost the whole batch. The profiles read before and after it are now saved; the run still reports the failure.
+
 ## [0.100.0] - 2026-10-01
 
 ### Added
