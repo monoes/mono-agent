@@ -119,6 +119,7 @@ export const api = {
   rejectDraftPersonMessage: (id) => GoApp.RejectDraftPersonMessage(id),
   getPendingPeopleApprovals: () => (GoApp.GetPendingPeopleApprovals ? GoApp.GetPendingPeopleApprovals() : Promise.resolve([])).catch(guard('pending people', [])),
   approvePendingPerson: (id, intro = '', sendNow = false) => GoApp.ApprovePendingPerson(id, intro, sendNow),
+  deletePeople: (ids) => GoApp.DeletePeople(ids),
   rejectPendingPerson: (id) => GoApp.RejectPendingPerson(id),
   getLatestPersonStatus: (personId) => GoApp.GetLatestPersonStatus(personId).catch(guard('latest status', null)),
   addPersonStatus:       (personId, text) => GoApp.AddPersonStatus(personId, text).catch(guard('add status', null)),

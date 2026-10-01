@@ -75,6 +75,14 @@ func TestLocalizeSavesPhotoAndKeepsSource(t *testing.T) {
 	if b, err := os.ReadFile(path); err != nil || string(b) != string(png) {
 		t.Fatalf("saved file differs: %v", err)
 	}
+	Delete(ctx, db.DB, "default", []string{"id-ada", "id-gone"})
+	var left int
+	db.DB.QueryRow(`SELECT COUNT(*) FROM vault_images WHERE source = ?`, Source).Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d saved photos left after Delete", left)
+	}
+	db.DB.Exec(`UPDATE people SET image_url = ?, profile_details = NULL WHERE id='id-ada'`, srv.URL+"/ada.jpg")
+	Localize(ctx, db.DB, "default", []Ref{{"X", "ada"}})
 	var gone string
 	db.DB.QueryRow(`SELECT image_url FROM people WHERE id='id-gone'`).Scan(&gone)
 	if gone != srv.URL+"/gone.jpg" {

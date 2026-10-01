@@ -225,6 +225,8 @@ export function GetPendingPeopleApprovals():Promise<Array<main.PendingPersonAppr
 
 export function GetPeople(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.PersonInfo>>;
 
+export function DeletePeople(arg1:Array<string>):Promise<void>;
+
 export function GetPeopleCount(arg1:string,arg2:string):Promise<number>;
 
 export function GetPeopleTagsMap(arg1:Array<string>):Promise<Record<string, Array<main.TagInfo>>>;
