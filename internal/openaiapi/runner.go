@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -50,24 +51,44 @@ type turn struct {
 // ~/.claude/projects/<folder>), which would pile up without bound under a
 // folder per request, and which this keeps apart between profiles. The folder
 // is emptied before and after every turn, so nothing one request leaves can
-// reach the next. A folder that cannot be emptied fails the request.
+// reach the next. A folder that cannot be emptied is set aside, for the
+// operator to delete, and replaced by an empty one; if that fails too, the
+// request fails.
 func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
 	profileDir := filepath.Join(g.cfg.ScratchRoot, profileFolder(profileID))
 	dir := filepath.Join(profileDir, fmt.Sprintf("%s%d", slotPrefix, slot))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(g.cfg.ScratchRoot, 0o700); err != nil {
 		return "", fmt.Errorf("creating the turn's folder: %w", err)
 	}
 	// Both must be real directories: a link planted in place of either would
-	// send the emptying, and the turn, somewhere else.
+	// send the emptying, and the turn, somewhere else. Each is looked at before
+	// anything is created in it, so nothing is created behind a link.
 	for _, d := range []string{profileDir, dir} {
-		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
-			return "", fmt.Errorf("the turn's folder %s is not a plain directory", d)
+		if err := plainDir(d); err != nil {
+			return "", fmt.Errorf("the turn's folder: %w", err)
 		}
 	}
 	if !emptyDir(dir) {
-		return "", fmt.Errorf("the turn's folder %s could not be emptied", dir)
+		if err := g.quarantine(dir); err != nil {
+			return "", fmt.Errorf("the turn's folder %s could not be emptied or set aside: %w", dir, err)
+		}
 	}
 	return dir, nil
+}
+
+// plainDir makes sure path is a directory of its own, creating it when it is
+// missing. A link or a file there is refused.
+func plainDir(path string) error {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return os.Mkdir(path, 0o700)
+	case err != nil:
+		return err
+	case !fi.IsDir():
+		return fmt.Errorf("%s is not a plain directory", path)
+	}
+	return nil
 }
 
 // turnTempDir makes the private folder for the files Exec writes for one turn:
@@ -80,6 +101,7 @@ func (g *Gateway) turnTempDir() (string, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", fmt.Errorf("creating the private folder of the turn's files: %w", err)
 	}
+	_ = os.Chmod(root, 0o700)          // MkdirAll leaves the mode of a folder that was already there
 	return os.MkdirTemp(root, "turn-") // mode 0700
 }
 

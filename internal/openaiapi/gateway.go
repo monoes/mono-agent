@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -144,6 +145,9 @@ const (
 	profilePrefix = "p-"
 	// tmpDirName holds the private folders of the turns' prompt files.
 	tmpDirName = ".tmp"
+	// quarantineDirName holds the slot folders that could not be emptied, set
+	// aside for the operator to delete.
+	quarantineDirName = ".quarantine"
 )
 
 // profileFolder names the folder that holds a profile's slot folders: a hash
@@ -193,53 +197,133 @@ func (g *Gateway) cleanSlots() {
 			}
 			dir := filepath.Join(profileDir, e.Name())
 			if n >= g.cfg.MaxConcurrent {
-				_ = os.RemoveAll(dir)
+				if emptyDir(dir) {
+					_ = os.Remove(dir)
+				} else {
+					_ = g.setAside(dir)
+				}
 				continue
 			}
-			emptyDir(dir)
+			if !emptyDir(dir) {
+				_ = g.quarantine(dir)
+			}
 		}
 	}
 }
 
-// removeAll is os.RemoveAll; a variable so a test can make a folder impossible
-// to empty.
-var removeAll = os.RemoveAll
+// maxCleanDepth is how deep emptyDir walks. A runtime builds nothing this deep
+// by accident (a node_modules tree is a few dozen levels), and a walk holds a
+// file descriptor per level: a chain of directories deeper than this is a way to
+// exhaust the process's descriptors, so such a folder is set aside, not walked.
+const maxCleanDepth = 100
 
-// emptyDir removes everything inside dir and keeps dir. It reports whether
-// the folder is empty afterwards. A runtime can leave a read-only directory
-// behind it (Go's module cache does), which os.RemoveAll cannot empty, so the
-// directories are opened up first: the gateway owns these folders.
+// afterListHook runs after emptyDir has listed a directory and before it acts
+// on what it found: a variable so a test can change the tree at the moment a
+// process that outlived its turn would.
+var afterListHook func()
+
+// emptyDir removes everything inside dir and keeps dir. It reports whether the
+// folder is empty afterwards, and false, without removing anything, for a tree
+// deeper than maxCleanDepth. A runtime can leave a read-only directory behind it
+// (Go's module cache does), which a removal cannot empty, so the directories are
+// opened up first: the gateway owns these folders.
+//
+// All of it is done through an open handle on dir (os.Root), never by path. A
+// process can outlive its turn and keep changing the tree, and a directory it
+// swaps for a link while this walks cannot send the chmod, the listing or the
+// removal outside dir: the handle refuses a link that leaves it.
 func emptyDir(dir string) bool {
-	_ = os.Chmod(dir, 0o700)
-	entries, err := os.ReadDir(dir)
+	_ = os.Chmod(dir, 0o700) // dir was checked to be a plain directory by its caller
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	if !openUp(root, 0) {
+		return false
+	}
+	entries, err := readDir(root)
 	if err != nil {
 		return false
 	}
 	for _, e := range entries {
-		p := filepath.Join(dir, e.Name())
-		if e.IsDir() {
-			openUp(p)
-		}
-		_ = removeAll(p)
+		_ = root.RemoveAll(e.Name())
 	}
-	left, err := os.ReadDir(dir)
+	left, err := readDir(root)
 	return err == nil && len(left) == 0
 }
 
-// openUp gives the owner access to dir and every real directory under it. It
-// never follows a symlink: os.ReadDir reports a link as a link, so a link is
-// neither opened nor entered.
-func openUp(dir string) {
-	_ = os.Chmod(dir, 0o700)
-	entries, err := os.ReadDir(dir)
+// readDir lists the directory root is.
+func readDir(root *os.Root) ([]os.DirEntry, error) {
+	f, err := root.Open(".")
 	if err != nil {
-		return
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+// openUp gives the owner access to every real directory under root, down to
+// maxCleanDepth, and reports whether the tree is no deeper. A link is reported
+// as a link by the listing, so it is neither opened nor entered; a directory
+// that was swapped for one after the listing is refused by the handle, and the
+// folder is then reported as one that cannot be emptied.
+func openUp(root *os.Root, depth int) bool {
+	entries, err := readDir(root)
+	if err != nil {
+		return false
+	}
+	if afterListHook != nil {
+		afterListHook()
 	}
 	for _, e := range entries {
-		if e.IsDir() {
-			openUp(filepath.Join(dir, e.Name()))
+		if !e.IsDir() {
+			continue
+		}
+		if depth+1 > maxCleanDepth {
+			return false
+		}
+		_ = root.Chmod(e.Name(), 0o700)
+		sub, err := root.OpenRoot(e.Name())
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // removed meanwhile
+		}
+		if err != nil {
+			return false
+		}
+		ok := openUp(sub, depth+1)
+		sub.Close()
+		if !ok {
+			return false
 		}
 	}
+	return true
+}
+
+// setAside moves a folder that could not be emptied under the scratch root's
+// quarantine folder, for the operator to delete when they like, and says so in
+// the log. It is not retried on every request, and it cannot be walked (or is
+// being changed under the gateway's hands): moving it is one rename.
+func (g *Gateway) setAside(dir string) error {
+	qdir := filepath.Join(g.cfg.ScratchRoot, quarantineDirName)
+	if err := os.MkdirAll(qdir, 0o700); err != nil {
+		return err
+	}
+	dest := filepath.Join(qdir, fmt.Sprintf("%s-%s-%d", filepath.Base(filepath.Dir(dir)), filepath.Base(dir), time.Now().UnixNano()))
+	if err := os.Rename(dir, dest); err != nil {
+		return err
+	}
+	g.deps.Logf("the working folder %s could not be emptied and was moved to %s: delete it when you no longer need it", dir, dest)
+	return nil
+}
+
+// quarantine is setAside followed by an empty folder at the same path, since the
+// path is what an agent CLI keys its session state on.
+func (g *Gateway) quarantine(dir string) error {
+	if err := g.setAside(dir); err != nil {
+		return err
+	}
+	return os.Mkdir(dir, 0o700)
 }
 
 // turnStarted counts a turn in, and refuses once the gateway is shutting down:

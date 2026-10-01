@@ -259,33 +259,6 @@ func TestRunTurnRepairsAFolderALastTurnLeftReadOnly(t *testing.T) {
 	}
 }
 
-// What cannot be emptied at all still refuses the turn: it must never run among
-// what an earlier request left.
-func TestRunTurnRefusesAFolderItCannotEmpty(t *testing.T) {
-	var ran atomic.Bool
-	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		ran.Store(true)
-		return okTurn("ok")(ctx, opts, onEvent)
-	})
-	slot := filepath.Join(h.scratch, profileFolder(""), "slot-0")
-	if err := os.MkdirAll(slot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(slot, "left-behind.txt"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	was := removeAll
-	removeAll = func(string) error { return errors.New("operation not permitted") }
-	t.Cleanup(func() { removeAll = was })
-
-	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err == nil {
-		t.Fatal("a turn must not start in a folder that still holds what an earlier turn left")
-	}
-	if ran.Load() {
-		t.Error("nothing must run when the folder is not clean")
-	}
-}
-
 // A link planted where a profile folder or a slot folder should be would send
 // the emptying, and the turn, somewhere else.
 func TestRunTurnRefusesASymlinkedFolder(t *testing.T) {

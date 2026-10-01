@@ -125,6 +125,101 @@ func TestEmptyDirOpensUpReadOnlyDirectoriesAndStaysInside(t *testing.T) {
 	}
 }
 
+// A process can outlive its turn and keep changing the tree while it is emptied.
+// A directory swapped for a link between the listing and the chmod must not send
+// the chmod, the listing or a removal outside the folder: the gateway acts on
+// the folder's files through an open handle, not by path.
+func TestEmptyDirSurvivesALinkPlantedWhileItWalks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "slot")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{filepath.Join(dir, "z", "inner"), outside} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(outside, 0o755); err != nil { // the mode a followed link would change
+		t.Fatal(err)
+	}
+	precious := filepath.Join(outside, "precious.txt")
+	if err := os.WriteFile(precious, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	swapped := false
+	afterListHook = func() {
+		if swapped {
+			return
+		}
+		swapped = true
+		_ = os.RemoveAll(filepath.Join(dir, "z")) // listed as a directory a moment ago
+		if err := os.Symlink(outside, filepath.Join(dir, "z")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterListHook = nil })
+
+	emptyDir(dir)
+	if !swapped {
+		t.Fatal("the hook never ran: the test does not exercise the race")
+	}
+	if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("a link planted while emptyDir walked sent its chmod outside the folder: %v %v", fi, err)
+	}
+	if _, err := os.Stat(precious); err != nil {
+		t.Errorf("what is behind the link was touched: %v", err)
+	}
+}
+
+// A walk holds a file descriptor per level, so a chain of directories deeper
+// than anything a runtime makes by accident is a way to exhaust the process's
+// descriptors. Such a tree is not walked: emptyDir says it cannot empty it, and
+// the caller sets the folder aside.
+func TestEmptyDirDoesNotWalkATreeDeeperThanItAllows(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "slot")
+	deepest := dir
+	for i := 0; i < maxCleanDepth+20; i++ {
+		deepest = filepath.Join(deepest, "d")
+	}
+	if err := os.MkdirAll(deepest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if emptyDir(dir) {
+		t.Fatal("a tree deeper than maxCleanDepth must not be reported emptied")
+	}
+	if _, err := os.Stat(deepest); err != nil {
+		t.Errorf("a tree it does not walk must be left as it was: %v", err)
+	}
+}
+
+// A run with a higher --max-concurrent leaves slot folders above today's limit.
+// They are removed at start, even when a runtime left them read-only.
+func TestNewRemovesAnOverLimitSlotFolderEvenWhenReadOnly(t *testing.T) {
+	root := t.TempDir()
+	slot := filepath.Join(root, profileFolder("alice"), "slot-9")
+	locked := filepath.Join(slot, "mod", "locked")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{locked, filepath.Join(slot, "mod"), slot} { // deepest first
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, d := range []string{slot, filepath.Join(slot, "mod"), locked} {
+			_ = os.Chmod(d, 0o700)
+		}
+	})
+
+	newHarness(t, okTurn("x"), func(_ *Deps, c *Config) { c.ScratchRoot, c.MaxConcurrent = root, 2 })
+	if _, err := os.Stat(slot); !os.IsNotExist(err) {
+		t.Errorf("a read-only slot folder above the limit must be removed at start: %v", err)
+	}
+}
+
 // Two gateways over one scratch root would hand the same slot folder to two
 // turns of one profile, and each would empty the other's files. The second
 // refuses to start, before it touches anything.
