@@ -47,6 +47,9 @@ func Untrusted(root, org string) string {
 	if raw, _, err := ReadFile(root, org); err == nil {
 		if v, err := parseOrgJSON(raw); err == nil {
 			rroot := realRoot(root)
+			for _, p := range blueprintPaths(root, v) {
+				paths = append(paths, [2]string{rroot, p})
+			}
 			_, _ = instructionsDigests(v, func(file string) (string, error) {
 				p := file
 				if !filepath.IsAbs(p) {

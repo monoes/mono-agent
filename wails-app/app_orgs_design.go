@@ -428,14 +428,16 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc, signNew bool) (sha strin
 // before the write) allowed it, and only when the write changed a signed
 // field. The CLI signs (`org sign --yes --expect-hash`), for the new JSON
 // with the instructions files sig pinned, and withdraws the signature if
-// monomind signed anything else. Anything else leaves the org for the
-// Review & sign banner.
+// monomind signed anything else. An org that still verifies (a cosmetic
+// write) is left alone by the CLI, which asks monomind's own check; this
+// process never reads the operator key. Anything else leaves the org for
+// the Review & sign banner.
 func (a *App) keepOrgSignature(root string, sig orgsign.Pre, name, sha string) {
 	if !sig.Eligible() {
 		return
 	}
 	raw, cur, err := orgsign.ReadFile(root, name)
-	if err != nil || cur != sha || orgsign.Verify(root, name, raw).OK() {
+	if err != nil || cur != sha {
 		return
 	}
 	want, err := sig.PinnedHash(raw)

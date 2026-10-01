@@ -76,7 +76,8 @@ func (s Stamp) addParents(root, file string) {
 }
 
 // StampDefinition stamps org's JSON under root and each instructions file
-// the JSON names now (resolved as instructionsDigest resolves them), with
+// the JSON names now (resolved as instructionsDigest resolves them), and the
+// catalog files of each blueprint a role names, with
 // the directories above them and the root's identity.
 func StampDefinition(root, org string) (Stamp, error) {
 	absRoot, err := filepath.Abs(root)
@@ -92,6 +93,9 @@ func StampDefinition(root, org string) (Stamp, error) {
 	}
 	var files []string
 	if v, err := parseOrgJSON(raw); err == nil {
+		// The catalog state and the files of each blueprint package the
+		// roles name are read for the hash as well.
+		files = append(files, blueprintPaths(root, v)...)
 		_, _ = instructionsDigests(v, func(file string) (string, error) {
 			files = append(files, file)
 			return "", nil
