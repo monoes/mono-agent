@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -65,6 +66,13 @@ type Catalog struct {
 	loaded bool // cached is a real result, possibly an empty list
 	at     time.Time
 	flight *catalogFlight
+	// lastLists is each runtime's last listing that succeeded. A runtime
+	// whose listing fails at a refresh keeps it, so one bad listing does not
+	// turn a model clients use into a 404.
+	lastLists map[string][]monomind.RuntimeModel
+	// failing marks the runtimes whose last listing failed, so a streak is
+	// logged once and not on every retry.
+	failing map[string]bool
 }
 
 type catalogFlight struct {
@@ -99,13 +107,20 @@ func (c *Catalog) logf(format string, args ...any) {
 	}
 }
 
-// Models returns every model, aliases included. When a reload fails the last
-// good list is returned instead of the error, and the reload is tried again
-// after staleRetryAfter.
+// Models returns every model, aliases included. Once a list has been loaded it
+// is always served at once: an expired one is reloaded in the background, so a
+// slow or hung scan costs no request its time. The first load is waited for,
+// and shared by every caller that arrives meanwhile. When a reload fails the
+// last good list stays, and the reload is tried again after staleRetryAfter.
 func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
 	c.mu.Lock()
-	if c.loaded && c.now().Sub(c.at) < c.ttl {
+	if c.loaded {
 		models := c.cached
+		if c.now().Sub(c.at) >= c.ttl && c.flight == nil {
+			fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
+			c.flight = fl
+			go c.refreshInBackground(fl, models)
+		}
 		c.mu.Unlock()
 		return models, nil
 	}
@@ -120,11 +135,26 @@ func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
 	}
 	fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
 	c.flight = fl
-	stale, hadStale := c.cached, c.loaded
 	c.mu.Unlock()
+	c.runLoad(ctx, fl, nil, false)
+	return fl.models, fl.err
+}
 
-	// However this load ends, even in a panic, the flight is over and its
-	// waiters wake: they must never wait on a leader that is gone.
+// refreshInBackground reloads an expired list. It runs in a goroutine of its
+// own, where a panic would end the process, so it recovers.
+func (c *Catalog) refreshInBackground(fl *catalogFlight, stale []ModelInfo) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logf("refreshing the model list panicked, serving the previous one: %v", r)
+		}
+	}()
+	c.runLoad(context.Background(), fl, stale, true)
+}
+
+// runLoad performs one load as the leader of fl. However it ends, even in a
+// panic, the flight is over and its waiters wake: they must never wait on a
+// leader that is gone.
+func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelInfo, hadStale bool) {
 	defer func() {
 		c.mu.Lock()
 		c.flight = nil
@@ -135,8 +165,8 @@ func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
 	// The load outlives the caller that started it: others wait on it too.
 	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loadTimeout)
 	defer cancel()
-	models, err := c.load(lctx)
-	retrySoon := false
+	models, degraded, err := c.load(lctx)
+	retrySoon := degraded // a runtime's listing fell back: do not keep that for a whole TTL
 	if err != nil && hadStale {
 		c.logf("refreshing the model list failed, serving the previous one: %v", err)
 		models, err, retrySoon = stale, nil, true
@@ -150,13 +180,15 @@ func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
 		}
 		c.mu.Unlock()
 	}
-	return fl.models, fl.err
 }
 
-func (c *Catalog) load(ctx context.Context) ([]ModelInfo, error) {
+// load builds the list. degraded reports that some runtime's own listing
+// failed, timed out or panicked and was replaced by its last good one (or, with
+// none, by whatever came back).
+func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, err error) {
 	scan, err := c.f.Scan(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var caps *monomind.CapabilitySet
 	if c.f.Caps != nil {
@@ -165,25 +197,71 @@ func (c *Catalog) load(ctx context.Context) ([]ModelInfo, error) {
 	installed := scan.Installed()
 	roster := c.rosterResults(ctx)
 
+	c.mu.Lock()
+	previous := maps.Clone(c.lastLists)
+	c.mu.Unlock()
+
 	lists := make([][]monomind.RuntimeModel, len(installed))
+	failed := make([]bool, len(installed))
 	var wg sync.WaitGroup
 	for i, e := range installed {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// These goroutines are not the caller's: a panic here would end the
+			// process, so it costs this runtime its listing and nothing else.
+			defer func() {
+				if r := recover(); r != nil {
+					c.logf("listing the models of %s panicked: %v", e.ID, r)
+					failed[i], lists[i] = true, previous[e.ID]
+				}
+			}()
 			bin := ""
 			if e.Binary != nil {
 				bin = *e.Binary
 			}
 			lctx, cancel := context.WithTimeout(ctx, listTimeout)
 			defer cancel()
-			// A failed or slow listing leaves the runtime with its default model.
-			if models, err := c.f.Models(lctx, e.ID, bin); err == nil {
-				lists[i] = models
+			models, err := c.f.Models(lctx, e.ID, bin)
+			// monomind.ListModels answers a listing that ran out of time with its
+			// built-in fallback and no error, so a timeout counts as a failure
+			// like an error does: the fallback must not replace the live list.
+			if err != nil || lctx.Err() != nil {
+				failed[i] = true
+				if last, ok := previous[e.ID]; ok {
+					lists[i] = last
+				} else if err == nil {
+					lists[i] = models
+				} // else the runtime keeps its default model only
+				return
 			}
+			lists[i] = models
 		}()
 	}
 	wg.Wait()
+	good := map[string][]monomind.RuntimeModel{}
+	var newlyFailing []string
+	c.mu.Lock()
+	if c.lastLists == nil {
+		c.lastLists, c.failing = map[string][]monomind.RuntimeModel{}, map[string]bool{}
+	}
+	for i, e := range installed {
+		if failed[i] {
+			degraded = true
+			if !c.failing[e.ID] {
+				c.failing[e.ID] = true
+				newlyFailing = append(newlyFailing, e.ID)
+			}
+		} else {
+			good[e.ID] = lists[i]
+			delete(c.failing, e.ID)
+		}
+	}
+	maps.Copy(c.lastLists, good)
+	c.mu.Unlock()
+	for _, id := range newlyFailing {
+		c.logf("the model list of %s could not be refreshed: using the last one, and trying again soon", id)
+	}
 
 	validated := validatedIDs(roster, scan, c.now())
 	var out []ModelInfo
@@ -225,7 +303,7 @@ func (c *Catalog) load(ctx context.Context) ([]ModelInfo, error) {
 			}
 		}
 	}
-	return out, nil
+	return out, degraded, nil
 }
 
 // rosterResults returns the stored roster rows. The roster is machine-wide
