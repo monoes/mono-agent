@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.99.0] - 2026-10-01
+
+### Added
+- **Profile photos are saved locally** (#307). A profile read stored only the platform's image URL, which expires or blocks hotlinking, so people lost their photo. The photo is now downloaded into the image vault and `people.image_url` points at the local copy; the original URL is kept as `photo_source_url` in the person's profile details. A photo that can't be fetched keeps its URL. `people photos` saves the photos of people still stored as URLs. People pulled by older versions have no photo, bio or extras until their profile is read again.
+- **Blueprint roles are hashed in Go** (#299, #308). Orgs whose roles name a blueprint get the blueprint digests in the signed projection, so they re-sign automatically again. A blueprint that can't be loaded or verified gives no hash and nothing is signed.
+
+### Changed
+- **Open tabs reload when you come back to them** without losing your place (#306).
+- **Org signatures:** mono-agent no longer reads the operator key after a designer save when monomind 2.22+ checks the signature (#296, #308).
+
 ## [Unreleased]
 
 ### Added
