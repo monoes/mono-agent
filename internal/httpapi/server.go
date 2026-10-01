@@ -34,12 +34,7 @@ type Server struct {
 // NewServer builds a Server. The runtime (DB, profile, engine) is bootstrapped
 // lazily on first request, exactly like the MCP server.
 func NewServer(opts Options) (*Server, error) {
-	if opts.Addr == "" {
-		opts.Addr = os.Getenv("MONOAGENT_HTTPAPI_ADDR")
-	}
-	if opts.Addr == "" {
-		opts.Addr = defaultAddr
-	}
+	opts.Addr = ResolveAddr(opts.Addr)
 	if !opts.AllowMutations {
 		opts.AllowMutations = os.Getenv("MONOAGENT_HTTPAPI_ALLOW_MUTATIONS") == "1"
 	}
@@ -52,6 +47,19 @@ func NewServer(opts Options) (*Server, error) {
 	s := &Server{opts: opts, addr: opts.Addr, rt: rt}
 	s.mux = s.routes()
 	return s, nil
+}
+
+// ResolveAddr returns the address the server listens on: addr when set, else
+// MONOAGENT_HTTPAPI_ADDR, else the loopback default. NewServer applies it,
+// and so do callers that must know the address before they build the server.
+func ResolveAddr(addr string) string {
+	if addr == "" {
+		addr = os.Getenv("MONOAGENT_HTTPAPI_ADDR")
+	}
+	if addr == "" {
+		addr = defaultAddr
+	}
+	return addr
 }
 
 // Addr returns the configured listen address.
