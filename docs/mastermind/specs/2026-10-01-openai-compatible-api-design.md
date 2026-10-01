@@ -96,7 +96,7 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 9. Map the result (§7.4) and set headers.
 10. Release the slot and remove the scratch folder.
 
-Files stay under 500 lines: `auth.go`, `catalog.go`, `confinement.go`, `translate.go`, `chat.go`, `stream.go`, `images.go`, `models.go`, `errors.go`, `limits.go`, `auto.go`, `register.go`, `serve.go`.
+Files stay under 500 lines: `auth.go`, `catalog.go`, `confinement.go`, `translate.go`, `chat.go`, `stream.go`, `images.go`, `models.go`, `errors.go`, `limits.go`, `auto.go`, `register.go`, `serve.go`, plus `types.go` (wire shapes), `config.go`, `gateway.go` (dependencies and the `Gateway`) and `runner.go` (one request as one turn).
 
 ## 5. Isolation model
 
@@ -146,7 +146,7 @@ Enforcement is repeated at turn start. When the `start` event arrives, its `nati
 | Request body | 2 MiB (images: 64 KiB) |
 | Concurrent turns | 4 (`--max-concurrent`, `MONOAGENT_API_MAX_CONCURRENT`); a full gateway returns 429 with `Retry-After: 2` |
 | Turn timeout | 10 min (`MONOAGENT_API_TURN_TIMEOUT`) |
-| Write deadline | Per request via `http.ResponseController`, turn timeout + 30 s (the server-wide 5 min `WriteTimeout` would cut long streams). SSE writes drop a client that stalls for 30 s. |
+| Write deadline | Per request via `http.ResponseController`, turn timeout + 60 s: the request context ends at turn timeout + 30 s, and the response needs time to be written after that (the server-wide 5 min `WriteTimeout` would cut long streams). SSE writes drop a client that stalls for 30 s. |
 | CORS | None; browser clients are out of scope |
 
 ## 7. API surface
@@ -205,7 +205,7 @@ Response:
 | Condition | HTTP | `type` / `code` |
 |---|---|---|
 | Missing or invalid key | 401 | `authentication_error` / `invalid_api_key` |
-| Bad body or parameter | 400 | `invalid_request_error` / `invalid_value`, `missing_required_parameter`, `unsupported_parameter` |
+| Bad body or parameter | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` |
 | Body too large | 413 | `invalid_request_error` / `request_too_large` |
 | Unknown model, or `auto` unavailable | 404 | `invalid_request_error` / `model_not_found` |
 | Class above policy | 403 | `permission_error` / `policy_denied` |
@@ -260,11 +260,11 @@ api key list [--all-profiles] [--include-revoked]
 api key show <id|name>
 api key update <id|name> [--name N] [--context | --no-context]
 api key revoke <id|name> [--yes]
-api models [--json]                         # what /v1/models lists for this profile, with policy reasons
+api models [--for loopback|network] [--confinement C]   # every model with its confinement class and whether that listener kind serves it
 api status [--json]                         # listeners, exposure, confinement, key counts, auto availability, reachability
 ```
 
-`httpapi` and `daemon` gain `--v1-addr`, `--confinement` and `--max-concurrent`. Settings otherwise come from env (§6). The daemon records its `/v1` addresses in `settings` for `api status`.
+`httpapi` and `daemon` gain `--v1-addr`, `--confinement` and `--max-concurrent`. Settings otherwise come from env (§6). The daemon records its dedicated `/v1` address in its heartbeat file (`daemonhb`, which already carries the HTTP API address), and `api status` reads it from there. `auto` availability joins `api status` and `api models` in phase 3.
 
 ### 8.3 MCP
 
