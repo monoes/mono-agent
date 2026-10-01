@@ -10,6 +10,7 @@ import { limiter } from '../lib/limiter.js'
 // must not start hundreds of processes at once.
 const loadThumb = limiter(4)
 import { onImagesChanged } from '../services/api.js'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
 function VaultThumb({ id }) {
   const [src, setSrc] = useState(null)
@@ -68,7 +69,7 @@ const sourceBadge = (source) => {
   )
 }
 
-export default function ImageVault() {
+export default function ImageVault({ isActive = true }) {
   const [images, setImages] = useState([])
   const [stats, setStats] = useState(null)
   const [search, setSearch] = useState('')
@@ -100,6 +101,7 @@ export default function ImageVault() {
       if (typeof unsub === 'function') unsub()
     }
   }, [load])
+  useReloadOnActivate(isActive, load)
 
   const handleRefresh = async () => {
     setRefreshing(true)
