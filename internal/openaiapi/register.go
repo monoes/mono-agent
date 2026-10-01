@@ -1,0 +1,11 @@
+package openaiapi
+
+import "net/http"
+
+// Mount registers the /v1 routes on mux for a listener with policy p. Each
+// route authenticates with an API key; nothing here reads the legacy HTTP API
+// token.
+func (g *Gateway) Mount(mux *http.ServeMux, p Policy) {
+	mux.Handle("GET /v1/models", g.auth(g.handleModels(p)))
+	mux.Handle("GET /v1/models/{id...}", g.auth(g.handleModel(p)))
+}
