@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -98,7 +99,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		id := newRequestID("chatcmpl-")
 
 		if req.Stream {
-			fail(errUnsupported("stream", "streaming is not supported yet"))
+			status, detail = g.streamChat(w, r, t, id, m.ID, req.StreamOptions != nil && req.StreamOptions.IncludeUsage)
 			return
 		}
 
@@ -132,6 +133,68 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 
 func policyDeniedAtStart(m ModelInfo, p Policy) *apiError {
 	return errPolicy(fmt.Sprintf("model %s started with a confinement the server policy (%s) does not allow, so the turn was stopped", m.ID, p))
+}
+
+// streamChat runs the turn and streams it. It returns the HTTP status the
+// request ended with and the operator-only detail of a failure.
+func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id, model string, includeUsage bool) (int, string) {
+	sw := newSSE(w, id, model)
+	t.OnDelta = sw.delta
+
+	// Commit the stream if the turn stays silent, then keep it alive. However
+	// this function ends, even in a panic, the helper stops: a ticker must
+	// never write to a response that is finished.
+	stop := make(chan struct{})
+	var once sync.Once
+	var wg sync.WaitGroup
+	stopKeepAlive := func() {
+		once.Do(func() { close(stop) })
+		wg.Wait()
+	}
+	defer stopKeepAlive()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		timer := time.NewTimer(g.cfg.StreamCommitAfter)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			sw.commit()
+		case <-stop:
+			return
+		}
+		tick := time.NewTicker(g.cfg.KeepAlive)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				sw.keepAlive()
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	res, err := g.runTurn(r.Context(), t)
+	stopKeepAlive()
+
+	failure := func(e *apiError) (int, string) {
+		if !sw.fail(e) {
+			writeError(w, e)
+		}
+		return e.Status, e.detail
+	}
+	if errors.Is(err, errPolicyDenied) {
+		return failure(errPolicy(fmt.Sprintf("model %s/%s started with a confinement the server policy (%s) does not allow, so the turn was stopped", t.Runtime, t.Model, t.Policy)))
+	}
+	if e := turnError(res, err); e != nil {
+		return failure(e)
+	}
+	if res.Err != nil || r.Context().Err() != nil { // cancelled: the caller left
+		return 499, ""
+	}
+	sw.finish(res, includeUsage)
+	return http.StatusOK, ""
 }
 
 // knowledgeContext searches the profile's knowledge for the user's message
