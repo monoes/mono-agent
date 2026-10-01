@@ -257,7 +257,10 @@ func Delete(ctx context.Context, db *sql.DB, profileID string, personIDs []strin
 		var imageID string
 		err := db.QueryRowContext(ctx, `SELECT COALESCE(CASE WHEN json_valid(profile_details) THEN json_extract(profile_details, '$.photo_image_id') END, '')
 			FROM people WHERE id = ? AND profile_id = ?`, id, profileID).Scan(&imageID)
-		if err == nil && imageID != "" {
+		if err != nil || imageID == "" {
+			continue
+		}
+		if im, err := vault.GetImage(ctx, db, profileID, imageID); err == nil && im.Source == Source {
 			_ = vault.DeleteImage(ctx, db, profileID, imageID)
 		}
 	}

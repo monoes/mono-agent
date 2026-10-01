@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/personitem"
 	"github.com/monoes/mono-agent/internal/personphoto"
+	"github.com/monoes/mono-agent/internal/util"
 )
 
 // workflowActionStorage implements action.StorageInterface backed by the
@@ -273,7 +273,7 @@ func itemCount(item map[string]interface{}, keys ...string) interface{} {
 		case float64:
 			return int64(v)
 		case string:
-			if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			if n, err := util.ConvertAbbreviatedNumber(strings.ReplaceAll(strings.TrimSpace(v), ",", "")); err == nil {
 				return n
 			}
 		}

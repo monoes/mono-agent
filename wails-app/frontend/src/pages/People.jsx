@@ -973,7 +973,7 @@ export default function People({ onProfile, isActive = true }) {
                       <input
                         type="checkbox"
                         aria-label="Select all"
-                        checked={selected.size === people.length}
+                        checked={people.length > 0 && selected.size === people.length}
                         onChange={e => setSelected(e.target.checked ? new Set(people.map(p => p.id)) : new Set())}
                       />
                     </th>

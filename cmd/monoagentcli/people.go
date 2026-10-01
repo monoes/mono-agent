@@ -397,10 +397,11 @@ func newPeopleDeleteCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			personphoto.Delete(cmd.Context(), db.DB, cfg.ProfileID, args)
-			vault.Wait()
 			deleted := 0
 			for _, personID := range args {
+				// The photo goes first (the row says where it is); a person
+				// that isn't there has no photo to lose.
+				personphoto.Delete(cmd.Context(), db.DB, cfg.ProfileID, []string{personID})
 				result, err := db.DB.Exec("DELETE FROM people WHERE id = ? AND profile_id = ?", personID, cfg.ProfileID)
 				if err != nil {
 					return fmt.Errorf("deleting person %s: %w", personID, err)
@@ -410,6 +411,7 @@ func newPeopleDeleteCmd(cfg *globalConfig) *cobra.Command {
 				}
 				deleted++
 			}
+			vault.Wait()
 			if cfg.JSONOutput {
 				return printReviewJSON(map[string]int{"deleted": deleted})
 			}

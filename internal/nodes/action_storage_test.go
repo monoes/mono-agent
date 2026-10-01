@@ -187,8 +187,13 @@ func TestSaveExtractedDataStoresCounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	read(map[string]interface{}{"username": "ada", "profile_url": "https://x.com/ada", "followers_count": 176697, "following_count": float64(332), "content_count": "10168"})
+	read(map[string]interface{}{"username": "ada", "profile_url": "https://x.com/ada", "followers_count": 176697, "following_count": float64(332), "content_count": "10,168"})
 	read(map[string]interface{}{"username": "ada", "profile_url": "https://x.com/ada", "full_name": "Ada"}) // a read without counts keeps them
+	read(map[string]interface{}{"username": "kay", "profile_url": "https://x.com/kay", "followers_count": "5.6K"})
+	var kay int64
+	if err := db.QueryRow(`SELECT follower_count FROM people WHERE platform_username = 'kay'`).Scan(&kay); err != nil || kay != 5600 {
+		t.Fatalf("abbreviated count = %d (%v)", kay, err)
+	}
 	var followers, following, posts int64
 	if err := db.QueryRow(`SELECT follower_count, following_count, content_count FROM people WHERE platform_username = 'ada'`).Scan(&followers, &following, &posts); err != nil {
 		t.Fatal(err)
