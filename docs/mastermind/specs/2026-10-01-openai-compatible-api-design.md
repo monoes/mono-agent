@@ -1,7 +1,7 @@
 # OpenAI-Compatible API — Design Spec
 
 Date: 2026-10-01
-Status: Draft for user review. The design was approved in conversation on 2026-10-01; one refinement (D13, §6.3: a dedicated listener) is called out for confirmation.
+Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3).
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
 
 ## 1. Goal
