@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/httpapi"
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/openaiapi"
 	"github.com/monoes/mono-agent/internal/tlsserve"
 )
@@ -272,12 +273,19 @@ func (a *apiRuntime) drain() {
 	}
 }
 
-// killTurns ends the turns in flight and gives their processes a few seconds to
-// be killed. A command about to exit at once (a second Ctrl+C) calls it first,
-// so the agent CLIs do not outlive it.
+// killReapMargin is how long killTurns waits beyond monomind.KillGrace. A turn
+// that ignores its cancel is ended by a group kill that Exec arms KillGrace
+// after the cancel reaches it, so a wait of just the grace returns a moment
+// before the kill.
+const killReapMargin = 3 * time.Second
+
+// killTurns ends the turns in flight and waits for their processes to be
+// killed. A command about to exit at once (a second Ctrl+C) calls it first, so
+// the agent CLIs do not outlive it: where a child gets no signal when its
+// parent dies (macOS), one left behind runs on.
 func (a *apiRuntime) killTurns() {
 	if gw := a.built(); gw != nil {
-		gw.Shutdown(5 * time.Second)
+		gw.Shutdown(monomind.KillGrace + killReapMargin)
 	}
 }
 
