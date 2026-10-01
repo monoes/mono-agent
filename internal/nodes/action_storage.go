@@ -1,6 +1,7 @@
 package nodes
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/personitem"
+	"github.com/monoes/mono-agent/internal/personphoto"
 )
 
 // workflowActionStorage implements action.StorageInterface backed by the
@@ -116,6 +118,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 	}
 	defer insertTarget.Close()
 
+	var photos []personphoto.Ref
 	for _, item := range items {
 		platform, _ := item["platform"].(string)
 		if platform == "" {
@@ -155,6 +158,9 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 			); err != nil {
 				return fmt.Errorf("nodes: upserting person %s: %w", ref.Username, err)
 			}
+			if prof.ImageURL != "" {
+				photos = append(photos, personphoto.Ref{Platform: platformUpper, Username: ref.Username})
+			}
 			var pid string
 			if err := lookupPerson.QueryRow(ref.Username, platformUpper, profileID).Scan(&pid); err == nil {
 				personID = sql.NullString{String: pid, Valid: true}
@@ -174,7 +180,12 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Keep a copy of each photo; one that can't be fetched keeps its URL.
+	_, _ = personphoto.Localize(context.Background(), s.db, profileID, photos)
+	return nil
 }
 
 // GetDailyActionCount and IncrementDailyActionCount key the daily-cap

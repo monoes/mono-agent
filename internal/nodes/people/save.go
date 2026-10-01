@@ -13,6 +13,7 @@ import (
 	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
 	_ "github.com/monoes/mono-agent/internal/bot/x"
 	"github.com/monoes/mono-agent/internal/personitem"
+	"github.com/monoes/mono-agent/internal/personphoto"
 	"github.com/monoes/mono-agent/internal/util"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -114,6 +115,7 @@ func (n *PeopleSaveNode) Execute(
 
 	now := time.Now().UTC()
 	var savedItems []workflow.Item
+	var saved []personphoto.Ref
 	exprEngine := workflow.NewExpressionEngine()
 
 	for _, item := range input.Items {
@@ -258,11 +260,16 @@ func (n *PeopleSaveNode) Execute(
 			out["introduction"] = introduction
 		}
 		savedItems = append(savedItems, workflow.NewItem(out))
+		if imageURL != "" {
+			saved = append(saved, personphoto.Ref{Platform: platformUpper, Username: username})
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("people.save: commit: %w", err)
 	}
+	// Keep a copy of each photo; one that can't be fetched keeps its URL.
+	_, _ = personphoto.Localize(ctx, globalPeopleDB, profileID, saved)
 
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: savedItems},
