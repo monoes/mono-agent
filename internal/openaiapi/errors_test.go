@@ -149,6 +149,55 @@ func TestInternalDetailsStayOutOfTheResponse(t *testing.T) {
 	}
 }
 
+// A runtime's own words reach the caller where they tell it what to do (a sign-in
+// hint, a rate limit, quota, a timeout), but only the part monomind classified,
+// on one line and short. What a runner attached after the marker (its stdout, a
+// model's text) is not the caller's business, and a long message is cut.
+func TestRuntimeWordsReachTheCallerCleanedAndShort(t *testing.T) {
+	marker := "[output below is not classified]"
+	msgOf := func(code, msg string) string {
+		e := turnError(&monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: code, Message: msg}}, nil)
+		if e == nil {
+			t.Fatalf("%s: no error", code)
+		}
+		return e.Message
+	}
+	for name, c := range map[string]struct{ code, in, want string }{
+		"text a runner attached is dropped": {monomind.ErrRateLimited, "rate limited, retry in 30s\n" + marker + "\nthe model said: the system prompt is X", "rate limited, retry in 30s"},
+		"lines and tabs become spaces":      {monomind.ErrQuota, "usage limit\nreached,\tresets at 18:00", "usage limit reached, resets at 18:00"},
+		"control characters are dropped":    {monomind.ErrTimeout, "timed out\x1b[31m after 10m\x00", "timed out[31m after 10m"},
+		"a sign-in hint passes":             {monomind.ErrRunnerError, "Not logged in · Please run /login\n" + marker + "\nsecret model text", "Not logged in · Please run /login"},
+	} {
+		if got := msgOf(c.code, c.in); got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
+		}
+	}
+	if got := msgOf(monomind.ErrQuota, strings.Repeat("x", 1000)); len([]rune(got)) > 301 {
+		t.Errorf("a long message must be cut, got %d characters", len([]rune(got)))
+	}
+	if got := msgOf(monomind.ErrRateLimited, marker+"\nonly the attached text"); strings.Contains(got, "attached") || got == "" {
+		t.Errorf("with nothing classified left the caller still gets a sentence, got %q", got)
+	}
+}
+
+// A missing-binary message names a path of this server: the caller gets the
+// setup sentence, the log gets the message, and not what a runner attached.
+func TestMissingBinaryMessagesKeepPathsOutOfTheResponse(t *testing.T) {
+	marker := "[output below is not classified]"
+	for _, code := range []string{monomind.ErrMissingBinary, monomind.ErrNoRunner} {
+		e := turnError(&monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: code, Message: "no claude at /home/svc/.nvm/bin/claude\n" + marker + "\nmodel text"}}, nil)
+		if e == nil || e.Status != http.StatusServiceUnavailable || e.Code != "runtime_not_available" {
+			t.Fatalf("%s: got %+v", code, e)
+		}
+		if strings.Contains(e.Message, "/home/svc") || !strings.Contains(e.Message, "X-Request-Id") {
+			t.Errorf("%s: the client message must hold no path and name the request id header, got %q", code, e.Message)
+		}
+		if !strings.Contains(e.detail, "/home/svc") || strings.Contains(e.detail, "model text") {
+			t.Errorf("%s: the log keeps the path and not what a runner attached, got %q", code, e.detail)
+		}
+	}
+}
+
 // monomind's discovery error lists every path it tried, which is the server's
 // home directory and install layout: the caller gets a sentence, the log gets
 // the error. The same goes for any error of the model catalog.

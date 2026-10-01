@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 )
@@ -147,14 +149,23 @@ func turnError(res *monomind.TurnResult, execErr error) *apiError {
 		case monomind.ErrCancelled:
 			return nil
 		case monomind.ErrRateLimited:
-			return &apiError{Status: http.StatusTooManyRequests, Type: "rate_limit_error", Code: "rate_limit_exceeded", Message: pe.Message}
+			return &apiError{Status: http.StatusTooManyRequests, Type: "rate_limit_error", Code: "rate_limit_exceeded",
+				Message: runtimeWords(pe.Message, "The runtime is rate limited. Retry shortly.")}
 		case monomind.ErrQuota, monomind.ErrBudget:
-			return &apiError{Status: http.StatusTooManyRequests, Type: "rate_limit_error", Code: "insufficient_quota", Message: pe.Message}
+			return &apiError{Status: http.StatusTooManyRequests, Type: "rate_limit_error", Code: "insufficient_quota",
+				Message: runtimeWords(pe.Message, "The runtime's usage limit has been reached.")}
 		case monomind.ErrTimeout:
-			return &apiError{Status: http.StatusGatewayTimeout, Type: "api_error", Code: "timeout", Message: pe.Message}
+			return &apiError{Status: http.StatusGatewayTimeout, Type: "api_error", Code: "timeout",
+				Message: runtimeWords(pe.Message, "The turn timed out.")}
 		}
 		if monomind.IsAgentNotSetup(pe) {
-			return errRuntimeUnavailable(pe.Message)
+			switch pe.Code {
+			case monomind.ErrMissingBinary, monomind.ErrNoRunner:
+				// These name a path of this server, like monomind's own discovery
+				// error: the caller gets the setup sentence, the log the message.
+				return errSetup(fmt.Errorf("%s: %s", pe.Code, monomind.ClassifiableMessage(pe.Message)))
+			}
+			return errRuntimeUnavailable(runtimeWords(pe.Message, "The runtime is not signed in on this server."))
 		}
 		return &apiError{Status: http.StatusBadGateway, Type: "api_error", Code: "runtime_error",
 			Message: "The runtime reported an error (" + pe.Code + "). " + quoteRequestID, detail: "code=" + pe.Code}
@@ -164,6 +175,30 @@ func turnError(res *monomind.TurnResult, execErr error) *apiError {
 			Message: "The runtime ended the turn without finishing it. " + quoteRequestID}
 	}
 	return nil
+}
+
+// maxRuntimeWords is the longest message of a runtime that a caller is given.
+const maxRuntimeWords = 300
+
+// runtimeWords is a runtime's own message made fit for a caller: only the part
+// monomind classified (a runner can attach its stdout, or a model's text, after
+// a marker), on one line, without control characters, and short. Where nothing
+// is left it is fallback.
+func runtimeWords(msg, fallback string) string {
+	msg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, monomind.ClassifiableMessage(msg))
+	msg = strings.Join(strings.Fields(msg), " ")
+	if r := []rune(msg); len(r) > maxRuntimeWords {
+		msg = string(r[:maxRuntimeWords]) + "…"
+	}
+	if msg == "" {
+		return fallback
+	}
+	return msg
 }
 
 // finishReason is the OpenAI finish_reason of a successful turn.
