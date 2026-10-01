@@ -49,9 +49,17 @@ type turn struct {
 // is emptied before and after every turn, so nothing one request leaves can
 // reach the next. A folder that cannot be emptied fails the request.
 func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
-	dir := filepath.Join(g.cfg.ScratchRoot, profileFolder(profileID), fmt.Sprintf("%s%d", slotPrefix, slot))
+	profileDir := filepath.Join(g.cfg.ScratchRoot, profileFolder(profileID))
+	dir := filepath.Join(profileDir, fmt.Sprintf("%s%d", slotPrefix, slot))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating the turn's folder: %w", err)
+	}
+	// Both must be real directories: a link planted in place of either would
+	// send the emptying, and the turn, somewhere else.
+	for _, d := range []string{profileDir, dir} {
+		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+			return "", fmt.Errorf("the turn's folder %s is not a plain directory", d)
+		}
 	}
 	if !emptyDir(dir) {
 		return "", fmt.Errorf("the turn's folder %s could not be emptied", dir)

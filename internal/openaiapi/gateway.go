@@ -177,18 +177,45 @@ func (g *Gateway) cleanSlots() {
 	}
 }
 
+// removeAll is os.RemoveAll; a variable so a test can make a folder impossible
+// to empty.
+var removeAll = os.RemoveAll
+
 // emptyDir removes everything inside dir and keeps dir. It reports whether
-// the folder is empty afterwards.
+// the folder is empty afterwards. A runtime can leave a read-only directory
+// behind it (Go's module cache does), which os.RemoveAll cannot empty, so the
+// directories are opened up first: the gateway owns these folders.
 func emptyDir(dir string) bool {
+	_ = os.Chmod(dir, 0o700)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
 	for _, e := range entries {
-		_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+		p := filepath.Join(dir, e.Name())
+		if e.IsDir() {
+			openUp(p)
+		}
+		_ = removeAll(p)
 	}
 	left, err := os.ReadDir(dir)
 	return err == nil && len(left) == 0
+}
+
+// openUp gives the owner access to dir and every real directory under it. It
+// never follows a symlink: os.ReadDir reports a link as a link, so a link is
+// neither opened nor entered.
+func openUp(dir string) {
+	_ = os.Chmod(dir, 0o700)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			openUp(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 func (g *Gateway) turnStarted() {

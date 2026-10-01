@@ -27,8 +27,9 @@ type Config struct {
 	TurnTimeout time.Duration
 	// BodyLimit is the largest request body accepted, in bytes.
 	BodyLimit int64
-	// ScratchRoot holds one throwaway folder per request. Default
-	// ~/.monoagent/workspaces/api.
+	// ScratchRoot holds the working folders of the turns: one folder per
+	// profile (p-<hash>) with one slot-N folder per concurrency slot, each
+	// emptied around every turn. Default ~/.monoagent/workspaces/api.
 	ScratchRoot string
 	// CatalogTTL is how long the model list is reused.
 	CatalogTTL time.Duration

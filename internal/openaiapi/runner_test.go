@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -165,32 +166,118 @@ func TestRunTurnSlotsWorkInDifferentFolders(t *testing.T) {
 	}
 }
 
-func TestRunTurnRefusesAFolderItCannotEmpty(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root can remove anything")
-	}
+// A runtime can leave a read-only directory behind it (Go's module cache does).
+// That must not brick the slot for good: the gateway owns the folder and opens
+// it up before emptying it.
+func TestRunTurnRepairsAFolderALastTurnLeftReadOnly(t *testing.T) {
 	var ran atomic.Bool
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		ran.Store(true)
 		return okTurn("ok")(ctx, opts, onEvent)
 	})
-	locked := filepath.Join(h.scratch, profileFolder(""), "slot-0", "locked")
+	slot := filepath.Join(h.scratch, profileFolder(""), "slot-0")
+	locked := filepath.Join(slot, "mod", "locked")
 	if err := os.MkdirAll(locked, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(locked, "f"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(locked, 0o500); err != nil { // its entries can no longer be removed
+	for _, d := range []string{locked, filepath.Join(slot, "mod"), slot} { // deepest first
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, d := range []string{slot, filepath.Join(slot, "mod"), locked} {
+			_ = os.Chmod(d, 0o700)
+		}
+	})
+
+	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err != nil {
+		t.Fatalf("a read-only leftover must be repaired, not refused: %v", err)
+	}
+	if !ran.Load() {
+		t.Error("the turn must run once the folder is clean")
+	}
+	if entries, _ := os.ReadDir(slot); len(entries) != 0 {
+		t.Errorf("the folder must be empty afterwards: %d entries", len(entries))
+	}
+}
+
+// What cannot be emptied at all still refuses the turn: it must never run among
+// what an earlier request left.
+func TestRunTurnRefusesAFolderItCannotEmpty(t *testing.T) {
+	var ran atomic.Bool
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		ran.Store(true)
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	slot := filepath.Join(h.scratch, profileFolder(""), "slot-0")
+	if err := os.MkdirAll(slot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if err := os.WriteFile(filepath.Join(slot, "left-behind.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	was := removeAll
+	removeAll = func(string) error { return errors.New("operation not permitted") }
+	t.Cleanup(func() { removeAll = was })
 
 	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err == nil {
 		t.Fatal("a turn must not start in a folder that still holds what an earlier turn left")
 	}
 	if ran.Load() {
 		t.Error("nothing must run when the folder is not clean")
+	}
+}
+
+// A link planted where a profile folder or a slot folder should be would send
+// the emptying, and the turn, somewhere else.
+func TestRunTurnRefusesASymlinkedFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	for name, linkAt := range map[string]func(scratch string) string{
+		"slot folder":    func(scratch string) string { return filepath.Join(scratch, profileFolder(""), "slot-0") },
+		"profile folder": func(scratch string) string { return filepath.Join(scratch, profileFolder("")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var ran atomic.Bool
+			h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+				ran.Store(true)
+				return okTurn("ok")(ctx, opts, onEvent)
+			})
+			outside := t.TempDir()
+			precious := filepath.Join(outside, "slot-0", "precious.txt")
+			if err := os.MkdirAll(filepath.Dir(precious), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(precious, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			link := linkAt(h.scratch)
+			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := outside
+			if name == "slot folder" {
+				target = filepath.Join(outside, "slot-0")
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err == nil {
+				t.Fatal("a turn must not run in a folder that is a symlink")
+			}
+			if ran.Load() {
+				t.Error("nothing must run")
+			}
+			if _, err := os.Stat(precious); err != nil {
+				t.Errorf("the emptying followed the link and removed what is behind it: %v", err)
+			}
+		})
 	}
 }
 

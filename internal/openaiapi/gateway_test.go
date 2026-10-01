@@ -83,6 +83,48 @@ func TestNewEmptiesLeftoverSlotFoldersAndNothingElse(t *testing.T) {
 	}
 }
 
+// emptyDir opens a directory a runtime made read-only before removing what is
+// inside it, and never follows a symlink out of the folder it is emptying.
+func TestEmptyDirOpensUpReadOnlyDirectoriesAndStaysInside(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "slot")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{filepath.Join(dir, "a", "b"), outside} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	precious := filepath.Join(outside, "precious.txt")
+	for _, f := range []string{filepath.Join(dir, "a", "b", "f"), filepath.Join(dir, "top"), precious} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link-out")); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+	for _, d := range []string{filepath.Join(dir, "a", "b"), filepath.Join(dir, "a"), dir} { // deepest first
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, d := range []string{dir, filepath.Join(dir, "a"), filepath.Join(dir, "a", "b")} {
+			_ = os.Chmod(d, 0o700)
+		}
+	})
+
+	if !emptyDir(dir) {
+		t.Fatal("a folder with read-only directories must still be emptied")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("%d entries left", len(entries))
+	}
+	if _, err := os.Stat(precious); err != nil {
+		t.Errorf("emptyDir followed a symlink out of the folder: %v", err)
+	}
+}
+
 func TestDrainWaitsUntilEveryStartedTurnHasEnded(t *testing.T) {
 	h := newHarness(t, okTurn("x"))
 	if !h.g.Drain(time.Second) {
