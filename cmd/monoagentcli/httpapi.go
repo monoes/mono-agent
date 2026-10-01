@@ -19,6 +19,7 @@ import (
 func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 	var addr string
 	var allowMutations bool
+	var api apiFlags
 
 	cmd := &cobra.Command{
 		Use:   "httpapi",
@@ -36,15 +37,33 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 			"(credential-shaped keys masked); pass `X-Full-Outputs: 1` to opt out per request, " +
 			"mirroring `workflow run --full-outputs`.\n\n" +
 			"See internal/httpapi/openapi.yaml for the full endpoint list and examples/httpapi-quickstart.md " +
-			"for a curl walkthrough.",
+			"for a curl walkthrough.\n\n" +
+			"The same process serves the OpenAI-compatible API (/v1, authenticated by the API keys of `monoagentcli api key`) " +
+			"when the bind is loopback; --v1-addr gives it a dedicated listener, which is how it is exposed beyond loopback " +
+			"(TLS required). See `monoagentcli api --help` and examples/openai-api-quickstart.md.",
 		Example: "  monoagentcli httpapi\n  monoagentcli httpapi --allow-mutations\n  MONOAGENT_HTTPAPI_ADDR=127.0.0.1:9999 monoagentcli httpapi",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The OpenAI-compatible API (/v1) reads API keys and the roster
+			// from the database, so this command opens it for the gateway.
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer db.Close()
+			apiRT, err := newAPIRuntime(db.DB, api, func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, "api: "+format+"\n", args...)
+			})
+			if err != nil {
+				return err
+			}
+
 			srv, err := httpapi.NewServer(httpapi.Options{
 				DBPath:         cfg.DBPath,
 				Profile:        cfg.ProfileID,
 				Addr:           addr,
 				AllowMutations: allowMutations,
 				Version:        version,
+				ExtraRoutes:    apiRT.mainMount(httpapi.ResolveAddr(addr)),
 			})
 			if err != nil {
 				return fmt.Errorf("build httpapi server: %w", err)
@@ -53,6 +72,14 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+
+			v1Addr, err := apiRT.startV1(ctx)
+			if err != nil {
+				return err
+			}
+			if v1Addr != "" {
+				fmt.Fprintf(os.Stdout, "OpenAI-compatible API listening on %s (confinement %s).\n", v1Addr, apiRT.policy(v1Addr))
+			}
 
 			// Mirrors daemon.go: a second interrupt forces an immediate exit
 			// instead of waiting out the graceful-shutdown window.
@@ -73,11 +100,14 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 
 			fmt.Fprintf(os.Stdout, "HTTP API listening on %s (mutations %s). Press Ctrl+C to stop.\n",
 				srv.Addr(), mutationsLabel(srv.AllowsMutations()))
-			return srv.ListenAndServe(ctx)
+			err = srv.ListenAndServe(ctx)
+			apiRT.drain() // no agent CLI outlives the command
+			return err
 		},
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", "", "Listen address (default 127.0.0.1:9322, or MONOAGENT_HTTPAPI_ADDR)")
+	api.bind(cmd)
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
 		"Serve mutating endpoints (workflow run/activate/deactivate, hil approve/reject); also settable via MONOAGENT_HTTPAPI_ALLOW_MUTATIONS=1")
 	return cmd
