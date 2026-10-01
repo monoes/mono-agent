@@ -176,3 +176,24 @@ func TestSaveExtractedDataBioIsAboutAndExtrasAreDetails(t *testing.T) {
 		t.Fatalf("details = %s", details)
 	}
 }
+
+// A profile read keeps its follower, following and post counts.
+func TestSaveExtractedDataStoresCounts(t *testing.T) {
+	db := newTargetsDB(t)
+	s := &workflowActionStorage{db: db, profileID: "p1", executionID: "cli", nodeID: "cli-node", platform: "x"}
+	read := func(item map[string]interface{}) {
+		t.Helper()
+		if err := s.SaveExtractedData("a", []map[string]interface{}{item}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(map[string]interface{}{"username": "ada", "profile_url": "https://x.com/ada", "followers_count": 176697, "following_count": float64(332), "content_count": "10168"})
+	read(map[string]interface{}{"username": "ada", "profile_url": "https://x.com/ada", "full_name": "Ada"}) // a read without counts keeps them
+	var followers, following, posts int64
+	if err := db.QueryRow(`SELECT follower_count, following_count, content_count FROM people WHERE platform_username = 'ada'`).Scan(&followers, &following, &posts); err != nil {
+		t.Fatal(err)
+	}
+	if followers != 176697 || following != 332 || posts != 10168 {
+		t.Fatalf("counts = %d %d %d", followers, following, posts)
+	}
+}
