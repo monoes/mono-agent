@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orggrant"
@@ -119,7 +120,8 @@ func newOrgTeardownProfileCmd(env *orgEnv) *cobra.Command {
 			"then it stops the orgs running out of the profile's folder and the folder's `org serve`, and " +
 			"strips the dead tool-provider blocks from the org files (an automation role keeps its endpoint " +
 			"URL, whose id is refused from now on). Org files, run data, and the decision ledger are " +
-			"otherwise left in place. Run it before removing the profile, " +
+			"otherwise left in place. It also revokes the profile's API keys (the OpenAI-compatible API). " +
+			"Run it before removing the profile, " +
 			"while its folder setting still exists. --dry-run reports what it would do.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -132,13 +134,21 @@ func newOrgTeardownProfileCmd(env *orgEnv) *cobra.Command {
 				return err
 			}
 			store := orggrant.NewStore(db.DB)
+			keyStore := apikeys.NewStore(db.DB)
 			var revoked orggrant.ProfileRevocation
+			var keys int // the profile's active API keys, revoked (dry run: that would be)
 			if dryRun {
 				revoked, err = store.ProfileFootprint(ctx, profileID)
+				if err == nil {
+					keys, err = keyStore.CountActive(ctx, profileID)
+				}
 			} else {
 				// Revoke first: a provider or endpoint that outlives a failed
 				// process stop can then no longer act for the profile.
 				revoked, err = store.RevokeProfile(ctx, profileID)
+				if err == nil {
+					keys, err = keyStore.RevokeProfile(ctx, profileID)
+				}
 			}
 			if err != nil {
 				return err
@@ -147,7 +157,7 @@ func newOrgTeardownProfileCmd(env *orgEnv) *cobra.Command {
 			out := map[string]interface{}{
 				"v": 1, "profile": profileID, "root": root, "dry_run": dryRun,
 				"revoked": revoked, "org_serve": map[string]interface{}{"pid": stop.ServePID, "status": stop.ServeStatus},
-				"stopped_orgs": stop.StoppedOrgs, "warnings": stop.Warnings,
+				"stopped_orgs": stop.StoppedOrgs, "warnings": stop.Warnings, "api_keys": keys,
 			}
 			if dryRun {
 				out["running_orgs"] = stop.RunningOrgs
