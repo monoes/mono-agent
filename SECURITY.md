@@ -449,7 +449,9 @@ profile. Only its SHA-256 is stored (table `api_keys`), so it is shown once,
 at creation, and verifying a request needs no vault and no keyring. There is
 no authentication cache: `api key revoke` and `org teardown-profile` take
 effect on the next request. A request authenticates as the key's profile and
-as nothing else; a key of another profile is "not found" in every command.
+as nothing else; a key of another profile is "not found" in every command
+except `api key list --all-profiles`, which lists every profile's keys
+(metadata only, never a secret) to whoever can run it on this machine.
 The legacy HTTP API token (vault entry `httpapi-token`) is a separate
 credential for the other routes: a key never opens them and the token never
 opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
@@ -475,13 +477,18 @@ runtime keeps the MCP servers and instructions files of the OS user it runs
 as, so a key holder can ask codex to use any tool you configured for it.
 
 The class is decided from `monomind agent scan` and fails closed: anything
-not vouched for is `unconfined`. A `sandboxed` model's turn is started with the sandbox required, so one
-whose sandbox cannot be applied is refused (403) instead of running
-unconfined. The class is checked again when the turn starts, against the
-confinement the `start` event reports (monomind 2.22 reports it), and a turn
-that is weaker than the listener's policy is cancelled (403
-`policy_denied`) before any of its text reaches the caller. The turn's verdict is also the `X-Monoagent-Sandbox`
-response header.
+not vouched for is `unconfined`. A `sandboxed` model's turn is started with
+the sandbox required, so one whose sandbox cannot be applied is refused (403)
+instead of running unconfined. The class is checked again when the turn
+starts, against the confinement the `start` event reports (monomind 2.22
+reports it), and a turn that is weaker than the listener's policy is
+cancelled (403 `policy_denied`) before any of its text reaches the caller. A
+streamed response is committed (status 200) on its first content or after 5
+seconds of silence, so a refusal later than that is an error event in the
+stream rather than a 403. A non-streaming response also carries monomind's
+sandbox verdict for the turn in `X-Monoagent-Sandbox` (`sandboxed`, `scoped`,
+`unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), which is not
+the class above; a streamed response has none.
 
 Be precise about what is and is not guaranteed. claude's `chat-only` rests on
 monomind's design (its allow-list gate); the live check
@@ -505,11 +512,17 @@ before giving a key to anyone you would not give a shell.
   a self-signed certificate cached under `~/.monoagent/api-tls/` (key file
   mode 0600) that covers `localhost` only, so remote clients reject it until
   they trust it explicitly. Set a real certificate, or terminate TLS in a
-  reverse proxy. The webhook server follows the same rules (see above).
+  reverse proxy. The two variables also make a loopback `--v1-addr` bind
+  speak TLS, so a proxy that forwards plain HTTP needs them unset. The webhook
+  server follows the same rules (see above). `httpapi` exits when the
+  listener cannot start; `daemon` prints a warning and keeps running without
+  it, so check `api status` after starting it.
 - The default confinement is `chat-only` off-loopback and `any` on loopback.
   Behind a reverse proxy the bind is loopback, so **set `--confinement`
-  (`MONOAGENT_API_CONFINEMENT`) explicitly**. A model above the policy is not
-  listed and answers 403.
+  (`MONOAGENT_API_CONFINEMENT`) explicitly**; it is one value for every
+  listener of the process, so it also limits the loopback main listener. A
+  model above the policy is not listed, `GET /v1/models/{id}` answers 404 for
+  it and a completion that names it answers 403.
 - TLS protects the key in transit; it does not limit who may try one. There
   is no rate limit per caller and no lockout, so a key is only as safe as it
   is long and secret (256 bits). Put a proxy or a firewall in front of a
@@ -536,14 +549,18 @@ The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
 the 2 MiB request body and the 10 minute turn timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing.
 
-**Logs and errors.** One line per request names the request id, key id,
-profile, model, status, duration and how many knowledge excerpts were added,
-plus, for a failure, the operator-only detail (a Go error or a runtime's error
-code). It never holds a prompt, an answer or a key. A failed authentication is
-logged with the caller's address, never the key it sent. Error messages sent
-to callers are generic for internal failures and for a runtime error other
-than a setup hint, a rate limit, quota or a timeout, and every response
-carries an `X-Request-Id` to quote to the operator.
+**Logs and errors.** One line per chat completion names the request id, key
+id, profile, model, status, duration and how many knowledge excerpts were
+added, plus, for a failure, the operator-only detail (a Go error or a
+runtime's error code). A failure to list models is logged the same way; a
+successful listing is not logged. No line holds a prompt, an answer or a key.
+A failed authentication is logged with the caller's address, never the key it
+sent (a request that sent no credential at all is not logged). Error messages
+sent to callers are generic for internal failures and for a runtime error
+other than a setup hint, a rate limit, quota or a timeout, and every response
+of the three routes carries an `X-Request-Id` to quote to the operator. A
+path or method the API does not have gets Go's plain-text 404 or 405, without
+one.
 
 **What this does not cover.**
 
@@ -556,10 +573,18 @@ carries an `X-Request-Id` to quote to the operator.
   folders bounded (one per profile and slot), not their content, and keep
   one profile's apart from another's.
 - Some runtimes (antigravity) pass the prompt on their command line, which
-  other local users can read with `ps` while the turn runs. On a shared host,
-  run the server on a machine or an OS user of its own.
+  other local users can read with `ps` while the turn runs. So does a context
+  key's knowledge search, for every runtime, claude included: it runs
+  `monomind mcp exec -t knowledge_search` with the first 500 characters of the
+  last user message in its arguments, for up to 30 seconds, in two parallel
+  processes (documents and captures). On a shared host, run the server on a
+  machine or an OS user of its own.
+- A turn's prompt and system prompt (which carry a context key's excerpts) are
+  written to files in a private folder (mode 0700) under
+  `~/.monoagent/workspaces/api/.tmp`, outside every turn's writable area, and
+  removed when the turn ends.
 
 **Not part of this surface (yet).** Image generation, OpenAI tool calling and
 Jev's `auto` model are later phases. Today a request cannot hand the agent
-tools of the caller's own (`tools` is rejected); the runtime's native tools are
+tools of the caller's own (a non-empty `tools` is rejected); the runtime's native tools are
 a separate matter, covered by the classes above.
