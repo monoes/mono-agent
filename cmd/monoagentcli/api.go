@@ -14,6 +14,6 @@ func newAPICmd(cfg *globalConfig) *cobra.Command {
 			"`--v1-addr` gives it a dedicated listener, which is how it is exposed beyond loopback (TLS required). " +
 			"These commands manage its API keys and show what it serves.",
 	}
-	cmd.AddCommand(newAPIKeyCmd(cfg))
+	cmd.AddCommand(newAPIKeyCmd(cfg), newAPIModelsCmd(cfg), newAPIStatusCmd(cfg))
 	return cmd
 }
