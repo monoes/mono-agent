@@ -254,6 +254,16 @@ func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
 		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=agy: %v, want %v", got, want)
 	}
 
+	// none switches image generation off: no model makes images.
+	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "none")
+	want = map[string][]string{
+		"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+		"antigravity/default": text, "antigravity/gemini-3.8-flash-high": text,
+	}
+	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
+		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=none: %v, want %v", got, want)
+	}
+
 	// A bad list is the server's own mistake: the refusal names the variable and, as for
 	// the others, repeats nothing.
 	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "co dex")

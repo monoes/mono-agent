@@ -170,6 +170,8 @@ func TestModelsReportSaysWhichModelsMakeImages(t *testing.T) {
 		{"the default list", nil, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": both}},
 		{"a list of one", []string{"antigravity"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": text, "antigravity/default": both}},
 		{"a chat-only runtime in the list cannot", []string{"claude", "codex"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": text}},
+		// A list with nothing in it is image generation switched off, which is not the default list.
+		{"switched off", []string{}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": text, "antigravity/default": text}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := NewModelsReport(ModelsReportInput{For: "loopback", Policy: Policy{Max: ChatOnly}, Source: ReportSourceShell, Models: reportModels, ImageRuntimes: c.list})
@@ -185,7 +187,8 @@ func TestModelsReportSaysWhichModelsMakeImages(t *testing.T) {
 }
 
 // The image list of a report comes from the same variable the gateway reads: unset is
-// the default list, and a bad value an error that names the variable.
+// the default list, "none" a list with nothing in it (not nil, which would be the
+// default), and a bad value an error that names the variable.
 func TestEffectiveImageRuntimes(t *testing.T) {
 	for _, c := range []struct {
 		value string
@@ -193,9 +196,10 @@ func TestEffectiveImageRuntimes(t *testing.T) {
 	}{
 		{"", []string{"codex", "antigravity"}},
 		{"agy, codex", []string{"antigravity", "codex"}},
+		{"none", []string{}},
 	} {
 		got, err := EffectiveImageRuntimes(envOf(map[string]string{"MONOAGENT_API_IMAGE_RUNTIMES": c.value}))
-		if err != nil || !reflect.DeepEqual(got, c.want) {
+		if err != nil || got == nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("EffectiveImageRuntimes(%q) = %#v, %v; want %#v", c.value, got, err, c.want)
 		}
 	}

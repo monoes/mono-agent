@@ -246,6 +246,7 @@ func TestAPIModelsListSaysWhichModelsMakeImagesLikeAPIModels(t *testing.T) {
 		{"the default list", "", "antigravity/default,antigravity/gemini-3.8-flash-high,codex/default,codex/gpt-6-astra"},
 		{"antigravity alone", "agy", "antigravity/default,antigravity/gemini-3.8-flash-high"},
 		{"codex alone", "codex", "codex/default,codex/gpt-6-astra"},
+		{"switched off", "none", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			db := newAPITestDB(t)
