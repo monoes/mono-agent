@@ -4,49 +4,22 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/openaiapi"
 )
 
-type apiModelJSON struct {
-	ID          string `json:"id"`
-	Runtime     string `json:"runtime"`
-	Model       string `json:"model"`
-	Label       string `json:"label"`
-	Confinement string `json:"confinement"`
-	Validated   bool   `json:"validated"`
-	Allowed     bool   `json:"allowed"`
-	// ContextAllowed is true when a key created with --context may use the model.
-	ContextAllowed bool `json:"context_allowed"`
-	// AutoAllowed is true when the auto model may pick it: allowed, and within
-	// --auto-confinement.
-	AutoAllowed bool `json:"auto_allowed"`
-}
-
-// apiAutoJSON says whether the auto model works for the profile, and what is
-// missing when it does not.
-type apiAutoJSON struct {
-	Available bool   `json:"available"`
-	Missing   string `json:"missing,omitempty"`
-	// KeySource is where the Jev key is, vault or env, when it is available. A key
-	// from the environment is this shell's: a running server reads its own.
-	KeySource string `json:"key_source,omitempty"`
-	// Confinement is the strongest class it picks within: the listener's policy
-	// capped by --auto-confinement (api models only).
-	Confinement string `json:"confinement,omitempty"`
-	// Candidates is how many models Jev would pick among: the ones the
-	// listener serves within --auto-confinement (api models only).
-	Candidates int `json:"candidates,omitempty"`
-	// HeldBack is how many the listener serves that auto may not pick, being
-	// above --auto-confinement (api models only).
-	HeldBack int `json:"held_back,omitempty"`
-}
+// The document `api models --json` prints is the one the MCP tool api_models_list
+// returns, so its types and the rules that fill them live in internal/openaiapi.
+type (
+	apiModelJSON  = openaiapi.ModelReport
+	apiAutoJSON   = openaiapi.AutoReport
+	apiModelsJSON = openaiapi.ModelsReport
+)
 
 // autoNote is the line the text output gives for it.
-func (a apiAutoJSON) autoNote() string {
+func autoNote(a apiAutoJSON) string {
 	if !a.Available {
 		return "off, it needs " + a.Missing
 	}
@@ -66,27 +39,6 @@ func (a apiAutoJSON) autoNote() string {
 		note += "; the Jev key is this shell's TYPESAFE_API_KEY, and a running server reads its own environment"
 	}
 	return note
-}
-
-type apiModelsJSON struct {
-	V      int `json:"v"`
-	Policy struct {
-		For         string `json:"for"`
-		Confinement string `json:"confinement"`
-		// ContextConfinement is the strongest class a key created with
-		// --context may use on this listener: the context maximum, never
-		// above Confinement.
-		ContextConfinement string `json:"context_confinement"`
-		// AutoConfinement is the strongest class the auto model may pick on this
-		// listener: the auto maximum, never above Confinement.
-		AutoConfinement string `json:"auto_confinement"`
-		// Source says whose settings these are: "shell", this command's own flags
-		// and environment, which a running server may not share.
-		Source string `json:"source"`
-	} `json:"policy"`
-	Models []apiModelJSON `json:"models"`
-	// Auto is the auto model for the active profile: Jev picks among Models.
-	Auto apiAutoJSON `json:"auto"`
 }
 
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
@@ -117,54 +69,19 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			forContext := policy.ForContextKey()
-			forAuto := policy.ForAuto()
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
-			catalog := openaiapi.NewCatalog(openaiapi.DefaultDeps(db.DB, getVersion()).Catalog, time.Minute)
-			models, err := catalog.Models(cmd.Context())
+			models, err := openaiapi.LoadModels(cmd.Context(), db.DB)
 			if err != nil {
 				return err
 			}
-
-			out := apiModelsJSON{V: 1, Models: []apiModelJSON{}}
-			out.Policy.For, out.Policy.Confinement, out.Policy.ContextConfinement = forListener, policy.String(), forContext.String()
-			out.Policy.AutoConfinement = forAuto.String()
-			out.Policy.Source = "shell"
-			for _, m := range models {
-				if m.Alias {
-					continue
-				}
-				out.Models = append(out.Models, apiModelJSON{
-					ID: m.ID, Runtime: m.Runtime, Model: m.Model, Label: m.Label,
-					Confinement: m.Class.String(), Validated: m.Validated, Allowed: policy.Allows(m.Class),
-					ContextAllowed: forContext.Allows(m.Class), AutoAllowed: forAuto.Allows(m.Class),
-				})
-			}
-			allowed, candidates := 0, 0
-			for _, m := range out.Models {
-				if m.Allowed {
-					allowed++
-				}
-				if m.AutoAllowed {
-					candidates++
-				}
-			}
-			st := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
-			out.Auto = apiAutoJSON{Available: st.Available, Missing: st.Missing, KeySource: st.KeySource,
-				Confinement: forAuto.Max.String(), Candidates: candidates, HeldBack: allowed - candidates}
-			switch {
-			case st.Available && allowed == 0:
-				out.Auto.Available, out.Auto.Missing = false, "at least one model the listener's policy allows"
-			case st.Available && candidates == 0:
-				out.Auto.Available = false
-				out.Auto.Missing = fmt.Sprintf("a model within --auto-confinement (%s), which holds back all %d the listener serves", forAuto, allowed)
-			}
-			if !out.Auto.Available {
-				out.Auto.Candidates, out.Auto.HeldBack, out.Auto.KeySource, out.Auto.Confinement = 0, 0, "", ""
-			}
+			out := openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
+				For: forListener, Policy: policy, Source: openaiapi.ReportSourceShell, Models: models,
+				Auto: openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID),
+			})
 			if cfg.JSONOutput {
 				return writeJSONTo(cmd.OutOrStdout(), out)
 			}
@@ -189,7 +106,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			if err := tw.Flush(); err != nil {
 				return err
 			}
-			fmt.Fprintf(w, "\nauto: %s\n", out.Auto.autoNote())
+			fmt.Fprintf(w, "\nauto: %s\n", autoNote(out.Auto))
 			return nil
 		},
 	}
@@ -200,69 +117,45 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+// The four functions below are the rules of internal/openaiapi (the MCP tool
+// api_models_list applies them too), with this command's flag names in the errors.
+
 // representativeAddr is a bind address of the given kind, for evaluating
 // the per-listener default policy.
 func representativeAddr(kind string) (string, error) {
-	switch kind {
-	case "loopback":
-		return "127.0.0.1:0", nil
-	case "network":
-		return "0.0.0.0:0", nil
+	addr, err := openaiapi.ListenerAddr(kind)
+	if err != nil {
+		return "", errInvalidInput("--for %v", err)
 	}
-	return "", errInvalidInput("--for must be loopback or network, got %q", kind)
+	return addr, nil
 }
 
 // effectiveContextMax is the strongest class a key created with --context may
 // use: the explicit value (a flag), else MONOAGENT_API_CONTEXT_CONFINEMENT,
-// else chat-only. Such a request carries excerpts of the profile's knowledge,
-// which includes captured web pages nobody vetted, so raising it is a choice
-// the operator makes on purpose.
+// else chat-only.
 func effectiveContextMax(explicit string, getenv func(string) string) (openaiapi.Class, error) {
-	v := explicit
-	if v == "" {
-		v = getenv("MONOAGENT_API_CONTEXT_CONFINEMENT")
-	}
-	if v == "" {
-		return openaiapi.ChatOnly, nil
-	}
-	p, err := openaiapi.ParsePolicy(v)
+	c, err := openaiapi.EffectiveContextMax(explicit, getenv)
 	if err != nil {
 		return 0, errInvalidInput("--context-confinement (MONOAGENT_API_CONTEXT_CONFINEMENT): %v", err)
 	}
-	return p.Max, nil
+	return c, nil
 }
 
 // effectiveAutoMax is the strongest class the auto model may pick: the explicit
-// value (a flag), else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only. A prompt
-// can steer which model Jev picks and its author need not hold the key, so
-// raising it is a choice the operator makes on purpose.
+// value (a flag), else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only.
 func effectiveAutoMax(explicit string, getenv func(string) string) (openaiapi.Class, error) {
-	v := explicit
-	if v == "" {
-		v = getenv("MONOAGENT_API_AUTO_CONFINEMENT")
-	}
-	if v == "" {
-		return openaiapi.ChatOnly, nil
-	}
-	p, err := openaiapi.ParsePolicy(v)
+	c, err := openaiapi.EffectiveAutoMax(explicit, getenv)
 	if err != nil {
 		return 0, errInvalidInput("--auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT): %v", err)
 	}
-	return p.Max, nil
+	return c, nil
 }
 
 // effectivePolicy is the confinement policy of a listener bound to addr: the
 // explicit value (a flag), else MONOAGENT_API_CONFINEMENT, else the default
 // for that kind of bind.
 func effectivePolicy(addr, explicit string, getenv func(string) string) (openaiapi.Policy, error) {
-	v := explicit
-	if v == "" {
-		v = getenv("MONOAGENT_API_CONFINEMENT")
-	}
-	if v == "" {
-		return openaiapi.DefaultPolicy(addr), nil
-	}
-	p, err := openaiapi.ParsePolicy(v)
+	p, err := openaiapi.EffectivePolicy(addr, explicit, getenv)
 	if err != nil {
 		return openaiapi.Policy{}, errInvalidInput("%v", err)
 	}

@@ -175,7 +175,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Profile %s: %d active API key(s)\n", st.Profile, st.Keys.Active)
-			fmt.Fprintf(w, "Auto model: %s\n", st.Auto.autoNote())
+			fmt.Fprintf(w, "Auto model: %s\n", autoNote(st.Auto))
 			if st.Daemon.Running {
 				fmt.Fprintln(w, "Daemon: running")
 			} else {
