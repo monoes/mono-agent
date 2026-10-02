@@ -164,3 +164,41 @@ func TestPrivateFolderIsTightenedTo0700(t *testing.T) {
 		t.Errorf("the folder holding prompts must be 0700: %v %v", fi, err)
 	}
 }
+
+// monomind keeps copies of its own (a prompt file, an agent file) under the temp
+// directory it runs with. A caller that runs turns for others, the
+// OpenAI-compatible API, gives every turn a temp folder of its own through
+// ExecOptions.Env, and that value must win over the one the parent process has.
+func TestExecEnvOverridesTheInheritedTempDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	dir, own, files := t.TempDir(), t.TempDir(), t.TempDir() // before TMPDIR changes below
+	bin, seen := filepath.Join(dir, "monomind"), filepath.Join(dir, "seen.txt")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ] && [ \"$2\" = \"--json\" ]; then echo '{\"v\":1,\"version\":\"2.10.0\",\"min_caller\":\"1.0.0\",\"capabilities\":[\"agent-exec\",\"agent-scan\",\"org-json-v1\"]}'; exit 0; fi\n" +
+		"if [ \"$1\" = \"agent\" ] && [ \"$2\" = \"exec\" ]; then\n" +
+		"  echo \"$TMPDIR $TMP $TEMP\" > \"" + seen + "\"\n" +
+		"  echo '{\"v\":1,\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"stop_reason\":\"end_turn\",\"text\":\"ok\"}'\n" +
+		"  echo '{\"v\":1,\"type\":\"done\",\"exit_code\":0}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo 'unsupported' >&2; exit 2\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", filepath.Join(dir, "ambient"))
+
+	opts := ExecOptions{Bin: bin, Runtime: "claude", Prompt: "p", TempDir: files,
+		Env: map[string]string{"TMPDIR": own, "TMP": own, "TEMP": own}}
+	if _, err := Exec(context.Background(), opts, nil); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	raw, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(raw)), own+" "+own+" "+own; got != want {
+		t.Errorf("the monomind process ran with TMPDIR, TMP and TEMP %q, want %q", got, want)
+	}
+}
