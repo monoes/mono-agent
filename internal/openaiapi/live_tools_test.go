@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,8 @@ import (
 // or replay must not hide behind a skip.
 func TestLiveToolLoopPerRuntime(t *testing.T) {
 	var nativeAttempts, nativeDenied, leftovers, strays atomic.Int32
+	var mu sync.Mutex
+	var dirs []string // the folders the turns of a runtime ran in
 	_, secret, h := liveGateway(t, func(inner ExecFunc) ExecFunc {
 		return func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 			res, err := inner(ctx, opts, func(ev monomind.Event) {
@@ -43,7 +46,11 @@ func TestLiveToolLoopPerRuntime(t *testing.T) {
 				onEvent(ev)
 			})
 			leftovers.Add(int32(len(besidesTmp(opts.Cwd))))
-			strays.Add(int32(len(processesIn(opts.Cwd))))
+			mu.Lock()
+			if !slices.Contains(dirs, opts.Cwd) {
+				dirs = append(dirs, opts.Cwd)
+			}
+			mu.Unlock()
 			return res, err
 		}
 	})
@@ -62,13 +69,32 @@ func TestLiveToolLoopPerRuntime(t *testing.T) {
 			nativeDenied.Store(0)
 			leftovers.Store(0)
 			strays.Store(0)
+			mu.Lock()
+			dirs = nil
+			mu.Unlock()
 			liveToolLoop(t, h, secret, rt)
+			// A leg that ends at its call is cancelled, and the runtime's process can take
+			// a few seconds to be gone after Exec has returned (claude's did, about 5 s,
+			// as an orphan of monomind). It is a leftover only if it outlives strayWait,
+			// and what a dying process wrote after the folder was emptied counts too.
+			mu.Lock()
+			used := slices.Clone(dirs)
+			mu.Unlock()
+			for _, dir := range used {
+				begin := time.Now()
+				left := processesIn(dir)
+				strays.Add(int32(len(left)))
+				if took := time.Since(begin); took > time.Second {
+					t.Logf("%s: processes of a turn were still running %.1fs after the request ended (%d left at the end)", rt, took.Seconds(), len(left))
+				}
+				leftovers.Add(int32(len(besidesTmp(dir))))
+			}
 			t.Logf("%s: the runtime tried %d of its own tools, %d denied; %d files and %d processes left in the turns' folders", rt, nativeAttempts.Load(), nativeDenied.Load(), leftovers.Load(), strays.Load())
 			if leftovers.Load() != 0 {
 				t.Errorf("%s: a tool turn left %d files in its folder", rt, leftovers.Load())
 			}
 			if strays.Load() != 0 {
-				t.Errorf("%s: %d processes were still running in a turn's folder after the turn returned", rt, strays.Load())
+				t.Errorf("%s: %d processes were still running in a turn's folder %v after the request ended", rt, strays.Load(), strayWait)
 			}
 		})
 	}
@@ -160,12 +186,18 @@ func contentOf(r toolReply) string {
 
 // The check for processes left behind must be able to see one: a check that reports
 // none whatever happens (lsof matching names, not the folder behind a symlink such as
-// macOS's /var) would let a leak through every live run. This one runs by default.
-func TestProcessesInSeesAProcessInTheFolder(t *testing.T) {
+// macOS's /var) would let a leak through every live run. It must also let a process
+// that is on its way out go: the claude binary of a cancelled leg was alive for a few
+// seconds after Exec had returned. This one runs by default.
+func TestProcessesInSeesAProcessInTheFolderAndLetsOneThatIsLeavingGo(t *testing.T) {
 	if _, err := exec.LookPath("lsof"); err != nil {
 		t.Skip("lsof is not installed")
 	}
+	old := strayWait
+	t.Cleanup(func() { strayWait = old })
 	dir := t.TempDir()
+
+	strayWait = 300 * time.Millisecond
 	cmd := exec.Command("sleep", "30")
 	cmd.Dir = dir
 	if err := cmd.Start(); err != nil {
@@ -180,20 +212,39 @@ func TestProcessesInSeesAProcessInTheFolder(t *testing.T) {
 	if got := processesIn(dir); len(got) != 0 {
 		t.Errorf("processesIn lists %v for a folder nothing runs in", got)
 	}
+
+	// One that ends by itself within the wait is not a leftover.
+	strayWait = 10 * time.Second
+	leaving := exec.Command("sleep", "1")
+	leaving.Dir = dir
+	if err := leaving.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = leaving.Wait() }()
+	begin := time.Now()
+	if got := processesIn(dir); len(got) != 0 {
+		t.Errorf("processesIn lists %v for a process that ends in a second", got)
+	}
+	if took := time.Since(begin); took > 5*time.Second {
+		t.Errorf("processesIn waited %v for a process that ended in a second", took)
+	}
 }
+
+// strayWait is how long processesIn gives the processes of a turn to be gone.
+var strayWait = 10 * time.Second
 
 // processesIn lists the processes, other than this one, whose working directory is
 // under dir; none where lsof is not installed. A leg that ends at a call has its
 // process group killed, so a process still in the turn's folder after the turn
-// returned would be one that outlived it. The kernel may take a moment to reap the
-// group: it looks again for up to two seconds.
+// returned would be one that outlived it. A runtime can take a few seconds to be
+// gone after Exec has returned, so it looks again until strayWait has passed.
 func processesIn(dir string) []string {
 	lsof, err := exec.LookPath("lsof")
 	if err != nil {
 		return nil
 	}
 	var pids []string
-	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+	for deadline := time.Now().Add(strayWait); ; time.Sleep(100 * time.Millisecond) {
 		out, _ := exec.Command(lsof, "-a", "-d", "cwd", "-t", "+D", dir).Output()
 		pids = slices.DeleteFunc(strings.Fields(string(out)), func(pid string) bool { return pid == strconv.Itoa(os.Getpid()) })
 		if len(pids) == 0 || time.Now().After(deadline) {
