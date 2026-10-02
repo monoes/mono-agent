@@ -112,13 +112,19 @@ func openFolder(dir string) (*os.Root, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	name := filepath.Base(dir)
+	return openChild(parent, filepath.Base(dir))
+}
+
+// openChild is openFolder for a folder of one that is open already: a turn's own
+// output folder, inside its working folder, which the turn can swap for a link as
+// well as the working folder itself.
+func openChild(parent *os.Root, name string) (*os.Root, error) {
 	fi, err := parent.Lstat(name) // a link at name is not followed
 	if err != nil {
 		return nil, err
 	}
 	if !fi.IsDir() {
-		return nil, fmt.Errorf("%s is not a plain directory", dir)
+		return nil, fmt.Errorf("%s is not a plain directory", name)
 	}
 	afterLstatHook.run()
 	_ = parent.Chmod(name, 0o700)
@@ -128,7 +134,7 @@ func openFolder(dir string) (*os.Root, error) {
 	}
 	if cur, err := root.Lstat("."); err != nil || !os.SameFile(fi, cur) {
 		root.Close()
-		return nil, fmt.Errorf("%s was replaced while it was opened", dir)
+		return nil, fmt.Errorf("%s was replaced while it was opened", name)
 	}
 	return root, nil
 }

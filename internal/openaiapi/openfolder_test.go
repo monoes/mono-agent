@@ -44,6 +44,50 @@ func TestOpenFolderOpensAPlainFolderAndRefusesWhatIsNotOne(t *testing.T) {
 	}
 }
 
+// A folder inside a folder that is open is opened with the same care: a link or a file
+// at its name is not a folder, and neither is one that was swapped in after the look.
+func TestOpenChildRefusesALinkAFileAndASwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	slot := filepath.Join(t.TempDir(), "slot")
+	for _, d := range []string{"plain", "swapped", "sibling"} {
+		if err := os.MkdirAll(filepath.Join(slot, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(slot, "file"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sibling", filepath.Join(slot, "link")); err != nil { // stays inside the folder
+		t.Fatal(err)
+	}
+	root := openRoot(t, slot)
+
+	child, err := openChild(root, "plain")
+	if err != nil {
+		t.Fatalf("a plain folder: %v", err)
+	}
+	child.Close()
+	for _, name := range []string{"file", "link", "missing"} {
+		if c, err := openChild(root, name); err == nil {
+			c.Close()
+			t.Errorf("%s was opened as a folder", name)
+		}
+	}
+	afterLstatHook.set(func() {
+		_ = os.RemoveAll(filepath.Join(slot, "swapped"))
+		if err := os.Symlink("sibling", filepath.Join(slot, "swapped")); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Cleanup(func() { afterLstatHook.set(nil) })
+	if c, err := openChild(root, "swapped"); err == nil {
+		c.Close()
+		t.Error("a folder swapped for a link after the look was opened")
+	}
+}
+
 // A link planted where the folder was, between the look from the parent and the
 // open, that points to a folder inside the parent is followed by a root handle: what
 // was opened must be the folder that was looked at.
