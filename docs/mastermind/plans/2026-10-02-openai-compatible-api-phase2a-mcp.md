@@ -28,7 +28,7 @@
 6. **Not served in grant mode.** An org role's tool provider cannot mint or revoke keys.
 7. **The shared part** is the data and the rules: the report types (field order, tags and `omitempty` verbatim), the pure `NewModelsReport` (the row marks, the candidate count, the "at least one model" override, what an unavailable auto clears), the four parsers (`ListenerAddr`, `EffectivePolicy`, `EffectiveContextMax`, `EffectiveAutoMax`) and `LoadModels` (the production catalog). Parsers return plain errors; the CLI and the tool prefix them with their own argument names, so the CLI's messages do not change. `autoNote` is presentation: it stays in `package main` as a plain function, since a method cannot stay on an alias of another package's type.
 8. **The secrets doctrine has no exceptions list in AGENTS.md**, only "values are never returned by any tool" on the `secret_list` line. The exception goes there (vault values; the one secret a tool returns is `api_key_create`'s key, once) and into the mutating list; no new section, and the `secret_list` tool description stays (it is about vault values, and chat shares it).
-9. **`api_models_list` loads once per server.** One `openaiapi.Catalog` on the MCP runtime (single flight, a one-minute TTL, the previous list served while a new one loads), asked with `ModelsBound` so that a load ends with the call; the gateway keeps its detached `Models`.
+9. **`api_models_list` loads once per server.** One `openaiapi.Catalog` on the MCP runtime (single flight, a one-minute TTL, the previous list served while a new one loads), asked with `ModelsBound` so that the first load, which a call waits for, ends with the call; the background reload of an expired list stays detached (90 s at most), like the gateway's `Models`, so its monomind processes can outlive a stopped MCP server by a few seconds.
 
 ## File Structure
 
@@ -83,7 +83,7 @@ Two read-only reviews (security, correctness) found eight things. Each was fixed
 
 1. **A key accepted as a key name** (`api_key_list` would show it): `validName` in `internal/apikeys` refuses `sk-ma-` in any case, so the CLI and every front end have it too.
 2. **`Store.Update` lost updates and wrote revoked rows** (it read, checked and wrote apart): one `UPDATE … COALESCE … AND revoked_at IS NULL`. The tests hold a write lock on a second connection so that both calls have read the row first.
-3. **`api_models_list` built a catalog per call** (twenty calls started a hundred processes) **and could not be cancelled**: one catalog per MCP runtime, and `Catalog.ModelsBound` ends a load with its caller (`api models` uses it too) without changing the gateway's detached load.
+3. **`api_models_list` built a catalog per call** (twenty calls started a hundred processes) **and could not be cancelled**: one catalog per MCP runtime, and `Catalog.ModelsBound` ends the first load, the one a call waits for, with its caller (`api models` uses it too) without changing the gateway's detached load.
 4. **`api_models_list` repeated its arguments in errors**: fixed texts and a 32-character cap. The claim is now true of all five tools and the docs say so.
 5. **Profile scoping was not pinned**: the old tests ran as `default`, which a hard-coded `default` also satisfies. New ones run as a profile whose id is neither `default` nor its name, opened by name (a test gap: no code changed).
 6. **The docs said `api key create` "prints to your terminal only"**: it writes the key to stdout, also with `--json`. Reworded wherever it appeared.

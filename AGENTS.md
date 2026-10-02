@@ -336,8 +336,9 @@ dangerous calls.
   asks the installed runtimes for their model lists: the first call takes a
   few seconds, calls at once share that load, the list is reused for a minute,
   and after that the previous one is served at once while a new one loads in
-  the background, as `/v1/models` does. The load ends with the call or the
-  server)
+  the background, as `/v1/models` does. The load a call waits for ends with
+  the call or the server; the background reload is detached, as the gateway's
+  is, and takes at most 90 seconds)
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
