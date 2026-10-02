@@ -452,6 +452,12 @@ effect on the next request. A request authenticates as the key's profile and
 as nothing else; a key of another profile is "not found" in every command
 except `api key list --all-profiles`, which lists every profile's keys
 (metadata only, never a secret) to whoever can run it on this machine.
+The MCP tools over keys (`api_key_list`, and with `mcp --allow-mutations`
+`api_key_create`, `api_key_update` and `api_key_revoke`) act on the MCP
+server's own profile only. `api_key_create` returns the new key in its result,
+once, so that key passes through the MCP host: into its transcript and, for a
+hosted model, to its provider. Create keys with `api key create`, which prints
+to your terminal only, when that matters.
 The legacy HTTP API token (vault entry `httpapi-token`) is a separate
 credential for the other routes: a key never opens them and the token never
 opens `/v1`. Treat a key like a password; it has no scopes and no expiry.

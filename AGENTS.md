@@ -320,12 +320,21 @@ dangerous calls.
   description for values), `node_schema`
 - `hil_list`
 - `vault_item_list`, `vault_item_get_path`, `profile_document_search`
-- `secret_list` (metadata only — values are never returned by any tool)
+- `secret_list` (metadata only — vault values are never returned by any tool;
+  the one secret a tool returns is the new key of `api_key_create`, below)
 - `person_list`, `person_get`
 - `message_list`, `message_get` (results carry an untrusted-content
   provenance fence)
 - `social_list_list`, `template_list`
 - `org_list`, `org_get`, `org_validate`
+- `api_key_list` (the active profile's API keys for the
+  [OpenAI-compatible API](#openai-compatible-api-v1): metadata only, never a
+  key), `api_models_list` (the document of `api models --json`: the models
+  `/v1` would serve with each one's confinement class. It takes the flags of
+  that command as `for`, `confinement`, `context_confinement` and
+  `auto_confinement`, otherwise reads this MCP server's own environment, and
+  asks the installed runtimes for their model lists, so it takes a few
+  seconds)
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -344,6 +353,17 @@ existing MCP client config that relies on them.
   `org_role_set_reports_to`, `org_role_remove`, `org_reload`
 - `org_automation_add`, `org_grant_set`, `org_autonomy_set` (the last two
   preview unless `confirm:true`)
+- `api_key_create`, `api_key_update`, `api_key_revoke` — the active profile's
+  API keys, under the rules of `api key create|update|revoke` (names, the
+  context switch, the errors); a key of another profile is "not found".
+  `api_key_revoke` is annotated destructive and asks for no confirmation: the
+  host gates it. **`api_key_create` is the one tool that returns a secret:** the
+  new key, once, in the `key` field of its result. Only its SHA-256 is stored,
+  so no tool, `api_key_list` included, can show it again. It also makes the key
+  part of the MCP host's transcript, which the host may keep and, for a hosted
+  model, send to its provider: `monoagentcli api key create`, which prints to
+  your terminal only, avoids that. The `api_*` tools are MCP only (the chat
+  assistant has none), and a grant-mode server serves none of them.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -352,9 +372,9 @@ granted automations (`automation_<alias>`, `automation_status`,
 calls in `monoagentcli daemon`, and refuses a grant used by another org or
 role. Plain `mcp` refuses to start inside an org role's process.
 
-Most of this surface (vault, secrets, people, orgs) is the same
-implementation the chat feature already uses natively — see "Assistant
-chat & tools" below for the safety properties (metadata-only secrets,
+Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is
+the same implementation the chat feature already uses natively — see
+"Assistant chat & tools" below for the safety properties (metadata-only secrets,
 pre-delete backups, `confirm:true` previews on destructive/cascading
 actions, untrusted-content fencing on messages), which apply unchanged
 here; MCP is just a second transport onto the same tool implementations.
@@ -469,6 +489,11 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `api key list --all-profiles` is the one command that spans profiles
   (metadata only). `api models` evaluates this shell's flags and environment,
   not a running server; `api status` reports what a running daemon applies.
+  `monoagentcli mcp` serves the same key management and the model list as tools
+  for its own profile, with no `--all-profiles`: `api_key_list` and
+  `api_models_list`, and with `--allow-mutations` `api_key_create`,
+  `api_key_update` and `api_key_revoke` (see [MCP server](#mcp-server): creating
+  a key there puts it in the host's transcript).
   `org teardown-profile` revokes a profile's keys. A key never opens the
   legacy routes, and the legacy token never opens `/v1`. Revoking applies to
   the next request: a turn already running finishes, within its timeout.

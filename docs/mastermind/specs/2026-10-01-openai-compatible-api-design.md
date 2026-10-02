@@ -4,6 +4,7 @@ Date: 2026-10-01
 Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3). Amended the same day after two independent reviews of the phase 1 code, and the user then decided the two open points: a context key is served only by `chat-only` models unless the operator raises `--context-confinement` (D2, §5, §6.3, §7.2), and each concurrency slot has a fixed working folder per profile instead of one folder per request (§4.2, §5). The other amendments: a sandbox that cannot be applied refuses the turn (§6.1), stopping the server ends the turns in flight (§6.4), and error messages stay generic (§7.4).
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
 Phase 3 (§9, the `auto` model) is implemented on `feat/openai-api-jev-auto`, stacked on the phase 1 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase3-jev-auto.md`.
+Phase 2a (§8.3, the MCP tools) is implemented on `feat/openai-api-mcp`, stacked on the phase 3 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase2a-mcp.md`.
 
 ## 1. Goal
 
@@ -287,6 +288,18 @@ api status [--json]                         # listeners, exposure, confinement, 
 
 All carry annotations. Keys are scoped to the MCP profile; another profile's id is "not found". Names are added to `AGENTS.md` and `cmd/monoagentcli/mcp.go`.
 
+**As built (phase 2a).**
+- **Inputs and results.**
+  - `api_key_list {include_revoked}` returns the metadata of the server's profile's keys.
+  - `api_models_list {for, confinement, context_confinement, auto_confinement}` returns the document of `api models --json`, evaluated from its arguments and the MCP server's own environment. `policy.source` is `mcp` where the CLI says `shell`.
+  - `api_key_create {name, context}` returns the key's metadata and `key`.
+  - `api_key_update {id, name, context}` and `api_key_revoke {id}` take an id or the name of an active key and return its metadata. An argument left out of an update is not changed, and `context: false` turns it off.
+- **Errors.** The tools pass `internal/apikeys`' errors on as they are. Another profile's id therefore gives exactly the error of an id nobody has (`api key not found`), and no error of a key tool repeats an argument: a caller may have pasted the key where an id goes. Nothing in the new code logs.
+- **Annotations.** The reads carry `readOnlyHint` and `idempotentHint`, create and update `readOnlyHint: false`, revoke `readOnlyHint: false` and `destructiveHint: true`. Revoke asks for no confirmation, like `secret_delete`: the host gates on the hint.
+- **Grant mode.** A grant-mode server serves none of them, so an org role cannot mint or revoke keys.
+- **Shared code.** What is not presentation in `api models` (the report types, the row marks, the candidate count, the parsers of the listener kind and of the three caps, and the production catalog) moved to `internal/openaiapi/modelsreport.go`, so that the CLI and the tool print the same document. `Update.IsEmpty` in `internal/apikeys` is the one rule for "nothing to change".
+- **D9.** AGENTS.md has no list of exceptions to "no tool returns secrets", only the `secret_list` line: it and the mutating list name `api_key_create` as the one tool that returns a secret, and SECURITY.md says that the key then passes through the MCP host.
+
 ### 8.4 GUI
 
 Settings gets an "OpenAI-compatible API" section (`ApiSection.jsx`, mounted next to Jev).
@@ -354,7 +367,7 @@ Implemented in phase 3, for text; the image options wait for P4.
 | Phase | Content |
 |---|---|
 | P1 | `apikeys` + migration, gateway (models, chat, stream, context), confinement and limits, dedicated listener and TLS, CLI, docs and OpenAPI |
-| P2 | MCP tools, GUI section and bindings |
+| P2 | MCP tools (phase 2a: implemented), GUI section and bindings |
 | P3 | Jev `api_auto` (surface, chooser, fallback, CLI exposure): implemented; its GUI exposure goes with P2's GUI section |
 | P4 | Images |
 | P5 | Tool calling (spike, then build) |

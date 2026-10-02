@@ -2760,6 +2760,11 @@ OPENAI-COMPATIBLE API (/v1)
                                    this shell's flags and environment see it
     monoagentcli api status        listeners, key count, reachability
 
+  monoagentcli mcp has the same management as tools, for its own profile:
+  api_key_list and api_models_list, and with --allow-mutations api_key_create
+  (it returns the key once, in its result, which puts it in the MCP host's
+  transcript), api_key_update and api_key_revoke.
+
   --context adds excerpts of the profile's own knowledge to requests made
   with the key; only chat-only models serve such a key unless the server
   raises --context-confinement. A key never opens the routes above, and

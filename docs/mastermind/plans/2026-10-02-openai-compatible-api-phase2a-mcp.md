@@ -21,7 +21,7 @@
 ## Decisions this plan adds to spec §8.3
 
 1. **Inputs and results mirror the CLI's `--json`.** `api_key_list {include_revoked}` returns `[]apikeys.Key`; no `all_profiles` and no `show` (keys are scoped to the MCP profile). `api_key_create {name, context}` returns the key's metadata plus `key`. `api_key_update {id, name?, context?}` and `api_key_revoke {id}` take an id or the name of an active key, and return the key's metadata. `api_models_list {for?, confinement?, context_confinement?, auto_confinement?}` (the flags of `api models`) returns the document of `api models --json`.
-2. **The key appears once.** Only in `api_key_create`'s `key` field. Every other result and every error is metadata or static text, and no error echoes the `id` argument (a caller may paste a key there). Nothing in the new code logs.
+2. **The key appears once.** Only in `api_key_create`'s `key` field. Every other result and every error of the key tools is metadata or static text, and none echoes the `id` argument (a caller may paste a key there). Nothing in the new code logs.
 3. **Another profile's key is `api key not found`**, the same text as an unknown id.
 4. **No `confirm` on revoke** (like `secret_delete`): the host gates on `destructiveHint`. Annotations: the two reads `readOnlyHint` + `idempotentHint`; create and update `readOnlyHint:false`; revoke `readOnlyHint:false, destructiveHint:true`.
 5. **`policy.source` is `mcp`** for the tool (`shell` for the CLI): the policy comes from the MCP server's own flags and environment, which a running `/v1` server may not share.
@@ -67,3 +67,11 @@
 ## Verification
 
 `gofmt -l .` (empty); `go build ./...` and `-tags nosocial`; `go vet ./...` and `-tags nosocial`; `go test` of the touched packages, then `go test ./...` (only the 8 known failures); `go test -race ./internal/mcp ./internal/openaiapi ./cmd/monoagentcli -run 'API|Api|MCP|Models'`; the byte comparison of the CLI outputs; the mutation checks of every behaviour test; a smoke run of the real `monoagentcli mcp --allow-mutations` over stdio under a throwaway HOME with the fake monomind, checking that every stdout line is JSON-RPC (`api_models_list` spawns processes, and nothing may leak onto the protocol channel).
+
+## How it was executed
+
+- The base moved from `0aff731f` to `d0f9fb16` (`--auto-confinement`) before any code was written, so the branch starts there and the shared report carries `auto_allowed`, `policy.auto_confinement` and `auto.{confinement,held_back}`.
+- Added to the plan: `apikeys.Update.IsEmpty`, so that `api key update` and `api_key_update` refuse "nothing to change" on one rule (task 3, its own commit).
+- Tests drive dependent calls through `callTool` on a server that stays open, because `Serve` answers on goroutines and closes the database when its input ends; only the wire-level checks (the key exactly once, a refused create, grant mode) go through `Serve`, over a pipe.
+- Failure messages of the key tests go through `scrubbed`, and fields are read without a panicking assertion: a mutation run printed a throwaway key and panicked once, which is how both were found.
+- Verified against the real binary: the recorded output of `api models` and `api status` (235 invocations) is byte-identical before and after the move; `api models --json` and `api_models_list` give the same document, field order included, apart from `source`; over stdio every line is JSON-RPC and the key is on stdout once.
