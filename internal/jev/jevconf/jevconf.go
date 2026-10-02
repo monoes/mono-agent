@@ -65,7 +65,7 @@ var Egress = map[Surface][]string{
 	PeopleLinks:    {"both people's name, username, platform, website, job title and bio"},
 	Asks:           {"reply subject and body", "the question text of up to 50 waiting asks"},
 	Retry:          {"node type", "the error message with URLs' query strings, bearer/API tokens and vault values removed", "attempt number and HTTP status"},
-	APIAuto:        {"first 4,000 characters of the last user message", "the names, descriptions and validated cost and latency of the models the API serves"},
+	APIAuto:        {"first 4,000 characters of the last user message (of an image request, its prompt)", "the names, descriptions and validated cost and latency of the models the API serves"},
 }
 
 // Info is a surface's display title and a one-line description of what

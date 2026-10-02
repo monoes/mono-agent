@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -50,7 +51,8 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			"The policy is --confinement, else MONOAGENT_API_CONFINEMENT, else the listener's default: any on " +
 			"loopback, chat-only on a network bind. A key created with --context is held to --context-confinement, " +
 			"else MONOAGENT_API_CONTEXT_CONFINEMENT, else chat-only, and never above the listener's policy. " +
-			"The auto model is held to --auto-confinement, else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only, the same way.",
+			"The auto model is held to --auto-confinement, else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only, the same way. " +
+			"IMAGES (capabilities in --json) says which models make images, from MONOAGENT_API_IMAGE_RUNTIMES, else codex and antigravity.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			addr, err := representativeAddr(forListener)
@@ -67,6 +69,10 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			if policy.AutoMax, err = effectiveAutoMax(autoConfinement, os.Getenv); err != nil {
 				return err
 			}
+			imageRuntimes, err := openaiapi.EffectiveImageRuntimes(os.Getenv)
+			if err != nil {
+				return errInvalidInput("%v", err)
+			}
 			forContext := policy.ForContextKey()
 			db, err := initDB(cfg)
 			if err != nil {
@@ -78,7 +84,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			out := openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
-				For: forListener, Policy: policy, Source: openaiapi.ReportSourceShell, Models: models,
+				For: forListener, Policy: policy, Source: openaiapi.ReportSourceShell, Models: models, ImageRuntimes: imageRuntimes,
 				Auto: openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID),
 			})
 			if cfg.JSONOutput {
@@ -88,9 +94,9 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n", forListener, policy, forContext)
 			fmt.Fprint(w, "From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).\n\n")
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY\tAUTO")
+			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY\tAUTO\tIMAGES")
 			for _, m := range out.Models {
-				served, withContext, withAuto := "yes", "yes", "yes"
+				served, withContext, withAuto, withImages := "yes", "yes", "yes", "no"
 				if !m.Allowed {
 					served = "no (policy)"
 				}
@@ -100,7 +106,10 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				if !m.AutoAllowed {
 					withAuto = "no"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext, withAuto)
+				if slices.Contains(m.Capabilities, "image") {
+					withImages = "yes"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext, withAuto, withImages)
 			}
 			if err := tw.Flush(); err != nil {
 				return err

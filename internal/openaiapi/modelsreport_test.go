@@ -143,7 +143,7 @@ func TestModelsReportJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"v":1,"policy":{"for":"loopback","confinement":"any","context_confinement":"chat-only","auto_confinement":"chat-only","source":"shell"},` +
-		`"models":[{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true}],` +
+		`"models":[{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true,"capabilities":["text"]}],` +
 		`"auto":{"available":true,"key_source":"env","confinement":"chat-only","candidates":1}}`
 	if string(got) != want {
 		t.Errorf("json\n got %s\nwant %s", got, want)
@@ -154,6 +154,57 @@ func TestModelsReportJSONShape(t *testing.T) {
 		`"models":[],"auto":{"available":false,"missing":"a key"}}`
 	if string(got) != want {
 		t.Errorf("json\n got %s\nwant %s", got, want)
+	}
+}
+
+// A report says which models make images, as GET /v1/models does: the models of the
+// runtimes of the image list, as far as they can write a file. The report lists every
+// model, whether or not the policy serves it, and so does this.
+func TestModelsReportSaysWhichModelsMakeImages(t *testing.T) {
+	text, both := []string{"text"}, []string{"text", "image"}
+	for _, c := range []struct {
+		name string
+		list []string
+		want map[string][]string
+	}{
+		{"the default list", nil, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": both}},
+		{"a list of one", []string{"antigravity"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": text, "antigravity/default": both}},
+		{"a chat-only runtime in the list cannot", []string{"claude", "codex"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": text}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := NewModelsReport(ModelsReportInput{For: "loopback", Policy: Policy{Max: ChatOnly}, Source: ReportSourceShell, Models: reportModels, ImageRuntimes: c.list})
+			got := map[string][]string{}
+			for _, m := range r.Models {
+				got[m.ID] = m.Capabilities
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("capabilities %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The image list of a report comes from the same variable the gateway reads: unset is
+// the default list, and a bad value an error that names the variable.
+func TestEffectiveImageRuntimes(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  []string
+	}{
+		{"", []string{"codex", "antigravity"}},
+		{"agy, codex", []string{"antigravity", "codex"}},
+	} {
+		got, err := EffectiveImageRuntimes(envOf(map[string]string{"MONOAGENT_API_IMAGE_RUNTIMES": c.value}))
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("EffectiveImageRuntimes(%q) = %#v, %v; want %#v", c.value, got, err, c.want)
+		}
+	}
+	got, err := EffectiveImageRuntimes(envOf(nil))
+	if err != nil || !reflect.DeepEqual(got, []string{"codex", "antigravity"}) {
+		t.Errorf("EffectiveImageRuntimes with the variable unset = %#v, %v; want the default list", got, err)
+	}
+	if _, err := EffectiveImageRuntimes(envOf(map[string]string{"MONOAGENT_API_IMAGE_RUNTIMES": "co dex"})); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_IMAGE_RUNTIMES") {
+		t.Errorf("a bad value must be an error that names the variable, got %v", err)
 	}
 }
 

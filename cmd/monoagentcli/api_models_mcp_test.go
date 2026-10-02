@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -190,7 +191,7 @@ func TestAPIModelsListIsTheDocumentOfAPIModelsJSON(t *testing.T) {
 			case "none":
 				fakeMonomindWithAgents(t, "")
 			}
-			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "TYPESAFE_API_KEY"} {
+			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "TYPESAFE_API_KEY"} {
 				t.Setenv(v, "")
 			}
 			for k, v := range c.env {
@@ -225,6 +226,50 @@ func TestAPIModelsListIsTheDocumentOfAPIModelsJSON(t *testing.T) {
 			}
 			if got := autoState(doc.Auto); got != c.auto || len(doc.Models) != c.models {
 				t.Errorf("the case does not exercise what it names: auto is %q (want %q) over %d models (want %d)", got, c.auto, len(doc.Models), c.models)
+			}
+			asTool := strings.Replace(strings.TrimSuffix(cli, "\n"), `"source": "shell"`, `"source": "mcp"`, 1)
+			if tool != asTool {
+				t.Errorf("api_models_list is not the document of api models --json: %s", firstDifference(asTool, tool))
+			}
+		})
+	}
+}
+
+// Both say which models make images, from the environment each of them runs in, and
+// say the same: the capability is part of the one document.
+func TestAPIModelsListSaysWhichModelsMakeImagesLikeAPIModels(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		env    string // MONOAGENT_API_IMAGE_RUNTIMES
+		images string // the models that make images, sorted
+	}{
+		{"the default list", "", "antigravity/default,antigravity/gemini-3.8-flash-high,codex/default,codex/gpt-6-astra"},
+		{"antigravity alone", "agy", "antigravity/default,antigravity/gemini-3.8-flash-high"},
+		{"codex alone", "codex", "codex/default,codex/gpt-6-astra"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := newAPITestDB(t)
+			fakeAPIMonomind(t)
+			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "TYPESAFE_API_KEY"} {
+				t.Setenv(v, "")
+			}
+			t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", c.env)
+
+			cli, _, err := runAPI(t, db, "default", true, "models")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool := mcpModelsList(t, db, "default", nil)
+
+			var images []string
+			for _, m := range decodeModels(t, cli).Models {
+				if slices.Contains(m.Capabilities, "image") {
+					images = append(images, m.ID)
+				}
+			}
+			sort.Strings(images)
+			if got := strings.Join(images, ","); got != c.images {
+				t.Errorf("the models that make images: %s, want %s", got, c.images)
 			}
 			asTool := strings.Replace(strings.TrimSuffix(cli, "\n"), `"source": "shell"`, `"source": "mcp"`, 1)
 			if tool != asTool {
