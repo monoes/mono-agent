@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
 import { missingIsAboutJev, pickListener, policyClass, servingListeners } from './apiModel.js'
-import { Badge, ClassBadge, block, label, hint, errText, mono } from './ui.jsx'
+import { Badge, CapBadges, ClassBadge, block, label, hint, errText, mono } from './ui.jsx'
 
 // The models the API would serve under the policy of the listener the header
 // describes (the first one that answers /v1: the status says which, and how many
@@ -66,6 +66,7 @@ export default function ApiModelsBlock({ models, err, status, statusErr, onOpenJ
               <tr>
                 <th style={th}>{t('settings.api.models.colModel')}</th>
                 <th style={th}>{t('settings.api.models.colConfinement')}</th>
+                <th style={th}>{t('settings.api.models.colCapabilities')}</th>
                 <th style={th}>{t('settings.api.models.colValidated')}</th>
                 <th style={th}>{t('settings.api.models.colServed')}</th>
                 <th style={th}>{t('settings.api.models.colContext')}</th>
@@ -76,13 +77,14 @@ export default function ApiModelsBlock({ models, err, status, statusErr, onOpenJ
               {models.auto && <AutoRow auto={models.auto} onOpenJev={onOpenJev} />}
               {list.map(m => (
                 <tr key={m.id} style={m.allowed ? undefined : { opacity: 0.6 }}>
-                  <td style={{ ...td, maxWidth: 320 }}>
+                  <td style={{ ...td, maxWidth: 220 }}>
                     <div style={{ fontFamily: mono, color: 'var(--text)', wordBreak: 'break-all' }}>{m.id}</div>
                     {m.label && (
                       <div title={m.label} style={{ ...hint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</div>
                     )}
                   </td>
                   <td style={td}><ClassBadge value={m.confinement} /></td>
+                  <td style={{ ...td, minWidth: 152 }}><CapBadges caps={m.capabilities} model={m.id} /></td>
                   <td style={td}>
                     {m.validated ? <Badge tone="ok" title={t('settings.api.models.validatedHint')}>{t('settings.api.models.validated')}</Badge> : dash}
                   </td>
@@ -117,7 +119,7 @@ function AutoRow({ auto, onOpenJev }) {
         <div style={{ fontFamily: mono, color: 'var(--text)' }}>auto</div>
         <div style={hint}>{t('settings.api.models.autoLabel')}</div>
       </td>
-      <td colSpan={5} style={td}>
+      <td colSpan={6} style={td}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {auto.available ? (
             <>

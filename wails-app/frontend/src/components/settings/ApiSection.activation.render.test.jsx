@@ -195,7 +195,7 @@ describe('ApiSection: coming back to the page', () => {
     await screen.findByText('notes bot')
     App.APIModels.mockResolvedValueOnce(modelsDoc({ confinement: 'chat-only' })) // Refresh: answered first
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-    const codex = () => within(screen.getByRole('row', { name: /codex\/default/ })).getAllByRole('cell')[3]
+    const codex = () => within(screen.getByRole('row', { name: /codex\/default/ })).getAllByRole('cell')[4] // "served"
     await waitFor(() => expect(codex()).toHaveTextContent('no (policy)'))
     await act(async () => { slow(modelsDoc({ confinement: 'any' })) }) // the old one: codex is served
     await settle()

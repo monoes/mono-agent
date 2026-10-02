@@ -39,25 +39,29 @@ export const statusOf = (listeners, over = {}) => ({
   auto: { available: false, missing: MISSING_SURFACE }, listeners, ...over,
 })
 
-// [id, class, label, validated], from `api models` on a machine with claude, codex, antigravity, copilot and pi.
+// [id, class, label, validated, capabilities], from `api models` on a machine with claude, codex, antigravity, copilot and pi.
+// The capabilities are what the gateway's rules give with MONOAGENT_API_IMAGE_RUNTIMES and MONOAGENT_API_TOOL_RUNTIMES at their
+// defaults (codex,antigravity and claude,codex): text for every model, image for a codex or antigravity one that is not
+// chat-only, tools for claude and for a codex model monomind can run read-only (here one of the two).
 const MODELS = [
-  ['claude/default', 'chat-only', 'Default (Use the default model (currently Opus 5 (1M context)))', false],
-  ['claude/sonnet', 'chat-only', 'Sonnet 5', true],
-  ['claude/haiku', 'chat-only', 'Haiku 4.5', false],
-  ['codex/default', 'sandboxed', 'codex default model', false],
-  ['codex/gpt-6-astra', 'sandboxed', 'GPT-6-Astra', false],
-  ['copilot/default', 'sandboxed', 'copilot default model', false],
-  ['antigravity/default', 'unconfined', 'antigravity default model', false],
-  ['pi/openrouter/nvidia/nemotron-3-super-120b-a12b:free', 'unconfined', 'Nemotron 3 Super (free, OpenRouter)', false],
+  ['claude/default', 'chat-only', 'Default (Use the default model (currently Opus 5 (1M context)))', false, ['text', 'tools']],
+  ['claude/sonnet', 'chat-only', 'Sonnet 5', true, ['text', 'tools']],
+  ['claude/haiku', 'chat-only', 'Haiku 4.5', false, ['text', 'tools']],
+  ['codex/default', 'sandboxed', 'codex default model', false, ['text', 'image']],
+  ['codex/gpt-6-astra', 'sandboxed', 'GPT-6-Astra', false, ['text', 'image', 'tools']],
+  ['copilot/default', 'sandboxed', 'copilot default model', false, ['text']],
+  ['antigravity/default', 'unconfined', 'antigravity default model', false, ['text', 'image']],
+  ['pi/openrouter/nvidia/nemotron-3-super-120b-a12b:free', 'unconfined', 'Nemotron 3 Super (free, OpenRouter)', false, ['text']],
 ]
 
 // modelsDoc is `api models --json` for a listener serving up to `confinement`,
 // whose context keys and auto may use up to `context` and `auto`.
 export function modelsDoc({ confinement = 'any', context = 'chat-only', auto = 'chat-only', forListener = 'loopback', autoState } = {}) {
   const served = (cls, cap) => WEIGHT[cls] <= Math.min(WEIGHT[confinement], WEIGHT[cap])
-  const models = MODELS.map(([id, cls, label, validated]) => ({
+  const models = MODELS.map(([id, cls, label, validated, capabilities]) => ({
     id, runtime: id.split('/')[0], model: id.split('/').slice(1).join('/'), label, confinement: cls, validated,
     allowed: served(cls, 'any'), context_allowed: served(cls, context), auto_allowed: served(cls, auto),
+    capabilities: [...capabilities],
   }))
   const candidates = models.filter(m => m.auto_allowed).length
   const heldBack = models.filter(m => m.allowed).length - candidates
@@ -73,12 +77,12 @@ export function modelsDoc({ confinement = 'any', context = 'chat-only', auto = '
   }
 }
 
-// The same document from a CLI that predates --auto-confinement: no auto_allowed,
-// no policy.auto_confinement, and an auto object without confinement, candidates or held_back.
+// The same document from a CLI that predates --auto-confinement and the capabilities: no auto_allowed and
+// no capabilities, no policy.auto_confinement, and an auto object without confinement, candidates or held_back.
 export function oldModelsDoc(opts) {
   const doc = modelsDoc(opts)
   delete doc.policy.auto_confinement
-  doc.models.forEach(m => { delete m.auto_allowed })
+  doc.models.forEach(m => { delete m.auto_allowed; delete m.capabilities })
   doc.auto = doc.auto.available ? { available: true, key_source: doc.auto.key_source } : { available: false, missing: doc.auto.missing }
   return doc
 }

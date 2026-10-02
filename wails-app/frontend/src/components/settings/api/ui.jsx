@@ -21,12 +21,12 @@ const TONES = {
 
 // Badge is the rounded chip of the Jev section. The text carries the meaning;
 // the tone only backs it up.
-export function Badge({ tone = 'muted', title, children, ...rest }) {
+export function Badge({ tone = 'muted', title, style, children, ...rest }) {
   const c = TONES[tone] || TONES.muted
   return (
     <span title={title} {...rest} style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10.5, whiteSpace: 'nowrap',
-      color: c.color, background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 99, padding: '2px 9px',
+      color: c.color, background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 99, padding: '2px 9px', ...style,
     }}>{children}</span>
   )
 }
@@ -46,4 +46,35 @@ export function ClassBadge({ value, children, ...rest }) {
   const { t } = useTranslation()
   if (!value) return <span style={{ ...hint, color: 'var(--text-dim)' }}>–</span>
   return <Badge tone={CLASS_TONE[value] || 'muted'} title={CLASS_HINT[value] ? t(CLASS_HINT[value]) : undefined} {...rest}>{children ?? value}</Badge>
+}
+
+// What a model can do, from `api models`: text, image (generation) and tools (function calling). The text of a badge
+// says which, in words, and the tone only backs it up; its title says what it means. A capability this page does not
+// know is shown as the CLI named it, with no meaning to give it. No list (missing in a CLI that predates the field,
+// null, empty, or not a list) is a dash: nothing is claimed.
+const CAPS = {
+  text: { label: 'settings.api.models.capText', hint: 'settings.api.models.capTextHint', tone: 'muted' },
+  image: { label: 'settings.api.models.capImage', hint: 'settings.api.models.capImageHint', tone: 'info' },
+  tools: { label: 'settings.api.models.capTools', hint: 'settings.api.models.capToolsHint', tone: 'info' },
+}
+
+// Up to three of them share a cell of the models table, so they are a little smaller than the other badges.
+const small = { fontSize: 10, padding: '1px 6px' }
+
+export function CapBadges({ caps, model }) {
+  const { t } = useTranslation()
+  const list = Array.isArray(caps) ? caps.filter(c => typeof c === 'string' && c !== '') : []
+  if (!list.length) return <span style={{ ...hint, color: 'var(--text-dim)' }}>–</span>
+  return (
+    <ul aria-label={t('settings.api.models.capsOf', { model })} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+      {list.map((c, i) => {
+        const known = Object.hasOwn(CAPS, c) ? CAPS[c] : undefined
+        return (
+          <li key={`${c}-${i}`}>
+            <Badge tone={known?.tone || 'muted'} title={known ? t(known.hint) : undefined} style={small}>{known ? t(known.label) : c}</Badge>
+          </li>
+        )
+      })}
+    </ul>
+  )
 }
