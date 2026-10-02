@@ -341,6 +341,13 @@ func TestResumeFailedMeansTheRuntimeCouldNotContinueTheSession(t *testing.T) {
 		want bool
 	}{
 		{"a runner error with nothing said", failed(monomind.ErrRunnerError), true},
+		// What the two runtimes say for a session id they do not have (the spike's raw
+		// events): a runner error before anything is said, 1 to 3 seconds after the
+		// start. The class is what counts; no wording is matched.
+		{"claude's unknown session", legResult{Res: &monomind.TurnResult{SawDone: true, ExitCode: 1, Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError,
+			Message: "Claude Code returned an error result: No conversation found with session ID: 00000000-0000-0000-0000-000000000000"}}}, true},
+		{"codex's unknown thread", legResult{Res: &monomind.TurnResult{SawDone: true, ExitCode: 1, Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError,
+			Message: "CodexAgentRunner: codex exec failed (exit 1)\nstderr: Error: thread/resume: thread/resume failed: no rollout found for thread id 00000000-0000-0000-0000-000000000000 (code -32600)\n"}}}, true},
 		{"a bad frame", failed(monomind.ErrBadFrame), true},
 		{"a process that vanished", legResult{Res: &monomind.TurnResult{}}, true},
 		{"quota is not the session's fault", failed(monomind.ErrQuota), false},
