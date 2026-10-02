@@ -66,6 +66,9 @@ type Catalog struct {
 	loaded bool // cached is a real result, possibly an empty list
 	at     time.Time
 	flight *catalogFlight
+	// failStreak counts the refreshes in a row that did not give a good list,
+	// which sets how long the next retry waits (retrySoonLocked).
+	failStreak int
 	// lastLists is each runtime's last listing that succeeded. A runtime
 	// whose listing fails at a refresh keeps it, so one bad listing does not
 	// turn a model clients use into a 404.
@@ -147,6 +150,7 @@ func (c *Catalog) refreshInBackground(fl *catalogFlight, stale []ModelInfo) {
 		if r := recover(); r != nil {
 			c.logf("refreshing the model list panicked, serving the previous one: %v", r)
 			c.mu.Lock()
+			c.failStreak++
 			c.retrySoonLocked() // like any failed refresh: not again on the very next request
 			c.mu.Unlock()
 		}
@@ -179,20 +183,30 @@ func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelI
 		c.mu.Lock()
 		c.cached, c.loaded, c.at = models, true, c.now()
 		if retrySoon {
+			c.failStreak++
 			c.retrySoonLocked()
+		} else {
+			c.failStreak = 0
 		}
 		c.mu.Unlock()
 	}
 }
 
-// retrySoonLocked makes the cached list expire staleRetryAfter from now instead
-// of a whole TTL from when it was loaded: the last refresh did not give a good
-// list. Callers hold c.mu.
+// retrySoonLocked makes the cached list expire sooner than a whole TTL after it
+// was loaded, because the last refresh did not give a good list: after
+// staleRetryAfter, and after each further failure in a row twice as long as the
+// time before, up to the TTL. A listing that keeps failing (a runtime that is
+// installed but not signed in) must not make every half minute of traffic reload
+// the whole catalog. Callers hold c.mu.
 func (c *Catalog) retrySoonLocked() {
-	c.at = c.now()
-	if c.ttl > staleRetryAfter {
-		c.at = c.at.Add(-(c.ttl - staleRetryAfter))
+	delay := staleRetryAfter
+	for i := 1; i < c.failStreak && delay < c.ttl; i++ {
+		delay *= 2
 	}
+	if delay > c.ttl {
+		delay = c.ttl
+	}
+	c.at = c.now().Add(-(c.ttl - delay))
 }
 
 // load builds the list. degraded reports that some runtime's own listing

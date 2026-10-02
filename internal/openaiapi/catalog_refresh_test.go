@@ -354,6 +354,68 @@ func TestCatalogServesAStandInListOnlyWhenItIsAllThereIs(t *testing.T) {
 	}
 }
 
+// A listing that keeps failing (claude installed but not signed in) must not make
+// every thirty seconds of traffic reload the whole catalog, which spawns monomind
+// once for the scan and once per runtime: the delay before the next try doubles,
+// up to the TTL, and starts over after a good listing.
+func TestCatalogBacksOffWhileARuntimesListingKeepsFailing(t *testing.T) {
+	f := testFuncs(t)
+	models := f.Models
+	var down atomic.Bool
+	down.Store(true)
+	f.Models = func(ctx context.Context, runtime, bin string) ([]monomind.RuntimeModel, error) {
+		if runtime == "claude" && down.Load() {
+			return []monomind.RuntimeModel{{ID: "claude-sonnet-5"}}, monomind.ErrBuiltinModels
+		}
+		return models(ctx, runtime, bin)
+	}
+	var scans atomic.Int32
+	scan := f.Scan
+	f.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+		scans.Add(1)
+		return scan(ctx)
+	}
+	c := NewCatalog(f, 5*time.Minute)
+	clock := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	ctx := context.Background()
+	if _, err := c.Models(ctx); err != nil { // the first load fails over to the stand-in
+		t.Fatal(err)
+	}
+	refresh := func(after time.Duration) int32 {
+		before := scans.Load()
+		clock = clock.Add(after)
+		_, _ = c.Models(ctx)
+		waitForRefresh(t, c)
+		return scans.Load() - before
+	}
+
+	if got := refresh(31 * time.Second); got != 1 { // 30 s after the first failure
+		t.Fatalf("the first retry comes after 30 s: %d scans", got)
+	}
+	if got := refresh(31 * time.Second); got != 0 { // the second failure doubled the delay to 60 s
+		t.Errorf("the delay must have doubled: %d scans after 31 s", got)
+	}
+	if got := refresh(30 * time.Second); got != 1 { // 61 s since the second failure
+		t.Errorf("the second retry comes after 60 s: %d scans", got)
+	}
+	if got := refresh(100 * time.Second); got != 0 { // the third doubled it again, to 120 s
+		t.Errorf("the delay must double again: %d scans after 100 s", got)
+	}
+
+	down.Store(false) // the runtime recovers
+	if got := refresh(30 * time.Second); got != 1 {
+		t.Fatalf("a good listing is picked up at the next retry: %d scans", got)
+	}
+	down.Store(true)
+	clock = clock.Add(6 * time.Minute) // a whole TTL later: the good list expired
+	_, _ = c.Models(ctx)
+	waitForRefresh(t, c)
+	if got := refresh(31 * time.Second); got != 1 {
+		t.Errorf("after a good listing the back-off starts over at 30 s: %d scans", got)
+	}
+}
+
 // A refresh that panics is recovered and the previous list keeps being served,
 // but it is not tried again on every request: like any failed refresh it waits
 // out the retry delay.
