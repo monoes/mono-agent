@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -92,6 +93,12 @@ type apiRuntime struct {
 	gwErr    error
 	v1Done   chan struct{}      // closed when the dedicated listener has stopped; nil without one
 	cancelV1 context.CancelFunc // stops the dedicated listener
+
+	// published is gw, readable without mu. Building the gateway holds mu while it
+	// empties the working folders, which takes as long as a process that keeps
+	// changing one makes it take: ending the turns (a second interrupt) must not
+	// wait for that, and while the gateway is being built it has no turns.
+	published atomic.Pointer[openaiapi.Gateway]
 }
 
 // newAPIRuntime reads the flags, falling back to the environment. Bad values
@@ -159,15 +166,15 @@ func (a *apiRuntime) gateway() (*openaiapi.Gateway, error) {
 		if a.gwErr != nil && !errors.Is(a.gwErr, openaiapi.ErrScratchBusy) {
 			a.gwErr = fmt.Errorf("starting the OpenAI-compatible API: %w", a.gwErr)
 		}
+		a.published.Store(a.gw)
 	}
 	return a.gw, a.gwErr
 }
 
-// built is the gateway if it has been built, nil otherwise.
+// built is the gateway if it has been built, nil otherwise. It never waits for a
+// build in progress.
 func (a *apiRuntime) built() *openaiapi.Gateway {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.gw
+	return a.published.Load()
 }
 
 // releaseUnused gives the working folders back when no listener serves the
@@ -183,6 +190,7 @@ func (a *apiRuntime) releaseUnused() {
 	}
 	gw := a.gw
 	a.gw, a.gwErr = nil, nil
+	a.published.Store(nil)
 	a.mu.Unlock()
 	if gw != nil {
 		gw.Shutdown(time.Second)

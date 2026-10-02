@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/openaiapi"
 )
@@ -113,4 +114,29 @@ func TestMainMountDegradesWhenTheGatewayCannotBeBuilt(t *testing.T) {
 	if err == nil || errors.Is(err, openaiapi.ErrScratchBusy) || !strings.Contains(err.Error(), "starting the OpenAI-compatible API") {
 		t.Errorf("an explicit --v1-addr must fail with the reason: %v", err)
 	}
+}
+
+// A second interrupt makes the command exit at once, after it has ended the turns
+// in flight. Building the gateway holds the runtime's lock while it empties the
+// working folders, which takes as long as a process that keeps changing one makes
+// it take: a second Ctrl+C must not wait for that. While the gateway is being
+// built it serves nothing, so there is no turn to end.
+func TestKillTurnsDoesNotWaitForAGatewayThatIsBeingBuilt(t *testing.T) {
+	rt, err := newAPIRuntimeForTest(t, apiFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.mu.Lock() // what gateway() holds for the whole of the build
+	done := make(chan struct{})
+	go func() {
+		rt.killTurns()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("killTurns waited for the gateway to be built: a second interrupt would not end the command")
+	}
+	rt.mu.Unlock()
+	<-done
 }
