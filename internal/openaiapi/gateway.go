@@ -145,6 +145,8 @@ const (
 	profilePrefix = "p-"
 	// tmpDirName holds the private folders of the turns' prompt files.
 	tmpDirName = ".tmp"
+	// turnTmpName is the temp folder a turn gets inside its own folder.
+	turnTmpName = ".tmp"
 	// quarantineDirName holds the slot folders that could not be emptied, set
 	// aside for the operator to delete.
 	quarantineDirName = ".quarantine"

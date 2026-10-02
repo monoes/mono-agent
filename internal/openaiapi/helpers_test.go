@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -119,6 +120,19 @@ func evDone(code int) monomind.Event {
 
 func evError(code, msg string) monomind.Event {
 	return monomind.Event{V: 1, Type: monomind.EventError, Code: code, ErrMessage: msg, Fatal: true}
+}
+
+// besidesTmp lists what is in a turn's folder other than the temp folder the
+// gateway makes for the turn itself.
+func besidesTmp(dir string) []string {
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		if e.Name() != turnTmpName {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
 
 // okTurn is a successful turn that answers text.

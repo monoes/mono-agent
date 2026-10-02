@@ -122,9 +122,7 @@ func TestLiveClaudeIsChatOnly(t *testing.T) {
 				}
 				onEvent(ev)
 			})
-			if entries, _ := os.ReadDir(opts.Cwd); len(entries) > 0 {
-				leftovers.Add(int32(len(entries)))
-			}
+			leftovers.Add(int32(len(besidesTmp(opts.Cwd))))
 			return res, err
 		}
 	})

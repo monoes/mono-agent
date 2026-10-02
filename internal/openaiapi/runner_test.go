@@ -49,8 +49,13 @@ func TestRunTurnBuildsTheLockedDownExecOptions(t *testing.T) {
 	}
 	// Nothing that widens a turn beyond the text-only posture.
 	if got.Access != "" || len(got.Tools) != 0 || got.OnToolCall != nil || len(got.Settings) != 0 ||
-		len(got.AllowBashPrefixes) != 0 || len(got.Env) != 0 || got.RequireSandbox {
-		t.Errorf("a text turn must not carry access, tools, settings, bash prefixes or env: %+v", got)
+		len(got.AllowBashPrefixes) != 0 || got.RequireSandbox {
+		t.Errorf("a text turn must not carry access, tools, settings or bash prefixes: %+v", got)
+	}
+	for k := range got.Env {
+		if k != "TMPDIR" && k != "TMP" && k != "TEMP" {
+			t.Errorf("a text turn's environment is its temp folder and nothing else, got %s", k)
+		}
 	}
 	if got.Timeout != time.Minute {
 		t.Errorf("Timeout = %v, want the configured turn timeout", got.Timeout)
@@ -107,8 +112,8 @@ func TestRunTurnDefaultModelPassesNoModelFlag(t *testing.T) {
 func TestRunTurnReusesTheSlotFolderAndEmptiesItAroundEveryTurn(t *testing.T) {
 	var dirs []string
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		if entries, _ := os.ReadDir(opts.Cwd); len(entries) != 0 {
-			t.Errorf("a turn started in a folder that still holds %d entries", len(entries))
+		if left := besidesTmp(opts.Cwd); len(left) != 0 {
+			t.Errorf("a turn started in a folder that still holds %d entries", len(left))
 		}
 		dirs = append(dirs, opts.Cwd)
 		_ = os.WriteFile(filepath.Join(opts.Cwd, "left-behind.txt"), []byte("x"), 0o600)

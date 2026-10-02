@@ -154,6 +154,16 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
+	// monomind keeps a copy of its own: hermes, cline and kimicode write the
+	// prompt, the system prompt or an agent file under their temp directory and
+	// hand the CLI its path. A sandboxed runtime may write the system's temp
+	// directory, so another turn's could rewrite that copy before it is read. The
+	// turn's temp directory is a folder inside its own instead: no other turn's
+	// sandbox reaches it, and it is emptied with the rest of the turn's files.
+	turnTmp := filepath.Join(dir, turnTmpName)
+	if err := os.Mkdir(turnTmp, 0o700); err != nil {
+		return nil, fmt.Errorf("creating the turn's temp folder: %w", err)
+	}
 
 	tctx, cancel := context.WithTimeout(ctx, g.cfg.TurnTimeout+turnGrace)
 	defer cancel()
@@ -176,6 +186,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		Cwd:              dir,
 		Bin:              bin,
 		TempDir:          tmp,
+		Env:              map[string]string{"TMPDIR": turnTmp, "TMP": turnTmp, "TEMP": turnTmp},
 		Sandbox:          monomind.TurnSandboxMode,
 		RequireSandbox:   t.RequireSandbox,
 		WorkspacePurpose: scratchPurpose,

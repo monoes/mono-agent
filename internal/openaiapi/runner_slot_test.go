@@ -37,8 +37,7 @@ func TestRunTurnSetsAsideAFolderItCannotEmptyAndRunsInAFreshOne(t *testing.T) {
 	var leftovers int
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		cwd = opts.Cwd
-		entries, _ := os.ReadDir(opts.Cwd)
-		leftovers = len(entries)
+		leftovers = len(besidesTmp(opts.Cwd))
 		return okTurn("ok")(ctx, opts, onEvent)
 	})
 	slot := filepath.Join(h.scratch, profileFolder(""), "slot-0")
@@ -222,5 +221,46 @@ func TestTurnTempDirTightensALooserFolder(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	if fi, err := os.Stat(loose); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("the folder holding the turns' files must be 0700: %v %v", fi, err)
+	}
+}
+
+// monomind writes its own copy of a turn's prompt, system prompt or agent file
+// under its temp directory (hermes, cline and kimicode do), and a sandboxed
+// runtime may write the system's. A turn gets a temp folder of its own, inside
+// its own folder: no other turn's sandbox reaches it, and the folder is emptied
+// with the rest of the turn's files.
+func TestRunTurnPointsTheRuntimesTempAtItsOwnFolder(t *testing.T) {
+	var env map[string]string
+	var execTmp string
+	var existed bool
+	var mode os.FileMode
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		env, execTmp = opts.Env, opts.TempDir
+		info, err := os.Stat(opts.Env["TMPDIR"])
+		existed = err == nil && info.IsDir()
+		if err == nil {
+			mode = info.Mode().Perm()
+		}
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "hermes", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(h.scratch, profileFolder("alice"), "slot-0")
+	want := filepath.Join(slot, ".tmp")
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if env[k] != want {
+			t.Errorf("%s = %q, want the turn's own temp folder %q", k, env[k], want)
+		}
+	}
+	if !existed || mode != 0o700 {
+		t.Errorf("the temp folder must exist during the turn with mode 0700: existed=%v mode=%v", existed, mode)
+	}
+	// What Exec writes for monomind stays where no turn can write.
+	if execTmp == "" || strings.HasPrefix(execTmp, slot) {
+		t.Errorf("Exec's own files (%q) must stay outside the turn's folder %s", execTmp, slot)
+	}
+	if entries, _ := os.ReadDir(slot); len(entries) != 0 {
+		t.Errorf("the turn's folder, its temp folder included, must be empty afterwards: %d entries", len(entries))
 	}
 }
