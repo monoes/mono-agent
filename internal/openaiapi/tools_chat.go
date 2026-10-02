@@ -109,7 +109,7 @@ func (g *Gateway) rememberCall(run toolRun, pl plannedLeg) (call wireToolCall, b
 		Function: wireToolFunc{Name: pl.Call.Name, Arguments: compactArgs(pl.Call.Args)}}
 	if sid := pl.Res.SessionID; sid != "" {
 		g.conts.put(contRecord{CallID: call.ID, KeyID: run.pr.KeyID, ProfileID: run.pr.ProfileID, Model: run.m.ID,
-			Name: pl.Call.Name, Session: sid, ToolsHash: toolsHash(run.req.toolDecls)})
+			Name: pl.Call.Name, Session: sid, ToolsHash: toolsHash(run.req.toolDecls), Convo: convoHash(run.req, len(run.req.Messages))})
 	}
 	badArgs = 1
 	for _, d := range run.req.toolDecls {

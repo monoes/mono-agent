@@ -28,6 +28,10 @@ type contRecord struct {
 	// function it called and ToolsHash the functions it was given: a session is
 	// only continued by the same model with the same tools.
 	Model, Name, ToolsHash string
+	// Convo is the hash of the conversation the leg was given (convoHash): a
+	// session is only continued by a follow-up whose conversation before the call is
+	// the same. A hash, never the words.
+	Convo string
 	// Session is the runtime's session id.
 	Session string
 	Expires time.Time

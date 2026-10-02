@@ -191,7 +191,7 @@ func TestToolsAResumeTheRuntimeCannotContinueFallsBackToAReplay(t *testing.T) {
 	req := toolRequest(t, weatherTools, weatherQuestion)
 	secret := h.key(t, "default", "app", false)
 	h.g.conts.put(contRecord{CallID: "call_x", KeyID: keyIDOf(t, h, secret), ProfileID: "default", Model: "claude/default", Name: "get_weather",
-		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls)})
+		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls), Convo: convoHash(req, len(req.Messages))})
 
 	rec := post(h, anyPolicy, secret, followUp("call_x", "21 C"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "It is 21 C.") {
@@ -203,6 +203,38 @@ func TestToolsAResumeTheRuntimeCannotContinueFallsBackToAReplay(t *testing.T) {
 	}
 	if line := logLineOf(h, rec); !strings.Contains(line, "leg=replay") {
 		t.Errorf("the log line says how the leg that answered started: %q", line)
+	}
+}
+
+// A client that changes its system prompt between the rounds of a conversation gets
+// its follow-up served from the transcript, with the new system prompt: a resumed
+// session would go on with the one it was started with.
+func TestToolsAFollowUpWithAnotherSystemPromptIsReplayed(t *testing.T) {
+	script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), answers("Il fait 21 C."), answers("It is 21 C.")}}
+	h := toolHarness(t, script.exec)
+	secret := h.key(t, "default", "app", false)
+	const brief, french = `{"role":"system","content":"Be brief."},`, `{"role":"system","content":"Answer in French."},`
+
+	rec := post(h, anyPolicy, secret, toolChatBody("claude", weatherTools, brief+weatherQuestion))
+	call := decodeToolReply(t, rec).Choices[0].Message.ToolCalls[0]
+
+	rec = post(h, anyPolicy, secret, strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, french+weatherQuestion, 1))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rec.Code, rec.Body)
+	}
+	replayed := script.calls()[1]
+	if replayed.Resume != "" || !strings.Contains(replayed.SystemPrompt, "Answer in French.") || strings.Contains(replayed.SystemPrompt, "Be brief.") || !strings.Contains(replayed.Prompt, "[tool get_weather ("+call.ID+")]") {
+		t.Errorf("a follow-up whose system prompt changed must start from the transcript: resume %q system %q prompt %q", replayed.Resume, replayed.SystemPrompt, replayed.Prompt)
+	}
+	if line := logLineOf(h, rec); !strings.Contains(line, "leg=replay") {
+		t.Errorf("the log line says how the leg that answered started: %q", line)
+	}
+
+	// The record was not used up by a follow-up that was not the conversation's own:
+	// the client that sends the conversation as it was still resumes the session.
+	rec = post(h, anyPolicy, secret, strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, brief+weatherQuestion, 1))
+	if rec.Code != http.StatusOK || script.calls()[2].Resume != "sess-1" {
+		t.Errorf("the owner of the conversation lost its session: %d resume %q", rec.Code, script.calls()[2].Resume)
 	}
 }
 
