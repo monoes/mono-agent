@@ -23,6 +23,27 @@ type apiModelJSON struct {
 	ContextAllowed bool `json:"context_allowed"`
 }
 
+// apiAutoJSON says whether the auto model works for the profile, and what is
+// missing when it does not.
+type apiAutoJSON struct {
+	Available bool   `json:"available"`
+	Missing   string `json:"missing,omitempty"`
+	// Candidates is how many models Jev would pick among: the ones the
+	// listener's policy allows (api models only).
+	Candidates int `json:"candidates,omitempty"`
+}
+
+// autoNote is the line the text output gives for it.
+func (a apiAutoJSON) autoNote() string {
+	if a.Available {
+		if a.Candidates > 0 {
+			return fmt.Sprintf("available (Jev picks among the %d models served on this listener)", a.Candidates)
+		}
+		return "available"
+	}
+	return "off, it needs " + a.Missing
+}
+
 type apiModelsJSON struct {
 	V      int `json:"v"`
 	Policy struct {
@@ -37,6 +58,8 @@ type apiModelsJSON struct {
 		Source string `json:"source"`
 	} `json:"policy"`
 	Models []apiModelJSON `json:"models"`
+	// Auto is the auto model for the active profile: Jev picks among Models.
+	Auto apiAutoJSON `json:"auto"`
 }
 
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
@@ -87,6 +110,20 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 					ContextAllowed: forContext.Allows(m.Class),
 				})
 			}
+			allowed := 0
+			for _, m := range out.Models {
+				if m.Allowed {
+					allowed++
+				}
+			}
+			st := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
+			out.Auto = apiAutoJSON{Available: st.Available, Missing: st.Missing, Candidates: allowed}
+			if st.Available && allowed == 0 {
+				out.Auto.Available, out.Auto.Missing = false, "at least one model the listener's policy allows"
+			}
+			if !out.Auto.Available {
+				out.Auto.Candidates = 0
+			}
 			if cfg.JSONOutput {
 				return writeJSONTo(cmd.OutOrStdout(), out)
 			}
@@ -105,7 +142,11 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "\nauto: %s\n", out.Auto.autoNote())
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&forListener, "for", "loopback", "Evaluate the policy of a loopback or a network listener")

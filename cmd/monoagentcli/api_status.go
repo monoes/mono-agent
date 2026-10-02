@@ -50,6 +50,9 @@ type apiStatusJSON struct {
 		APIAddr string `json:"api_addr,omitempty"`
 		V1Addr  string `json:"v1_addr,omitempty"`
 	} `json:"daemon"`
+	// Auto is the auto model for the profile: whether it works, and what is
+	// missing when it does not.
+	Auto      apiAutoJSON       `json:"auto"`
 	Listeners []apiListenerJSON `json:"listeners"`
 }
 
@@ -78,6 +81,8 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 
 			st := apiStatusJSON{V: 1, Profile: cfg.ProfileID, Listeners: []apiListenerJSON{}}
 			st.Keys.Active = active
+			autoStatus := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
+			st.Auto = apiAutoJSON{Available: autoStatus.Available, Missing: autoStatus.Missing}
 			hb, live := daemonhb.Read()
 			mainAddr, v1Addr := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR")
 			mainFromDaemon, v1FromDaemon := false, false
@@ -153,6 +158,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Profile %s: %d active API key(s)\n", st.Profile, st.Keys.Active)
+			fmt.Fprintf(w, "Auto model: %s\n", st.Auto.autoNote())
 			if st.Daemon.Running {
 				fmt.Fprintln(w, "Daemon: running")
 			} else {
