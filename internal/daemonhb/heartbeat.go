@@ -30,10 +30,12 @@ type Heartbeat struct {
 	// really applies on the OpenAI-compatible API of its HTTP API listener and
 	// of its dedicated listener ("" where that listener does not serve it).
 	// ContextConfinement is the strongest class a key created with --context
-	// may use. `api status` cannot work any of them out from its own environment.
+	// may use, and AutoConfinement the strongest the auto model may pick.
+	// `api status` cannot work any of them out from its own environment.
 	APIConfinement     string `json:"api_confinement,omitempty"`
 	V1Confinement      string `json:"v1_confinement,omitempty"`
 	ContextConfinement string `json:"context_confinement,omitempty"`
+	AutoConfinement    string `json:"auto_confinement,omitempty"`
 	Version            string `json:"version,omitempty"`
 	// Schedules are the registered schedule triggers with the scheduler's
 	// own next fire time, refreshed on every write.

@@ -30,6 +30,9 @@ type apiListenerJSON struct {
 	// ContextConfinement is the strongest class a key created with --context
 	// may use here: the context maximum, never above Confinement.
 	ContextConfinement string `json:"context_confinement"`
+	// AutoConfinement is the strongest class the auto model may pick here: the
+	// auto maximum, never above Confinement.
+	AutoConfinement string `json:"auto_confinement"`
 	// ConfinementSource is "daemon" when the running daemon reported the
 	// policy, "environment" when it is worked out from this shell's
 	// environment and the defaults, which a server started with
@@ -117,6 +120,18 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					contextMax = p.Max
 				}
 			}
+			// The auto maximum is the daemon's too. A daemon that predates the setting
+			// reports none, and auto is chat-only there.
+			autoMax, err := effectiveAutoMax("", os.Getenv)
+			if err != nil {
+				return err
+			}
+			if live {
+				autoMax = openaiapi.ChatOnly
+				if p, perr := openaiapi.ParsePolicy(hb.AutoConfinement); perr == nil {
+					autoMax = p.Max
+				}
+			}
 			{
 				mainPolicy, err := effectivePolicy(mainAddr, "", override)
 				if err != nil {
@@ -134,6 +149,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					main.V1, main.daemonSaysNoV1 = false, true
 				}
 				main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
+				main.AutoConfinement = autoConfinementFor(main.Confinement, autoMax)
 				// The main listener is always plain HTTP: only the dedicated one has TLS.
 				main.Reachable, main.V1Answers = probeListener("http://"+mainAddr, main.V1)
 				add(main, mainFromDaemon)
@@ -149,6 +165,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					dedicated.Confinement, dedicated.ConfinementSource = hb.V1Confinement, "daemon"
 				}
 				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
+				dedicated.AutoConfinement = autoConfinementFor(dedicated.Confinement, autoMax)
 				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, loop, true)
 				add(dedicated, v1FromDaemon)
 			}
@@ -201,6 +218,17 @@ func contextConfinementFor(confinement string, contextMax openaiapi.Class) strin
 	return p.ForContextKey().String()
 }
 
+// autoConfinementFor is what the auto model may pick on a listener that serves
+// confinement, given the auto maximum.
+func autoConfinementFor(confinement string, autoMax openaiapi.Class) string {
+	p, err := openaiapi.ParsePolicy(confinement)
+	if err != nil {
+		return ""
+	}
+	p.AutoMax = autoMax
+	return p.ForAuto().String()
+}
+
 // listenerNote says in a sentence what `api status` found at a listener.
 func listenerNote(l apiListenerJSON) string {
 	switch {
@@ -211,9 +239,9 @@ func listenerNote(l apiListenerJSON) string {
 	case !l.V1:
 		return "reachable, but does not serve /v1 (bound off-loopback; use --v1-addr)"
 	case l.V1Answers:
-		note := "serves /v1, confinement " + l.Confinement + ", keys created with --context: " + l.ContextConfinement
+		note := "serves /v1, confinement " + l.Confinement + ", keys created with --context: " + l.ContextConfinement + ", auto picks up to: " + l.AutoConfinement
 		if l.ConfinementSource != "daemon" {
-			note += " (assumed from this shell's environment: a server started with --confinement or --context-confinement may differ)"
+			note += " (assumed from this shell's environment: a server started with --confinement, --context-confinement or --auto-confinement may differ)"
 		}
 		return note
 	}
