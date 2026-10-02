@@ -28,6 +28,9 @@ type apiModelJSON struct {
 type apiAutoJSON struct {
 	Available bool   `json:"available"`
 	Missing   string `json:"missing,omitempty"`
+	// KeySource is where the Jev key is, vault or env, when it is available. A key
+	// from the environment is this shell's: a running server reads its own.
+	KeySource string `json:"key_source,omitempty"`
 	// Candidates is how many models Jev would pick among: the ones the
 	// listener's policy allows (api models only).
 	Candidates int `json:"candidates,omitempty"`
@@ -35,13 +38,17 @@ type apiAutoJSON struct {
 
 // autoNote is the line the text output gives for it.
 func (a apiAutoJSON) autoNote() string {
-	if a.Available {
-		if a.Candidates > 0 {
-			return fmt.Sprintf("available (Jev picks among the %d models served on this listener)", a.Candidates)
-		}
-		return "available"
+	if !a.Available {
+		return "off, it needs " + a.Missing
 	}
-	return "off, it needs " + a.Missing
+	note := "available"
+	if a.Candidates > 0 {
+		note += fmt.Sprintf(" (Jev picks among the %d models served on this listener)", a.Candidates)
+	}
+	if a.KeySource == "env" {
+		note += "; the Jev key is this shell's TYPESAFE_API_KEY, and a running server reads its own environment"
+	}
+	return note
 }
 
 type apiModelsJSON struct {
@@ -117,12 +124,12 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 			st := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
-			out.Auto = apiAutoJSON{Available: st.Available, Missing: st.Missing, Candidates: allowed}
+			out.Auto = apiAutoJSON{Available: st.Available, Missing: st.Missing, KeySource: st.KeySource, Candidates: allowed}
 			if st.Available && allowed == 0 {
 				out.Auto.Available, out.Auto.Missing = false, "at least one model the listener's policy allows"
 			}
 			if !out.Auto.Available {
-				out.Auto.Candidates = 0
+				out.Auto.Candidates, out.Auto.KeySource = 0, ""
 			}
 			if cfg.JSONOutput {
 				return writeJSONTo(cmd.OutOrStdout(), out)

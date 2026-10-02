@@ -57,7 +57,7 @@ func TestAPIModelsSaysWhetherAutoWorks(t *testing.T) {
 			allowed++
 		}
 	}
-	if !m.Auto.Available || m.Auto.Missing != "" || m.Auto.Candidates != allowed || allowed < 2 {
+	if !m.Auto.Available || m.Auto.Missing != "" || m.Auto.Candidates != allowed || allowed < 2 || m.Auto.KeySource != "env" {
 		t.Errorf("surface on and a key: %+v with %d models allowed", m.Auto, allowed)
 	}
 	out, _, _ = runAPI(t, db, "default", true, "models", "--for", "network")
@@ -65,9 +65,10 @@ func TestAPIModelsSaysWhetherAutoWorks(t *testing.T) {
 		t.Errorf("a network listener serves chat-only: Jev picks among %d, want 1 (claude)", n.Auto.Candidates)
 	}
 
+	// A key from the environment is this shell's: a running server reads its own.
 	text, _, err := runAPI(t, db, "default", false, "models")
-	if err != nil || !strings.Contains(text, "auto: available") {
-		t.Errorf("the table must say it too: %q, %v", text, err)
+	if err != nil || !strings.Contains(text, "auto: available") || !strings.Contains(text, "this shell's TYPESAFE_API_KEY") {
+		t.Errorf("the table must say it too, and whose key it is: %q, %v", text, err)
 	}
 }
 
@@ -132,10 +133,10 @@ func TestAPIStatusSaysWhetherAutoWorks(t *testing.T) {
 	enableAPIAuto(t, db, "default")
 	t.Setenv("TYPESAFE_API_KEY", "test-key")
 	out, _, _ = runAPI(t, db, "default", true, "status")
-	if st := decodeStatus(t, out); !st.Auto.Available {
+	if st := decodeStatus(t, out); !st.Auto.Available || st.Auto.KeySource != "env" {
 		t.Errorf("surface on and a key: %+v", st.Auto)
 	}
-	if text, _, _ := runAPI(t, db, "default", false, "status"); !strings.Contains(text, "Auto model: available") {
-		t.Errorf("the text must say it works:\n%s", text)
+	if text, _, _ := runAPI(t, db, "default", false, "status"); !strings.Contains(text, "Auto model: available") || !strings.Contains(text, "this shell's TYPESAFE_API_KEY") {
+		t.Errorf("the text must say it works, and whose key it is:\n%s", text)
 	}
 }

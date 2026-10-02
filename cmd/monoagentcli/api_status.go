@@ -82,7 +82,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			st := apiStatusJSON{V: 1, Profile: cfg.ProfileID, Listeners: []apiListenerJSON{}}
 			st.Keys.Active = active
 			autoStatus := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
-			st.Auto = apiAutoJSON{Available: autoStatus.Available, Missing: autoStatus.Missing}
+			st.Auto = apiAutoJSON{Available: autoStatus.Available, Missing: autoStatus.Missing, KeySource: autoStatus.KeySource}
 			hb, live := daemonhb.Read()
 			mainAddr, v1Addr := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR")
 			mainFromDaemon, v1FromDaemon := false, false

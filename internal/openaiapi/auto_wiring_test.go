@@ -32,8 +32,8 @@ func TestDefaultAutoNeedsTheSurfaceAndAKey(t *testing.T) {
 		t.Errorf("surface on, no key: %+v, want it to name the Jev key", st)
 	}
 	t.Setenv("TYPESAFE_API_KEY", "test-key")
-	if st := auto.Status(ctx, "alice"); !st.Available {
-		t.Errorf("surface on and a key: %+v", st)
+	if st := auto.Status(ctx, "alice"); !st.Available || st.KeySource != "env" {
+		t.Errorf("surface on and a key from the environment: %+v", st)
 	}
 	if st := auto.Status(ctx, "bob"); st.Available {
 		t.Errorf("bob never switched the surface on: %+v", st)

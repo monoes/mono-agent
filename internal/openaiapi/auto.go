@@ -21,6 +21,10 @@ type AutoStatus struct {
 	Available bool
 	// Missing names what to set up when it is not available.
 	Missing string
+	// KeySource says where the Jev key is (jevconf's "vault" or "env") when it is
+	// available: a key from the environment is the environment of the process that
+	// asks, which a CLI's is not a server's.
+	KeySource string
 }
 
 // AutoFuncs are what the auto model needs from outside the gateway: the zero
