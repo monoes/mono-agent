@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,6 +113,7 @@ func TestAutoDescription(t *testing.T) {
 
 // fakeAuto records what the gateway asked Jev and answers as scripted.
 type fakeAuto struct {
+	mu      sync.Mutex // guards what the questions read and write, for the ones that run abandoned
 	id      string
 	p       float64
 	err     error
@@ -121,19 +124,34 @@ type fakeAuto struct {
 	options map[string]string
 	// the profile each call was made for
 	chooseProfile, thresholdProfile string
+	// calls counts the questions asked, for the tests whose questions are
+	// abandoned and finish in a goroutine of their own: it is the only field
+	// they may read before those goroutines are done.
+	calls atomic.Int32
+}
+
+// script changes how the questions are answered while others may be running.
+func (f *fakeAuto) script(block bool, err error, id string, p float64) {
+	f.mu.Lock()
+	f.block, f.err, f.id, f.p = block, err, id, p
+	f.mu.Unlock()
 }
 
 func (f *fakeAuto) funcs() AutoFuncs {
 	return AutoFuncs{
 		Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
 		Choose: func(ctx context.Context, profile string, prompt string, options map[string]string) (string, float64, error) {
+			f.mu.Lock()
 			f.asked++
 			f.chooseProfile, f.prompt, f.options = profile, prompt, options
-			if f.block {
+			block, id, p, err := f.block, f.id, f.p, f.err
+			f.mu.Unlock()
+			f.calls.Add(1)
+			if block {
 				<-ctx.Done()
 				return "", 0, ctx.Err()
 			}
-			return f.id, f.p, f.err
+			return id, p, err
 		},
 		Threshold: func(profile string) float64 {
 			f.thresholdProfile = profile

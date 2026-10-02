@@ -83,6 +83,11 @@ type Gateway struct {
 	running int             // turns in flight
 	idle    []chan struct{} // closed when running reaches zero
 
+	// now is the clock of the auto model's breakers: time.Now, unless a test moves it.
+	now       func() time.Time
+	breakerMu sync.Mutex
+	breakers  map[string]*autoBreaker // by profile
+
 	// shutdownCtx ends when the server is stopping: every turn in flight
 	// watches it, so closing a listener cannot leave an agent CLI running.
 	shutdownCtx context.Context
@@ -132,6 +137,9 @@ func New(d Deps, c Config) (*Gateway, error) {
 		limiter: newLimiter(cfg.MaxConcurrent),
 		bin:     &binCache{f: d.Bin},
 		unlock:  unlock,
+
+		now:      time.Now,
+		breakers: map[string]*autoBreaker{},
 	}
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
 	g.cleanSlots() // only now: nothing of another process can be running in them

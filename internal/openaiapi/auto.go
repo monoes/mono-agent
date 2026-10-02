@@ -98,6 +98,10 @@ func (g *Gateway) pickAuto(ctx context.Context, profileID, prompt string, candid
 	if len(candidates) == 1 {
 		return autoPick{Model: candidates[0], By: "rule"}
 	}
+	breaker := g.autoBreakerFor(profileID)
+	if !breaker.allow() { // Jev has not been answering: the rule picks, without waiting for it
+		return autoPick{Model: ruleChoice(candidates), By: "rule"}
+	}
 	options := make(map[string]string, len(candidates))
 	for _, m := range candidates {
 		options[m.ID] = autoDescription(m)
@@ -106,7 +110,14 @@ func (g *Gateway) pickAuto(ctx context.Context, profileID, prompt string, candid
 	defer cancel()
 	id, p, err := g.ask(cctx, profileID, clipRunes(prompt, autoPromptRunes), options)
 	if ctx.Err() != nil { // the caller left: nothing was decided, and Jev is not to blame
+		breaker.abandon()
 		return autoPick{Model: ruleChoice(candidates), By: "rule"}
+	}
+	switch breaker.record(err == nil) {
+	case breakerOpened:
+		g.deps.Logf("auto: Jev gave no answer %d times in a row for profile %s: stop asking it for %s, the rule decides meanwhile", breaker.threshold, profileID, breaker.cooldown)
+	case breakerClosed:
+		g.deps.Logf("auto: Jev answers again for profile %s", profileID)
 	}
 	reason := ""
 	switch {
