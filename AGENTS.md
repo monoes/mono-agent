@@ -667,8 +667,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
   together take more than 100,000 steps to read (a reference is read once
   however it is spelled, so the cost is bounded by the request), is 400
-  `invalid_value` on `tools[i].function.parameters`
-  (`internal/openaiapi/tools_hoist.go`). **A
+  `invalid_value` on `tools[i].function.parameters`, while the tools are passed:
+  with `tool_choice` `none` no schema is read for arguments and nothing of this
+  is refused (`internal/openaiapi/tools_hoist.go`). **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
   process group; a group kill only if monomind has not exited within its grace,

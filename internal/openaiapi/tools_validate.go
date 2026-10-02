@@ -21,9 +21,8 @@ func validateTools(req *ChatRequest) *apiError {
 	declared := make(map[string]bool, len(req.Tools))
 	known := make(map[string]bool, len(req.Tools)) // the names the runtime knows the functions by
 	var wire, back map[string]string
-	budget := newHoistBudget() // what the functions of the request together may spend on naming their arguments
 	for i, raw := range req.Tools {
-		d, e := parseToolDecl(i, raw, budget)
+		d, e := parseToolDecl(i, raw)
 		if e != nil {
 			return e
 		}
@@ -46,12 +45,32 @@ func validateTools(req *ChatRequest) *apiError {
 	if e != nil {
 		return e
 	}
+	if pick.Mode != choiceNone { // tools that are not passed to the model have no arguments to name
+		if e := nameAllArguments(decls); e != nil {
+			return e
+		}
+	}
 	req.toolDecls, req.toolPick = decls, pick
 	req.toolWire, req.toolDeclared = wire, back
 	return nil
 }
 
-func parseToolDecl(i int, raw json.RawMessage, budget *hoistBudget) (toolDecl, *apiError) {
+// nameAllArguments names the arguments of every declared function for monomind (nameArguments),
+// and refuses the request when one cannot be named: a call of that function would reach the client
+// as {}. The functions of a request share one budget of work.
+func nameAllArguments(decls []toolDecl) *apiError {
+	budget := newHoistBudget()
+	for i := range decls {
+		names := nameArguments(decls[i].Params, budget)
+		if e := unnameable(fmt.Sprintf("tools[%d].function.parameters", i), names); e != nil {
+			return e
+		}
+		decls[i].Props, decls[i].Required = names.Props, names.Required
+	}
+	return nil
+}
+
+func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
 	base := fmt.Sprintf("tools[%d]", i)
 	var t struct {
 		Type     string `json:"type"`
@@ -82,11 +101,6 @@ func parseToolDecl(i int, raw json.RawMessage, budget *hoistBudget) (toolDecl, *
 	if d.Params, e = inspectParams(param, t.Function.Parameters); e != nil {
 		return toolDecl{}, e
 	}
-	names := nameArguments(d.Params, budget)
-	if e := unnameable(param, names); e != nil {
-		return toolDecl{}, e
-	}
-	d.Props, d.Required = names.Props, names.Required
 	return d, nil
 }
 
@@ -99,9 +113,12 @@ func unnameable(param string, names argNames) *apiError {
 	case names.Spent:
 		return errInvalid("invalid_value", param,
 			"the parameters of the functions of the request together hold more schemas and properties than are read to name their arguments: list the arguments in properties, or declare fewer functions with such schemas")
-	case names.Overrun:
-		return errInvalid("invalid_value", param,
-			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref too deeply to name their arguments: list the arguments in properties")
+	case names.TooDeep:
+		return errInvalid("invalid_value", param, fmt.Sprintf(
+			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref more than %d levels deep to name their arguments: list the arguments in properties", maxHoistDepth))
+	case names.TooWide:
+		return errInvalid("invalid_value", param, fmt.Sprintf(
+			"the parameters hold more than %d schemas (each branch and each reference counts) to name their arguments: list the arguments in properties", maxHoistNodes))
 	case names.Open && len(names.Props) == 0:
 		return errInvalid("invalid_value", param,
 			"the parameters name no property but allow other keys, so no argument of a call could be passed on: list the arguments in properties")

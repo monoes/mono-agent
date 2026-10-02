@@ -49,8 +49,8 @@ func TestAReferenceIsReadOnceHoweverItIsSpelled(t *testing.T) {
 	b := newHoistBudget()
 	begin := time.Now()
 	got := nameArguments(json.RawMessage(params), b)
-	if got.Overrun || got.Spent || len(got.Props) != 300 {
-		t.Fatalf("the 300 properties of the definition must be named: %d named, overrun %v, spent %v", len(got.Props), got.Overrun, got.Spent)
+	if got.TooDeep || got.TooWide || got.Spent || len(got.Props) != 300 {
+		t.Fatalf("the 300 properties of the definition must be named: %d named, overrun %v, spent %v", len(got.Props), got.TooDeep || got.TooWide, got.Spent)
 	}
 	// 900 branches and 900 references, and the definition read once: a few thousand steps. Reading
 	// it for each spelling is 270,000.
@@ -247,8 +247,8 @@ func TestAnyOfFanOutOverSharedDefinitionsIsLinear(t *testing.T) {
 	b := newHoistBudget()
 	begin := time.Now()
 	got := nameArguments(json.RawMessage(params), b)
-	if got.Spent || got.Overrun || len(got.Props) != 4 {
-		t.Fatalf("p0, p1, p2 and last are named: %v, spent %v, overrun %v", keysOf(got.Props), got.Spent, got.Overrun)
+	if got.Spent || got.TooDeep || got.TooWide || len(got.Props) != 4 {
+		t.Fatalf("p0, p1, p2 and last are named: %v, spent %v, overrun %v", keysOf(got.Props), got.Spent, got.TooDeep || got.TooWide)
 	}
 	// Each definition is read at most twice and a read costs the 41 branches and the 41
 	// references they hold: 4 definitions, 2 reads and about 100 steps.

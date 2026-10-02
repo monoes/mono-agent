@@ -49,8 +49,9 @@ type argNames struct {
 	// (additionalProperties that is true or a schema, a non-empty patternProperties), or a
 	// reference that cannot be followed.
 	Open bool
-	// Overrun says the schema nests deeper, or holds more schemas, than is read.
-	Overrun bool
+	// TooDeep says the schema nests combinators and references deeper than is read, and TooWide
+	// that it holds more schemas than is read.
+	TooDeep, TooWide bool
 	// Spent says the request has spent what it may on naming arguments (hoistBudget).
 	Spent bool
 	// Unreadable says the schema could not be read as a JSON object at all.
@@ -92,7 +93,7 @@ func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	h := &hoister{doc: doc, budget: budget, props: map[string]json.RawMessage{}, views: map[string]string{},
 		followed: map[uintptr]int{}, mentioned: map[string]bool{}, required: map[string]bool{}}
 	h.walk(doc, 0, false)
-	out := argNames{Props: h.props, Open: h.open, Overrun: h.overrun, Spent: h.spent}
+	out := argNames{Props: h.props, Open: h.open, TooDeep: h.tooDeep, TooWide: h.tooWide, Spent: h.spent}
 	for _, name := range h.names {
 		if _, has := h.props[name]; !has {
 			h.props[name] = json.RawMessage("true")
@@ -113,7 +114,8 @@ type hoister struct {
 	followed map[uintptr]int   // the schemas that references led to, read already, as which kind (the bits below)
 	nodes    int
 	open     bool
-	overrun  bool
+	tooDeep  bool
+	tooWide  bool
 	// The names that required lists mention, once each and in the order they come, and
 	// which of them are required of the call.
 	names     []string
@@ -131,12 +133,16 @@ const (
 // with it. optional says the schema is one of several that may apply, so nothing it
 // requires is required of the call.
 func (h *hoister) walk(node any, depth int, optional bool) {
-	if h.spent || h.overrun || !h.step() {
+	if h.spent || h.tooDeep || h.tooWide || !h.step() {
 		return
 	}
 	h.nodes++
-	if depth > maxHoistDepth || h.nodes > maxHoistNodes {
-		h.overrun = true
+	switch {
+	case depth > maxHoistDepth:
+		h.tooDeep = true
+		return
+	case h.nodes > maxHoistNodes:
+		h.tooWide = true
 		return
 	}
 	m, ok := node.(map[string]any)

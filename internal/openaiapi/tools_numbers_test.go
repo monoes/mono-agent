@@ -107,7 +107,8 @@ func TestEveryWayArgumentsCannotBeNamedIsRefusedOnTheParametersWithAMessageOfIts
 	}{
 		"unreadable": {argNames{Unreadable: true}, "could not be read"},
 		"spent":      {argNames{Spent: true}, "together"},
-		"overrun":    {argNames{Overrun: true}, "too deeply"},
+		"too deep":   {argNames{TooDeep: true}, "levels deep"},
+		"too wide":   {argNames{TooWide: true}, "more than 2000 schemas"},
 		"open":       {argNames{Open: true}, "name no property"},
 	} {
 		err := unnameable(param, c.names)
