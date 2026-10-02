@@ -562,11 +562,18 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `style`, `output_format`, `background` and `user` are accepted and ignored, and
   the body is capped at 64 KiB. Which runtimes make images is configuration, not
   knowledge of any CLI, because monomind does not report image output:
-  `MONOAGENT_API_IMAGE_RUNTIMES`, default `codex,antigravity`. `model` is
+  `MONOAGENT_API_IMAGE_RUNTIMES`, default `codex,antigravity`; `none` switches
+  image generation off (no model has the capability, and a request without a
+  model or for `auto` is 404 `model_not_found` and one naming a model 400
+  `invalid_value`, each saying it is switched off). `model` is
   `<runtime>/<model>`, a runtime of that list, `auto`, or missing, which means
   the first installed runtime of the list that the policy allows. A model that
   cannot make images is 400 `invalid_value` (a runtime of the list that runs as
-  chat-only cannot, so it is not one) and an unknown one 404. `GET /v1/models`
+  chat-only cannot, so it is not one; the message names the runtimes whose models
+  the key may use that can, or says that none can) and an unknown one 404. When
+  no runtime of the list can make images a request without a model is a 404 that
+  says why for each: not installed, or installed but chat-only; the server logs the
+  same once, with the first list of models it loads. `GET /v1/models`
   gives `"capabilities":["text","image"]` to the models that can, and
   `api models --json` the same per model. The runtime has to write the file, so
   the model must run as `sandboxed` or `unconfined`: under `--confinement
@@ -578,19 +585,32 @@ a key. It lives in `internal/openaiapi/`; the spec is
   temp directory, no tools, no settings, the sandbox required for a `sandboxed`
   model) with a fixed system prompt: generate each image with your own built-in
   image capability, do not draw it programmatically, save each file in the
-  current directory (copy it there if your tool saves elsewhere), reply with the
-  file names, reply `NO_IMAGE_TOOL` if you cannot. The prompt is the request's
+  folder `./out-<16 random characters>/`, which exists already in the working
+  folder and is new for every turn (copy it there if your tool saves elsewhere,
+  save nothing anywhere else), reply with the file names, reply `NO_IMAGE_TOOL`
+  on a line of its own if you cannot. The prompt is the request's
   `prompt` plus "Create N distinct images." (n above 1) and "Preferred size:
   WxH.". After the turn, and before the slot folder is emptied, the gateway
-  reads the files at the top of that folder that are PNG, JPEG, WebP or GIF by
-  their first bytes, at most 20 MiB each, the first `n` by name. It runs as the
-  OS user outside the runtime's sandbox, so it never follows a link (a runtime
-  could plant one to any image on the disk), never opens a FIFO or a device,
-  ignores folders and goes through the folder's own handle, like the emptying.
-  `NO_IMAGE_TOOL` in the reply is 400 `image_generation_unsupported`; no image is
-  502 `image_generation_failed` with the runtime's reply (300 characters, one
-  line) in the message, and the log says what was left out by reason and count,
-  never by name. In the probes of 2026-10-01 a turn took 40 to 52 s and about
+  reads the files at the top of that output folder, and of nothing else, that
+  are PNG, JPEG, WebP or GIF by their first bytes, at most 20 MiB each, the first
+  `n` by name. A file the runtime saved anywhere else in its working folder is not
+  returned, however it is named: a process an earlier turn left running keeps
+  writing where it wrote, and only the folder the next turn was told is read. The
+  log counts such files as outside the turn's folder, and a turn whose
+  runtime ignored the folder is a 502. The gateway runs as the OS user outside
+  the runtime's sandbox, so it never follows a link (a runtime could plant one to
+  any image on the disk), never opens a FIFO or a device, ignores folders and goes
+  through the folder's own handle, like the emptying. It reads only the first 12
+  bytes of a file that is no image, looks at no more than 64 entries and gives up
+  after a minute or when the client has left. `NO_IMAGE_TOOL` as a line of its
+  own in the reply, with no image in the folder, is 400
+  `image_generation_unsupported` (a reply that only mentions it is not, and an
+  image wins over it); no image is 502 `image_generation_failed` with the
+  runtime's reply (300 characters, one line) in the message, and the log says what
+  was left out by reason and count, never by name, for a success too. The
+  response is written as the images are encoded, the slot is given back as soon
+  as the turn is over, and a client has two minutes to read the body. In the
+  probes of 2026-10-01 a turn took 40 to 52 s and about
   40,000 input tokens, on the runtime's account (codex and antigravity report no
   cost). `"model": "auto"` has Jev pick among the image models `auto` may pick:
   image runtimes are `sandboxed` or `unconfined`, so with `--auto-confinement`
@@ -1655,7 +1675,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). One value for every listener of the process, the loopback main one included. Default: unset — `any` on a loopback listener, `chat-only` on any other. |
 | `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
 | `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
-| `MONOAGENT_API_IMAGE_RUNTIMES` | Runtimes whose models can generate images on the OpenAI-compatible API (`POST /v1/images/generations`), comma-separated runtime ids in the order "the first installed one" is looked for (`agy` means `antigravity`; case and spaces do not matter). A runtime that runs as chat-only cannot make images however it is listed. A bad value stops `httpapi` and `daemon` at start. Default: unset — `codex,antigravity`. |
+| `MONOAGENT_API_IMAGE_RUNTIMES` | Runtimes whose models can generate images on the OpenAI-compatible API (`POST /v1/images/generations`), comma-separated runtime ids in the order "the first installed one" is looked for (`agy` means `antigravity`; case and spaces do not matter). A runtime that runs as chat-only cannot make images however it is listed. `none` switches image generation off: no model gets the `image` capability and every image request says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `codex,antigravity`. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |

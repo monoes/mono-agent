@@ -614,33 +614,57 @@ from `MONOAGENT_API_IMAGE_RUNTIMES` (codex and antigravity unless the operator
 changed it) that runs as `sandboxed` or `unconfined`: the runtime has to write
 the file, so a `chat-only` runtime cannot make images, and the route is refused
 under `--confinement chat-only` and, for a key created with `--context`, under
-`--context-confinement` (chat-only unless raised). It is the chat turn in the same
-slot folder, so everything above holds. Two things differ, and both reach further
-than chat does.
+`--context-confinement` (chat-only unless raised). An operator who wants no
+image route at all sets `MONOAGENT_API_IMAGE_RUNTIMES=none`: nothing runs, every
+image request says it is switched off, and no model is listed with the `image`
+capability. It is the chat turn in the same slot folder, so everything above
+holds. Two things differ, and both reach further than chat does.
 
 - *The turn is told to use the runtime's native tools.* It makes the image with
-  its own tool and then copies the file into the slot folder with a shell
+  its own tool and then copies the file into the folder it was given with a shell
   command from the runtime's own state folder (in the probes of 2026-10-01,
   codex's `~/.codex/generated_images/` and antigravity's
   `~/.gemini/antigravity-cli/brain/`), and a runtime may read its own skill files
   outside the folder first. What a `sandboxed` or `unconfined` runtime can read
   or run was already in reach of such a key through chat; here it is the normal
   path.
-- *The gateway returns bytes.* After the turn, and before the folder is emptied,
-  it reads the files at the top of the slot folder that are PNG, JPEG, WebP or
-  GIF by their first bytes (at most 20 MiB each, at most `n` of them, `n` at most
-  4) and sends them in the response. A key holder, or a prompt that steers the
-  runtime, can therefore have it copy any image file it can read into that folder
-  and receive it. Under `sandboxed` and `unconfined` the runtime reads the disk as
-  the OS user, so this adds only the transport of image files: no other file is
-  ever returned. The gateway runs as that user outside the runtime's sandbox, so
-  the collection does not trust the folder. It never follows a link (one planted
-  to an image elsewhere is left out, and the log counts it), never opens a FIFO or
-  a device (a read would wait for a writer), ignores folders, and reads through the
-  folder's own handle, the one the emptying uses, which refuses a path that leaves
-  it; a file that is swapped between the look and the read, or grows past 20 MiB,
-  is left out. A copy or a hard link is a plain file and is returned: a runtime
-  can make one of anything it can read, which is the point above.
+- *The gateway returns bytes.* Each turn is told a folder of its own to save its
+  images in, `./out-<16 random characters>/` inside the slot folder, which the
+  gateway makes (mode 0700) before the turn starts. After the turn, and before the
+  slot folder is emptied, it reads the files at the top of that folder, and of
+  nothing else, that are PNG, JPEG, WebP or GIF by their first bytes (at most
+  20 MiB each, at most `n` of them, `n` at most 4) and sends them in the response.
+  A key holder, or a prompt that steers the runtime, can therefore have it copy
+  any image file it can read into that folder and receive it, and the test is on
+  the first bytes only: a file that begins with the eight bytes of the PNG
+  signature and goes on with anything is returned, so a runtime that can read a
+  file can have that file returned by putting those bytes in front of it. Under
+  `sandboxed` and `unconfined` the runtime reads the disk as the OS user, and chat
+  could already have it say what it read; what this adds is the transport of the
+  bytes themselves, of any file it can read. The gateway runs as that user outside
+  the runtime's sandbox, so the collection does not trust the folder. It never
+  follows a link (one planted to an image elsewhere is left out, and the log
+  counts it), never opens a FIFO or a device (a read would wait for a writer),
+  ignores folders, and reads through the folder's own handle, the one the emptying
+  uses, which refuses a path that leaves it; a file that is swapped between the
+  look and the read, or grows past 20 MiB, is left out. It is bounded as well: of
+  a file that is no image only the first 12 bytes are read, no more than 64
+  entries of the folder are looked at, and it gives up after a minute or when the
+  client has left, and does not wait for a step that does not return. A copy or a
+  hard link is a plain file and is returned: a runtime can make one of anything it
+  can read, which is the point above.
+
+The folder is new for every turn and its name is not known beforehand, so that a
+process an earlier turn left running, which writes to the paths it knew (the slot
+folder, or the earlier turn's folder), cannot put a file into a later request's
+response. What it writes elsewhere is not returned: the log line counts the files
+at the top of the slot folder that are outside the turn's folder, and a turn
+whose runtime ignored the folder it was told is a 502 and not a silent fallback
+to unnamed files. That is all the name does. A process of the same OS user that
+survives can list the slot folder while a later turn runs, read the name of the
+folder, and write into it, or read what it holds (the images of the turn, before
+they are returned): the name keeps a stale writer blind, it does not keep it
+out. Run the server as a dedicated OS user and look at what it leaves, as below.
 
 An image turn took 40 to 52 seconds and about 40,000 input tokens in those
 probes, on the runtime's own account (codex and antigravity report no cost), and
@@ -651,7 +675,13 @@ request. `auto` picks among image models only within `--auto-confinement`, so by
 default none: image models are `sandboxed` or `unconfined` and `auto` is held to
 chat-only until the operator raises it. The runtimes keep the images they generate
 in their own state folders, as they do for any use of them: the gateway empties
-the slot folder, not those.
+the slot folder, not those. The response is written as the images are encoded,
+not built in memory first, the slot is given back as soon as the turn is over, and
+a client has two minutes to read the body before the connection is cut. Until the
+last byte is written the images are held in memory (up to four of 20 MiB), so a
+client that starts requests and does not read them holds that for those two
+minutes for as many requests as it can start turns for: the concurrency cap
+bounds the turns, not the responses that wait to be read.
 
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost
@@ -659,15 +689,16 @@ model turn on your subscription or account, and some runtimes report no cost
 The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
 the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
 timeout. A request that is
-rejected (invalid, over policy, or busy) starts nothing.
+rejected (invalid, over policy, or busy) starts nothing and takes no slot.
 
 **Logs and errors.** One line per chat completion or image request names the
 request id, key
 id, profile, model, status, duration, how many knowledge excerpts were
 added (chat only) and, for `auto`, who chose the model, plus, for a failure, the
 operator-only detail (a Go error or a
-runtime's error code; for an image request that made none, how many files the
-collection left out and why, never a file name). A failure to list models, a failed knowledge search and
+runtime's error code; for an image request, whether it made images or not, how
+many of the files it looked at the collection left out and why, never a file
+name). A failure to list models, a failed knowledge search and
 a failure to verify a key are logged too; a successful listing is not. None
 of the gateway's lines holds a prompt, an answer or a key. monomind's own
 diagnostics (its stderr) reach the server log as they do for any use, and
@@ -732,7 +763,10 @@ unauthenticated and returns the server version.
   when that folder cannot be made.
 - A runtime can leave a process behind it (a command started with `nohup`, say)
   that keeps its write access to the turn's folder. Emptying the folder does
-  not stop it. A sandbox that only confines writes below the turn's folder
+  not stop it. For an image turn it cannot put a file into a later request's
+  response, which is read from a folder with a name it cannot know in advance,
+  but it can still read and write whatever that folder holds while the turn
+  runs, as a process of the same OS user (see Image generation). A sandbox that only confines writes below the turn's folder
   (macOS's, checked) still lets the turn remove that folder and put a link in
   its place. The gateway looks at the folder from its parent, which no turn can
   change, and acts on it through open handles: a link is set aside, not
@@ -754,8 +788,7 @@ unauthenticated and returns the server version.
   not a determined key holder, and keep the OS user's own files out of reach (a
   dedicated user, as above).
 
-**Not part of this surface (yet).** Image generation and OpenAI tool calling
-are later phases. Today a request cannot hand the agent
+**Not part of this surface (yet).** OpenAI tool calling is a later phase. Today a request cannot hand the agent
 tools of the caller's own (a non-empty `tools` is rejected); the runtime's
 native tools are
 a separate matter, covered by the classes above.
