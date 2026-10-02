@@ -40,13 +40,16 @@ type legCall struct {
 // legResult is what a leg produced. Res and Err are runTurn's; Call is the call
 // the leg ended at, nil when it ended without one; Text is what the assistant
 // said before the call (the whole answer when there was none); SawText says
-// whether it said anything at all.
+// whether it said anything at all; Ran says a tool of the runtime's own ran and
+// monomind did not deny it (codex using one of the user's own MCP servers): the
+// model ran, and what the tool did is done.
 type legResult struct {
 	Res     *monomind.TurnResult
 	Err     error
 	Call    *legCall
 	Text    string
 	SawText bool
+	Ran     bool
 }
 
 // legCollector watches the events of a leg. onEvent runs in the one goroutine
@@ -59,6 +62,7 @@ type legCollector struct {
 	text        strings.Builder
 	sawText     bool
 	call        *legCall
+	ran         map[string]bool // the runtime's own tools that ran, by id, none of them denied
 
 	ended   chan struct{} // closed by the done event: the process is over
 	endOnce sync.Once
@@ -88,6 +92,17 @@ func (c *legCollector) onEvent(ev monomind.Event) {
 		if c.call == nil {
 			c.call = &legCall{Name: ev.Name, Args: ev.Args}
 			c.cancel()
+		}
+	case monomind.EventToolActivity:
+		// A tool of the runtime's own. One that monomind refuses is a start and then an end
+		// marked denied, and did nothing; any other did what it does.
+		if c.ran == nil {
+			c.ran = map[string]bool{}
+		}
+		if ev.Denied {
+			delete(c.ran, ev.ID)
+		} else {
+			c.ran[ev.ID] = true
 		}
 	case monomind.EventDone:
 		c.endOnce.Do(func() { close(c.ended) })
@@ -129,7 +144,7 @@ func (g *Gateway) runLeg(ctx context.Context, t turn) legResult {
 		}
 	}
 	res, err := g.runTurn(lctx, t)
-	return legResult{Res: res, Err: err, Call: c.call, Text: c.text.String(), SawText: c.sawText}
+	return legResult{Res: res, Err: err, Call: c.call, Text: c.text.String(), SawText: c.sawText, Ran: len(c.ran) > 0}
 }
 
 // legError says how a finished leg is answered: the error to send, nil when it
@@ -155,10 +170,10 @@ func (g *Gateway) legError(ctx context.Context, lr legResult, m ModelInfo, eff P
 
 // sessionUntouched reports whether a leg ended before the model ran, in a way that
 // says nothing about the runtime's session: the runtime was rate limited, out of
-// quota or budget, or not signed in, and nothing was said or called. The session
-// is as it was, and a retry may continue it.
+// quota or budget, or not signed in, and nothing was said or called and no tool of
+// its own ran. The session is as it was, and a retry may continue it.
 func (lr legResult) sessionUntouched() bool {
-	if lr.Err != nil || lr.Res == nil || lr.Res.Err == nil || lr.Call != nil || lr.SawText {
+	if lr.Err != nil || lr.Res == nil || lr.Res.Err == nil || lr.Call != nil || lr.SawText || lr.Ran {
 		return false
 	}
 	switch lr.Res.Err.Code {
@@ -170,11 +185,12 @@ func (lr legResult) sessionUntouched() bool {
 
 // resumeFailed reports whether a leg that continued a runtime's session could not:
 // it ended in an error of the runtime's own (an unknown session ends that way,
-// on claude and on codex) before the model said or called anything, or the
-// process vanished. No message is matched. Quota, rate limit, auth and timeout
-// say nothing about the session, and a leg that was cancelled is not a failure.
+// on claude and on codex) before the model said or called anything or ran a tool
+// of its own (a replay would run it again), or the process vanished. No message
+// is matched. Quota, rate limit, auth and timeout say nothing about the session,
+// and a leg that was cancelled is not a failure.
 func (lr legResult) resumeFailed() bool {
-	if lr.Err != nil || lr.Res == nil || lr.Call != nil || lr.SawText {
+	if lr.Err != nil || lr.Res == nil || lr.Call != nil || lr.SawText || lr.Ran {
 		return false
 	}
 	if pe := lr.Res.Err; pe != nil {

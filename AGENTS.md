@@ -687,12 +687,15 @@ a key. It lives in `internal/openaiapi/`; the spec is
   edits or compacts its history, or changes its system prompt, gets a replay),
   the result must answer that one call, and nothing but user messages may follow
   it; otherwise, and when the runtime cannot continue the session (an error of
-  its own before it said or called anything: claude's `No conversation found`
-  and codex's `no rollout found` both end that way within a few seconds, and no
-  wording is matched), the transcript is **replayed** in a new turn with the
-  tools declared again, which always works. A resume that fails before the model
-  ran for a rate limit, the quota, a budget or a sign-in gives its record back,
-  so the retry resumes. The system prompt of a resumed claude leg says that the
+  its own before it said or called anything or ran a tool of its own: claude's
+  `No conversation found` and codex's `no rollout found` both end that way
+  within a few seconds, and no wording is matched), the transcript is
+  **replayed** in a new turn with the tools declared again, which always works.
+  A resume that fails before the model ran (nothing said or called, and no tool
+  of the runtime's own that monomind did not deny) for a rate limit, the quota,
+  a budget or a sign-in gives its record back, so the retry resumes. A tool of
+  the runtime's own that ran (codex using one of the user's own MCP servers) is
+  never run again by either: its leg is neither replayed nor given back. The system prompt of a resumed claude leg says that the
   caller ran the call and that its result is real: cancelling a leg at its call
   makes the claude CLI write a rejected result and an interrupt marker into the
   session, and a model that read them distrusted the result (0 of 3 with the

@@ -56,6 +56,80 @@ func TestToolsAResumeThatFailedBeforeTheModelRanKeepsItsSession(t *testing.T) {
 	}
 }
 
+// evNativeStart and evNativeDenied are a runtime's own tool starting, and monomind
+// refusing it (monomind#357): codex using one of the user's own MCP servers, claude
+// trying Bash.
+func evNativeStart(id string) monomind.Event {
+	return monomind.Event{V: 1, Type: monomind.EventToolActivity, ID: id, Name: "lookup", CoderFields: monomind.CoderFields{Phase: "start", Kind: "mcp"}}
+}
+
+func evNativeDenied(id string) monomind.Event {
+	return monomind.Event{V: 1, Type: monomind.EventToolActivity, ID: id, CoderFields: monomind.CoderFields{Phase: "end", Denied: true}}
+}
+
+// A tool of the runtime's own that ran in a resumed leg did what it did: when the leg
+// then fails, it is not run again from the transcript (a replay would run the tool a
+// second time) and its session is not given back for a retry (which would run it again).
+// A tool monomind denied did nothing, and the leg is as untouched as one that never
+// tried: claude tries tools often, and every attempt is denied.
+func TestToolsAResumeInWhichARuntimeToolRanIsNeitherReplayedNorGivenBack(t *testing.T) {
+	runnerError := []monomind.Event{evError(monomind.ErrRunnerError, "boom"), evDone(1)}
+	rateLimited := []monomind.Event{evError(monomind.ErrRateLimited, "slow down"), evDone(1)}
+	leg := func(activity ...monomind.Event) func(ending []monomind.Event) execFunc {
+		return func(ending []monomind.Event) execFunc {
+			return scriptedExec(append(append([]monomind.Event{evStart(false, "monomind")}, activity...), ending...)...)
+		}
+	}
+	deniedStart := evNativeStart("tu_1")
+	deniedStart.Denied = true
+	for _, c := range []struct {
+		name     string
+		leg      func(ending []monomind.Event) execFunc
+		ending   []monomind.Event
+		replayed bool // the failed resume is run again from the transcript, in the same request
+		kept     bool // otherwise: the retry continues the session
+	}{
+		{"a tool ran, then the runtime failed", leg(evNativeStart("tu_1")), runnerError, false, false},
+		{"a tool ran, then the runtime was rate limited", leg(evNativeStart("tu_1")), rateLimited, false, false},
+		{"a tool ran and another was denied, then the runtime failed", leg(evNativeStart("tu_1"), evNativeStart("tu_2"), evNativeDenied("tu_2")), runnerError, false, false},
+		{"a tool was denied, then the runtime failed", leg(evNativeStart("tu_1"), evNativeDenied("tu_1")), runnerError, true, false},
+		{"a tool was denied, then the runtime was rate limited", leg(evNativeStart("tu_1"), evNativeDenied("tu_1")), rateLimited, false, true},
+		{"a tool whose start was marked denied, then the runtime failed", leg(deniedStart), runnerError, true, false},
+		{"no tool, then the runtime failed", leg(), runnerError, true, false},
+	} {
+		for _, stream := range []bool{false, true} {
+			script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), c.leg(c.ending), answers("It is 21 C.")}}
+			h := toolHarness(t, script.exec)
+			secret := h.key(t, "default", "app", false)
+			body := followUp(firstCall(t, h, secret), "21 C")
+			if stream {
+				body = strings.Replace(body, `"model":"claude"`, `"model":"claude","stream":true`, 1)
+			}
+
+			first := post(h, anyPolicy, secret, body)
+			calls := script.calls()
+			if c.replayed {
+				if len(calls) != 3 || calls[2].Resume != "" || first.Code != http.StatusOK {
+					t.Errorf("%s (stream %v): the failed resume must be run again from the transcript: %d turns, status %d", c.name, stream, len(calls), first.Code)
+				}
+				continue
+			}
+			if len(calls) != 2 || (first.Code == http.StatusOK && !strings.Contains(first.Body.String(), `"error"`)) {
+				t.Errorf("%s (stream %v): the follow-up must fail and run nothing again: %d turns, status %d: %s", c.name, stream, len(calls), first.Code, first.Body)
+				continue
+			}
+			retry := post(h, anyPolicy, secret, body)
+			calls = script.calls()
+			if len(calls) != 3 || (calls[2].Resume == "sess-1") != c.kept {
+				t.Errorf("%s (stream %v): the retry must %s the session: %d turns, resumed %q", c.name, stream, map[bool]string{true: "continue", false: "not continue"}[c.kept], len(calls), calls[len(calls)-1].Resume)
+			}
+			if retry.Code != http.StatusOK {
+				t.Errorf("%s (stream %v): the retry got %d: %s", c.name, stream, retry.Code, retry.Body)
+			}
+		}
+	}
+}
+
 // deadlineRecorder is a response recorder that takes a write deadline as net/http's
 // real writer does, and keeps the last one it was given.
 type deadlineRecorder struct {

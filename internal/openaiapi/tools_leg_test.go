@@ -360,10 +360,71 @@ func TestResumeFailedMeansTheRuntimeCouldNotContinueTheSession(t *testing.T) {
 		{"an answer", legResult{Res: &monomind.TurnResult{SawDone: true}, SawText: true}, false},
 		{"a leg that never started", legResult{Err: errPolicyDenied}, false},
 		{"an empty answer that finished", legResult{Res: &monomind.TurnResult{SawDone: true}}, false},
+		{"a runner error after a tool of the runtime's own ran: a replay would run it again", legResult{Res: failed(monomind.ErrRunnerError).Res, Ran: true}, false},
+		{"a process that vanished after a tool of the runtime's own ran", legResult{Res: &monomind.TurnResult{}, Ran: true}, false},
 	}
 	for _, c := range cases {
 		if got := c.lr.resumeFailed(); got != c.want {
 			t.Errorf("%s: resumeFailed = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A leg's session is as it was only when the model did not run: a rate limit, the quota,
+// the budget or a missing sign-in with nothing said, no call and no tool of the runtime's
+// own that ran.
+func TestSessionUntouchedMeansTheModelNeverRan(t *testing.T) {
+	failed := func(code string) *monomind.TurnResult {
+		return &monomind.TurnResult{SawDone: true, ExitCode: 1, Err: &monomind.ProtocolError{Code: code, Message: "x"}}
+	}
+	cases := []struct {
+		name string
+		lr   legResult
+		want bool
+	}{
+		{"rate limited", legResult{Res: failed(monomind.ErrRateLimited)}, true},
+		{"out of quota", legResult{Res: failed(monomind.ErrQuota)}, true},
+		{"over budget", legResult{Res: failed(monomind.ErrBudget)}, true},
+		{"not signed in", legResult{Res: failed(monomind.ErrAuth)}, true},
+		{"a runner error", legResult{Res: failed(monomind.ErrRunnerError)}, false},
+		{"a timeout", legResult{Res: failed(monomind.ErrTimeout)}, false},
+		{"rate limited after the model spoke", legResult{Res: failed(monomind.ErrRateLimited), SawText: true}, false},
+		{"rate limited after a call", legResult{Res: failed(monomind.ErrRateLimited), Call: &legCall{Name: "f"}}, false},
+		{"rate limited after a tool of the runtime's own ran", legResult{Res: failed(monomind.ErrRateLimited), Ran: true}, false},
+		{"a leg that never started", legResult{Err: errPolicyDenied}, false},
+		{"an answer", legResult{Res: &monomind.TurnResult{SawDone: true}, SawText: true}, false},
+	}
+	for _, c := range cases {
+		if got := c.lr.sessionUntouched(); got != c.want {
+			t.Errorf("%s: sessionUntouched = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A tool of the runtime's own ran unless monomind refused it: a refused one is a start and
+// an end marked denied, or a start already marked, and does nothing. What is counted is by
+// the id of the tool, so that one that ran is not forgotten when another is refused.
+func TestLegKnowsWhichToolsOfTheRuntimeRan(t *testing.T) {
+	deniedStart := evNativeStart("tu_1")
+	deniedStart.Denied = true
+	for _, c := range []struct {
+		name   string
+		events []monomind.Event
+		ran    bool
+	}{
+		{"none tried", nil, false},
+		{"one ran", []monomind.Event{evNativeStart("tu_1")}, true},
+		{"one ran and its end came", []monomind.Event{evNativeStart("tu_1"), {V: 1, Type: monomind.EventToolActivity, ID: "tu_1", CoderFields: monomind.CoderFields{Phase: "end"}}}, true},
+		{"one was refused", []monomind.Event{evNativeStart("tu_1"), evNativeDenied("tu_1")}, false},
+		{"a start that was marked", []monomind.Event{deniedStart}, false},
+		{"one ran and another was refused", []monomind.Event{evNativeStart("tu_1"), evNativeStart("tu_2"), evNativeDenied("tu_2")}, true},
+		{"one was refused and another ran", []monomind.Event{evNativeStart("tu_1"), evNativeDenied("tu_1"), evNativeStart("tu_2")}, true},
+	} {
+		events := append([]monomind.Event{evStart(false, "monomind")}, c.events...)
+		events = append(events, evDone(0))
+		h := newHarness(t, scriptedExec(events...))
+		if lr := runLegWithin(t, h.g, context.Background(), legTurn("claude")); lr.Ran != c.ran {
+			t.Errorf("%s: Ran = %v, want %v", c.name, lr.Ran, c.ran)
 		}
 	}
 }
