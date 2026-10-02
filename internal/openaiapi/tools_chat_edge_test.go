@@ -464,6 +464,46 @@ func TestToolsAResumeIsGivenTheTimeOfTwoTurns(t *testing.T) {
 	}
 }
 
+// codex repeats an identical call two or three times in a leg that ends at a call (the
+// spike saw an edit written twice). A leg ends at the first: the repeats, which arrive
+// while the leg is being cancelled, start no second call, no second record and no
+// result.
+func TestToolsAnIdenticalCallRepeatedWhileTheLegEndsIsOneCallAndOneRecord(t *testing.T) {
+	repeats := func() execFunc {
+		return fakeLegExec(func(ctx context.Context, emit func(monomind.Event)) {
+			emit(evStart(false, "workspace-write"))
+			emit(evSession("th_1"))
+			for range 3 {
+				emit(evCall("get_weather", `{"city":"Paris"}`))
+			}
+			<-ctx.Done()
+		})
+	}
+	for _, stream := range []bool{false, true} {
+		h := toolHarness(t, repeats())
+		secret := h.key(t, "default", "app", false)
+		extra := weatherTools
+		if stream {
+			extra += `,"stream":true`
+		}
+		rec := post(h, anyPolicy, secret, toolChatBody("codex/gpt-6-astra", extra, weatherQuestion))
+		calls := 0
+		if stream {
+			data, _ := sseEvents(rec.Body.String())
+			for _, c := range decodeRawChunks(t, data) {
+				if raw, ok := c.Choices[0].Delta["tool_calls"]; ok && strings.Contains(string(raw), `"id"`) {
+					calls++
+				}
+			}
+		} else {
+			calls = len(decodeToolReply(t, rec).Choices[0].Message.ToolCalls)
+		}
+		if rec.Code != http.StatusOK || calls != 1 || h.g.conts.size() != 1 {
+			t.Errorf("stream %v: status %d, %d calls, %d records: %s", stream, rec.Code, calls, h.g.conts.size(), rec.Body)
+		}
+	}
+}
+
 // A first leg that hit the quota has no session to keep and no record to give back.
 func TestToolsAFirstLegThatHitTheQuotaIsATooManyRequests(t *testing.T) {
 	quota := scriptedExec(evStart(false, "monomind"), evError(monomind.ErrQuota, "usage limit"), evDone(1))
