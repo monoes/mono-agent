@@ -34,10 +34,21 @@ const (
 		`"created_at":"2026-10-02T07:00:00Z","last_used_at":null,"revoked_at":null}`
 )
 
+// argv is one call as fakeAPICLI logs it: every argument in brackets, so that
+// `--name=notes bot` (one argument) is not the same line as `--name=notes bot`
+// as two arguments, which a log of "$*" cannot tell.
+func argv(args ...string) string {
+	var b strings.Builder
+	for _, a := range args {
+		b.WriteString("[" + a + "]")
+	}
+	return b.String()
+}
+
 // fakeAPICLI installs a monoagentcli stand-in that logs argv (one line per
-// call) and answers each api subcommand with a canned JSON document. The
-// create and the update answers carry a key, so that a method that let one
-// through would show.
+// call, in the form argv builds) and answers each api subcommand with a canned
+// JSON document. The create and the update answers carry a key, so that a method
+// that let one through would show.
 func fakeAPICLI(t *testing.T) (argsLog string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,7 +56,9 @@ func fakeAPICLI(t *testing.T) (argsLog string) {
 	withKey := strings.TrimSuffix(apiKeyOne, "}") + `,"key":"` + fakeAPIKey + `"}`
 	revoked := strings.Replace(apiKeyOne, `"revoked_at":null`, `"revoked_at":"2026-10-02T10:00:00Z"`, 1)
 	script := `#!/bin/sh
-echo "$*" >> '` + argsLog + `'
+line=''
+for a in "$@"; do line="$line[$a]"; done
+echo "$line" >> '` + argsLog + `'
 case "$*" in
   *" api status"*) echo '` + apiStatusJSON + `';;
   *" api models"*) echo '` + apiModelsJSON + `';;
@@ -123,16 +136,18 @@ func TestAPIFuncsShellOutToCLI(t *testing.T) {
 		t.Fatalf("APIKeyRevoke = %+v, %v", revoked, err)
 	}
 
+	pre := []string{"--profile", "work", "--json", "api"}
+	call := func(args ...string) string { return argv(append(append([]string{}, pre...), args...)...) }
 	want := []string{
-		"--profile work --json api status",
-		"--profile work --json api models",
-		"--profile work --json api models --for=network --confinement=chat-only --context-confinement=chat-only --auto-confinement=chat-only",
-		"--profile work --json api key list",
-		"--profile work --json api key create --name=my-app",
-		"--profile work --json api key create --name=notes bot --context",
-		"--profile work --json api key update key_abcdefghijkl --context",
-		"--profile work --json api key update key_abcdefghijkl --no-context",
-		"--profile work --json api key revoke key_abcdefghijkl --yes",
+		call("status"),
+		call("models"),
+		call("models", "--for=network", "--confinement=chat-only", "--context-confinement=chat-only", "--auto-confinement=chat-only"),
+		call("key", "list"),
+		call("key", "create", "--name=my-app"),
+		call("key", "create", "--name=notes bot", "--context"), // the name is one argument, with its space
+		call("key", "update", "key_abcdefghijkl", "--context"),
+		call("key", "update", "key_abcdefghijkl", "--no-context"),
+		call("key", "revoke", "key_abcdefghijkl", "--yes"),
 	}
 	got := loggedArgs(t, argsLog)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -161,9 +176,9 @@ func TestAPIModelsPassesOnlyWhatWasGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"--profile work --json api models --for=loopback --context-confinement=sandboxed",
-		"--profile work --json api key create --name=--yes",
-		"--profile work --json api key create --name=padded",
+		argv("--profile", "work", "--json", "api", "models", "--for=loopback", "--context-confinement=sandboxed"),
+		argv("--profile", "work", "--json", "api", "key", "create", "--name=--yes"),
+		argv("--profile", "work", "--json", "api", "key", "create", "--name=padded"),
 	}
 	if got := loggedArgs(t, argsLog); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -385,14 +400,26 @@ func TestAPICLIErrorsKeepTheirClass(t *testing.T) {
 
 // TestAPIRealCLI drives the real monoagentcli (opt-in: API_REAL_CLI=1 with
 // MONOAGENTCLI_BIN set): the shapes of its JSON are the ones the structs here
-// decode. It runs the CLI in a scratch HOME with nothing listening where the API
-// would be, so it touches neither the real data nor a real daemon, and it never
-// prints a key.
+// decode. It never prints a key. What it touches:
+//
+//   - HOME and USERPROFILE (the home of Unix and of Windows) are a scratch
+//     directory. The CLI keeps its state under ~/.monoagent, the database and the
+//     key store with it, so the keys this test creates and revokes exist only
+//     there, and the test stops before it creates one if the CLI did not put its
+//     state there.
+//   - MONOAGENT_DAEMON_HEARTBEAT names a file that does not exist, so no running
+//     daemon is found, and MONOAGENT_HTTPAPI_ADDR points where nothing listens
+//     (MONOAGENT_API_V1_ADDR is empty), so `api status` finds the API down.
+//   - Not isolated: PATH and the rest of the environment. `api models` runs the
+//     real monomind, found the way the CLI finds it, to list the agent runtimes
+//     installed on this machine; it sends them no prompt.
 func TestAPIRealCLI(t *testing.T) {
 	if os.Getenv("API_REAL_CLI") != "1" || os.Getenv("MONOAGENTCLI_BIN") == "" {
 		t.Skip("set API_REAL_CLI=1 and MONOAGENTCLI_BIN to run against the real CLI")
 	}
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "none.json"))
 	t.Setenv("MONOAGENT_HTTPAPI_ADDR", "127.0.0.1:1")
 	t.Setenv("MONOAGENT_API_V1_ADDR", "")
@@ -401,6 +428,10 @@ func TestAPIRealCLI(t *testing.T) {
 
 	if keys, err := a.APIKeyList(); err != nil || len(keys) != 0 {
 		t.Fatalf("initial keys = %+v, %v", keys, err)
+	}
+	// The first call made the CLI open its database: it must be the scratch one, before any key exists.
+	if _, err := os.Stat(filepath.Join(home, ".monoagent")); err != nil {
+		t.Fatalf("the CLI did not keep its state under the scratch home: %v", err)
 	}
 	created, err := a.APIKeyCreate("real-cli", false)
 	if err != nil || created.ID == "" || created.Name != "real-cli" || created.Context || created.CreatedAt == "" ||
