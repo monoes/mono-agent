@@ -17,7 +17,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/monomind"
-	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 	"github.com/monoes/mono-agent/internal/tlsserve"
 )
 
@@ -32,14 +32,7 @@ func liveGateway(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string, 
 	if os.Getenv("MONOAGENT_LIVE_API_TESTS") != "1" {
 		t.Skip("set MONOAGENT_LIVE_API_TESTS=1 to run the live checks (they call real models)")
 	}
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "live.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 
 	deps := DefaultDeps(db.DB, "live")
 	deps.Knowledge = nil

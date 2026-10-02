@@ -12,6 +12,7 @@ import (
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 )
 
 type execFunc = func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error)
@@ -37,14 +38,7 @@ func (h *harness) logged() []string {
 
 func newHarness(t *testing.T, exec execFunc, mutate ...func(*Deps, *Config)) *harness {
 	t.Helper()
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "gateway-test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 
 	h := &harness{keys: apikeys.NewStore(db.DB), db: db, scratch: filepath.Join(t.TempDir(), "workspaces")}
 	f := testFuncs(t)

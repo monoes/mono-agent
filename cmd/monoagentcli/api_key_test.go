@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 )
 
 // newAPITestDB is a migrated database and the HOME that goes with it.
@@ -18,16 +18,7 @@ func newAPITestDB(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MONOAGENT_API_CONTEXT_CONFINEMENT", "")
-	dbPath := filepath.Join(t.TempDir(), "api.db")
-	db, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	return dbPath
+	return testdb.Path(t)
 }
 
 // runAPI runs `api <args>` and returns stdout and stderr separately.

@@ -3,24 +3,17 @@ package apikeys
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 )
 
 func newTestStore(t *testing.T) (*Store, *storage.Database) {
 	t.Helper()
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "apikeys-test.db"))
-	if err != nil {
-		t.Fatalf("NewDatabase: %v", err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatalf("ApplyMigrations: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 	return NewStore(db.DB), db
 }
 

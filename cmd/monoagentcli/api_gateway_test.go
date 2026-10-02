@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/openaiapi"
-	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 )
 
 func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
@@ -27,14 +26,7 @@ func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
 	t.Setenv("MONOAGENT_API_V1_ADDR", "")
 	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "")
 	t.Setenv("MONOAGENT_API_TURN_TIMEOUT", "")
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "gw.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 	return newAPIRuntime(db.DB, f, func(string, ...any) {})
 }
 
@@ -42,14 +34,7 @@ func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
 // reset HOME, so it sees the working folders the first one holds.
 func newAPIRuntimeSharingHome(t *testing.T, f apiFlags, logf func(string, ...any)) *apiRuntime {
 	t.Helper()
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "gw2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 	rt, err := newAPIRuntime(db.DB, f, logf)
 	if err != nil {
 		t.Fatal(err)
@@ -167,9 +152,7 @@ func TestAPIRuntimeRejectsBadSettingsAsInvalidInput(t *testing.T) {
 	}
 
 	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "lots")
-	db, _ := storage.NewDatabase(filepath.Join(t.TempDir(), "x.db"))
-	defer db.Close()
-	_ = db.ApplyMigrations()
+	db := testdb.Open(t)
 	if _, err := newAPIRuntime(db.DB, apiFlags{}, func(string, ...any) {}); exitCode(err) != 3 {
 		t.Errorf("a bad MONOAGENT_API_MAX_CONCURRENT: exit %d (%v), want 3", exitCode(err), err)
 	}
@@ -256,12 +239,7 @@ func TestMaxConcurrentFlagRemembersWhetherItWasGiven(t *testing.T) {
 
 func TestMaxConcurrentEnvironmentIsBoundedToo(t *testing.T) {
 	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "100000")
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "x.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	_ = db.ApplyMigrations()
+	db := testdb.Open(t)
 	if _, err := newAPIRuntime(db.DB, apiFlags{}, func(string, ...any) {}); exitCode(err) != 3 {
 		t.Errorf("an absurd MONOAGENT_API_MAX_CONCURRENT: exit %d (%v), want 3", exitCode(err), err)
 	}

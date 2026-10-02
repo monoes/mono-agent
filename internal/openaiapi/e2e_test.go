@@ -13,7 +13,7 @@ import (
 	"github.com/monoes/mono-agent/internal/agentroster"
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/monomind"
-	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/testdb"
 )
 
 // fakeMonomind is a shell script that speaks just enough of the Agent Exec
@@ -67,14 +67,7 @@ func TestEndToEndThroughTheRealExec(t *testing.T) {
 	monomind.ResetCapabilityCache()
 	t.Cleanup(monomind.ResetCapabilityCache)
 
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "e2e.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 
 	deps := DefaultDeps(db.DB, "e2e")
 	deps.Logf = func(string, ...any) {}
@@ -154,14 +147,7 @@ func TestEndToEndThroughTheRealExec(t *testing.T) {
 // TestDefaultDepsReadTheRosterFromTheDatabase checks the default Deps read
 // the validated roster from the same database the keys live in.
 func TestDefaultDepsReadTheRosterFromTheDatabase(t *testing.T) {
-	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "roster.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ApplyMigrations(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.Open(t)
 	if err := agentroster.AddManual(context.Background(), db.DB, "claude", "sonnet"); err != nil {
 		t.Fatal(err)
 	}
