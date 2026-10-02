@@ -50,6 +50,9 @@ type Config struct {
 	// and a list with nothing in it switches image generation off; read it through
 	// ImageRuntimeList.
 	ImageRuntimes []string
+	// ToolRuntimes are the runtimes that serve tool calling. Empty means
+	// defaultToolRuntimes; read it through ToolRuntimeList.
+	ToolRuntimes []string
 }
 
 // defaultImageRuntimes make images when MONOAGENT_API_IMAGE_RUNTIMES is not
@@ -156,8 +159,9 @@ func (c Config) withDefaults() (Config, error) {
 
 // ConfigFromEnv reads MONOAGENT_API_MAX_CONCURRENT (an integer from 1 to
 // MaxConcurrentLimit), MONOAGENT_API_TURN_TIMEOUT (a duration of at least 10s,
-// such as 15m) and MONOAGENT_API_IMAGE_RUNTIMES (see ParseImageRuntimes). An
-// unset variable keeps the default.
+// such as 15m), MONOAGENT_API_IMAGE_RUNTIMES (see ParseImageRuntimes) and
+// MONOAGENT_API_TOOL_RUNTIMES (see ParseToolRuntimes). An unset variable keeps
+// the default.
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	var c Config
 	if v := getenv("MONOAGENT_API_MAX_CONCURRENT"); v != "" {
@@ -180,6 +184,13 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 		c.ImageRuntimes = list
+	}
+	if v := getenv("MONOAGENT_API_TOOL_RUNTIMES"); v != "" {
+		list, err := ParseToolRuntimes(v)
+		if err != nil {
+			return Config{}, err
+		}
+		c.ToolRuntimes = list
 	}
 	return c, nil
 }

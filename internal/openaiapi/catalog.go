@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,11 @@ type ModelInfo struct {
 	Validated bool     // the roster has a recent passing validation
 	Efforts   []string // reasoning effort levels the model accepts
 	Alias     bool     // another name for an earlier entry: resolvable, not listed
+	// ReadAccess says monomind can run the model's runtime read-only (--access
+	// read): the handshake has the capability and the runtime's scan entry lists
+	// the mode. A leg of a conversation with tools needs it where the runtime's
+	// own tools are not gated by monomind.
+	ReadAccess bool
 	// What that validation measured, for choosing between models (the auto
 	// model's fallback rule): zero when the model is not validated, and HasCost
 	// says whether the runtime reported a cost at all.
@@ -209,6 +215,7 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 	var out []ModelInfo
 	for i, e := range installed {
 		class := ClassifyRuntime(e, caps)
+		readAccess := caps.Has(monomind.CapAgentExecAccessRead) && slices.Contains(e.AccessModes, monomind.AccessRead)
 		seen := map[string]bool{}
 		add := func(m monomind.RuntimeModel) {
 			if seen[m.ID] || !modelRE.MatchString(m.ID) {
@@ -224,7 +231,7 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 			out = append(out, ModelInfo{
 				ID: id, Runtime: e.ID, Model: m.ID, Label: label, Class: class,
 				Validated: isValidated, Efforts: m.EffortLevels, Alias: m.AliasOf != "",
-				CostUSD: v.CostUSD, HasCost: v.HasCost, LatencyMs: v.LatencyMs,
+				CostUSD: v.CostUSD, HasCost: v.HasCost, LatencyMs: v.LatencyMs, ReadAccess: readAccess,
 			})
 		}
 		listsDefault := false
