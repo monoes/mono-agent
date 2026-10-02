@@ -44,8 +44,8 @@ type turn struct {
 	// streams incrementally.
 	OnDelta func(text string)
 	// Collect, when set, receives the turn's folder after a turn that ended
-	// without an error and before the folder is emptied: what the turn left in it
-	// is read there, and nowhere else.
+	// without an error, having said it was done, and before the folder is emptied:
+	// what the turn left in it is read there, and nowhere else.
 	Collect func(dir string)
 }
 
@@ -239,7 +239,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		// Our own deadline ended the turn, not a caller who left: a timeout.
 		res.Err = &monomind.ProtocolError{Code: monomind.ErrTimeout, Message: "the turn exceeded the time limit of " + g.cfg.TurnTimeout.String()}
 	}
-	if t.Collect != nil && err == nil && res != nil && res.Err == nil {
+	if t.Collect != nil && err == nil && res != nil && res.Err == nil && res.SawDone {
 		t.Collect(dir) // the deferred emptyDir runs after this
 	}
 	return res, err

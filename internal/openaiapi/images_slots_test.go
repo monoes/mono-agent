@@ -165,6 +165,7 @@ func TestRunTurnDoesNotCollectAfterATurnThatDidNotEndCleanly(t *testing.T) {
 			return nil, errors.New("boom")
 		}, anyPolicy},
 		"the turn reported an error":              {scriptedExec(evStart(false, "workspace-write"), evError(monomind.ErrQuota, "limit"), evDone(1)), anyPolicy},
+		"the turn never said it was done":         {scriptedExec(evStart(false, "workspace-write"), evText("x")), anyPolicy},
 		"the turn started weaker than the policy": {scriptedExec(evStart(false, "none"), evText("x"), evResult("x", monomind.StopEndTurn), evDone(0)), Policy{Max: Sandboxed}},
 	} {
 		h := newHarness(t, c.exec)

@@ -237,8 +237,10 @@ func TestImagesRejectBeforeSpawningAnything(t *testing.T) {
 	}
 }
 
-// What the runtime says decides, in this order: it has no image tool (400), it made
-// nothing (502, with what it said), or there are images.
+// What the runtime saved decides first: with images in the folder it is a success, whatever
+// the reply says. With none, a reply that is the marker on a line of its own is "no image
+// tool" (400, nothing to be done by retrying), and anything else is a turn that made no image
+// (502, with what the runtime said).
 func TestImagesReplyHandling(t *testing.T) {
 	long := strings.Repeat("a long and rambling reply ", 40)
 	for name, c := range map[string]struct {
@@ -249,9 +251,18 @@ func TestImagesReplyHandling(t *testing.T) {
 		in     []string // what the message holds
 		out    []string // what it must not
 	}{
-		"no image tool":                  {"NO_IMAGE_TOOL", nil, 400, "image_generation_unsupported", nil, nil},
-		"no image tool, said politely":   {"I am sorry zqreply. NO_IMAGE_TOOL.", nil, 400, "image_generation_unsupported", nil, nil},
-		"no image tool, yet a file":      {"NO_IMAGE_TOOL", onePNG("drawn.png"), 400, "image_generation_unsupported", nil, nil},
+		"no image tool":                      {"NO_IMAGE_TOOL", nil, 400, "image_generation_unsupported", nil, nil},
+		"no image tool on a line of its own": {"I am sorry zqreply.\nNO_IMAGE_TOOL\n", nil, 400, "image_generation_unsupported", nil, nil},
+		"no image tool, padded":              {"  NO_IMAGE_TOOL \t\n", nil, 400, "image_generation_unsupported", nil, nil},
+		// Only the marker on a line of its own says it: a sentence that holds it, or a file name
+		// that starts with it, is what the runtime said, and the client is shown it.
+		"the marker at the end of a sentence": {"I am sorry zqreply. NO_IMAGE_TOOL.", nil, 502, "image_generation_failed", []string{"I am sorry zqreply. NO_IMAGE_TOOL."}, nil},
+		"the marker in a file name":           {"NO_IMAGE_TOOL.png", nil, 502, "image_generation_failed", []string{"NO_IMAGE_TOOL.png"}, nil},
+		// Images win: a runtime that made one did not lack the tool.
+		"images win over the marker":            {"NO_IMAGE_TOOL", onePNG("drawn.png"), 200, "", nil, nil},
+		"images win over a mention of it":       {"Saved a.png zqreply (no need to reply NO_IMAGE_TOOL)", onePNG("a.png"), 200, "", nil, nil},
+		"images win, one of them named like it": {"NO_IMAGE_TOOL.png", onePNG("NO_IMAGE_TOOL.png"), 200, "", nil, nil},
+
 		"nothing saved":                  {"I could not save the image zqreply, the tool failed.", nil, 502, "image_generation_failed", []string{"the tool failed"}, nil},
 		"nothing saved and nothing said": {"", nil, 502, "image_generation_failed", nil, nil},
 		"only files that are no image":   {"done: notes.txt zqreply", map[string][]byte{"notes.txt": []byte("not a picture")}, 502, "image_generation_failed", []string{"done: notes.txt zqreply"}, []string{"not a picture"}},
@@ -260,6 +271,24 @@ func TestImagesReplyHandling(t *testing.T) {
 	} {
 		h := newHarness(t, imageTurn(c.reply, c.files))
 		rec := postImages(h, anyPolicy, h.key(t, "default", "app", false), `{"prompt":"a secret prompt"}`)
+		// Neither the prompt nor what the runtime answered is for the log.
+		defer func() {
+			for _, line := range h.logged() {
+				if strings.Contains(line, "secret prompt") || strings.Contains(line, "zqreply") || strings.Contains(line, "tool failed") || strings.Contains(line, "notes.txt") {
+					t.Errorf("%s: the log holds the prompt or the reply: %q", name, line)
+				}
+			}
+		}()
+		if c.status == http.StatusOK {
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s: %d %s, want the images", name, rec.Code, rec.Body)
+				continue
+			}
+			if _, images := decodeImages(t, rec); len(images) != 1 {
+				t.Errorf("%s: %d images, want 1", name, len(images))
+			}
+			continue
+		}
 		e := decodeErrorBody(t, rec)
 		msg, _ := e["message"].(string)
 		if rec.Code != c.status || e["code"] != c.code {
@@ -285,12 +314,6 @@ func TestImagesReplyHandling(t *testing.T) {
 		}
 		if c.status == 502 && len([]rune(msg)) > maxRuntimeWords+120 {
 			t.Errorf("%s: the message is %d characters: the runtime's words are cut to %d", name, len([]rune(msg)), maxRuntimeWords)
-		}
-		// Neither the prompt nor what the runtime answered is for the log.
-		for _, line := range h.logged() {
-			if strings.Contains(line, "secret prompt") || strings.Contains(line, "zqreply") || strings.Contains(line, "tool failed") || strings.Contains(line, "notes.txt") {
-				t.Errorf("%s: the log holds the prompt or the reply: %q", name, line)
-			}
 		}
 	}
 }

@@ -101,10 +101,11 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 			return
 		}
 		switch {
-		case strings.Contains(res.ResultText, noImageToolMarker):
+		case len(found.images) > 0: // what the runtime saved decides: it did not lack the tool
+		case saidNoImageTool(res.ResultText):
 			fail(errNoImageTool(m))
 			return
-		case len(found.images) == 0:
+		default:
 			e := errNoImageMade(res.ResultText)
 			e.detail = "no image was collected from the turn's folder"
 			if note := found.note(); note != "" {

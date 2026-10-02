@@ -116,3 +116,15 @@ const imageSystemPrompt = "You generate images for an API client.\n" +
 
 // noImageToolMarker is what the runtime replies when it cannot make an image.
 const noImageToolMarker = "NO_IMAGE_TOOL"
+
+// saidNoImageTool reports whether a reply says the runtime has no image tool: the
+// marker as a line of its own, or as the whole reply. A sentence that holds the word
+// does not say it, and neither does a file name that starts with it.
+func saidNoImageTool(reply string) bool {
+	for _, line := range strings.Split(reply, "\n") {
+		if strings.TrimSpace(line) == noImageToolMarker {
+			return true
+		}
+	}
+	return false
+}
