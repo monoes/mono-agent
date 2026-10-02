@@ -804,9 +804,12 @@ components:
                 `unconfined`; with the variable set to `none`, no model has it) and
                 `tools` for one that serves tool calling (a model of a runtime in
                 `MONOAGENT_API_TOOL_RUNTIMES`, `claude` and `codex` by default, that
-                is chat-only or that monomind can run read-only; set to `none`, no
-                model has it). `auto` lists `image` or `tools` only while it has a
-                model it may pick that does.
+                is chat-only or that monomind can run read-only, and whose sandbox
+                monomind can apply; set to `none`, no model has it). A key created
+                with `--context` is not offered `tools` while
+                `--context-confinement` is chat-only: a request that declares them
+                is refused for it. `auto` lists `image` or `tools` only while it
+                has a model it may pick that does.
               items: { type: string, enum: [text, image, tools] }
     ModelList:
       type: object

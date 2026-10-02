@@ -332,6 +332,10 @@ curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \
   | jq -r '.data[] | select(.monoagent.capabilities | index("tools")) | .id'
 ```
 
+A key created with `--context` is not offered `tools` (and a request that
+declares them is a 403) unless the operator raised `--context-confinement`
+above chat-only.
+
 A round trip with curl. The first request declares the function; the answer ends
 at the model's call:
 

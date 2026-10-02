@@ -2,7 +2,9 @@ package openaiapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -144,5 +146,50 @@ func TestTheRefusalOfToolsForAContextKeyTakesNoSlot(t *testing.T) {
 	}
 	if counts.turns.Load() != 1 || counts.searches.Load() != 0 {
 		t.Errorf("%d turns and %d knowledge searches: only the one that held the slot may have run", counts.turns.Load(), counts.searches.Load())
+	}
+}
+
+// The lists say what a key may do: a key that a request with tools would be refused for is
+// not offered the capability, by a model or by auto, and one that would be served is.
+func TestModelListsOfferToolsOnlyToAKeyThatMayUseThem(t *testing.T) {
+	f := &fakeAuto{id: "claude/default", p: 1}
+	h := autoGateway(t, f, withReadAccess)
+	plain, ctxKey := h.key(t, "default", "plain", false), h.key(t, "default", "ctx", true)
+	raised := Policy{Max: Unconfined, ContextMax: Sandboxed, AutoMax: Unconfined}
+
+	for _, c := range []struct {
+		name   string
+		policy Policy
+		secret string
+		tools  bool
+	}{
+		{"a key without --context", autoAnyPolicy, plain, true},
+		{"a context key under the default policy", autoAnyPolicy, ctxKey, false},
+		{"a context key under a raised --context-confinement", raised, ctxKey, true},
+	} {
+		have := map[string]bool{}
+		listed := decodeModelList(t, h.serve(c.policy, http.MethodGet, "/v1/models", c.secret, "")).Data
+		for _, m := range listed {
+			have[m.ID] = slices.Contains(m.Monoagent.Capabilities, "tools")
+			if have[m.ID] && !c.tools {
+				t.Errorf("%s: %s offers tools to a key that would be refused them", c.name, m.ID)
+			}
+		}
+		if len(listed) < 2 || have["claude/default"] != c.tools {
+			t.Errorf("%s: %d models listed, claude/default has tools = %v, want %v", c.name, len(listed), have["claude/default"], c.tools)
+		}
+		if _, hasAuto := have["auto"]; !hasAuto || have["auto"] != c.tools {
+			t.Errorf("%s: auto has tools = %v (listed %v), want %v", c.name, have["auto"], hasAuto, c.tools)
+		}
+		for _, id := range []string{"claude/default", "auto"} {
+			var one modelObject
+			rec := h.serve(c.policy, http.MethodGet, "/v1/models/"+id, c.secret, "")
+			if err := json.Unmarshal(rec.Body.Bytes(), &one); err != nil || rec.Code != http.StatusOK {
+				t.Fatalf("%s: GET /v1/models/%s: %d %s", c.name, id, rec.Code, rec.Body)
+			}
+			if slices.Contains(one.Monoagent.Capabilities, "tools") != c.tools || !slices.Contains(one.Monoagent.Capabilities, "text") {
+				t.Errorf("%s: %s says %v, want tools = %v and text", c.name, id, one.Monoagent.Capabilities, c.tools)
+			}
+		}
 	}
 }

@@ -638,7 +638,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   declared one in the spike, so any other runtime, and a model of a listed one
   that monomind cannot run read-only (see below), is 400 `unsupported_parameter`
   on `tools` before anything starts; `GET /v1/models` gives `"tools"` among the
-  capabilities of the models that serve them, and `api models --json` the same,
+  capabilities of the models that serve them (not to a key created with
+  `--context` while `--context-confinement` is chat-only, which a request with
+  tools is refused for), and `api models --json` the same,
   per model, with `api models` also as a TOOLS column of its table and the MCP
   tool `api_models_list`, which is that document, from its own server's
   `MONOAGENT_API_TOOL_RUNTIMES`; `none` switches tool calling off: no model has
