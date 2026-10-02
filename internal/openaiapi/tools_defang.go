@@ -135,18 +135,22 @@ func neutralise(text string, markers bool) string {
 // line break a line feed, and no fence tag and no turn marker the model could read in it.
 func defangResult(text string) string { return neutralise(lineBreaks.Replace(text), true) }
 
+// rawLineBreaks are the three characters that end a line and that JSON lets through raw
+// inside a string (every other one is a control character, which JSON forbids there): they
+// are escaped in the arguments of a call, which stay the JSON they were.
+var rawLineBreaks = strings.NewReplacer("\u0085", `\u0085`, "\u2028", `\u2028`, "\u2029", `\u2029`)
+
 // argumentsInPrompt is the arguments of a call of the request as the transcript renders
-// them, outside any fence. JSON is compact (which leaves no line break in it but the
-// three that JSON allows raw inside a string, escaped here) and has its angle brackets
-// and ampersands escaped; the fence tags a skeleton finds in it are neutralised all the
-// same. Anything else is defanged as a result is.
+// them, outside any fence. JSON is compact, which leaves no line break in it but the three
+// that rawLineBreaks escapes, and is otherwise as the model made it (code goes through the
+// arguments of a write or an edit, and a model that reads its own call back with its angle
+// brackets and ampersands escaped reads something it never wrote); the fence tags a
+// skeleton finds in it are neutralised all the same. Anything else is defanged as a result is.
 func argumentsInPrompt(raw json.RawMessage) string {
 	text := argumentsText(raw)
 	var compact bytes.Buffer
 	if json.Compact(&compact, []byte(text)) != nil {
 		return defangResult(text)
 	}
-	var escaped bytes.Buffer
-	json.HTMLEscape(&escaped, compact.Bytes()) // <, >, & and the line and paragraph separators
-	return neutralise(strings.ReplaceAll(escaped.String(), "\u0085", `\u0085`), false)
+	return neutralise(rawLineBreaks.Replace(compact.String()), false)
 }

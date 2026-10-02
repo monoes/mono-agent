@@ -203,6 +203,16 @@ func TestTheNameAndTheIdOfACallOfTheConversationAreTokens(t *testing.T) {
 	}
 }
 
+// Code goes through the arguments of a write or an edit: the model reads its own call back as
+// it made it, angle brackets and ampersands included, and not as escapes it never wrote.
+func TestTheArgumentsOfACallKeepTheirAngleBracketsAndAmpersands(t *testing.T) {
+	const arguments = `{"path":"a.go","content":"if a < b && c > d { return \"<div>\" }"}`
+	req := toolRequest(t, `"tools":[`+weatherTool+`]`, conversation(arguments, "ok"))
+	if got := replayPrompt(req, true); !strings.Contains(got, "(called the function get_weather with arguments "+arguments+")") {
+		t.Errorf("the arguments as the model made them are not in the replay:\n%s", got)
+	}
+}
+
 // What the arguments say reaches the prompt as the JSON they are.
 func TestTheArgumentsOfACallAreRenderedAsCompactJSON(t *testing.T) {
 	req := toolRequest(t, `"tools":[`+weatherTool+`]`, conversation("{\n \"city\": \"Paris\",\n \"units\": [ 1, 2 ]\n}", "21 C"))
