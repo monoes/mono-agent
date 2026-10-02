@@ -232,6 +232,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
   - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
   - `org stop|pause|resume <org>` are the bubble's controls.
+- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`). The app asks `api models` for the policy that `api status` reports for the listener it shows. `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes.
 
 ## monoes.me library
 
@@ -539,6 +540,21 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (and per failure to list models or to search a context key's knowledge,
   among others), and never a prompt, an answer or a key. Stopping the server
   answers a turn in flight with a 503 the client can retry.
+- **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
+  folded until opened) runs the commands above through `wails-app/app_api.go`.
+  It shows where `/v1` listens and whether it runs (the base URL with a copy
+  button, and the exposure and confinement the running daemon reports, or that
+  they are assumed from the app's environment), the active profile's keys
+  (create with a show-once panel, a context switch, revoke after a
+  confirmation) and the models: their class, whether the listener's policy
+  serves them, and whether a context key and `auto` may use them. `auto` says
+  what it picks among and how many served models `--auto-confinement` holds
+  back, or what it is missing, with a link to the Jev settings when that is
+  where it is switched on (the `api_auto` surface, a Jev key). `api status`
+  reports no scheme, so the base URL is `http://` for the main listener and a
+  dedicated loopback one and `https://` for a dedicated one off loopback: it is
+  wrong for a dedicated loopback listener when the server has
+  `MONOAGENT_API_TLS_CERT` set, which makes that one speak TLS.
 
 Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 `examples/openai-api-quickstart.md`; paths and schemas:
