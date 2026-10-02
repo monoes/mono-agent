@@ -575,7 +575,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   says why for each: not installed, or installed but chat-only; the server logs the
   same once, with the first list of models it loads. `GET /v1/models`
   gives `"capabilities":["text","image"]` to the models that can, and
-  `api models --json` the same per model. The runtime has to write the file, so
+  `api models --json` (and the MCP tool `api_models_list`, which is its document)
+  the same per model, `api models` also as an IMAGES column of its table, read
+  from this shell's `MONOAGENT_API_IMAGE_RUNTIMES` (the tool reads its own
+  server's). The runtime has to write the file, so
   the model must run as `sandboxed` or `unconfined`: under `--confinement
   chat-only`, or for a `--context` key held to chat-only, a request without a
   model is 403 `policy_denied` saying to raise `--confinement` (and

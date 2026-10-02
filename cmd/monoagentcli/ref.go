@@ -2786,8 +2786,9 @@ OPENAI-COMPATIBLE API (/v1)
 
     monoagentcli api key create --name NAME [--context]
     monoagentcli api key list [--all-profiles] | show | update | revoke
-    monoagentcli api models        each model with its confinement class, as
-                                   this shell's flags and environment see it
+    monoagentcli api models        each model with its confinement class and
+                                   whether it makes images, as this shell's
+                                   flags and environment see it
     monoagentcli api status        listeners, key count, reachability
 
   monoagentcli mcp has the same management as tools, for its own profile:

@@ -78,10 +78,18 @@
 
 Two read-only reviews (security, correctness) of the branch led to these changes, each test-first and mutation-checked, in small commits:
 
-- [x] The turn gets an output folder with an unpredictable name (`turn.Subdir`) and only that is read, so a process an earlier turn left running cannot put a file into a later response; the collection is bounded (first 12 bytes, 64 entries, a budget, the caller leaving) and counts files outside the folder.
+- [x] The turn gets an output folder with an unpredictable name (`turn.Subdir`) and only that is read, so a process an earlier turn left running, which keeps writing where it wrote before, does not put a file into a later response; the collection is bounded (first 12 bytes, 64 entries, a budget, the caller leaving) and counts files outside the folder.
 - [x] The response is streamed, the slot is released before it is written, and a client has two minutes to read it.
 - [x] `MONOAGENT_API_IMAGE_RUNTIMES=none` is the off switch; the messages tell a runtime that is not installed from one that is chat-only, the hint of the 400 follows the key's policy, and the operator is told once which listed runtimes make no images.
 - [x] Earlier in the round: images win over `NO_IMAGE_TOOL` (a line of its own only), no collection after a turn that never said done, a field of the wrong type is `invalid_value`, refusals log the model, a success logs what was left out.
 - [x] The slot and emptying tests test what they say (one slot, a start-of-turn case, the endings of a request, a refused request while the slot is held).
 - [x] SECURITY.md, AGENTS.md, CHANGELOG, `openapi.yaml`, the quickstart (the proxy timeout), `ref api` and spec §7.3 say the same.
 - Live, after the per-turn folder: antigravity returned a JPEG (74.9 s) and codex, for the first time through the gateway, a PNG (105.3 s), each from the folder it was given.
+
+## Stacked on phase 2 (2026-10-02)
+
+The final order of the stack is phase 1, the MCP tools and the desktop section (`feat/openai-api-p2`), then this phase. The branch was rebased onto `feat/openai-api-p2`:
+
+- [x] `api models --json` is one document now, made by `openaiapi.NewModelsReport` for the command and for the MCP tool `api_models_list`: each model has `capabilities` (additive JSON, last field of a model), the input has `ImageRuntimes` (`nil` is the default list, a list with nothing in it, which `none` makes, is image generation off) and `EffectiveImageRuntimes` reads the variable. The table has the IMAGES column. A bad value is exit 3 for the command and a fixed text for the tool. The pipe test that compares the tool with the command covers it.
+- [x] The catalog's first-load hook (the log of runtimes of the image list that make no images) works with `ModelsBound`: told of the first list that is cached, whoever loads it, and not of a bound load whose starter left.
+- [x] The desktop section reads `api models --json` without looking at fields it does not know: nothing of it changes, and it does not show `capabilities` (see its binding, `wails-app/app_api.go`, for a later change).
