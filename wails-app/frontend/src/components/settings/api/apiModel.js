@@ -5,16 +5,32 @@
 // The values of --confinement, --context-confinement and --auto-confinement.
 export const CLASSES = ['chat-only', 'sandboxed', 'any']
 
-// pickListener is the listener the header describes: the main one when it is
-// loopback and serves /v1, else the dedicated --v1-addr one. With neither, the
-// main one (off loopback, or not mounted by the daemon), only to say why /v1 is
-// not served; null when `api status` lists no listener.
+// policyClass spells a model class as the policy that allows it. The CLI says
+// unconfined for the class and any for the policy: a listener's confinement is
+// "any", while auto.confinement of `api models` is "unconfined" for the same thing.
+export const policyClass = (c) => (c === 'unconfined' ? 'any' : c)
+
+const listenersOf = (status) => (Array.isArray(status?.listeners) ? status.listeners.filter(l => l && typeof l === 'object') : [])
+
+// servingListeners is every listener that is meant to serve /v1, in the order
+// `api status` lists them (the main one first). Each is shown: one that is
+// bound beyond loopback is never left out in favour of one that is not.
+export function servingListeners(status) {
+  return listenersOf(status).filter(l => l.v1)
+}
+
+// pickListener is the one listener the page evaluates the models and the keys'
+// context hint against, and the header's chip describes: of the listeners that
+// serve /v1, one that answers /v1, else one that answers /health, else the first
+// listed. With none serving, the main one (off loopback, or not mounted by the
+// daemon), only to say why /v1 is not served; null when `api status` lists no listener.
 export function pickListener(status) {
-  const ls = Array.isArray(status?.listeners) ? status.listeners : []
-  const main = ls.find(l => l?.name === 'main')
-  const dedicated = ls.find(l => l?.name === 'v1')
-  if (main?.loopback && main?.v1) return main
-  return dedicated || main || null
+  const rank = (l) => (l.reachable && l.v1_answers ? 2 : l.reachable ? 1 : 0)
+  let best = null
+  for (const l of servingListeners(status)) if (!best || rank(l) > rank(best)) best = l
+  if (best) return best
+  const ls = listenersOf(status)
+  return ls.find(l => l.name === 'main') || ls[0] || null
 }
 
 // listenerState says what `api status` found at a listener: the cases of its
@@ -33,20 +49,59 @@ export function listenerState(l) {
   return l.v1_answers ? 'serving' : 'stale'
 }
 
+const LABEL = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
+const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)'
+const HOSTNAME = new RegExp(`^${LABEL}(?:\\.${LABEL})*$`)
+const IPV4 = new RegExp(`^${OCTET}(?:\\.${OCTET}){3}$`)
+
+// isIPv6 is the text of an IPv6 address without zone: up to eight groups of hex
+// digits, one "::" at most, and an IPv4 address allowed in the last two groups.
+function isIPv6(s) {
+  if (!/^[0-9A-Fa-f:.]+$/.test(s)) return false
+  let groups = s
+  if (s.includes('.')) {
+    const at = s.lastIndexOf(':')
+    if (!IPV4.test(s.slice(at + 1))) return false
+    groups = s.slice(0, at + 1) + '0:0' // the two groups the IPv4 address takes
+  }
+  const halves = groups.split('::')
+  if (halves.length > 2) return false
+  const parts = (h) => (h === '' ? [] : h.split(':'))
+  const all = [...parts(halves[0]), ...(halves.length === 2 ? parts(halves[1]) : [])]
+  if (!all.every(g => /^[0-9A-Fa-f]{1,4}$/.test(g))) return false
+  return halves.length === 2 ? all.length <= 7 : all.length === 8
+}
+
+// isHost: a host name (letters, digits, hyphens and dots, whose last label is not a
+// number: a number there is an IPv4 address, and then a valid one), an IPv4
+// address, or an IPv6 address in brackets. Nothing else is part of a base URL, so
+// that what is copied never names a host the listener does not bind.
+function isHost(h) {
+  if (h.startsWith('[')) return h.endsWith(']') && isIPv6(h.slice(1, -1))
+  if (IPV4.test(h)) return true
+  return h.length <= 253 && HOSTNAME.test(h) && !/^\d+$/.test(h.slice(h.lastIndexOf('.') + 1))
+}
+
 // baseURL is where a client points its base_url, or null for a listener that is
-// not meant to serve /v1. `api status` reports no scheme, so it is derived: the
-// main listener is plain HTTP, a dedicated one is TLS off loopback and plain on
-// loopback (unless the server has MONOAGENT_API_TLS_CERT set, which `api status`
-// cannot tell). A wildcard host is not an address a client can use: it is shown
-// as localhost, and `wildcard` says so.
+// not meant to serve /v1 and for an address that is not a host and a port (1 to
+// 65535): the page copies it, so it never copies a URL the address could have
+// bent to another host. The scheme is the one `api status` saw answer; for a
+// listener it could not reach (or a CLI that predates it) the scheme is derived:
+// the main listener is plain HTTP, a dedicated one is TLS off loopback and plain
+// on loopback (unless the server has MONOAGENT_API_TLS_CERT set, which only a
+// probe can tell). A wildcard host is not an address a client can use: it is
+// shown as localhost, and `wildcard` says so.
 export function baseURL(l) {
   if (!l?.v1 || !l.addr) return null
-  const m = /^(\[[^\]]*\]|[^:[\]]*):(\d+)$/.exec(String(l.addr).trim())
+  const m = /^(\[[^\]]*\]|[^:[\]]*):(\d{1,5})$/.exec(String(l.addr))
   if (!m) return null
-  const bare = m[1].replace(/^\[|\]$/g, '')
-  const wildcard = bare === '' || bare === '0.0.0.0' || bare === '::'
-  const tls = l.name === 'v1' && !l.loopback
-  return { url: `${tls ? 'https' : 'http'}://${wildcard ? 'localhost' : m[1]}:${m[2]}/v1`, tls, wildcard }
+  const [, host, p] = m
+  const port = Number(p)
+  if (port < 1 || port > 65535) return null
+  const wildcard = host === '' || host === '0.0.0.0' || host === '[::]'
+  if (!wildcard && !isHost(host)) return null
+  const scheme = l.scheme === 'http' || l.scheme === 'https' ? l.scheme : (l.name === 'v1' && !l.loopback ? 'https' : 'http')
+  return { url: `${scheme}://${wildcard ? 'localhost' : host}:${port}/v1`, tls: scheme === 'https', wildcard }
 }
 
 // modelsArgs are the arguments of APIModels: [for, confinement, contextConfinement,

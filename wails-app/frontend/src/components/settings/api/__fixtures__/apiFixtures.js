@@ -1,24 +1,38 @@
 // Realistic CLI documents for the API section's tests: the shapes of
 // `api status --json` and `api models --json` (cmd/monoagentcli/api_status.go and
-// api_models.go), with the models of a real machine. The flags are computed the
-// way the CLI computes them, so a fixture is consistent with its policy.
+// api_models.go) as the app's bindings pass them on, with the models of a real
+// machine. The flags are computed the way the CLI computes them, so a fixture is
+// consistent with its policy, and so is its spelling: a policy says chat-only,
+// sandboxed or any, a model's class says chat-only, sandboxed or unconfined, and
+// the CLI's auto.confinement is a class while its policy.auto_confinement is a policy.
 
 const WEIGHT = { 'chat-only': 1, sandboxed: 2, unconfined: 3, any: 3 }
+const asClass = (policy) => (policy === 'any' ? 'unconfined' : policy)
 
 export const MISSING_SURFACE = 'the api_auto surface switched on for the profile (monoagentcli jev enable api_auto)'
 export const MISSING_KEY = 'a Jev key for the profile (monoagentcli jev key set, or TYPESAFE_API_KEY)'
 
-export const mainListener = (over = {}) => ({
+// A listener as a current CLI reports it: the scheme that answered, and none when nothing did.
+function listener(base, over) {
+  const l = { ...base, ...over }
+  if (!l.reachable) delete l.scheme
+  return l
+}
+
+export const mainListener = (over = {}) => listener({
   name: 'main', addr: '127.0.0.1:9322', loopback: true, v1: true,
   confinement: 'any', context_confinement: 'chat-only', auto_confinement: 'chat-only',
-  confinement_source: 'environment', reachable: true, v1_answers: true, ...over,
-})
+  confinement_source: 'environment', scheme: 'http', reachable: true, v1_answers: true,
+}, over)
 
-export const dedicatedListener = (over = {}) => ({
+export const dedicatedListener = (over = {}) => listener({
   name: 'v1', addr: '0.0.0.0:9443', loopback: false, v1: true,
   confinement: 'chat-only', context_confinement: 'chat-only', auto_confinement: 'chat-only',
-  confinement_source: 'daemon', reachable: true, v1_answers: true, ...over,
-})
+  confinement_source: 'daemon', scheme: 'https', reachable: true, v1_answers: true,
+}, over)
+
+// The same listener from a CLI that predates the scheme.
+export const withoutScheme = (l) => { const o = { ...l }; delete o.scheme; return o }
 
 export const statusOf = (listeners, over = {}) => ({
   v: 1, profile: 'default', keys: { active: 2 }, daemon: { running: false },
@@ -47,10 +61,13 @@ export function modelsDoc({ confinement = 'any', context = 'chat-only', auto = '
   }))
   const candidates = models.filter(m => m.auto_allowed).length
   const heldBack = models.filter(m => m.allowed).length - candidates
-  const autoDoc = autoState || { available: true, key_source: 'vault', confinement: WEIGHT[auto] < WEIGHT[confinement] ? auto : confinement, candidates, held_back: heldBack }
+  const cap = (p) => (WEIGHT[p] < WEIGHT[confinement] ? p : confinement)
+  // The CLI leaves a count of 0 out, and spells auto.confinement as a class.
+  const counts = { ...(candidates ? { candidates } : {}), ...(heldBack ? { held_back: heldBack } : {}) }
+  const autoDoc = autoState || { available: true, key_source: 'vault', confinement: asClass(cap(auto)), ...counts }
   return {
     v: 1,
-    policy: { for: forListener, confinement, context_confinement: WEIGHT[context] < WEIGHT[confinement] ? context : confinement, auto_confinement: WEIGHT[auto] < WEIGHT[confinement] ? auto : confinement, source: 'shell' },
+    policy: { for: forListener, confinement, context_confinement: cap(context), auto_confinement: cap(auto), source: 'shell' },
     models,
     auto: autoDoc,
   }
