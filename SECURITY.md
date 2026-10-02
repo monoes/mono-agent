@@ -572,16 +572,18 @@ moved to it, and its prompts to TypeSafe, by switching the surface on.
 What Jev can decide is bounded by structure, not by its instructions. The prompt
 goes as data (`state.untrusted_prompt`, and Jev is told to treat it so), but Jev
 can only answer with one of the listed model ids, anything else is discarded,
-and the list is already cut to what the key's policy allows (the listener's
-`--confinement`, a context key's `--context-confinement`) before Jev sees it. A
-prompt that steers Jev can therefore never reach a model the key could not have
-named itself. It can reach any of them, though: under the default loopback
-policy (`any`) that includes an unconfined runtime, and the author of a prompt
-need not be the holder of the key (an app that forwards its users' text, say),
-so a prompt can choose the confinement class of its own turn. Where that is not
-acceptable, set `--confinement chat-only` or `sandboxed`: `auto` follows it, and
-`api models` shows how many models Jev would pick among. A context key stays at
-chat-only unless `--context-confinement` says otherwise, through `auto` as well.
+and the list is already cut before Jev sees it: to what the key's policy allows
+(the listener's `--confinement`, a context key's `--context-confinement`) and
+within `--auto-confinement`, which is **chat-only unless the operator raised
+it**. A prompt that steers Jev can therefore never reach a model the key could
+not have named itself and, by default, never one with native tools. The author
+of a prompt need not be the holder of the key (an app that forwards its users'
+text, say), so letting a prompt choose the confinement class of its own turn is
+a permission the operator gives, with `--auto-confinement sandboxed|any`
+(`MONOAGENT_API_AUTO_CONFINEMENT`); `api models` shows which models auto may
+pick and how many are held back. A model the client names itself is not subject
+to it. A context key stays at chat-only unless `--context-confinement` says
+otherwise, through `auto` as well.
 Jev's answer is used only when it arrives within 8 seconds (looking up the key
 included), with no retry, and is sure enough for the surface's threshold; an
 outage, a timeout or a doubt falls back to a rule, never to a wider set: of the

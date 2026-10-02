@@ -432,10 +432,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   TypeSafe: the first 4,000 characters of the last user message and each
   candidate's name, description and validated cost and latency, never the
   system prompt, earlier turns, the profile's knowledge or a key. Jev only
-  picks among options the code lists, so it never goes beyond what the policy
-  allows, but that includes every class the policy allows: under the default
-  loopback policy (`any`) a prompt can steer it to an unconfined runtime, so
-  set `--confinement` to keep `auto` within a class. A failure, a timeout
+  picks among options the code lists: the models the policy allows within
+  `--auto-confinement` (`MONOAGENT_API_AUTO_CONFINEMENT`), which is `chat-only`
+  unless the operator raised it, because a prompt can steer which model Jev
+  picks and its author need not hold the key. It never goes above the
+  listener's policy or a context key's cap, and a model the client names itself
+  is not affected; `api models` shows what auto may pick (`auto_allowed` per
+  model, `auto.candidates`, `auto.held_back`). A failure, a timeout
   (8 seconds, key lookup included), an answer that is not an option or a
   probability under the surface's threshold (default 0, set it with `jev
   enable api_auto --threshold`) uses a rule instead: of the validated models
@@ -504,6 +507,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `--context-confinement chat-only|sandboxed|any`
   (`MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest
   class a key created with `--context` may use, never above the listener's.
+  `--auto-confinement chat-only|sandboxed|any` (`MONOAGENT_API_AUTO_CONFINEMENT`,
+  default `chat-only`) is the strongest class the `auto` model may pick, never
+  above the listener's or a context key's.
 - **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
   is loopback (default `127.0.0.1:9322`, where every runtime is allowed
   unless `--confinement` says otherwise). To serve it
@@ -1534,6 +1540,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_API_TLS_CERT` / `MONOAGENT_API_TLS_KEY` | Explicit TLS certificate/key file paths for the `--v1-addr` listener; when set they also make a loopback bind speak TLS. Both or neither: setting only one, or a pair that cannot be loaded, stops `httpapi` at startup, while `daemon` only prints a warning and serves no dedicated listener. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/api-tls/`, and a loopback bind is plain HTTP. |
 | `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). One value for every listener of the process, the loopback main one included. Default: unset — `any` on a loopback listener, `chat-only` on any other. |
 | `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
+| `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |

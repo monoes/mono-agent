@@ -331,8 +331,9 @@ paths:
         jev enable api_auto`) and a Jev key, the list ends with the model
         `auto` (`owned_by` is `jev`), after the others so that a client that
         takes the first model is not moved to it: a request for it has Jev pick
-        the model among the others. Its `confinement` is the strongest class
-        the key's policy allows.
+        the model among the others. Its `confinement` is the strongest class it
+        picks within: the key's policy, capped by what the operator let auto
+        pick (`--auto-confinement`, chat-only unless raised).
       security:
         - apiKeyAuth: []
       responses:
@@ -386,8 +387,9 @@ paths:
         below `--context-confinement` (chat-only by default).
 
         `model` may be `auto`: TypeSafe Jev then picks the model of this
-        request among the ones the key may use (the listener's policy, and for
-        a key created with `--context` its own cap, decide which). It is off
+        request among the ones the key may use (the listener's policy, the
+        operator's `--auto-confinement`, chat-only unless raised, and for a key
+        created with `--context` its own cap, decide which). It is off
         until the key's profile runs `monoagentcli jev enable api_auto` and has
         a Jev key; the first 4,000 characters of the last user message and the
         names, descriptions and validated cost and latency of the candidates

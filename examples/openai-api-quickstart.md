@@ -203,12 +203,14 @@ when only one model was left to pick. Of the models that passed
 the rule takes the most confined, then the cheapest, then the fastest; with none
 validated, a runtime's default model, claude first.
 
-Jev picks only among models the key may use: under `--confinement chat-only`, or
-for a `--context` key held to its own cap, a model above the cap is not an
-option. Mind that on loopback the default policy allows every runtime, so a
-prompt can steer `auto` to an unconfined one (see `SECURITY.md`): start the
-server with `--confinement chat-only` or `sandboxed` to keep `auto` within a
-class. `GET /v1/models` lists `auto` after the other models, so a client that
+Jev picks only among models the key may use, and by default only among the
+chat-only ones (claude): a prompt can steer the pick, and its author need not
+be the holder of the key (see `SECURITY.md`). To let `auto` pick sandboxed or
+unconfined runtimes too, start the server with `--auto-confinement sandboxed`
+(or `any`, or `MONOAGENT_API_AUTO_CONFINEMENT`); it never goes above
+`--confinement`, nor above the cap of a `--context` key, and a model you name
+yourself is not affected. `monoagentcli api models` shows which models `auto`
+may pick. `GET /v1/models` lists `auto` after the other models, so a client that
 takes the first one is not moved to it, and leaves it out while it does not work;
 `monoagentcli api status` says what is missing.
 

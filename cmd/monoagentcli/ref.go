@@ -2736,9 +2736,11 @@ OPENAI-COMPATIBLE API (/v1)
   profile: monoagentcli jev enable api_auto, with a Jev key (jev key set, or
   TYPESAFE_API_KEY in the server's environment). What leaves the machine: the
   first 4,000 characters of the last user message, and each candidate's name,
-  description and validated cost and latency. Jev never goes beyond the policy,
-  but under the default loopback policy (any) that includes unconfined runtimes:
-  --confinement keeps "auto" within a class. A Jev failure, a timeout (8 s) or a
+  description and validated cost and latency. It picks among chat-only models
+  unless the operator raised --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT;
+  a prompt can steer the pick and its author need not hold the key), never above
+  --confinement or a --context key's cap; api models shows what it may pick. A Jev
+  failure, a timeout (8 s) or a
   doubt falls back to a rule (of the validated models the most confined, then the
   cheapest, then the fastest; with none validated, a runtime's default model),
   never to a wider set. The answer carries X-Monoagent-Model (the pick) and
@@ -2771,7 +2773,8 @@ OPENAI-COMPATIBLE API (/v1)
   unlisted, GET /v1/models/{id} answers 404 for it and a completion naming it
   answers 403 policy_denied. --context-confinement
   (MONOAGENT_API_CONTEXT_CONFINEMENT, default chat-only) caps what a
-  --context key may use, never above that.
+  --context key may use, never above that. --auto-confinement
+  (MONOAGENT_API_AUTO_CONFINEMENT, default chat-only) caps what "auto" may pick.
 
   Exposure: /v1 is served on the main listener only while it is loopback.
   Beyond the machine use --v1-addr (MONOAGENT_API_V1_ADDR) on httpapi or
