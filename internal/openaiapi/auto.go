@@ -113,8 +113,8 @@ func (g *Gateway) noAutoCandidates(ctx context.Context, eff Policy, capability s
 			return fmt.Sprintf("a model that calls tools within what auto may pick (%s here): the models this key may use that call tools run as sandboxed or unconfined, "+
 				"and the operator can raise --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT) to sandboxed or any", eff.ForAuto())
 		}
-		return fmt.Sprintf("a model this key may use that calls tools, and there is none: tool calling is served on %s only (MONOAGENT_API_TOOL_RUNTIMES), "+
-			"and a runtime that is not chat-only needs monomind to run it read-only", strings.Join(g.cfg.ToolRuntimeList(), ", "))
+		return fmt.Sprintf("a model this key may use that calls tools, and there is none: tool calling is served on %s only (MONOAGENT_API_TOOL_RUNTIMES), %s",
+			strings.Join(g.cfg.ToolRuntimeList(), ", "), g.whyNoToolModel(ctx, eff))
 	}
 	if capability != capImage {
 		return "at least one model the server's confinement policy allows auto to pick (chat-only, unless --auto-confinement says more)"
@@ -125,6 +125,40 @@ func (g *Gateway) noAutoCandidates(ctx context.Context, eff Policy, capability s
 	}
 	return fmt.Sprintf("an image model this key may use, and there is none: no installed runtime of the image list (%s) can make images under "+
 		"the server's confinement policy (--confinement, and --context-confinement for a key created with --context)", strings.Join(g.cfg.ImageRuntimeList(), ", "))
+}
+
+// whyNoToolModel says why the models of the runtimes that serve tool calling cannot serve it
+// here, for a key whose effective policy is eff: the causes are the ones the models of those
+// runtimes this key may use are refused for (Config.toolsRefusal), each with the runtimes it
+// is true of, and neither is cured by --auto-confinement. With no model of those runtimes
+// to use at all, it says that.
+func (g *Gateway) whyNoToolModel(ctx context.Context, eff Policy) string {
+	list := g.cfg.ToolRuntimeList()
+	var noSandbox, noRead []string
+	if usable, err := g.catalog.Visible(ctx, eff); err == nil {
+		for _, m := range usable {
+			if !slices.Contains(list, m.Runtime) {
+				continue
+			}
+			if !m.Sandboxable && !slices.Contains(noSandbox, m.Runtime) {
+				noSandbox = append(noSandbox, m.Runtime)
+			}
+			if m.Class != ChatOnly && !m.ReadAccess && !slices.Contains(noRead, m.Runtime) {
+				noRead = append(noRead, m.Runtime)
+			}
+		}
+	}
+	var causes []string
+	if len(noSandbox) > 0 {
+		causes = append(causes, fmt.Sprintf("a turn with tools requires monomind's sandbox, which this machine's monomind cannot apply to %s", strings.Join(noSandbox, ", ")))
+	}
+	if len(noRead) > 0 {
+		causes = append(causes, fmt.Sprintf("monomind cannot run %s read-only, which a runtime that is not chat-only needs", strings.Join(noRead, ", ")))
+	}
+	if len(causes) == 0 {
+		return "and no model of those runtimes is available to this key (the runtime is not installed, or the policy does not allow it)"
+	}
+	return "and " + strings.Join(causes, ", and ")
 }
 
 // autoObject is auto as a model of the list. Its confinement is the strongest

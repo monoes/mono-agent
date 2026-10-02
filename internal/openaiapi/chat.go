@@ -42,7 +42,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 
 		eff := policyFor(p, pr)
 		if req.toolsActive() { // before anything starts: no model is resolved, no pick, no slot, no knowledge search
-			if e := contextToolsRefusal(pr, eff); e != nil {
+			if e := contextToolsRefusal(pr, p, eff); e != nil {
 				fail(e)
 				return
 			}

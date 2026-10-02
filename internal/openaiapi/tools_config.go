@@ -87,15 +87,28 @@ func (c Config) toolsRefusal(m ModelInfo) *apiError {
 	return nil
 }
 
-// contextToolsRefusal is the 403 for a request that declares tools with a key created with
-// --context, unless the operator raised --context-confinement above chat-only (eff is the
-// policy the key is held to). Such a key puts excerpts of the profile's knowledge, which
-// includes captured web pages nobody vetted, into the system prompt, and an instruction in
-// one of them could steer which calls the model proposes, which the client runs with its
-// own authority. The answer is fixed and names no function.
-func contextToolsRefusal(pr Principal, eff Policy) *apiError {
-	if !pr.Context || eff.Max > ChatOnly {
+// contextToolsRefused says whether a key created with --context is refused tools: it is, unless
+// the operator raised --context-confinement above chat-only (eff is the policy the key is held
+// to, the listener's capped at that).
+func contextToolsRefused(pr Principal, eff Policy) bool { return pr.Context && eff.Max <= ChatOnly }
+
+// contextToolsRefusal is the 403 for a request that declares tools with a key that
+// contextToolsRefused. Such a key puts excerpts of the profile's knowledge, which includes
+// captured web pages nobody vetted, into the system prompt, and an instruction in one of them
+// could steer which calls the model proposes, which the client runs with its own authority. The
+// answer is fixed and names no function, and it names the flag that would change it: the key
+// is held to the lower of the listener's --confinement and --context-confinement, so on a
+// listener that is chat-only raising --context-confinement alone changes nothing.
+func contextToolsRefusal(pr Principal, listener, eff Policy) *apiError {
+	if !contextToolsRefused(pr, eff) {
 		return nil
 	}
-	return errPolicy("Tool calling is not available to a key created with --context: its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted, and an instruction in one of them could steer the calls the model asks you to run. Use a key created without --context, or ask the operator to raise --context-confinement.")
+	const why = "Tool calling is not available to a key created with --context: its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted, and an instruction in one of them could steer the calls the model asks you to run. Use a key created without --context, or ask the operator to "
+	switch {
+	case listener.Max > ChatOnly:
+		return errPolicy(why + "raise --context-confinement.")
+	case listener.ContextMax > ChatOnly:
+		return errPolicy(why + "raise --confinement: this server is chat-only, and a key created with --context is held to the lower of the two.")
+	}
+	return errPolicy(why + "raise --confinement and --context-confinement: this server is chat-only, and a key created with --context is held to the lower of the two.")
 }

@@ -171,3 +171,40 @@ func TestAPIModelsTableHasAToolsColumn(t *testing.T) {
 		t.Errorf("tool calling switched off: %v", tools)
 	}
 }
+
+// Which models serve tools depends on more than the list of runtimes: every turn with tools
+// requires monomind's sandbox, and a key created with --context is refused tools unless
+// --context-confinement is above chat-only. The help says both, and so does one line under
+// the table (the JSON document is the one the MCP tool returns, and has no field for it).
+func TestAPIModelsSaysWhatToolCallingNeedsBeyondTheListOfRuntimes(t *testing.T) {
+	db := newAPITestDB(t)
+	fakeReadOnlyMonomind(t)
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_TOOL_RUNTIMES", "")
+
+	help, _, err := runAPI(t, db, "default", false, "models", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.Join(strings.Fields(help), " ")
+	for _, want := range []string{"sandbox", "agent-exec-sandbox", "refused tools", "--context-confinement"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the help of `api models` does not say %q:\n%s", want, help)
+		}
+	}
+
+	out, _, err := runAPI(t, db, "default", false, "models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "tools: ") || !strings.Contains(last, "sandbox") || !strings.Contains(last, "--context-confinement") {
+		t.Errorf("the last line under the table must say what tool calling needs, got %q", last)
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "tools: ") && line != last {
+			t.Errorf("one line, not two: %q", line)
+		}
+	}
+}

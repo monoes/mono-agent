@@ -81,8 +81,8 @@ func TestToolsAreRefusedForAContextKeyUnlessTheOperatorRaisedItsConfinement(t *t
 			continue
 		}
 		e := decodeErrorBody(t, rec)
-		if rec.Code != http.StatusForbidden || e["code"] != "policy_denied" || !strings.Contains(rec.Body.String(), "--context-confinement") {
-			t.Errorf("%s: status %d, body %s, want 403 policy_denied that names --context-confinement", c.name, rec.Code, rec.Body)
+		if rec.Code != http.StatusForbidden || e["code"] != "policy_denied" || !strings.Contains(rec.Body.String(), "confinement") {
+			t.Errorf("%s: status %d, body %s, want 403 policy_denied that names the flag to raise (--context-confinement, or --confinement on a listener that is chat-only: TestTheRefusalForAContextKeyNamesTheFlagThatWouldChangeIt says which)", c.name, rec.Code, rec.Body)
 		}
 		if strings.Contains(rec.Body.String(), markerName) {
 			t.Errorf("%s: the refusal repeats the name of a function: %s", c.name, rec.Body)
@@ -189,6 +189,41 @@ func TestModelListsOfferToolsOnlyToAKeyThatMayUseThem(t *testing.T) {
 			}
 			if slices.Contains(one.Monoagent.Capabilities, "tools") != c.tools || !slices.Contains(one.Monoagent.Capabilities, "text") {
 				t.Errorf("%s: %s says %v, want tools = %v and text", c.name, id, one.Monoagent.Capabilities, c.tools)
+			}
+		}
+	}
+}
+
+// The refusal names the flag that would change it. A key created with --context is held to the
+// lower of --confinement (the listener) and --context-confinement, so on a listener that is
+// chat-only, raising --context-confinement alone changes nothing.
+func TestTheRefusalForAContextKeyNamesTheFlagThatWouldChangeIt(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		policy  Policy
+		says    []string
+		notSays []string
+	}{
+		{"a listener that allows more, and a context maximum that is chat-only", Policy{Max: Unconfined, ContextMax: ChatOnly, AutoMax: Unconfined}, []string{"--context-confinement"}, []string{"--confinement"}},
+		{"the default context maximum", autoAnyPolicy, []string{"--context-confinement"}, []string{"--confinement"}},
+		{"a listener that is chat-only and a context maximum that is raised", Policy{Max: ChatOnly, ContextMax: Unconfined, AutoMax: Unconfined}, []string{"--confinement", "chat-only"}, []string{"--context-confinement"}},
+		{"a listener that is chat-only and the default context maximum", Policy{Max: ChatOnly, AutoMax: Unconfined}, []string{"--confinement", "--context-confinement"}, nil},
+	} {
+		h, _ := contextGateway(t, callsWeather(true, "sess-1", ""))
+		rec := post(h, c.policy, h.key(t, "default", "ctx", true), toolChatBody("claude", markerTools, weatherQuestion))
+		msg, _ := decodeErrorBody(t, rec)["message"].(string)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body)
+			continue
+		}
+		for _, want := range c.says {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: the message does not say %q: %s", c.name, want, msg)
+			}
+		}
+		for _, not := range c.notSays {
+			if strings.Contains(msg, not) {
+				t.Errorf("%s: the message names a flag that would change nothing (%q): %s", c.name, not, msg)
 			}
 		}
 	}

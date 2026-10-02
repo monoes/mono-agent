@@ -185,3 +185,81 @@ func TestAutoWithToolsSaysWhenToolCallingIsSwitchedOff(t *testing.T) {
 		t.Errorf("Jev was asked %d times for a request without candidates", f.asked)
 	}
 }
+
+// scanModes changes the sandbox modes a runtime's scan entry lists.
+func scanModes(runtime string, modes []string) func(*Deps, *Config) {
+	return func(d *Deps, _ *Config) {
+		scan := d.Catalog.Scan
+		d.Catalog.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+			res, err := scan(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := *res
+			out.Agents = slices.Clone(res.Agents)
+			for i := range out.Agents {
+				if out.Agents[i].ID == runtime {
+					out.Agents[i].SandboxModes = modes
+				}
+			}
+			return &out, nil
+		}
+	}
+}
+
+// capsOf is a monomind that has the given capabilities (and no more).
+func capsOf(caps ...string) func(*Deps, *Config) {
+	return func(d *Deps, _ *Config) {
+		d.Catalog.Caps = func(context.Context) (*monomind.CapabilitySet, error) {
+			return monomind.NewCapabilitySet("2.22.0", caps...), nil
+		}
+	}
+}
+
+// When no model that serves tools can be used here, the 404 of auto says why. What to raise is
+// not the answer to every cause: a claude that lists only the full mode (monomind 2.19) cannot
+// have the sandbox that every turn with tools requires applied, and a codex that monomind cannot
+// run read-only cannot be used, and --auto-confinement cures neither.
+func TestAutoWithToolsSaysWhichCauseKeepsTheModelsFromServingThem(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		mutate  []func(*Deps, *Config)
+		says    []string
+		notSays []string
+	}{
+		{"claude lists only full (monomind 2.19)", []func(*Deps, *Config){withReadAccess, scanModes("claude", []string{"full"}),
+			func(_ *Deps, c *Config) { c.ToolRuntimes = []string{"claude"} }}, []string{"sandbox", "claude"},
+			[]string{"read-only", "--auto-confinement", "claude, claude", "codex", "antigravity", "hermes"}},
+		{"monomind has no sandbox flag", []func(*Deps, *Config){capsOf(monomind.CapAgentExecAccessRead),
+			func(_ *Deps, c *Config) { c.ToolRuntimes = []string{"claude"} }}, []string{"sandbox", "claude"}, []string{"read-only", "--auto-confinement"}},
+		{"codex cannot be run read-only", []func(*Deps, *Config){capsOf(monomind.CapAgentExecSandbox),
+			func(_ *Deps, c *Config) { c.ToolRuntimes = []string{"codex"} }}, []string{"read-only", "codex"},
+			[]string{"sandbox", "--auto-confinement", "codex, codex", "claude", "antigravity", "hermes"}},
+		{"both causes", []func(*Deps, *Config){capsOf(), func(_ *Deps, c *Config) { c.ToolRuntimes = []string{"claude", "codex"} }},
+			[]string{"sandbox", "read-only", "claude", "codex"}, []string{"--auto-confinement"}},
+		{"no runtime of the list has a model", []func(*Deps, *Config){withReadAccess, func(_ *Deps, c *Config) { c.ToolRuntimes = []string{"grok"} }},
+			[]string{"grok", "not installed"}, []string{"sandbox", "read-only", "--auto-confinement"}},
+	} {
+		f := &fakeAuto{id: "claude/default", p: 1}
+		h := autoGateway(t, f, c.mutate...)
+		rec := post(h, autoAnyPolicy, h.key(t, "default", "app", false), toolChatBody("auto", weatherTools, weatherQuestion))
+		msg, _ := decodeErrorBody(t, rec)["message"].(string)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body)
+			continue
+		}
+		for _, want := range c.says {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: the message does not say %q: %s", c.name, want, msg)
+			}
+		}
+		for _, not := range c.notSays {
+			if strings.Contains(msg, not) {
+				t.Errorf("%s: the message names a cause that is not this one (%q): %s", c.name, not, msg)
+			}
+		}
+		if f.asked != 0 {
+			t.Errorf("%s: Jev was asked %d times for a request without candidates", c.name, f.asked)
+		}
+	}
+}

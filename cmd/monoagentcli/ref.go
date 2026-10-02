@@ -2738,8 +2738,9 @@ OPENAI-COMPATIBLE API (/v1)
   cannot run read-only or whose sandbox it cannot apply (every tool turn requires
   monomind's sandbox: 403 policy_denied, nothing run, if it cannot be applied), is
   400 unsupported_parameter on tools, before anything starts; a key created with
-  --context is refused tools, 403 policy_denied naming --context-confinement,
-  unless that cap is above chat-only). GET /v1/models and api models --json (a
+  --context is refused tools, 403 policy_denied naming the flag that would change
+  it (--context-confinement, or --confinement on a listener that is chat-only: the
+  key is held to the lower of the two), unless that cap is above chat-only). GET /v1/models and api models --json (a
   TOOLS column in its table, and the MCP tool api_models_list) give the models
   that serve them "tools" among their capabilities. A request declares up to 128
   functions (name 1 to 64 characters of [A-Za-z0-9_-], unique, where a name of 55

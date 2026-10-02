@@ -41,6 +41,11 @@ func autoNote(a apiAutoJSON) string {
 	return note
 }
 
+// toolsNote is the line under the table for the TOOLS column, which is the models that can serve
+// tool calling on this machine and not what a given key may do.
+const toolsNote = "tools: a model serves them only where monomind can apply the sandbox every turn with tools requires; " +
+	"a key created with --context is refused them unless --context-confinement (and the listener's policy) is above chat-only"
+
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 	var forListener, confinement, contextConfinement, autoConfinement string
 	cmd := &cobra.Command{
@@ -54,7 +59,10 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			"The auto model is held to --auto-confinement, else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only, the same way. " +
 			"IMAGES (capabilities in --json) says which models make images, from MONOAGENT_API_IMAGE_RUNTIMES, else codex and antigravity. " +
 			"TOOLS says which models serve tool calling, from MONOAGENT_API_TOOL_RUNTIMES, else claude and codex (a runtime that is not " +
-			"chat-only also needs monomind to run it read-only). Either list can be none, which switches that off.",
+			"chat-only also needs monomind to run it read-only, and every turn with tools requires monomind's sandbox, " +
+			"agent-exec-sandbox, to be applicable to its runtime). Either list can be none, which switches that off. " +
+			"A key created with --context is refused tools whatever this column says, unless --context-confinement is above chat-only " +
+			"(and the listener's policy is too: it is held to the lower of the two).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			addr, err := representativeAddr(forListener)
@@ -124,6 +132,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(w, "\nauto: %s\n", autoNote(out.Auto))
+			fmt.Fprintln(w, toolsNote)
 			return nil
 		},
 	}

@@ -32,7 +32,7 @@ func objectFor(m ModelInfo, capabilities []string) modelObject {
 // --context is refused them unless the operator raised its cap), so that the lists do
 // not offer what the key cannot use.
 func forKey(o modelObject, pr Principal, eff Policy) modelObject {
-	if contextToolsRefusal(pr, eff) != nil {
+	if contextToolsRefused(pr, eff) {
 		o.Monoagent.Capabilities = slices.DeleteFunc(slices.Clone(o.Monoagent.Capabilities), func(c string) bool { return c == capTools })
 	}
 	return o
