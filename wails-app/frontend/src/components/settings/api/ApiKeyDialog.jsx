@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Copy, Check, ShieldAlert } from 'lucide-react'
 import { APIKeyCreate } from '../../../wailsjs/go/main/App'
-import { copyText } from '../../../pages/connections/ui.jsx'
+import { copyText, useDialog } from '../../../pages/connections/ui.jsx'
 import { apiError } from './apiError.js'
 import { mono, hint, errText, okText } from './ui.jsx'
 
@@ -10,8 +10,15 @@ import { mono, hint, errText, okText } from './ui.jsx'
 // panel with the new key. The key lives in this component's state and nowhere
 // else: not in storage, the console, a URL, an error text or what onCreated
 // hands the parent, and it is cleared when the dialog closes, however it closes.
+//
+// Escape and a click outside close the form, but not while the CLI works (the key
+// it creates would be shown to nobody) and never over the panel that holds the
+// key, whose only way out is Done: the key is not shown again. Nothing the focus
+// can be on is disabled while the CLI works (a disabled control drops the focus
+// to the page behind, and Escape and Tab with it): it is read-only or
+// aria-disabled instead.
 
-const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+const dim = { opacity: 0.4, cursor: 'not-allowed' } // what .btn:disabled looks like, for a button that holds the focus
 
 /**
  * @param {boolean} open
@@ -20,6 +27,11 @@ const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabinde
  *   never with the key itself.
  */
 export default function ApiKeyDialog({ open, onClose, onCreated }) {
+  // Closed, it is not there: each opening has its own state, focus and opener.
+  return open ? <Dialog onClose={onClose} onCreated={onCreated} /> : null
+}
+
+function Dialog({ onClose, onCreated }) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [context, setContext] = useState(false)
@@ -29,31 +41,20 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
   const [copied, setCopied] = useState('') // '' | 'ok' | 'failed'
   const nameRef = useRef(null)
   const copyRef = useRef(null)
-  const dialogRef = useRef(null)
   const ids = useId()
   const titleId = `${ids}-title`, nameId = `${ids}-name`, nameHintId = `${ids}-name-hint`, keyId = `${ids}-key`
 
-  const reset = () => { setName(''); setContext(false); setBusy(false); setErr(''); setSecret(''); setCopied('') }
-  // Closing waits for the CLI: a key created while the dialog is gone would be shown to nobody.
-  const close = () => { if (busy) return; reset(); onClose?.() }
+  // Done closes whatever it holds; the key is cleared even if the parent keeps the dialog open.
+  const finish = () => { setName(''); setContext(false); setBusy(false); setErr(''); setSecret(''); setCopied(''); onClose?.() }
+  const askClose = () => { if (!busy && !secret) finish() }
+  const dialog = useDialog(askClose) // focus in on open and back to the opener on close, Escape, and Tab kept inside
 
-  // A dialog that opens or closes holds nothing of the last one: not a name, not a key.
-  useEffect(() => { reset() }, [open])
-  useEffect(() => { if (open && !secret) nameRef.current?.focus() }, [open, secret])
   useEffect(() => { if (secret) copyRef.current?.focus() }, [secret])
   useEffect(() => {
     if (copied !== 'ok') return undefined
     const id = setTimeout(() => setCopied(''), 2000)
     return () => clearTimeout(id)
   }, [copied])
-  useEffect(() => {
-    if (!open) return undefined
-    const onKey = (e) => { if (e.key === 'Escape') close() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
-
-  if (!open) return null
 
   const create = async () => {
     const n = name.trim()
@@ -66,6 +67,7 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
       else setErr(t('settings.api.create.noKey'))
     } catch (e) {
       setErr(apiError(e, t))
+      nameRef.current?.focus() // to correct the name; it is read-only until this settles, but focusable
     } finally {
       setBusy(false)
     }
@@ -73,19 +75,9 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
 
   const copy = async () => setCopied((await copyText(secret)) ? 'ok' : 'failed')
 
-  // Keep Tab inside the dialog: the page behind it is not reachable.
-  const trap = (e) => {
-    if (e.key !== 'Tab' || !dialogRef.current) return
-    const items = Array.from(dialogRef.current.querySelectorAll(FOCUSABLE))
-    if (!items.length) return
-    const first = items[0], last = items[items.length - 1]
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
-  }
-
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && !secret) close() }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="modal" style={{ width: 460 }} onKeyDown={trap}>
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) askClose() }}>
+      <div {...dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} className="modal" style={{ width: 460 }}>
         <div id={titleId} className="modal-title">
           {secret ? t('settings.api.create.doneTitle') : t('settings.api.create.title')}
         </div>
@@ -118,7 +110,7 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
             </div>
             <div style={hint}>{t('settings.api.create.usage')}</div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-primary" onClick={close}>{t('settings.api.create.done')}</button>
+              <button type="button" className="btn btn-primary" onClick={finish}>{t('settings.api.create.done')}</button>
             </div>
           </div>
         ) : (
@@ -126,7 +118,7 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
             <div className="form-group">
               <label className="form-label" htmlFor={nameId}>{t('settings.api.create.name')}</label>
               <input
-                id={nameId} ref={nameRef} className="form-input" value={name} maxLength={64} disabled={busy}
+                id={nameId} ref={nameRef} className="form-input" value={name} maxLength={64} readOnly={busy}
                 placeholder={t('settings.api.create.namePlaceholder')} autoComplete="off" spellCheck={false}
                 aria-describedby={nameHintId} onChange={e => setName(e.target.value)}
               />
@@ -134,7 +126,7 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
             </div>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: busy ? 'default' : 'pointer' }}>
               <input
-                type="checkbox" checked={context} disabled={busy} onChange={e => setContext(e.target.checked)}
+                type="checkbox" checked={context} aria-disabled={busy || undefined} onChange={e => { if (!busy) setContext(e.target.checked) }}
                 style={{ marginTop: 2, accentColor: '#00b4d8', flexShrink: 0 }}
               />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -144,8 +136,10 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
             </label>
             {err && <div role="alert" style={{ ...errText, marginTop: 12 }}>{err}</div>}
             <div className="modal-actions">
-              <button type="button" className="btn btn-secondary" disabled={busy} onClick={close}>{t('settings.api.create.cancel')}</button>
-              <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
+              <button type="button" className="btn btn-secondary" aria-disabled={busy || undefined} style={busy ? dim : undefined} onClick={askClose}>
+                {t('settings.api.create.cancel')}
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={!name.trim()} aria-disabled={busy || undefined} style={busy ? dim : undefined}>
                 {busy ? t('settings.api.create.creating') : t('settings.api.create.submit')}
               </button>
             </div>

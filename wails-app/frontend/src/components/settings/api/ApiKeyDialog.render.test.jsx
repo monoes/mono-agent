@@ -13,13 +13,20 @@ import es from '../../../locales/es.json'
 const KEY = 'sk-ma-' + 'X'.repeat(43)
 
 const App = {}
+let offsetParent
 beforeEach(async () => {
   await i18n.changeLanguage('en')
   App.APIKeyCreate = vi.fn()
   window.go = { main: { App } }
   window.runtime = { ClipboardSetText: vi.fn().mockResolvedValue(true) }
+  // jsdom has no layout: every element has a null offsetParent, which the Tab trap reads as "not visible".
+  offsetParent = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetParent')
+  Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get() { return this.parentNode } })
 })
-afterEach(() => { cleanup(); delete window.go; delete window.runtime; vi.restoreAllMocks() })
+afterEach(() => {
+  cleanup(); delete window.go; delete window.runtime; vi.restoreAllMocks()
+  if (offsetParent) Object.defineProperty(HTMLElement.prototype, 'offsetParent', offsetParent)
+})
 
 const created = (over = {}) => ({
   id: 'key_abcdefghijkl', profile_id: 'default', name: 'my-app', prefix: 'sk-ma-XXXXXX', context: false,
@@ -35,10 +42,17 @@ async function mount(props = {}) {
 }
 const nameInput = () => screen.getByLabelText('Name')
 const submit = () => screen.getByRole('button', { name: 'Create key' })
+const dialog = () => screen.getByRole('dialog')
 async function createKey(name = 'my-app') {
   fireEvent.change(nameInput(), { target: { value: name } })
   fireEvent.click(submit())
   return screen.findByTestId('api-key-secret')
+}
+// A create that does not finish until the test says so.
+function slowCreate() {
+  let resolve, reject
+  App.APIKeyCreate.mockReturnValue(new Promise((res, rej) => { resolve = res; reject = rej }))
+  return { resolve: (v) => act(async () => { resolve(v) }), reject: (e) => act(async () => { reject(e) }) }
 }
 
 describe('ApiKeyDialog', () => {
@@ -49,8 +63,7 @@ describe('ApiKeyDialog', () => {
 
   it('opens on the name, which is required', async () => {
     await mount()
-    const dialog = screen.getByRole('dialog', { name: 'Create an API key' })
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(screen.getByRole('dialog', { name: 'Create an API key' })).toHaveAttribute('aria-modal', 'true')
     expect(nameInput()).toHaveFocus()
     expect(submit()).toBeDisabled()
     fireEvent.change(nameInput(), { target: { value: '   ' } })
@@ -105,7 +118,9 @@ describe('ApiKeyDialog', () => {
     await screen.findByText(/Couldn't copy: select the key/)
     expect(screen.queryByText('Copied')).not.toBeInTheDocument()
   })
+})
 
+describe('ApiKeyDialog: closing', () => {
   it('Done clears the key even if the parent keeps the dialog open', async () => {
     App.APIKeyCreate.mockResolvedValue(created())
     const { onClose } = await mount()
@@ -119,20 +134,33 @@ describe('ApiKeyDialog', () => {
     expect(nameInput()).toHaveValue('')
   })
 
-  it('Escape closes the panel and clears the key too', async () => {
+  it('Escape does not close the panel that holds the key: it would destroy the only copy. Only Done does', async () => {
     App.APIKeyCreate.mockResolvedValue(created())
     const { onClose } = await mount()
     await createKey()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    // Wherever the focus is in the dialog.
+    for (const target of [dialog(), screen.getByTestId('api-key-secret'), screen.getByRole('button', { name: 'Copy key' }), screen.getByRole('button', { name: 'Done' })]) {
+      fireEvent.keyDown(target, { key: 'Escape' })
+    }
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('api-key-secret')).toHaveValue(KEY)
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(onClose).toHaveBeenCalledTimes(1)
-    expect(screen.queryByTestId('api-key-secret')).not.toBeInTheDocument()
     expect(document.body.textContent).not.toContain(KEY)
+  })
+
+  it('Escape closes the form, from wherever the focus is in the dialog', async () => {
+    const { onClose } = await mount()
+    fireEvent.keyDown(nameInput(), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(screen.getByRole('checkbox'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(2)
   })
 
   it('a click outside closes the form but never the panel that holds the key', async () => {
     App.APIKeyCreate.mockResolvedValue(created())
     const { onClose } = await mount()
-    const overlay = () => screen.getByRole('dialog').parentElement
+    const overlay = () => dialog().parentElement
     fireEvent.click(overlay())
     expect(onClose).toHaveBeenCalledTimes(1)
 
@@ -140,6 +168,19 @@ describe('ApiKeyDialog', () => {
     fireEvent.click(overlay())
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('api-key-secret')).toHaveValue(KEY)
+  })
+
+  it('a click inside the dialog does not close it', async () => {
+    const { onClose } = await mount()
+    fireEvent.click(dialog())
+    fireEvent.click(screen.getByText('Create an API key'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('Cancel closes the form', async () => {
+    const { onClose } = await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('holds nothing once closed from outside: reopening shows an empty form', async () => {
@@ -155,6 +196,43 @@ describe('ApiKeyDialog', () => {
     expect(nameInput()).toHaveValue('')
   })
 
+  it('gives the focus back to what opened it, however it closes', async () => {
+    App.APIKeyCreate.mockResolvedValue(created())
+    const { default: ApiKeyDialog } = await import('./ApiKeyDialog.jsx')
+    function Harness() {
+      const [open, setOpen] = React.useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Open it</button>
+          <ApiKeyDialog open={open} onClose={() => setOpen(false)} onCreated={() => {}} />
+        </>
+      )
+    }
+    render(<Harness />)
+    const opener = screen.getByRole('button', { name: 'Open it' })
+    const open = () => { opener.focus(); fireEvent.click(opener) }
+
+    open()
+    expect(nameInput()).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+
+    open()
+    fireEvent.keyDown(dialog(), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+
+    open()
+    await createKey()
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+    expect(document.body.textContent).not.toContain(KEY)
+  })
+})
+
+describe('ApiKeyDialog: failures', () => {
   it('says in words that a name is taken, keeps the form, and tells the parent nothing', async () => {
     App.APIKeyCreate.mockRejectedValue(new Error('invalid_input: an active key with that name already exists in this profile'))
     const { onCreated } = await mount()
@@ -165,6 +243,22 @@ describe('ApiKeyDialog', () => {
     expect(submit()).toBeEnabled()
     expect(screen.queryByTestId('api-key-secret')).not.toBeInTheDocument()
     expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('puts the focus back on the name after a failure, to correct it', async () => {
+    App.APIKeyCreate.mockRejectedValue(new Error('invalid_input: an active key with that name already exists in this profile'))
+    await mount()
+    fireEvent.change(nameInput(), { target: { value: 'my-app' } })
+    submit().focus()
+    fireEvent.click(submit())
+    await screen.findByRole('alert')
+    expect(nameInput()).toHaveFocus()
+    // ... and not when there was no failure: the panel has the key, and the Copy button the focus.
+    cleanup()
+    App.APIKeyCreate.mockResolvedValue(created())
+    await mount()
+    await createKey()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy key' })).toHaveFocus())
   })
 
   it('words the failure in the chosen language, and gives what it cannot word as the CLI said it', async () => {
@@ -190,35 +284,90 @@ describe('ApiKeyDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('did not return the key')
     expect(screen.queryByTestId('api-key-secret')).not.toBeInTheDocument()
   })
+})
 
-  it('does not submit twice while the CLI works', async () => {
-    let resolve
-    App.APIKeyCreate.mockReturnValue(new Promise(r => { resolve = r }))
-    await mount()
+describe('ApiKeyDialog: while the CLI works', () => {
+  async function startCreate() {
+    const slow = slowCreate()
+    const view = await mount()
     fireEvent.change(nameInput(), { target: { value: 'my-app' } })
+    submit().focus()
     fireEvent.click(submit())
-    expect(await screen.findByRole('button', { name: 'Creating…' })).toBeDisabled()
+    await screen.findByRole('button', { name: 'Creating…' })
+    return { ...slow, ...view }
+  }
+
+  it('does not submit twice', async () => {
+    const { resolve } = await startCreate()
+    expect(screen.getByRole('button', { name: 'Creating…' })).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Creating…' }))
     fireEvent.submit(nameInput().closest('form'))
     expect(App.APIKeyCreate).toHaveBeenCalledTimes(1)
-    await act(async () => { resolve(created()) })
+    await resolve(created())
     await screen.findByTestId('api-key-secret')
   })
 
-  it('cannot be closed while the CLI works, so a key is never created for nobody', async () => {
-    let resolve
-    App.APIKeyCreate.mockReturnValue(new Promise(r => { resolve = r }))
-    const { onClose } = await mount()
-    fireEvent.change(nameInput(), { target: { value: 'my-app' } })
-    fireEvent.click(submit())
-    await screen.findByRole('button', { name: 'Creating…' })
-    fireEvent.keyDown(window, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('dialog').parentElement)
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  it('cannot be closed, so a key is never created for nobody', async () => {
+    const { onClose, resolve } = await startCreate()
+    fireEvent.keyDown(dialog(), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Creating…' }), { key: 'Escape' })
+    fireEvent.click(dialog().parentElement)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).not.toHaveBeenCalled()
-    await act(async () => { resolve(created()) })
+    await resolve(created())
     expect(await screen.findByTestId('api-key-secret')).toHaveValue(KEY)
   })
 
+  it('keeps the focus where it was, and so keeps Escape and Tab working in the dialog: nothing the focus is on is disabled', async () => {
+    const { onClose, resolve } = await startCreate()
+    expect(screen.getByRole('button', { name: 'Creating…' })).toHaveFocus()
+    // What cannot be changed now is read-only or aria-disabled, never disabled: a disabled control drops the focus.
+    expect(nameInput()).toHaveAttribute('readonly')
+    expect(nameInput()).not.toBeDisabled()
+    const checkbox = screen.getByRole('checkbox')
+    expect(checkbox).toHaveAttribute('aria-disabled', 'true')
+    expect(checkbox).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Creating…' })).not.toBeDisabled()
+    // Tab still wraps inside the dialog.
+    const buttons = within(dialog()).getAllByRole('button')
+    buttons[buttons.length - 1].focus()
+    fireEvent.keyDown(dialog(), { key: 'Tab' })
+    expect(nameInput()).toHaveFocus()
+    fireEvent.keyDown(nameInput(), { key: 'Tab', shiftKey: true })
+    expect(buttons[buttons.length - 1]).toHaveFocus()
+    // Escape reaches the dialog, which refuses it.
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+    await resolve(created())
+    await screen.findByTestId('api-key-secret')
+  })
+
+  it('does not let the context choice change', async () => {
+    const { resolve } = await startCreate()
+    const checkbox = screen.getByRole('checkbox')
+    expect(checkbox).not.toBeChecked()
+    fireEvent.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+    await resolve(created())
+    await screen.findByTestId('api-key-secret')
+    expect(App.APIKeyCreate).toHaveBeenCalledWith('my-app', false)
+  })
+
+  it('is editable again after a failure', async () => {
+    const { reject } = await startCreate()
+    await reject(new Error('boom'))
+    await screen.findByRole('alert')
+    expect(nameInput()).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('checkbox')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Create key' })).not.toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('checkbox')).toBeChecked()
+  })
+})
+
+describe('ApiKeyDialog: the rest', () => {
   it('keeps the key out of storage, the console and the page address', async () => {
     const stored = []
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation((...a) => { stored.push(a) })
@@ -238,16 +387,30 @@ describe('ApiKeyDialog', () => {
 
   it('keeps Tab inside the dialog', async () => {
     await mount()
-    const dialog = screen.getByRole('dialog')
-    const buttons = within(dialog).getAllByRole('button')
+    const buttons = within(dialog()).getAllByRole('button')
     const last = buttons[buttons.length - 1]
     fireEvent.change(nameInput(), { target: { value: 'my-app' } })
     last.focus()
-    fireEvent.keyDown(dialog, { key: 'Tab' })
+    fireEvent.keyDown(dialog(), { key: 'Tab' })
     expect(nameInput()).toHaveFocus()
     nameInput().focus()
-    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(dialog(), { key: 'Tab', shiftKey: true })
     expect(last).toHaveFocus()
+  })
+
+  it('keeps Tab inside the panel that holds the key', async () => {
+    App.APIKeyCreate.mockResolvedValue(created())
+    await mount()
+    await createKey()
+    const copy = screen.getByRole('button', { name: 'Copy key' })
+    const done = screen.getByRole('button', { name: 'Done' })
+    done.focus()
+    fireEvent.keyDown(dialog(), { key: 'Tab' })
+    expect(screen.getByTestId('api-key-secret')).toHaveFocus() // the first focusable of the panel
+    copy.focus()
+    screen.getByTestId('api-key-secret').focus()
+    fireEvent.keyDown(dialog(), { key: 'Tab', shiftKey: true })
+    expect(done).toHaveFocus()
   })
 
   it('speaks the chosen language', async () => {
