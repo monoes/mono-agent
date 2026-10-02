@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Whose flags and environment a models report was evaluated from. A running
@@ -136,10 +137,18 @@ func NewModelsReport(in ModelsReportInput) ModelsReport {
 	return out
 }
 
+// NewModelCatalog is the catalog over the installed runtimes that the gateway
+// has: asked of monomind and the stored roster. A caller that asks again keeps
+// it and calls ModelsBound, so that calls at once share one load and a list is
+// reused for ttl, instead of every call starting every runtime again.
+func NewModelCatalog(db *sql.DB, ttl time.Duration) *Catalog {
+	return NewCatalog(DefaultDeps(db, "").Catalog, ttl)
+}
+
 // LoadModels lists the models of the installed runtimes as the gateway's own
-// catalog does: asked of monomind and the stored roster now, aliases included.
+// catalog does, aliases included: a one-shot call, whose load ends with ctx.
 func LoadModels(ctx context.Context, db *sql.DB) ([]ModelInfo, error) {
-	return NewCatalog(DefaultDeps(db, "").Catalog, defaultCatalogTTL).Models(ctx)
+	return NewModelCatalog(db, defaultCatalogTTL).ModelsBound(ctx)
 }
 
 // ListenerAddr is a bind address of the given kind, "loopback" or "network", for

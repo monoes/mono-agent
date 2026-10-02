@@ -3,12 +3,14 @@ package openaiapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/testdb"
@@ -245,9 +247,10 @@ func TestEffectiveCapsPrecedence(t *testing.T) {
 	}
 }
 
-// LoadModels is the gateway's own catalog over the installed runtimes: here the
-// fake monomind of the end-to-end test, which has claude and two of its models.
-func TestLoadModelsListsWhatTheInstalledRuntimesOffer(t *testing.T) {
+// useFakeMonomind points monomind at the fake binary of the end-to-end test, which
+// lists claude and two of its models.
+func useFakeMonomind(t *testing.T) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake monomind is a shell script")
 	}
@@ -259,6 +262,12 @@ func TestLoadModelsListsWhatTheInstalledRuntimesOffer(t *testing.T) {
 	t.Setenv(monomind.EnvOverride, bin)
 	monomind.ResetCapabilityCache()
 	t.Cleanup(monomind.ResetCapabilityCache)
+}
+
+// LoadModels is the gateway's own catalog over the installed runtimes: here the
+// fake monomind of the end-to-end test, which has claude and two of its models.
+func TestLoadModelsListsWhatTheInstalledRuntimesOffer(t *testing.T) {
+	useFakeMonomind(t)
 
 	models, err := LoadModels(context.Background(), testdb.Open(t).DB)
 	if err != nil {
@@ -271,5 +280,38 @@ func TestLoadModelsListsWhatTheInstalledRuntimesOffer(t *testing.T) {
 		if m.Class != ChatOnly {
 			t.Errorf("%s is %v, want chat-only: monomind's native_sandbox for claude", m.ID, m.Class)
 		}
+	}
+}
+
+// LoadModels is a one-shot call: its load ends with the caller that made it, where
+// the gateway's outlives its first request.
+func TestLoadModelsEndsWithItsCaller(t *testing.T) {
+	useFakeMonomind(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := LoadModels(ctx, testdb.Open(t).DB); !errors.Is(err, context.Canceled) {
+		t.Errorf("LoadModels with a context that has ended: err = %v, want context.Canceled", err)
+	}
+}
+
+// A catalog that is kept (an MCP server keeps one) lists what the runtimes offer,
+// and answers the next call from what it loaded: nothing is started again within
+// the TTL, which the missing binary shows.
+func TestNewModelCatalogKeepsWhatItLoaded(t *testing.T) {
+	useFakeMonomind(t)
+	c := NewModelCatalog(testdb.Open(t).DB, time.Minute)
+
+	first, err := c.ModelsBound(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(first); !reflect.DeepEqual(got, []string{"claude/default", "claude/sonnet"}) {
+		t.Fatalf("models %v", got)
+	}
+	t.Setenv(monomind.EnvOverride, filepath.Join(t.TempDir(), "gone"))
+	monomind.ResetCapabilityCache()
+	again, err := c.ModelsBound(context.Background())
+	if err != nil || !reflect.DeepEqual(ids(again), ids(first)) {
+		t.Errorf("the second call within the TTL: %v, %v; want the list it already had", ids(again), err)
 	}
 }

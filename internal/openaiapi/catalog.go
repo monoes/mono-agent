@@ -88,6 +88,10 @@ type catalogFlight struct {
 	done   chan struct{}
 	models []ModelInfo
 	err    error
+	// abandoned: the load was a bound one whose starter left before it ended. What
+	// it holds is not a list, and a caller that joined it and is still there starts
+	// a load of its own.
+	abandoned bool
 }
 
 // NewCatalog returns a Catalog that reuses a load for ttl.
@@ -122,19 +126,55 @@ func (c *Catalog) logf(format string, args ...any) {
 // and shared by every caller that arrives meanwhile. When a reload fails the
 // last good list stays, and the reload is tried again after staleRetryAfter.
 func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
-	c.mu.Lock()
-	if c.loaded {
-		models := c.cached
-		if c.now().Sub(c.at) >= c.ttl && c.flight == nil {
-			fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
-			c.flight = fl
-			go c.refreshInBackground(fl, models)
+	return c.models(ctx, false)
+}
+
+// ModelsBound is Models for a caller whose own lifetime is the load's: a one-shot
+// command, or the tools of a server that stops all its callers together, not a
+// gateway whose first request must not decide for everyone who waits behind it.
+// The first load, which Models detaches from its caller so that others can wait on
+// it, runs under ctx here: cancelling ctx stops the processes it started, and the
+// call returns at once instead of waiting for them to close their pipes. A load
+// that ctx cut short is not cached. A caller that joins a load someone else
+// started waits for it as in Models, and starts one of its own if that starter
+// left while it did not. A list that is already cached is served as in Models.
+func (c *Catalog) ModelsBound(ctx context.Context) ([]ModelInfo, error) {
+	return c.models(ctx, true)
+}
+
+func (c *Catalog) models(ctx context.Context, bound bool) ([]ModelInfo, error) {
+	for {
+		c.mu.Lock()
+		if c.loaded {
+			models := c.cached
+			if c.now().Sub(c.at) >= c.ttl && c.flight == nil {
+				fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
+				c.flight = fl
+				go c.refreshInBackground(fl, models)
+			}
+			c.mu.Unlock()
+			return models, nil
 		}
+		if fl := c.flight; fl != nil {
+			c.mu.Unlock()
+			select {
+			case <-fl.done:
+				if fl.abandoned && ctx.Err() == nil {
+					continue // its starter left and this caller did not: it loads for itself
+				}
+				return fl.models, fl.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
+		c.flight = fl
 		c.mu.Unlock()
-		return models, nil
-	}
-	if fl := c.flight; fl != nil {
-		c.mu.Unlock()
+		if !bound {
+			c.runLoad(ctx, fl, nil, false, false)
+			return fl.models, fl.err
+		}
+		go c.runBound(ctx, fl)
 		select {
 		case <-fl.done:
 			return fl.models, fl.err
@@ -142,11 +182,17 @@ func (c *Catalog) Models(ctx context.Context) ([]ModelInfo, error) {
 			return nil, ctx.Err()
 		}
 	}
-	fl := &catalogFlight{done: make(chan struct{}), err: errLoadAborted}
-	c.flight = fl
-	c.mu.Unlock()
-	c.runLoad(ctx, fl, nil, false)
-	return fl.models, fl.err
+}
+
+// runBound runs a bound caller's load on a goroutine of its own, so that the
+// caller can stop waiting for it. Nobody above it would recover a panic there.
+func (c *Catalog) runBound(ctx context.Context, fl *catalogFlight) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logf("loading the model list panicked: %v", r)
+		}
+	}()
+	c.runLoad(ctx, fl, nil, false, true)
 }
 
 // refreshInBackground reloads an expired list. It runs in a goroutine of its
@@ -161,13 +207,13 @@ func (c *Catalog) refreshInBackground(fl *catalogFlight, stale []ModelInfo) {
 			c.mu.Unlock()
 		}
 	}()
-	c.runLoad(context.Background(), fl, stale, true)
+	c.runLoad(context.Background(), fl, stale, true, false)
 }
 
 // runLoad performs one load as the leader of fl. However it ends, even in a
 // panic, the flight is over and its waiters wake: they must never wait on a
 // leader that is gone.
-func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelInfo, hadStale bool) {
+func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelInfo, hadStale, bound bool) {
 	defer func() {
 		c.mu.Lock()
 		c.flight = nil
@@ -175,10 +221,23 @@ func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelI
 		close(fl.done)
 	}()
 
-	// The load outlives the caller that started it: others wait on it too.
-	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loadTimeout)
+	// The load outlives the caller that started it: others wait on it too. A bound
+	// caller's load is its own, and ends with it.
+	base := context.WithoutCancel(ctx)
+	if bound {
+		base = ctx
+	}
+	lctx, cancel := context.WithTimeout(base, loadTimeout)
 	defer cancel()
 	models, degraded, err := c.load(lctx)
+	if bound && ctx.Err() != nil {
+		// The starter left while the load ran, so what it holds may be cut short: a
+		// listing that the cancellation failed is replaced by its runtime's default
+		// model, and the load still counts as a success. It is neither cached nor
+		// handed to the callers that joined it.
+		fl.abandoned, fl.err = true, ctx.Err()
+		return
+	}
 	retrySoon := degraded // a runtime's listing fell back: do not keep that for a whole TTL
 	if err != nil && hadStale {
 		c.logf("refreshing the model list failed, serving the previous one: %v", err)
