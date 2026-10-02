@@ -9,7 +9,12 @@ it on a headless Linux server. Paths and schemas:
 
 Today it serves `GET /v1/models`, `GET /v1/models/{id}` and
 `POST /v1/chat/completions` (JSON and `"stream": true`). Images, tool
-calling and an `auto` model that picks for you are not available yet.
+calling and an `auto` model that picks for you are not available yet:
+having Jev set up on the profile changes nothing for now, and asking for
+`auto` is a 404 `model_not_found` that says it is not implemented. A `404 page
+not found` in plain text instead means the server running is older than this
+API and has no `/v1` at all (`monoagentcli daemon` and `httpapi` serve it only
+from a build that includes it).
 
 ## 1. Create a key
 

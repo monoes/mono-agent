@@ -75,9 +75,18 @@ func errAuth() *apiError {
 		Message: "Incorrect API key provided. Send it as `Authorization: Bearer sk-ma-…`."}
 }
 
+// autoModelID is the model that will let Jev pick a runtime and model for a
+// request. It is a later phase: until then it is refused like any unknown model,
+// but the message says why.
+const autoModelID = "auto"
+
 // errModelNotFound quotes the client's string so control characters never
 // reach a log line or a terminal.
 func errModelNotFound(model string) *apiError {
+	if model == autoModelID {
+		return &apiError{Status: http.StatusNotFound, Type: "invalid_request_error", Code: "model_not_found", Param: "model",
+			Message: `The model "auto" is not available in this version: choosing the model automatically is not implemented yet. List the available ids with GET /v1/models.`}
+	}
 	if len(model) > 64 {
 		model = model[:64]
 	}
