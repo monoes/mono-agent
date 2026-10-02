@@ -601,7 +601,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the runtime's sandbox, so it never follows a link (a runtime could plant one to
   any image on the disk), never opens a FIFO or a device, ignores folders and goes
   through the folder's own handle, like the emptying. It reads only the first 12
-  bytes of a file that is no image, looks at no more than 64 entries and gives up
+  bytes of a file that is no image, looks at no more than 64 entries (the first 64
+  the system lists, so "the first `n` by name" is among those) and gives up
   after a minute or when the client has left. `NO_IMAGE_TOOL` as a line of its
   own in the reply, with no image in the folder, is 400
   `image_generation_unsupported` (a reply that only mentions it is not, and an

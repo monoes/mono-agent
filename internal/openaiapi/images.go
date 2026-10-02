@@ -177,8 +177,9 @@ func (g *Gateway) defaultImageModel(ctx context.Context, pr Principal, p, eff Po
 
 // logImageRuntimes says, with the first list of models, which runtimes of the image
 // list cannot make images here: one that is not installed (a typo, say) and one that is
-// installed but chat-only. The operator hears it at the start, and not from a client's
-// 404.
+// installed but chat-only. The list is loaded by the first request that needs one (the
+// gateway is built, and the catalog filled, on first use), so that is when the operator
+// hears it: from the server's log, and not from a client's 404.
 func (g *Gateway) logImageRuntimes(models []ModelInfo) {
 	var problems []string
 	for _, runtime := range g.cfg.ImageRuntimeList() {

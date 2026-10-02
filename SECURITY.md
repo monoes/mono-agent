@@ -649,24 +649,26 @@ holds. Two things differ, and both reach further than chat does.
   uses, which refuses a path that leaves it; a file that is swapped between the
   look and the read, or grows past 20 MiB, is left out. It is bounded as well: of
   a file that is no image only the first 12 bytes are read, no more than 64
-  entries of the folder are looked at, and it gives up after a minute or when the
+  entries of the folder are looked at (the first 64 the system lists, so "the
+  first `n` by name" is among those), and it gives up after a minute or when the
   client has left, and does not wait for a step that does not return. A copy or a
   hard link is a plain file and is returned: a runtime can make one of anything it
   can read, which is the point above.
 
 The folder is new for every turn and its name is not known beforehand, so that a
-process an earlier turn left running, which writes to the paths it knew (the slot
-folder, or the earlier turn's folder), cannot put a file into a later request's
-response. What it writes elsewhere is not returned: the log line counts the files
-at the top of the slot folder that are outside the turn's folder, and a turn
-whose runtime ignored the folder it was told is a 502 and not a silent fallback
-to unnamed files. That is all the name does. A process of the same OS user that
-survives can list the slot folder while a later turn runs, read the name of the
-folder, and write into it, or read what it holds (the images of the turn, before
-they are returned): the name keeps a stale writer blind, it does not keep it
-out. Run the server as a dedicated OS user and look at what it leaves, as below.
+process an earlier turn left running that keeps writing to the paths it knew (the
+slot folder, or the earlier turn's folder) does not put a file into a later
+request's response. What it writes elsewhere is not returned: the log line counts
+the files at the top of the slot folder that are outside the turn's folder, and a
+turn whose runtime ignored the folder it was told is a 502 and not a silent
+fallback to unnamed files. That is all the name does. A process of the same OS
+user that survives and looks can list the slot folder while a later turn runs,
+read the name of the folder, and write into it, or read what it holds (the images
+of the turn, before they are returned): the name keeps a writer that does not look
+out, it does not keep out one that does. Run the server as a dedicated OS user and
+look at what it leaves, as below.
 
-An image turn took 40 to 52 seconds and about 40,000 input tokens in those
+An image turn took 40 to 75 seconds and about 40,000 input tokens in the
 probes, on the runtime's own account (codex and antigravity report no cost), and
 there is no quota per key: the concurrency cap is the bound. Its prompt goes to
 the runtime's provider, and with `auto` the first 4,000 characters of it also to
@@ -763,10 +765,11 @@ unauthenticated and returns the server version.
   when that folder cannot be made.
 - A runtime can leave a process behind it (a command started with `nohup`, say)
   that keeps its write access to the turn's folder. Emptying the folder does
-  not stop it. For an image turn it cannot put a file into a later request's
-  response, which is read from a folder with a name it cannot know in advance,
-  but it can still read and write whatever that folder holds while the turn
-  runs, as a process of the same OS user (see Image generation). A sandbox that only confines writes below the turn's folder
+  not stop it. For an image turn a process that keeps writing where it wrote
+  before cannot put a file into a later request's response, which is read from a
+  folder with a name it did not know in advance; one that looks (lists the slot
+  folder, reads the name) can still read and write whatever that folder holds
+  while the turn runs, as a process of the same OS user (see Image generation). A sandbox that only confines writes below the turn's folder
   (macOS's, checked) still lets the turn remove that folder and put a link in
   its place. The gateway looks at the folder from its parent, which no turn can
   change, and acts on it through open handles: a link is set aside, not
