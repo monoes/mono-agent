@@ -59,13 +59,14 @@ func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request
 			return
 		}
 		out := modelList{Object: "list", Data: make([]modelObject, 0, len(models)+1)}
-		// Auto comes first, where it works: it is what a client that does not care
-		// which model answers should ask for.
-		if len(models) > 0 && g.autoStatus(r.Context(), pr.ProfileID).Available {
-			out.Data = append(out.Data, autoObject(eff))
-		}
 		for _, m := range models {
 			out.Data = append(out.Data, objectFor(m))
+		}
+		// Auto comes last, where it works: a client that takes the first model of
+		// the list must not be moved to it, and its prompts to TypeSafe, by an
+		// operator switching the surface on.
+		if len(models) > 0 && g.autoStatus(r.Context(), pr.ProfileID).Available {
+			out.Data = append(out.Data, autoObject(eff))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

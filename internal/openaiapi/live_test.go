@@ -191,7 +191,8 @@ func TestLiveOneChatPerInstalledRuntime(t *testing.T) {
 }
 
 // With a Jev key and the surface on, a request for auto runs a model the list
-// offered, picked by Jev or, when it cannot, by the rule. A chat-only policy
+// offered, and Jev picks it (the rule only when there is nothing to choose
+// between: a TypeSafe that fails every call must fail this). A chat-only policy
 // keeps the choice to the chat-only models, so the turn is claude's.
 func TestLiveAutoPicksAModel(t *testing.T) {
 	_, secret, h, db := liveGatewayDB(t, nil)
@@ -203,11 +204,11 @@ func TestLiveAutoPicksAModel(t *testing.T) {
 	}
 	policy := Policy{Max: ChatOnly}
 	list := decodeModelList(t, h.serve(policy, http.MethodGet, "/v1/models", secret, ""))
-	if len(list.Data) < 2 || list.Data[0].ID != autoModelID {
-		t.Fatalf("auto is not offered first: %+v", list.Data)
+	if len(list.Data) < 2 || list.Data[len(list.Data)-1].ID != autoModelID {
+		t.Fatalf("auto is not offered after the models: %+v", list.Data)
 	}
 	offered := map[string]bool{}
-	for _, m := range list.Data[1:] {
+	for _, m := range list.Data[:len(list.Data)-1] {
 		offered[m.ID] = true
 	}
 
@@ -215,8 +216,11 @@ func TestLiveAutoPicksAModel(t *testing.T) {
 		`{"model":"auto","messages":[{"role":"user","content":"What is 17 times 23? Answer with the number only."}]}`)
 	usableOrSkip(t, rec.Code, rec.Body.String())
 	by, picked := rec.Header().Get("X-Monoagent-Auto"), rec.Header().Get("X-Monoagent-Model")
-	if by != "jev" && by != "rule" {
-		t.Errorf("X-Monoagent-Auto = %q, want jev or rule", by)
+	switch {
+	case by == "jev":
+	case by == "rule" && len(offered) < 2: // nothing to choose between: Jev is not asked
+	default:
+		t.Errorf("X-Monoagent-Auto = %q among %d models: Jev should have chosen (the server log says why it did not)", by, len(offered))
 	}
 	if !offered[picked] {
 		t.Errorf("auto picked %q, which the list did not offer: %v", picked, offered)

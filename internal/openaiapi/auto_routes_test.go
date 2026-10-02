@@ -92,19 +92,20 @@ func TestAutoIsNotOfferedWithoutJev(t *testing.T) {
 	}
 }
 
-// Where it works, auto is the first model of the list, retrievable, and its
-// confinement is the strongest class the key's policy allows: what Jev picks is
-// never above it.
-func TestAutoIsListedFirstWhenAvailable(t *testing.T) {
+// Where it works, auto is the last model of the list, so that a client that takes
+// the first one is not moved to it (and its prompts to TypeSafe) by an operator
+// switching the surface on. It is retrievable, and its confinement is the
+// strongest class the key's policy allows: what Jev picks is never above it.
+func TestAutoIsListedLastWhenAvailable(t *testing.T) {
 	h := autoGateway(t, &fakeAuto{id: "claude/default", p: 1})
 	secret := h.key(t, "default", "app", false)
 
 	for policy, want := range map[Policy]string{anyPolicy: "unconfined", {Max: Sandboxed}: "sandboxed", {Max: ChatOnly}: "chat-only"} {
 		list := decodeModelList(t, h.serve(policy, http.MethodGet, "/v1/models", secret, ""))
-		if len(list.Data) < 2 || list.Data[0].ID != "auto" {
-			t.Fatalf("policy %v: auto must come first: %+v", policy, list.Data)
+		if len(list.Data) < 2 || list.Data[len(list.Data)-1].ID != "auto" || list.Data[0].ID == "auto" {
+			t.Fatalf("policy %v: auto must come after the models: %+v", policy, list.Data)
 		}
-		a := list.Data[0]
+		a := list.Data[len(list.Data)-1]
 		if a.Object != "model" || a.OwnedBy != "jev" || a.Monoagent.Runtime != "auto" || a.Monoagent.Confinement != want {
 			t.Errorf("policy %v: %+v, want owned by jev, runtime auto, confinement %s", policy, a, want)
 		}
