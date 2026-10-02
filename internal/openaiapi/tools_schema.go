@@ -21,7 +21,9 @@ import (
 // and every nested key are dropped. So a spec carries the flat schema monomind
 // can use, and the whole parameters schema, compact, goes at the end of the
 // description, where the model reads it (a rule that lived only in a property's
-// description was lost with the flat schema and kept when folded in).
+// description was lost with the flat schema and kept when folded in). A schema
+// with no top-level properties (a root anyOf, a $ref, free-form properties) is
+// folded too: the description is all the model would have of it.
 func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 	specs := make([]monomind.ToolSpec, 0, len(decls))
 	for _, d := range decls {
@@ -29,6 +31,7 @@ func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 		for name, raw := range d.Props {
 			var v interface{}
 			if json.Unmarshal(raw, &v) == nil {
+				leaveOutForeignEnum(v)
 				props[name] = v
 			}
 		}
@@ -37,7 +40,7 @@ func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 			schema["required"] = d.Required
 		}
 		desc := d.Description
-		if len(d.Props) > 0 {
+		if !paramsSayNothing(d.Params) {
 			if desc != "" {
 				desc += "\n\n"
 			}
@@ -46,6 +49,52 @@ func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 		specs = append(specs, monomind.ToolSpec{Name: d.Name, Description: desc, Schema: schema})
 	}
 	return specs
+}
+
+// leaveOutForeignEnum removes the enum of a property when it is not a non-empty
+// list of strings: monomind's tool bridge takes no other, and rejects every call of
+// a tool that has one. The model still reads the enum in the description.
+func leaveOutForeignEnum(prop interface{}) {
+	p, ok := prop.(map[string]interface{})
+	if !ok {
+		return
+	}
+	enum, has := p["enum"]
+	if !has {
+		return
+	}
+	list, _ := enum.([]interface{})
+	if len(list) == 0 || slices.ContainsFunc(list, func(e interface{}) bool { _, isString := e.(string); return !isString }) {
+		delete(p, "enum")
+	}
+}
+
+// paramsSayNothing reports whether a parameters schema tells the model nothing that
+// a tool without parameters does not: there is none, or it is an object with no
+// properties, no required list and no keyword of substance. Any other schema is
+// folded into the description.
+func paramsSayNothing(params json.RawMessage) bool {
+	if len(params) == 0 {
+		return true
+	}
+	var top map[string]json.RawMessage // params went through inspectParams: a JSON object
+	_ = json.Unmarshal(params, &top)
+	for key, v := range top {
+		switch key {
+		case "type", "$schema":
+		case "properties", "required":
+			if s := string(v); s != "null" && s != "{}" && s != "[]" {
+				return false
+			}
+		case "additionalProperties":
+			if string(v) != "false" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // toolsHash identifies a set of declared functions, whatever their order: a

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"unicode"
 )
 
 // Validation of what a request says about tools: the ones it declares, the
@@ -75,9 +73,10 @@ func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
 // inspectParams checks a parameters schema and returns it compact, with its
 // top-level properties and its required list, which are what monomind keeps of
 // it. An absent or null schema gives nothing. Only what would break the tool is
-// refused: a type other than object, and an enum of a top-level property that
-// does not list strings only (monomind rejects every call of a tool with one).
-// Nested properties are not looked at: monomind drops them.
+// refused: a type other than object, and a top-level property that is not a
+// schema. Nested properties are not looked at: monomind drops them. An enum that
+// monomind cannot take is not refused either: toolSpecs leaves it out of what
+// monomind gets.
 func inspectParams(param string, raw json.RawMessage) (compact json.RawMessage, props map[string]json.RawMessage, required []string, e *apiError) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -97,8 +96,8 @@ func inspectParams(param string, raw json.RawMessage) (compact json.RawMessage, 
 		if err := json.Unmarshal(v, &props); err != nil {
 			return nil, nil, nil, errInvalid("invalid_value", param+".properties", "properties must be an object")
 		}
-		for name, p := range props {
-			if e := inspectProperty(param+".properties."+safeParamName(name), p); e != nil {
+		for _, p := range props {
+			if e := inspectProperty(param+".properties", p); e != nil {
 				return nil, nil, nil, e
 			}
 		}
@@ -115,8 +114,8 @@ func inspectParams(param string, raw json.RawMessage) (compact json.RawMessage, 
 	return buf.Bytes(), props, required, nil
 }
 
-// inspectProperty checks one top-level property: a schema object, or a boolean,
-// and in an object an enum that lists strings only.
+// inspectProperty checks one top-level property: a schema object, or a boolean. The
+// error names the list of properties, not the property: its name is the client's.
 func inspectProperty(param string, raw json.RawMessage) *apiError {
 	raw = bytes.TrimSpace(raw)
 	switch string(raw) {
@@ -127,32 +126,7 @@ func inspectProperty(param string, raw json.RawMessage) *apiError {
 	if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &p) != nil {
 		return errInvalid("invalid_value", param, "a property must be a schema object")
 	}
-	enum, ok := p["enum"]
-	if !ok {
-		return nil
-	}
-	var values []json.RawMessage
-	if json.Unmarshal(enum, &values) != nil || len(values) == 0 {
-		return errInvalid("invalid_value", param+".enum", "an enum must list at least one string")
-	}
-	for _, v := range values {
-		if !bytes.HasPrefix(bytes.TrimSpace(v), []byte(`"`)) {
-			return errInvalid("invalid_value", param+".enum", "an enum of a top-level property must list strings only: the runtime's tool bridge rejects every call otherwise")
-		}
-	}
 	return nil
-}
-
-// safeParamName is a property name fit for the param of an error: no control
-// characters, and not long.
-func safeParamName(name string) string {
-	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, name)
-	return clipRunes(name, 64)
 }
 
 // parseToolChoice reads tool_choice. declared holds the names of the declared

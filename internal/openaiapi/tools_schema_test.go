@@ -65,6 +65,8 @@ func TestToolSpecsOfToolsWithLittleToFold(t *testing.T) {
 		`{"type":"function","function":{"name":"noprops","description":"No arguments.","parameters":{"type":"object","properties":{}}}}`,
 		`{"type":"function","function":{"name":"schemaonly","parameters":{"type":"object","properties":{"x":{"type":"integer"}}}}}`,
 		`{"type":"function","function":{"name":"boolprop","parameters":{"type":"object","properties":{"x":true}}}}`,
+		`{"type":"function","function":{"name":"emptyobject","description":"Takes nothing.","parameters":{"type":"object"}}}`,
+		`{"type":"function","function":{"name":"closed","description":"Takes nothing, closed.","parameters":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{},"required":[],"additionalProperties":false}}}`,
 	}, ","))
 	specs := toolSpecs(decls)
 	byName := map[string]string{}
@@ -74,8 +76,8 @@ func TestToolSpecsOfToolsWithLittleToFold(t *testing.T) {
 	if byName["bare"] != "" {
 		t.Errorf("a tool with nothing to say has no description: %q", byName["bare"])
 	}
-	if byName["described"] != "Does a thing." || byName["noprops"] != "No arguments." {
-		t.Errorf("a tool without properties has nothing to fold: %q %q", byName["described"], byName["noprops"])
+	if byName["described"] != "Does a thing." || byName["noprops"] != "No arguments." || byName["emptyobject"] != "Takes nothing." || byName["closed"] != "Takes nothing, closed." {
+		t.Errorf("a tool whose schema says nothing has nothing to fold: %q", byName)
 	}
 	if want := "Parameters (JSON Schema):\n" + `{"type":"object","properties":{"x":{"type":"integer"}}}`; byName["schemaonly"] != want {
 		t.Errorf("a schema without a description: %q", byName["schemaonly"])
@@ -94,6 +96,49 @@ func TestToolSpecsOfToolsWithLittleToFold(t *testing.T) {
 				t.Errorf("a boolean property is passed as it is: %v", s.Schema)
 			}
 		}
+	}
+}
+
+// A schema without top-level properties still tells the model how to call: it is
+// all in the description, which is the only place monomind does not shrink.
+func TestToolSpecsFoldASchemaThatHasNoTopLevelProperties(t *testing.T) {
+	for name, params := range map[string]string{
+		"a root anyOf":         `{"anyOf":[{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]},{"type":"object","properties":{"b":{"type":"integer"}},"required":["b"]}]}`,
+		"free-form properties": `{"type":"object","additionalProperties":{"type":"string"}}`,
+		"a reference":          `{"$ref":"#/$defs/Args","$defs":{"Args":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}`,
+		"a description only":   `{"type":"object","description":"Pass the city as city."}`,
+		"pattern properties":   `{"type":"object","patternProperties":{"^x-":{"type":"string"}},"properties":{}}`,
+		"required only":        `{"type":"object","required":["city"]}`,
+		"properties as null":   `{"type":"object","properties":null,"oneOf":[{"required":["a"]}]}`,
+	} {
+		specs := toolSpecs(toolDecls(t, `{"type":"function","function":{"name":"f","description":"Does it.","parameters":`+params+`}}`))
+		if want := "Does it.\n\nParameters (JSON Schema):\n" + params; specs[0].Description != want {
+			t.Errorf("%s: description %q, want %q", name, specs[0].Description, want)
+		}
+	}
+}
+
+// monomind's tool bridge takes an enum of strings only and rejects every call of a
+// tool with another: the flat copy leaves such an enum out, and the model still reads
+// it in the description, where the whole schema is.
+func TestToolSpecsLeaveAnEnumMonomindCannotTakeOutOfTheFlatCopyOnly(t *testing.T) {
+	const params = `{"type":"object","properties":{"n":{"type":"integer","enum":[1,2,3]},"m":{"enum":["a",2,null]},"e":{"type":"string","enum":[]},"x":{"enum":"a"},"ok":{"type":"string","enum":["a","b"]},"plain":{"type":"string"}}}`
+	specs := toolSpecs(toolDecls(t, `{"type":"function","function":{"name":"f","parameters":`+params+`}}`))
+	props, _ := specs[0].Schema["properties"].(map[string]interface{})
+	for _, name := range []string{"n", "m", "e", "x"} {
+		p, _ := props[name].(map[string]interface{})
+		if _, has := p["enum"]; has {
+			t.Errorf("property %s: monomind would reject every call of the tool: %v", name, p)
+		}
+	}
+	if p, _ := props["n"].(map[string]interface{}); p["type"] != "integer" {
+		t.Errorf("only the enum is left out: %v", props["n"])
+	}
+	if p, _ := props["ok"].(map[string]interface{}); !reflect.DeepEqual(p["enum"], []interface{}{"a", "b"}) {
+		t.Errorf("a string enum must reach monomind: %v", props["ok"])
+	}
+	if !strings.Contains(specs[0].Description, `"n":{"type":"integer","enum":[1,2,3]}`) || !strings.HasSuffix(specs[0].Description, params) {
+		t.Errorf("the model must still read every enum: %q", specs[0].Description)
 	}
 }
 
