@@ -2738,7 +2738,7 @@ OPENAI-COMPATIBLE API (/v1)
   cannot run read-only, is 400 unsupported_parameter on tools, before anything
   starts). GET /v1/models and api models --json (a TOOLS column in its table, and
   the MCP tool api_models_list) give the models that serve them "tools" among
-  their capabilities. A request declares up to 64 functions (name 1 to 54 characters of
+  their capabilities. A request declares up to 128 functions (name 1 to 54 characters of
   [A-Za-z0-9_-], unique; parameters a JSON schema object, folded whole into the
   description because monomind keeps only top-level properties; an enum that
   is not a list of strings is left out of what monomind gets), tool_choice

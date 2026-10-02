@@ -7,7 +7,7 @@ import (
 
 // Limits of what a request may declare or carry for tool calling.
 const (
-	maxTools = 64
+	maxTools = 128
 	// maxToolName is 54, not the 64 of the runtimes: monomind puts a prefix
 	// (mcp__org__) in front of the name before the runtime sees it.
 	maxToolName        = 54

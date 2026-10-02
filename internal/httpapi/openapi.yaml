@@ -417,7 +417,7 @@ paths:
         `tools`), content parts that are not text (images, audio, files), and a
         `response_format` of any other type than `text` or `json_object`.
 
-        **Tool calling.** `tools` (up to 64 functions: `name` of 1 to 54
+        **Tool calling.** `tools` (up to 128 functions: `name` of 1 to 54
         characters of `[A-Za-z0-9_-]`, unique; a `description`; `parameters`, a
         JSON schema object, at most 64 KiB; `strict` is accepted and ignored),
         `tool_choice` (`none` passes no tools, `auto`, `required` or

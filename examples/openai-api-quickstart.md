@@ -458,7 +458,7 @@ What to expect from a tool loop:
   arguments in `properties`. A call whose arguments do not match the schema is
   returned all the same. An `enum` that is not a list of strings is left out of
   what the runtime's tool bridge gets (the model still reads it in the
-  description); more than 64 functions, a name that is not 1 to 54 characters
+  description); more than 128 functions, a name that is not 1 to 54 characters
   of `[A-Za-z0-9_-]`, a schema that nests combinators and references more than
   8 levels deep, a result larger than 256 KiB, and a call in the conversation
   whose id or name is not printable ASCII without `[ ] < > & ' "` or a backtick

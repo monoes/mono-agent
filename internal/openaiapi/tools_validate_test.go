@@ -23,10 +23,11 @@ func toolBody(extra, messages string) string {
 
 func TestValidateToolsAcceptsWhatClientsSend(t *testing.T) {
 	long54 := strings.Repeat("a", 54)
-	var sixtyFour []string
-	for i := range 64 {
-		sixtyFour = append(sixtyFour, fmt.Sprintf(`{"type":"function","function":{"name":"t%d"}}`, i))
+	var all []string
+	for i := range 129 {
+		all = append(all, fmt.Sprintf(`{"type":"function","function":{"name":"t%d"}}`, i))
 	}
+	sixtyFour, most := all[:64], all[:128]
 	cases := map[string]string{
 		"a minimal tool":          toolBody(`"tools":[{"type":"function","function":{"name":"f"}}]`, userHi),
 		"a tool with a schema":    toolBody(`"tools":[`+weatherTool+`]`, userHi),
@@ -36,6 +37,7 @@ func TestValidateToolsAcceptsWhatClientsSend(t *testing.T) {
 		"a name of 54":            toolBody(`"tools":[{"type":"function","function":{"name":"`+long54+`"}}]`, userHi),
 		"dashes and underscore":   toolBody(`"tools":[{"type":"function","function":{"name":"a-b_C9"}}]`, userHi),
 		"64 tools":                toolBody(`"tools":[`+strings.Join(sixtyFour, ",")+`]`, userHi),
+		"128 tools":               toolBody(`"tools":[`+strings.Join(most, ",")+`]`, userHi),
 		"a string enum":           toolBody(`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"m":{"type":"string","enum":["a","b"]}}}}}]`, userHi),
 		"a nested numeric enum":   toolBody(`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"o":{"type":"object","properties":{"n":{"type":"integer","enum":[1,2]}}}}}}}]`, userHi),
 		"a numeric enum":          toolBody(`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"n":{"type":"integer","enum":[1,2,3]}}}}}]`, userHi),
@@ -69,14 +71,14 @@ func TestValidateToolsRejections(t *testing.T) {
 		return userHi + `,{"role":"assistant","tool_calls":[` + c + `]},{"role":"tool","tool_call_id":"c","content":"r"}`
 	}
 	big := strings.Repeat("x", maxToolResult+1)
-	var sixtyFive []string
-	for i := range 65 {
-		sixtyFive = append(sixtyFive, fmt.Sprintf(`{"type":"function","function":{"name":"t%d"}}`, i))
+	var tooMany []string
+	for i := range 129 {
+		tooMany = append(tooMany, fmt.Sprintf(`{"type":"function","function":{"name":"t%d"}}`, i))
 	}
 	cases := []struct {
 		name, body, code, param string
 	}{
-		{"65 tools", toolBody(`"tools":[`+strings.Join(sixtyFive, ",")+`]`, userHi), "invalid_value", "tools"},
+		{"129 tools", toolBody(`"tools":[`+strings.Join(tooMany, ",")+`]`, userHi), "invalid_value", "tools"},
 		{"not an object", toolBody(`"tools":["f"]`, userHi), "invalid_value", "tools[0]"},
 		{"a non-function type", toolBody(`"tools":[{"type":"retrieval"}]`, userHi), "unsupported_parameter", "tools[0].type"},
 		{"no type", toolBody(`"tools":[{"function":{"name":"f"}}]`, userHi), "unsupported_parameter", "tools[0].type"},

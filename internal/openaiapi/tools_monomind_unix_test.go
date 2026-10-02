@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,6 +182,26 @@ func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
 	}
 	if alive := noneAlive(pids); len(alive) != 0 {
 		t.Errorf("processes of the fake codex are still running: %v", alive)
+	}
+}
+
+// A coding client sends every tool of every MCP server it has, which is more than 64: the most
+// the gateway takes is 128, and the real monomind must take that many in one tools file.
+//
+//	MONOMIND_SMOKE=1 go test ./internal/openaiapi -run TestAsManyToolsAsTheGatewayTakes -v
+func TestAsManyToolsAsTheGatewayTakesOverTheRealMonomind(t *testing.T) {
+	h, _ := realMonomindWithAFakeCodex(t, "single") // one call: get_weather for Paris
+	secret := h.key(t, "default", "app", false)
+	tools := []string{weatherTool}
+	for i := 1; i < 128; i++ {
+		tools = append(tools, fmt.Sprintf(`{"type":"function","function":{"name":"tool_%03d","description":"Does thing %d.","parameters":{"type":"object","properties":{"x":{"type":"string"}}}}}`, i, i))
+	}
+	rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", `"tools":[`+strings.Join(tools, ",")+`]`, weatherQuestion))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("128 tools: %d %s", rec.Code, rec.Body)
+	}
+	if calls := decodeToolReply(t, rec).Choices[0].Message.ToolCalls; len(calls) != 1 || calls[0].Function.Name != "get_weather" || calls[0].Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("the call among 128 tools: %s", rec.Body)
 	}
 }
 

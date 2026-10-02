@@ -647,7 +647,7 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the capability, a request that declares tools is 400 `unsupported_parameter`
   saying it is switched off, `auto` has nothing to pick for one, and the server
   logs it once at start).
-  A request declares up to 64 `tools` of type `function` (a name of 1 to 54
+  A request declares up to 128 `tools` of type `function` (a name of 1 to 54
   characters of `[A-Za-z0-9_-]`, unique; a `description`; `parameters`, a JSON
   schema object whose `type` is `object`; `strict` is accepted and ignored),
   a `tool_choice` (`none` passes no tools, `auto`, `required`, or a named
