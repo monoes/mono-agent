@@ -170,6 +170,25 @@ func (a *apiRuntime) built() *openaiapi.Gateway {
 	return a.gw
 }
 
+// releaseUnused gives the working folders back when no listener serves the
+// gateway. The HTTP API server takes its routes when it is made, so the gateway
+// exists before the listener it is mounted on is bound: a bind that then fails
+// (a port in use) must not leave the home locked by a process that serves
+// nothing. A gateway the dedicated listener serves stays.
+func (a *apiRuntime) releaseUnused() {
+	a.mu.Lock()
+	if a.v1Done != nil {
+		a.mu.Unlock()
+		return
+	}
+	gw := a.gw
+	a.gw, a.gwErr = nil, nil
+	a.mu.Unlock()
+	if gw != nil {
+		gw.Shutdown(time.Second)
+	}
+}
+
 // policy is the confinement policy of a listener bound to addr: what it
 // serves, and what a key created with --context may use of that.
 func (a *apiRuntime) policy(addr string) openaiapi.Policy {
@@ -210,10 +229,6 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 	if a.v1Addr == "" {
 		return "", nil
 	}
-	gw, err := a.gateway()
-	if err != nil {
-		return "", err
-	}
 	tlsCfg, err := tlsserve.Resolve(tlsserve.Config{
 		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv,
 		CacheDir: "api-tls", CommonName: "monoagentcli API server (self-signed)", Label: "API server",
@@ -225,6 +240,13 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 	ln, err := net.Listen("tcp", a.v1Addr)
 	if err != nil {
 		return "", fmt.Errorf("listen on %s: %w", a.v1Addr, err)
+	}
+	// Only now, with the address in hand: building the gateway takes the home's
+	// working folders, and a listener that cannot bind must not keep them.
+	gw, err := a.gateway()
+	if err != nil {
+		ln.Close()
+		return "", err
 	}
 	p := a.policy(a.v1Addr)
 	// The listener gets a context of its own: a command whose other listener

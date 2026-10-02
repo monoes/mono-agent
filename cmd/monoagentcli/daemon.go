@@ -244,10 +244,12 @@ func startDaemonAPI(ctx context.Context, cfg *globalConfig, db *storage.Database
 		ExtraRoutes: daemonRoutes(orgs.registerRoutes, api, addr),
 	})
 	if err != nil {
+		api.releaseUnused() // the routes above built the gateway, which nothing serves now
 		return "", err
 	}
 	ln, err := net.Listen("tcp", srv.Addr())
 	if err != nil {
+		api.releaseUnused()
 		return "", fmt.Errorf("listen on %s: %w (is another daemon or `monoagentcli httpapi` using it?)", srv.Addr(), err)
 	}
 	if _, err := db.DB.Exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, daemonAPIAddrSetting, srv.Addr()); err != nil {
