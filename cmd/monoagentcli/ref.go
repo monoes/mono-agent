@@ -1960,7 +1960,7 @@ Subcommands:
   expressions           Template expression syntax and built-in functions
   examples              Common workflow patterns and use cases
   crawling              How to automate scraping on new/custom platforms
-  api                   HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes
+  api                   HTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes
   org                   Orgs, automations, grants, automation roles, autonomy, holding orgs`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("monoagentcli ref — built-in reference")
@@ -1976,7 +1976,7 @@ Subcommands:
 			fmt.Fprintln(w, "  expressions\tTemplate expression syntax and built-in functions")
 			fmt.Fprintln(w, "  examples\tCommon workflow patterns and use cases")
 			fmt.Fprintln(w, "  crawling\tAutomate sites with no built-in node type (custom XPath configs or an AI agent)")
-			fmt.Fprintln(w, "  api\tHTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes")
+			fmt.Fprintln(w, "  api\tHTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes")
 			fmt.Fprintln(w, "  org\tOrgs, automations, grants, automation roles, autonomy, holding orgs")
 			w.Flush()
 			fmt.Println()
@@ -2654,7 +2654,7 @@ XPATH RULES (automatically enforced by the skill)
 func refAPICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "api",
-		Short: "HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes",
+		Short: "HTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Print(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -2708,6 +2708,73 @@ AUTH
   "httpapi-token"; monoagentcli secret reveal httpapi-token --reveal to
   print it). Loopback-only bind by default (127.0.0.1:9322) — override
   with --addr or MONOAGENT_HTTPAPI_ADDR.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPENAI-COMPATIBLE API (/v1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  The same process also serves standard OpenAI-style endpoints over the
+  agent runtimes installed on this machine (claude, codex, antigravity,
+  ...), so an OpenAI SDK or tool works with just a base URL and a key:
+
+    GET  /v1/models                 models as <runtime>/<model> ids
+    GET  /v1/models/{id}            one model
+    POST /v1/chat/completions       chat, JSON or "stream": true (SSE)
+
+  Model ids look like "claude/sonnet" or "codex/gpt-6-astra" (each runtime's
+  own list decides: read GET /v1/models); a bare runtime ("codex") is its
+  default model, and "agy" is an alias of "antigravity".
+  Sampling parameters are accepted and ignored. These are rejected with 400
+  unsupported_parameter: n above 1, logprobs true, an audio object, a
+  non-empty tools or functions, a tool_choice or function_call other than
+  "none", tool and function messages, content parts that are not text and a
+  response_format other than text or json_object. Not available yet: images,
+  tool calling and the "auto" model.
+
+  Auth is an API key, not the credential above. One profile each (its
+  requests run as that profile and add only that profile's knowledge), shown
+  once, only its SHA-256 is stored (no vault, no keyring, so it works on a
+  headless server):
+
+    monoagentcli api key create --name NAME [--context]
+    monoagentcli api key list [--all-profiles] | show | update | revoke
+    monoagentcli api models        each model with its confinement class, as
+                                   this shell's flags and environment see it
+    monoagentcli api status        listeners, key count, reachability
+
+  --context adds excerpts of the profile's own knowledge to requests made
+  with the key; only chat-only models serve such a key unless the server
+  raises --context-confinement. A key never opens the routes above, and
+  the credential above never opens /v1.
+  org teardown-profile revokes a profile's keys.
+
+  Confinement: chat-only (claude), sandboxed (codex: writes confined to the
+  turn's folder and the temp directory, reads open), unconfined (antigravity:
+  native tools run as the OS user).
+  --confinement chat-only|sandboxed|any (MONOAGENT_API_CONFINEMENT) caps what
+  the process serves, one value for all its listeners; a model above it is
+  unlisted, GET /v1/models/{id} answers 404 for it and a completion naming it
+  answers 403 policy_denied. --context-confinement
+  (MONOAGENT_API_CONTEXT_CONFINEMENT, default chat-only) caps what a
+  --context key may use, never above that.
+
+  Exposure: /v1 is served on the main listener only while it is loopback.
+  Beyond the machine use --v1-addr (MONOAGENT_API_V1_ADDR) on httpapi or
+  daemon: its own listener, only /v1 and /health, TLS only off-loopback
+  (MONOAGENT_API_TLS_CERT and _KEY, else a self-signed certificate that
+  remote clients must trust; with the two set, a loopback bind speaks TLS
+  too), default confinement chat-only. httpapi exits when it cannot start
+  that listener, daemon only warns (check api status). One process per home
+  serves /v1 at a time: a second httpapi serves its other routes without it,
+  a second daemon is refused.
+
+  Limits: 2 MiB body; 4 concurrent turns (--max-concurrent; 429 with
+  Retry-After when full); 10 minute turn timeout (MONOAGENT_API_TURN_TIMEOUT);
+  no CORS. The errors of the three routes are OpenAI-shaped,
+  {"error":{"message","type","param","code"}}, with an X-Request-Id header;
+  an unknown path or method gets the plain 404 or 405 of Go's mux.
+
+  Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT REDACTION

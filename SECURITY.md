@@ -435,3 +435,221 @@ allowlist) if browser-based callers need to reach it; without it the
 server emits no CORS headers at all, so cross-origin browser requests are
 blocked outright — see [Runtime environment variables in
 AGENTS.md](AGENTS.md#runtime-environment-variables).
+
+## OpenAI-compatible API surface
+
+`monoagentcli httpapi` and `monoagentcli daemon` serve `GET /v1/models`,
+`GET /v1/models/{id}` and `POST /v1/chat/completions` over the agent
+runtimes installed on the machine (`internal/openaiapi/`). A request is a
+real agent turn run through `monomind agent exec`; this section is what that
+means for exposure. Setup: `examples/openai-api-quickstart.md`.
+
+**Credentials.** A key is `sk-ma-` plus 32 random bytes and belongs to one
+profile. Only its SHA-256 is stored (table `api_keys`), so it is shown once,
+at creation, and verifying a request needs no vault and no keyring. There is
+no authentication cache: `api key revoke` and `org teardown-profile` take
+effect on the next request. A request authenticates as the key's profile and
+as nothing else; a key of another profile is "not found" in every command
+except `api key list --all-profiles`, which lists every profile's keys
+(metadata only, never a secret) to whoever can run it on this machine.
+The legacy HTTP API token (vault entry `httpapi-token`) is a separate
+credential for the other routes: a key never opens them and the token never
+opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
+
+**What a key can make this machine do.** Every request starts one agent turn
+in a slot folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+(`<hash>` is a hash of the profile id, so two profiles never share a folder;
+never the profile's own folder; emptied before and after every turn), with no
+tools, no settings and the workspace-write sandbox where the runtime has
+one. What that confines depends on the runtime, and
+`monoagentcli api models` reports it per model instead of pretending
+otherwise:
+
+| Class | Meaning | For example |
+|---|---|---|
+| `chat-only` | monomind's allow-list gate is the only tool gate, and a request carries no caller tools, so no native tool is reachable | claude |
+| `sandboxed` | writes are confined to the turn's folder and the system temp directory; reads and the network are open, and the runtime's own configuration still applies | codex |
+| `unconfined` | the runtime's native tools run as the OS user | antigravity, and any runtime monomind does not vouch for |
+
+Which runtime lands in which class follows what monomind reports, so it can
+change with a monomind upgrade. `sandboxed` confines writes, nothing more: a
+runtime keeps the MCP servers and instructions files of the OS user it runs
+as, so a key holder can ask codex to use any tool you configured for it.
+
+Profiles are kept apart by their folders and by what the API looks up for a
+key, not by an OS boundary. Every profile's data lives under the same
+`~/.monoagent`, and a runtime that can read the disk (codex under `sandboxed`,
+antigravity) can read it, the prompt files of a turn that is running for
+another profile included.
+
+The class is decided from `monomind agent scan` and fails closed: anything
+not vouched for is `unconfined`. A `sandboxed` model's turn is started with
+the sandbox required, so one whose sandbox cannot be applied is refused (403)
+instead of running unconfined. The class is checked again when the turn
+starts, against the confinement the `start` event reports (monomind 2.22
+reports it), and a turn that is weaker than the listener's policy is
+cancelled (403 `policy_denied`) before any of its text reaches the caller. A
+streamed response is committed (status 200) on its first content or after 5
+seconds of silence, so a refusal later than that is an error event in the
+stream rather than a 403. A successful non-streaming response also carries
+monomind's sandbox verdict for the turn in `X-Monoagent-Sandbox` (`sandboxed`,
+`scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`),
+which is not the class above; a streamed response and an error have none.
+
+Be precise about what is and is not guaranteed. claude's `chat-only` rests on
+monomind's design (its allow-list gate); the live check
+`MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run TestLiveClaudeIsChatOnly`
+tries to make it do otherwise: it asks claude to run `ls /`, read `/etc/hosts`
+and write a file. It was run on 2026-10-02 against claude 2.1.287 and monomind
+2.22.0: claude did try its Bash, Read and Write tools, monomind refused every
+call ("not in the tool list this exec call was given"), nothing ran and no file
+was written. That is one machine and one version of each, so run it again after
+upgrading either; read the class as measured for that pair and as the design
+beyond it. codex under
+`workspace-write` can still read files outside its folder, and antigravity
+can run a shell command with the permissions of the OS user. **Run the server
+as a dedicated unprivileged OS user**, with nothing of value readable by it,
+before giving a key to anyone you would not give a shell.
+
+**Exposure.**
+
+- `/v1` rides the main HTTP API listener only while that bind is loopback
+  (default `127.0.0.1:9322`), where by default every runtime is served.
+  Off-loopback the
+  main listener never serves `/v1`; it logs a pointer to `--v1-addr`.
+- `--v1-addr` (`MONOAGENT_API_V1_ADDR`) starts a dedicated listener that
+  serves only `/v1/*` and `GET /health`: no workflow, node, HIL or org
+  endpoint exists on it. Any non-loopback bind is served only over TLS, with
+  no way to serve it in the clear: `MONOAGENT_API_TLS_CERT` and `_KEY`, else
+  a self-signed certificate cached under `~/.monoagent/api-tls/` (key file
+  mode 0600) that covers `localhost` only, so remote clients reject it until
+  they trust it explicitly. Set a real certificate, or terminate TLS in a
+  reverse proxy. The two variables also make a loopback `--v1-addr` bind
+  speak TLS, so a proxy that forwards plain HTTP needs them unset. The webhook
+  server follows the same rules (see above). `httpapi` exits when the
+  listener cannot start; `daemon` prints a warning and keeps running without
+  it, so check `api status` after starting it.
+- The default confinement is `chat-only` off-loopback and `any` on loopback.
+  Behind a reverse proxy the bind is loopback, so **set `--confinement`
+  (`MONOAGENT_API_CONFINEMENT`) explicitly**; it is one value for every
+  listener of the process, so it also limits the loopback main listener. A
+  model above the policy is not listed, `GET /v1/models/{id}` answers 404 for
+  it and a completion that names it answers 403.
+- TLS protects the key in transit; it does not limit who may try one. There
+  is no rate limit per caller and no lockout, so a key is only as safe as it
+  is long and secret (256 bits). Put a proxy or a firewall in front of a
+  listener that faces the internet. There is no CORS: browser clients are out
+  of scope.
+
+**Context keys.** A key created with `--context` adds up to five excerpts
+(1,200 characters each, source base names only, never paths) from that
+profile's own documents and captures to the system prompt, framed as data
+whose instructions must be ignored. Captured web pages are in that knowledge
+and nobody vetted them, and the framing reduces prompt injection without
+removing it, so **by default a context key is served only by `chat-only`
+models**: a runtime with native tools could be steered into using them.
+`--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
+raises that on purpose, for example to give a coding agent on your own
+machine your notes. It never goes above the listener's own `--confinement`,
+and raising it accepts that a captured page could steer that runtime. The
+excerpts leave the machine like any prompt, to the runtime's provider. The
+personal brain and other profiles are never searched.
+
+**Cost and abuse limits.** There are no per-key quotas: every request is a real
+model turn on your subscription or account, and some runtimes report no cost.
+The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
+the 2 MiB request body and the 10 minute turn timeout. A request that is
+rejected (invalid, over policy, or busy) starts nothing.
+
+**Logs and errors.** One line per chat completion names the request id, key
+id, profile, model, status, duration and how many knowledge excerpts were
+added, plus, for a failure, the operator-only detail (a Go error or a
+runtime's error code). A failure to list models, a failed knowledge search and
+a failure to verify a key are logged too; a successful listing is not. None
+of the gateway's lines holds a prompt, an answer or a key. monomind's own
+diagnostics (its stderr) reach the server log as they do for any use, and
+nothing in this repo shows that they never echo a prompt. A failed
+authentication is logged with the address of the connection, never the key it
+sent (behind a reverse proxy that is the proxy's address: `X-Forwarded-For` is
+not read); a request that sent no credential at all is not logged. Error
+messages sent to callers are generic for internal failures and for a runtime
+error other than a setup hint, a rate limit, quota or a timeout; of those,
+only the part monomind classified reaches the caller, on one line and at most
+300 characters. Every response of the three routes carries an `X-Request-Id`
+to quote to the operator. A path or method the API does not have gets Go's
+plain-text 404 or 405, without one. `GET /health` on the dedicated listener is
+unauthenticated and returns the server version.
+
+**What this does not cover.**
+
+- Revocation applies to the next request: a turn already running finishes,
+  within the turn timeout. Stopping the daemon or `httpapi` ends the turns in
+  flight (their clients get a 503 they can retry) and waits for their
+  processes to be killed, up to a few seconds longer than monomind's kill grace
+  when a second Ctrl+C forces the exit, so that no agent CLI outlives the
+  command. `httpapi` and a dedicated listener first give running requests 10
+  seconds to finish; the daemon's main listener does not.
+- The agent CLIs keep session transcripts of their turns in their own stores
+  (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
+  they do for any use. The fixed slot folders keep the number of those
+  folders bounded (one per profile and slot), not their content, and keep
+  one profile's apart from another's.
+- Some runtimes (antigravity) pass the prompt on their command line, which
+  other local users can read with `ps` while the turn runs. So does a context
+  key's knowledge search, for every runtime, claude included: it runs
+  `monomind mcp exec -t knowledge_search` with the first 500 characters of the
+  last user message in its arguments, for up to 30 seconds, in two parallel
+  processes (documents and captures). On a shared host, run the server on a
+  machine or an OS user of its own.
+- A turn's prompt and system prompt (which carry a context key's excerpts) are
+  written to files in a private folder (mode 0700) under
+  `~/.monoagent/workspaces/api/.tmp`, outside every turn's writable area, and
+  removed when the turn ends (a crash leaves them until the next start, which
+  clears the folder). The mode keeps other OS users out, not other turns: a
+  runtime that can read the disk can read them while the turn runs, another
+  profile's included, and an unconfined runtime can write there.
+- monomind keeps copies of its own: its hermes, cline and kimicode runners write
+  the prompt, or an agent file, under the temp directory and hand the CLI its
+  path. A sandboxed turn can write the system temp directory and `/tmp`
+  (checked with codex's `workspace-write` on macOS), so it could rewrite such a
+  copy before it is read. Each API turn therefore gets a temp directory of its
+  own (`TMPDIR`, `TMP` and `TEMP`), a folder inside its own folder that no other
+  turn's sandbox reaches, emptied with the rest of the turn's files. That
+  protects the turns of the API, and only those. A turn that does not come
+  through it (a workflow, a chat) keeps monomind's copies in the system temp
+  directory, and a sandboxed API turn can still write `/tmp`: where that is the
+  temp directory (Linux), it could rewrite such a turn's prompt file. On a host
+  that also runs hermes, cline or kimicode turns as the same OS user, run the
+  API server as a user of its own, or with `--confinement chat-only`. The files
+  `monomind.Exec` itself makes for every other caller go to `~/.monoagent/tmp`
+  (mode 0700, files older than a day swept), or to the system temp directory
+  when that folder cannot be made.
+- A runtime can leave a process behind it (a command started with `nohup`, say)
+  that keeps its write access to the turn's folder. Emptying the folder does
+  not stop it. A sandbox that only confines writes below the turn's folder
+  (macOS's, checked) still lets the turn remove that folder and put a link in
+  its place. The gateway looks at the folder from its parent, which no turn can
+  change, and acts on it through open handles: a link is set aside, not
+  followed, so neither such a process nor such a turn can send the emptying
+  outside the folder. A folder it makes impossible to empty (a tree deeper
+  than 100 levels), or too slow to (more than 30 seconds: it keeps changing the
+  tree, or swaps a directory for a FIFO that the walk then waits on) is moved to
+  `~/.monoagent/workspaces/api/.quarantine` and replaced. A walk that was given
+  up on is not waited for; one stuck on a FIFO holds a thread and a few file
+  descriptors until the server restarts. Nothing ends the process. Run the server as a dedicated OS user and
+  look at what it leaves.
+- Where a turn's sandbox is rooted is a path: the turn's folder. A process that
+  outlives its turn can replace that folder with a link in the moment between
+  the gateway's last look at it and the start of the next turn of the slot, and
+  that turn's sandbox is then rooted where the link points, an OS user's home
+  included. The gateway looks right before it starts the process, which narrows
+  the window to milliseconds and cannot close it: only a runtime that roots its
+  sandbox on an open directory could. Read `sandboxed` as confining a prompt,
+  not a determined key holder, and keep the OS user's own files out of reach (a
+  dedicated user, as above).
+
+**Not part of this surface (yet).** Image generation, OpenAI tool calling and
+Jev's `auto` model are later phases. Today a request cannot hand the agent
+tools of the caller's own (a non-empty `tools` is rejected); the runtime's
+native tools are
+a separate matter, covered by the classes above.
