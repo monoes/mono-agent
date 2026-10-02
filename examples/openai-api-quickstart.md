@@ -460,7 +460,10 @@ What to expect from a tool loop:
   what the runtime's tool bridge gets (the model still reads it in the
   description); more than 64 functions, a name that is not 1 to 54 characters
   of `[A-Za-z0-9_-]`, a schema that nests combinators and references more than
-  8 levels deep and a result larger than 256 KiB are refused (400).
+  8 levels deep, a result larger than 256 KiB, and a call in the conversation
+  whose id or name is not printable ASCII without `[ ] < > & ' "` or a backtick
+  (what clients really send, such as `call_abc123`, `toolu_01A...` and
+  `functions.name:0`, is fine) are refused (400).
 - Make tools with side effects idempotent. A model can ask for the same call
   again after a resume (1 of 19 single-result claude legs in the spike, none of
   18 on codex), and codex repeats an identical call two or three times within a

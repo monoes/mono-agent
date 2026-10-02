@@ -732,8 +732,23 @@ executes nothing of the caller's. What this changes, and what it does not:
 - *What the model proposes can be steered, and the caller decides.* A tool
   result is untrusted data. The prompt fences it (`<function_result>`) and
   defangs the fence's tags and any line of it that would open a turn of the
-  transcript, as it does for knowledge excerpts, so a result cannot pass for the
-  user's or the assistant's words. That does not keep a model from following
+  transcript, so a result cannot pass for the user's or the assistant's words.
+  The defence reads the result as a model does, not as an ASCII pattern does:
+  every character a renderer may end a line at (CR, VT, FF, the information
+  separators, NEL, the line and paragraph separators) is a line feed in the
+  prompt, zero-width and other format characters are not there, every kind of
+  space is a space, full-width letters and brackets are plain ones and case does
+  not matter, so spelling a marker or a tag with them gains nothing. The
+  arguments of a call that a client sends back, which the transcript renders
+  outside the fence, are rendered as compact JSON (with the characters that end a
+  line escaped) or, when they are not JSON, defanged as a result is; the id and
+  the name of such a call are refused (400) unless they are printable ASCII
+  without `[ ] < > & ' "` or a backtick. It does not look through letters of
+  another script that resemble Latin ones (a Cyrillic "е"), the words of the
+  user and of the assistant are rendered as the client sent them (they are the
+  conversation), and the tags of the fence carry no per-request token. The
+  knowledge excerpts of a context key have their own, narrower defence: only
+  their `<knowledge` tags are defanged. That does not keep a model from following
   what is in it: a tool that fetched a web page can return instructions, and a
   key created with `--context` puts excerpts of captured pages in the system
   prompt. Either can steer which calls the model proposes next, so a context key

@@ -717,7 +717,14 @@ a key. It lives in `internal/openaiapi/`; the spec is
   replay each round (on claude it does not: the resumed leg is told the new
   choice). A result is fenced in
   the prompt (`<function_result>`), with the fence's tags and any line that
-  would open a turn of the transcript defanged. A call whose arguments do not
+  would open a turn of the transcript defanged, reading the text as a model does
+  (every kind of line break is a line feed, format characters are not there,
+  full-width letters are plain ones, case does not matter:
+  `internal/openaiapi/tools_defang.go`). The arguments of a call that the client
+  sends back are rendered as compact JSON, or defanged like a result when they
+  are not JSON, and the id and the name of such a call must be printable ASCII
+  without `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the
+  parameter, never the value). A call whose arguments do not
   match the declared schema is returned all the same, and the client decides. A
   resumed leg can ask for the same call again instead of using the result (1 of
   19 single-result claude legs in the spike, 0 of 18 on codex), and codex repeats

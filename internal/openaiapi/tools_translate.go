@@ -3,7 +3,6 @@ package openaiapi
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -100,7 +99,7 @@ func replayPrompt(req *ChatRequest, active bool) string {
 			}
 			for _, c := range m.ToolCalls {
 				names[c.ID] = c.Function.Name
-				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", c.Function.Name, argumentsText(c.Function.Arguments))
+				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", c.Function.Name, argumentsInPrompt(c.Function.Arguments))
 			}
 		case "tool":
 			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text))
@@ -116,24 +115,13 @@ func replayPrompt(req *ChatRequest, active bool) string {
 	return b.String()
 }
 
-var (
-	// resultFenceRE matches an opening or closing tag of the fence a result sits
-	// in, in any case and spacing.
-	resultFenceRE = regexp.MustCompile(`(?i)<\s*/?\s*function_result`)
-	// turnMarkerRE matches the start of a line that would open a turn of the
-	// transcript: [user], [assistant], [tool NAME (ID)] and the other roles.
-	turnMarkerRE = regexp.MustCompile(`(?im)^([ \t]*)\[(user|assistant|tool|system|developer|function)\b`)
-)
-
 // fenceResult renders the result of a function as data. A result is whatever the
 // client's function returned (a file, a page, an API's answer), so nothing in it
 // may close the fence or pass for a turn of the transcript: the tags of the fence
-// and the markers at the start of a line are defanged, as the knowledge excerpts'
-// are, and the words stay readable.
+// and the markers at the start of a line are defanged (defangResult says how), and the
+// words stay readable.
 func fenceResult(text string) string {
-	text = resultFenceRE.ReplaceAllStringFunc(text, func(m string) string { return "&lt;" + m[1:] })
-	text = turnMarkerRE.ReplaceAllString(text, "${1}&#91;${2}")
-	return "<function_result>\n" + text + "\n</function_result>"
+	return "<function_result>\n" + defangResult(text) + "\n</function_result>"
 }
 
 // argumentsText is the arguments of a call of the request as text: the string
