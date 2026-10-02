@@ -21,8 +21,9 @@ func validateTools(req *ChatRequest) *apiError {
 	declared := make(map[string]bool, len(req.Tools))
 	known := make(map[string]bool, len(req.Tools)) // the names the runtime knows the functions by
 	var wire, back map[string]string
+	budget := newHoistBudget() // what the functions of the request together may spend on naming their arguments
 	for i, raw := range req.Tools {
-		d, e := parseToolDecl(i, raw)
+		d, e := parseToolDecl(i, raw, budget)
 		if e != nil {
 			return e
 		}
@@ -50,7 +51,7 @@ func validateTools(req *ChatRequest) *apiError {
 	return nil
 }
 
-func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
+func parseToolDecl(i int, raw json.RawMessage, budget *hoistBudget) (toolDecl, *apiError) {
 	base := fmt.Sprintf("tools[%d]", i)
 	var t struct {
 		Type     string `json:"type"`
@@ -81,8 +82,11 @@ func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
 	if d.Params, e = inspectParams(param, t.Function.Parameters); e != nil {
 		return toolDecl{}, e
 	}
-	names := nameArguments(d.Params)
+	names := nameArguments(d.Params, budget)
 	switch {
+	case names.Spent:
+		return toolDecl{}, errInvalid("invalid_value", param,
+			"the parameters of the functions of the request together hold more schemas and properties than are read to name their arguments: list the arguments in properties, or declare fewer functions with such schemas")
 	case names.Overrun:
 		return toolDecl{}, errInvalid("invalid_value", param,
 			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref too deeply to name their arguments: list the arguments in properties")

@@ -170,6 +170,7 @@ func TestFunctionsWithoutArgumentsOrWithFreeFormKeysBesideTheirPropertiesStayVal
 		`{}`, `{"type":"object"}`, `{"type":"object","properties":{}}`, `{"type":"object","additionalProperties":false}`,
 		`{"type":"object","patternProperties":{}}`, `{"type":"object","description":"No arguments."}`,
 		`{"anyOf":[{"type":"object"},{"type":"string"}]}`, `{"properties":{},"additionalProperties":false}`,
+		`{"$ref":"#/$defs/T","$defs":{"T":true}}`, `{"$ref":"#/$defs/T","$defs":{"T":"not a schema"}}`,
 	} {
 		if props, _ := named(t, params); len(props) != 0 {
 			t.Errorf("%s names properties: %v", params, keysOf(props))

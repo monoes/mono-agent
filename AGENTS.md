@@ -664,7 +664,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the whole schema is also folded into the tool's description, and an enum that
   is not a list of strings is left out of what monomind gets, not refused. A
   schema that names no property and allows free-form keys, or that nests more
-  than 8 levels deep, is 400 `invalid_value` on `tools[i].function.parameters`
+  than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
+  together take more than 100,000 steps to read (a reference is read once
+  however it is spelled, so the cost is bounded by the request), is 400
+  `invalid_value` on `tools[i].function.parameters`
   (`internal/openaiapi/tools_hoist.go`). **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the

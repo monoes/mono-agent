@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"encoding/json"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,9 +13,32 @@ import (
 // the client's: the nesting of one that fits in the size limit is not, so a schema that
 // goes past either bound is refused, not named in part.
 const (
-	maxHoistDepth = 8    // levels of combinators and references followed
-	maxHoistNodes = 2000 // schemas visited in all
+	maxHoistDepth = 8       // levels of combinators and references followed
+	maxHoistNodes = 2000    // schemas visited in one function
+	maxHoistSteps = 100_000 // schemas visited, references followed and properties named in all the functions of a request
 )
+
+// hoistBudget is what the whole request may spend on naming arguments. Every schema read,
+// every reference followed and every property named by any function counts against it, so
+// that however the schemas of a request refer to each other it costs a bounded amount of work,
+// and that before anything starts (a slot is not held yet, so nothing else bounds it).
+type hoistBudget struct {
+	left     int
+	used     int
+	marshals int // properties marshalled: what the tests of the cost count
+}
+
+func newHoistBudget() *hoistBudget { return &hoistBudget{left: maxHoistSteps} }
+
+// spend takes one step from the budget and says whether there was one.
+func (b *hoistBudget) spend() bool {
+	if b.left <= 0 {
+		return false
+	}
+	b.left--
+	b.used++
+	return true
+}
 
 // argNames is what nameArguments found in a parameters schema.
 type argNames struct {
@@ -27,6 +51,8 @@ type argNames struct {
 	Open bool
 	// Overrun says the schema nests deeper, or holds more schemas, than is read.
 	Overrun bool
+	// Spent says the request has spent what it may on naming arguments (hoistBudget).
+	Spent bool
 }
 
 // nameArguments says which arguments monomind has to be told of. monomind builds the
@@ -43,15 +69,18 @@ type argNames struct {
 // With no property to name and Open set, nothing about the arguments could be told to
 // monomind: the caller refuses the function. With some named, the keys outside them are
 // not passed on, which the docs say.
-func nameArguments(params json.RawMessage) argNames {
+func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	var doc map[string]any
 	if len(params) == 0 || json.Unmarshal(params, &doc) != nil {
 		return argNames{}
 	}
-	h := &hoister{doc: doc, props: map[string]json.RawMessage{}, views: map[string]string{},
-		followed: map[string]int{}, mentioned: map[string]bool{}, required: map[string]bool{}}
+	if budget == nil {
+		budget = newHoistBudget()
+	}
+	h := &hoister{doc: doc, budget: budget, props: map[string]json.RawMessage{}, views: map[string]string{},
+		followed: map[uintptr]int{}, mentioned: map[string]bool{}, required: map[string]bool{}}
 	h.walk(doc, 0, false)
-	out := argNames{Props: h.props, Open: h.open, Overrun: h.overrun}
+	out := argNames{Props: h.props, Open: h.open, Overrun: h.overrun, Spent: h.spent}
 	for _, name := range h.names {
 		if _, has := h.props[name]; !has {
 			h.props[name] = json.RawMessage("true")
@@ -64,10 +93,12 @@ func nameArguments(params json.RawMessage) argNames {
 }
 
 type hoister struct {
+	budget   *hoistBudget
+	spent    bool           // the budget ran out
 	doc      map[string]any // the whole schema, for the pointers of its references
 	props    map[string]json.RawMessage
 	views    map[string]string // what monomind reads of each property that is defined
-	followed map[string]int    // the references read already, as which kind (the bits below)
+	followed map[uintptr]int   // the schemas that references led to, read already, as which kind (the bits below)
 	nodes    int
 	open     bool
 	overrun  bool
@@ -88,6 +119,9 @@ const (
 // with it. optional says the schema is one of several that may apply, so nothing it
 // requires is required of the call.
 func (h *hoister) walk(node any, depth int, optional bool) {
+	if h.spent || h.overrun || !h.step() {
+		return
+	}
 	h.nodes++
 	if depth > maxHoistDepth || h.nodes > maxHoistNodes {
 		h.overrun = true
@@ -144,6 +178,15 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 	}
 }
 
+// step charges one step of work to the budget of the request.
+func (h *hoister) step() bool {
+	if !h.budget.spend() {
+		h.spent = true
+		return false
+	}
+	return true
+}
+
 func (h *hoister) walkEach(branches any, depth int, optional bool) {
 	list, _ := branches.([]any)
 	for _, b := range list {
@@ -152,26 +195,36 @@ func (h *hoister) walkEach(branches any, depth int, optional bool) {
 }
 
 // follow reads what a local reference points at as if it stood where the reference does.
-// A reference is read once for each way it is met, which ends a loop and keeps a schema
-// that refers twice to the same definitions, level after level, from costing a path for
-// each. One that leaves the document or points at nothing leaves arguments that nothing
-// names.
+// The schema a reference leads to is read once for each way it is met, which ends a loop and
+// keeps a schema that refers twice to the same definitions, level after level, from costing
+// a path for each. It is the schema that is remembered, not the text of the reference: a
+// pointer has as many spellings as it has percent-encodable characters and numbers that mean
+// one index, and a memory of the spellings would read the schema again for each. One that
+// leaves the document or points at nothing leaves arguments that nothing names.
 func (h *hoister) follow(ref string, depth int, optional bool) {
-	kind := followedApplied
-	if optional {
-		kind = followedOptional
-	}
-	have := h.followed[ref]
-	if have&followedApplied != 0 || have&kind != 0 {
+	if !h.step() {
 		return
 	}
-	h.followed[ref] = have | kind
 	target, ok := h.resolve(ref)
 	if !ok {
 		h.open = true
 		return
 	}
-	h.walk(target, depth+1, optional)
+	m, isSchema := target.(map[string]any)
+	if !isSchema {
+		return // a boolean says nothing of arguments
+	}
+	kind := followedApplied
+	if optional {
+		kind = followedOptional
+	}
+	id := reflect.ValueOf(m).Pointer()
+	have := h.followed[id]
+	if have&followedApplied != 0 || have&kind != 0 {
+		return
+	}
+	h.followed[id] = have | kind
+	h.walk(m, depth+1, optional)
 }
 
 // resolve follows a JSON pointer in a fragment ("#/$defs/Args") through the document.
@@ -214,23 +267,32 @@ func (h *hoister) resolve(ref string) (any, bool) {
 // What is not a schema (a branch's property is not checked as a top-level one is) is any
 // value too.
 func (h *hoister) define(name string, prop any) {
-	raw := json.RawMessage("true")
-	switch p := prop.(type) {
-	case map[string]any:
-		if b, err := json.Marshal(p); err == nil {
-			raw = b
-		}
-	case bool:
-		raw = json.RawMessage(strconv.FormatBool(p))
+	if !h.step() {
+		return
 	}
-	view := propertyView(prop)
 	have, seen := h.props[name]
+	view := propertyView(prop)
 	switch {
 	case !seen:
-		h.props[name], h.views[name] = raw, view
+		h.props[name], h.views[name] = h.marshal(prop), view
 	case h.views[name] != view && string(have) != "true":
 		h.props[name], h.views[name] = json.RawMessage("true"), ""
 	}
+}
+
+// marshal is a property as monomind is given it: only a name that is met for the first time
+// needs it, and a schema may define the same name in thousands of branches.
+func (h *hoister) marshal(prop any) json.RawMessage {
+	switch p := prop.(type) {
+	case map[string]any:
+		h.budget.marshals++
+		if b, err := json.Marshal(p); err == nil {
+			return b
+		}
+	case bool:
+		return json.RawMessage(strconv.FormatBool(p))
+	}
+	return json.RawMessage("true")
 }
 
 // require notes a name of a required list: it is an argument, and required of the call
@@ -252,8 +314,14 @@ func propertyView(prop any) string {
 	if !ok {
 		return ""
 	}
-	typ, _ := json.Marshal(p["type"])
-	view := string(typ)
+	view := "-" // no type
+	switch t := p["type"].(type) {
+	case nil:
+	case string:
+		view = "s:" + t
+	default:
+		view = "~" // a list of types, or anything else: monomind reads none of it
+	}
 	if list, ok := p["enum"].([]any); ok && len(list) > 0 {
 		values := make([]string, 0, len(list))
 		for _, v := range list {
