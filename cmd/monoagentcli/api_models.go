@@ -13,7 +13,6 @@ import (
 // The document `api models --json` prints is the one the MCP tool api_models_list
 // returns, so its types and the rules that fill them live in internal/openaiapi.
 type (
-	apiModelJSON  = openaiapi.ModelReport
 	apiAutoJSON   = openaiapi.AutoReport
 	apiModelsJSON = openaiapi.ModelsReport
 )
