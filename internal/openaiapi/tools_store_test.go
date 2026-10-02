@@ -35,6 +35,13 @@ func record(call, key string) contRecord {
 
 func matchAll(contRecord) bool { return true }
 
+// size is the number of records the store holds.
+func (s *contStore) size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.order)
+}
+
 func TestContStorePutAndTake(t *testing.T) {
 	clock := newTestClock()
 	s := newContStore(clock.now)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -216,5 +217,22 @@ func TestAHistoryCallOfAnotherLongNameIsRenderedAsItIs(t *testing.T) {
 	req := toolRequest(t, `"tools":[`+declare(longTool)+`]`, `{"role":"user","content":"q"},{"role":"assistant","tool_calls":[{"id":"c","type":"function","function":{"name":"`+other+`","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"r"}`)
 	if got := replayPrompt(req, true); !strings.Contains(got, "(called the function "+other+" with arguments {})") || !strings.Contains(got, "[tool "+other+" (c)]") {
 		t.Errorf("a function that was not declared keeps its name: %s", got)
+	}
+}
+
+// The longest name a client may declare is the constant, not a number written into a pattern: a
+// limit that is changed in one place and not in the other would refuse names the aliasing is
+// built for, or take names it cannot alias.
+func TestTheLongestDeclaredNameIsTheConstant(t *testing.T) {
+	name := strings.Repeat("n", maxDeclaredName)
+	if err := validateChat(decodeRequest(t, toolBody(`"tools":[`+declare(name)+`]`, userHi))); err != nil {
+		t.Errorf("a name of %d characters: %+v", maxDeclaredName, err)
+	}
+	err := validateChat(decodeRequest(t, toolBody(`"tools":[`+declare(name+"n")+`]`, userHi)))
+	if err == nil || err.Code != "invalid_value" || err.Param != "tools[0].function.name" {
+		t.Errorf("a name of %d characters: %+v, want 400 invalid_value on tools[0].function.name", maxDeclaredName+1, err)
+	}
+	if want := fmt.Sprintf("^[A-Za-z0-9_-]{1,%d}$", maxDeclaredName); toolNameRE.String() != want {
+		t.Errorf("the pattern of a name is %s, want %s", toolNameRE, want)
 	}
 }

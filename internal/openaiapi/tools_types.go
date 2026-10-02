@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 )
 
@@ -26,7 +27,7 @@ const (
 	maxCallName     = 128
 )
 
-var toolNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var toolNameRE = regexp.MustCompile(fmt.Sprintf(`^[A-Za-z0-9_-]{1,%d}$`, maxDeclaredName))
 
 // toolDecl is one function the request declares, validated.
 type toolDecl struct {

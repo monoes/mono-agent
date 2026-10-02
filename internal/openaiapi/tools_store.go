@@ -138,13 +138,6 @@ func (s *contStore) take(callID string, match func(contRecord) bool) (contRecord
 	return *r, true
 }
 
-// size is the number of records held.
-func (s *contStore) size() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.order)
-}
-
 // makeRoomLocked removes the record that expires first of those pick accepts, to make room for
 // r, and reports whether it did. It does not when there is none, or when r would expire before
 // it: then r is the record that goes.
