@@ -27,17 +27,22 @@ func turnFolder(t *testing.T) (dir, out string) {
 // it likes in no time and without the disk.
 func sparseFile(t *testing.T, path string, head []byte, size int64) {
 	t.Helper()
+	if err := writeSparse(path, head, size); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeSparse is sparseFile for a goroutine that is not the test's.
+func writeSparse(path string, head []byte, size int64) error {
 	f, err := os.Create(path)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
+	defer f.Close()
 	if _, err := f.Write(head); err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if err := f.Truncate(size); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	return f.Truncate(size)
 }
 
 // What is no image by its first bytes is not read any further: a folder of big files that

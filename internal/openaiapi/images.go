@@ -15,17 +15,6 @@ import (
 // maximum on this route, where none of its knowledge is added to the turn.
 const imageContextWhy = "such a key is held to it on every route, because its chat requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted"
 
-// imagesResponse is the answer of POST /v1/images/generations: the images the
-// runtime saved, each as the base64 of its bytes (encoding/json writes a []byte so).
-type imagesResponse struct {
-	Created int64       `json:"created"`
-	Data    []imageData `json:"data"`
-}
-
-type imageData struct {
-	B64JSON []byte `json:"b64_json"`
-}
-
 // handleImages is POST /v1/images/generations: one turn of a runtime that can make
 // images, in a slot folder, told to save what it makes there; what it saved is read
 // before the folder is emptied and returned.
@@ -95,6 +84,7 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 		extendWriteDeadline(w, g.cfg.TurnTimeout+2*turnGrace)
 
 		res, err := g.runTurn(r.Context(), t)
+		release() // the turn is over and its folder is empty: writing the answer is not what the slot is for
 		e, gone := g.resultError(r.Context(), res, err, m, eff)
 		if gone {
 			status = 499 // the caller left; there is nobody to answer
@@ -124,11 +114,7 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 		if res.SandboxStatus != "" {
 			w.Header().Set("X-Monoagent-Sandbox", res.SandboxStatus)
 		}
-		data := make([]imageData, len(found.images))
-		for i, img := range found.images {
-			data[i] = imageData{B64JSON: img}
-		}
-		writeJSON(w, http.StatusOK, imagesResponse{Created: time.Now().Unix(), Data: data})
+		writeImages(w, time.Now().Unix(), found.images)
 	}
 }
 

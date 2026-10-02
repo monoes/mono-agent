@@ -227,8 +227,10 @@ func readImage(root *os.Root, name string) ([]byte, string) {
 	if !isImage(head[:k]) {
 		return nil, "not an image"
 	}
-	var buf bytes.Buffer
-	buf.Grow(int(fi.Size()) + 1)
+	// One allocation, with room for the file and for the read that finds its end: with
+	// less, that read doubles the buffer. (Buffer.Grow is not used: it allocates the
+	// space twice when the race detector is on.)
+	buf := bytes.NewBuffer(make([]byte, 0, int(fi.Size())+bytes.MinRead))
 	buf.Write(head[:k])
 	if _, err := buf.ReadFrom(io.LimitReader(f, maxImageBytes+1-int64(k))); err != nil {
 		return nil, "unreadable"
