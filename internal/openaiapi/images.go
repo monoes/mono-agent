@@ -16,8 +16,8 @@ import (
 const imageContextWhy = "such a key is held to it on every route, because its chat requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted"
 
 // handleImages is POST /v1/images/generations: one turn of a runtime that can make
-// images, in a slot folder, told to save what it makes there; what it saved is read
-// before the folder is emptied and returned.
+// images, in a slot folder, told to save what it makes in a folder of the turn's own
+// inside it; what it saved there is read before the slot folder is emptied, and returned.
 func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request, Principal) {
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		begin := time.Now()
