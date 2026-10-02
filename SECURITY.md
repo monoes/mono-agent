@@ -731,20 +731,32 @@ executes nothing of the caller's. What this changes, and what it does not:
   `unsupported_parameter` before anything starts.
 - *What the model proposes can be steered, and for the client's own functions the
   caller decides.* A tool result is untrusted data. The prompt fences it
-  (`<function_result>`) and defangs the fence's tags and any line of it that would
-  open a turn of the transcript, so a result cannot pass for the user's or the
-  assistant's words. The defence reads the result as a model does, not as an
-  ASCII pattern does: every character a renderer may end a line at (CR, VT, FF,
-  the information separators, NEL, the line and paragraph separators) is a line
-  feed in the prompt, zero-width and other format characters are not there, every
-  kind of space is a space, full-width letters and brackets are plain ones and
-  case does not matter, so spelling a marker or a tag with them gains nothing.
+  (`<function_result>`): the fence is the defence, a model is told that what is
+  inside is data. A second layer defangs the fence's tags and any line of a result
+  that would open a turn of the transcript, so a result does not pass for the
+  user's or the assistant's words, and it reads the result as a model does, not as
+  an ASCII pattern does: every character a renderer may end a line at (CR, VT, FF,
+  the information separators, NEL, the line and paragraph separators) ends one,
+  every kind of space is a space, case does not matter, a look-alike of an ASCII
+  character (full-width, bold, circled or superscript letters, full-width
+  brackets, ligatures: NFKC) is that character, and whatever renders as nothing
+  (control and format characters, the Hangul and braille blanks, combining marks)
+  is not there, so spelling a marker or a tag with them gains nothing against a
+  reader of that kind (a fuzz of random compositions of them, judged by a reader that
+  shares nothing with the code, is in the tests). A match is neutralised in
+  place and nothing else of a result is changed: line ends of every kind reach the
+  model as they were (a file with CRLF line ends is read as it is), and so does a
+  header such as `[tool.poetry]` (a role marker is the role word followed by a
+  bracket or a space; the `[user]` header of a gitconfig is indistinguishable from
+  one and is defanged with the rest).
   The arguments of a call that a client sends back, which the transcript renders
   outside the fence, are rendered as compact JSON (with the characters that end a
   line escaped) or, when they are not JSON, defanged as a result is; the id and
   the name of such a call are refused (400) unless they are printable ASCII
   without `[ ] < > & ' "` or a backtick. It does not look through letters of
-  another script that resemble Latin ones (a Cyrillic "е"), the words of the
+  another script that resemble Latin ones (a Cyrillic "е"), which would take a
+  table of confusables: against such a disguise the fence is the defence and the
+  second layer is not. The words of the
   user and of the assistant are rendered as the client sent them (they are the
   conversation), and the tags of the fence carry no per-request token. The
   knowledge excerpts of a context key have their own, narrower defence: only
