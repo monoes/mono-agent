@@ -418,8 +418,26 @@ a key. It lives in `internal/openaiapi/`; the spec is
   non-empty `tools` or `functions`, a `tool_choice` or `function_call` other
   than `"none"`, `tool` and `function` messages, content parts that are not
   text (images, audio, files) and a `response_format` other than `text` or
-  `json_object`. Images, tool calling and an `auto` model that lets Jev pick
-  are not available yet.
+  `json_object`. Images and tool calling are not available yet.
+- **The `auto` model.** `"model": "auto"` lets [TypeSafe Jev](#typesafe-jev-decisions-only)
+  pick, per request, among the models the listener serves (a `--context` key:
+  among those its own cap allows). It is the `api_auto` Jev surface: off until
+  `monoagentcli jev enable api_auto` on the key's profile, which also needs
+  that profile's Jev key (`jev key set`, or `TYPESAFE_API_KEY`). Without them
+  `auto` is not listed and answers 404 `model_not_found` naming what is
+  missing (`api models` and `api status` say it too). What is sent to
+  TypeSafe: the first 4,000 characters of the last user message and each
+  candidate's name, description and validated cost and latency, never the
+  system prompt, earlier turns, the profile's knowledge or a key. Jev only
+  picks among options the code lists, so it never goes beyond what the policy
+  allows; a failure, a timeout (8 seconds), an answer that is not an option or
+  a probability under the surface's threshold (default 0, set it with `jev
+  enable api_auto --threshold`) uses a rule instead: the cheapest, then the
+  fastest validated model. The response names the pick in `model` and
+  `X-Monoagent-Model`, and who chose in `X-Monoagent-Auto` (`jev` or `rule`;
+  `rule` also when there was only one model to pick and Jev was not asked). A
+  question to Jev is recorded under `api_auto` in `jev usage`, and the
+  server's log line has `auto=jev|rule` and never the prompt.
 - **Auth is a per-profile API key** (`sk-ma-…`), never the legacy token above.
   `monoagentcli api key create --name <n> [--context]` prints the key once and
   stores only its SHA-256, so it needs no vault and no keyring and works on a
@@ -1413,7 +1431,7 @@ probabilities, in one ~100–300 ms request. It **never generates text**.
   surface does exactly what it did without Jev.
 - **Opt-in per surface, per profile.** Every implicit surface
   (`action_fallback`, `hil`, `people_review`, `capture`, `inbox`,
-  `people_links`, `asks`, `retry`) is off until enabled. `enable` prints what
+  `people_links`, `asks`, `retry`, `api_auto`) is off until enabled. `enable` prints what
   that surface sends to TypeSafe and asks (or needs `--yes` when stdin is not
   a terminal). Workflow nodes that use Jev (e.g. `browser.jev`) opt in by
   being used; the org decider opts in through its own autonomy config.

@@ -555,6 +555,29 @@ and raising it accepts that a captured page could steer that runtime. The
 excerpts leave the machine like any prompt, to the runtime's provider. The
 personal brain and other profiles are never searched.
 
+**The `auto` model.** A request for `"model": "auto"` has TypeSafe Jev pick
+the runtime and model. It is off until the key's profile runs `monoagentcli
+jev enable api_auto` (which prints what follows and asks first) and has a Jev
+key. Then each such request sends TypeSafe, a third party besides the
+runtime's provider that answers the prompt, the first 4,000 characters of the
+last user message and, for every model the key may use, its name, description
+and validated cost and latency. Never the system prompt, earlier turns, the
+excerpts of a context key or a key. So whoever holds a key of that profile
+decides what is sent to TypeSafe: enable the surface only where you accept
+that. The prompt goes as data (`state.untrusted_prompt`, and Jev is told to
+treat it so), but what holds is the structure, not that instruction: Jev
+answers with one of the listed model ids, anything else is discarded, and the
+list is already cut to what the key's policy allows (the listener's
+`--confinement`, a context key's `--context-confinement`) before Jev sees it. A
+prompt that steers Jev can therefore only choose among models the key could
+have named itself; at most it steers toward the dearest of them, which the
+absence of per-key quotas already allows. Jev's answer is used only when it
+arrives within 8 seconds, with no retry, and is sure enough for the surface's
+threshold; an outage, a timeout or a doubt falls back to a rule (the cheapest,
+then the fastest validated model of the same list), never to a wider set. Each
+question is recorded in `jev_usage` under `api_auto` (counts only), and the
+log line of the request says `auto=jev` or `auto=rule` and never the prompt.
+
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost.
 The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
@@ -562,8 +585,9 @@ the 2 MiB request body and the 10 minute turn timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing.
 
 **Logs and errors.** One line per chat completion names the request id, key
-id, profile, model, status, duration and how many knowledge excerpts were
-added, plus, for a failure, the operator-only detail (a Go error or a
+id, profile, model, status, duration, how many knowledge excerpts were
+added and, for `auto`, who chose the model, plus, for a failure, the
+operator-only detail (a Go error or a
 runtime's error code). A failure to list models, a failed knowledge search and
 a failure to verify a key are logged too; a successful listing is not. None
 of the gateway's lines holds a prompt, an answer or a key. monomind's own
@@ -648,8 +672,8 @@ unauthenticated and returns the server version.
   not a determined key holder, and keep the OS user's own files out of reach (a
   dedicated user, as above).
 
-**Not part of this surface (yet).** Image generation, OpenAI tool calling and
-Jev's `auto` model are later phases. Today a request cannot hand the agent
+**Not part of this surface (yet).** Image generation and OpenAI tool calling
+are later phases. Today a request cannot hand the agent
 tools of the caller's own (a non-empty `tools` is rejected); the runtime's
 native tools are
 a separate matter, covered by the classes above.
