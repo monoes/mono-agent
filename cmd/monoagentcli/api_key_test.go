@@ -186,8 +186,8 @@ func TestAPIKeyUpdateHonoursExplicitFlagValues(t *testing.T) {
 func TestAPIKeyCreateWithContextSaysWhichModelsServeIt(t *testing.T) {
 	db := newAPITestDB(t)
 	_, withNote, err := runAPI(t, db, "default", false, "key", "create", "--name", "notes", "--context")
-	if err != nil || !strings.Contains(withNote, "chat-only") || !strings.Contains(withNote, "--context-confinement") {
-		t.Errorf("a context key must say it is served by chat-only models unless the server raises --context-confinement: %q (%v)", withNote, err)
+	if err != nil || !strings.Contains(withNote, "chat-only") || !strings.Contains(withNote, "--context-confinement") || !strings.Contains(withNote, "tool calling") {
+		t.Errorf("a context key must say it is served by chat-only models, and refused tool calling, unless the server raises --context-confinement: %q (%v)", withNote, err)
 	}
 	_, plainNote, err := runAPI(t, db, "default", false, "key", "create", "--name", "plain")
 	if err != nil || strings.Contains(plainNote, "chat-only") {

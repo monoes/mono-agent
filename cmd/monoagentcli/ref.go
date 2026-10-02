@@ -2735,12 +2735,19 @@ OPENAI-COMPATIBLE API (/v1)
   POST /v1/chat/completions, streaming and not, on the runtimes of
   MONOAGENT_API_TOOL_RUNTIMES (default claude,codex; none switches tool calling
   off; a model of another runtime, or of a non-chat-only runtime that monomind
-  cannot run read-only, is 400 unsupported_parameter on tools, before anything
-  starts). GET /v1/models and api models --json (a TOOLS column in its table, and
-  the MCP tool api_models_list) give the models that serve them "tools" among
-  their capabilities. A request declares up to 128 functions (name 1 to 64 characters of
-  [A-Za-z0-9_-], unique; parameters a JSON schema object, folded whole into the
-  description because monomind keeps only top-level properties; an enum that
+  cannot run read-only or whose sandbox it cannot apply (every tool turn requires
+  monomind's sandbox: 403 policy_denied, nothing run, if it cannot be applied), is
+  400 unsupported_parameter on tools, before anything starts; a key created with
+  --context is refused tools, 403 policy_denied naming --context-confinement,
+  unless that cap is above chat-only). GET /v1/models and api models --json (a
+  TOOLS column in its table, and the MCP tool api_models_list) give the models
+  that serve them "tools" among their capabilities. A request declares up to 128
+  functions (name 1 to 64 characters of [A-Za-z0-9_-], unique, where a name of 55
+  or more reaches monomind and the model as an alias of 54 and the client sees its
+  own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref
+  and if/then/else arguments are named at the top level for monomind, which keeps
+  only top-level properties, and which is folded whole into the description; a
+  schema that names no property and allows free-form keys is 400; an enum that
   is not a list of strings is left out of what monomind gets), tool_choice
   none (no tools), auto,
   required or a named function (a best-effort line), parallel_tool_calls (treated
@@ -2752,12 +2759,15 @@ OPENAI-COMPATIBLE API (/v1)
   and sends the conversation again with that assistant message and a message of
   role "tool" (tool_call_id, text result up to 256 KiB). No process waits and no
   slot is held meanwhile. The follow-up continues the runtime's session when a
-  single-use in-memory record fits (same key, profile, model, function, tools
-  and conversation before the call; 10 minutes; ids, names and hashes only) and
-  otherwise replays the transcript, which always works. A codex leg runs read-only (--access read); declaring tools
-  changes no confinement class. Tool results are untrusted data, fenced in the
-  prompt, and a steered call is the caller's to run or not: see SECURITY.md. The log line
-  adds tools=<n> leg=first|resume|replay.
+  single-use in-memory record fits (same key, profile, model, function and its
+  arguments, tools and conversation before the call; 10 minutes; ids, names and
+  hashes only) and otherwise replays the transcript, which always works. A codex
+  leg runs read-only (--access read); declaring tools changes no confinement class.
+  Tool results are untrusted data, fenced in the prompt with every way of writing
+  a turn marker or a fence tag neutralised, and so are the arguments of a call of
+  the conversation, whose id and name must be printable ASCII without [ ] < > & '
+  " or a backtick (400); a steered call is the caller's to run or not: see
+  SECURITY.md. The log line adds tools=<n> leg=first|resume|replay.
 
   Images: POST /v1/images/generations {model, prompt, n, size, response_format}
   answers {"created":..., "data":[{"b64_json":"..."}]}: base64 only (response_format

@@ -729,17 +729,17 @@ executes nothing of the caller's. What this changes, and what it does not:
   mode (2.19.0 lists only `full`). A model has the `tools` capability only where
   it can be applied, and a request that declares tools for any other is 400
   `unsupported_parameter` before anything starts.
-- *What the model proposes can be steered, and the caller decides.* A tool
-  result is untrusted data. The prompt fences it (`<function_result>`) and
-  defangs the fence's tags and any line of it that would open a turn of the
-  transcript, so a result cannot pass for the user's or the assistant's words.
-  The defence reads the result as a model does, not as an ASCII pattern does:
-  every character a renderer may end a line at (CR, VT, FF, the information
-  separators, NEL, the line and paragraph separators) is a line feed in the
-  prompt, zero-width and other format characters are not there, every kind of
-  space is a space, full-width letters and brackets are plain ones and case does
-  not matter, so spelling a marker or a tag with them gains nothing. The
-  arguments of a call that a client sends back, which the transcript renders
+- *What the model proposes can be steered, and for the client's own functions the
+  caller decides.* A tool result is untrusted data. The prompt fences it
+  (`<function_result>`) and defangs the fence's tags and any line of it that would
+  open a turn of the transcript, so a result cannot pass for the user's or the
+  assistant's words. The defence reads the result as a model does, not as an
+  ASCII pattern does: every character a renderer may end a line at (CR, VT, FF,
+  the information separators, NEL, the line and paragraph separators) is a line
+  feed in the prompt, zero-width and other format characters are not there, every
+  kind of space is a space, full-width letters and brackets are plain ones and
+  case does not matter, so spelling a marker or a tag with them gains nothing.
+  The arguments of a call that a client sends back, which the transcript renders
   outside the fence, are rendered as compact JSON (with the characters that end a
   line escaped) or, when they are not JSON, defanged as a result is; the id and
   the name of such a call are refused (400) unless they are printable ASCII
@@ -748,18 +748,29 @@ executes nothing of the caller's. What this changes, and what it does not:
   user and of the assistant are rendered as the client sent them (they are the
   conversation), and the tags of the fence carry no per-request token. The
   knowledge excerpts of a context key have their own, narrower defence: only
-  their `<knowledge` tags are defanged. That does not keep a model from following
-  what is in it: a tool that fetched a web page can return instructions, and a
-  key created with `--context` puts excerpts of captured pages in the system
-  prompt. Either can steer which calls the model proposes next, so a context key
-  is refused tools unless the operator raised `--context-confinement` above
-  chat-only (403 `policy_denied`, before anything starts; a result is still
-  untrusted data on any other key). The gateway cannot tell a steered call from an asked one, and
-  it returns every call, valid or not (a call that does not match its schema is
-  returned too and counted in the log). So a client that runs calls without
-  asking runs whatever the model was steered to propose, with its own
-  permissions: give such a client keys whose prompts you trust, and keep a
-  person, or a policy of the client's own, between a call and its execution.
+  their `<knowledge` tags are defanged.
+  None of that keeps a model from following what a result says: a tool that
+  fetched a web page can return instructions, and a key created with `--context`
+  puts excerpts of captured pages in the system prompt. Either can steer which
+  calls the model proposes next, so a context key is refused tools unless the
+  operator raised `--context-confinement` above chat-only (403 `policy_denied`,
+  before anything starts; a result is still untrusted data on any other key). The
+  gateway cannot tell a steered call from an asked one, and it returns every
+  call, valid or not (a call that does not match its schema is returned too and
+  counted in the log). So a client that runs calls without asking runs whatever
+  the model was steered to propose, with its own permissions: give such a client
+  keys whose prompts you trust, and keep a person, or a policy of the client's
+  own, between a call and its execution.
+- *Not every call is the client's.* What the caller decides is its own functions.
+  A codex leg may use a tool of one of the user's own MCP servers (the spike saw
+  it once): the runtime makes that call itself, the gateway never sees it as a
+  call to return, the read-only sandbox of the leg does not cover it (it limits
+  what the runtime writes, not which servers it talks to) and the caller does not
+  decide it, so a steered model can reach it without the client. A leg in which
+  such a tool ran is never replayed or given back (so it does not run twice), but
+  it ran once. An operator who does not want that removes those servers from
+  codex's configuration, or leaves codex out of `MONOAGENT_API_TOOL_RUNTIMES`
+  (claude's own tools are denied by monomind, which is stricter).
 - *What is kept.* No process waits for a result and no slot is held while the
   client runs the call. A continuation record (the id the client was given, key
   id, profile, model, function name, a hash of the declared tools, a hash of the

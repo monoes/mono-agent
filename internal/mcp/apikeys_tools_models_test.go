@@ -361,3 +361,21 @@ func TestAPIModelsListSaysWhetherAutoWorksForTheServersProfile(t *testing.T) {
 		t.Errorf("auto raised to any: %+v", r.Auto)
 	}
 }
+
+// What a tool says of itself is all a model has of it: api_models_list gives the tools
+// capability and the environment variable that decides it, as it gives the images', and
+// api_key_create says that a context key is refused tool calling unless the cap is raised.
+func TestTheAPIToolsDescribeToolCalling(t *testing.T) {
+	descriptions := map[string]string{}
+	for _, tl := range apiTools() {
+		descriptions[tl.name] = tl.description
+	}
+	for _, want := range []string{"tools", "MONOAGENT_API_TOOL_RUNTIMES", "MONOAGENT_API_IMAGE_RUNTIMES"} {
+		if !strings.Contains(descriptions["api_models_list"], want) {
+			t.Errorf("the description of api_models_list does not mention %q: %s", want, descriptions["api_models_list"])
+		}
+	}
+	if d := descriptions["api_key_create"]; !strings.Contains(d, "tool calling") || !strings.Contains(d, "--context-confinement") {
+		t.Errorf("the description of api_key_create must say that a context key is refused tool calling unless --context-confinement is raised: %s", d)
+	}
+}
