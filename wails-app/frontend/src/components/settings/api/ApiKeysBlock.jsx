@@ -19,23 +19,38 @@ const td = { fontSize: 11.5, padding: '8px 10px', whiteSpace: 'nowrap' }
 /**
  * @param {Array|null} keys The profile's keys, or null while they load.
  * @param {string} err Why they could not be read.
- * @param {string} contextClass The strongest class a key with context may use on the listener.
- * @param {() => void} onChanged Called after a key was created, changed or revoked.
+ * @param {string[]} contextClasses The strongest class a key with context may use, on each listener that serves /v1
+ *   (without repeats). One class is named; several are not, since each listener applies its own.
+ * @param {() => (void|Promise<void>)} onChanged Called after a key was created, changed or revoked, or a call failed
+ *   (the list may have changed anyway); the controls stay busy until what it returns settles.
  * @param {() => void} onRetry
  */
-export default function ApiKeysBlock({ keys, err, contextClass, onChanged, onRetry }) {
+export default function ApiKeysBlock({ keys, err, contextClasses = [], onChanged, onRetry }) {
   const { t, i18n } = useTranslation()
   const lng = i18n.resolvedLanguage || i18n.language
   const [busy, setBusy] = useState('') // the id of the key a call is running for
   const [actionErr, setActionErr] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // One call at a time: what the CLI says when it fails is shown, and nothing is reloaded.
+  // One call at a time, and the list is read again, whatever came of it (a failed call may have been done anyway, or
+  // the key may be gone), before anything else can be asked of it: the list is stale until then, and a switch on it
+  // would start from a value that is no longer true. What the CLI says when it fails is shown.
   const run = async (id, fn) => {
     setBusy(id); setActionErr('')
-    try { await fn(); onChanged?.() } catch (e) { setActionErr(apiError(e, t)) } finally { setBusy('') }
+    try { await fn() } catch (e) { setActionErr(apiError(e, t)) }
+    try { await onChanged?.() } finally { setBusy('') }
   }
-  const setContext = (k, on) => run(k.id, () => APIKeySetContext(k.id, on))
+  // Turning context on sends excerpts of this profile's documents to the model's provider: it asks, in the words of
+  // the create dialog. Turning it off only takes them away, and asks nothing.
+  const setContext = async (k, on) => {
+    if (on) {
+      const ok = await confirm(t('settings.api.create.contextHint'), {
+        title: t('settings.api.keys.contextOnTitle', { name: k.name }), confirmLabel: t('settings.api.keys.contextOnConfirm'), danger: false,
+      })
+      if (!ok) return
+    }
+    await run(k.id, () => APIKeySetContext(k.id, on))
+  }
   const revoke = async (k) => {
     const ok = await confirm(t('settings.api.keys.revokeBody', { name: k.name }), {
       title: t('settings.api.keys.revokeTitle'), confirmLabel: t('settings.api.keys.revokeConfirm'), danger: true,
@@ -108,7 +123,9 @@ export default function ApiKeysBlock({ keys, err, contextClass, onChanged, onRet
               </tbody>
             </table>
           </div>
-          <div style={hint}>{t('settings.api.keys.contextHint', { class: contextClass || 'chat-only' })}</div>
+          <div style={hint}>
+            {contextClasses.length > 1 ? t('settings.api.keys.contextHintMany') : t('settings.api.keys.contextHint', { class: contextClasses[0] || 'chat-only' })}
+          </div>
         </>
       )}
 

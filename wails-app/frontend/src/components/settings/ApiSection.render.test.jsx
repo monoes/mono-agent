@@ -274,6 +274,37 @@ describe('ApiSection: keys', () => {
     await mount({ defaultExpanded: true })
     expect(await screen.findByText(/Context adds excerpts/)).toHaveTextContent('up to sandboxed')
   })
+
+  it('names the context cap when every listener that serves /v1 has the same, and none when they differ', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ context_confinement: 'sandboxed' }), dedicatedListener({ context_confinement: 'sandboxed' })]))
+    await mount({ defaultExpanded: true })
+    expect(await screen.findByText(/Context adds excerpts/)).toHaveTextContent('up to sandboxed')
+    cleanup()
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ context_confinement: 'sandboxed' }), dedicatedListener({ context_confinement: 'chat-only' })]))
+    await mount({ defaultExpanded: true })
+    expect(await screen.findByText(/Context adds excerpts/)).toHaveTextContent('up to the class each listener allows')
+    cleanup()
+    // A listener that does not serve /v1 has no say.
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ v1: false, context_confinement: 'chat-only' }), dedicatedListener({ context_confinement: 'sandboxed' })]))
+    await mount({ defaultExpanded: true })
+    expect(await screen.findByText(/Context adds excerpts/)).toHaveTextContent('up to sandboxed')
+  })
+
+  it('keeps the keys busy while the list is read again after a context change, and then shows the new value', async () => {
+    mockConfirm.mockResolvedValue(true)
+    await mount({ defaultExpanded: true })
+    await screen.findByText('notes bot')
+    let release
+    App.APIKeySetContext.mockResolvedValue({})
+    App.APIKeyList.mockReturnValueOnce(new Promise(r => { release = r }))
+    fireEvent.click(within(screen.getByRole('row', { name: /my-app/ })).getByRole('switch'))
+    await waitFor(() => expect(App.APIKeyList).toHaveBeenCalledTimes(2))
+    // The list is being read: the old rows are still there, and cannot be acted on.
+    expect(within(screen.getByRole('row', { name: /notes bot/ })).getByRole('switch')).toBeDisabled()
+    await act(async () => { release(keyList().map(k => (k.id === 'key_abcdefghijkl' ? { ...k, context: true } : k))) })
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /my-app/ })).getByRole('switch')).toHaveAttribute('aria-checked', 'true'))
+    expect(within(screen.getByRole('row', { name: /my-app/ })).getByRole('switch')).toBeEnabled()
+  })
 })
 
 describe('ApiSection: auto and the Jev settings', () => {

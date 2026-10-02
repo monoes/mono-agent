@@ -35,11 +35,13 @@ const keys = () => [
 
 async function mount(props = {}) {
   const { default: ApiKeysBlock } = await import('./ApiKeysBlock.jsx')
-  const onChanged = vi.fn(); const onRetry = vi.fn()
-  render(<ApiKeysBlock keys={keys()} err="" contextClass="chat-only" onChanged={onChanged} onRetry={onRetry} {...props} />)
+  const onChanged = props.onChanged || vi.fn(); const onRetry = vi.fn()
+  render(<ApiKeysBlock keys={keys()} err="" contextClasses={['chat-only']} onRetry={onRetry} {...props} onChanged={onChanged} />)
   return { onChanged, onRetry }
 }
 const row = (name) => screen.getByRole('row', { name: new RegExp(name) })
+// Lets what a click scheduled (a confirmation, a call) run, so that a "was not called" holds.
+const settle = () => act(async () => { await new Promise(r => setTimeout(r, 20)) })
 
 describe('ApiKeysBlock', () => {
   it('lists each key with its prefix, dates and context switch', async () => {
@@ -59,11 +61,19 @@ describe('ApiKeysBlock', () => {
   })
 
   it('says what context adds and which models such a key may use', async () => {
-    await mount({ contextClass: 'sandboxed' })
+    await mount({ contextClasses: ['sandboxed'] })
     expect(screen.getByText(/Context adds excerpts of this profile's documents and captures/)).toHaveTextContent('up to sandboxed')
     cleanup()
-    await mount({ contextClass: undefined })
+    // Nothing known of the listeners (or no listener serving): the CLI's own default.
+    await mount({ contextClasses: [] })
     expect(screen.getByText(/Context adds excerpts/)).toHaveTextContent('up to chat-only')
+  })
+
+  it('does not name one class when the listeners that serve /v1 allow different ones', async () => {
+    await mount({ contextClasses: ['chat-only', 'sandboxed'] })
+    const text = screen.getByText(/Context adds excerpts/)
+    expect(text).toHaveTextContent('up to the class each listener allows (--context-confinement, see above)')
+    expect(text).not.toHaveTextContent(/up to (chat-only|sandboxed)/)
   })
 
   it('shows an empty state, a loading state and a load error with a retry', async () => {
@@ -82,11 +92,12 @@ describe('ApiKeysBlock', () => {
   })
 
   it('switches context through the CLI, one key at a time, then asks for a reload', async () => {
+    mockConfirm.mockResolvedValue(true)
     let resolve
     App.APIKeySetContext.mockReturnValue(new Promise(r => { resolve = r }))
     const { onChanged } = await mount()
     fireEvent.click(within(row('my-app')).getByRole('switch'))
-    expect(App.APIKeySetContext).toHaveBeenCalledWith('key_abcdefghijkl', true)
+    await waitFor(() => expect(App.APIKeySetContext).toHaveBeenCalledWith('key_abcdefghijkl', true))
     // While it runs, nothing else on the list can be started.
     await waitFor(() => expect(within(row('notes bot')).getByRole('switch')).toBeDisabled())
     expect(within(row('my-app')).getByRole('button', { name: 'Revoke my-app' })).toBeDisabled()
@@ -95,19 +106,99 @@ describe('ApiKeysBlock', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(within(row('notes bot')).getByRole('switch')).toBeEnabled()
 
-    // Switching off sends false.
+    // Switching off sends false, and asks nothing.
     App.APIKeySetContext.mockResolvedValue({})
     fireEvent.click(within(row('notes bot')).getByRole('switch'))
     expect(App.APIKeySetContext).toHaveBeenLastCalledWith('key_mnopqrstuvwx', false)
+    expect(mockConfirm).toHaveBeenCalledTimes(1) // only for the one that turned it on
   })
 
-  it('shows what the CLI says when a switch fails, and does not reload', async () => {
+  it('keeps every control busy until the list has been read again: no second click lands on a stale row', async () => {
+    mockConfirm.mockResolvedValue(true)
+    App.APIKeySetContext.mockResolvedValue({})
+    let reloaded
+    const onChanged = vi.fn(() => new Promise(r => { reloaded = r }))
+    await mount({ onChanged })
+    fireEvent.click(within(row('my-app')).getByRole('switch'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    // The CLI has answered and the list is not read yet: it still shows the old value, and nothing may be started on it.
+    expect(within(row('my-app')).getByRole('switch')).toBeDisabled()
+    expect(within(row('notes bot')).getByRole('switch')).toBeDisabled()
+    expect(within(row('my-app')).getByRole('button', { name: 'Revoke my-app' })).toBeDisabled()
+    await act(async () => { reloaded() })
+    expect(within(row('my-app')).getByRole('switch')).toBeEnabled()
+    expect(within(row('notes bot')).getByRole('button', { name: 'Revoke notes bot' })).toBeEnabled()
+  })
+
+  it('shows what the CLI says when a switch fails, and reads the list again: the key may be gone', async () => {
+    mockConfirm.mockResolvedValue(true)
     App.APIKeySetContext.mockRejectedValue(new Error('not_found: api key not found'))
     const { onChanged } = await mount()
     fireEvent.click(within(row('my-app')).getByRole('switch'))
     expect(await screen.findByRole('alert')).toHaveTextContent(en.settings.api.errors.keyNotFound)
-    expect(onChanged).not.toHaveBeenCalled()
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
     expect(within(row('my-app')).getByRole('switch')).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(en.settings.api.errors.keyNotFound) // the reload does not wipe it
+  })
+
+  it('keeps the controls busy through the reload after a failure too', async () => {
+    mockConfirm.mockResolvedValue(true)
+    App.APIKeySetContext.mockRejectedValue(new Error('boom'))
+    let reloaded
+    const onChanged = vi.fn(() => new Promise(r => { reloaded = r }))
+    await mount({ onChanged })
+    fireEvent.click(within(row('my-app')).getByRole('switch'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(within(row('notes bot')).getByRole('switch')).toBeDisabled()
+    await act(async () => { reloaded() })
+    expect(within(row('notes bot')).getByRole('switch')).toBeEnabled()
+  })
+
+  describe('turning context on', () => {
+    it('asks first, in the words of the create dialog, and does nothing when declined', async () => {
+      mockConfirm.mockResolvedValueOnce(false)
+      const { onChanged } = await mount()
+      fireEvent.click(within(row('my-app')).getByRole('switch'))
+      await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+      const [message, opts] = mockConfirm.mock.calls[0]
+      expect(message).toBe(en.settings.api.create.contextHint)
+      expect(message).toMatch(/so they reach the model's provider/)
+      expect(opts).toMatchObject({ title: 'Turn on context for my-app?', confirmLabel: 'Turn on context', danger: false })
+      await settle()
+      expect(App.APIKeySetContext).not.toHaveBeenCalled()
+      expect(onChanged).not.toHaveBeenCalled()
+      expect(within(row('my-app')).getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+      expect(within(row('my-app')).getByRole('switch')).toBeEnabled()
+    })
+
+    it('turns it on after a yes', async () => {
+      mockConfirm.mockResolvedValueOnce(true)
+      App.APIKeySetContext.mockResolvedValue({})
+      const { onChanged } = await mount()
+      fireEvent.click(within(row('my-app')).getByRole('switch'))
+      await waitFor(() => expect(App.APIKeySetContext).toHaveBeenCalledWith('key_abcdefghijkl', true))
+      await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    })
+
+    it('does not ask when turning it off: that only takes the excerpts away', async () => {
+      App.APIKeySetContext.mockResolvedValue({})
+      await mount()
+      fireEvent.click(within(row('notes bot')).getByRole('switch'))
+      await waitFor(() => expect(App.APIKeySetContext).toHaveBeenCalledWith('key_mnopqrstuvwx', false))
+      expect(mockConfirm).not.toHaveBeenCalled()
+    })
+
+    it('asks in the chosen language', async () => {
+      await act(() => i18n.changeLanguage('es'))
+      mockConfirm.mockResolvedValueOnce(false)
+      await mount()
+      fireEvent.click(within(row('my-app')).getByRole('switch'))
+      await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+      const [message, opts] = mockConfirm.mock.calls[0]
+      expect(message).toBe(es.settings.api.create.contextHint)
+      expect(opts.title).toBe(es.settings.api.keys.contextOnTitle.replace('{{name}}', 'my-app'))
+      expect(opts.confirmLabel).toBe(es.settings.api.keys.contextOnConfirm)
+    })
   })
 
   it('revokes only after the confirmation says yes', async () => {
@@ -134,7 +225,7 @@ describe('ApiKeysBlock', () => {
     const { onChanged } = await mount()
     fireEvent.click(within(row('notes bot')).getByRole('button', { name: 'Revoke notes bot' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('database is locked')
-    expect(onChanged).not.toHaveBeenCalled()
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1)) // read again: a failed revoke may still have happened
 
     await act(() => i18n.changeLanguage('es'))
     App.APIKeyRevoke.mockRejectedValueOnce(new Error('not_found: api key not found'))

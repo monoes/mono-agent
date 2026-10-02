@@ -82,7 +82,9 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
   const listener = pickListener(status)
   const state = STATE[listenerState(listener, !!status?.daemon?.running)]
   // Any listener that serves /v1 beyond loopback is said in the header, whichever listener it describes.
-  const exposed = servingListeners(status).some(l => !l.loopback)
+  const serving = servingListeners(status)
+  const exposed = serving.some(l => !l.loopback)
+  const contextClasses = [...new Set(serving.map(l => l.context_confinement).filter(Boolean))]
   const count = keys ? keys.length : status?.keys?.active
   const toggle = () => setExpanded(v => !v)
 
@@ -137,7 +139,7 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
           <div style={hint}>{t('settings.api.intro')}</div>
           <ApiStatusBlock status={status} err={statusErr} refreshing={refreshing} onRefresh={refresh} onRetry={refresh} />
           <ApiKeysBlock
-            keys={keys} err={keysErr} contextClass={listener?.v1 ? listener.context_confinement : undefined}
+            keys={keys} err={keysErr} contextClasses={contextClasses}
             onChanged={loadKeys} onRetry={loadKeys}
           />
           <ApiModelsBlock
