@@ -671,8 +671,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a value that
   is not an object (the arguments of a call are one), or that nests more
   than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
-  together take more than 100,000 steps to read (a reference is read once
-  however it is spelled, so the cost is bounded by the request), is 400
+  together take more than 100,000 steps to read (a step is a schema read, a reference followed, a property or a listed name met, an enum entry compared,
+  each time it is done; a reference is read once however it is spelled, so the
+  cost is bounded by the request), is 400
   `invalid_value` on `tools[i].function.parameters`, while the tools are passed:
   with `tool_choice` `none` no schema is read for arguments and nothing of this
   is refused (`internal/openaiapi/tools_hoist.go`). **A

@@ -481,8 +481,8 @@ What to expect from a tool loop:
   value that is not an object, which no call could match; a schema that
   nests combinators and references more than 8 levels deep or holds more than
   2,000 schemas, and functions whose schemas together take more of the server
-  than it reads to name their arguments (100,000 steps for a request; a
-  reference counts once however it is spelled). Whatever the choice: more than
+  than it reads to name their arguments (100,000 steps for a request, a step
+  being a schema read, a reference followed, a property or a listed name met, an enum entry compared; a reference counts once however it is spelled). Whatever the choice: more than
   128 functions, a name that is not 1 to 64 characters of `[A-Za-z0-9_-]` (a name
   of 55 or more reaches the model as an alias, and you always see your own; an
   alias that is the name of another function is refused), a result larger than

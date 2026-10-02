@@ -455,7 +455,8 @@ paths:
         applies) holds a value that is not an object, a schema
         that nests combinators and references more than 8 levels deep or holds
         more than 2000 schemas, and functions whose schemas together take more
-        than 100,000 steps to read are 400 `invalid_value` on
+        than 100,000 steps to read (a step is a schema read, a reference followed, a property or a listed name met, an enum entry compared)
+        are 400 `invalid_value` on
         `tools[i].function.parameters`.
         **A response carries one call**: the turn ends at the
         model's first call, and the answer is an assistant message with one

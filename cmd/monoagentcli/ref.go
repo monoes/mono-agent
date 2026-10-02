@@ -2757,7 +2757,8 @@ OPENAI-COMPATIBLE API (/v1)
   that applies) holds a value that is not an object is 400, and so is one nested
   more than 8 levels deep or
   holding more than 2000 schemas, or functions whose schemas together take more
-  than 100,000 steps to read; monomind rejects a call whose top-level types,
+  than 100,000 steps to read (a step: a schema read, a reference followed, a property or a listed name met, an enum entry compared); monomind rejects a call
+  whose top-level types,
   string enums or required names do not match what it was told, which never comes
   back: after its round cap of 10 the answer is 200, the cap's text and
   finish_reason "length"; what it cannot see comes back unchecked), tool_choice

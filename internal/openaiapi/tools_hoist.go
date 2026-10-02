@@ -15,13 +15,17 @@ import (
 const (
 	maxHoistDepth = 8       // levels of combinators and references followed
 	maxHoistNodes = 2000    // schemas visited in one function
-	maxHoistSteps = 100_000 // schemas visited, references followed and properties named in all the functions of a request
+	maxHoistSteps = 100_000 // steps of work in all the functions of a request (hoistBudget says what a step is)
 )
 
-// hoistBudget is what the whole request may spend on naming arguments. Every schema read,
-// every reference followed and every property named by any function counts against it, so
-// that however the schemas of a request refer to each other it costs a bounded amount of work,
-// and that before anything starts (a slot is not held yet, so nothing else bounds it).
+// hoistBudget is what the whole request may spend on naming arguments, and it is spent before anything
+// starts (a slot is not held yet, so nothing else bounds it). A step is one of these, taken each time
+// the work is done: a schema read (one that two paths lead to is read twice and charged twice), a
+// reference followed, a property defined, a name that a list mentions (a required list, what a
+// dependency asks for, the keys of a const or an enum), a member of a const or an enum, an entry of the
+// enum of a property that holds for every call (they are compared with those of another definition),
+// and each name told to monomind at the end. So however the schemas of a request refer to each other,
+// and whatever lists and enums they hold, naming their arguments costs a bounded amount of work.
 type hoistBudget struct {
 	left     int
 	used     int
@@ -30,13 +34,15 @@ type hoistBudget struct {
 
 func newHoistBudget() *hoistBudget { return &hoistBudget{left: maxHoistSteps} }
 
-// spend takes one step from the budget and says whether there was one.
-func (b *hoistBudget) spend() bool {
-	if b.left <= 0 {
+// spend takes n steps from the budget and says whether there were that many; when there were not,
+// there are none left.
+func (b *hoistBudget) spend(n int) bool {
+	if n > b.left {
+		b.left = 0
 		return false
 	}
-	b.left--
-	b.used++
+	b.left -= n
+	b.used += n
 	return true
 }
 
@@ -104,6 +110,10 @@ func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	h.walk(doc, 0, false)
 	out := argNames{Props: h.props, Open: h.open, TooDeep: h.tooDeep, TooWide: h.tooWide, Spent: h.spent, Impossible: h.impossible}
 	for _, name := range h.names {
+		if !h.step() { // each name told to monomind costs a step, as it did when a list mentioned it
+			out.Spent = true
+			break
+		}
 		if _, has := h.props[name]; !has {
 			h.props[name] = json.RawMessage("true")
 		}
@@ -262,8 +272,11 @@ func (h *hoister) walkDependencies(m map[string]any, depth int) {
 }
 
 // step charges one step of work to the budget of the request.
-func (h *hoister) step() bool {
-	if !h.budget.spend() {
+func (h *hoister) step() bool { return h.charge(1) }
+
+// charge charges n steps of work to the budget of the request.
+func (h *hoister) charge(n int) bool {
+	if !h.budget.spend(n) {
 		h.spent = true
 		return false
 	}
@@ -363,6 +376,9 @@ func (h *hoister) define(name string, prop any, optional bool) {
 		}
 		return
 	}
+	if !h.charge(enumEntries(prop)) { // the entries are sorted to be compared with another definition's
+		return
+	}
 	view := propertyView(prop)
 	switch {
 	case !h.sure[name]: // the first definition that holds for every call, after any that does not
@@ -387,9 +403,13 @@ func (h *hoister) marshal(prop any) json.RawMessage {
 	return json.RawMessage("true")
 }
 
-// require notes a name of a required list: it is an argument, and required of the call
-// unless the schema it is in is one of several that may apply.
+// require notes a name that a list mentions (a required list, what a dependency asks for, the
+// keys of a const or an enum): it is an argument, and required of the call unless the schema it is
+// in is one of several that may apply. Each mention costs a step.
 func (h *hoister) require(name string, optional bool) {
+	if !h.step() {
+		return
+	}
 	if !h.mentioned[name] {
 		h.mentioned[name] = true
 		h.names = append(h.names, name)
@@ -397,6 +417,16 @@ func (h *hoister) require(name string, optional bool) {
 	if !optional {
 		h.required[name] = true
 	}
+}
+
+// enumEntries is how many entries the enum of a property has.
+func enumEntries(prop any) int {
+	if p, ok := prop.(map[string]any); ok {
+		if list, ok := p["enum"].([]any); ok {
+			return len(list)
+		}
+	}
+	return 0
 }
 
 // propertyView is what monomind reads of a property: its type, and its enum when that
