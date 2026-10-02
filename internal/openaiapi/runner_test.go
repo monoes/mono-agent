@@ -224,6 +224,9 @@ func TestRunTurnWritesItsPromptFilesInAPrivateFolder(t *testing.T) {
 // That must not brick the slot for good: the gateway owns the folder and opens
 // it up before emptying it.
 func TestRunTurnRepairsAFolderALastTurnLeftReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can empty a read-only folder: nothing about it is tested")
+	}
 	var ran atomic.Bool
 	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		ran.Store(true)

@@ -89,6 +89,9 @@ func TestNewEmptiesLeftoverSlotFoldersAndNothingElse(t *testing.T) {
 // emptyDir opens a directory a runtime made read-only before removing what is
 // inside it, and never follows a symlink out of the folder it is emptying.
 func TestEmptyDirOpensUpReadOnlyDirectoriesAndStaysInside(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can open any directory: nothing about read-only ones is tested")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "slot")
 	outside := filepath.Join(root, "outside")
@@ -208,6 +211,9 @@ func TestEmptyDirDoesNotWalkATreeDeeperThanItAllows(t *testing.T) {
 // A run with a higher --max-concurrent leaves slot folders above today's limit.
 // They are removed at start, even when a runtime left them read-only.
 func TestNewRemovesAnOverLimitSlotFolderEvenWhenReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can remove a read-only tree: nothing about it is tested")
+	}
 	root := t.TempDir()
 	slot := filepath.Join(root, profileFolder("alice"), "slot-9")
 	locked := filepath.Join(slot, "mod", "locked")
