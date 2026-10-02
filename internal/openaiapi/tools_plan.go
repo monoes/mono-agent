@@ -151,7 +151,7 @@ var resumeHearsRequest = map[string]bool{"claude": true}
 // resumed leg is told the rest again. It is the hash of what the client said, in the
 // words the session was told, so that it is the same for a client that sends the same
 // history again; what a client may change without changing the conversation (null or
-// empty content, whitespace around the words, the spacing of the arguments) is left
+// empty content, whitespace around the words, how the arguments are written down) is left
 // out. A leg's record keeps it for all the messages of its request, and the follow-up
 // asks for the hash of the messages before the call it answers.
 func convoHash(runtime string, req *ChatRequest, upto int) string {
@@ -184,25 +184,38 @@ func convoHash(runtime string, req *ChatRequest, upto int) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// normalArguments is the arguments of a call of the request as compact JSON when
-// they are JSON, so that a client that spaces them out differently is not another
+// normalArguments is the arguments of a call of the request as what they say when they
+// are JSON, so that a client that writes them down differently is not another
 // conversation.
 func normalArguments(raw json.RawMessage) string {
 	return normalArgumentsText(argumentsText(raw))
 }
 
-// normalArgumentsText is the text of a call's arguments, compact when it is JSON and
-// trimmed when it is not; {} when it is blank.
+// normalArgumentsText is the text of a call's arguments as the hashes know it: for JSON a
+// canonical form of what it says, and the trimmed text for anything else; {} when it is
+// blank. A client that stores its history and sends it again re-serialises it (Python's
+// json.dumps, Go's json.Marshal, JavaScript's JSON.stringify), and JSON lets one value be
+// written many ways: the keys of an object in any order, a letter as itself or as an
+// escape, "<" as itself or as \u003c, "/" as itself or as \/. The canonical form has the keys
+// of every object in order, each string written one way, no space between tokens and each
+// number as it was written (1.0 and 1 are not the same arguments: a client that changed a
+// number changed the call).
 func normalArgumentsText(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "{}"
 	}
-	var buf bytes.Buffer
-	if json.Compact(&buf, []byte(text)) != nil {
+	v, err := decodeKeepingNumbers([]byte(text))
+	if err != nil {
 		return text
 	}
-	return buf.String()
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(v) != nil {
+		return text
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // argsHash identifies the arguments of a call as the client has them: the string of
