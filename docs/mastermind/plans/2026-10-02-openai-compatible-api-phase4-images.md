@@ -33,38 +33,43 @@
 ## Tasks
 
 ### Task 1: the plan
-- [ ] Commit this file: `docs(api): the plan of phase 4, images`.
+- [x] Commit this file: `docs(api): the plan of phase 4, images`.
 
 ### Task 2: configuration and the image capability
-- [ ] Tests: `ParseImageRuntimes` (default when empty; `codex, AGY ,codex` gives `codex, antigravity`; an empty entry, `--x`, `a b` and a 33-character id are errors naming the variable); `ConfigFromEnv` reads it; `CanMakeImages` (listed and sandboxed or unconfined yes; listed chat-only no; unlisted no); `GET /v1/models` and `/v1/models/{id}` give `["text","image"]` for codex and antigravity models only, and the list follows the configured one.
-- [ ] Implement; commit `feat(openaiapi): MONOAGENT_API_IMAGE_RUNTIMES and the image capability of a model`.
+- [x] Tests: `ParseImageRuntimes` (default when empty; `codex, AGY ,codex` gives `codex, antigravity`; an empty entry, `--x`, `a b` and a 33-character id are errors naming the variable); `ConfigFromEnv` reads it; `CanMakeImages` (listed and sandboxed or unconfined yes; listed chat-only no; unlisted no); `GET /v1/models` and `/v1/models/{id}` give `["text","image"]` for codex and antigravity models only, and the list follows the configured one.
+- [x] Implement; commit `feat(openaiapi): MONOAGENT_API_IMAGE_RUNTIMES and the image capability of a model`.
 
 ### Task 3: one way to open a turn's folder
-- [ ] Behaviour-preserving: `openFolder` extracted from `emptyDirBy`; the existing `empty_test.go` and `empty_unix_test.go` are the safety net. Commit `refactor(openaiapi): the emptying and the collection open a turn's folder the same way`.
+- [x] Behaviour-preserving: `openFolder` extracted from `emptyDirBy`; the existing `empty_test.go` and `empty_unix_test.go` are the safety net. Commit `refactor(openaiapi): the emptying and the collection open a turn's folder the same way`.
 
 ### Task 4: collecting images
-- [ ] Tests: PNG, JPEG, WebP, GIF collected; the name does not decide (a `.txt` with PNG magic is taken, a `.png` of text is not); at most `n`, by name; one level only; 20 MiB taken and 20 MiB + 1 not; a symlink to an image outside, one inside, a dangling one; a FIFO (unix); a directory named `x.png`; a swap between `Lstat` and open (hook) to a FIFO or link; a slot folder replaced by a link yields nothing; the report counts what was skipped by reason.
-- [ ] Implement `collectImages`; commit `feat(openaiapi): collect the images a turn left in its folder`.
+- [x] Tests: PNG, JPEG, WebP, GIF collected; the name does not decide (a `.txt` with PNG magic is taken, a `.png` of text is not); at most `n`, by name; one level only; 20 MiB taken and 20 MiB + 1 not; a symlink to an image outside, one inside, a dangling one; a FIFO (unix); a directory named `x.png`; a swap between `Lstat` and open (hook) to a FIFO or link; a slot folder replaced by a link yields nothing; the report counts what was skipped by reason.
+- [x] Implement `collectImages`; commit `feat(openaiapi): collect the images a turn left in its folder`.
 
 ### Task 5: the request
-- [ ] Tests (table): missing and blank `prompt`; `n` 0, -1, 5, 1.5; `size` table (valid, `auto`, malformed, out of range, injection-shaped, full-width digits); `response_format`; `stream`; ignored fields; the prompt text for n and size.
-- [ ] Implement `images_request.go`; commit `feat(openaiapi): validate an image request and build its prompt`.
+- [x] Tests (table): missing and blank `prompt`; `n` 0, -1, 5, 1.5; `size` table (valid, `auto`, malformed, out of range, injection-shaped, full-width digits); `response_format`; `stream`; ignored fields; the prompt text for n and size.
+- [x] Implement `images_request.go`; commit `feat(openaiapi): validate an image request and build its prompt`.
 
 ### Task 6: the endpoint
-- [ ] Extract from `chat.go` `policyRefusal`, `logRequest`, `resultError`, `autoPick` (chat tests untouched and green), add `turn.Collect` to `runTurn`.
-- [ ] Tests (fake exec writing files into `opts.Cwd`): happy path with the locked-down `ExecOptions` and the fixed system prompt; headers; slot folder emptied afterwards; 3 files with n=2; `NO_IMAGE_TOOL`; no file with a noisy reply; collection security end to end (a symlink to a file outside is not returned); the policy table (chat-only, a `--context` key, raised context cap, antigravity under sandboxed); non-image model 400; unknown 404; default model by list order and policy; no runtime installed; 401, 413 (64 KiB), 429 busy and no process; runtime errors (quota 429, timeout 504, not signed in 503); policy at start 403; the log line holds no prompt or reply.
-- [ ] Commit `feat(openaiapi): POST /v1/images/generations`.
+- [x] Extract from `chat.go` `policyRefusal`, `logRequest`, `resultError`, `autoPick` (chat tests untouched and green), add `turn.Collect` to `runTurn`.
+- [x] Tests (fake exec writing files into `opts.Cwd`): happy path with the locked-down `ExecOptions` and the fixed system prompt; headers; slot folder emptied afterwards; 3 files with n=2; `NO_IMAGE_TOOL`; no file with a noisy reply; collection security end to end (a symlink to a file outside is not returned); the policy table (chat-only, a `--context` key, raised context cap, antigravity under sandboxed); non-image model 400; unknown 404; default model by list order and policy; no runtime installed; 401, 413 (64 KiB), 429 busy and no process; runtime errors (quota 429, timeout 504, not signed in 503); policy at start 403; the log line holds no prompt or reply.
+- [x] Commit `feat(openaiapi): POST /v1/images/generations`.
 
 ### Task 7: `auto` for images
-- [ ] Tests: default policy gives 404 naming `--auto-confinement`; raised, Jev is offered only image models, the header, the log and `X-Monoagent-Model` say the pick; the rule fallback; the `auto` object lists `image` only with image candidates; chat's `auto` is unchanged.
-- [ ] Implement; add the egress line; commit `feat(openaiapi): auto picks among image models for an image request`.
+- [x] Tests: default policy gives 404 naming `--auto-confinement`; raised, Jev is offered only image models, the header, the log and `X-Monoagent-Model` say the pick; the rule fallback; the `auto` object lists `image` only with image candidates; chat's `auto` is unchanged.
+- [x] Implement; add the egress line; commit `feat(openaiapi): auto picks among image models for an image request`.
 
 ### Task 8: the CLI
-- [ ] `api models --json` gets `capabilities` per model (existing fields untouched), the table an `IMAGES` column; a bad `MONOAGENT_API_IMAGE_RUNTIMES` is exit 3. Commit `feat(cli): api models shows which models make images`.
+- [x] `api models --json` gets `capabilities` per model (existing fields untouched), the table an `IMAGES` column; a bad `MONOAGENT_API_IMAGE_RUNTIMES` is exit 3. Commit `feat(cli): api models shows which models make images`.
 
 ### Task 9: docs and the canary
-- [ ] The docs listed above (every claim checked against the code; `redocly lint`), spec §7.3 marked as built with the deviations. Commits per document group.
-- [ ] `TestLiveImagePerImageRuntime` (opt-in), run once per image runtime at the very end.
+- [x] The docs listed above (every claim checked against the code; `redocly lint`), spec §7.3 marked as built with the deviations. Commits per document group.
+- [x] `TestLiveImagePerImageRuntime` (opt-in), run once per image runtime at the very end.
 
 ### Task 10: verification
-- [ ] Mutation-check every behaviour test; `gofmt -l`, `go vet ./...`, `go test ./internal/openaiapi` with and without `-race`, the touched packages, `go test ./...`, `go build -tags nosocial ./...`, `GOOS=windows go build ./...`.
+- [x] Mutation-check every behaviour test; `gofmt -l`, `go vet ./...`, `go test ./internal/openaiapi` with and without `-race`, the touched packages, `go test ./...`, `go build -tags nosocial ./...`, `GOOS=windows go build ./...`.
+
+## Outcome
+
+- Live canary, 2026-10-02 (monomind 2.22.0): antigravity passed (a 496,150 byte JPEG in 71.9 s, the runtime saved it at the top of the slot folder, `X-Monoagent-Sandbox: unsupported`); codex was skipped, its usage limit answered 429 `insufficient_quota`, so the codex path is untested live.
+- `go test ./...` shows only the 8 failures known on this machine; `GOOS=windows go build ./...`, `go build -tags nosocial ./...` and `redocly lint` pass.
