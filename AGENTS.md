@@ -556,7 +556,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `--auto-confinement chat-only|sandboxed|any` (`MONOAGENT_API_AUTO_CONFINEMENT`,
   default `chat-only`) is the strongest class the `auto` model may pick, never
   above the listener's or a context key's. A request that declares tools changes
-  none of this; its codex leg runs read-only (**Tool calling**).
+  none of this, except that a key created with `--context` is refused tools (403
+  `policy_denied` naming `--context-confinement`, before anything starts) unless
+  that cap is above chat-only; its codex leg runs read-only (**Tool calling**).
 - **Images.** `POST /v1/images/generations` takes `{model, prompt, n, size,
   response_format}` and answers `{"created":…,"data":[{"b64_json":…}]}`: base64
   only, so `response_format: "url"` is 400 `unsupported_parameter`, as is

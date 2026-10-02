@@ -42,6 +42,12 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		}
 
 		eff := policyFor(p, pr)
+		if req.toolsActive() { // before anything starts: no model is resolved, no pick, no slot, no knowledge search
+			if e := contextToolsRefusal(pr, eff); e != nil {
+				fail(e)
+				return
+			}
+		}
 		var m ModelInfo
 		var candidates []ModelInfo // for auto: what Jev may pick among, all of them allowed
 		isAuto := req.Model == autoModelID

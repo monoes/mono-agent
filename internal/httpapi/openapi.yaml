@@ -429,7 +429,11 @@ paths:
         `unsupported_parameter` on `tools`, answered before anything starts. A
         model has `tools` only where monomind can apply its sandbox, which every
         tool turn requires (403 `policy_denied`, nothing run, when it cannot be
-        applied). monomind keeps only the top-level properties of a
+        applied). A key created with `--context` is refused tools (403
+        `policy_denied` naming `--context-confinement`, answered before
+        anything starts) unless the operator raised that cap above chat-only:
+        the captured pages in its system prompt could steer the calls the
+        client runs. monomind keeps only the top-level properties of a
         schema, so the arguments that a root `anyOf`, `oneOf` or `allOf`, a
         local `$ref`, an `if`, a `then` or an `else` define are named at the top
         level too (optional unless the schema requires them), and the whole
@@ -483,7 +487,7 @@ paths:
         |---|---|---|
         | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter, or `tools` for a model that does not serve them (the message says which runtimes do) |
         | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
-        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
+        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or the request declares `tools` (and `tool_choice` is not `none`) with a key created with `--context` while `--context-confinement` is chat-only (answered before anything starts), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
         | 404 | `invalid_request_error` / `model_not_found` | Unknown model, or `auto` while it is not set up for the key's profile (the message says what is missing: the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
         | 429 | `rate_limit_error` / `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |

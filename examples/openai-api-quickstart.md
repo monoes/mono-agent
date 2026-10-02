@@ -466,7 +466,10 @@ What to expect from a tool loop:
   them for its last round) is answered as text.
 - Read `SECURITY.md` ("Tool calling") before you let a client run calls without
   asking: a tool result, and with `--context` a captured page, can steer which
-  calls the model proposes.
+  calls the model proposes. So a key created with `--context` is refused tools
+  (403 `policy_denied` naming `--context-confinement`, before anything starts)
+  unless the operator raised that cap above chat-only; use a key without
+  `--context` for a client that calls tools.
 
 ## 4. Serve it beyond this machine
 
@@ -550,7 +553,7 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 | 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images (or image generation switched off), `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
 | 400 | `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no image tool |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
-| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
+| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; a completion that declares `tools` (without `tool_choice` `none`) with a key created with `--context` while `--context-confinement` is chat-only; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
 | 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows). For an image request without a model also: no runtime of `MONOAGENT_API_IMAGE_RUNTIMES` can make images here (the message says, for each, not installed or installed but chat-only), or image generation is switched off (`none`) |
 | 413 | `request_too_large` | Body over 2 MiB (64 KiB for an image request) |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |

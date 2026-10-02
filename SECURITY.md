@@ -563,7 +563,12 @@ models**: a runtime with native tools could be steered into using them.
 `--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
 raises that on purpose, for example to give a coding agent on your own
 machine your notes. It never goes above the listener's own `--confinement`,
-and raising it accepts that a captured page could steer that runtime. The
+and raising it accepts that a captured page could steer that runtime. The same
+cap decides **tool calling**: a request that declares `tools` (and does not set
+`tool_choice` to `none`) with a context key is 403 `policy_denied`, before
+anything starts, unless `--context-confinement` is above chat-only, because an
+instruction in a captured page could steer the calls the model proposes and the
+client runs those with its own authority. The
 excerpts leave the machine like any prompt, to the runtime's provider. The
 personal brain and other profiles are never searched.
 
@@ -731,7 +736,10 @@ executes nothing of the caller's. What this changes, and what it does not:
   user's or the assistant's words. That does not keep a model from following
   what is in it: a tool that fetched a web page can return instructions, and a
   key created with `--context` puts excerpts of captured pages in the system
-  prompt. Either can steer which calls the model proposes next. The gateway cannot tell a steered call from an asked one, and
+  prompt. Either can steer which calls the model proposes next, so a context key
+  is refused tools unless the operator raised `--context-confinement` above
+  chat-only (403 `policy_denied`, before anything starts; a result is still
+  untrusted data on any other key). The gateway cannot tell a steered call from an asked one, and
   it returns every call, valid or not (a call that does not match its schema is
   returned too and counted in the log). So a client that runs calls without
   asking runs whatever the model was steered to propose, with its own

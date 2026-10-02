@@ -86,3 +86,16 @@ func (c Config) toolsRefusal(m ModelInfo) *apiError {
 	}
 	return nil
 }
+
+// contextToolsRefusal is the 403 for a request that declares tools with a key created with
+// --context, unless the operator raised --context-confinement above chat-only (eff is the
+// policy the key is held to). Such a key puts excerpts of the profile's knowledge, which
+// includes captured web pages nobody vetted, into the system prompt, and an instruction in
+// one of them could steer which calls the model proposes, which the client runs with its
+// own authority. The answer is fixed and names no function.
+func contextToolsRefusal(pr Principal, eff Policy) *apiError {
+	if !pr.Context || eff.Max > ChatOnly {
+		return nil
+	}
+	return errPolicy("Tool calling is not available to a key created with --context: its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted, and an instruction in one of them could steer the calls the model asks you to run. Use a key created without --context, or ask the operator to raise --context-confinement.")
+}
