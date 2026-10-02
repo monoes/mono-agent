@@ -117,8 +117,8 @@ describe('ApiSection: expanding', () => {
   })
 
   it('shows what each part could not read, with its own retry', async () => {
-    App.APIKeyList.mockRejectedValueOnce(new Error('no such table: api_keys'))
-    App.APIModels.mockRejectedValueOnce(new Error('monomind not found'))
+    App.APIKeyList.mockRejectedValueOnce(new Error('invalid_input: no such table: api_keys')) // the class is not shown
+    App.APIModels.mockRejectedValueOnce(new Error('invalid_input: monomind not found'))
     await mount({ defaultExpanded: true })
     expect(await screen.findByText(/Couldn't read the keys: no such table: api_keys/)).toBeInTheDocument()
     expect(await screen.findByText("Couldn't list the models: monomind not found")).toBeInTheDocument()
@@ -151,9 +151,19 @@ describe('ApiSection: expanding', () => {
     expect(screen.getByTestId('api-state')).toHaveTextContent('Not running')
   })
 
-  it('retries the status from its error line', async () => {
-    App.APIStatus.mockRejectedValueOnce(new Error('boom'))
+  it('words a failure in the language chosen after the section was shown', async () => {
     await mount({ defaultExpanded: true })
+    await screen.findByText('notes bot')
+    await act(() => i18n.changeLanguage('es'))
+    App.APIStatus.mockRejectedValueOnce(undefined) // nothing to say: the page words it
+    fireEvent.click(screen.getByRole('button', { name: es.settings.api.refresh }))
+    expect(await screen.findByText(`${es.settings.api.loadError.replace('{{error}}', es.settings.api.errors.unknown)}`)).toBeInTheDocument()
+  })
+
+  it('retries the status from its error line', async () => {
+    App.APIStatus.mockRejectedValueOnce(new Error('not_found: boom')) // the class is not shown
+    await mount({ defaultExpanded: true })
+    expect(await screen.findByText("Couldn't read the API status: boom")).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
     expect(await screen.findByTestId('api-base-url')).toBeInTheDocument()
     expect(App.APIStatus).toHaveBeenCalledTimes(2)

@@ -5,8 +5,9 @@ import { APIStatus, APIKeyList, APIModels } from '../../wailsjs/go/main/App'
 import ApiStatusBlock, { STATE } from './api/ApiStatusBlock.jsx'
 import ApiKeysBlock from './api/ApiKeysBlock.jsx'
 import ApiModelsBlock from './api/ApiModelsBlock.jsx'
+import { apiError } from './api/apiError.js'
 import { listenerState, modelsArgs, pickListener } from './api/apiModel.js'
-import { Badge, errMsg, hint, mono } from './api/ui.jsx'
+import { Badge, hint, mono } from './api/ui.jsx'
 
 // Settings › OpenAI-compatible API (spec §8.4): where /v1 listens and whether it
 // runs, the active profile's API keys, and the models it serves. Everything goes
@@ -39,17 +40,20 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
   const [modelsErr, setModelsErr] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const detailsAsked = useRef(false)
+  // A failure is worded when it happens, in the language of the moment; the loaders keep one identity.
+  const tRef = useRef(t)
+  tRef.current = t
 
   // Each part is read on its own: one that fails is shown as failed, and the others stay.
   const loadStatus = useCallback(async () => {
-    try { const st = await APIStatus(); setStatus(st); setStatusErr(''); return st } catch (e) { setStatusErr(errMsg(e)); return null }
+    try { const st = await APIStatus(); setStatus(st); setStatusErr(''); return st } catch (e) { setStatusErr(apiError(e, tRef.current)); return null }
   }, [])
   const loadKeys = useCallback(async () => {
-    try { setKeys(await APIKeyList()); setKeysErr('') } catch (e) { setKeysErr(errMsg(e)) }
+    try { setKeys(await APIKeyList()); setKeysErr('') } catch (e) { setKeysErr(apiError(e, tRef.current)) }
   }, [])
   // The models are evaluated for the listener the header describes, so they wait for the status.
   const loadModels = useCallback(async (st) => {
-    try { setModels(await APIModels(...modelsArgs(pickListener(st)))); setModelsErr('') } catch (e) { setModelsErr(errMsg(e)) }
+    try { setModels(await APIModels(...modelsArgs(pickListener(st)))); setModelsErr('') } catch (e) { setModelsErr(apiError(e, tRef.current)) }
   }, [])
 
   useEffect(() => { loadStatus() }, [loadStatus])

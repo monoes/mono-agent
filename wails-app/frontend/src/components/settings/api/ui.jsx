@@ -10,8 +10,6 @@ export const errText = { fontFamily: mono, fontSize: 10.5, color: 'var(--red)', 
 export const okText = { fontFamily: mono, fontSize: 10.5, color: 'var(--green-neon)', lineHeight: 1.5, wordBreak: 'break-word' }
 export const block = { display: 'flex', flexDirection: 'column', gap: 10, borderTop: '1px solid var(--border-dim)', paddingTop: 14 }
 
-export const errMsg = (e) => String(e?.message || e || 'unknown error')
-
 const TONES = {
   ok: { color: 'var(--green-neon)', bg: 'rgba(16,185,129,.1)', bd: 'rgba(74,222,128,.25)' },
   info: { color: 'var(--cyan)', bg: 'rgba(0,180,216,.1)', bd: 'rgba(0,180,216,.25)' },

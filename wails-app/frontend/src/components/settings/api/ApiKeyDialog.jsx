@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Copy, Check, ShieldAlert } from 'lucide-react'
 import { APIKeyCreate } from '../../../wailsjs/go/main/App'
 import { copyText } from '../../../pages/connections/ui.jsx'
-import { errMsg, mono, hint, errText, okText } from './ui.jsx'
+import { apiError } from './apiError.js'
+import { mono, hint, errText, okText } from './ui.jsx'
 
 // The create-key dialog: a name and the context switch, then the show-once
 // panel with the new key. The key lives in this component's state and nowhere
@@ -64,7 +65,7 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
       if (key) setSecret(key)
       else setErr(t('settings.api.create.noKey'))
     } catch (e) {
-      setErr(errMsg(e))
+      setErr(apiError(e, t))
     } finally {
       setBusy(false)
     }

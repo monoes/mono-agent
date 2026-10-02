@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react'
 // The real i18n setup, as main.jsx loads it, so the dialog's words come from src/locales/*.json.
 import i18n from '../../../i18n.js'
+import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
 
 // A stand-in for the key `api key create` prints once, built at run time so no
@@ -154,16 +155,31 @@ describe('ApiKeyDialog', () => {
     expect(nameInput()).toHaveValue('')
   })
 
-  it('shows the CLI error, keeps the form, and tells the parent nothing', async () => {
-    App.APIKeyCreate.mockRejectedValue(new Error('an active key with that name already exists in this profile'))
+  it('says in words that a name is taken, keeps the form, and tells the parent nothing', async () => {
+    App.APIKeyCreate.mockRejectedValue(new Error('invalid_input: an active key with that name already exists in this profile'))
     const { onCreated } = await mount()
     fireEvent.change(nameInput(), { target: { value: 'my-app' } })
     fireEvent.click(submit())
-    expect(await screen.findByRole('alert')).toHaveTextContent('already exists in this profile')
+    expect(await screen.findByRole('alert')).toHaveTextContent(en.settings.api.errors.nameTaken)
     expect(nameInput()).toHaveValue('my-app')
     expect(submit()).toBeEnabled()
     expect(screen.queryByTestId('api-key-secret')).not.toBeInTheDocument()
     expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('words the failure in the chosen language, and gives what it cannot word as the CLI said it', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    App.APIKeyCreate.mockRejectedValueOnce(new Error('invalid_input: an active key with that name already exists in this profile'))
+    await mount()
+    fireEvent.change(screen.getByLabelText(es.settings.api.create.name), { target: { value: 'my-app' } })
+    fireEvent.click(screen.getByRole('button', { name: es.settings.api.create.submit }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(es.settings.api.errors.nameTaken)
+    App.APIKeyCreate.mockRejectedValueOnce(new Error('database is locked'))
+    fireEvent.click(screen.getByRole('button', { name: es.settings.api.create.submit }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('database is locked'))
+    App.APIKeyCreate.mockRejectedValueOnce(new Error('invalid_input: unknown flag: --nope'))
+    fireEvent.click(screen.getByRole('button', { name: es.settings.api.create.submit }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/^unknown flag: --nope$/))
   })
 
   it('says so when the CLI returns no key, and shows no empty panel', async () => {

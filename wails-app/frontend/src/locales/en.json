@@ -435,6 +435,12 @@
         "autoOff": "Off. It needs {{missing}}.",
         "openJev": "Open the Jev settings",
         "openJevHint": "The Jev key and the api_auto feature are switched on there."
+      },
+      "errors": {
+        "nameTaken": "An active key of this profile already has that name. Pick another name.",
+        "nameInvalid": "That name isn't allowed. Use 1 to 64 characters: letters, digits, space, . _ -, starting with a letter or digit, and not shaped like a key id (key_ and 12 characters).",
+        "keyNotFound": "That key no longer exists: it may have been revoked from the terminal or another window.",
+        "unknown": "Unknown error"
       }
     }
   },

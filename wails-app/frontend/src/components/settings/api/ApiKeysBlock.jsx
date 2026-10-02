@@ -5,8 +5,9 @@ import { APIKeySetContext, APIKeyRevoke } from '../../../wailsjs/go/main/App'
 import { confirm } from '../../ConfirmDialog.jsx'
 import { Switch } from '../JevSection.jsx'
 import ApiKeyDialog from './ApiKeyDialog.jsx'
+import { apiError } from './apiError.js'
 import { formatDate, relativeTime } from './apiModel.js'
-import { block, label, hint, errText, mono, errMsg } from './ui.jsx'
+import { block, label, hint, errText, mono } from './ui.jsx'
 
 // The keys of the active profile: a table with a context switch and revoke, and
 // the create dialog. The CLI does the work (APIKeySetContext, APIKeyRevoke,
@@ -32,7 +33,7 @@ export default function ApiKeysBlock({ keys, err, contextClass, onChanged, onRet
   // One call at a time: what the CLI says when it fails is shown, and nothing is reloaded.
   const run = async (id, fn) => {
     setBusy(id); setActionErr('')
-    try { await fn(); onChanged?.() } catch (e) { setActionErr(errMsg(e)) } finally { setBusy('') }
+    try { await fn(); onChanged?.() } catch (e) { setActionErr(apiError(e, t)) } finally { setBusy('') }
   }
   const setContext = (k, on) => run(k.id, () => APIKeySetContext(k.id, on))
   const revoke = async (k) => {

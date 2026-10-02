@@ -435,6 +435,12 @@
         "autoOff": "Desactivado. Necesita {{missing}}.",
         "openJev": "Abrir los ajustes de Jev",
         "openJevHint": "La clave de Jev y la función api_auto se activan allí."
+      },
+      "errors": {
+        "nameTaken": "Una clave activa de este perfil ya tiene ese nombre. Elige otro nombre.",
+        "nameInvalid": "Ese nombre no es válido. Usa de 1 a 64 caracteres: letras, dígitos, espacio, . _ -, empezando por una letra o un dígito, y que no tenga la forma de un id de clave (key_ y 12 caracteres).",
+        "keyNotFound": "Esa clave ya no existe: puede que se haya revocado desde la terminal o desde otra ventana.",
+        "unknown": "Error desconocido"
       }
     }
   },

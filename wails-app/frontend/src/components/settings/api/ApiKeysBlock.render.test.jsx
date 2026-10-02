@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react'
 import i18n from '../../../i18n.js'
+import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
 
 const mockConfirm = vi.fn()
@@ -101,10 +102,10 @@ describe('ApiKeysBlock', () => {
   })
 
   it('shows what the CLI says when a switch fails, and does not reload', async () => {
-    App.APIKeySetContext.mockRejectedValue(new Error('api key not found'))
+    App.APIKeySetContext.mockRejectedValue(new Error('not_found: api key not found'))
     const { onChanged } = await mount()
     fireEvent.click(within(row('my-app')).getByRole('switch'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('api key not found')
+    expect(await screen.findByRole('alert')).toHaveTextContent(en.settings.api.errors.keyNotFound)
     expect(onChanged).not.toHaveBeenCalled()
     expect(within(row('my-app')).getByRole('switch')).toBeEnabled()
   })
@@ -127,13 +128,18 @@ describe('ApiKeysBlock', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
   })
 
-  it('shows what the CLI says when a revoke fails', async () => {
+  it('shows what the CLI says when a revoke fails, in the chosen language when it can', async () => {
     mockConfirm.mockResolvedValue(true)
-    App.APIKeyRevoke.mockRejectedValue(new Error('api key not found'))
+    App.APIKeyRevoke.mockRejectedValueOnce(new Error('database is locked'))
     const { onChanged } = await mount()
     fireEvent.click(within(row('notes bot')).getByRole('button', { name: 'Revoke notes bot' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('api key not found')
+    expect(await screen.findByRole('alert')).toHaveTextContent('database is locked')
     expect(onChanged).not.toHaveBeenCalled()
+
+    await act(() => i18n.changeLanguage('es'))
+    App.APIKeyRevoke.mockRejectedValueOnce(new Error('not_found: api key not found'))
+    fireEvent.click(within(row('notes bot')).getByRole('button', { name: 'Revocar notes bot' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(es.settings.api.errors.keyNotFound))
   })
 
   it('opens the create dialog, and reloads the list once a key is created while the key is still shown', async () => {
