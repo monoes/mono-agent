@@ -72,6 +72,12 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 				fail(e)
 				return
 			}
+			if req.toolsActive() { // a refusal starts nothing: no slot, no knowledge search, no turn
+				if e := g.cfg.toolsRefusal(m); e != nil {
+					fail(e)
+					return
+				}
+			}
 		}
 
 		slot, release, ok := g.limiter.tryAcquire()

@@ -71,6 +71,45 @@ func TestToolsServedRuntimesAreTheOperatorsList(t *testing.T) {
 	}
 }
 
+// A request that is refused starts nothing: not the knowledge search of a context
+// key (two monomind processes), not a turn, and it is answered before a busy
+// server would answer it with a 429.
+func TestToolsAreRefusedBeforeAnythingStarts(t *testing.T) {
+	var searched, spawned atomic.Int32
+	release := make(chan struct{})
+	h := toolHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		spawned.Add(1)
+		<-release
+		return okTurn("x")(ctx, o, onEvent)
+	}, func(d *Deps, c *Config) {
+		c.MaxConcurrent = 1
+		d.Knowledge = func(context.Context, string, string) ([]monomind.KnowledgeResult, error) {
+			searched.Add(1)
+			return []monomind.KnowledgeResult{{Path: "/a/b.md", Excerpt: "e", Score: 1}}, nil
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	ctxKey := h.key(t, "default", "ctx", true)
+	plain := h.key(t, "default", "plain", false)
+	policy := Policy{Max: Unconfined, ContextMax: Unconfined} // a context key may use antigravity here
+
+	// The one slot is taken by a turn that waits.
+	busy := make(chan *httpRecorder, 1)
+	go func() { busy <- post(h, policy, plain, toolChatBody("claude", "", weatherQuestion)) }()
+	for spawned.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	searched.Store(0)
+
+	rec := post(h, policy, ctxKey, toolChatBody("antigravity", weatherTools, weatherQuestion))
+	if rec.Code != http.StatusBadRequest || decodeErrorBody(t, rec)["code"] != "unsupported_parameter" {
+		t.Errorf("status %d: %s (a refusal comes before the 429 of a busy server)", rec.Code, rec.Body)
+	}
+	if searched.Load() != 0 || spawned.Load() != 1 {
+		t.Errorf("the knowledge was searched %d times and %d turns started for a request that had to be refused", searched.Load(), spawned.Load())
+	}
+}
+
 // What the key's policy forbids is a 403 before anything about tools.
 func TestToolsThePolicyComesBeforeTheToolRefusal(t *testing.T) {
 	h := toolHarness(t, answers("x"))

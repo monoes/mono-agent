@@ -44,13 +44,11 @@ func (l toolLog) String() string {
 // toolChat answers a chat completion that declares tools: it runs one leg of the
 // conversation, a first leg, a resume or a replay, and answers with the tool call
 // the leg ended at, or with the model's answer when it called nothing. It returns
-// what handleChat logs. The request has been validated and its model resolved and
-// allowed; t is the turn chat would run, with the slot and the system prompt.
+// what handleChat logs. The request has been validated, and its model resolved,
+// allowed and found able to serve tools (a named model is refused before a slot
+// is taken, and the candidates of auto are only models that serve them); t is the
+// turn chat would run, with the slot and the system prompt.
 func (g *Gateway) toolChat(w http.ResponseWriter, r *http.Request, pr Principal, req *ChatRequest, t turn, m ModelInfo, eff Policy, id string) (int, string, toolLog) {
-	if e := g.cfg.toolsRefusal(m); e != nil {
-		writeError(w, e)
-		return e.Status, e.detail, toolLog{}
-	}
 	t.Tools = toolSpecs(req.toolDecls)
 	t.Access, t.MaxTurns = legAccess(m), toolLegMaxTurns
 	if line := toolChoiceLine(req.toolPick); line != "" {
