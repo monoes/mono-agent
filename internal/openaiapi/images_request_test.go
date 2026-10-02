@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -111,5 +112,54 @@ func TestImagePrompt(t *testing.T) {
 		if got := imagePrompt("a red circle", c.n, c.size); got != c.want {
 			t.Errorf("imagePrompt(n=%d, size=%q) = %q, want %q", c.n, c.size, got, c.want)
 		}
+	}
+}
+
+// A field of the wrong JSON type is a bad value for that field, and the client is told
+// which one and what it should be, without its own value echoed. A body that is not an
+// object at all, or not JSON, is still "not valid JSON". Chat keeps its own answer.
+func TestImagesAFieldOfTheWrongTypeIsAnInvalidValue(t *testing.T) {
+	h := newHarness(t, imageTurn("a.png", onePNG("a.png")))
+	secret := h.key(t, "default", "app", false)
+
+	for _, c := range []struct{ body, param, must string }{
+		{`{"prompt":"x","n":1.5}`, "n", "n must be a whole number"},
+		{`{"prompt":"x","n":2.0}`, "n", "n must be a whole number"},
+		{`{"prompt":"x","n":"2"}`, "n", "n must be a whole number"},
+		{`{"prompt":"x","n":true}`, "n", "n must be a whole number"},
+		{`{"prompt":"x","size":1024}`, "size", "size must be a string"},
+		{`{"prompt":5}`, "prompt", "prompt must be a string"},
+		{`{"prompt":["a"]}`, "prompt", "prompt must be a string"},
+		{`{"prompt":"x","model":5}`, "model", "model must be a string"},
+		{`{"prompt":"x","response_format":1}`, "response_format", "response_format must be a string"},
+		{`{"prompt":"x","stream":"true"}`, "stream", "stream must be true or false"},
+	} {
+		rec := postImages(h, anyPolicy, secret, c.body)
+		e := decodeErrorBody(t, rec)
+		msg, _ := e["message"].(string)
+		if rec.Code != http.StatusBadRequest || e["code"] != "invalid_value" || e["param"] != c.param || e["type"] != "invalid_request_error" {
+			t.Errorf("%s: %d %v, want a 400 invalid_value on %s", c.body, rec.Code, e, c.param)
+			continue
+		}
+		if !strings.Contains(msg, c.must) || strings.Contains(msg, "1.5") || strings.Contains(msg, "true\"") {
+			t.Errorf("%s: the message is %q, want it to say %q and not echo the value", c.body, msg, c.must)
+		}
+	}
+
+	for _, body := range []string{`[]`, `{nope`, ``, `"x"`, `5`, `{"prompt":"x"`} {
+		rec := postImages(h, anyPolicy, secret, body)
+		if e := decodeErrorBody(t, rec); rec.Code != http.StatusBadRequest || e["code"] != "invalid_json" || e["param"] != nil {
+			t.Errorf("%q: %d %v, want a 400 invalid_json that names no parameter", body, rec.Code, e)
+		}
+	}
+	// A null body is an object with nothing in it: the prompt is what is missing.
+	if rec := postImages(h, anyPolicy, secret, `null`); decodeErrorBody(t, rec)["code"] != "missing_required_parameter" {
+		t.Errorf("null: %d %s", rec.Code, rec.Body)
+	}
+
+	// Chat's answer to the same mistake is what it always was.
+	rec := post(h, anyPolicy, secret, `{"model":5,"messages":[{"role":"user","content":"x"}]}`)
+	if e := decodeErrorBody(t, rec); rec.Code != http.StatusBadRequest || e["code"] != "invalid_json" || e["param"] != nil || e["message"] != "the request body is not valid JSON" {
+		t.Errorf("chat with a model of the wrong type: %d %v", rec.Code, e)
 	}
 }

@@ -41,7 +41,7 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 		defer func() { g.logRequest(pr, begin, model, status, "", autoBy, detail) }()
 
 		var req ImageRequest
-		if e := decodeBody(w, r, min(g.cfg.BodyLimit, maxImageBody), &req); e != nil {
+		if e := decodeBodyWith(w, r, min(g.cfg.BodyLimit, maxImageBody), &req, imageTypeError); e != nil {
 			fail(e)
 			return
 		}

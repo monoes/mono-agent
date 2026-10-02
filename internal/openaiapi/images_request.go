@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +34,21 @@ type ImageRequest struct {
 // imageSizeRE is the shape of a size: two numbers of two to five digits, no sign,
 // no leading zero, an x between them. Nothing else reaches a prompt.
 var imageSizeRE = regexp.MustCompile(`^([1-9][0-9]{1,4})[xX]([1-9][0-9]{1,4})$`)
+
+// imageTypeError is the answer to a field of the wrong JSON type: which field, and
+// what it has to be. The client's own value is not echoed.
+func imageTypeError(field string, want reflect.Type) *apiError {
+	var what string
+	switch want.Kind() {
+	case reflect.Int:
+		what = "a whole number"
+	case reflect.Bool:
+		what = "true or false"
+	default:
+		what = "a string"
+	}
+	return errInvalid("invalid_value", field, field+" must be "+what)
+}
 
 // validateImages checks an image request and returns what the turn needs of it:
 // how many images (1 when the client did not say) and the preferred size as WxH,
