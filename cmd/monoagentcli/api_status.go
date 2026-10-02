@@ -23,6 +23,10 @@ type apiListenerJSON struct {
 	Loopback    bool   `json:"loopback"`
 	V1          bool   `json:"v1"` // the listener is meant to serve /v1
 	Confinement string `json:"confinement"`
+	// daemonSaysNoV1: the daemon knows /v1 and reports no policy for this
+	// listener, which means it did not mount it here (another process owns the
+	// API's working folders, say).
+	daemonSaysNoV1 bool
 	// ContextConfinement is the strongest class a key created with --context
 	// may use here: the context maximum, never above Confinement.
 	ContextConfinement string `json:"context_confinement"`
@@ -55,8 +59,9 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Show where the OpenAI-compatible API listens and whether it answers",
 		Long: "Reports the profile's active key count, the running daemon (from its heartbeat) and each listener: " +
 			"the main HTTP API listener (which serves /v1 only on loopback) and the dedicated --v1-addr listener. " +
-			"Addresses come from the daemon's heartbeat, else MONOAGENT_HTTPAPI_ADDR and MONOAGENT_API_V1_ADDR, " +
-			"else the default 127.0.0.1:9322. A listener is reachable when GET /health answers within 2 s, and answers /v1 when " +
+			"A running daemon's heartbeat is believed about what the daemon serves. Anything it does not report, such as a " +
+			"standalone `httpapi`, is taken from MONOAGENT_HTTPAPI_ADDR and MONOAGENT_API_V1_ADDR, else the default 127.0.0.1:9322, " +
+			"and is listed next to a running daemon only when it answers. A listener is reachable when GET /health answers within 2 s, and answers /v1 when " +
 			"GET /v1/models sent without a key is refused with 401, which only the API does: a server that predates it " +
 			"answers 404 and must be restarted.",
 		Args: cobra.NoArgs,
@@ -74,13 +79,27 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			st := apiStatusJSON{V: 1, Profile: cfg.ProfileID, Listeners: []apiListenerJSON{}}
 			st.Keys.Active = active
 			hb, live := daemonhb.Read()
-			mainAddr, v1Addr, serveMain := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR"), true
+			mainAddr, v1Addr := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR")
+			mainFromDaemon, v1FromDaemon := false, false
 			if live {
 				st.Daemon.Running, st.Daemon.APIAddr, st.Daemon.V1Addr = true, hb.APIAddr, hb.V1Addr
-				// A running daemon serves what it reports, whatever this shell's
-				// environment says: one started with --api=false and no --v1-addr
-				// serves no /v1 at all.
-				mainAddr, v1Addr, serveMain = hb.APIAddr, hb.V1Addr, hb.APIAddr != ""
+				// A running daemon is believed about what it serves: one started
+				// with --api=false and no --v1-addr serves no /v1, whatever this
+				// shell's environment says. What the environment names is then
+				// only listed when something answers there, as a standalone
+				// `httpapi` does.
+				if hb.APIAddr != "" {
+					mainAddr, mainFromDaemon = hb.APIAddr, true
+				}
+				if hb.V1Addr != "" {
+					v1Addr, v1FromDaemon = hb.V1Addr, true
+				}
+			}
+			add := func(l apiListenerJSON, fromDaemon bool) {
+				if live && !fromDaemon && !l.Reachable {
+					return
+				}
+				st.Listeners = append(st.Listeners, l)
 			}
 			override := os.Getenv
 			// The context maximum is the daemon's when it reported one.
@@ -93,19 +112,23 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 					contextMax = p.Max
 				}
 			}
-			if serveMain {
+			{
 				mainPolicy, err := effectivePolicy(mainAddr, "", override)
 				if err != nil {
 					return err
 				}
 				mainLoop := tlsserve.IsLoopbackAddr(mainAddr)
 				main := apiListenerJSON{Name: "main", Addr: mainAddr, Loopback: mainLoop, V1: mainLoop, Confinement: mainPolicy.String(), ConfinementSource: "environment"}
-				if live && hb.APIConfinement != "" {
+				if mainFromDaemon && hb.APIConfinement != "" {
 					main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
 				}
+				if mainFromDaemon && hb.APIConfinement == "" && hb.ContextConfinement != "" {
+					main.V1, main.daemonSaysNoV1 = false, true
+				}
 				main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
-				main.Reachable, main.V1Answers = probeAddr(mainAddr, mainLoop, main.V1)
-				st.Listeners = append(st.Listeners, main)
+				// The main listener is always plain HTTP: only the dedicated one has TLS.
+				main.Reachable, main.V1Answers = probeListener("http://"+mainAddr, main.V1)
+				add(main, mainFromDaemon)
 			}
 			if v1Addr != "" {
 				v1Policy, err := effectivePolicy(v1Addr, "", override)
@@ -114,12 +137,12 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				}
 				loop := tlsserve.IsLoopbackAddr(v1Addr)
 				dedicated := apiListenerJSON{Name: "v1", Addr: v1Addr, Loopback: loop, V1: true, Confinement: v1Policy.String(), ConfinementSource: "environment"}
-				if live && hb.V1Confinement != "" {
+				if v1FromDaemon && hb.V1Confinement != "" {
 					dedicated.Confinement, dedicated.ConfinementSource = hb.V1Confinement, "daemon"
 				}
 				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
 				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, loop, true)
-				st.Listeners = append(st.Listeners, dedicated)
+				add(dedicated, v1FromDaemon)
 			}
 
 			if cfg.JSONOutput {
@@ -135,12 +158,27 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			for _, l := range st.Listeners {
 				fmt.Fprintf(w, "  %-4s %s  %s\n", l.Name, l.Addr, listenerNote(l))
 			}
-			if len(st.Listeners) == 0 {
-				fmt.Fprintln(w, "  The running daemon serves no HTTP API and no dedicated /v1 listener (see --api, --api-addr and --v1-addr).")
+			if st.Daemon.Running {
+				if !hasListener(st.Listeners, "main") {
+					fmt.Fprintln(w, "  main none: the daemon serves no HTTP API (see --api and --api-addr), and nothing else answers at the usual address")
+				}
+				if !hasListener(st.Listeners, "v1") {
+					fmt.Fprintln(w, "  v1   none: the daemon reports no dedicated /v1 listener (it was started without --v1-addr, or could not start it: see its log)")
+				}
 			}
 			return nil
 		},
 	}
+}
+
+// hasListener reports whether the status lists a listener of that name.
+func hasListener(ls []apiListenerJSON, name string) bool {
+	for _, l := range ls {
+		if l.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // contextConfinementFor is what a key created with --context may use on a
@@ -159,6 +197,8 @@ func listenerNote(l apiListenerJSON) string {
 	switch {
 	case !l.Reachable:
 		return "not reachable: nothing answers /health there"
+	case l.daemonSaysNoV1:
+		return "reachable, but the daemon does not serve /v1 on it: another process may own the API's working folders (see the daemon's log)"
 	case !l.V1:
 		return "reachable, but does not serve /v1 (bound off-loopback; use --v1-addr)"
 	case l.V1Answers:
@@ -203,6 +243,8 @@ func probeListener(base string, wantV1 bool) (reachable, v1Answers bool) {
 	client := &http.Client{
 		Timeout:   2 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // no secret is sent
+		// What answers is whatever is at the address: it is not followed anywhere else.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	status := func(path string) int {
 		resp, err := client.Get(base + path)

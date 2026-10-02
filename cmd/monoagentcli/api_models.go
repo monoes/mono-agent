@@ -92,7 +92,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n", forListener, policy, forContext)
-			fmt.Fprint(w, "From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what it applies).\n\n")
+			fmt.Fprint(w, "From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).\n\n")
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY")
 			for _, m := range out.Models {
