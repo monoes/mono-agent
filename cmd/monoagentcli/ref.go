@@ -2724,14 +2724,15 @@ OPENAI-COMPATIBLE API (/v1)
   Model ids look like "claude/sonnet" or "codex/gpt-6-astra" (each runtime's
   own list decides: read GET /v1/models); a bare runtime ("codex") is its
   default model, and "agy" is an alias of "antigravity".
-  Sampling parameters are accepted and ignored. n > 1, logprobs, audio,
-  image/audio content parts, tool/function messages, a non-empty tools or
-  functions, a tool_choice or function_call other than "none" and a
-  response_format other than text or json_object are rejected with 400
-  unsupported_parameter. Not available yet: images, tool calling and the
-  "auto" model.
+  Sampling parameters are accepted and ignored. These are rejected with 400
+  unsupported_parameter: n above 1, logprobs true, an audio object, a
+  non-empty tools or functions, a tool_choice or function_call other than
+  "none", tool and function messages, content parts that are not text and a
+  response_format other than text or json_object. Not available yet: images,
+  tool calling and the "auto" model.
 
-  Auth is an API key, not the credential above. One profile each, shown
+  Auth is an API key, not the credential above. One profile each (its
+  requests run as that profile and add only that profile's knowledge), shown
   once, only its SHA-256 is stored (no vault, no keyring, so it works on a
   headless server):
 
@@ -2747,8 +2748,9 @@ OPENAI-COMPATIBLE API (/v1)
   the credential above never opens /v1.
   org teardown-profile revokes a profile's keys.
 
-  Confinement: chat-only (claude), sandboxed (codex: writes confined, reads
-  open), unconfined (antigravity: native tools run as the OS user).
+  Confinement: chat-only (claude), sandboxed (codex: writes confined to the
+  turn's folder and the temp directory, reads open), unconfined (antigravity:
+  native tools run as the OS user).
   --confinement chat-only|sandboxed|any (MONOAGENT_API_CONFINEMENT) caps what
   the process serves, one value for all its listeners; a model above it is
   unlisted, GET /v1/models/{id} answers 404 for it and a completion naming it
@@ -2763,7 +2765,8 @@ OPENAI-COMPATIBLE API (/v1)
   remote clients must trust; with the two set, a loopback bind speaks TLS
   too), default confinement chat-only. httpapi exits when it cannot start
   that listener, daemon only warns (check api status). One process per home
-  serves /v1 at a time.
+  serves /v1 at a time: a second httpapi serves its other routes without it,
+  a second daemon is refused.
 
   Limits: 2 MiB body; 4 concurrent turns (--max-concurrent; 429 with
   Retry-After when full); 10 minute turn timeout (MONOAGENT_API_TURN_TIMEOUT);

@@ -18,14 +18,16 @@ monoagentcli api key create --name my-app
 # sk-ma-…            ← printed once; only its SHA-256 is stored
 ```
 
-A key belongs to the active profile (`--profile`, or `profile switch`) and
-reaches nothing of any other profile. The commands below read the key from
+A key belongs to the active profile (`--profile`, or `profile switch`): its
+requests run as that profile, add only that profile's knowledge and work in that
+profile's folder (what a runtime can read on the machine is set by its
+confinement class: see `SECURITY.md`). The commands below read the key from
 `$KEY`. In a script, stdout is the key alone, so capture it instead (a name
 is unique among a profile's active keys: use this form or the one above, not
 both):
 
 ```bash
-export KEY=$(monoagentcli api key create --name my-app)
+KEY=$(monoagentcli api key create --name my-app) && export KEY
 ```
 
 Add `--context` to give requests made with the key excerpts of the profile's
@@ -49,8 +51,9 @@ monoagentcli httpapi        # or: monoagentcli daemon
 The API is served at `http://127.0.0.1:9322/v1` while the HTTP API listener
 is loopback, which is the default. Only one process per home (`~/.monoagent`)
 serves `/v1` at a time, because the working folders are emptied around every
-turn: a second `httpapi` or `daemon` says so and serves its other routes
-without `/v1`. Check what it serves:
+turn: a second `httpapi` says so and serves its other routes without `/v1`, and
+a second `daemon` is refused outright (one daemon per home). Check what it
+serves:
 
 ```bash
 monoagentcli api status     # listeners, key count, whether they answer
@@ -63,7 +66,7 @@ list, so yours will differ):
 
 ```
 Confinement policy for a loopback listener: any (keys created with --context: chat-only)
-From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what it applies).
+From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).
 
 MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY
 claude/default           chat-only    false      yes     yes
@@ -78,9 +81,11 @@ shows what a running daemon applies). `SERVED` is whether the model is served
 under that policy and `CONTEXT KEY` whether a key created with `--context`
 may use it. The ids are `<runtime>/<model>`, as each runtime lists them, so
 use the ones this prints. A bare runtime (`codex`) is its default model, and
-`agy` is accepted for `antigravity`. A model the runtime does not list is a
-404: the server only runs listed models, although a runtime's aliases (such
-as `claude/opus[1m]`) resolve without being listed.
+`agy` is accepted for `antigravity`. A model that is neither listed by the
+runtime nor in your agent roster is a 404, although a runtime's aliases (such
+as `claude/opus[1m]`) resolve without being listed. If a runtime's own listing
+fails, a built-in list stands in for it until it answers again (a few
+seconds), so its ids can differ for a moment.
 
 ## 3. Call it
 
@@ -139,13 +144,15 @@ What to expect:
   server answers 429 with `Retry-After`).
 - Requests are stateless. Sampling parameters (`temperature`, `max_tokens`,
   `stop`, …) are accepted and ignored, because the agent runtimes have none.
-  `n > 1`, `tools`, `response_format` of type `json_schema`, tool messages,
-  and image and audio parts are rejected with 400 `unsupported_parameter`
+  `n` above 1, a non-empty `tools`, `logprobs: true`, `response_format` of
+  type `json_schema`, tool messages and parts that are not text (images, audio,
+  files) are rejected with 400 `unsupported_parameter`
   (`response_format: {"type":"json_object"}` works, as a best-effort
-  instruction).
+  instruction; `tools: []` and `tool_choice: "none"` are accepted).
 - `curl -i` shows `X-Monoagent-Model` (the model that answered),
   `X-Monoagent-Sandbox` (how monomind sandboxed that turn: `sandboxed`,
-  `scoped`, `unsupported`, …; not sent on a stream) and, for a `--context`
+  `scoped`, `unsupported`, …; sent on a successful non-streaming response
+  only) and, for a `--context`
   key, `X-Monoagent-Context` (how many knowledge excerpts were added).
 
 ## 4. Serve it beyond this machine
@@ -210,7 +217,10 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 4. Check that the listener came up: `monoagentcli api status`, run as the same
    user, lists it and says whether it answers `/v1`. The daemon only logs a
    warning when it cannot start the listener (an unreadable certificate, a
-   port in use) and keeps running, so the unit looks healthy either way.
+   port in use) and keeps running, so the unit looks healthy either way. A
+   listener it could not start is missing from the list, and `api status` says
+   so (`v1 none: the daemon reports no dedicated /v1 listener …`): read
+   `journalctl --user -u monoagent-daemon` for the reason.
 5. From another machine: `curl https://server:9443/v1/models -H "Authorization:
    Bearer $KEY"`.
 
@@ -218,19 +228,22 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (`tools`, `n > 1`, `json_schema` output, image parts, …) |
+| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …) |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
 | 403 | `policy_denied` | A completion names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
 | 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403) |
 | 413 | `request_too_large` | Body over 2 MiB |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
 | 500 | `internal_error` | An internal failure. The message is generic; the detail is in the server log under the response's `X-Request-Id` |
-| 502 | `runtime_error` | The runtime reported an error, or ended the turn without finishing it. The message is generic too |
+| 502 | `runtime_error` | The runtime reported an error, or ended the turn without finishing it. The message is generic too, and the runtime's own words reach you only for a sign-in hint, a rate limit, quota or a timeout, on one line and at most 300 characters |
 | 503 | `runtime_not_available` | monomind or the runtime is not installed or not signed in, or the server is shutting down |
 | 504 | `timeout` | The turn exceeded 10 minutes (`MONOAGENT_API_TURN_TIMEOUT`) |
 
 Every error of the three routes has the body
 `{"error":{"message","type","param","code"}}` and an `X-Request-Id` header. A
 path or method the API does not have (for example `GET /v1/embeddings`) gets
-Go's plain-text 404 or 405 instead. On a stream that has already started, an
-error arrives as a `data: {"error": …}` event followed by `data: [DONE]`.
+Go's plain-text 404 or 405 instead. A stream starts (status 200) on its first
+content or after 5 seconds of silence, and from then on an error arrives as a
+`data: {"error": …}` event followed by `data: [DONE]`, not as a status from
+this table: a runtime that does not stream (codex, for one) is usually past
+that point before it fails.

@@ -468,13 +468,19 @@ otherwise:
 | Class | Meaning | For example |
 |---|---|---|
 | `chat-only` | monomind's allow-list gate is the only tool gate, and a request carries no caller tools, so no native tool is reachable | claude |
-| `sandboxed` | writes are confined to the turn's folder; reads and the network are open, and the runtime's own configuration still applies | codex |
+| `sandboxed` | writes are confined to the turn's folder and the system temp directory; reads and the network are open, and the runtime's own configuration still applies | codex |
 | `unconfined` | the runtime's native tools run as the OS user | antigravity, and any runtime monomind does not vouch for |
 
 Which runtime lands in which class follows what monomind reports, so it can
 change with a monomind upgrade. `sandboxed` confines writes, nothing more: a
 runtime keeps the MCP servers and instructions files of the OS user it runs
 as, so a key holder can ask codex to use any tool you configured for it.
+
+Profiles are kept apart by their folders and by what the API looks up for a
+key, not by an OS boundary. Every profile's data lives under the same
+`~/.monoagent`, and a runtime that can read the disk (codex under `sandboxed`,
+antigravity) can read it, the prompt files of a turn that is running for
+another profile included.
 
 The class is decided from `monomind agent scan` and fails closed: anything
 not vouched for is `unconfined`. A `sandboxed` model's turn is started with
@@ -485,10 +491,10 @@ reports it), and a turn that is weaker than the listener's policy is
 cancelled (403 `policy_denied`) before any of its text reaches the caller. A
 streamed response is committed (status 200) on its first content or after 5
 seconds of silence, so a refusal later than that is an error event in the
-stream rather than a 403. A non-streaming response also carries monomind's
-sandbox verdict for the turn in `X-Monoagent-Sandbox` (`sandboxed`, `scoped`,
-`unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), which is not
-the class above; a streamed response has none.
+stream rather than a 403. A successful non-streaming response also carries
+monomind's sandbox verdict for the turn in `X-Monoagent-Sandbox` (`sandboxed`,
+`scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`),
+which is not the class above; a streamed response and an error have none.
 
 Be precise about what is and is not guaranteed. claude's `chat-only` rests on
 monomind's design (its allow-list gate); the live check
@@ -503,7 +509,8 @@ before giving a key to anyone you would not give a shell.
 **Exposure.**
 
 - `/v1` rides the main HTTP API listener only while that bind is loopback
-  (default `127.0.0.1:9322`), where every runtime is served. Off-loopback the
+  (default `127.0.0.1:9322`), where by default every runtime is served.
+  Off-loopback the
   main listener never serves `/v1`; it logs a pointer to `--v1-addr`.
 - `--v1-addr` (`MONOAGENT_API_V1_ADDR`) starts a dedicated listener that
   serves only `/v1/*` and `GET /health`: no workflow, node, HIL or org
@@ -552,21 +559,31 @@ rejected (invalid, over policy, or busy) starts nothing.
 **Logs and errors.** One line per chat completion names the request id, key
 id, profile, model, status, duration and how many knowledge excerpts were
 added, plus, for a failure, the operator-only detail (a Go error or a
-runtime's error code). A failure to list models is logged the same way; a
-successful listing is not logged. No line holds a prompt, an answer or a key.
-A failed authentication is logged with the caller's address, never the key it
-sent (a request that sent no credential at all is not logged). Error messages
-sent to callers are generic for internal failures and for a runtime error
-other than a setup hint, a rate limit, quota or a timeout, and every response
-of the three routes carries an `X-Request-Id` to quote to the operator. A
-path or method the API does not have gets Go's plain-text 404 or 405, without
-one.
+runtime's error code). A failure to list models, a failed knowledge search and
+a failure to verify a key are logged too; a successful listing is not. None
+of the gateway's lines holds a prompt, an answer or a key. monomind's own
+diagnostics (its stderr) reach the server log as they do for any use, and
+nothing in this repo shows that they never echo a prompt. A failed
+authentication is logged with the address of the connection, never the key it
+sent (behind a reverse proxy that is the proxy's address: `X-Forwarded-For` is
+not read); a request that sent no credential at all is not logged. Error
+messages sent to callers are generic for internal failures and for a runtime
+error other than a setup hint, a rate limit, quota or a timeout; of those,
+only the part monomind classified reaches the caller, on one line and at most
+300 characters. Every response of the three routes carries an `X-Request-Id`
+to quote to the operator. A path or method the API does not have gets Go's
+plain-text 404 or 405, without one. `GET /health` on the dedicated listener is
+unauthenticated and returns the server version.
 
 **What this does not cover.**
 
 - Revocation applies to the next request: a turn already running finishes,
   within the turn timeout. Stopping the daemon or `httpapi` ends the turns in
-  flight and waits for their processes to be killed.
+  flight (their clients get a 503 they can retry) and waits for their
+  processes to be killed, up to a few seconds longer than monomind's kill grace
+  when a second Ctrl+C forces the exit, so that no agent CLI outlives the
+  command. `httpapi` and a dedicated listener first give running requests 10
+  seconds to finish; the daemon's main listener does not.
 - The agent CLIs keep session transcripts of their turns in their own stores
   (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
   they do for any use. The fixed slot folders keep the number of those
@@ -581,10 +598,25 @@ one.
   machine or an OS user of its own.
 - A turn's prompt and system prompt (which carry a context key's excerpts) are
   written to files in a private folder (mode 0700) under
-  `~/.monoagent/workspaces/api/.tmp`, outside every turn's writable area, and
-  removed when the turn ends.
+  `~/.monoagent/workspaces/api/.tmp`, outside a sandboxed turn's writable
+  area, and removed when the turn ends (a crash leaves them until the next
+  start, which clears the folder). The mode keeps other OS users out, not
+  other turns: a runtime that can read the disk can read them while the turn
+  runs, another profile's included, and an unconfined runtime can write there.
+  Every other `monomind.Exec` caller writes its files in `~/.monoagent/tmp`
+  (mode 0700, files older than a day swept) for the same reason: the system
+  temp directory is writable by a sandboxed turn, which could rewrite a prompt
+  file before monomind reads it.
+- A runtime can leave a process behind it (a command started with `nohup`, say)
+  that keeps its write access to the turn's folder. Emptying the folder does
+  not stop it. The gateway acts on the folder through an open handle, so such
+  a process cannot send the emptying outside it, and a folder it makes
+  impossible to empty (a tree deeper than 100 levels) is moved to
+  `~/.monoagent/workspaces/api/.quarantine` and replaced, but nothing ends the
+  process. Run the server as a dedicated OS user and look at what it leaves.
 
 **Not part of this surface (yet).** Image generation, OpenAI tool calling and
 Jev's `auto` model are later phases. Today a request cannot hand the agent
-tools of the caller's own (a non-empty `tools` is rejected); the runtime's native tools are
+tools of the caller's own (a non-empty `tools` is rejected); the runtime's
+native tools are
 a separate matter, covered by the classes above.

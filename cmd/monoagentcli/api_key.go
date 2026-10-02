@@ -26,9 +26,10 @@ func newAPIKeyCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "key",
 		Short: "Create, list, update and revoke the active profile's API keys",
 		Long: "API keys authenticate the OpenAI-compatible HTTP API (/v1) served by `monoagentcli httpapi` " +
-			"and `monoagentcli daemon`. A key belongs to exactly one profile (select it with --profile) and " +
-			"reaches nothing of any other profile. Only the key's SHA-256 is stored, so a key is shown once, " +
-			"when it is created.",
+			"and `monoagentcli daemon`. A key belongs to exactly one profile (select it with --profile): its " +
+			"requests run as that profile and add only that profile's knowledge, and what a runtime can read " +
+			"on the machine is set by its confinement class (see `api models`). Only the key's SHA-256 is " +
+			"stored, so a key is shown once, when it is created.",
 	}
 	cmd.AddCommand(newAPIKeyCreateCmd(cfg), newAPIKeyListCmd(cfg), newAPIKeyShowCmd(cfg), newAPIKeyUpdateCmd(cfg), newAPIKeyRevokeCmd(cfg))
 	return cmd

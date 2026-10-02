@@ -346,7 +346,8 @@ paths:
         The id contains a slash (`claude/sonnet`) and is sent as is, not
         encoded. A bare runtime name (`codex`) means its default model, and
         `agy` is accepted for `antigravity`. A model the listener's
-        confinement policy does not allow is a 404, as is an unknown one.
+        confinement policy does not allow (for a key created with `--context`,
+        `--context-confinement` too) is a 404, as is an unknown one.
       security:
         - apiKeyAuth: []
       parameters:
@@ -383,10 +384,11 @@ paths:
         `reasoning_effort` is passed on when the model lists that level, and
         `response_format` `json_object` adds a best-effort instruction. These
         are rejected with 400 `unsupported_parameter`: `n` above 1, `logprobs`
-        true, `audio`, a non-empty `tools` or `functions`, a `tool_choice` or
-        `function_call` other than `none`, `tool` and `function` messages,
-        image or audio content parts, and a `response_format` of any other
-        type than `text` or `json_object`.
+        true, an `audio` object, a non-empty `tools` or `functions`, a
+        `tool_choice` or `function_call` other than `none`, `tool` and
+        `function` messages, content parts that are not text (images, audio,
+        files), and a `response_format` of any other type than `text` or
+        `json_object`.
 
         With `stream: true` the response is `text/event-stream`: a role chunk,
         content deltas, a final chunk with `finish_reason`, an optional usage
@@ -408,7 +410,7 @@ paths:
         |---|---|---|
         | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter |
         | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
-        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context`, or its sandbox could not be applied, or the runtime started with less confinement than the policy allows (`GET /v1/models/{id}` answers 404 for such a model) |
+        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
         | 404 | `invalid_request_error` / `model_not_found` | Unknown model |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
         | 429 | `rate_limit_error` / `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
@@ -436,7 +438,7 @@ paths:
               description: The `<runtime>/<model>` that answered.
               schema: { type: string }
             X-Monoagent-Sandbox:
-              description: How monomind sandboxed the turn (`sandboxed`, `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), not the confinement class. Not sent on a stream.
+              description: How monomind sandboxed the turn (`sandboxed`, `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), not the confinement class. Sent on a successful non-streaming response only.
               schema: { type: string }
             X-Monoagent-Context:
               description: For a key created with `--context`, the number of knowledge excerpts added, `none` or `unavailable`.
@@ -629,9 +631,10 @@ components:
       required: [model, messages]
       description: >
         Sampling parameters not listed here (`temperature`, `top_p`,
-        `max_tokens`, `stop`, …) are accepted and ignored. The parameters the
-        description of `POST /v1/chat/completions` lists as rejected get a 400,
-        unless they are empty or `none`.
+        `max_tokens`, `stop`, …) are accepted and ignored. What is rejected,
+        and the few values of those parameters that are accepted
+        (`tools: []`, `tool_choice: "none"`, `logprobs: false`, `n: 1`), is
+        described with `POST /v1/chat/completions`.
       additionalProperties: true
       properties:
         model: { type: string, example: "claude/sonnet" }
