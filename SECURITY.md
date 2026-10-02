@@ -766,9 +766,10 @@ executes nothing of the caller's. What this changes, and what it does not:
   conversation the leg was given, a hash of the call's arguments and the
   runtime's session id) lives in memory
   for ten minutes, at most 1,024 in all and 64 per key, and is used once (given
-  back only when a resume fails before the model ran, for a rate limit, the quota
-  or a sign-in, and no tool of the runtime's own had run: such a tool is never
-  run a second time by a replay or a retry); a restart loses them and the follow-ups then start from their
+  back, with the expiry it had, only when a resume fails before the model ran, for
+  a rate limit, the quota or a sign-in, and no tool of the runtime's own had
+  run: such a tool is never run a second time by a replay or a retry, and a
+  retry does not extend how long a session lives); a restart loses them and the follow-ups then start from their
   transcripts. It holds no argument and no result, and a follow-up continues the
   session only when its conversation before the call hashes the same. A record belongs to
   its key: another key, even of the same profile, finds nothing and is served by

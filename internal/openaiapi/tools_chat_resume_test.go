@@ -56,6 +56,39 @@ func TestToolsAResumeThatFailedBeforeTheModelRanKeepsItsSession(t *testing.T) {
 	}
 }
 
+// The record a failed resume gave back is the same record: it expires when the ten minutes of
+// the leg that left it are up, not ten minutes after the retry (which would let a client that
+// keeps retrying hold a session for as long as it likes).
+func TestToolsAGivenBackSessionDoesNotOutliveTheTenMinutesOfItsLeg(t *testing.T) {
+	rateLimited := scriptedExec(evStart(false, "monomind"), evError(monomind.ErrRateLimited, "slow down"), evDone(1))
+	for _, c := range []struct {
+		name    string
+		retryIn time.Duration // after the failed resume, which came seven minutes after the leg
+		resumes bool
+	}{
+		{"a retry within the ten minutes of the leg", 2 * time.Minute, true},
+		{"a retry after them", 4 * time.Minute, false},
+	} {
+		script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), rateLimited, answers("It is 21 C.")}}
+		h := toolHarness(t, script.exec)
+		clock := newTestClock()
+		h.g.conts.now = clock.now
+		secret := h.key(t, "default", "app", false)
+		body := followUp(firstCall(t, h, secret), "21 C")
+
+		clock.advance(7 * time.Minute)
+		if rec := post(h, anyPolicy, secret, body); rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("%s: the follow-up should have been rate limited: %d %s", c.name, rec.Code, rec.Body)
+		}
+		clock.advance(c.retryIn)
+		rec := post(h, anyPolicy, secret, body)
+		calls := script.calls()
+		if rec.Code != http.StatusOK || len(calls) != 3 || (calls[2].Resume == "sess-1") != c.resumes {
+			t.Errorf("%s: status %d, %d turns, resume %q, want the session continued = %v", c.name, rec.Code, len(calls), calls[len(calls)-1].Resume, c.resumes)
+		}
+	}
+}
+
 // evNativeStart and evNativeDenied are a runtime's own tool starting, and monomind
 // refusing it (monomind#357): codex using one of the user's own MCP servers, claude
 // trying Bash.

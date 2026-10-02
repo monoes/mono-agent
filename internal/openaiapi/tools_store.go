@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"slices"
+	"sort"
 	"sync"
 	"time"
 )
@@ -55,7 +56,7 @@ type contStore struct {
 	mu     sync.Mutex
 	byCall map[string]*contRecord
 	perKey map[string]int
-	order  []*contRecord // oldest first
+	order  []*contRecord // by expiry, the soonest first (the oldest first, for records of one age)
 }
 
 func newContStore(now func() time.Time) *contStore {
@@ -63,11 +64,31 @@ func newContStore(now func() time.Time) *contStore {
 		byCall: map[string]*contRecord{}, perKey: map[string]int{}}
 }
 
-// put adds a record. Expired ones are dropped first, then the oldest record of
-// a key that is at its cap, then the oldest of all while the store is at its cap.
+// put adds a record that has just been made: it expires after the TTL.
 func (s *contStore) put(r contRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	r.Expires = s.now().Add(s.ttl)
+	s.addLocked(r)
+}
+
+// giveBack puts back a record that take returned and that was not used, with the expiry it
+// had: a retry is no reason for a session to live longer than the leg that left it was told
+// it would. A record that has expired by now is not put back.
+func (s *contStore) giveBack(r contRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.now().Before(r.Expires) {
+		return
+	}
+	s.addLocked(r)
+}
+
+// addLocked adds a record with the expiry it carries. Expired ones are dropped first,
+// then the oldest record of a key that is at its cap, then the oldest of all while the
+// store is at its cap. The record goes where its expiry puts it, so that the sweep, which
+// looks at the front only, never has an expired record behind one that is not.
+func (s *contStore) addLocked(r contRecord) {
 	now := s.now()
 	for len(s.order) > 0 && !now.Before(s.order[0].Expires) {
 		s.removeLocked(s.order[0])
@@ -76,14 +97,14 @@ func (s *contStore) put(r contRecord) {
 	}
 	for len(s.order) >= s.maxTotal && s.dropOldestLocked(func(*contRecord) bool { return true }) {
 	}
-	r.Expires = now.Add(s.ttl)
 	if old := s.byCall[r.CallID]; old != nil { // an id is never reused, but a record must never be counted twice
 		s.removeLocked(old)
 	}
 	rec := &r
 	s.byCall[r.CallID] = rec
 	s.perKey[r.KeyID]++
-	s.order = append(s.order, rec)
+	at := sort.Search(len(s.order), func(i int) bool { return s.order[i].Expires.After(rec.Expires) })
+	s.order = slices.Insert(s.order, at, rec)
 }
 
 // take returns the record of a call and removes it, if it is there, has not

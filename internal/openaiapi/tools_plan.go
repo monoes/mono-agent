@@ -86,7 +86,7 @@ func (g *Gateway) planLeg(pr Principal, req *ChatRequest, m ModelInfo, firstProm
 // gone on in.
 func (g *Gateway) keepSession(plan legPlan, pl plannedLeg) {
 	if plan.rec != nil && !pl.FellBack && pl.sessionUntouched() {
-		g.conts.put(*plan.rec)
+		g.conts.giveBack(*plan.rec)
 	}
 }
 

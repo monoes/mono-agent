@@ -83,6 +83,73 @@ func TestContStoreDropsExpiredRecordsWhenOthersArePut(t *testing.T) {
 	}
 }
 
+// A record given back after a resume that failed before the model ran keeps the expiry it
+// had: the retry is no reason for a session to live longer than the leg that left it was
+// told it would, and the sweep that drops the expired records from the front must still find
+// it where its expiry puts it.
+func TestContStoreAGivenBackRecordKeepsItsExpiry(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.put(record("call_1", "key_a"))
+	clock.advance(9 * time.Minute)
+	r, ok := s.take("call_1", matchAll)
+	if !ok {
+		t.Fatal("no record")
+	}
+	s.giveBack(r)
+	clock.advance(time.Minute / 2) // 9.5 minutes in: still its own ten
+	if _, ok := s.take("call_1", func(contRecord) bool { return false }); ok || s.size() != 1 {
+		t.Fatalf("a record given back before its expiry is held: size %d", s.size())
+	}
+	clock.advance(time.Minute) // 10.5 minutes after the leg ended: the given back record has had its ten
+	if _, ok := s.take("call_1", matchAll); ok {
+		t.Error("a given back record outlived the ten minutes of the leg that left it")
+	}
+}
+
+func TestContStoreAGivenBackRecordIsSweptWhenItExpires(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.put(record("old", "key_a")) // expires at ten minutes
+	clock.advance(5 * time.Minute)
+	r, _ := s.take("old", matchAll)
+	s.put(record("newer", "key_b")) // expires at fifteen
+	s.giveBack(r)                   // goes before it, where its own ten minutes put it
+	clock.advance(6 * time.Minute)  // eleven: "old" is over, "newer" is not
+	s.put(record("another", "key_c"))
+	if s.size() != 2 {
+		t.Errorf("size = %d: the expired record behind a newer one must be swept with the others", s.size())
+	}
+	if _, ok := s.take("newer", matchAll); !ok {
+		t.Error("the sweep took a record that had not expired")
+	}
+}
+
+func TestContStoreARecordThatExpiredIsNotGivenBack(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.put(record("call_1", "key_a"))
+	r, _ := s.take("call_1", matchAll)
+	clock.advance(contTTL + time.Second) // the resume that failed took longer than the record had
+	s.giveBack(r)
+	if s.size() != 0 {
+		t.Errorf("an expired record was put back: size %d", s.size())
+	}
+}
+
+func TestContStoreAGivenBackRecordRespectsTheCaps(t *testing.T) {
+	s := newContStore(newTestClock().now)
+	s.maxPerKey = 2
+	s.put(record("a1", "key_a"))
+	r, _ := s.take("a1", matchAll)
+	s.put(record("a2", "key_a"))
+	s.put(record("a3", "key_a"))
+	s.giveBack(r) // key_a is at its cap: the oldest goes, the count never passes it
+	if got := s.size(); got != 2 {
+		t.Errorf("size = %d, want the cap of 2", got)
+	}
+}
+
 // A match that refuses leaves the record for whoever it belongs to: asking with
 // another key must not use it up.
 func TestContStoreARefusedMatchLeavesTheRecord(t *testing.T) {

@@ -703,7 +703,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   **replayed** in a new turn with the tools declared again, which always works.
   A resume that fails before the model ran (nothing said or called, and no tool
   of the runtime's own that monomind did not deny) for a rate limit, the quota,
-  a budget or a sign-in gives its record back, so the retry resumes. A tool of
+  a budget or a sign-in gives its record back with the expiry it had, so the retry
+  resumes while the ten minutes of the leg last. A tool of
   the runtime's own that ran (codex using one of the user's own MCP servers) is
   never run again by either: its leg is neither replayed nor given back. The system prompt of a resumed claude leg says that the
   caller ran the call and that its result is real: cancelling a leg at its call
