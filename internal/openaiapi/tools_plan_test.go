@@ -22,7 +22,7 @@ func planFixture(t *testing.T, messages string) (*harness, *ChatRequest, ModelIn
 	rec := contRecord{CallID: "call_a", KeyID: "key_a", ProfileID: "alice", Model: "claude/default", Name: "get_weather",
 		Session: "sess-1", ToolsHash: toolsHash(req.toolDecls), Args: argsHash(`{"city":"Paris"}`)}
 	if ai, ok := trailingRound(req); ok { // the session saw the conversation as it was before the call
-		rec.Convo = convoHash(req, ai)
+		rec.Convo = convoHash(m.Runtime, req, ai)
 	}
 	return h, req, m, pr, rec
 }
@@ -241,6 +241,7 @@ func TestPlanLegThatDoesNotMatchLeavesTheRecordForItsOwner(t *testing.T) {
 // a null one, trailing whitespace, the spacing of the arguments) must not cost a replay.
 const (
 	sysBrief = `{"role":"system","content":"Be brief."}`
+	devBrief = `{"role":"developer","content":"Be brief."}`
 	askParis = `{"role":"user","content":"Weather in Paris?"}`
 	askRome  = `{"role":"user","content":"Weather in Rome?"}`
 	hello    = `{"role":"user","content":"hello"},{"role":"assistant","content":"hi!"}`
@@ -271,15 +272,19 @@ const (
 
 // planAfter plans the follow-up (followMsgs, with followExtra among its parameters)
 // of a call (callID) that a leg made when the request said firstMsgs and firstExtra.
-func planAfter(t *testing.T, callID, firstExtra, firstMsgs, followExtra, followMsgs string) legPlan {
+func planAfter(t *testing.T, runtime, callID, firstExtra, firstMsgs, followExtra, followMsgs string) legPlan {
 	t.Helper()
 	h, _, m, pr, rec := planFixture(t, oneRound)
+	if runtime == "codex" {
+		m = ModelInfo{ID: "codex/default", Runtime: "codex", Model: "default", Class: Sandboxed}
+		rec.Model = m.ID
+	}
 	tools := `"tools":[` + weatherTool + `,` + stockTool + `]`
 	first := toolRequest(t, tools+firstExtra, firstMsgs)
 	follow := toolRequest(t, tools+followExtra, followMsgs)
 	// The arguments the model gave each of the calls the cases use.
 	args := map[string]string{"call_a": `{"city":"Paris"}`, "call_b": `{"city":"Rome"}`, "call_c": `{"city":"Oslo"}`}
-	rec.CallID, rec.Convo, rec.ToolsHash, rec.Args = callID, convoHash(first, len(first.Messages)), toolsHash(first.toolDecls), argsHash(args[callID])
+	rec.CallID, rec.Convo, rec.ToolsHash, rec.Args = callID, convoHash(runtime, first, len(first.Messages)), toolsHash(first.toolDecls), argsHash(args[callID])
 	h.g.conts.put(rec)
 	return h.g.planLeg(pr, follow, m, "unused")
 }
@@ -303,6 +308,8 @@ func TestPlanLegResumesOnlyTheConversationTheSessionSaw(t *testing.T) {
 
 		{"the first message edited", "call_a", "", first, "", sysBrief + "," + askRome + "," + callParisMsg + "," + paris21, legReplay},
 		{"the system prompt changed", "call_a", "", first, "", strings.Replace(followed, "Be brief.", "Be verbose.", 1), legReplay},
+		{"the developer message changed", "call_a", "", devBrief + "," + askParis, "", strings.Replace(devBrief+","+askParis+","+callParisMsg+","+paris21, "Be brief.", "Be verbose.", 1), legReplay},
+		{"the developer message as it was", "call_a", "", devBrief + "," + askParis, "", devBrief + "," + askParis + "," + callParisMsg + "," + paris21, legResume},
 		{"the system prompt dropped", "call_a", "", first, "", askParis + "," + callParisMsg + "," + paris21, legReplay},
 		{"a message compacted away", "call_a", "", sysBrief + "," + hello + "," + askParis, "", followed, legReplay},
 		{"a message added before the call", "call_a", "", first, "", sysBrief + "," + hello + "," + askParis + "," + callParisMsg + "," + paris21, legReplay},
@@ -329,13 +336,27 @@ func TestPlanLegResumesOnlyTheConversationTheSessionSaw(t *testing.T) {
 		{"results of an earlier round in another order", "call_c", "", first + "," + twoCallsMsg + "," + okA + "," + okB, "", first + "," + twoCallsMsg + "," + okB + "," + okA + "," + callOsloMsg + "," + oslo3, legReplay},
 		{"an earlier result edited", "call_b", "", followed, "", first + "," + callParisMsg + `,{"role":"tool","tool_call_id":"call_a","content":"22"}` + "," + callRomeMsg + "," + rome25, legReplay},
 	}
-	for _, c := range cases {
-		got := planAfter(t, c.callID, c.firstExtra, c.firstMsgs, c.followExtra, c.followMsgs)
-		if got.Kind != c.want {
-			t.Errorf("%s: the plan is a %s, want a %s", c.name, got.Kind, c.want)
-		}
-		if c.want == legReplay && got.Session != "" {
-			t.Errorf("%s: a replay must not carry a session: %+v", c.name, got)
+	// claude's resumed leg is given the system prompt, the tool choice and the response
+	// format of its own request, whatever the session saw: for it, and only it, these rows
+	// are a resume. codex's resumed thread keeps the first leg's, so for codex they are not.
+	claudeResumes := map[string]bool{
+		"the system prompt changed": true, "the developer message changed": true, "the system prompt dropped": true, "the choice became required": true,
+		"the choice became a named function": true, "the required choice was lifted": true, "the named function changed": true,
+		"the response format changed": true,
+	}
+	for _, runtime := range []string{"codex", "claude"} {
+		for _, c := range cases {
+			want := c.want
+			if runtime == "claude" && claudeResumes[c.name] {
+				want = legResume
+			}
+			got := planAfter(t, runtime, c.callID, c.firstExtra, c.firstMsgs, c.followExtra, c.followMsgs)
+			if got.Kind != want {
+				t.Errorf("%s, %s: the plan is a %s, want a %s", runtime, c.name, got.Kind, want)
+			}
+			if want == legReplay && got.Session != "" {
+				t.Errorf("%s, %s: a replay must not carry a session: %+v", runtime, c.name, got)
+			}
 		}
 	}
 }

@@ -67,7 +67,7 @@ func (g *Gateway) planLeg(pr Principal, req *ChatRequest, m ModelInfo, firstProm
 	if len(calls) != 1 || !onlyTheResultAndUsers(req.Messages[ai+1:], calls[0].ID) {
 		return replay
 	}
-	hash, convo, args := toolsHash(req.toolDecls), convoHash(req, ai), argsHash(argumentsText(calls[0].Function.Arguments))
+	hash, convo, args := toolsHash(req.toolDecls), convoHash(m.Runtime, req, ai), argsHash(argumentsText(calls[0].Function.Arguments))
 	rec, ok := g.conts.take(calls[0].ID, func(r contRecord) bool {
 		return r.KeyID == pr.KeyID && r.ProfileID == pr.ProfileID && r.Model == m.ID &&
 			r.Name == calls[0].Function.Name && r.ToolsHash == hash && r.Convo == convo && r.Args == args
@@ -134,26 +134,43 @@ func onlyTheResultAndUsers(msgs []Message, id string) bool {
 	return true
 }
 
+// resumeHearsRequest lists the runtimes whose resumed leg is given the system prompt,
+// the tool choice and the response format of its own request, as claude's is (they
+// travel with every invocation): the session need not have seen them, so a client
+// that changes them between the rounds (a date in the system prompt, context added
+// per request, which coding clients do) does not pay a replay each round. A resumed
+// codex thread keeps the first leg's, so for codex, and for any runtime not listed,
+// the conversation hash holds them and a change is a replay. A constant, not learned
+// from a runtime's words (D7).
+var resumeHearsRequest = map[string]bool{"claude": true}
+
 // convoHash identifies the conversation a session was started or continued from:
 // the messages before index upto, with the system prompt among them, and the choice
-// of tool and the response format, which shape the system prompt of a leg. It is
-// the hash of what the client said, in the words the session was told, so that it
-// is the same for a client that sends the same history again; what a client may
-// change without changing the conversation (null or empty content, whitespace
-// around the words, the spacing of the arguments) is left out. A leg's record keeps
-// it for all the messages of its request, and the follow-up asks for the hash of
-// the messages before the call it answers.
-func convoHash(req *ChatRequest, upto int) string {
+// of tool and the response format, which shape the system prompt of a leg. For a
+// runtime in resumeHearsRequest it is the user, assistant and tool messages alone: the
+// resumed leg is told the rest again. It is the hash of what the client said, in the
+// words the session was told, so that it is the same for a client that sends the same
+// history again; what a client may change without changing the conversation (null or
+// empty content, whitespace around the words, the spacing of the arguments) is left
+// out. A leg's record keeps it for all the messages of its request, and the follow-up
+// asks for the hash of the messages before the call it answers.
+func convoHash(runtime string, req *ChatRequest, upto int) string {
 	h := sha256.New()
 	field := func(s string) { fmt.Fprintf(h, "%d:%s;", len(s), s) }
-	field(req.toolPick.Mode)
-	field(req.toolPick.Name)
-	if req.ResponseFormat != nil {
-		field(req.ResponseFormat.Type)
-	} else {
-		field("")
+	hears := resumeHearsRequest[runtime]
+	if !hears {
+		field(req.toolPick.Mode)
+		field(req.toolPick.Name)
+		if req.ResponseFormat != nil {
+			field(req.ResponseFormat.Type)
+		} else {
+			field("")
+		}
 	}
 	for _, m := range req.Messages[:upto] {
+		if hears && (m.Role == "system" || m.Role == "developer") {
+			continue
+		}
 		field(m.Role)
 		field(strings.TrimSpace(m.Content.Text))
 		field(m.ToolCallID)

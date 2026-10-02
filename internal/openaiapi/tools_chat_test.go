@@ -197,7 +197,7 @@ func TestToolsAResumeTheRuntimeCannotContinueFallsBackToAReplay(t *testing.T) {
 	req := toolRequest(t, weatherTools, weatherQuestion)
 	secret := h.key(t, "default", "app", false)
 	h.g.conts.put(contRecord{CallID: "call_x", KeyID: keyIDOf(t, h, secret), ProfileID: "default", Model: "claude/default", Name: "get_weather",
-		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls), Convo: convoHash(req, len(req.Messages)), Args: argsHash(`{"city":"Paris"}`)})
+		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls), Convo: convoHash("claude", req, len(req.Messages)), Args: argsHash(`{"city":"Paris"}`)})
 
 	rec := post(h, anyPolicy, secret, followUp("call_x", "21 C"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "It is 21 C.") {
@@ -212,19 +212,23 @@ func TestToolsAResumeTheRuntimeCannotContinueFallsBackToAReplay(t *testing.T) {
 	}
 }
 
-// A client that changes its system prompt between the rounds of a conversation gets
-// its follow-up served from the transcript, with the new system prompt: a resumed
-// session would go on with the one it was started with.
-func TestToolsAFollowUpWithAnotherSystemPromptIsReplayed(t *testing.T) {
+// A client that changes its system prompt between the rounds of a conversation with
+// codex gets its follow-up served from the transcript, with the new system prompt: a
+// resumed codex thread goes on with the one it was started with (the runner passes none on
+// a resume). claude's resumed leg is given the new one, which has its own test.
+func TestToolsAFollowUpWithAnotherSystemPromptIsReplayedForCodex(t *testing.T) {
 	script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), answers("Il fait 21 C."), answers("It is 21 C.")}}
 	h := toolHarness(t, script.exec)
 	secret := h.key(t, "default", "app", false)
 	const brief, french = `{"role":"system","content":"Be brief."},`, `{"role":"system","content":"Answer in French."},`
+	asCodex := func(body string) string {
+		return strings.Replace(body, `"model":"claude"`, `"model":"codex/gpt-6-astra"`, 1)
+	}
 
-	rec := post(h, anyPolicy, secret, toolChatBody("claude", weatherTools, brief+weatherQuestion))
+	rec := post(h, anyPolicy, secret, toolChatBody("codex/gpt-6-astra", weatherTools, brief+weatherQuestion))
 	call := decodeToolReply(t, rec).Choices[0].Message.ToolCalls[0]
 
-	rec = post(h, anyPolicy, secret, strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, french+weatherQuestion, 1))
+	rec = post(h, anyPolicy, secret, asCodex(strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, french+weatherQuestion, 1)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rec.Code, rec.Body)
 	}
@@ -238,9 +242,73 @@ func TestToolsAFollowUpWithAnotherSystemPromptIsReplayed(t *testing.T) {
 
 	// The record was not used up by a follow-up that was not the conversation's own:
 	// the client that sends the conversation as it was still resumes the session.
-	rec = post(h, anyPolicy, secret, strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, brief+weatherQuestion, 1))
+	rec = post(h, anyPolicy, secret, asCodex(strings.Replace(followUp(call.ID, "21 C"), weatherQuestion, brief+weatherQuestion, 1)))
 	if rec.Code != http.StatusOK || script.calls()[2].Resume != "sess-1" {
 		t.Errorf("the owner of the conversation lost its session: %d resume %q", rec.Code, script.calls()[2].Resume)
+	}
+}
+
+// claude's resumed leg is given the system prompt, the tool choice and the response format
+// of its own request, so a client that changes them between the rounds (a date in the system
+// prompt, context added per request, which coding clients do) does not cost a replay each
+// round: the session is resumed, and the leg is told the new ones. Tools are another matter
+// (they are a hash of their own, and a change replays).
+func TestToolsAClaudeFollowUpWithAnotherSystemPromptOrChoiceResumesWithTheNewOne(t *testing.T) {
+	const brief, french = `{"role":"system","content":"Be brief."},`, `{"role":"system","content":"Answer in French."},`
+	for _, c := range []struct {
+		name    string
+		extra   string // added to the follow-up's parameters
+		change  func(string) string
+		told    []string // what the resumed leg's system prompt says
+		notTold []string
+	}{
+		{"another system prompt", "", func(b string) string { return strings.Replace(b, weatherQuestion, french+weatherQuestion, 1) },
+			[]string{"Answer in French.", resumeNote}, []string{"Be brief."}},
+		{"no system prompt", "", func(b string) string { return b }, []string{resumeNote}, []string{"Be brief."}},
+		{"a required call", `,"tool_choice":"required"`, func(b string) string { return strings.Replace(b, weatherQuestion, brief+weatherQuestion, 1) },
+			[]string{"You must call at least one of the available functions", "Be brief."}, nil},
+		{"a response format", `,"response_format":{"type":"json_object"}`, func(b string) string { return strings.Replace(b, weatherQuestion, brief+weatherQuestion, 1) },
+			[]string{"Be brief.", jsonModeLine}, nil},
+	} {
+		script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), answers("It is 21 C.")}}
+		h := toolHarness(t, script.exec)
+		secret := h.key(t, "default", "app", false)
+		call := decodeToolReply(t, post(h, anyPolicy, secret, toolChatBody("claude", weatherTools, brief+weatherQuestion))).Choices[0].Message.ToolCalls[0]
+
+		body := strings.Replace(c.change(followUp(call.ID, "21 C")), weatherTools, weatherTools+c.extra, 1)
+		rec := post(h, anyPolicy, secret, body)
+		calls := script.calls()
+		if rec.Code != http.StatusOK || len(calls) != 2 || calls[1].Resume != "sess-1" {
+			t.Errorf("%s: the follow-up must resume the session: status %d, %d turns, resume %q: %s", c.name, rec.Code, len(calls), calls[len(calls)-1].Resume, rec.Body)
+			continue
+		}
+		for _, want := range c.told {
+			if !strings.Contains(calls[1].SystemPrompt, want) {
+				t.Errorf("%s: the resumed leg is not told %q: %q", c.name, want, calls[1].SystemPrompt)
+			}
+		}
+		for _, not := range c.notTold {
+			if strings.Contains(calls[1].SystemPrompt, not) {
+				t.Errorf("%s: the resumed leg is told %q: %q", c.name, not, calls[1].SystemPrompt)
+			}
+		}
+		if line := logLineOf(h, rec); !strings.Contains(line, "leg=resume") {
+			t.Errorf("%s: the log line says how the leg that answered started: %q", c.name, line)
+		}
+	}
+}
+
+// What the declared tools say stays in the hash for claude too: a leg's tools are a
+// part of what the session was started with.
+func TestToolsAClaudeFollowUpWithOtherToolsIsReplayed(t *testing.T) {
+	script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), answers("It is 21 C.")}}
+	h := toolHarness(t, script.exec)
+	secret := h.key(t, "default", "app", false)
+	call := decodeToolReply(t, post(h, anyPolicy, secret, toolChatBody("claude", weatherTools, weatherQuestion))).Choices[0].Message.ToolCalls[0]
+
+	body := strings.Replace(followUp(call.ID, "21 C"), `"tools":[`, `"tools":[`+stockTool+`,`, 1)
+	if rec := post(h, anyPolicy, secret, body); rec.Code != http.StatusOK || script.calls()[1].Resume != "" {
+		t.Errorf("a changed tool list must replay: status %d, resume %q", rec.Code, script.calls()[1].Resume)
 	}
 }
 

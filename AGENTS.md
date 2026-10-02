@@ -684,9 +684,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   key and profile, model, function (with the arguments the model gave the call,
   compared as a hash of the compact JSON: a client that edited them gets a
   replay) and declared tools, the conversation before
-  the call must be the one the session saw (a hash of the messages, the system
-  prompt among them, the tool choice and the response format: a client that
-  edits or compacts its history, or changes its system prompt, gets a replay),
+  the call must be the one the session saw (a hash of the messages, and for
+  codex also the system prompt among them, the tool choice and the response
+  format: a client that edits or compacts its history gets a replay, and one that
+  changes its system prompt gets one on codex, whose resumed thread keeps the
+  first leg's; claude's resumed leg is given the system prompt, the tool choice
+  and the response format again, so for claude only the user, assistant and tool
+  messages count),
   the result must answer that one call, and nothing but user messages may follow
   it; otherwise, and when the runtime cannot continue the session (an error of
   its own before it said or called anything or ran a tool of its own: claude's
@@ -704,9 +708,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   note in the user message, 3 of 3 in the system prompt). codex's runner passes
   no system prompt on a resumed thread, so codex is not told; it did not need
   it (it distrusted 0 of 18 results). For the same reason the conversation hash
-  includes the system prompt and the tool choice: a client that sends `required`
-  or a named function in one round and `auto` in the next gets a replay each
-  round. A result is fenced in
+  of a codex leg includes the system prompt and the tool choice: a client that
+  sends `required` or a named function in one round and `auto` in the next gets a
+  replay each round (on claude it does not: the resumed leg is told the new
+  choice). A result is fenced in
   the prompt (`<function_result>`), with the fence's tags and any line that
   would open a turn of the transcript defanged. A call whose arguments do not
   match the declared schema is returned all the same, and the client decides. A
