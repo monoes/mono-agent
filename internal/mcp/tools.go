@@ -206,7 +206,8 @@ func allTools() []tool {
 			handler:     toolDocs,
 		},
 	}
-	return append(native, monoagentAdaptedTools()...)
+	native = append(native, monoagentAdaptedTools()...)
+	return append(native, apiTools()...)
 }
 
 func decodeArgs(args json.RawMessage, dst interface{}) error {
