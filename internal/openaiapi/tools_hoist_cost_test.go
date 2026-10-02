@@ -79,7 +79,9 @@ func TestSpellingsOfAnArrayIndexAreOneReference(t *testing.T) {
 	}
 }
 
-// A name that many branches define is marshalled when it is first met, not each time.
+// A name that many schemas define is marshalled when it is first met as a definition that holds
+// for every call, not each time, and a name that only branches that may not apply define is not
+// marshalled at all: monomind is told it is any value.
 func TestAPropertyThatManyBranchesDefineIsMarshalledOnce(t *testing.T) {
 	big := make([]string, 0, 50)
 	for i := range 50 {
@@ -89,13 +91,15 @@ func TestAPropertyThatManyBranchesDefineIsMarshalledOnce(t *testing.T) {
 	for range 300 {
 		branches = append(branches, `{"properties":{"x":{"type":"object","properties":{`+strings.Join(big, ",")+`}}}}`)
 	}
-	b := newHoistBudget()
-	got := nameArguments(json.RawMessage(`{"anyOf":[`+strings.Join(branches, ",")+`]}`), b)
-	if len(got.Props) != 1 {
-		t.Fatalf("%d properties named", len(got.Props))
-	}
-	if b.marshals != 1 {
-		t.Errorf("the property was marshalled %d times for 300 definitions", b.marshals)
+	for combinator, marshals := range map[string]int{"allOf": 1, "anyOf": 0} {
+		b := newHoistBudget()
+		got := nameArguments(json.RawMessage(`{"`+combinator+`":[`+strings.Join(branches, ",")+`]}`), b)
+		if len(got.Props) != 1 {
+			t.Fatalf("%s: %d properties named", combinator, len(got.Props))
+		}
+		if b.marshals != marshals {
+			t.Errorf("%s: the property was marshalled %d times for 300 definitions, want %d", combinator, b.marshals, marshals)
+		}
 	}
 }
 

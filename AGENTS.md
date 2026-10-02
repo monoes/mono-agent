@@ -660,7 +660,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   enum of strings (any other enum there rejects every call), so the arguments of
   a root `anyOf`, `oneOf` or `allOf`, of a local `$ref` and of an `if`, `then` or
   `else` are named at the top level too (optional where the schema lets a call do
-  without them; without that monomind drops every one and the client gets `{}`),
+  without them, and as any value where only a branch that may not apply defines
+  them: monomind rejects a call that does not match the type or the enum it was
+  told of, so they come only from what holds for every call; without naming them
+  monomind drops every one and the client gets `{}`),
   the whole schema is also folded into the tool's description, and an enum that
   is not a list of strings is left out of what monomind gets, not refused. A
   schema that names no property and allows free-form keys, or that nests more

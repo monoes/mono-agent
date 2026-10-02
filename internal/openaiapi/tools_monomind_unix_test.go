@@ -244,6 +244,13 @@ func TestArgumentsOutsideTheTopLevelPropertiesReachTheClientOverTheRealMonomind(
 		"a root allOf":                `{"allOf":[` + city + `]}`,
 		"a root $ref":                 `{"$ref":"#/$defs/Args","$defs":{"Args":` + city + `}}`,
 		"a then":                      `{"type":"object","properties":{"units":{"type":"string"}},"if":{"required":["units"]},"then":` + city + `}`,
+		// monomind holds a call to the type and the enum of a top-level property: a name that only a
+		// branch that may not apply defines is told to it as any value, or the call that the schema
+		// allows is rejected, the model gives up after its rounds and the client gets the cap text.
+		"an enum in one anyOf branch":           `{"anyOf":[{"properties":{"city":{"enum":["Rome","Milan"]}}},` + zip + `]}`,
+		"a number type in one oneOf branch":     `{"oneOf":[{"properties":{"city":{"type":"number"}}},` + zip + `]}`,
+		"an if and an else, the enum in the if": `{"type":"object","if":{"properties":{"city":{"enum":["Rome"]}},"required":["city"]},"then":{"required":["city"]},"else":{"properties":{"zip":{"type":"string"}}}}`,
+		"an enum in a then":                     `{"type":"object","if":{"required":["zip"]},"then":{"properties":{"city":{"enum":["Rome"]}}}}`,
 		// A number that float64 cannot hold made every property unnamed, and every call {}.
 		"a bound of 1e400 in a property":     `{"type":"object","properties":{"city":{"type":"string"},"n":{"type":"number","maximum":1e400}},"required":["city"]}`,
 		"an integer of 400 digits in a root": `{"default":` + fourHundredDigits + `,"anyOf":[` + city + `,` + zip + `]}`,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -87,26 +88,57 @@ func TestArgumentsOfRootCombinatorsAndReferencesAreNamedAtTheTopLevel(t *testing
 	}
 }
 
-// What monomind gets of a property is its type and an enum of strings: a name defined
-// twice keeps the first definition when they agree on both, and is let through as it is
-// (any value) when they do not, so that neither branch's arguments are refused.
-func TestAPropertyDefinedInSeveralBranchesKeepsItsTypeOrGivesItUp(t *testing.T) {
-	props, _ := named(t, `{"anyOf":[{"properties":{"id":{"type":"string","description":"a"}}},{"properties":{"id":{"type":"string","minLength":1}}}]}`)
-	var got map[string]any
-	if err := json.Unmarshal(props["id"], &got); err != nil || got["type"] != "string" || got["description"] != "a" {
-		t.Errorf("two branches agree on the type: the first definition is kept, got %s", props["id"])
-	}
-	props, _ = named(t, `{"anyOf":[{"properties":{"id":{"type":"string"}}},{"properties":{"id":{"type":"integer"}}}]}`)
-	if string(props["id"]) != "true" {
-		t.Errorf("two branches disagree on the type: the property is let through as any value, got %s", props["id"])
-	}
-	props, _ = named(t, `{"anyOf":[{"properties":{"id":{"enum":["a","b"]}}},{"properties":{"id":{"enum":["a","c"]}}}]}`)
-	if string(props["id"]) != "true" {
-		t.Errorf("two branches disagree on the enum: got %s", props["id"])
-	}
-	props, _ = named(t, `{"anyOf":[{"properties":{"id":{"enum":["a","b"]}}},{"properties":{"id":{"enum":["b","a"]}}}]}`)
-	if string(props["id"]) == "true" {
-		t.Errorf("two branches list the same enum in another order: they agree")
+// What monomind gets of a property is its type and an enum of strings, and it holds every call to
+// them: a call that does not match is rejected, and the client gets the answer of a model that gave
+// up after its rounds. So a property is given its type and its enum only where the schema is
+// certain of them for every call: in the root's own properties, in an allOf and behind a $ref that
+// applies. A name that is only found in a branch that may or may not apply (anyOf, oneOf, if, then,
+// else, dependentSchemas) is any value: `{"city":"Paris"}` is a call the schema allows when only
+// one branch says city is one of Rome and Milan. A name that two certain definitions disagree on
+// is any value too.
+func TestAPropertyKeepsItsTypeAndEnumOnlyWhereTheSchemaIsCertainOfThem(t *testing.T) {
+	const city = `{"type":"string","description":"a"}`
+	for _, c := range []struct {
+		name, params string
+		want         string // the property as monomind is told of it: "any" for a value of any kind
+	}{
+		{"the root's own properties", `{"properties":{"id":` + city + `}}`, city},
+		{"an allOf", `{"allOf":[{"properties":{"id":` + city + `}}]}`, city},
+		{"a reference that applies", `{"$ref":"#/$defs/A","$defs":{"A":{"properties":{"id":` + city + `}}}}`, city},
+		{"a reference inside an allOf", `{"allOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"id":` + city + `}}}}`, city},
+		{"two certain definitions that agree: the first is kept", `{"properties":{"id":` + city + `},"allOf":[{"properties":{"id":{"type":"string","minLength":1}}}]}`, city},
+		{"two certain definitions that agree on an enum in another order", `{"properties":{"id":{"enum":["a","b"],"description":"first"}},"allOf":[{"properties":{"id":{"enum":["b","a"]}}}]}`, `{"enum":["a","b"],"description":"first"}`},
+		{"two certain definitions that disagree on the type", `{"properties":{"id":{"type":"string"}},"allOf":[{"properties":{"id":{"type":"integer"}}}]}`, "any"},
+		{"two certain definitions that disagree on the enum", `{"properties":{"id":{"enum":["a","b"]}},"allOf":[{"properties":{"id":{"enum":["a","c"]}}}]}`, "any"},
+		{"a third that agrees with the first does not undo the giving up", `{"properties":{"id":{"type":"string"}},"allOf":[{"properties":{"id":{"type":"integer"}}},{"properties":{"id":{"type":"string"}}}]}`, "any"},
+
+		{"an anyOf branch: it may not apply", `{"anyOf":[{"properties":{"id":` + city + `}},{"properties":{"zip":{"type":"string"}}}]}`, "any"},
+		{"a oneOf branch", `{"oneOf":[{"properties":{"id":{"enum":["Rome","Milan"]}}},{"properties":{"zip":{"type":"string"}}}]}`, "any"},
+		{"a then", `{"if":{"required":["zip"]},"then":{"properties":{"id":{"type":"number"}}}}`, "any"},
+		{"an else", `{"if":{"required":["zip"]},"else":{"properties":{"id":{"enum":["Rome"]}}}}`, "any"},
+		{"the condition of an if", `{"if":{"properties":{"id":{"enum":["Rome"]}},"required":["id"]},"then":{"properties":{"zip":{"type":"string"}}}}`, "any"},
+		{"a dependent schema", `{"dependentSchemas":{"zip":{"properties":{"id":{"type":"integer"}}}}}`, "any"},
+		{"an anyOf branch that is a reference", `{"anyOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"id":` + city + `}}}}`, "any"},
+		{"an allOf inside an anyOf branch: still optional", `{"anyOf":[{"allOf":[{"properties":{"id":` + city + `}}]}]}`, "any"},
+		{"branches that say the same: still any value", `{"anyOf":[{"properties":{"id":` + city + `}},{"properties":{"id":` + city + `}}]}`, "any"},
+		{"branches that disagree", `{"anyOf":[{"properties":{"id":{"type":"string"}}},{"properties":{"id":{"type":"integer"}}}]}`, "any"},
+
+		{"a certain definition and a branch that says another: the certain one", `{"properties":{"id":` + city + `},"anyOf":[{"properties":{"id":{"type":"integer"}}}]}`, city},
+		{"a branch first, then a certain definition: the certain one", `{"allOf":[{"anyOf":[{"properties":{"id":{"type":"integer"}}}]},{"properties":{"id":` + city + `}}]}`, city},
+		{"a reference met as optional and then as applied: the applied one", `{"anyOf":[{"$ref":"#/$defs/A"}],"allOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"id":` + city + `}}}}`, city},
+	} {
+		props, _ := named(t, c.params)
+		got := string(props["id"])
+		if c.want == "any" {
+			if got != "true" {
+				t.Errorf("%s: the property is %s, want any value (true)", c.name, got)
+			}
+			continue
+		}
+		var gotM, wantM map[string]any
+		if json.Unmarshal([]byte(got), &gotM) != nil || json.Unmarshal([]byte(c.want), &wantM) != nil || !reflect.DeepEqual(gotM, wantM) {
+			t.Errorf("%s: the property is %s, want %s", c.name, got, c.want)
+		}
 	}
 }
 
@@ -253,7 +285,7 @@ func TestASchemaThatNestsOrFansOutPastWhatIsReadIsRefusedNotNamedInPart(t *testi
 // A property of a branch is not checked the way a top-level one is: what is not a schema is
 // let through as any value, so that monomind never gets a null where it reads a schema.
 func TestAPropertyOfABranchThatIsNotASchemaIsLetThroughAsAnyValue(t *testing.T) {
-	props, _ := named(t, `{"anyOf":[{"properties":{"a":null,"b":5,"c":"x","d":[1]}},{"properties":{"e":false}}]}`)
+	props, _ := named(t, `{"allOf":[{"properties":{"a":null,"b":5,"c":"x","d":[1]}},{"properties":{"e":false}}]}`)
 	for _, name := range []string{"a", "b", "c", "d"} {
 		if string(props[name]) != "true" {
 			t.Errorf("property %s: got %s, want any value", name, props[name])
@@ -261,5 +293,11 @@ func TestAPropertyOfABranchThatIsNotASchemaIsLetThroughAsAnyValue(t *testing.T) 
 	}
 	if string(props["e"]) != "false" {
 		t.Errorf("a boolean schema is passed as it is, as a top-level one is: %s", props["e"])
+	}
+	props, _ = named(t, `{"anyOf":[{"properties":{"a":null,"e":false}}]}`)
+	for _, name := range []string{"a", "e"} {
+		if string(props[name]) != "true" {
+			t.Errorf("property %s of a branch that may not apply: got %s, want any value", name, props[name])
+		}
 	}
 }

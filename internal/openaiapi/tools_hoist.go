@@ -65,8 +65,10 @@ type argNames struct {
 // the client {} at every call. The properties of those branches are named at the top level
 // too: a branch that may or may not apply (anyOf, oneOf, if, then, else, dependentSchemas)
 // makes what it names optional, one that applies (allOf, a $ref, the root itself) keeps
-// the schema's required names required. A name that a required list mentions and nothing
-// defines is let through as any value, and so is one that two branches define differently
+// the schema's required names required. monomind holds a call to the type and the enum of
+// a property it is told of, so only what holds for every call gives them: a name that only a
+// branch that may not apply defines is any value, as is a name that a required list mentions
+// and nothing defines, and one that two definitions that hold for every call say differently
 // (monomind reads a property's type and an enum of strings, and nothing else of it).
 //
 // With no property to name and Open set, nothing about the arguments could be told to
@@ -90,7 +92,7 @@ func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	if budget == nil {
 		budget = newHoistBudget()
 	}
-	h := &hoister{doc: doc, budget: budget, props: map[string]json.RawMessage{}, views: map[string]string{},
+	h := &hoister{doc: doc, budget: budget, props: map[string]json.RawMessage{}, views: map[string]string{}, sure: map[string]bool{},
 		followed: map[uintptr]int{}, mentioned: map[string]bool{}, required: map[string]bool{}}
 	h.walk(doc, 0, false)
 	out := argNames{Props: h.props, Open: h.open, TooDeep: h.tooDeep, TooWide: h.tooWide, Spent: h.spent}
@@ -110,7 +112,8 @@ type hoister struct {
 	spent    bool           // the budget ran out
 	doc      map[string]any // the whole schema, for the pointers of its references
 	props    map[string]json.RawMessage
-	views    map[string]string // what monomind reads of each property that is defined
+	views    map[string]string // what monomind reads of each property that is defined for every call
+	sure     map[string]bool   // the names whose entry in props is such a definition, and not any value
 	followed map[uintptr]int   // the schemas that references led to, read already, as which kind (the bits below)
 	nodes    int
 	open     bool
@@ -151,7 +154,7 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 	}
 	if props, ok := m["properties"].(map[string]any); ok {
 		for _, name := range sortedNames(props) {
-			h.define(name, props[name])
+			h.define(name, props[name], optional)
 		}
 	}
 	if list, ok := m["required"].([]any); ok {
@@ -280,20 +283,29 @@ func (h *hoister) resolve(ref string) (any, bool) {
 	return cur, true
 }
 
-// define names a property. A name that is defined again keeps its first definition when
-// the second says the same to monomind, and is let through as any value when it does not.
-// What is not a schema (a branch's property is not checked as a top-level one is) is any
-// value too.
-func (h *hoister) define(name string, prop any) {
+// define names a property. monomind holds every call to the type and the enum it is told of, and
+// rejects a call that does not match, so a property is given them only where the schema is certain
+// of them for every call: in the root's own properties, in an allOf and behind a reference that
+// applies. A name that only a branch that may or may not apply defines (optional) is any value:
+// a call that the schema allows may say what that branch does not. Two certain definitions that
+// say different things to monomind give each other up, and any value is what is told; the first is
+// kept when they agree. What is not a schema (a branch's property is not checked as a top-level
+// one is) is any value too.
+func (h *hoister) define(name string, prop any, optional bool) {
 	if !h.step() {
 		return
 	}
-	have, seen := h.props[name]
+	if optional {
+		if _, seen := h.props[name]; !seen {
+			h.props[name] = json.RawMessage("true")
+		}
+		return
+	}
 	view := propertyView(prop)
 	switch {
-	case !seen:
-		h.props[name], h.views[name] = h.marshal(prop), view
-	case h.views[name] != view && string(have) != "true":
+	case !h.sure[name]: // the first definition that holds for every call, after any that does not
+		h.props[name], h.views[name], h.sure[name] = h.marshal(prop), view, true
+	case h.views[name] != view:
 		h.props[name], h.views[name] = json.RawMessage("true"), ""
 	}
 }
