@@ -81,6 +81,18 @@ describe('listenerState (listenerNote of api_status.go, case by case)', () => {
   it('is stale when /health answers but /v1 does not (a server that predates the API)', () => {
     expect(listenerState(listener(stale))).toBe('stale')
   })
+  it('is down-daemon when nothing answers although the daemon is running: starting it is not the advice', () => {
+    expect(listenerState(listener(down), true)).toBe('down-daemon')
+    expect(listenerState(listener({ ...down, v1: false }), true)).toBe('down-daemon')
+    expect(listenerState(listener(down), false)).toBe('down')
+    expect(listenerState(listener(down))).toBe('down')
+  })
+  it('is what it is when the daemon runs and something answers, or nothing is listed', () => {
+    expect(listenerState(listener(), true)).toBe('serving')
+    expect(listenerState(listener(stale), true)).toBe('stale')
+    expect(listenerState(listener({ v1: false }), true)).toBe('no-v1-daemon')
+    expect(listenerState(null, true)).toBe('none')
+  })
 })
 
 describe('baseURL: the scheme', () => {

@@ -66,9 +66,72 @@ describe('ApiSection: folded', () => {
     await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Not running'))
     expect(screen.getByTestId('api-fold-keys')).toHaveTextContent('1 key')
   })
+
+  it('says a server that does not answer while the daemon runs as not answering', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ reachable: false, v1_answers: false })], { daemon: { running: true } }))
+    await mount()
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Not answering'))
+  })
+
+  it('has no exposure chip when /v1 is bound to loopback only', async () => {
+    await mount()
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Running'))
+    expect(screen.queryByTestId('api-fold-exposure')).not.toBeInTheDocument()
+  })
+
+  it('says Network in the header when any listener that serves /v1 is bound beyond loopback, whichever one answers', async () => {
+    // The loopback one answers and is the one the header's state describes; the network one must not vanish behind it.
+    App.APIStatus.mockResolvedValue(statusOf([mainListener(), dedicatedListener({ reachable: false, v1_answers: false })]))
+    await mount()
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Running'))
+    expect(screen.getByTestId('api-fold-exposure')).toHaveTextContent('Network')
+    expect(toggle()).toHaveAccessibleName(/OpenAI-compatible API\s+Running\s+Network\s+2 keys/)
+  })
+
+  it('describes in the header the listener that answers /v1, not the first one that is listed', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ reachable: false, v1_answers: false }), dedicatedListener()]))
+    await mount()
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Running'))
+  })
+
+  it('says nothing of exposure once the status could not be read again: the header has an error, not stale news', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([dedicatedListener()]))
+    await mount({ defaultExpanded: true })
+    await screen.findByTestId('api-fold-exposure')
+    App.APIStatus.mockRejectedValueOnce(new Error('boom'))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Error reading status'))
+    expect(screen.queryByTestId('api-fold-exposure')).not.toBeInTheDocument()
+  })
+
+  it('has no exposure chip for a listener that does not serve /v1, however it is bound', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ addr: '0.0.0.0:9322', loopback: false, v1: false })]))
+    await mount()
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Not serving /v1'))
+    expect(screen.queryByTestId('api-fold-exposure')).not.toBeInTheDocument()
+  })
 })
 
 describe('ApiSection: expanding', () => {
+  it('shows every listener that serves /v1 once expanded, the network one too', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener(), dedicatedListener()], { daemon: { running: true } }))
+    await mount({ defaultExpanded: true })
+    expect(await screen.findByTestId('api-listener-main')).toBeInTheDocument()
+    expect(await screen.findByTestId('api-listener-v1')).toBeInTheDocument()
+    expect(screen.getAllByTestId('api-base-url').map(e => e.textContent)).toEqual(['http://127.0.0.1:9322/v1', 'https://localhost:9443/v1'])
+    expect(screen.getAllByTestId('api-exposure').map(e => e.textContent)).toEqual(['Bound to loopback', 'Network'])
+    // The models are those of the listener the header describes: the first that answers /v1, the main one.
+    await waitFor(() => expect(App.APIModels).toHaveBeenCalledWith('loopback', 'any', 'chat-only', 'chat-only'))
+  })
+
+  it('reads the models for the listener that answers when the first one listed does not', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener({ reachable: false, v1_answers: false }), dedicatedListener()]))
+    App.APIModels.mockResolvedValue(modelsDoc({ confinement: 'chat-only', forListener: 'network' }))
+    await mount({ defaultExpanded: true })
+    await waitFor(() => expect(App.APIModels).toHaveBeenCalledTimes(1))
+    expect(App.APIModels).toHaveBeenCalledWith('network', 'chat-only', 'chat-only', 'chat-only')
+  })
+
   it('reads the keys and the models on the first expand, for the listener the header describes', async () => {
     App.APIStatus.mockResolvedValue(statusOf([mainListener({ v1: false }), dedicatedListener()], { daemon: { running: true } }))
     App.APIModels.mockResolvedValue(modelsDoc({ confinement: 'chat-only', forListener: 'network' }))

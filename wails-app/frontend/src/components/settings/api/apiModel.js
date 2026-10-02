@@ -38,13 +38,14 @@ export function pickListener(status) {
 // main listener reaches the JSON as v1:false on a loopback listener.
 //   none               no listener at all
 //   down               nothing answers /health
+//   down-daemon        the same, though the daemon is running (daemonRunning): starting it is not the advice
 //   no-v1-daemon       reachable, but the daemon does not serve /v1 on it
 //   no-v1-offloopback  reachable, bound off loopback: /v1 needs --v1-addr
 //   stale              answers /health but not /v1: a server that predates the API
 //   serving            serves /v1
-export function listenerState(l) {
+export function listenerState(l, daemonRunning = false) {
   if (!l) return 'none'
-  if (!l.reachable) return 'down'
+  if (!l.reachable) return daemonRunning ? 'down-daemon' : 'down'
   if (!l.v1) return l.loopback ? 'no-v1-daemon' : 'no-v1-offloopback'
   return l.v1_answers ? 'serving' : 'stale'
 }

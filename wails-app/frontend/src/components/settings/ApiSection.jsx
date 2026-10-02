@@ -6,7 +6,7 @@ import ApiStatusBlock, { STATE } from './api/ApiStatusBlock.jsx'
 import ApiKeysBlock from './api/ApiKeysBlock.jsx'
 import ApiModelsBlock from './api/ApiModelsBlock.jsx'
 import { apiError } from './api/apiError.js'
-import { listenerState, modelsArgs, pickListener } from './api/apiModel.js'
+import { listenerState, modelsArgs, pickListener, servingListeners } from './api/apiModel.js'
 import { Badge, hint, mono } from './api/ui.jsx'
 
 // Settings › OpenAI-compatible API (spec §8.4): where /v1 listens and whether it
@@ -80,7 +80,9 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
   }
 
   const listener = pickListener(status)
-  const state = STATE[listenerState(listener)]
+  const state = STATE[listenerState(listener, !!status?.daemon?.running)]
+  // Any listener that serves /v1 beyond loopback is said in the header, whichever listener it describes.
+  const exposed = servingListeners(status).some(l => !l.loopback)
   const count = keys ? keys.length : status?.keys?.active
   const toggle = () => setExpanded(v => !v)
 
@@ -115,6 +117,11 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
             <Badge data-testid="api-fold-state" tone="info"><Loader2 size={11} className="spin" /> {t('settings.api.loading')}</Badge>
           ) : (
             <Badge data-testid="api-fold-state" tone={state.tone}>{t(state.text)}</Badge>
+          )}
+          {!statusErr && exposed && (
+            <Badge data-testid="api-fold-exposure" tone="warn" title={t('settings.api.status.exposureNetworkHint')}>
+              {t('settings.api.status.exposureNetwork')}
+            </Badge>
           )}
           {typeof count === 'number' && (
             <Badge data-testid="api-fold-keys" tone={count > 0 ? 'ok' : 'muted'}>
