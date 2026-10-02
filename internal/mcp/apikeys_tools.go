@@ -43,6 +43,46 @@ func apiTools() []tool {
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIModelsList,
 		},
+		{
+			name: "api_key_create",
+			description: "Create an API key for the active profile, for the OpenAI-compatible API (/v1). The key is returned ONCE, in the key field of the result: " +
+				"only its SHA-256 is stored, so no tool can show it again. It authenticates /v1 requests as this profile and nothing else. " +
+				"Treat it as a password and give it only to the user: it is now part of this conversation's transcript, which the host may keep " +
+				"(`monoagentcli api key create` prints it to a terminal only). " +
+				"name is 1-64 characters (letters, digits, space, '.', '_', '-', starting with a letter or digit) and unique among the profile's active keys. " +
+				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models unless the server raises --context-confinement.",
+			schema: objSchema(map[string]interface{}{
+				"name":    strParam("Key name, unique among the profile's active keys"),
+				"context": boolParam("Add the profile's own knowledge (documents and captures) to requests made with this key (default false)"),
+			}, "name"),
+			annotations: map[string]bool{"readOnlyHint": false},
+			mutating:    true,
+			handler:     toolAPIKeyCreate,
+		},
+		{
+			name: "api_key_update",
+			description: "Rename an active API key of the active profile and/or switch its knowledge context on or off. Pass name, context or both: an argument left out is not changed, " +
+				"and context false turns it off. The key itself is not changed and never returned.",
+			schema: objSchema(map[string]interface{}{
+				"id":      strParam("The key's id (key_…) or the name of an active key"),
+				"name":    strParam("New name (omit to leave unchanged)"),
+				"context": boolParam("true adds the profile's own knowledge to requests made with the key, false stops it (omit to leave unchanged)"),
+			}, "id"),
+			annotations: map[string]bool{"readOnlyHint": false},
+			mutating:    true,
+			handler:     toolAPIKeyUpdate,
+		},
+		{
+			name: "api_key_revoke",
+			description: "Revoke an API key of the active profile now: requests made with it are refused from the next request on (a turn already running finishes). " +
+				"It cannot be undone. Revoking a revoked key by id succeeds.",
+			schema: objSchema(map[string]interface{}{
+				"id": strParam("The key's id (key_…) or the name of an active key"),
+			}, "id"),
+			annotations: map[string]bool{"readOnlyHint": false, "destructiveHint": true},
+			mutating:    true,
+			handler:     toolAPIKeyRevoke,
+		},
 	}
 }
 
@@ -67,6 +107,76 @@ func toolAPIKeyList(ctx context.Context, s *Server, args json.RawMessage) (inter
 		return nil, err
 	}
 	return store.List(ctx, profileID, a.IncludeRevoked)
+}
+
+// createdAPIKey is what api_key_create returns: the key's metadata and the key
+// itself, the one place the key is ever shown.
+type createdAPIKey struct {
+	apikeys.Key
+	Secret string `json:"key"`
+}
+
+// The three handlers below pass the store's errors on as they are (ErrInvalidName,
+// ErrNameTaken, ErrNotFound: static texts) and never put an argument in one, since a
+// caller may have pasted the key itself where an id goes.
+
+func toolAPIKeyCreate(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	var a struct {
+		Name    string `json:"name"`
+		Context bool   `json:"context"`
+	}
+	if err := decodeArgs(args, &a); err != nil {
+		return nil, err
+	}
+	store, profileID, err := s.apiKeys()
+	if err != nil {
+		return nil, err
+	}
+	key, secret, err := store.Create(ctx, profileID, a.Name, a.Context)
+	if err != nil {
+		return nil, err
+	}
+	return createdAPIKey{Key: key, Secret: secret}, nil
+}
+
+func toolAPIKeyUpdate(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	var a struct {
+		ID      string  `json:"id"`
+		Name    *string `json:"name"`
+		Context *bool   `json:"context"`
+	}
+	if err := decodeArgs(args, &a); err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	u := apikeys.Update{Name: a.Name, Context: a.Context}
+	if u.IsEmpty() {
+		return nil, fmt.Errorf("nothing to change: pass name or context")
+	}
+	store, profileID, err := s.apiKeys()
+	if err != nil {
+		return nil, err
+	}
+	return store.Update(ctx, profileID, a.ID, u)
+}
+
+func toolAPIKeyRevoke(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := decodeArgs(args, &a); err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	store, profileID, err := s.apiKeys()
+	if err != nil {
+		return nil, err
+	}
+	return store.Revoke(ctx, profileID, a.ID)
 }
 
 func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {

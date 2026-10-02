@@ -75,7 +75,7 @@ func decodeKeys(t *testing.T, text string) []map[string]any {
 	t.Helper()
 	var keys []map[string]any
 	if err := json.Unmarshal([]byte(text), &keys); err != nil {
-		t.Fatalf("not a list of keys: %v\n%s", err, text)
+		t.Fatalf("not a list of keys: %v\n%s", err, scrubbed(text))
 	}
 	return keys
 }
@@ -163,9 +163,9 @@ func TestAPIKeyListIsTheMetadataOfThisProfilesKeys(t *testing.T) {
 	}
 
 	for _, secret := range []string{alphaSecret, betaSecret, otherSecret} {
-		for _, leaked := range []string{secret, apikeys.HashKey(secret), secret[len(apikeys.KeyPrefix):]} {
+		for what, leaked := range map[string]string{"a key": secret, "a key's hash": apikeys.HashKey(secret), "a key without its prefix": secret[len(apikeys.KeyPrefix):]} {
 			if strings.Contains(text+withRevoked, leaked) {
-				t.Errorf("the list holds %q, which is (part of) a key or its hash", leaked[:8]+"…")
+				t.Errorf("the list holds %s", what)
 			}
 		}
 	}
