@@ -171,6 +171,7 @@ func TestToolsHashTellsTheSameDeclarationsFromOthers(t *testing.T) {
 	a := toolDecls(t, weatherTool)
 	b := toolDecls(t, weatherTool)
 	other := toolDecls(t, strings.Replace(weatherTool, "Get the weather.", "Get the weather today.", 1))
+	otherParams := toolDecls(t, strings.Replace(weatherTool, `"required":["city"]`, `"required":[]`, 1)) // only the schema differs
 	reordered := toolDecls(t, `{"type":"function","function":{"name":"x"}},`+weatherTool)
 	reordered2 := toolDecls(t, weatherTool+`,{"type":"function","function":{"name":"x"}}`)
 	if toolsHash(a) != toolsHash(b) {
@@ -178,6 +179,9 @@ func TestToolsHashTellsTheSameDeclarationsFromOthers(t *testing.T) {
 	}
 	if toolsHash(a) == toolsHash(other) {
 		t.Error("a changed description must change the hash")
+	}
+	if toolsHash(a) == toolsHash(otherParams) {
+		t.Error("a changed schema must change the hash, whatever the description says: a resumed codex session does not hear a new tool list")
 	}
 	if toolsHash(reordered) != toolsHash(reordered2) {
 		t.Error("the order of the tools does not matter")
