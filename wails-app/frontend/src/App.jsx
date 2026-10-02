@@ -280,7 +280,7 @@ export default function App() {
     ai: <Agents onOpenChat={openGlobalChat} />,
     orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,
-    settings:  <SettingsPage onNavigate={navigate} navData={activePage === 'settings' ? navData : null} />,
+    settings:  <SettingsPage onNavigate={navigate} navData={activePage === 'settings' ? navData : null} isActive={activePage === 'settings'} />,
   }
 
   // Detail views keyed by a changing id (which profile/post) — these SHOULD

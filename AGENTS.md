@@ -232,6 +232,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
   - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
   - `org stop|pause|resume <org>` are the bubble's controls.
+- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
 
 ## monoes.me library
 
@@ -563,7 +564,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `httpapi` exits when the dedicated listener cannot start (a bad
   certificate, a port in use); `daemon` only prints a warning and keeps
   running without it, so check `api status`, which says when the daemon
-  reports no dedicated listener. Read
+  reports no dedicated listener, and which scheme each listener that answers
+  speaks (`scheme`, `http` or `https`, in `--json`, absent for one that does not
+  answer; `serves /v1 over https` in the text): the address does not tell a
+  dedicated loopback listener that has a certificate from one that has not. Read
   [SECURITY.md](SECURITY.md#openai-compatible-api-surface) before exposing it.
 - **Limits.** 2 MiB request body, 4 concurrent turns (`--max-concurrent`,
   `MONOAGENT_API_MAX_CONCURRENT`; a full server answers 429 with
@@ -575,6 +579,27 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (and per failure to list models or to search a context key's knowledge,
   among others), and never a prompt, an answer or a key. Stopping the server
   answers a turn in flight with a 503 the client can retry.
+- **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
+  folded until opened, read again when Settings is shown again) runs the
+  commands above through `wails-app/app_api.go`. It shows every listener that
+  serves `/v1`, a network one never left out for a loopback one that answers:
+  its base URL with a copy button (the scheme is the one `api status` saw
+  answer, derived only for a listener that did not or a CLI that predates it;
+  an address that is not a host name or IP address and a port gets no URL),
+  whether it runs, "bound to loopback" or "network" (a proxy, tunnel or port
+  forward on the machine can still expose a loopback one) and the confinement
+  the running daemon reports, or that is assumed from the app's environment.
+  The header says Network when any listener that serves `/v1` is bound beyond
+  loopback. The active profile's keys: create with a show-once panel (Escape
+  does not close it, only Done: the key is not shown again), a context switch
+  (turning it on asks first, since excerpts of the profile's documents reach the
+  model's provider) and revoke after a confirmation. The models: their class,
+  whether the policy of the first listener that answers `/v1` (the first listed
+  when none does) serves them, and whether a context key and `auto` may use them. `auto` says what it picks among
+  (with one model the rule uses it and Jev is not asked) and how many served
+  models `--auto-confinement` holds back, or what it is missing, with a link to
+  the Jev settings when that is where it is switched on (the `api_auto` surface,
+  a Jev key).
 
 Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 `examples/openai-api-quickstart.md`; paths and schemas:

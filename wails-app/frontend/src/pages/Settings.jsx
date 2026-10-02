@@ -8,6 +8,7 @@ import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
 import BrowserBindingsSection from '../components/settings/BrowserBindingsSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
+import ApiSection from '../components/settings/ApiSection.jsx'
 import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
 import CoderModeSection from '../components/settings/CoderModeSection.jsx'
 
@@ -294,7 +295,7 @@ function LanguageSection() {
   )
 }
 
-export default function Settings({ onNavigate, navData }) {
+export default function Settings({ onNavigate, navData, isActive = true }) {
   const { t } = useTranslation()
   // Deep links (the dashboard's "health" and "Jev" rows) scroll to a section.
   const sectionRefs = { health: useRef(null), jev: useRef(null), version: useRef(null) }
@@ -407,8 +408,10 @@ export default function Settings({ onNavigate, navData }) {
         <CoderModeSection />
 
         <div ref={sectionRefs.jev} data-section="jev">
-          <JevSection collapsible defaultExpanded={section === 'jev'} />
+          <JevSection collapsible defaultExpanded={section === 'jev'} expandToken={section === 'jev' ? navData : null} />
         </div>
+
+        <ApiSection onNavigate={onNavigate} isActive={isActive} />
 
         {/* Application Info */}
         <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
