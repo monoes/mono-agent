@@ -419,6 +419,10 @@ func TestLegKnowsWhichToolsOfTheRuntimeRan(t *testing.T) {
 		{"a start that was marked", []monomind.Event{deniedStart}, false},
 		{"one ran and another was refused", []monomind.Event{evNativeStart("tu_1"), evNativeStart("tu_2"), evNativeDenied("tu_2")}, true},
 		{"one was refused and another ran", []monomind.Event{evNativeStart("tu_1"), evNativeDenied("tu_1"), evNativeStart("tu_2")}, true},
+		// monomind gives every tool_activity an id; a monomind that did not could not tell a refused
+		// tool from one that ran, and a refusal with no id forgets nothing.
+		{"a start with no id, and a refusal with none", []monomind.Event{evNativeStart(""), evNativeDenied("")}, true},
+		{"a refusal with no id after a tool that ran", []monomind.Event{evNativeStart("tu_1"), evNativeDenied("")}, true},
 	} {
 		events := append([]monomind.Event{evStart(false, "monomind")}, c.events...)
 		events = append(events, evDone(0))

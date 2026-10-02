@@ -99,10 +99,11 @@ func (c *legCollector) onEvent(ev monomind.Event) {
 		if c.ran == nil {
 			c.ran = map[string]bool{}
 		}
-		if ev.Denied {
-			delete(c.ran, ev.ID)
-		} else {
+		switch {
+		case !ev.Denied:
 			c.ran[ev.ID] = true
+		case ev.ID != "": // a refusal that names no tool cannot be told from one of those that ran
+			delete(c.ran, ev.ID)
 		}
 	case monomind.EventDone:
 		c.endOnce.Do(func() { close(c.ended) })
