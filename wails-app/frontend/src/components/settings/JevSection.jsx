@@ -55,7 +55,7 @@ function formatUSD(v) {
   return `$${v.toFixed(v < 1 ? 4 : 2)}`
 }
 
-function Switch({ on, disabled, label: aria, onChange }) {
+export function Switch({ on, disabled, label: aria, onChange }) {
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={aria} disabled={disabled}
