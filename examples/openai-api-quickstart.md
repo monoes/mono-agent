@@ -432,10 +432,13 @@ What to expect from a tool loop:
   earlier message or the system prompt, it starts again from the transcript you
   send, which always works. Either way you send the whole conversation each time.
 - **The functions are yours; the model's own tools are not.** claude's own tools
-  stay denied by monomind. A codex leg runs read-only (`--access read`): it
-  cannot write files, so a coding client's edits must go through its declared
-  functions, which is the point. A model whose runtime monomind cannot run
-  read-only is refused.
+  stay denied: a tool turn requires monomind's sandbox, under which monomind lets
+  only the prefixed names of your functions through, so a function called `Bash`
+  cannot open claude's own, and the turn is refused (403) when the sandbox cannot
+  be applied. A codex leg runs read-only (`--access read`): it cannot write files,
+  so a coding client's edits must go through its declared functions, which is the
+  point. A model whose runtime monomind cannot run read-only, or whose sandbox it
+  cannot apply, is refused.
 - `tool_choice` `required` or a named function is an instruction in the system
   prompt, not a guarantee (it worked 9 of 9 for a named function and 5 of 6 for
   `required` in the spike); `none` passes no tools.

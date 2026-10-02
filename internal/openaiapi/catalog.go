@@ -46,6 +46,13 @@ type ModelInfo struct {
 	// the mode. A leg of a conversation with tools needs it where the runtime's
 	// own tools are not gated by monomind.
 	ReadAccess bool
+	// Sandboxable says monomind can apply to the model's runtime the sandbox that every
+	// turn asks for (monomind.TurnSandboxMode): the handshake has agent-exec-sandbox and
+	// the runtime's scan entry lists the mode, which is what monomind.SandboxArgs asks
+	// of them. A leg of a conversation with tools requires it: under the sandbox
+	// monomind lets only the prefixed names of the declared functions through, and
+	// without it a function called Bash would open the runtime's own Bash.
+	Sandboxable bool
 	// What that validation measured, for choosing between models (the auto
 	// model's fallback rule): zero when the model is not validated, and HasCost
 	// says whether the runtime reported a cost at all.
@@ -216,6 +223,12 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 	for i, e := range installed {
 		class := ClassifyRuntime(e, caps)
 		readAccess := caps.Has(monomind.CapAgentExecAccessRead) && slices.Contains(e.AccessModes, monomind.AccessRead)
+		var modes []string // as Exec reads them: only from a monomind that has --sandbox
+		if caps.Has(monomind.CapAgentExecSandbox) {
+			modes = e.SandboxModes
+		}
+		_, sandboxStatus := monomind.SandboxArgs(caps, modes, e.ID, monomind.TurnSandboxMode)
+		sandboxable := sandboxStatus == monomind.SandboxStatusSandboxed
 		seen := map[string]bool{}
 		add := func(m monomind.RuntimeModel) {
 			if seen[m.ID] || !modelRE.MatchString(m.ID) {
@@ -231,7 +244,7 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 			out = append(out, ModelInfo{
 				ID: id, Runtime: e.ID, Model: m.ID, Label: label, Class: class,
 				Validated: isValidated, Efforts: m.EffortLevels, Alias: m.AliasOf != "",
-				CostUSD: v.CostUSD, HasCost: v.HasCost, LatencyMs: v.LatencyMs, ReadAccess: readAccess,
+				CostUSD: v.CostUSD, HasCost: v.HasCost, LatencyMs: v.LatencyMs, ReadAccess: readAccess, Sandboxable: sandboxable,
 			})
 		}
 		listsDefault := false

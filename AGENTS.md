@@ -706,8 +706,16 @@ a key. It lives in `internal/openaiapi/`; the spec is
   side effects should make them idempotent. That is reliability, not security.
   With `tool_choice: "none"`, or tool history and
   no `tools`, the turn is a plain one and earlier rounds are text in its
-  transcript. Declaring tools changes no confinement field or policy check.
-  claude's own tools stay denied by monomind. codex's would stay in play and
+  transcript. Declaring tools changes no confinement field or policy check, and
+  no tool leg runs without monomind's sandbox: every leg, a chat-only claude's
+  too, is started with the sandbox required, because under it monomind lets only
+  the prefixed names (`mcp__org__<name>`) of the declared functions through,
+  while without it a function called `Bash` would open claude's own Bash. A leg
+  whose sandbox cannot be applied is 403 `policy_denied` with nothing run, and a
+  model has the `tools` capability only where it can be (monomind's
+  `agent-exec-sandbox` and the `workspace-write` mode in the runtime's scan
+  entry; otherwise a request with tools is 400 `unsupported_parameter`). claude's
+  own tools stay denied by monomind. codex's would stay in play and
   pull the model away from the declared ones (31 of 31 native attempts in the
   spike, and the declared tool used 0 of 4 times), so a codex leg runs with
   `--access read`, which monomind turns into a read-only sandbox (its start

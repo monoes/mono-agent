@@ -18,10 +18,10 @@ import (
 
 // reportModels is one model of each class, and an alias, which a report leaves out.
 var reportModels = []ModelInfo{
-	{ID: "claude/default", Runtime: "claude", Model: "default", Label: "Default", Class: ChatOnly, Validated: true},
-	{ID: "claude/opus", Runtime: "claude", Model: "opus", Label: "Opus", Class: ChatOnly, Alias: true},
-	{ID: "codex/gpt-6-astra", Runtime: "codex", Model: "gpt-6-astra", Label: "GPT-6-Astra", Class: Sandboxed},
-	{ID: "antigravity/default", Runtime: "antigravity", Model: "default", Label: "antigravity default model", Class: Unconfined},
+	{ID: "claude/default", Runtime: "claude", Model: "default", Label: "Default", Class: ChatOnly, Validated: true, Sandboxable: true},
+	{ID: "claude/opus", Runtime: "claude", Model: "opus", Label: "Opus", Class: ChatOnly, Alias: true, Sandboxable: true},
+	{ID: "codex/gpt-6-astra", Runtime: "codex", Model: "gpt-6-astra", Label: "GPT-6-Astra", Class: Sandboxed, Sandboxable: true},
+	{ID: "antigravity/default", Runtime: "antigravity", Model: "default", Label: "antigravity default model", Class: Unconfined, Sandboxable: true},
 }
 
 func reportOf(kind string, p Policy, auto AutoStatus, models []ModelInfo) ModelsReport {

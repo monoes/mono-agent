@@ -143,6 +143,12 @@ func (g *Gateway) legError(ctx context.Context, lr legResult, m ModelInfo, eff P
 		return nil, true
 	case lr.Call != nil:
 		return nil, false
+	case errors.Is(lr.Err, monomind.ErrSandboxRequired):
+		// Every leg requires the sandbox (toolChat). The text says what the caller can
+		// do about it and holds no name of the request; the detail is monomind's own.
+		e := errPolicy("Tool calling needs monomind's sandbox, which could not be applied to this model's runtime here, so the turn was not run. Retry without tools, or ask the operator.")
+		e.detail = lr.Err.Error()
+		return e, false
 	}
 	return g.resultError(ctx, lr.Res, lr.Err, m, eff)
 }

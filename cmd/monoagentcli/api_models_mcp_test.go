@@ -326,3 +326,47 @@ func TestAPIModelsListSaysWhichModelsCallToolsLikeAPIModels(t *testing.T) {
 		})
 	}
 }
+
+// A model has the tools capability only where monomind can apply the sandbox that every
+// leg requires: its scan entry lists the mode a turn asks for. Both the command and the
+// tool read it from the one report, and say the same.
+func TestAPIModelsListSaysNoToolsWhereTheSandboxCannotBeApplied(t *testing.T) {
+	claude := func(modes string) string {
+		return `{"id":"claude","installed":true,"binary":"/usr/local/bin/claude","version":"2.1.0","install_hint":"","native_sandbox":"monomind","sandbox_modes":` + modes + `}`
+	}
+	for _, c := range []struct {
+		name  string
+		modes string
+		tools bool // every model of claude has the capability, or none does
+	}{
+		{"claude lists workspace-write", `["read-only","workspace-write","full"]`, true},
+		{"claude lists only full, as monomind 2.19 does", `["full"]`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := newAPITestDB(t)
+			fakeMonomindWithAgents(t, claude(c.modes))
+			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "MONOAGENT_API_TOOL_RUNTIMES", "TYPESAFE_API_KEY"} {
+				t.Setenv(v, "")
+			}
+			cli, _, err := runAPI(t, db, "default", true, "models")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool := mcpModelsList(t, db, "default", nil)
+
+			models := decodeModels(t, cli).Models
+			if len(models) == 0 {
+				t.Fatal("the report lists no model")
+			}
+			for _, m := range models {
+				if got := slices.Contains(m.Capabilities, "tools"); got != c.tools {
+					t.Errorf("%s: has the tools capability %v, want %v", m.ID, got, c.tools)
+				}
+			}
+			asTool := strings.Replace(strings.TrimSuffix(cli, "\n"), `"source": "shell"`, `"source": "mcp"`, 1)
+			if tool != asTool {
+				t.Errorf("api_models_list is not the document of api models --json: %s", firstDifference(asTool, tool))
+			}
+		})
+	}
+}

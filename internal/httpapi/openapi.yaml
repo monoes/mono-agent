@@ -426,7 +426,10 @@ paths:
         as false) work on `claude` and `codex` (`MONOAGENT_API_TOOL_RUNTIMES`;
         `none` switches tool calling off), and only on a model whose
         `monoagent.capabilities` has `tools`: any other is 400
-        `unsupported_parameter` on `tools`, answered before anything starts. monomind keeps only the top-level properties of a
+        `unsupported_parameter` on `tools`, answered before anything starts. A
+        model has `tools` only where monomind can apply its sandbox, which every
+        tool turn requires (403 `policy_denied`, nothing run, when it cannot be
+        applied). monomind keeps only the top-level properties of a
         schema, so the whole schema is also folded into the function's
         description (an `enum` that is not a list of strings is left out of what
         the runtime's tool bridge gets, and the model still reads it there).

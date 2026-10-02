@@ -693,7 +693,9 @@ executes nothing of the caller's. What this changes, and what it does not:
 
 - *The confinement class does not change.* Declaring tools moves no class, no
   policy and no check of the start event, and a `sandboxed` model's turn still
-  requires its sandbox. A runtime that is not `chat-only` keeps its own tools in
+  requires its sandbox. A tool leg of any model, a chat-only one included,
+  requires the sandbox too (below): the one thing tools change for chat-only
+  models. A runtime that is not `chat-only` keeps its own tools in
   play, which pulled the model away from the declared ones in the spike (codex
   made 31 of 31 native attempts and edited files itself while the caller got
   nothing), so its leg runs with read access: for codex monomind makes the
@@ -708,8 +710,20 @@ executes nothing of the caller's. What this changes, and what it does not:
   refused with a 400 instead of run with its own tools in play, and so is any
   runtime outside `MONOAGENT_API_TOOL_RUNTIMES` (claude and codex unless the
   operator changed it; an operator who wants no caller tools reachable on a
-  listener at all sets it to `none`). claude's own tools stay denied by monomind: it denied
-  all 15 attempts in the spike.
+  listener at all sets it to `none`). claude's own tools stay denied by monomind
+  (it denied all 15 attempts in the spike), and that holds only because every
+  tool leg requires monomind's sandbox. Under it monomind lets only the prefixed
+  names (`mcp__org__<name>`) of the declared functions through; without it a
+  declared function is allow-listed by its bare name too, so a function called
+  `Bash`, `Write` or `Read` would open the native tool of that name, for a key
+  holder, a tool result or a captured page that can steer the call. So every
+  leg (first, resume and replay, every runtime) is started with the sandbox
+  required, and `monomind.Exec` refuses it (403 `policy_denied`, nothing run, the
+  answer names no function) when the sandbox cannot be applied: the scan or the
+  handshake failed, or monomind is one whose claude lists no `workspace-write`
+  mode (2.19.0 lists only `full`). A model has the `tools` capability only where
+  it can be applied, and a request that declares tools for any other is 400
+  `unsupported_parameter` before anything starts.
 - *What the model proposes can be steered, and the caller decides.* A tool
   result is untrusted data. The prompt fences it (`<function_result>`) and
   defangs the fence's tags and any line of it that would open a turn of the

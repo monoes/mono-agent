@@ -65,12 +65,16 @@ func TestServesToolsAndItsRefusalAgree(t *testing.T) {
 		m      ModelInfo
 		serves bool
 	}{
-		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly}, true},
-		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly, ReadAccess: true}, true},
-		{ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed, ReadAccess: true}, true},
-		{ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed}, false}, // monomind cannot run it read-only
-		{ModelInfo{ID: "antigravity/default", Runtime: "antigravity", Class: Unconfined, ReadAccess: true}, false},
-		{ModelInfo{ID: "hermes/default", Runtime: "hermes", Class: Unconfined}, false},
+		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly, Sandboxable: true}, true},
+		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly, Sandboxable: true, ReadAccess: true}, true},
+		{ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed, Sandboxable: true, ReadAccess: true}, true},
+		{ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed, Sandboxable: true}, false}, // monomind cannot run it read-only
+		{ModelInfo{ID: "antigravity/default", Runtime: "antigravity", Class: Unconfined, Sandboxable: true, ReadAccess: true}, false},
+		{ModelInfo{ID: "hermes/default", Runtime: "hermes", Class: Unconfined, Sandboxable: true}, false},
+		// The sandbox every leg requires cannot be applied, whatever else is true.
+		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly}, false},
+		{ModelInfo{ID: "claude/default", Runtime: "claude", Class: ChatOnly, ReadAccess: true}, false},
+		{ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed, ReadAccess: true}, false},
 	}
 	for _, c := range models {
 		e := cfg.toolsRefusal(c.m)
@@ -83,7 +87,7 @@ func TestServesToolsAndItsRefusalAgree(t *testing.T) {
 	}
 	// An operator's list decides the runtime half.
 	cfg.ToolRuntimes = []string{"antigravity"}
-	if !cfg.ServesTools(ModelInfo{Runtime: "antigravity", Class: Unconfined, ReadAccess: true}) || cfg.ServesTools(ModelInfo{Runtime: "claude", Class: ChatOnly}) {
+	if !cfg.ServesTools(ModelInfo{Runtime: "antigravity", Class: Unconfined, Sandboxable: true, ReadAccess: true}) || cfg.ServesTools(ModelInfo{Runtime: "claude", Class: ChatOnly, Sandboxable: true}) {
 		t.Error("the configured runtimes are not what decides")
 	}
 }
@@ -101,6 +105,57 @@ func TestToolsRefusalSaysWhichRuntimesServeTools(t *testing.T) {
 	e = (Config{}).toolsRefusal(ModelInfo{ID: "codex/default", Runtime: "codex", Class: Sandboxed})
 	if e == nil || !strings.Contains(e.Message, "read") {
 		t.Errorf("a runtime that cannot run read-only must say so: %+v", e)
+	}
+}
+
+// The catalog says whether monomind can apply the sandbox every leg requires to a
+// model's runtime, by the rule Exec itself follows (monomind.SandboxArgs): the
+// handshake has agent-exec-sandbox and the runtime's scan entry lists the mode a turn
+// asks for.
+func TestCatalogMarksTheModelsWhoseRuntimeCanBeSandboxed(t *testing.T) {
+	for name, c := range map[string]struct {
+		caps  []string
+		modes map[string][]string // by runtime; the 2.22.0 fixture's own where left out
+		want  map[string]bool
+	}{
+		"monomind 2.22": {[]string{monomind.CapAgentExecSandbox}, nil,
+			map[string]bool{"claude": true, "codex": true, "antigravity": false}}, // antigravity lists restricted and full
+		"no agent-exec-sandbox": {nil, nil,
+			map[string]bool{"claude": false, "codex": true, "antigravity": false}}, // codex has the env path of monomind 2.11.1 and later
+		"claude lists only full": {[]string{monomind.CapAgentExecSandbox}, map[string][]string{"claude": {"full"}},
+			map[string]bool{"claude": false, "codex": true, "antigravity": false}},
+		"claude lists no modes": {[]string{monomind.CapAgentExecSandbox}, map[string][]string{"claude": nil},
+			map[string]bool{"claude": false, "codex": true, "antigravity": false}},
+	} {
+		h := newHarness(t, okTurn("x"), func(d *Deps, _ *Config) {
+			d.Catalog.Caps = func(context.Context) (*monomind.CapabilitySet, error) {
+				return monomind.NewCapabilitySet("2.22.0", c.caps...), nil
+			}
+			scan := d.Catalog.Scan
+			d.Catalog.Scan = func(ctx context.Context) (*monomind.ScanResult, error) {
+				res, err := scan(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := *res
+				out.Agents = slices.Clone(res.Agents)
+				for i := range out.Agents {
+					if modes, ok := c.modes[out.Agents[i].ID]; ok {
+						out.Agents[i].SandboxModes = modes
+					}
+				}
+				return &out, nil
+			}
+		})
+		models, err := h.g.catalog.Models(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range models {
+			if want, ok := c.want[m.Runtime]; ok && m.Sandboxable != want {
+				t.Errorf("%s: %s has Sandboxable %v, want %v", name, m.ID, m.Sandboxable, want)
+			}
+		}
 	}
 }
 
@@ -213,29 +268,31 @@ func TestEffectiveToolRuntimes(t *testing.T) {
 // predicate: the model's runtime is in the list, and its own tools are gated by
 // monomind (chat-only) or monomind can run it read-only.
 func TestModelsReportSaysWhichModelsCallTools(t *testing.T) {
-	models := func(codexReadOnly bool) []ModelInfo {
+	models := func(codexReadOnly, sandbox bool) []ModelInfo {
 		return []ModelInfo{
-			{ID: "claude/default", Runtime: "claude", Model: "default", Class: ChatOnly},
-			{ID: "codex/default", Runtime: "codex", Model: "default", Class: Sandboxed, ReadAccess: codexReadOnly},
-			{ID: "hermes/default", Runtime: "hermes", Model: "default", Class: Unconfined, ReadAccess: true},
-			{ID: "antigravity/default", Runtime: "antigravity", Model: "default", Class: Unconfined},
+			{ID: "claude/default", Runtime: "claude", Model: "default", Class: ChatOnly, Sandboxable: sandbox},
+			{ID: "codex/default", Runtime: "codex", Model: "default", Class: Sandboxed, ReadAccess: codexReadOnly, Sandboxable: sandbox},
+			{ID: "hermes/default", Runtime: "hermes", Model: "default", Class: Unconfined, ReadAccess: true, Sandboxable: sandbox},
+			{ID: "antigravity/default", Runtime: "antigravity", Model: "default", Class: Unconfined, Sandboxable: sandbox},
 		}
 	}
 	for _, c := range []struct {
 		name     string
 		list     []string
 		readOnly bool // monomind can run codex read-only
+		sandbox  bool // monomind can apply the sandbox every leg requires
 		want     string
 	}{
-		{"the default list", nil, true, "claude/default,codex/default"},
-		{"monomind cannot run codex read-only", nil, false, "claude/default"},
-		{"a list of one", []string{"hermes"}, true, "hermes/default"},
-		{"a listed runtime that cannot run read-only", []string{"antigravity"}, true, ""},
+		{"the default list", nil, true, true, "claude/default,codex/default"},
+		{"monomind cannot run codex read-only", nil, false, true, "claude/default"},
+		{"monomind cannot apply the sandbox", nil, true, false, ""},
+		{"a list of one", []string{"hermes"}, true, true, "hermes/default"},
+		{"a listed runtime that cannot run read-only", []string{"antigravity"}, true, true, ""},
 		// A list with nothing in it is tool calling switched off, which is not the default list.
-		{"switched off", []string{}, true, ""},
+		{"switched off", []string{}, true, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			r := NewModelsReport(ModelsReportInput{For: "loopback", Policy: Policy{Max: Unconfined}, Source: ReportSourceShell, Models: models(c.readOnly), ToolRuntimes: c.list})
+			r := NewModelsReport(ModelsReportInput{For: "loopback", Policy: Policy{Max: Unconfined}, Source: ReportSourceShell, Models: models(c.readOnly, c.sandbox), ToolRuntimes: c.list})
 			var calls []string
 			for _, m := range r.Models {
 				if slices.Contains(m.Capabilities, "tools") {

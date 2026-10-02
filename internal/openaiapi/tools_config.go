@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // defaultToolRuntimes serve tool calling when MONOAGENT_API_TOOL_RUNTIMES is not
@@ -66,9 +68,10 @@ func ParseToolRuntimes(v string) ([]string, error) {
 func (c Config) ServesTools(m ModelInfo) bool { return c.toolsRefusal(m) == nil }
 
 // toolsRefusal is the 400 for a request that declares tools for a model that
-// cannot serve them, nil when it can: its runtime is in the list, and either its
-// own tools are gated by monomind (chat-only) or monomind can run it read-only,
-// which keeps its native tools from being used instead of the declared ones.
+// cannot serve them, nil when it can: its runtime is in the list, either its
+// own tools are gated by monomind (chat-only) or monomind can run it read-only
+// (which keeps its native tools from being used instead of the declared ones), and
+// monomind can apply the sandbox that every leg requires.
 func (c Config) toolsRefusal(m ModelInfo) *apiError {
 	list := c.ToolRuntimeList()
 	switch {
@@ -78,6 +81,8 @@ func (c Config) toolsRefusal(m ModelInfo) *apiError {
 		return errUnsupported("tools", fmt.Sprintf("tool calling is not available on model %s: it is served on %s only (the operator sets that list with MONOAGENT_API_TOOL_RUNTIMES)", m.ID, strings.Join(list, ", ")))
 	case m.Class != ChatOnly && !m.ReadAccess:
 		return errUnsupported("tools", fmt.Sprintf("tool calling is not available on model %s here: it needs the runtime to run read-only, which this machine's monomind cannot do for it (monomind's agent-exec-access-read)", m.ID))
+	case !m.Sandboxable:
+		return errUnsupported("tools", fmt.Sprintf("tool calling is not available on model %s here: a turn with tools requires monomind's sandbox, which this machine's monomind cannot apply to its runtime (monomind's agent-exec-sandbox, and the %s mode in the runtime's scan entry)", m.ID, monomind.TurnSandboxMode))
 	}
 	return nil
 }

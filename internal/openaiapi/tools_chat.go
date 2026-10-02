@@ -51,6 +51,11 @@ func (l toolLog) String() string {
 func (g *Gateway) toolChat(w http.ResponseWriter, r *http.Request, pr Principal, req *ChatRequest, t turn, m ModelInfo, eff Policy, id string) (int, string, toolLog) {
 	t.Tools = toolSpecs(req.toolDecls)
 	t.Access, t.MaxTurns = legAccess(m), toolLegMaxTurns
+	// Every leg requires the sandbox, a chat-only runtime's too: under it monomind lets
+	// only the prefixed names of the declared functions through, and without it a
+	// function called Bash would open the runtime's own Bash. Exec refuses the leg
+	// (ErrSandboxRequired) rather than run it without.
+	t.RequireSandbox = true
 	if line := toolChoiceLine(req.toolPick); line != "" {
 		t.System = strings.TrimSpace(t.System + "\n\n" + line)
 	}
