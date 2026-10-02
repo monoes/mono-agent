@@ -194,6 +194,33 @@ func TestAPIStatusSaysWhenTheDaemonDoesNotServeV1OnItsListener(t *testing.T) {
 	}
 }
 
+// A daemon's main listener off loopback never serves /v1, and reports no policy
+// for it: that is not a daemon that failed to mount the API, and the operator
+// must be told to use --v1-addr, not to look for another process.
+func TestAPIStatusDoesNotBlameAnotherProcessForAnOffLoopbackMainListener(t *testing.T) {
+	db := newAPITestDB(t)
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_V1_ADDR", "")
+	_, port, _ := strings.Cut(apiServer(t, false), ":") // a server that answers on every address of the machine
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: "0.0.0.0:" + port, ContextConfinement: "chat-only"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runAPI(t, db, "default", true, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := decodeStatus(t, out).Listeners[0]
+	if main.Loopback || main.V1 || !main.Reachable {
+		t.Fatalf("an off-loopback main listener: %+v", main)
+	}
+	human, _, _ := runAPI(t, db, "default", false, "status")
+	if !strings.Contains(human, "--v1-addr") || strings.Contains(human, "another process") {
+		t.Errorf("the output must point at --v1-addr, not at another process:\n%s", human)
+	}
+}
+
 // A daemon that cannot start the dedicated listener only warns, and runs on:
 // the listener is then missing from `api status`, which has to say what that means.
 func TestAPIStatusExplainsAMissingDedicatedListener(t *testing.T) {

@@ -122,7 +122,10 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				if mainFromDaemon && hb.APIConfinement != "" {
 					main.Confinement, main.ConfinementSource = hb.APIConfinement, "daemon"
 				}
-				if mainFromDaemon && hb.APIConfinement == "" && hb.ContextConfinement != "" {
+				// The daemon knows /v1 but reports no policy for a loopback listener:
+				// it did not mount the API there. (Off loopback the main listener
+				// never serves /v1, and reports none for that reason.)
+				if mainFromDaemon && mainLoop && hb.APIConfinement == "" && hb.ContextConfinement != "" {
 					main.V1, main.daemonSaysNoV1 = false, true
 				}
 				main.ContextConfinement = contextConfinementFor(main.Confinement, contextMax)
