@@ -24,8 +24,8 @@ const (
 
 	apiModelsJSON = `{"v":1,"policy":{"for":"network","confinement":"chat-only","context_confinement":"chat-only","auto_confinement":"chat-only","source":"shell"},` +
 		`"models":[` +
-		`{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true},` +
-		`{"id":"codex/gpt-6-astra","runtime":"codex","model":"gpt-6-astra","label":"GPT-6-Astra","confinement":"sandboxed","validated":false,"allowed":false,"context_allowed":false,"auto_allowed":false}],` +
+		`{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true,"capabilities":["text","tools"]},` +
+		`{"id":"codex/gpt-6-astra","runtime":"codex","model":"gpt-6-astra","label":"GPT-6-Astra","confinement":"sandboxed","validated":false,"allowed":false,"context_allowed":false,"auto_allowed":false,"capabilities":["text","image","tools"]}],` +
 		`"auto":{"available":true,"key_source":"vault","confinement":"chat-only","candidates":1,"held_back":2}}`
 
 	apiKeyOne = `{"id":"key_abcdefghijkl","profile_id":"work","name":"my-app","prefix":"sk-ma-AbCdEf","context":false,` +
@@ -105,6 +105,13 @@ func TestAPIFuncsShellOutToCLI(t *testing.T) {
 	}
 	if x := m.Models[1]; x.ID != "codex/gpt-6-astra" || x.Confinement != "sandboxed" || x.Allowed || x.ContextAllowed || x.AutoAllowed == nil || *x.AutoAllowed || x.Validated {
 		t.Fatalf("model = %+v", x)
+	}
+	// What each model can do reaches the page as the CLI listed it.
+	if got := strings.Join(m.Models[0].Capabilities, ","); got != "text,tools" {
+		t.Fatalf("claude/default capabilities = %q", got)
+	}
+	if got := strings.Join(m.Models[1].Capabilities, ","); got != "text,image,tools" {
+		t.Fatalf("codex/gpt-6-astra capabilities = %q", got)
 	}
 
 	keys, err := a.APIKeyList()
@@ -321,11 +328,57 @@ func TestAPIAbsentStaysAbsent(t *testing.T) {
 	}
 	mm := wire(t, m)
 	absent(t, "policy", mm["policy"].(map[string]any), "auto_confinement")
-	absent(t, "model", mm["models"].([]any)[0].(map[string]any), "auto_allowed")
+	absent(t, "model", mm["models"].([]any)[0].(map[string]any), "auto_allowed", "capabilities")
 	absent(t, "auto", mm["auto"].(map[string]any), "candidates", "held_back", "confinement", "missing")
 	if mm["auto"].(map[string]any)["available"] != true {
 		t.Errorf("auto = %v", mm["auto"])
 	}
+}
+
+// What each model can do (`capabilities` of the models report) reaches the page as
+// a list, in the order the CLI gave it and with whatever it names, so that a
+// capability a later CLI adds is not lost. A model without the field, as a CLI that
+// predates it lists it, has none in what the page receives: not null, not empty.
+func TestAPIModelsCarryCapabilities(t *testing.T) {
+	model := func(id, caps string) string {
+		return `{"id":"` + id + `","runtime":"x","model":"m","label":"l","confinement":"chat-only","validated":false,"allowed":true,"context_allowed":true,"auto_allowed":true` + caps + `}`
+	}
+	ids := []string{"text", "image", "tools", "both", "future"}
+	want := []string{"text", "text,image", "text,tools", "text,image,tools", "text,audio"}
+	var models []string
+	for i, id := range ids {
+		models = append(models, model(id, `,"capabilities":["`+strings.ReplaceAll(want[i], ",", `","`)+`"]`))
+	}
+	models = append(models, model("older", ""))
+	fakeAPIDocs(t,
+		`{"v":1,"profile":"work","keys":{"active":0},"daemon":{"running":false},"listeners":[]}`,
+		`{"v":1,"policy":{"for":"loopback","confinement":"any","context_confinement":"chat-only","auto_confinement":"chat-only","source":"shell"},"models":[`+
+			strings.Join(models, ",")+`],"auto":{"available":false}}`)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+
+	m, err := a.APIModels("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Models) != len(ids)+1 {
+		t.Fatalf("models = %d", len(m.Models))
+	}
+	page := wire(t, m)["models"].([]any)
+	for i, id := range ids {
+		list, ok := page[i].(map[string]any)["capabilities"].([]any)
+		if !ok {
+			t.Fatalf("%s: capabilities = %v", id, page[i].(map[string]any)["capabilities"])
+		}
+		var got []string
+		for _, c := range list {
+			got = append(got, c.(string))
+		}
+		if strings.Join(got, ",") != want[i] {
+			t.Errorf("%s: capabilities = %v, want %s", id, got, want[i])
+		}
+	}
+	absent(t, "a model of a CLI that predates capabilities", page[len(ids)].(map[string]any), "capabilities")
 }
 
 // What a current CLI says is kept, zeros and false included: they are values.

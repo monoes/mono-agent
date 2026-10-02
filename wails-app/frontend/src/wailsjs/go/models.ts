@@ -155,7 +155,8 @@ export namespace main {
 	    allowed: boolean;
 	    context_allowed: boolean;
 	    auto_allowed?: boolean;
-	
+	    capabilities?: string[];
+
 	    static createFrom(source: any = {}) {
 	        return new APIModel(source);
 	    }
@@ -171,6 +172,7 @@ export namespace main {
 	        this.allowed = source["allowed"];
 	        this.context_allowed = source["context_allowed"];
 	        this.auto_allowed = source["auto_allowed"];
+	        this.capabilities = source["capabilities"];
 	    }
 	}
 	export class APIPolicy {
