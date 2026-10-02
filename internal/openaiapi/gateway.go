@@ -39,8 +39,11 @@ type Deps struct {
 	Catalog CatalogFuncs
 	// Knowledge searches a profile's own knowledge. nil disables context.
 	Knowledge func(ctx context.Context, profileID, query string) ([]monomind.KnowledgeResult, error)
-	Logf      func(format string, args ...any)
-	Version   string
+	// Auto lets Jev pick the model of a request for "auto". The zero value means
+	// the model is never available.
+	Auto    AutoFuncs
+	Logf    func(format string, args ...any)
+	Version string
 }
 
 // DefaultDeps wires the gateway to monomind and the stored roster.

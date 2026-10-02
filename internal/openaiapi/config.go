@@ -16,6 +16,7 @@ const (
 	defaultCatalogTTL        = 5 * time.Minute
 	defaultStreamCommitAfter = 5 * time.Second
 	defaultKeepAlive         = 15 * time.Second
+	defaultAutoTimeout       = 8 * time.Second
 	minTurnTimeout           = 10 * time.Second
 )
 
@@ -39,6 +40,9 @@ type Config struct {
 	StreamCommitAfter time.Duration
 	// KeepAlive is the interval of SSE keep-alive comments once committed.
 	KeepAlive time.Duration
+	// AutoTimeout is how long Jev gets to pick the model of a request for
+	// "auto"; past it the rule picks.
+	AutoTimeout time.Duration
 }
 
 // MaxConcurrentLimit is the most turns a gateway may run at once. Every turn is
@@ -63,6 +67,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.KeepAlive <= 0 {
 		c.KeepAlive = defaultKeepAlive
+	}
+	if c.AutoTimeout <= 0 {
+		c.AutoTimeout = defaultAutoTimeout
 	}
 	if c.ScratchRoot == "" {
 		dir, err := monomind.SandboxWorkspaceDir(scratchPurpose)
