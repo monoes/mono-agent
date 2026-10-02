@@ -2738,7 +2738,7 @@ OPENAI-COMPATIBLE API (/v1)
   auto or WxH with each side 64 to 8192, quality, style, output_format,
   background and user are ignored, the body is capped at 64 KiB. Which runtimes
   make images is a list, MONOAGENT_API_IMAGE_RUNTIMES (default codex,antigravity;
-  monomind does not report it): GET /v1/models and api models --json give their
+  none switches image generation off; monomind does not report it): GET /v1/models and api models --json give their
   models "capabilities":["text","image"], and a runtime of the list that runs as
   chat-only cannot make images. model is <runtime>/<model>, a runtime of the
   list, auto, or missing (the first installed runtime of the list the policy
@@ -2747,12 +2747,15 @@ OPENAI-COMPATIBLE API (/v1)
   --confinement chat-only, or for a --context key held to chat-only, it is 403
   policy_denied and says what to raise. The turn is a chat turn with a fixed
   system prompt (use your built-in image capability, do not draw it, save each
-  file in the current directory, reply with the file names, NO_IMAGE_TOOL if you
-  cannot); afterwards, before the slot folder is emptied, the gateway reads the
-  PNG, JPEG, WebP and GIF files at its top (first bytes decide, 20 MiB each, the
-  first n by name), never following a link or opening a FIFO. NO_IMAGE_TOOL is
-  400 image_generation_unsupported, no image 502 image_generation_failed with the
-  runtime's reply (300 characters). About a minute and 40,000 input tokens per
+  file in ./out-<random>/, a folder made for the turn, reply with the file
+  names, NO_IMAGE_TOOL on a line of its own if you cannot); afterwards, before
+  the slot folder is emptied, the gateway reads the PNG, JPEG, WebP and GIF
+  files at the top of that folder and of nothing else (first bytes decide, 20 MiB
+  each, the first n by name), never following a link or opening a FIFO, looking
+  at no more than 64 entries. NO_IMAGE_TOOL is 400 image_generation_unsupported,
+  no image 502 image_generation_failed with the runtime's reply (300
+  characters). The body is streamed and the client has two minutes to read it.
+  About a minute and 40,000 input tokens per
   image, on the runtime's account. "auto" picks among the image models auto may
   pick: none while --auto-confinement is chat-only, then 404 model_not_found
   saying what to raise.

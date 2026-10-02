@@ -501,13 +501,19 @@ paths:
         input tokens per request, on the runtime's own account.
 
         Which runtimes make images is configuration: `MONOAGENT_API_IMAGE_RUNTIMES`
-        (default `codex,antigravity`), because monomind does not report image
-        output. `GET /v1/models` marks their models with the capability `image`.
-        `model` is `<runtime>/<model>`, a runtime of that list (its default
-        model), `auto`, or missing, which means the first installed runtime of the
-        list that the key's policy allows. A model that exists but cannot make
-        images (a chat-only runtime, or one that is not in the list) is 400
-        `invalid_value` on `model`; an unknown one is 404.
+        (default `codex,antigravity`; `none` switches image generation off),
+        because monomind does not report image output. `GET /v1/models` marks their
+        models with the capability `image`. `model` is `<runtime>/<model>`, a
+        runtime of that list (its default model), `auto`, or missing, which means
+        the first installed runtime of the list that the key's policy allows. A
+        model that exists but cannot make images (a chat-only runtime, or one that
+        is not in the list) is 400 `invalid_value` on `model`, and its message
+        names the runtimes whose models the key may use that can, or says that
+        none can; an unknown one is 404. When no runtime of the list can make
+        images, a request without a model is a 404 that says why for each (not
+        installed, or installed but chat-only). With image generation switched
+        off, a request without a model, or for `auto`, is a 404 that says so, and
+        a model named is a 400.
 
         The runtime has to write the file, so the model must run as `sandboxed`
         or `unconfined`. Under `--confinement chat-only`, or for a key created
@@ -529,16 +535,22 @@ paths:
         The turn is a chat turn (an emptied working folder of the key's profile,
         no tools, the sandbox required for a `sandboxed` model) with a fixed
         system prompt: generate each image with the runtime's own built-in image
-        capability, do not draw it programmatically, save each file in the
-        current directory, reply with the file names, reply `NO_IMAGE_TOOL` if
-        there is no such capability. After the turn the gateway reads the files
-        at the top of that folder that are PNG, JPEG, WebP or GIF by their first
-        bytes, at most 20 MiB each and the first `n` by name. It never follows a
-        link and never opens a FIFO or a device, because the folder is the
-        runtime's to write. A runtime that saves fewer than `n` images still
-        answers with what it saved; one that saves none is 502. The images are
-        returned in the order of their names, and carry no content type: tell
-        the format from the first bytes.
+        capability, do not draw it programmatically, save each file in a folder
+        made for the turn inside the working folder (its name is new every time),
+        reply with the file names, and reply `NO_IMAGE_TOOL` on a line of its own
+        if there is no such capability. After the turn the gateway reads the files
+        at the top of that folder, and of nothing else, that are PNG, JPEG, WebP
+        or GIF by their first bytes, at most 20 MiB each and the first `n` by
+        name. It never follows a link and never opens a FIFO or a device, because
+        the folder is the runtime's to write, and it looks at no more than 64
+        entries and gives up after a minute. A runtime that saves fewer than `n`
+        images still answers with what it saved; one that saves none, or saves
+        them outside the folder it was given, is 502. The images are returned in
+        the order of their names, and carry no content type: tell the format from
+        the first bytes. The body is written as the images are encoded and is
+        about a third larger than they are; the client has two minutes to read it.
+        No byte of the response is sent while the turn runs (a minute or more), so
+        a reverse proxy has to wait that long for one.
 
         `size` is `auto` or `WxH` in pixels with each side from 64 to 8192, and
         is a preference the runtime is asked to follow, not a guarantee.
@@ -550,11 +562,11 @@ paths:
 
         | Status | `type` / `code` | Cause |
         |---|---|---|
-        | 400 | `invalid_request_error` / `invalid_value`, `missing_required_parameter` | `prompt` missing or blank; `n` not from 1 to 4; `size` not `auto` or `WxH` within the bounds; `response_format` neither `b64_json` nor `url`; `model` cannot make images |
+        | 400 | `invalid_request_error` / `invalid_value`, `missing_required_parameter` | `prompt` missing or blank; `n` not from 1 to 4, or of the wrong type; `size` not `auto` or `WxH` within the bounds, or of the wrong type; `response_format` neither `b64_json` nor `url`; `model` cannot make images, or image generation is switched off |
         | 400 | `invalid_request_error` / `unsupported_parameter` | `response_format: "url"` (this server has no address to serve an image from) or `stream: true` |
-        | 400 | `invalid_request_error` / `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no built-in image generation capability |
+        | 400 | `invalid_request_error` / `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL` on a line of its own and saved no image: it has no built-in image generation capability |
         | 403 | `permission_error` / `policy_denied` | The key's policy allows no runtime that can write a file, or the named model is above it (see above) |
-        | 404 | `invalid_request_error` / `model_not_found` | Unknown model; no runtime of the image list is installed; or `auto` with no image model it may pick |
+        | 404 | `invalid_request_error` / `model_not_found` | Unknown model; no runtime of the image list can make images here (none installed, or installed but chat-only); image generation is switched off and no model was named; or `auto` with no image model it may pick |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 64 KiB |
         | 502 | `api_error` / `image_generation_failed` | The turn ended without an image to return; the message has what the runtime replied, on one line and at most 300 characters |
       security:
@@ -738,8 +750,9 @@ components:
                 `text` for every model, and `image` for one that can generate
                 images through `POST /v1/images/generations`: a model of a runtime
                 in `MONOAGENT_API_IMAGE_RUNTIMES` that runs as `sandboxed` or
-                `unconfined`. `auto` lists `image` only while it has an image
-                model it may pick.
+                `unconfined` (with the variable set to `none`, no model has it).
+                `auto` lists `image` only while it has an image model it may
+                pick.
               items: { type: string, enum: [text, image] }
     ModelList:
       type: object

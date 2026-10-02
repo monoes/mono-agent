@@ -73,3 +73,15 @@
 
 - Live canary, 2026-10-02 (monomind 2.22.0): antigravity passed (a 496,150 byte JPEG in 71.9 s, the runtime saved it at the top of the slot folder, `X-Monoagent-Sandbox: unsupported`); codex was skipped, its usage limit answered 429 `insufficient_quota`, so the codex path is untested live.
 - `go test ./...` shows only the 8 failures known on this machine; `GOOS=windows go build ./...`, `go build -tags nosocial ./...` and `redocly lint` pass.
+
+## Review round (2026-10-02)
+
+Two read-only reviews (security, correctness) of the branch led to these changes, each test-first and mutation-checked, in small commits:
+
+- [x] The turn gets an output folder with an unpredictable name (`turn.Subdir`) and only that is read, so a process an earlier turn left running cannot put a file into a later response; the collection is bounded (first 12 bytes, 64 entries, a budget, the caller leaving) and counts files outside the folder.
+- [x] The response is streamed, the slot is released before it is written, and a client has two minutes to read it.
+- [x] `MONOAGENT_API_IMAGE_RUNTIMES=none` is the off switch; the messages tell a runtime that is not installed from one that is chat-only, the hint of the 400 follows the key's policy, and the operator is told once which listed runtimes make no images.
+- [x] Earlier in the round: images win over `NO_IMAGE_TOOL` (a line of its own only), no collection after a turn that never said done, a field of the wrong type is `invalid_value`, refusals log the model, a success logs what was left out.
+- [x] The slot and emptying tests test what they say (one slot, a start-of-turn case, the endings of a request, a refused request while the slot is held).
+- [x] SECURITY.md, AGENTS.md, CHANGELOG, `openapi.yaml`, the quickstart (the proxy timeout), `ref api` and spec §7.3 say the same.
+- Live: antigravity returned a JPEG from the folder it was given (74.9 s).

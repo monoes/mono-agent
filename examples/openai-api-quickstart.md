@@ -224,7 +224,8 @@ takes the first one is not moved to it, and leaves it out while it does not work
 `POST /v1/images/generations` has a runtime that can make images do it, and
 returns the files it saved. Which runtimes can is a list, `MONOAGENT_API_IMAGE_RUNTIMES`
 (default `codex,antigravity`: monomind does not say which CLIs have an image
-tool). `GET /v1/models` marks their models with the capability `image`, and so
+tool; `none` switches image generation off, and every image request then says
+so). `GET /v1/models` marks their models with the capability `image`, and so
 does `api models --json`:
 
 ```bash
@@ -288,25 +289,30 @@ fs.writeFileSync(`circle.${ext}`, bytes);
 What to expect:
 
 - A request takes about a minute and uses some 40,000 input tokens of the
-  runtime, on your account (the probes: 40 and 52 seconds; codex and
+  runtime, on your account (the probes: 40, 52 and 75 seconds; codex and
   antigravity report no cost). The 10 minute turn timeout and the 4 turns at
   once are the same as for chat. The body is capped at 64 KiB.
 - `n` is 1 to 4 and is passed on in words: a runtime may save fewer images, and
   you get what it saved (at least one). `size` is `auto` or `WxH` with each side
   from 64 to 8192, a preference the runtime may not follow. `quality`, `style`,
   `output_format`, `background` and `user` are accepted and ignored.
-- The runtime makes the image with its own tool and copies the file into its
-  working folder; the server reads PNG, JPEG, WebP and GIF files there (up to
-  20 MiB each) before it empties the folder, and never follows a link in it. A
-  runtime that says it has no image tool is a 400 `image_generation_unsupported`;
-  one that saves nothing is a 502 `image_generation_failed` with what it said.
+- The runtime makes the image with its own tool and copies the file into a
+  folder the server made for the turn (its name is new every time); the server
+  reads the PNG, JPEG, WebP and GIF files there, and in nothing else, (up to
+  20 MiB each) before it empties the working folder, and never follows a link
+  in it. A runtime that says it has no image tool is a 400
+  `image_generation_unsupported`; one that saves nothing, or saves it
+  elsewhere, is a 502 `image_generation_failed` with what it said.
+- Nothing is sent until the turn is over, a minute or more: a reverse proxy has
+  to wait that long (see "Behind a reverse proxy" below).
 - `"model": "auto"` has Jev pick among the image models, but `auto` is held to
   chat-only until you start the server with `--auto-confinement sandboxed` (or
   `any`): image runtimes are sandboxed or unconfined, so by default it is a 404
   `model_not_found` that says what to raise. Raised, `jev enable api_auto` sends
   TypeSafe the first 4,000 characters of the image prompt, as it does for chat.
 - Read `SECURITY.md` ("Image generation"): the runtime may read and copy files
-  from outside its folder, and the server returns any image file it left there.
+  from outside its folder, and the server returns any file it left in the
+  turn's folder that begins like an image (the test is on the first bytes).
 
 ## 4. Serve it beyond this machine
 
@@ -336,6 +342,12 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
   certificate variables for a proxy that forwards plain HTTP: while they are
   set, the listener speaks TLS even on a loopback bind. Turn proxy buffering
   off for streaming (the server already sends `X-Accel-Buffering: no`).
+- Raise the proxy's read timeout above the turn time. An image request sends no
+  byte while its turn runs, a minute or more (40 to 75 seconds in the probes, up
+  to `MONOAGENT_API_TURN_TIMEOUT`, 10 minutes by default), and nginx's default
+  `proxy_read_timeout` is 60 seconds: the client would get a 504 from the
+  proxy while the turn is still running. For nginx, `proxy_read_timeout 11m;`
+  on the location of `/v1/`.
 
 ## 5. A headless Linux server
 
@@ -384,8 +396,8 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 | 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images, `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
 | 400 | `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no image tool |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
-| 403 | `policy_denied` | A completion names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
-| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
+| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
+| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows). For an image request without a model also: no runtime of `MONOAGENT_API_IMAGE_RUNTIMES` can make images here (the message says, for each, not installed or installed but chat-only), or image generation is switched off (`none`) |
 | 413 | `request_too_large` | Body over 2 MiB (64 KiB for an image request) |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
 | 500 | `internal_error` | An internal failure. The message is generic; the detail is in the server log under the response's `X-Request-Id` |
