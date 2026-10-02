@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -190,36 +189,8 @@ func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id,
 	// Commit the stream if the turn stays silent, then keep it alive. However
 	// this function ends, even in a panic, the helper stops: a ticker must
 	// never write to a response that is finished.
-	stop := make(chan struct{})
-	var once sync.Once
-	var wg sync.WaitGroup
-	stopKeepAlive := func() {
-		once.Do(func() { close(stop) })
-		wg.Wait()
-	}
+	stopKeepAlive := sw.startKeepAlive(g.cfg.StreamCommitAfter, g.cfg.KeepAlive)
 	defer stopKeepAlive()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		timer := time.NewTimer(g.cfg.StreamCommitAfter)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			sw.commit()
-		case <-stop:
-			return
-		}
-		tick := time.NewTicker(g.cfg.KeepAlive)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				sw.keepAlive()
-			case <-stop:
-				return
-			}
-		}
-	}()
 
 	res, err := g.runTurn(ctx, t)
 	stopKeepAlive()
