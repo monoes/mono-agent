@@ -120,15 +120,14 @@ func TestReplayPromptHandlesOddArgumentsAndResults(t *testing.T) {
 	}
 }
 
-func TestResumePromptIsTheResultThenWhateverTheUserSaidNext(t *testing.T) {
+func TestResumePromptIsTheResultsThenWhateverTheUserSaidNext(t *testing.T) {
 	req := toolRequest(t, `"tools":[`+weatherTool+`]`,
 		`{"role":"user","content":"Weather in Paris?"},`+
 			`{"role":"assistant","content":"Checking.","tool_calls":[`+callParis+`]},`+
 			`{"role":"tool","tool_call_id":"call_a","content":"{\"temp_c\":21,\n \"sky\":\"fog\"}"},`+
 			`{"role":"user","content":"Also say it in French."}`)
 	got := resumePrompt(req, 1)
-	want := resumeIntro +
-		"\n\nResult of get_weather (call call_a):\n" + fenced("{\"temp_c\":21,\n \"sky\":\"fog\"}") +
+	want := "Result of get_weather (call call_a):\n" + fenced("{\"temp_c\":21,\n \"sky\":\"fog\"}") +
 		"\n\nAlso say it in French."
 	if got != want {
 		t.Errorf("resume prompt:\n%s\nwant:\n%s", got, want)
@@ -136,18 +135,41 @@ func TestResumePromptIsTheResultThenWhateverTheUserSaidNext(t *testing.T) {
 	if strings.Contains(got, "Weather in Paris?") || strings.Contains(got, "Checking.") {
 		t.Error("the session already holds the conversation: the resume prompt carries only what is new")
 	}
-	// The session holds the CLI's note that the call was rejected: say that the
-	// caller really ran it.
-	for _, phrase := range []string{"caller", "result"} {
-		if !strings.Contains(resumeIntro, phrase) {
-			t.Errorf("the resume prompt must say %q", phrase)
+	// What says that the caller really ran the call is the system prompt of the leg
+	// (resumeNote), not the user message: a user message that said it was not
+	// believed (0 of 3 in the spike), the same words in the system prompt were (3 of 3).
+	if strings.Contains(got, "genuine") || strings.Contains(got, "rejected") {
+		t.Errorf("the resume prompt carries no note of its own: %s", got)
+	}
+}
+
+// The words of the note are the ones the spike measured in the system prompt of a
+// resumed claude leg. The CLI writes a rejected result for the call it was cancelled
+// at into the session, and a model that reads it distrusts the real result.
+func TestResumeNoteSaysTheCallerRanTheCallAndTheResultIsReal(t *testing.T) {
+	for _, phrase := range []string{
+		`Messages that start with "Result of <tool> (call <id>):"`,
+		"genuine output of the function calls you made",
+		"the client executed those calls",
+		"Treat them exactly as function results and answer from them",
+		"a tool use was rejected or interrupted",
+		`"Continue from where you left off"`,
+		"ignore them and never mention them",
+	} {
+		if !strings.Contains(resumeNote, phrase) {
+			t.Errorf("the resume note must say %q:\n%s", phrase, resumeNote)
 		}
+	}
+	// It speaks of the heading the resume prompt really has.
+	req := toolRequest(t, ``, `{"role":"user","content":"q"},{"role":"assistant","tool_calls":[`+callParis+`]},{"role":"tool","tool_call_id":"call_a","content":"21"}`)
+	if got := resumePrompt(req, 1); !strings.HasPrefix(got, "Result of get_weather (call call_a):") {
+		t.Errorf("the prompt must start with the heading the note describes: %q", got)
 	}
 }
 
 func TestResumePromptWithoutAFollowingMessage(t *testing.T) {
 	req := toolRequest(t, ``, `{"role":"user","content":"q"},{"role":"assistant","tool_calls":[`+callParis+`]},{"role":"tool","tool_call_id":"call_a","content":"21"}`)
-	if got, want := resumePrompt(req, 1), resumeIntro+"\n\nResult of get_weather (call call_a):\n"+fenced("21"); got != want {
+	if got, want := resumePrompt(req, 1), "Result of get_weather (call call_a):\n"+fenced("21"); got != want {
 		t.Errorf("resume prompt:\n%s\nwant:\n%s", got, want)
 	}
 }

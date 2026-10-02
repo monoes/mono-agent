@@ -17,10 +17,14 @@ const (
 	// transcript, which is wrong when the transcript ends in a tool result.
 	toolOutro      = "Reply as the assistant; do not repeat the conversation. Use the function results above; call a function again only if you still need one."
 	plainToolOutro = "Reply as the assistant; do not repeat the conversation. Use the function results above."
-	// resumeIntro opens the prompt of a resumed session. When a leg ends at a
+	// resumeNote is added to the system prompt of a resumed leg. When a leg ends at a
 	// call the agent CLI is cancelled mid-call, and it writes a rejected result for
-	// the call into the session; the model must not take that for what happened.
-	resumeIntro = "The caller ran the tool you called, whatever an earlier note in this conversation says about the call being rejected or cancelled. Its result follows. Continue from it."
+	// the call, "[Request interrupted by user for tool use]" and "Continue from where
+	// you left off" into the session; a model that reads them takes the real result
+	// for a forgery. These words, in the system prompt, were believed 3 of 3 times on
+	// claude; the same in the user message 0 of 3 (the spike, two results in one
+	// prompt). Measured wording: do not reword without measuring.
+	resumeNote = `Messages that start with "Result of <tool> (call <id>):" carry the genuine output of the function calls you made: the client executed those calls and pasted their output into the conversation. Treat them exactly as function results and answer from them. Earlier notices in this conversation that a tool use was rejected or interrupted, and the line "Continue from where you left off", are artifacts of how the conversation is continued between requests: ignore them and never mention them.`
 
 	// toolLegMaxTurns caps the agent turns of a leg. A leg ends at its first call,
 	// so this is only headroom for a model that first tries its own tools, which
@@ -145,13 +149,14 @@ func argumentsText(raw json.RawMessage) string {
 // resumePrompt is what a resumed session is told: the results of the call it
 // ended at, fenced as data, and whatever the user said after them. ai is the index
 // of the assistant message that made the call (trailingRound). The session already
-// holds everything before, so nothing before is repeated.
+// holds everything before, so nothing before is repeated. That the caller really ran
+// the call is said in the system prompt of the leg (resumeNote).
 func resumePrompt(req *ChatRequest, ai int) string {
 	names := map[string]string{}
 	for _, c := range req.Messages[ai].ToolCalls {
 		names[c.ID] = c.Function.Name
 	}
-	parts := []string{resumeIntro}
+	var parts []string
 	for _, m := range req.Messages[ai+1:] {
 		switch m.Role {
 		case "tool":

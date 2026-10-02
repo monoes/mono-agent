@@ -105,10 +105,14 @@ type plannedLeg struct {
 // path that always works. t carries the tools and the options of the leg; the
 // prompt and the session are the plan's.
 func (g *Gateway) runPlanned(ctx context.Context, t turn, plan legPlan, req *ChatRequest) plannedLeg {
+	system := t.System
 	t.Prompt, t.Resume = plan.Prompt, plan.Session
+	if plan.Kind == legResume { // the session holds the CLI's note that the call was rejected: say that it was not
+		t.System = strings.TrimSpace(system + "\n\n" + resumeNote)
+	}
 	lr := g.runLeg(ctx, t)
 	if plan.Kind == legResume && lr.resumeFailed() {
-		t.Prompt, t.Resume = replayPrompt(req, true), ""
+		t.Prompt, t.Resume, t.System = replayPrompt(req, true), "", system
 		return plannedLeg{legResult: g.runLeg(ctx, t), Kind: legReplay, FellBack: true}
 	}
 	return plannedLeg{legResult: lr, Kind: plan.Kind}

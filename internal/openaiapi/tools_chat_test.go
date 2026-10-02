@@ -162,6 +162,9 @@ func TestToolsALegEndsAtItsCallAndTheFollowUpResumesTheSession(t *testing.T) {
 	if resumed.Resume != "sess-1" || len(resumed.Tools) != 1 {
 		t.Errorf("the follow-up must continue the session with the tools declared: resume %q tools %d", resumed.Resume, len(resumed.Tools))
 	}
+	if !strings.HasSuffix(resumed.SystemPrompt, resumeNote) || strings.Contains(opts.SystemPrompt, "genuine output") {
+		t.Errorf("only the resumed leg is told that the caller ran the call: first %q, resumed %q", opts.SystemPrompt, resumed.SystemPrompt)
+	}
 	if !strings.Contains(resumed.Prompt, "Result of get_weather (call "+call.ID+"):\n"+fenced("21 C, fog")) || strings.Contains(resumed.Prompt, "What is the weather") {
 		t.Errorf("the resumed prompt is the result and nothing the session already holds: %q", resumed.Prompt)
 	}
@@ -177,6 +180,9 @@ func TestToolsAFollowUpWithoutARecordReplaysTheTranscript(t *testing.T) {
 	opts := script.calls()[0]
 	if opts.Resume != "" || len(opts.Tools) != 1 {
 		t.Errorf("a replay starts a session of its own and declares the tools again: resume %q tools %d", opts.Resume, len(opts.Tools))
+	}
+	if strings.Contains(opts.SystemPrompt, "genuine output") {
+		t.Errorf("a replay has no rejected call in its session, and no note about one: %q", opts.SystemPrompt)
 	}
 	for _, want := range []string{"[user]\nWhat is the weather in Paris?", "(called the function get_weather with arguments {\"city\":\"Paris\"})", "[tool get_weather (call_from_another_server)]\n" + fenced("21 C"), toolOutro} {
 		if !strings.Contains(opts.Prompt, want) {

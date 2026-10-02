@@ -139,6 +139,7 @@ func TestRunPlannedFallsBackToAReplayWhenTheSessionIsGone(t *testing.T) {
 	h := newHarness(t, script.exec)
 	req := toolRequest(t, `"tools":[`+weatherTool+`]`, oneRound)
 	tn := legTurn("claude")
+	tn.System = "Be brief."
 	plan := legPlan{Kind: legResume, Prompt: resumePrompt(req, 1), Session: "sess-1"}
 
 	got := h.g.runPlanned(context.Background(), tn, plan, req)
@@ -157,6 +158,32 @@ func TestRunPlannedFallsBackToAReplayWhenTheSessionIsGone(t *testing.T) {
 	}
 	if len(calls[1].Tools) != 1 {
 		t.Error("the replay declares the tools again")
+	}
+	// The resumed leg is told that the result is real; the replay is a new session
+	// with no rejected call in it, and is not.
+	if want := "Be brief.\n\n" + resumeNote; calls[0].SystemPrompt != want {
+		t.Errorf("the resumed leg's system prompt:\n%q\nwant:\n%q", calls[0].SystemPrompt, want)
+	}
+	if calls[1].SystemPrompt != "Be brief." {
+		t.Errorf("the replay's system prompt carries no note: %q", calls[1].SystemPrompt)
+	}
+}
+
+func TestRunPlannedTellsOnlyAResumedLegThatTheResultIsReal(t *testing.T) {
+	for _, kind := range []string{legFirst, legReplay, legResume} {
+		script := &execScript{turns: []execFunc{okTurn("x")}}
+		h := newHarness(t, script.exec)
+		req := toolRequest(t, `"tools":[`+weatherTool+`]`, oneRound)
+		tn := legTurn("claude")
+		plan := legPlan{Kind: kind, Prompt: "p"}
+		if kind == legResume {
+			plan.Session = "sess-1"
+		}
+		h.g.runPlanned(context.Background(), tn, plan, req) // no system prompt of its own
+		got := script.calls()[0].SystemPrompt
+		if want := map[string]string{legFirst: "", legReplay: "", legResume: resumeNote}[kind]; got != want {
+			t.Errorf("%s: system prompt %q, want %q", kind, got, want)
+		}
 	}
 }
 
