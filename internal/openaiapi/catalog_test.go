@@ -197,6 +197,37 @@ func TestCatalogMarksModelsTheRosterValidated(t *testing.T) {
 	}
 }
 
+// The fallback of the auto model prefers the cheapest and fastest validated
+// model, so the catalog carries what each validation measured, and nothing for a
+// model whose validation did not pass.
+func TestCatalogCarriesTheValidationStatsOfValidatedModels(t *testing.T) {
+	f := testFuncs(t)
+	f.Roster = func(context.Context) ([]agentroster.Result, error) {
+		return []agentroster.Result{
+			{Runtime: "claude", Model: "opus[1m]", Status: agentroster.StatusOK, CostUSD: 0.0123, HasCost: true, LatencyMs: 2400, ValidatedAt: time.Now()},
+			{Runtime: "claude", Model: "default", Status: agentroster.StatusOK, LatencyMs: 900, ValidatedAt: time.Now()}, // no cost reported
+			{Runtime: "codex", Model: "gpt-6-astra", Status: agentroster.StatusAuth, CostUSD: 5, HasCost: true, LatencyMs: 1, ValidatedAt: time.Now()},
+		}, nil
+	}
+	models, err := NewCatalog(f, time.Minute).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]ModelInfo{}
+	for _, m := range models {
+		by[m.ID] = m
+	}
+	if m := by["claude/opus[1m]"]; !m.Validated || !m.HasCost || m.CostUSD != 0.0123 || m.LatencyMs != 2400 {
+		t.Errorf("a validated model carries what the validation measured: %+v", m)
+	}
+	if m := by["claude/default"]; !m.Validated || m.HasCost || m.CostUSD != 0 || m.LatencyMs != 900 {
+		t.Errorf("a validation that reported no cost has none: %+v", m)
+	}
+	if m := by["codex/gpt-6-astra"]; m.Validated || m.HasCost || m.CostUSD != 0 || m.LatencyMs != 0 {
+		t.Errorf("a model whose validation failed has no stats: %+v", m)
+	}
+}
+
 func TestCatalogResolve(t *testing.T) {
 	c := NewCatalog(testFuncs(t), time.Minute)
 	ctx := context.Background()
