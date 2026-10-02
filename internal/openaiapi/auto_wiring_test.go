@@ -125,11 +125,11 @@ func TestAutoEndToEndWithJev(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list := decodeModelList(t, h.serve(anyPolicy, http.MethodGet, "/v1/models", secret, ""))
+	list := decodeModelList(t, h.serve(autoAnyPolicy, http.MethodGet, "/v1/models", secret, ""))
 	if len(list.Data) < 2 || list.Data[len(list.Data)-1].ID != "auto" {
 		t.Fatalf("auto must be listed last once the surface is on: %+v", list.Data)
 	}
-	rec := h.serve(anyPolicy, http.MethodPost, autoChatURL, secret, autoChat)
+	rec := h.serve(autoAnyPolicy, http.MethodPost, autoChatURL, secret, autoChat)
 	if rec.Code != http.StatusOK || rec.Header().Get("X-Monoagent-Auto") != "jev" || rec.Header().Get("X-Monoagent-Model") != "codex/gpt-6-astra" {
 		t.Fatalf("%d, auto %q, model %q: %s", rec.Code, rec.Header().Get("X-Monoagent-Auto"), rec.Header().Get("X-Monoagent-Model"), rec.Body)
 	}

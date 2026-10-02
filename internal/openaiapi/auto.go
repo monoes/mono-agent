@@ -51,30 +51,33 @@ func (g *Gateway) autoStatus(ctx context.Context, profileID string) AutoStatus {
 }
 
 // autoCandidates returns the models auto may pick among for a key whose
-// effective policy is eff, or the 404 that says why auto is not available: Jev
-// has no key or the surface is off for the profile, or the policy allows no model.
+// effective policy is eff: the ones that policy allows, within what the operator
+// let auto pick (chat-only unless they raised it). Or the 404 that says why auto
+// is not available: Jev has no key or the surface is off for the profile, or
+// there is no such model.
 func (g *Gateway) autoCandidates(ctx context.Context, pr Principal, eff Policy) ([]ModelInfo, *apiError) {
 	if st := g.autoStatus(ctx, pr.ProfileID); !st.Available {
 		return nil, errAutoUnavailable(st.Missing)
 	}
-	models, err := g.catalog.Visible(ctx, eff)
+	models, err := g.catalog.Visible(ctx, eff.ForAuto())
 	if err != nil {
 		return nil, catalogError(err)
 	}
 	if len(models) == 0 {
-		return nil, errAutoUnavailable("at least one model the server's confinement policy allows")
+		return nil, errAutoUnavailable("at least one model the server's confinement policy allows auto to pick (chat-only, unless --auto-confinement says more)")
 	}
 	return models, nil
 }
 
 // autoObject is auto as a model of the list. Its confinement is the strongest
-// class the key's policy allows: what Jev picks is never above it.
+// class it picks within: the key's policy, capped by what the operator let auto
+// pick. What Jev picks is never above it.
 func autoObject(eff Policy) modelObject {
 	return modelObject{
 		ID: autoModelID, Object: "model", OwnedBy: "jev",
 		Monoagent: modelMeta{
 			Runtime: autoModelID, Model: autoModelID, Label: "Jev picks the model for each request",
-			Confinement: eff.Max.String(), Capabilities: []string{"text"},
+			Confinement: eff.ForAuto().Max.String(), Capabilities: []string{"text"},
 		},
 	}
 }

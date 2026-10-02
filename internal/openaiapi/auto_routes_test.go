@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,10 @@ const (
 	autoChat    = `{"model":"auto","messages":[{"role":"user","content":"write a haiku"}]}`
 	autoChatURL = "/v1/chat/completions"
 )
+
+// autoAnyPolicy serves every class and lets auto pick among all of them: what an
+// operator has when they raised --auto-confinement on purpose.
+var autoAnyPolicy = Policy{Max: Unconfined, AutoMax: Unconfined}
 
 func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	t.Helper()
@@ -95,19 +100,29 @@ func TestAutoIsNotOfferedWithoutJev(t *testing.T) {
 // Where it works, auto is the last model of the list, so that a client that takes
 // the first one is not moved to it (and its prompts to TypeSafe) by an operator
 // switching the surface on. It is retrievable, and its confinement is the
-// strongest class the key's policy allows: what Jev picks is never above it.
+// strongest class it picks within: the policy's, capped by what the operator let
+// auto pick (chat-only unless they raised it).
 func TestAutoIsListedLastWhenAvailable(t *testing.T) {
 	h := autoGateway(t, &fakeAuto{id: "claude/default", p: 1})
 	secret := h.key(t, "default", "app", false)
 
-	for policy, want := range map[Policy]string{anyPolicy: "unconfined", {Max: Sandboxed}: "sandboxed", {Max: ChatOnly}: "chat-only"} {
-		list := decodeModelList(t, h.serve(policy, http.MethodGet, "/v1/models", secret, ""))
+	for _, c := range []struct {
+		policy Policy
+		want   string
+	}{
+		{anyPolicy, "chat-only"}, // nothing granted to auto
+		{Policy{Max: Unconfined, AutoMax: Sandboxed}, "sandboxed"},
+		{autoAnyPolicy, "unconfined"},
+		{Policy{Max: Sandboxed, AutoMax: Unconfined}, "sandboxed"}, // never above the listener
+		{Policy{Max: ChatOnly, AutoMax: Unconfined}, "chat-only"},
+	} {
+		list := decodeModelList(t, h.serve(c.policy, http.MethodGet, "/v1/models", secret, ""))
 		if len(list.Data) < 2 || list.Data[len(list.Data)-1].ID != "auto" || list.Data[0].ID == "auto" {
-			t.Fatalf("policy %v: auto must come after the models: %+v", policy, list.Data)
+			t.Fatalf("policy %v: auto must come after the models: %+v", c.policy, list.Data)
 		}
 		a := list.Data[len(list.Data)-1]
-		if a.Object != "model" || a.OwnedBy != "jev" || a.Monoagent.Runtime != "auto" || a.Monoagent.Confinement != want {
-			t.Errorf("policy %v: %+v, want owned by jev, runtime auto, confinement %s", policy, a, want)
+		if a.Object != "model" || a.OwnedBy != "jev" || a.Monoagent.Runtime != "auto" || a.Monoagent.Confinement != c.want {
+			t.Errorf("policy %v: %+v, want owned by jev, runtime auto, confinement %s", c.policy, a, c.want)
 		}
 	}
 	rec := h.serve(anyPolicy, http.MethodGet, "/v1/models/auto", secret, "")
@@ -126,7 +141,7 @@ func TestAutoRunsTheModelJevPicks(t *testing.T) {
 	secret := h.key(t, "alice", "app", false)
 
 	body := `{"model":"auto","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"first question"},{"role":"assistant","content":"first answer"},{"role":"user","content":"write a haiku"}]}`
-	rec := h.serve(anyPolicy, http.MethodPost, autoChatURL, secret, body)
+	rec := h.serve(autoAnyPolicy, http.MethodPost, autoChatURL, secret, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
@@ -149,17 +164,19 @@ func TestAutoRunsTheModelJevPicks(t *testing.T) {
 	}
 }
 
-// Jev only picks among what the policy allows: under chat-only it is offered
-// claude's models and nothing else, and a model it names that was not offered
-// is not run. A key created with --context is held to the context maximum.
+// Jev only picks among what the policy allows, and within what the operator let
+// auto pick: under chat-only it is offered claude's models and nothing else, and a
+// model it names that was not offered is not run. A key created with --context is
+// held to the context maximum.
 func TestAutoOffersOnlyWhatThePolicyAllows(t *testing.T) {
 	for name, c := range map[string]struct {
 		policy  Policy
 		context bool
 	}{
-		"a chat-only server":  {Policy{Max: ChatOnly}, false},
-		"a context key":       {Policy{Max: Unconfined, ContextMax: ChatOnly}, true},
-		"a sandboxed ceiling": {Policy{Max: Sandboxed}, false},
+		"a chat-only server":  {Policy{Max: ChatOnly, AutoMax: Unconfined}, false},
+		"a context key":       {Policy{Max: Unconfined, ContextMax: ChatOnly, AutoMax: Unconfined}, true},
+		"a sandboxed ceiling": {Policy{Max: Sandboxed, AutoMax: Unconfined}, false},
+		"nothing granted":     {anyPolicy, false},
 	} {
 		log, f := &execLog{}, &fakeAuto{id: "antigravity/gemini-3.8-flash-high", p: 1} // never offered
 		h := newHarness(t, log.exec("x"), func(d *Deps, _ *Config) { d.Auto = f.funcs() })
@@ -176,6 +193,7 @@ func TestAutoOffersOnlyWhatThePolicyAllows(t *testing.T) {
 		if c.context {
 			eff = c.policy.ForContextKey()
 		}
+		eff = eff.ForAuto()
 		for id := range f.options {
 			m, err := h.g.catalog.Resolve(context.Background(), id)
 			if err != nil || !eff.Allows(m.Class) {
@@ -185,6 +203,53 @@ func TestAutoOffersOnlyWhatThePolicyAllows(t *testing.T) {
 		if rec.Header().Get("X-Monoagent-Auto") != "rule" || log.opts[0].Runtime == "antigravity" {
 			t.Errorf("%s: a model that was not offered must not run (auto=%q, ran %s)", name, rec.Header().Get("X-Monoagent-Auto"), log.opts[0].Runtime)
 		}
+	}
+}
+
+// Until the operator grants it more, auto picks among chat-only models, because a
+// prompt can steer the pick and the author of a prompt need not hold the key: on a
+// listener that serves every class, a runtime above chat-only is not an option, and
+// a named model is not subject to this (the client chose it). --auto-confinement
+// (AutoMax) is the permission, and never above the listener's own policy.
+func TestAutoIsChatOnlyUntilTheOperatorGrantsMore(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		policy  Policy
+		offered []string // the runtimes Jev is offered, sorted
+	}{
+		{"nothing granted", anyPolicy, []string{"claude"}},
+		{"sandboxed granted", Policy{Max: Unconfined, AutoMax: Sandboxed}, []string{"claude", "codex"}},
+		{"everything granted", autoAnyPolicy, []string{"antigravity", "claude", "codex", "hermes"}},
+		{"granted above a chat-only listener", Policy{Max: ChatOnly, AutoMax: Unconfined}, []string{"claude"}},
+	} {
+		log, f := &execLog{}, &fakeAuto{id: "claude/default", p: 1}
+		h := newHarness(t, log.exec("x"), func(d *Deps, _ *Config) { d.Auto = f.funcs() })
+		secret := h.key(t, "default", "app", false)
+
+		if rec := h.serve(c.policy, http.MethodPost, autoChatURL, secret, autoChat); rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", c.name, rec.Code, rec.Body)
+		}
+		runtimes := map[string]bool{}
+		for id := range f.options {
+			runtimes[strings.SplitN(id, "/", 2)[0]] = true
+		}
+		var got []string
+		for rt := range runtimes {
+			got = append(got, rt)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(c.offered, ",") {
+			t.Errorf("%s: Jev was offered %v, want models of %v", c.name, got, c.offered)
+		}
+	}
+
+	// A model the client names itself is not auto's to refuse.
+	log := &execLog{}
+	h := newHarness(t, log.exec("x"), func(d *Deps, _ *Config) { d.Auto = (&fakeAuto{id: "claude/default", p: 1}).funcs() })
+	secret := h.key(t, "default", "app", false)
+	rec := h.serve(anyPolicy, http.MethodPost, autoChatURL, secret, `{"model":"antigravity","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK || log.count() != 1 || log.opts[0].Runtime != "antigravity" {
+		t.Errorf("a named model: %d, ran %+v", rec.Code, log.opts)
 	}
 }
 
@@ -221,7 +286,7 @@ func TestAutoStreamsAndLogsWithoutThePrompt(t *testing.T) {
 	h := newHarness(t, log.exec("streamed"), func(d *Deps, _ *Config) { d.Auto = f.funcs() })
 	secret := h.key(t, "default", "app", false)
 
-	rec := h.serve(anyPolicy, http.MethodPost, autoChatURL, secret, `{"model":"auto","stream":true,"messages":[{"role":"user","content":"write a haiku"}]}`)
+	rec := h.serve(autoAnyPolicy, http.MethodPost, autoChatURL, secret, `{"model":"auto","stream":true,"messages":[{"role":"user","content":"write a haiku"}]}`)
 	if rec.Code != http.StatusOK || rec.Header().Get("X-Monoagent-Auto") != "jev" || rec.Header().Get("X-Monoagent-Model") != "codex/gpt-6-astra" {
 		t.Fatalf("%d, auto %q, model %q", rec.Code, rec.Header().Get("X-Monoagent-Auto"), rec.Header().Get("X-Monoagent-Model"))
 	}
