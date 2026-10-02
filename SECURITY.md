@@ -769,7 +769,8 @@ executes nothing of the caller's. What this changes, and what it does not:
   `</functionResult>` is not).
   The arguments of a call that a client sends back, which the transcript renders
   outside the fence, are rendered as compact JSON (with the characters that end a
-  line escaped) or, when they are not JSON, defanged as a result is; the name
+  line escaped, and a marker or a tag found in it defanged as in a result) or, when
+  they are not JSON, defanged as a result is; the name
   of such a call is refused (400) unless it is printable ASCII without
   `[ ] < > & ' "` or a backtick. An id of that kind is shown as it is, and any
   other id (a client may send one of 1 to 128 bytes of anything) is shown to the
