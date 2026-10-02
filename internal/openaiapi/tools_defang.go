@@ -76,6 +76,16 @@ func see(r rune) (byte, bool) {
 	case unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r): // the Hangul fillers, among others, are letters that render as nothing
 		return 0, false
 	case unicode.IsLetter(r) || unicode.IsDigit(r):
+		// A letter that is a case of an ASCII one (the dotted capital I lower-cases to i, the
+		// dotless i upper-cases to I) is that letter: NFKC does not take it apart.
+		for _, c := range [2]rune{unicode.ToLower(r), unicode.ToUpper(r)} {
+			switch {
+			case 'a' <= c && c <= 'z':
+				return byte(c) - 'a' + 'A', true
+			case 'A' <= c && c <= 'Z':
+				return byte(c), true
+			}
+		}
 		return otherLetter, true
 	}
 	return 0, false // format characters, combining marks, symbols, other punctuation

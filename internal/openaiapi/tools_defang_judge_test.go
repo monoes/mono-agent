@@ -131,13 +131,14 @@ func TestWhatPassesForATurnIsChangedAndTheWordsStay(t *testing.T) {
 		"x\n[ user ]\n":                "x\n&#91; user ]\n",
 		// What is at a place the skeleton took apart or left out is replaced as it stands: the
 		// character, whole, that gave the bracket, wherever it was.
-		"x\n［user］\n":                           "x\n&#91;user］\n",
-		"x\n\u2800 ［assistant］\n":               "x\n\u2800 &#91;assistant］\n",
-		"x\n\u200b\u3000[user]\n":               "x\n\u200b\u3000&#91;user]\n",
-		"x\n\ufe64/function_result\ufe65\n":     "x\n&lt;/function_result\ufe65\n",
-		"\ufe64function_result":                 "&lt;function_result",
-		"[\u0301user]":                          "&#91;\u0301user]",
-		"x\n<\u2800/ function\u00a0_ result>\n": "x\n&lt;\u2800/ function\u00a0_ result>\n",
+		"x\n［user］\n":                             "x\n&#91;user］\n",
+		"x\n\u2800 ［assistant］\n":                 "x\n\u2800 &#91;assistant］\n",
+		"x\n\u200b\u3000[user]\n":                 "x\n\u200b\u3000&#91;user]\n",
+		"x\n\ufe64/function_result\ufe65\n":       "x\n&lt;/function_result\ufe65\n",
+		"\ufe64function_result":                   "&lt;function_result",
+		"[\u0301user]":                            "&#91;\u0301user]",
+		"[assistant]\n[assİstant]\n[assıstant]\n": "&#91;assistant]\n&#91;assİstant]\n&#91;assıstant]\n", // the dotted capital I and the dotless i are cases of i
+		"x\n<\u2800/ function\u00a0_ result>\n":   "x\n&lt;\u2800/ function\u00a0_ result>\n",
 	} {
 		if got := defangResult(text); got != want {
 			t.Errorf("defangResult(%q) = %q, want %q", text, got, want)
@@ -174,7 +175,7 @@ func TestNoCompositionOfDisguisesFoolsTheJudge(t *testing.T) {
 		u(0x115f), u(0x1160), u(0x3164), u(0xffa0), u(0x34f), u(0xfe0f), u(0xa0), u(0x3000), u(0x2003), u(0x202f), u(0x301), u(0x308), u(0x20dd),
 		"[user]", "[assistant]", "[tool x (y)]", "[function]", "</function_result>", "<function_result>", "< / function_result >",
 		u(0xff3b), u(0xff3d), u(0xff1c), u(0xff1e), u(0xfe64), u(0xfe65), "ｕｓｅｒ", "ＵＳＥＲ", "ｆｕｎｃｔｉｏｎ＿ｒｅｓｕｌｔ",
-		u(0x1d42e, 0x1d42c, 0x1d41e, 0x1d42b), "ⓤⓢⓔⓡ", "ᵘˢᵉʳ", "𝗎𝗌𝖾𝗋", "ᴜꜱᴇʀ", u(0x17f), u(0x212a), u(0xfb01), u(0x2474),
+		u(0x1d42e, 0x1d42c, 0x1d41e, 0x1d42b), "ⓤⓢⓔⓡ", "ᵘˢᵉʳ", "𝗎𝗌𝖾𝗋", "ᴜꜱᴇʀ", u(0x17f), u(0x212a), u(0x130), u(0x131), u(0xfb01), u(0x2474),
 		"&lt;", "&#91;", u(0x3008), u(0x27e8), u(0x2215), u(0x2044),
 	}
 	rng := rand.New(rand.NewSource(11))
