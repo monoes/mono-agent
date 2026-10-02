@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +30,7 @@ import (
 // 429, 502). Every other failure fails it, the follow-ups included: a broken resume
 // or replay must not hide behind a skip.
 func TestLiveToolLoopPerRuntime(t *testing.T) {
-	var nativeAttempts, nativeDenied, leftovers atomic.Int32
+	var nativeAttempts, nativeDenied, leftovers, strays atomic.Int32
 	_, secret, h := liveGateway(t, func(inner ExecFunc) ExecFunc {
 		return func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 			res, err := inner(ctx, opts, func(ev monomind.Event) {
@@ -41,6 +43,7 @@ func TestLiveToolLoopPerRuntime(t *testing.T) {
 				onEvent(ev)
 			})
 			leftovers.Add(int32(len(besidesTmp(opts.Cwd))))
+			strays.Add(int32(len(processesIn(opts.Cwd))))
 			return res, err
 		}
 	})
@@ -58,10 +61,14 @@ func TestLiveToolLoopPerRuntime(t *testing.T) {
 			nativeAttempts.Store(0)
 			nativeDenied.Store(0)
 			leftovers.Store(0)
+			strays.Store(0)
 			liveToolLoop(t, h, secret, rt)
-			t.Logf("%s: the runtime tried %d of its own tools, %d denied; %d files left in the turns' folders", rt, nativeAttempts.Load(), nativeDenied.Load(), leftovers.Load())
+			t.Logf("%s: the runtime tried %d of its own tools, %d denied; %d files and %d processes left in the turns' folders", rt, nativeAttempts.Load(), nativeDenied.Load(), leftovers.Load(), strays.Load())
 			if leftovers.Load() != 0 {
 				t.Errorf("%s: a tool turn left %d files in its folder", rt, leftovers.Load())
+			}
+			if strays.Load() != 0 {
+				t.Errorf("%s: %d processes were still running in a turn's folder after the turn returned", rt, strays.Load())
 			}
 		})
 	}
@@ -149,4 +156,48 @@ func contentOf(r toolReply) string {
 		return *c
 	}
 	return ""
+}
+
+// The check for processes left behind must be able to see one: a check that reports
+// none whatever happens (lsof matching names, not the folder behind a symlink such as
+// macOS's /var) would let a leak through every live run. This one runs by default.
+func TestProcessesInSeesAProcessInTheFolder(t *testing.T) {
+	if _, err := exec.LookPath("lsof"); err != nil {
+		t.Skip("lsof is not installed")
+	}
+	dir := t.TempDir()
+	cmd := exec.Command("sleep", "30")
+	cmd.Dir = dir
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := strconv.Itoa(cmd.Process.Pid)
+	if got := processesIn(dir); !slices.Contains(got, pid) {
+		t.Errorf("processesIn lists %v for a folder that process %s runs in", got, pid)
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	if got := processesIn(dir); len(got) != 0 {
+		t.Errorf("processesIn lists %v for a folder nothing runs in", got)
+	}
+}
+
+// processesIn lists the processes, other than this one, whose working directory is
+// under dir; none where lsof is not installed. A leg that ends at a call has its
+// process group killed, so a process still in the turn's folder after the turn
+// returned would be one that outlived it. The kernel may take a moment to reap the
+// group: it looks again for up to two seconds.
+func processesIn(dir string) []string {
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		return nil
+	}
+	var pids []string
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		out, _ := exec.Command(lsof, "-a", "-d", "cwd", "-t", "+D", dir).Output()
+		pids = slices.DeleteFunc(strings.Fields(string(out)), func(pid string) bool { return pid == strconv.Itoa(os.Getpid()) })
+		if len(pids) == 0 || time.Now().After(deadline) {
+			return pids
+		}
+	}
 }
