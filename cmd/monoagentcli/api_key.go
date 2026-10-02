@@ -93,7 +93,7 @@ func newAPIKeyCreateCmd(cfg *globalConfig) *cobra.Command {
 					key.Name, key.ID, key.ProfileID)
 				if key.Context {
 					fmt.Fprintln(cmd.ErrOrStderr(),
-						"This key adds the profile's knowledge to requests, so it is served only by chat-only models, and is refused tool calling, unless the server was started with --context-confinement (see `monoagentcli api models`).")
+						"This key adds the profile's knowledge to requests, so it is served only by chat-only models, and is refused tool calling, unless the server was started with --context-confinement (and --confinement, on a chat-only listener) above chat-only (see `monoagentcli api models`).")
 				}
 				return nil
 			})
