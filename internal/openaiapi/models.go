@@ -66,7 +66,7 @@ func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request
 		// the list must not be moved to it, and its prompts to TypeSafe, by an
 		// operator switching the surface on.
 		if len(models) > 0 && g.autoStatus(r.Context(), pr.ProfileID).Available {
-			out.Data = append(out.Data, autoObject(eff))
+			out.Data = append(out.Data, g.autoObject(eff, models))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -79,14 +79,15 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 		id := r.PathValue("id")
 		if id == autoModelID {
 			eff := policyFor(p, pr)
-			if _, e := g.autoCandidates(r.Context(), pr, eff); e != nil {
+			candidates, e := g.autoCandidates(r.Context(), pr, eff)
+			if e != nil {
 				if e.Status != http.StatusNotFound { // the list could not be loaded
 					g.logFailure(pr, "get model", e)
 				}
 				writeError(w, e)
 				return
 			}
-			writeJSON(w, http.StatusOK, autoObject(eff))
+			writeJSON(w, http.StatusOK, g.autoObject(eff, candidates))
 			return
 		}
 		m, err := g.catalog.Resolve(r.Context(), id)
