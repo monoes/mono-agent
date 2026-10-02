@@ -146,6 +146,39 @@ func TestPolicyForContextKeyIsCappedByTheContextMax(t *testing.T) {
 	}
 }
 
+// The auto model picks among chat-only models unless the operator raised the auto
+// maximum, because a prompt can steer the pick; the maximum never raises what the
+// listener serves, nor what a context key may use.
+func TestPolicyForAutoIsCappedByTheAutoMax(t *testing.T) {
+	for _, c := range []struct{ listener, autoMax, want Class }{
+		{Unconfined, 0, ChatOnly}, // nothing set: chat-only
+		{Sandboxed, 0, ChatOnly},
+		{ChatOnly, 0, ChatOnly},
+		{Unconfined, ChatOnly, ChatOnly},
+		{Unconfined, Sandboxed, Sandboxed},
+		{Unconfined, Unconfined, Unconfined},
+		{Sandboxed, Unconfined, Sandboxed}, // never above the listener
+		{ChatOnly, Unconfined, ChatOnly},
+	} {
+		p := Policy{Max: c.listener, AutoMax: c.autoMax}
+		if got := p.ForAuto().Max; got != c.want {
+			t.Errorf("a %s listener with auto maximum %d lets auto pick up to %v, want %v", p, c.autoMax, got, c.want)
+		}
+	}
+	// A context key keeps its own cap through auto, whatever the auto maximum.
+	ctx := Policy{Max: Unconfined, ContextMax: ChatOnly, AutoMax: Unconfined}
+	if got := ctx.ForContextKey().ForAuto().Max; got != ChatOnly {
+		t.Errorf("a context key through auto: up to %v, want chat-only", got)
+	}
+	both := Policy{Max: Unconfined, ContextMax: Sandboxed, AutoMax: Sandboxed}
+	if got := both.ForContextKey().ForAuto().Max; got != Sandboxed {
+		t.Errorf("both raised to sandboxed: up to %v, want sandboxed", got)
+	}
+	if (Policy{}).ForAuto().Allows(ChatOnly) {
+		t.Error("the zero policy serves nothing, for auto too")
+	}
+}
+
 func TestDefaultPolicyByBindAddress(t *testing.T) {
 	for addr, want := range map[string]Class{
 		"127.0.0.1:9322": Unconfined,

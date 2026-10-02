@@ -159,7 +159,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			go daemonhb.RunWith(ctx, daemonhb.Heartbeat{
 				APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, V1Addr: v1ServingAddr, Version: getVersion(),
 				APIConfinement: apiRT.confinementReport(servingAddr, false), V1Confinement: apiRT.confinementReport(v1ServingAddr, true),
-				ContextConfinement: apiRT.contextReport(),
+				ContextConfinement: apiRT.contextReport(), AutoConfinement: apiRT.autoReport(),
 			},
 				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
 			orgs.start(ctx, engine)

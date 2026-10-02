@@ -23,34 +23,6 @@ func decodeErrorBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]an
 	return body.Error
 }
 
-// `auto`, the model that lets Jev pick, is a later phase. Asking for it is a 404
-// like any unknown model, but a client that configured Jev, and was told "does not
-// exist", has no way to tell a missing feature from a typo: the message says it is
-// not implemented yet, whichever route the name came in on.
-func TestAutoIsRefusedAsNotImplementedYet(t *testing.T) {
-	h := newHarness(t, okTurn("x"))
-	secret := h.key(t, "default", "app", false)
-
-	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"chat":      h.serve(anyPolicy, http.MethodPost, "/v1/chat/completions", secret, `{"model":"auto","messages":[{"role":"user","content":"x"}]}`),
-		"retrieval": h.serve(anyPolicy, http.MethodGet, "/v1/models/auto", secret, ""),
-	} {
-		e := decodeErrorBody(t, rec)
-		msg, _ := e["message"].(string)
-		if rec.Code != http.StatusNotFound || e["code"] != "model_not_found" || e["param"] != "model" {
-			t.Errorf("%s: status %d, error %v: still a 404 model_not_found on the model parameter", name, rec.Code, e)
-		}
-		if !strings.Contains(msg, "not implemented yet") || strings.Contains(msg, "does not exist") {
-			t.Errorf("%s: message %q must say the feature is not implemented yet, not that the model does not exist", name, msg)
-		}
-	}
-
-	rec := h.serve(anyPolicy, http.MethodGet, "/v1/models/nope", secret, "")
-	if msg, _ := decodeErrorBody(t, rec)["message"].(string); !strings.Contains(msg, "does not exist") {
-		t.Errorf("an unknown id keeps its own message: %q", msg)
-	}
-}
-
 func TestWriteErrorUsesTheOpenAIShape(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeError(rec, errUnsupported("tools", "tool calling is not supported yet"))

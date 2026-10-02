@@ -40,6 +40,12 @@ type ModelInfo struct {
 	Validated bool     // the roster has a recent passing validation
 	Efforts   []string // reasoning effort levels the model accepts
 	Alias     bool     // another name for an earlier entry: resolvable, not listed
+	// What that validation measured, for choosing between models (the auto
+	// model's fallback rule): zero when the model is not validated, and HasCost
+	// says whether the runtime reported a cost at all.
+	CostUSD   float64
+	HasCost   bool
+	LatencyMs int64
 }
 
 // CatalogFuncs are the lookups the catalog is built from. Production wires
@@ -292,7 +298,7 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 		c.logf("the model list of %s could not be refreshed: using the last one, and trying again soon", id)
 	}
 
-	validated := validatedIDs(roster, scan, c.now())
+	validated := validatedModels(roster, scan, c.now())
 	var out []ModelInfo
 	for i, e := range installed {
 		class := ClassifyRuntime(e, caps)
@@ -307,9 +313,11 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 				label = m.ID
 			}
 			id := e.ID + "/" + m.ID
+			v, isValidated := validated[id]
 			out = append(out, ModelInfo{
 				ID: id, Runtime: e.ID, Model: m.ID, Label: label, Class: class,
-				Validated: validated[id], Efforts: m.EffortLevels, Alias: m.AliasOf != "",
+				Validated: isValidated, Efforts: m.EffortLevels, Alias: m.AliasOf != "",
+				CostUSD: v.CostUSD, HasCost: v.HasCost, LatencyMs: v.LatencyMs,
 			})
 		}
 		listsDefault := false
@@ -348,14 +356,21 @@ func (c *Catalog) rosterResults(ctx context.Context) []agentroster.Result {
 	return results
 }
 
-// validatedIDs returns the "<runtime>/<model>" ids with a recent passing
-// validation.
-func validatedIDs(results []agentroster.Result, scan *monomind.ScanResult, now time.Time) map[string]bool {
-	ready := map[string]bool{}
+// validation is what the latest passing validation of a model measured.
+type validation struct {
+	CostUSD   float64
+	HasCost   bool
+	LatencyMs int64
+}
+
+// validatedModels returns, by "<runtime>/<model>" id, the models with a recent
+// passing validation and what it measured.
+func validatedModels(results []agentroster.Result, scan *monomind.ScanResult, now time.Time) map[string]validation {
+	ready := map[string]validation{}
 	for _, rr := range agentroster.Build(results, scan, now, agentroster.DefaultMaxAge) {
 		for _, m := range rr.Models {
 			if m.State == agentroster.StateReady {
-				ready[rr.Runtime+"/"+m.Model] = true
+				ready[rr.Runtime+"/"+m.Model] = validation{CostUSD: m.CostUSD, HasCost: m.HasCost, LatencyMs: m.LatencyMs}
 			}
 		}
 	}

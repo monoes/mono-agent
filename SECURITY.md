@@ -555,6 +555,48 @@ and raising it accepts that a captured page could steer that runtime. The
 excerpts leave the machine like any prompt, to the runtime's provider. The
 personal brain and other profiles are never searched.
 
+**The `auto` model.** A request for `"model": "auto"` has TypeSafe Jev pick
+the runtime and model. It is off until the key's profile runs `monoagentcli
+jev enable api_auto` (which prints what follows and asks first) and has a Jev
+key: its vault entry, else the server's `TYPESAFE_API_KEY`, so with that
+variable set every profile that switches the surface on spends it. Then each
+such request sends TypeSafe, a third party besides the runtime's provider that
+answers the prompt, the first 4,000 characters of the last user message and,
+for every model the key may use, its name, description and validated cost and
+latency. Never the system prompt, earlier turns, the excerpts of a context key
+or a key. So whoever holds a key of that profile decides what is sent to
+TypeSafe: enable the surface only where you accept that. `auto` is listed after
+the concrete models, so a client that takes the first model of the list is not
+moved to it, and its prompts to TypeSafe, by switching the surface on.
+
+What Jev can decide is bounded by structure, not by its instructions. The prompt
+goes as data (`state.untrusted_prompt`, and Jev is told to treat it so), but Jev
+can only answer with one of the listed model ids, anything else is discarded,
+and the list is already cut before Jev sees it: to what the key's policy allows
+(the listener's `--confinement`, a context key's `--context-confinement`) and
+within `--auto-confinement`, which is **chat-only unless the operator raised
+it**. A prompt that steers Jev can therefore never reach a model the key could
+not have named itself and, by default, never one with native tools. The author
+of a prompt need not be the holder of the key (an app that forwards its users'
+text, say), so letting a prompt choose the confinement class of its own turn is
+a permission the operator gives, with `--auto-confinement sandboxed|any`
+(`MONOAGENT_API_AUTO_CONFINEMENT`); `api models` shows which models auto may
+pick and how many are held back. A model the client names itself is not subject
+to it. A context key stays at chat-only unless `--context-confinement` says
+otherwise, through `auto` as well.
+Jev's answer is used only when it arrives within 8 seconds (looking up the key
+included), with no retry, and is sure enough for the surface's threshold; an
+outage, a timeout or a doubt falls back to a rule, never to a wider set: of the
+validated models the most confined, then the cheapest, then the fastest, so that
+an outage does not move a request to a less confined model for being cheaper. An
+outage costs a profile's first three `auto` requests up to those 8 seconds each,
+with their slots held; then its questions stop for 30 seconds and the rule decides
+at once, and one question after that finds out whether Jev is back.
+Each question is recorded in `jev_usage` under `api_auto` (counts only), and the
+log line of the request says `auto=jev` or `auto=rule` and never the prompt. The
+gateway blanks `TYPESAFE_API_KEY` in the environment of its agent turns, which
+inherit the rest of the server's: a turn that runs commands could read it.
+
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost.
 The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
@@ -562,8 +604,9 @@ the 2 MiB request body and the 10 minute turn timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing.
 
 **Logs and errors.** One line per chat completion names the request id, key
-id, profile, model, status, duration and how many knowledge excerpts were
-added, plus, for a failure, the operator-only detail (a Go error or a
+id, profile, model, status, duration, how many knowledge excerpts were
+added and, for `auto`, who chose the model, plus, for a failure, the
+operator-only detail (a Go error or a
 runtime's error code). A failure to list models, a failed knowledge search and
 a failure to verify a key are logged too; a successful listing is not. None
 of the gateway's lines holds a prompt, an answer or a key. monomind's own
@@ -648,8 +691,8 @@ unauthenticated and returns the server version.
   not a determined key holder, and keep the OS user's own files out of reach (a
   dedicated user, as above).
 
-**Not part of this surface (yet).** Image generation, OpenAI tool calling and
-Jev's `auto` model are later phases. Today a request cannot hand the agent
+**Not part of this surface (yet).** Image generation and OpenAI tool calling
+are later phases. Today a request cannot hand the agent
 tools of the caller's own (a non-empty `tools` is rejected); the runtime's
 native tools are
 a separate matter, covered by the classes above.

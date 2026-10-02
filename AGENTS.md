@@ -418,8 +418,40 @@ a key. It lives in `internal/openaiapi/`; the spec is
   non-empty `tools` or `functions`, a `tool_choice` or `function_call` other
   than `"none"`, `tool` and `function` messages, content parts that are not
   text (images, audio, files) and a `response_format` other than `text` or
-  `json_object`. Images, tool calling and an `auto` model that lets Jev pick
-  are not available yet.
+  `json_object`. Images and tool calling are not available yet.
+- **The `auto` model.** `"model": "auto"` lets [TypeSafe Jev](#typesafe-jev-decisions-only)
+  pick, per request, among the models the listener serves (a `--context` key:
+  among those its own cap allows). It is the `api_auto` Jev surface: off until
+  `monoagentcli jev enable api_auto` on the key's profile, which also needs
+  that profile's Jev key (`jev key set`, or `TYPESAFE_API_KEY` in the server's
+  environment, which the gateway blanks in its agent turns). Without them
+  `auto` is not listed and answers 404 `model_not_found` naming what is
+  missing (`api models` and `api status` say it too, and that a key from the
+  environment is that shell's). It is listed after the concrete models, so a
+  client that takes the first model is not moved to it. What is sent to
+  TypeSafe: the first 4,000 characters of the last user message and each
+  candidate's name, description and validated cost and latency, never the
+  system prompt, earlier turns, the profile's knowledge or a key. Jev only
+  picks among options the code lists: the models the policy allows within
+  `--auto-confinement` (`MONOAGENT_API_AUTO_CONFINEMENT`), which is `chat-only`
+  unless the operator raised it, because a prompt can steer which model Jev
+  picks and its author need not hold the key. It never goes above the
+  listener's policy or a context key's cap, and a model the client names itself
+  is not affected; `api models` shows what auto may pick (`auto_allowed` per
+  model, `auto.candidates`, `auto.held_back`). A failure, a timeout
+  (8 seconds, key lookup included), an answer that is not an option or a
+  probability under the surface's threshold (default 0, set it with `jev
+  enable api_auto --threshold`) uses a rule instead: of the validated models
+  the most confined, then the cheapest, then the fastest, and with none
+  validated a runtime's default model, claude first. Three questions in a row
+  with no answer stop a profile's questions for 30 seconds (then one question
+  probes whether Jev is back), so an outage does not cost every request its 8
+  seconds: the rule decides meanwhile, and the log says when. The response names the
+  pick in `model` and `X-Monoagent-Model`, and who chose in
+  `X-Monoagent-Auto` (`jev` or `rule`; `rule` also when there was only one
+  model to pick and Jev was not asked). A question to Jev is recorded under
+  `api_auto` in `jev usage`, and the server's log line has `auto=jev|rule` and
+  never the prompt.
 - **Auth is a per-profile API key** (`sk-ma-…`), never the legacy token above.
   `monoagentcli api key create --name <n> [--context]` prints the key once and
   stores only its SHA-256, so it needs no vault and no keyring and works on a
@@ -478,6 +510,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `--context-confinement chat-only|sandboxed|any`
   (`MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest
   class a key created with `--context` may use, never above the listener's.
+  `--auto-confinement chat-only|sandboxed|any` (`MONOAGENT_API_AUTO_CONFINEMENT`,
+  default `chat-only`) is the strongest class the `auto` model may pick, never
+  above the listener's or a context key's.
 - **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
   is loopback (default `127.0.0.1:9322`, where every runtime is allowed
   unless `--confinement` says otherwise). To serve it
@@ -1413,7 +1448,7 @@ probabilities, in one ~100–300 ms request. It **never generates text**.
   surface does exactly what it did without Jev.
 - **Opt-in per surface, per profile.** Every implicit surface
   (`action_fallback`, `hil`, `people_review`, `capture`, `inbox`,
-  `people_links`, `asks`, `retry`) is off until enabled. `enable` prints what
+  `people_links`, `asks`, `retry`, `api_auto`) is off until enabled. `enable` prints what
   that surface sends to TypeSafe and asks (or needs `--yes` when stdin is not
   a terminal). Workflow nodes that use Jev (e.g. `browser.jev`) opt in by
   being used; the org decider opts in through its own autonomy config.
@@ -1508,6 +1543,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_API_TLS_CERT` / `MONOAGENT_API_TLS_KEY` | Explicit TLS certificate/key file paths for the `--v1-addr` listener; when set they also make a loopback bind speak TLS. Both or neither: setting only one, or a pair that cannot be loaded, stops `httpapi` at startup, while `daemon` only prints a warning and serves no dedicated listener. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/api-tls/`, and a loopback bind is plain HTTP. |
 | `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). One value for every listener of the process, the loopback main one included. Default: unset — `any` on a loopback listener, `chat-only` on any other. |
 | `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
+| `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |

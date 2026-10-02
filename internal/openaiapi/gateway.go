@@ -39,8 +39,11 @@ type Deps struct {
 	Catalog CatalogFuncs
 	// Knowledge searches a profile's own knowledge. nil disables context.
 	Knowledge func(ctx context.Context, profileID, query string) ([]monomind.KnowledgeResult, error)
-	Logf      func(format string, args ...any)
-	Version   string
+	// Auto lets Jev pick the model of a request for "auto". The zero value means
+	// the model is never available.
+	Auto    AutoFuncs
+	Logf    func(format string, args ...any)
+	Version string
 }
 
 // DefaultDeps wires the gateway to monomind and the stored roster.
@@ -61,6 +64,7 @@ func DefaultDeps(db *sql.DB, version string) Deps {
 		Knowledge: func(ctx context.Context, profileID, query string) ([]monomind.KnowledgeResult, error) {
 			return monomind.SearchKnowledge(ctx, db, profileID, query)
 		},
+		Auto:    DefaultAuto(db),
 		Logf:    func(format string, args ...any) { fmt.Fprintf(os.Stderr, "api: "+format+"\n", args...) },
 		Version: version,
 	}
@@ -78,6 +82,11 @@ type Gateway struct {
 	mu      sync.Mutex
 	running int             // turns in flight
 	idle    []chan struct{} // closed when running reaches zero
+
+	// now is the clock of the auto model's breakers: time.Now, unless a test moves it.
+	now       func() time.Time
+	breakerMu sync.Mutex
+	breakers  map[string]*autoBreaker // by profile
 
 	// shutdownCtx ends when the server is stopping: every turn in flight
 	// watches it, so closing a listener cannot leave an agent CLI running.
@@ -128,6 +137,9 @@ func New(d Deps, c Config) (*Gateway, error) {
 		limiter: newLimiter(cfg.MaxConcurrent),
 		bin:     &binCache{f: d.Bin},
 		unlock:  unlock,
+
+		now:      time.Now,
+		breakers: map[string]*autoBreaker{},
 	}
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
 	g.cleanSlots() // only now: nothing of another process can be running in them

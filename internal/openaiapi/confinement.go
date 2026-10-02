@@ -77,6 +77,11 @@ type Policy struct {
 	// only a runtime with no native tools can safely read that, so the zero
 	// value means chat-only. It never raises Max.
 	ContextMax Class
+	// AutoMax is the strongest class the auto model may pick. A prompt can steer
+	// which model Jev picks, and the author of a prompt need not be the holder
+	// of the key, so auto stays among chat-only models until the operator gives
+	// it more: the zero value means chat-only. It never raises Max.
+	AutoMax Class
 }
 
 // ParsePolicy reads a --confinement value: chat-only, sandboxed or any.
@@ -109,6 +114,20 @@ func (p Policy) Allows(c Class) bool { return c >= ChatOnly && c <= p.Max }
 // --context: the listener's, capped at ContextMax (chat-only when unset).
 func (p Policy) ForContextKey() Policy {
 	limit := p.ContextMax
+	if limit == 0 {
+		limit = ChatOnly
+	}
+	if p.Max > limit {
+		p.Max = limit
+	}
+	return p
+}
+
+// ForAuto is the policy the auto model picks within: p, capped at AutoMax
+// (chat-only when unset). For a context key call it on ForContextKey's result, so
+// that the key's own cap applies too.
+func (p Policy) ForAuto() Policy {
+	limit := p.AutoMax
 	if limit == 0 {
 		limit = ChatOnly
 	}

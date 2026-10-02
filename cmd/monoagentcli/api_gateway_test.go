@@ -23,6 +23,7 @@ func newAPIRuntimeForTest(t *testing.T, f apiFlags) (*apiRuntime, error) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
 	t.Setenv("MONOAGENT_API_CONTEXT_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_AUTO_CONFINEMENT", "")
 	t.Setenv("MONOAGENT_API_V1_ADDR", "")
 	t.Setenv("MONOAGENT_API_MAX_CONCURRENT", "")
 	t.Setenv("MONOAGENT_API_TURN_TIMEOUT", "")
@@ -211,6 +212,50 @@ func TestAPIRuntimeContextConfinement(t *testing.T) {
 	}
 	if got := rt.contextReport(); got != "sandboxed" {
 		t.Errorf("contextReport = %q, want sandboxed", got)
+	}
+}
+
+// The auto model picks among chat-only models unless the operator raises it with
+// --auto-confinement (or MONOAGENT_API_AUTO_CONFINEMENT), and never above the
+// listener's own policy.
+func TestAPIRuntimeAutoConfinement(t *testing.T) {
+	rt, err := newAPIRuntimeForTest(t, apiFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.policy("127.0.0.1:9322").ForAuto().String(); got != "chat-only" {
+		t.Errorf("auto on a loopback listener by default: %s, want chat-only", got)
+	}
+	if got := rt.autoReport(); got != "chat-only" {
+		t.Errorf("autoReport = %q, want chat-only", got)
+	}
+
+	rt, err = newAPIRuntimeForTest(t, apiFlags{autoConfinement: "sandboxed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.policy("127.0.0.1:9322").ForAuto().String(); got != "sandboxed" {
+		t.Errorf("--auto-confinement sandboxed on loopback: %s", got)
+	}
+	if got := rt.policy("0.0.0.0:9443").ForAuto().String(); got != "chat-only" {
+		t.Errorf("a chat-only network listener must stay chat-only for auto: %s", got)
+	}
+	if got := rt.autoReport(); got != "sandboxed" {
+		t.Errorf("autoReport = %q, want sandboxed", got)
+	}
+
+	// The environment is read when the flag is not given.
+	t.Setenv("MONOAGENT_API_AUTO_CONFINEMENT", "any")
+	rt, err = newAPIRuntime(testdb.Open(t).DB, apiFlags{}, func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.policy("127.0.0.1:9322").ForAuto().String(); got != "any" {
+		t.Errorf("MONOAGENT_API_AUTO_CONFINEMENT=any on loopback: %s", got)
+	}
+
+	if _, err := newAPIRuntimeForTest(t, apiFlags{autoConfinement: "nope"}); exitCode(err) != 3 {
+		t.Errorf("a bad --auto-confinement must be invalid input, got exit %d (%v)", exitCode(err), err)
 	}
 }
 

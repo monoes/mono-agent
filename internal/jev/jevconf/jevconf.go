@@ -34,6 +34,9 @@ const (
 	PeopleLinks    Surface = "people_links"
 	Asks           Surface = "asks"
 	Retry          Surface = "retry"
+	// APIAuto lets Jev pick the runtime and model of a request to the
+	// OpenAI-compatible API that asks for the model "auto".
+	APIAuto Surface = "api_auto"
 	// Decider is recorded for usage only: the org decider opts in through
 	// its own autonomy config (plan D2), never through Enabled.
 	Decider Surface = "decider"
@@ -49,7 +52,7 @@ const (
 func NodeSurface(nodeType string) Surface { return Surface("node:" + nodeType) }
 
 // Surfaces lists the surfaces `jev enable` accepts, in display order.
-var Surfaces = []Surface{ActionFallback, HIL, PeopleReview, Capture, Inbox, PeopleLinks, Asks, Retry}
+var Surfaces = []Surface{ActionFallback, HIL, PeopleReview, Capture, Inbox, PeopleLinks, Asks, Retry, APIAuto}
 
 // Egress lists, per surface, the data sent to TypeSafe (plan §5); `jev enable`
 // prints it before switching a surface on.
@@ -62,6 +65,7 @@ var Egress = map[Surface][]string{
 	PeopleLinks:    {"both people's name, username, platform, website, job title and bio"},
 	Asks:           {"reply subject and body", "the question text of up to 50 waiting asks"},
 	Retry:          {"node type", "the error message with URLs' query strings, bearer/API tokens and vault values removed", "attempt number and HTTP status"},
+	APIAuto:        {"first 4,000 characters of the last user message", "the names, descriptions and validated cost and latency of the models the API serves"},
 }
 
 // Info is a surface's display title and a one-line description of what
@@ -78,12 +82,16 @@ var Describe = map[Surface]Info{
 	PeopleLinks:    {"Cross-platform people links", "Suggests which people on different platforms are the same person. Never merges anyone."},
 	Asks:           {"Org ask reply linking", "Links a reply that lost its ask: token to the waiting org ask it answers."},
 	Retry:          {"Retry triage", "Classifies node failures so rate limits back off longer and auth or permanent errors stop retrying."},
+	APIAuto:        {"OpenAI-compatible API: the auto model", "When a request asks for the model `auto`, Jev picks the runtime and model from the prompt, among the models the server's confinement policy allows."},
 }
 
 // Default thresholds per surface (plan §5), compared against jev.Top.
 var DefaultThreshold = map[Surface]float64{
 	ActionFallback: 0.5, HIL: 0.9, PeopleReview: 0, Capture: 0.75,
 	Inbox: 0.7, PeopleLinks: 0.9, Asks: 0.9, Retry: 0.7,
+	// APIAuto: 0 accepts the top pick, since the alternative is a rule that
+	// picks without reading the prompt at all.
+	APIAuto: 0,
 }
 
 // SecretName is the vault entry the resolver looks up.
