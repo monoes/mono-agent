@@ -13,33 +13,44 @@ func cand(id string, class Class, validated bool, cost float64, hasCost bool, la
 	return ModelInfo{ID: id, Runtime: rt, Model: model, Label: id, Class: class, Validated: validated, CostUSD: cost, HasCost: hasCost, LatencyMs: latency}
 }
 
-// The rule for when Jev cannot be asked or does not answer: the cheapest and
-// fastest model that has a recent passing validation; otherwise the runtime's
-// default model, runtimes in the order claude, codex, antigravity, then the rest
-// alphabetically.
+// The rule for when Jev cannot be asked or does not answer. Among the models
+// that have a recent passing validation: the most confined class, then the
+// cheapest, then the fastest. With none validated, a runtime's default model.
+// Within a class, runtimes go in the order claude, codex, antigravity, then the
+// rest alphabetically. Never a less confined model for being cheaper: what the
+// rule does must not depend on whether TypeSafe is up.
 func TestRuleChoice(t *testing.T) {
 	cases := []struct {
 		name string
 		in   []ModelInfo
 		want string
 	}{
-		{"the cheapest validated", []ModelInfo{
+		{"the most confined validated model, not the cheapest", []ModelInfo{
 			cand("claude/opus[1m]", ChatOnly, true, 0.02, true, 3000),
 			cand("codex/gpt-6-astra", Sandboxed, true, 0.004, true, 5000),
 			cand("claude/default", ChatOnly, false, 0, false, 0),
-		}, "codex/gpt-6-astra"},
+		}, "claude/opus[1m]"},
+		{"however cheap a less confined one is", []ModelInfo{
+			cand("antigravity/gemini", Unconfined, true, 0.0001, true, 100),
+			cand("claude/opus[1m]", ChatOnly, true, 0.5, true, 9000),
+		}, "claude/opus[1m]"},
+		{"within a class, the cheapest", []ModelInfo{
+			cand("claude/opus[1m]", ChatOnly, true, 0.02, true, 3000),
+			cand("claude/sonnet", ChatOnly, true, 0.005, true, 4000),
+			cand("codex/gpt-6-astra", Sandboxed, true, 0.001, true, 100),
+		}, "claude/sonnet"},
 		{"the same cost: the fastest", []ModelInfo{
 			cand("claude/opus[1m]", ChatOnly, true, 0.01, true, 3000),
-			cand("codex/gpt-6-astra", Sandboxed, true, 0.01, true, 1200),
-		}, "codex/gpt-6-astra"},
+			cand("claude/sonnet", ChatOnly, true, 0.01, true, 1200),
+		}, "claude/sonnet"},
 		{"a cost nobody reported sorts last", []ModelInfo{
 			cand("claude/opus[1m]", ChatOnly, true, 0, false, 500),
-			cand("codex/gpt-6-astra", Sandboxed, true, 0.5, true, 9000),
-		}, "codex/gpt-6-astra"},
+			cand("claude/sonnet", ChatOnly, true, 0.5, true, 9000),
+		}, "claude/sonnet"},
 		{"no cost anywhere: the fastest", []ModelInfo{
-			cand("claude/opus[1m]", ChatOnly, true, 0, false, 3000),
-			cand("antigravity/gemini", Unconfined, true, 0, false, 800),
-		}, "antigravity/gemini"},
+			cand("codex/gpt-6-astra", Sandboxed, true, 0, false, 3000),
+			cand("codex/gpt-6-mini", Sandboxed, true, 0, false, 800),
+		}, "codex/gpt-6-mini"},
 		{"validated beats a faster model that is not", []ModelInfo{
 			cand("claude/default", ChatOnly, false, 0, false, 10),
 			cand("codex/gpt-6-astra", Sandboxed, true, 1, true, 99999),
@@ -49,19 +60,31 @@ func TestRuleChoice(t *testing.T) {
 			cand("claude/opus[1m]", ChatOnly, false, 0, false, 0),
 			cand("claude/default", ChatOnly, false, 0, false, 0),
 		}, "claude/default"},
-		{"none validated: codex before antigravity before the rest", []ModelInfo{
+		{"none validated: the more confined default, whatever the runtime", []ModelInfo{
 			cand("zed/default", Unconfined, false, 0, false, 0),
 			cand("antigravity/default", Unconfined, false, 0, false, 0),
+			cand("copilot/default", Sandboxed, false, 0, false, 0),
+		}, "copilot/default"},
+		{"none validated: codex before antigravity", []ModelInfo{
+			cand("antigravity/default", Sandboxed, false, 0, false, 0),
 			cand("codex/default", Sandboxed, false, 0, false, 0),
 		}, "codex/default"},
-		{"none validated: the rest alphabetically", []ModelInfo{
+		{"none validated, one class: antigravity before the rest", []ModelInfo{
 			cand("zed/default", Unconfined, false, 0, false, 0),
+			cand("antigravity/default", Unconfined, false, 0, false, 0),
+		}, "antigravity/default"},
+		{"none validated, one class: the rest alphabetically", []ModelInfo{
+			cand("zed/default", Sandboxed, false, 0, false, 0),
 			cand("copilot/default", Sandboxed, false, 0, false, 0),
 		}, "copilot/default"},
 		{"no default model: the first by runtime order", []ModelInfo{
 			cand("codex/gpt-6-astra", Sandboxed, false, 0, false, 0),
 			cand("claude/opus[1m]", ChatOnly, false, 0, false, 0),
 		}, "claude/opus[1m]"},
+		{"no default model: the more confined first, whatever the runtime", []ModelInfo{
+			cand("antigravity/gemini", Unconfined, false, 0, false, 0),
+			cand("copilot/gpt", Sandboxed, false, 0, false, 0),
+		}, "copilot/gpt"},
 	}
 	for _, c := range cases {
 		if got := ruleChoice(c.in).ID; got != c.want {

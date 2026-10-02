@@ -143,13 +143,15 @@ func (g *Gateway) ask(ctx context.Context, profileID, prompt string, options map
 	}
 }
 
-// ruleChoice is the model auto uses when Jev does not decide: the cheapest, then
-// the fastest, of the models with a recent passing validation (a cost or a
-// latency nobody measured sorts last); with none, the default model of a
-// runtime; with none of those, the first candidate. Runtimes are taken in the
-// order claude, codex, antigravity, then the rest alphabetically. candidates must
-// not be empty.
+// ruleChoice is the model auto uses when Jev does not decide: of the models with
+// a recent passing validation, the most confined, then the cheapest, then the
+// fastest (a cost or a latency nobody measured sorts last); with none, the default
+// model of a runtime; with none of those, the first candidate. The class comes
+// first everywhere, so a TypeSafe outage never moves a request to a less confined
+// model for being cheaper; within a class, runtimes are taken in the order claude,
+// codex, antigravity, then the rest alphabetically. candidates must not be empty.
 func ruleChoice(candidates []ModelInfo) ModelInfo {
+	byClass := func(a, b ModelInfo) int { return cmp.Compare(a.Class, b.Class) }
 	byRuntime := func(a, b ModelInfo) int {
 		if c := cmp.Compare(runtimeRank(a.Runtime), runtimeRank(b.Runtime)); c != 0 {
 			return c
@@ -168,17 +170,18 @@ func ruleChoice(candidates []ModelInfo) ModelInfo {
 	switch {
 	case len(validated) > 0:
 		slices.SortStableFunc(validated, func(a, b ModelInfo) int {
-			return cmp.Or(compareKnownFirst(a.CostUSD, a.HasCost, b.CostUSD, b.HasCost),
+			return cmp.Or(byClass(a, b),
+				compareKnownFirst(a.CostUSD, a.HasCost, b.CostUSD, b.HasCost),
 				compareKnownFirst(float64(a.LatencyMs), a.LatencyMs > 0, float64(b.LatencyMs), b.LatencyMs > 0),
 				byRuntime(a, b))
 		})
 		return validated[0]
 	case len(defaults) > 0:
-		slices.SortFunc(defaults, byRuntime)
+		slices.SortFunc(defaults, func(a, b ModelInfo) int { return cmp.Or(byClass(a, b), byRuntime(a, b)) })
 		return defaults[0]
 	}
 	sorted := slices.Clone(candidates)
-	slices.SortFunc(sorted, byRuntime)
+	slices.SortFunc(sorted, func(a, b ModelInfo) int { return cmp.Or(byClass(a, b), byRuntime(a, b)) })
 	return sorted[0]
 }
 
