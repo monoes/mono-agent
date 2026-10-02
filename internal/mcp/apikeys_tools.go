@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/openaiapi"
@@ -34,7 +35,8 @@ func apiTools() []tool {
 				"and whether the auto model works for the active profile: the document of `monoagentcli api models --json`. " +
 				"The policy comes from the arguments, else from MONOAGENT_API_CONFINEMENT, MONOAGENT_API_CONTEXT_CONFINEMENT and MONOAGENT_API_AUTO_CONFINEMENT " +
 				"in this MCP server's environment, else the listener's defaults, so it can differ from what a running server applies (`monoagentcli api status` shows that). " +
-				"It asks every installed agent runtime for its models, so it takes a few seconds.",
+				"Loading the models asks every installed agent runtime for its list, which takes a few seconds: calls at once share one load, the list is reused for a minute, " +
+				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does.",
 			schema: objSchema(map[string]interface{}{
 				"for":                 strParam("loopback (default) or network: the kind of listener to evaluate"),
 				"confinement":         strParam("Strongest class the listener serves: chat-only, sandboxed or any (default: the environment, else any on loopback and chat-only on a network listener)"),
@@ -180,6 +182,20 @@ func toolAPIKeyRevoke(ctx context.Context, s *Server, args json.RawMessage) (int
 	return store.Revoke(ctx, profileID, a.ID)
 }
 
+// modelsTTL is how long api_models_list reuses the list of models it loaded. After
+// it the previous list is served at once while a new one is loaded in the
+// background, as the gateway's own catalog does.
+const modelsTTL = time.Minute
+
+// modelCatalog is the one catalog of models of this server. Calls at once share a
+// load, and a list is reused for modelsTTL, so that a host that asks again does not
+// start every installed runtime each time (a catalog made per call did: twenty
+// calls started a hundred processes).
+func (rt *runtime) modelCatalog() *openaiapi.Catalog {
+	rt.catalogOnce.Do(func() { rt.catalog = openaiapi.NewModelCatalog(rt.db.DB, modelsTTL) })
+	return rt.catalog
+}
+
 // maxEnumArgLen is far above the longest value any argument of api_models_list takes
 // ("sandboxed", "loopback"): a longer one is refused before it is looked at.
 const maxEnumArgLen = 32
@@ -232,7 +248,9 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if err != nil {
 		return nil, err
 	}
-	models, err := openaiapi.LoadModels(ctx, rt.db.DB)
+	// Bound to the call's context: it ends when the server stops its calls, and the
+	// call does not wait for monomind's processes to close their pipes.
+	models, err := rt.modelCatalog().ModelsBound(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
 	}
