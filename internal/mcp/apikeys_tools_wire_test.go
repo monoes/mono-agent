@@ -37,18 +37,31 @@ func newWireSession(t *testing.T, s *Server) *wireSession {
 	return w
 }
 
-// call sends a tools/call and returns the text of its answer and whether it is an error.
-func (w *wireSession) call(name string, args map[string]any) (string, bool) {
+// send writes a tools/call and returns its id, without waiting for the answer: a
+// host may have several calls in flight.
+func (w *wireSession) send(name string, args map[string]any) string {
 	w.t.Helper()
 	id := strconv.Itoa(w.next)
 	if _, err := fmt.Fprintln(w.pw, callToolReq(w.next, name, args)); err != nil {
 		w.t.Fatal(err)
 	}
 	w.next++
+	return id
+}
+
+// call sends a tools/call and returns the text of its answer and whether it is an error.
+func (w *wireSession) call(name string, args map[string]any) (string, bool) {
+	w.t.Helper()
+	return w.await(w.send(name, args))
+}
+
+// await waits for the answer to a request sent earlier.
+func (w *wireSession) await(id string) (string, bool) {
+	w.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for !w.out.responseIDsSeen()[id] {
 		if time.Now().After(deadline) {
-			w.t.Fatalf("no answer to %s (request %s)", name, id)
+			w.t.Fatalf("no answer to request %s", id)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
