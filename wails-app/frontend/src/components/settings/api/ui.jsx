@@ -68,7 +68,7 @@ export function CapBadges({ caps, model }) {
   return (
     <ul aria-label={t('settings.api.models.capsOf', { model })} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
       {list.map((c, i) => {
-        const known = Object.hasOwn(CAPS, c) ? CAPS[c] : undefined
+        const known = Object.prototype.hasOwnProperty.call(CAPS, c) ? CAPS[c] : undefined
         return (
           <li key={`${c}-${i}`}>
             <Badge tone={known?.tone || 'muted'} title={known ? t(known.hint) : undefined} style={small}>{known ? t(known.label) : c}</Badge>
