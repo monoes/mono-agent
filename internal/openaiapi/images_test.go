@@ -328,6 +328,53 @@ func TestImagesFailureLogSaysWhyFilesWereLeftOut(t *testing.T) {
 	}
 }
 
+// A refused request names the model it was refused for in its log line, as chat's does:
+// the operator reading it sees what was asked for. Without a model of its own to name
+// (an unknown one, or none given) there is none.
+func TestImagesRefusalsLogTheModel(t *testing.T) {
+	for name, c := range map[string]struct {
+		policy Policy
+		body   string
+		status string
+		model  string
+	}{
+		"a model above the policy":        {Policy{Max: ChatOnly}, `{"model":"codex","prompt":"x"}`, "status=403", "model=codex/default "},
+		"a model that cannot make images": {anyPolicy, `{"model":"claude","prompt":"x"}`, "status=400", "model=claude/default "},
+		"auto, which is not set up":       {anyPolicy, `{"model":"auto","prompt":"x"}`, "status=404", "model=auto "},
+		"an unknown model":                {anyPolicy, `{"model":"nope/x","prompt":"x"}`, "status=404", "model= "},
+		"no model, and none allowed":      {Policy{Max: ChatOnly}, `{"prompt":"x"}`, "status=403", "model= "},
+	} {
+		h := newHarness(t, imageTurn("a.png", onePNG("a.png")))
+		postImages(h, c.policy, h.key(t, "default", "app", false), c.body)
+		lines := h.logged()
+		if len(lines) != 1 || !strings.Contains(lines[0], c.status) || !strings.Contains(lines[0], c.model) {
+			t.Errorf("%s: the log is %q, want it to hold %q and %q", name, lines, c.status, c.model)
+		}
+	}
+}
+
+// What the collection left out is told to the operator whether or not an image was
+// found: by reason and count, never by name. A runtime that makes an image and a mess
+// is how an operator finds out about the mess.
+func TestImagesSuccessLogSaysWhatWasLeftOut(t *testing.T) {
+	// The collection looks at files by name and stops at the n it was asked for, so these come first.
+	h := newHarness(t, imageTurn("a.png", map[string][]byte{"a.png": pngBytes, "0-notes.txt": []byte("x"), "1-more-notes.txt": []byte("y")}))
+	rec := postImages(h, anyPolicy, h.key(t, "default", "app", false), `{"prompt":"p"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	lines := h.logged()
+	if len(lines) != 1 || !strings.Contains(lines[0], "status=200") || !strings.Contains(lines[0], "not an image x2") || strings.Contains(lines[0], "notes") {
+		t.Errorf("the log line of a success must say what was left out, by reason and count: %q", lines)
+	}
+	// Nothing left out, nothing said.
+	h = newHarness(t, imageTurn("a.png", onePNG("a.png")))
+	postImages(h, anyPolicy, h.key(t, "default", "app", false), `{"prompt":"p"}`)
+	if lines := h.logged(); len(lines) != 1 || strings.Contains(lines[0], "detail=") {
+		t.Errorf("a success that left nothing out has no detail: %q", lines)
+	}
+}
+
 // The request leaves one line, as chat's does, with the key, the profile, the model
 // and the outcome, and never the prompt or the image.
 func TestImagesLogLine(t *testing.T) {

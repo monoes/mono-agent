@@ -52,15 +52,17 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 		}
 
 		eff := policyFor(p, pr)
+		isAuto := req.Model == autoModelID
+		if isAuto {
+			model = autoModelID
+		}
 		m, candidates, e := g.resolveImageModel(r.Context(), pr, p, eff, req.Model)
+		if m.ID != "" { // the model a refusal is for is in the log line, as for chat
+			model = m.ID
+		}
 		if e != nil {
 			fail(e)
 			return
-		}
-		isAuto := req.Model == autoModelID
-		model = m.ID
-		if isAuto {
-			model = autoModelID
 		}
 
 		slot, release, ok := g.limiter.tryAcquire()
@@ -114,6 +116,9 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 			fail(e)
 			return
 		}
+		if note := found.note(); note != "" { // a success that left files out says so, too
+			detail = "left out: " + note
+		}
 		if res.SandboxStatus != "" {
 			w.Header().Set("X-Monoagent-Sandbox", res.SandboxStatus)
 		}
@@ -144,7 +149,7 @@ func (g *Gateway) resolveImageModel(ctx context.Context, pr Principal, p, eff Po
 	case err != nil:
 		return ModelInfo{}, nil, catalogError(err)
 	case !g.cfg.CanMakeImages(m):
-		return ModelInfo{}, nil, g.errNotAnImageModel(ctx, m)
+		return m, nil, g.errNotAnImageModel(ctx, m)
 	}
 	return m, nil, policyRefusal(m, p, eff, imageContextWhy)
 }
