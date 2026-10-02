@@ -741,6 +741,20 @@ executes nothing of the caller's. What this changes, and what it does not:
   `badargs=1` when a call did not match its schema). It never holds a function
   name, an argument or a result, and an error sent to the caller names a
   parameter, never what the client put in it, and never echoes a tool result.
+- *A cancelled leg's runtime can outlive it a few seconds.* A leg ends by
+  cancelling its turn: monomind's cancel for claude, SIGTERM to the process group
+  for codex, and a group kill only if monomind has not exited within its grace.
+  The slot's folder is emptied and the slot freed when Exec returns, not when the
+  runtime's process is gone, and in the live check claude's own binary outlived
+  a cancelled leg by about 5 s, an orphan of monomind that exited by itself (codex
+  left nothing). For those seconds a process of the cancelled leg still has the
+  slot's folder as its working directory. A freed slot joins the back of the
+  queue, so with the default four another request takes that folder only after
+  three others have been served, and `--max-concurrent 1` makes it the next one;
+  a turn starts in an emptied folder, and the process wrote nothing there in the
+  live check. It is the same runtime under the same confinement, so no policy is
+  crossed; a runtime that hung would not be killed, which is a matter for
+  `monomind.Exec`.
 - *Reliability, not security.* A resumed leg can ask for the same call again
   instead of using the result: 1 of 19 single-result claude legs did in the
   spike, 0 of 18 on codex, and nothing detects it. codex repeats an identical

@@ -2743,8 +2743,8 @@ OPENAI-COMPATIBLE API (/v1)
   is not a list of strings is left out of what monomind gets), tool_choice
   none (no tools), auto,
   required or a named function (a best-effort line), parallel_tool_calls (treated
-  as false). A response carries ONE call: the turn ends at the model's first
-  call and the runtime's process is killed, and the answer is an assistant message
+  as false). A response carries ONE call: the turn ends, cancelled, at the model's
+  first call, and the answer is an assistant message
   with one tool_calls entry (id call_<random>, function.arguments a JSON string),
   finish_reason "tool_calls", content null or what the model said first, and no
   usage; streamed, delta.tool_calls chunks, then [DONE]. The client runs the call

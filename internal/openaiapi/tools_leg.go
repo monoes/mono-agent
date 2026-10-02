@@ -12,10 +12,12 @@ import (
 )
 
 // A leg is one turn of a conversation with tools. It ends at the first tool call
-// the model makes: the call is recorded and the turn is cancelled there, which
-// kills the runtime's process group, and the client gets the call to run. No
-// process waits for the result: the follow-up request starts a new leg, which
-// continues the runtime's session or starts again from the transcript.
+// the model makes: the call is recorded and the turn is cancelled there (monomind's
+// cancel frame; for a read-access leg Exec also sends SIGTERM to the process group;
+// the group is killed only if monomind has not exited within the kill grace, and
+// not at all once it has), and the client gets the call to run. No process waits
+// for the result: the follow-up request starts a new leg, which continues the
+// runtime's session or starts again from the transcript.
 
 // legEndGrace is how long the handler of a call waits for the runtime to be gone
 // before it answers. Exec hands the handler's answer to the runtime as the

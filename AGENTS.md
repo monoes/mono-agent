@@ -647,7 +647,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   is also folded into the tool's description, and an enum that is not a list of
   strings is left out of what monomind gets, not refused. **A
   response carries one call.** The turn (a leg) ends at the model's first call:
-  the runtime's process group is killed, and the answer is a message with one
+  it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
+  process group; a group kill only if monomind has not exited within its grace,
+  and none once it has), and the answer is a message with one
   `tool_calls` entry (`id` `call_<random>`, `type` `function`, `function`
   `{name, arguments}` with `arguments` a string of JSON) and
   `finish_reason: "tool_calls"`, `content` null or what the model said before the
@@ -677,11 +679,16 @@ a key. It lives in `internal/openaiapi/`; the spec is
   wording is matched), the transcript is **replayed** in a new turn with the
   tools declared again, which always works. A resume that fails before the model
   ran for a rate limit, the quota, a budget or a sign-in gives its record back,
-  so the retry resumes. The system prompt of a resumed leg says that the caller
-  ran the call and that its result is real: cancelling a leg at its call makes
-  the claude CLI write a rejected result and an interrupt marker into the
+  so the retry resumes. The system prompt of a resumed claude leg says that the
+  caller ran the call and that its result is real: cancelling a leg at its call
+  makes the claude CLI write a rejected result and an interrupt marker into the
   session, and a model that read them distrusted the result (0 of 3 with the
-  note in the user message, 3 of 3 in the system prompt). A result is fenced in
+  note in the user message, 3 of 3 in the system prompt). codex's runner passes
+  no system prompt on a resumed thread, so codex is not told; it did not need
+  it (it distrusted 0 of 18 results). For the same reason the conversation hash
+  includes the system prompt and the tool choice: a client that sends `required`
+  or a named function in one round and `auto` in the next gets a replay each
+  round. A result is fenced in
   the prompt (`<function_result>`), with the fence's tags and any line that
   would open a turn of the transcript defanged. A call whose arguments do not
   match the declared schema is returned all the same, and the client decides. A

@@ -4,7 +4,7 @@
 
 **Goal:** `tools`, `tool_choice`, `tool_calls` and `tool` messages work on `/v1/chat/completions`, streaming and not, on claude and codex, so a client that runs its own tools (a coding assistant, an SDK tool loop) can use the local runtimes.
 
-**Architecture (D18, as amended by the spike).** No process is parked. A request with tools runs one *leg*: an ordinary turn (slot, sandbox, timeout, cleanup as chat) with the tools declared. The leg ends at the FIRST tool call: the event hook records it and cancels the leg's context, so the process group is killed; the answer is one `tool_calls` entry and `finish_reason: "tool_calls"`. The runtime's session id goes into a short-lived, single-use record in memory. The follow-up carrying the `tool` message *resumes* that session when the record matches, and otherwise *replays* the transcript statelessly. Replay is built first and always works; resume is an optimisation that falls back to it.
+**Architecture (D18, as amended by the spike).** No process is parked. A request with tools runs one *leg*: an ordinary turn (slot, sandbox, timeout, cleanup as chat) with the tools declared. The leg ends at the FIRST tool call: the event hook records it and cancels the leg's context, so Exec cancels the turn (monomind's cancel; SIGTERM to the group for codex); the answer is one `tool_calls` entry and `finish_reason: "tool_calls"`. The runtime's session id goes into a short-lived, single-use record in memory. The follow-up carrying the `tool` message *resumes* that session when the record matches, and otherwise *replays* the transcript statelessly. Replay is built first and always works; resume is an optimisation that falls back to it.
 
 ## Global Constraints
 
