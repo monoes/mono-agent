@@ -176,6 +176,12 @@ monoagentcli jev enable api_auto    # prints what is sent to TypeSafe, then asks
 monoagentcli api models             # its last line says whether auto works
 ```
 
+On a headless server, where the vault needs the file keyring and its passphrase
+file, `TYPESAFE_API_KEY` in the server's environment is the simple way: the
+server's agent turns do not inherit it. `api models` and `api status` run in
+your shell, so for a key from the environment they report this shell's, not the
+server's.
+
 `jev enable` lists what leaves the machine: to TypeSafe, besides the prompt
 going to the runtime that answers, the first 4,000 characters of the last user
 message and the names, descriptions and validated cost and latency of the
@@ -192,13 +198,19 @@ The response's `model` and `X-Monoagent-Model` name the pick, and
 `X-Monoagent-Auto` says who chose: `jev`, or `rule` when Jev could not (no
 answer within 8 seconds, an answer that is not one of the options, or one under
 the surface's threshold, which `jev enable api_auto --threshold 0.8` raises) or
-when only one model was left to pick. The rule takes the cheapest, then the
-fastest, of the models that passed `monoagentcli agent validate` (which
-records the cost and latency to compare). Jev picks only among models the key may use: under
-`--confinement chat-only`, or for a `--context` key held to its own cap, a
-model above the cap is not an option. `GET /v1/models` lists `auto` first while
-it works and leaves it out while it does not; `monoagentcli api status` says what
-is missing.
+when only one model was left to pick. Of the models that passed
+`monoagentcli agent validate` (which records the cost and latency to compare),
+the rule takes the most confined, then the cheapest, then the fastest; with none
+validated, a runtime's default model, claude first.
+
+Jev picks only among models the key may use: under `--confinement chat-only`, or
+for a `--context` key held to its own cap, a model above the cap is not an
+option. Mind that on loopback the default policy allows every runtime, so a
+prompt can steer `auto` to an unconfined one (see `SECURITY.md`): start the
+server with `--confinement chat-only` or `sandboxed` to keep `auto` within a
+class. `GET /v1/models` lists `auto` after the other models, so a client that
+takes the first one is not moved to it, and leaves it out while it does not work;
+`monoagentcli api status` says what is missing.
 
 ## 4. Serve it beyond this machine
 

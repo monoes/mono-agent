@@ -423,21 +423,29 @@ a key. It lives in `internal/openaiapi/`; the spec is
   pick, per request, among the models the listener serves (a `--context` key:
   among those its own cap allows). It is the `api_auto` Jev surface: off until
   `monoagentcli jev enable api_auto` on the key's profile, which also needs
-  that profile's Jev key (`jev key set`, or `TYPESAFE_API_KEY`). Without them
+  that profile's Jev key (`jev key set`, or `TYPESAFE_API_KEY` in the server's
+  environment, which the gateway blanks in its agent turns). Without them
   `auto` is not listed and answers 404 `model_not_found` naming what is
-  missing (`api models` and `api status` say it too). What is sent to
+  missing (`api models` and `api status` say it too, and that a key from the
+  environment is that shell's). It is listed after the concrete models, so a
+  client that takes the first model is not moved to it. What is sent to
   TypeSafe: the first 4,000 characters of the last user message and each
   candidate's name, description and validated cost and latency, never the
   system prompt, earlier turns, the profile's knowledge or a key. Jev only
   picks among options the code lists, so it never goes beyond what the policy
-  allows; a failure, a timeout (8 seconds), an answer that is not an option or
-  a probability under the surface's threshold (default 0, set it with `jev
-  enable api_auto --threshold`) uses a rule instead: the cheapest, then the
-  fastest validated model. The response names the pick in `model` and
-  `X-Monoagent-Model`, and who chose in `X-Monoagent-Auto` (`jev` or `rule`;
-  `rule` also when there was only one model to pick and Jev was not asked). A
-  question to Jev is recorded under `api_auto` in `jev usage`, and the
-  server's log line has `auto=jev|rule` and never the prompt.
+  allows, but that includes every class the policy allows: under the default
+  loopback policy (`any`) a prompt can steer it to an unconfined runtime, so
+  set `--confinement` to keep `auto` within a class. A failure, a timeout
+  (8 seconds, key lookup included), an answer that is not an option or a
+  probability under the surface's threshold (default 0, set it with `jev
+  enable api_auto --threshold`) uses a rule instead: of the validated models
+  the most confined, then the cheapest, then the fastest, and with none
+  validated a runtime's default model, claude first. The response names the
+  pick in `model` and `X-Monoagent-Model`, and who chose in
+  `X-Monoagent-Auto` (`jev` or `rule`; `rule` also when there was only one
+  model to pick and Jev was not asked). A question to Jev is recorded under
+  `api_auto` in `jev usage`, and the server's log line has `auto=jev|rule` and
+  never the prompt.
 - **Auth is a per-profile API key** (`sk-ma-…`), never the legacy token above.
   `monoagentcli api key create --name <n> [--context]` prints the key once and
   stores only its SHA-256, so it needs no vault and no keyring and works on a

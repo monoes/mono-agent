@@ -328,10 +328,11 @@ paths:
         the listener's confinement policy allows. For a key created with `--context` only those at or below
         `--context-confinement` (chat-only unless the operator raised it).
         While the key's profile has the `api_auto` Jev surface on (`monoagentcli
-        jev enable api_auto`) and a Jev key, the list starts with the model
-        `auto` (`owned_by` is `jev`): a request for it has Jev pick the model
-        among the others. Its `confinement` is the strongest class the key's
-        policy allows.
+        jev enable api_auto`) and a Jev key, the list ends with the model
+        `auto` (`owned_by` is `jev`), after the others so that a client that
+        takes the first model is not moved to it: a request for it has Jev pick
+        the model among the others. Its `confinement` is the strongest class
+        the key's policy allows.
       security:
         - apiKeyAuth: []
       responses:
@@ -390,11 +391,12 @@ paths:
         until the key's profile runs `monoagentcli jev enable api_auto` and has
         a Jev key; the first 4,000 characters of the last user message and the
         names, descriptions and validated cost and latency of the candidates
-        are what Jev is sent. A failure, a timeout, an answer that is not a
-        candidate or a probability under the surface's threshold falls back to
-        a rule (the cheapest, then the fastest validated model). The
-        `X-Monoagent-Model` header and the response's `model` name the pick,
-        and `X-Monoagent-Auto` says who chose.
+        are what Jev is sent. A failure, a timeout (8 seconds), an answer that
+        is not a candidate or a probability under the surface's threshold falls
+        back to a rule: of the validated models the most confined, then the
+        cheapest, then the fastest, and with none validated a runtime's default
+        model. The `X-Monoagent-Model` header and the response's `model` name
+        the pick, and `X-Monoagent-Auto` says who chose.
 
         Sampling parameters (`temperature`, `top_p`, `max_tokens`,
         `max_completion_tokens`, `stop`, `seed`, `presence_penalty`,

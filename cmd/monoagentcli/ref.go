@@ -2734,12 +2734,16 @@ OPENAI-COMPATIBLE API (/v1)
   The "auto" model lets Jev pick, per request, among the models the listener
   serves (a --context key: among those its own cap allows). It is opt-in per
   profile: monoagentcli jev enable api_auto, with a Jev key (jev key set, or
-  TYPESAFE_API_KEY). What leaves the machine: the first 4,000 characters of the
-  last user message, and each candidate's name, description and validated cost
-  and latency. A Jev failure, a timeout or a doubt falls back to a rule (the
-  cheapest, then the fastest validated model), never to a wider set. The answer
-  carries X-Monoagent-Model (the pick) and X-Monoagent-Auto (jev or rule). While
-  the surface or the key is missing, "auto" is not listed and answers 404
+  TYPESAFE_API_KEY in the server's environment). What leaves the machine: the
+  first 4,000 characters of the last user message, and each candidate's name,
+  description and validated cost and latency. Jev never goes beyond the policy,
+  but under the default loopback policy (any) that includes unconfined runtimes:
+  --confinement keeps "auto" within a class. A Jev failure, a timeout (8 s) or a
+  doubt falls back to a rule (of the validated models the most confined, then the
+  cheapest, then the fastest; with none validated, a runtime's default model),
+  never to a wider set. The answer carries X-Monoagent-Model (the pick) and
+  X-Monoagent-Auto (jev or rule). "auto" is listed after the other models. While
+  the surface or the key is missing it is not listed and answers 404
   model_not_found naming what is missing; api models and api status say it too.
 
   Auth is an API key, not the credential above. One profile each (its

@@ -558,25 +558,40 @@ personal brain and other profiles are never searched.
 **The `auto` model.** A request for `"model": "auto"` has TypeSafe Jev pick
 the runtime and model. It is off until the key's profile runs `monoagentcli
 jev enable api_auto` (which prints what follows and asks first) and has a Jev
-key. Then each such request sends TypeSafe, a third party besides the
-runtime's provider that answers the prompt, the first 4,000 characters of the
-last user message and, for every model the key may use, its name, description
-and validated cost and latency. Never the system prompt, earlier turns, the
-excerpts of a context key or a key. So whoever holds a key of that profile
-decides what is sent to TypeSafe: enable the surface only where you accept
-that. The prompt goes as data (`state.untrusted_prompt`, and Jev is told to
-treat it so), but what holds is the structure, not that instruction: Jev
-answers with one of the listed model ids, anything else is discarded, and the
-list is already cut to what the key's policy allows (the listener's
+key: its vault entry, else the server's `TYPESAFE_API_KEY`, so with that
+variable set every profile that switches the surface on spends it. Then each
+such request sends TypeSafe, a third party besides the runtime's provider that
+answers the prompt, the first 4,000 characters of the last user message and,
+for every model the key may use, its name, description and validated cost and
+latency. Never the system prompt, earlier turns, the excerpts of a context key
+or a key. So whoever holds a key of that profile decides what is sent to
+TypeSafe: enable the surface only where you accept that. `auto` is listed after
+the concrete models, so a client that takes the first model of the list is not
+moved to it, and its prompts to TypeSafe, by switching the surface on.
+
+What Jev can decide is bounded by structure, not by its instructions. The prompt
+goes as data (`state.untrusted_prompt`, and Jev is told to treat it so), but Jev
+can only answer with one of the listed model ids, anything else is discarded,
+and the list is already cut to what the key's policy allows (the listener's
 `--confinement`, a context key's `--context-confinement`) before Jev sees it. A
-prompt that steers Jev can therefore only choose among models the key could
-have named itself; at most it steers toward the dearest of them, which the
-absence of per-key quotas already allows. Jev's answer is used only when it
-arrives within 8 seconds, with no retry, and is sure enough for the surface's
-threshold; an outage, a timeout or a doubt falls back to a rule (the cheapest,
-then the fastest validated model of the same list), never to a wider set. Each
-question is recorded in `jev_usage` under `api_auto` (counts only), and the
-log line of the request says `auto=jev` or `auto=rule` and never the prompt.
+prompt that steers Jev can therefore never reach a model the key could not have
+named itself. It can reach any of them, though: under the default loopback
+policy (`any`) that includes an unconfined runtime, and the author of a prompt
+need not be the holder of the key (an app that forwards its users' text, say),
+so a prompt can choose the confinement class of its own turn. Where that is not
+acceptable, set `--confinement chat-only` or `sandboxed`: `auto` follows it, and
+`api models` shows how many models Jev would pick among. A context key stays at
+chat-only unless `--context-confinement` says otherwise, through `auto` as well.
+Jev's answer is used only when it arrives within 8 seconds (looking up the key
+included), with no retry, and is sure enough for the surface's threshold; an
+outage, a timeout or a doubt falls back to a rule, never to a wider set: of the
+validated models the most confined, then the cheapest, then the fastest, so that
+an outage does not move a request to a less confined model for being cheaper. An
+outage does cost every `auto` request up to those 8 seconds, with its slot held.
+Each question is recorded in `jev_usage` under `api_auto` (counts only), and the
+log line of the request says `auto=jev` or `auto=rule` and never the prompt. The
+gateway blanks `TYPESAFE_API_KEY` in the environment of its agent turns, which
+inherit the rest of the server's: a turn that runs commands could read it.
 
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost.
