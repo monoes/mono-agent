@@ -76,6 +76,19 @@ func TestArgumentsOfRootCombinatorsAndReferencesAreNamedAtTheTopLevel(t *testing
 		{"a reference met as optional first and as required after", `{"allOf":[{"anyOf":[{"$ref":"#/$defs/A"}]},{"$ref":"#/$defs/A"}],"$defs":{"A":` + city + `}}`, []string{"city"}, []string{"city"}},
 		{"an if, a then and an else: each may apply", `{"if":{"properties":{"mode":{"enum":["a"]}}},"then":` + city + `,"else":` + zip + `}`, []string{"city", "mode", "zip"}, nil},
 		{"dependentSchemas: optional", `{"type":"object","properties":{"x":{"type":"string"}},"dependentSchemas":{"x":` + zip + `}}`, []string{"x", "zip"}, nil},
+		// What a property asks for when it is there is an argument too, and none of it is asked of every
+		// call: the keys (a call may carry them), the schemas they bring (dependencies, as a schema, is
+		// dependentSchemas of draft-07) and the names a list asks for (dependencies as a list, and
+		// dependentRequired).
+		{"dependentSchemas whose key nothing defines", `{"dependentSchemas":{"x":` + zip + `}}`, []string{"x", "zip"}, nil},
+		{"dependencies, a schema: optional", `{"type":"object","properties":{"x":{"type":"string"}},"dependencies":{"x":` + zip + `}}`, []string{"x", "zip"}, nil},
+		{"dependencies, a schema whose key nothing defines", `{"dependencies":{"mode":{"properties":{"level":{"type":"integer"}},"required":["level"]}}}`, []string{"level", "mode"}, nil},
+		{"dependencies, a list of names", `{"type":"object","properties":{"card":{"type":"string"}},"dependencies":{"card":["billing","zip"]}}`, []string{"billing", "card", "zip"}, nil},
+		{"dependentRequired", `{"type":"object","properties":{"card":{"type":"string"}},"dependentRequired":{"card":["billing"]}}`, []string{"billing", "card"}, nil},
+		{"dependentRequired with nothing else", `{"dependentRequired":{"credit_card":["billing_address"]}}`, []string{"billing_address", "credit_card"}, nil},
+		{"dependencies of both forms in a branch", `{"anyOf":[{"dependencies":{"a":["b"],"c":{"properties":{"d":{"type":"string"}}}}}]}`, []string{"a", "b", "c", "d"}, nil},
+		{"a boolean schema and other things that are no schema as a dependency", `{"properties":{"x":{"type":"string"}},"dependencies":{"x":true,"y":false,"z":"nope","w":[1,null]}}`, []string{"w", "x", "y", "z"}, nil},
+		{"a name a dependency asks for that the schema requires anyway", `{"required":["b"],"dependentRequired":{"a":["b"]}}`, []string{"a", "b"}, []string{"b"}},
 	}
 	for _, c := range cases {
 		props, required := named(t, c.params)
@@ -118,6 +131,8 @@ func TestAPropertyKeepsItsTypeAndEnumOnlyWhereTheSchemaIsCertainOfThem(t *testin
 		{"an else", `{"if":{"required":["zip"]},"else":{"properties":{"id":{"enum":["Rome"]}}}}`, "any"},
 		{"the condition of an if", `{"if":{"properties":{"id":{"enum":["Rome"]}},"required":["id"]},"then":{"properties":{"zip":{"type":"string"}}}}`, "any"},
 		{"a dependent schema", `{"dependentSchemas":{"zip":{"properties":{"id":{"type":"integer"}}}}}`, "any"},
+		{"a dependency that is a schema", `{"dependencies":{"zip":{"properties":{"id":{"type":"integer"}}}}}`, "any"},
+		{"a name that a dependency asks for", `{"dependencies":{"zip":["id"]}}`, "any"},
 		{"an anyOf branch that is a reference", `{"anyOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"id":` + city + `}}}}`, "any"},
 		{"an allOf inside an anyOf branch: still optional", `{"anyOf":[{"allOf":[{"properties":{"id":` + city + `}}]}]}`, "any"},
 		{"branches that say the same: still any value", `{"anyOf":[{"properties":{"id":` + city + `}},{"properties":{"id":` + city + `}}]}`, "any"},

@@ -658,8 +658,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
   the top-level properties of a schema, and of a property only its type and an
   enum of strings (any other enum there rejects every call), so the arguments of
-  a root `anyOf`, `oneOf` or `allOf`, of a local `$ref` and of an `if`, `then` or
-  `else` are named at the top level too (optional where the schema lets a call do
+  a root `anyOf`, `oneOf` or `allOf`, of a local `$ref`, of an `if`, `then` or
+  `else` and of what `dependentSchemas`, `dependencies` and `dependentRequired` ask
+  for are named at the top level too (optional where the schema lets a call do
   without them, and as any value where only a branch that may not apply defines
   them: monomind rejects a call that does not match the type or the enum it was
   told of, so they come only from what holds for every call; without naming them

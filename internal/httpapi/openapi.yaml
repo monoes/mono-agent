@@ -439,8 +439,9 @@ paths:
         raised that cap above chat-only: the captured pages in its system
         prompt could steer the calls the client runs. monomind keeps only the
         top-level properties of a schema, so the arguments that a root `anyOf`,
-        `oneOf` or `allOf`, a local `$ref`, an `if`, a `then` or an `else`
-        define are named at the top level too (optional unless the schema
+        `oneOf` or `allOf`, a local `$ref`, an `if`, a `then`, an `else`, a
+        `dependentSchemas`, a `dependencies` or a `dependentRequired`
+        define or ask for are named at the top level too (optional unless the schema
         requires them, and as any value where only a branch that may not apply
         defines them), and the whole schema is also folded into the function's
         description (an `enum` that is not a list of strings is left out of

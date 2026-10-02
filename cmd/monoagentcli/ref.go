@@ -2745,8 +2745,9 @@ OPENAI-COMPATIBLE API (/v1)
   that serve them "tools" among their capabilities. A request declares up to 128
   functions (name 1 to 64 characters of [A-Za-z0-9_-], unique, where a name of 55
   or more reaches monomind and the model as an alias of 54 and the client sees its
-  own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref
-  and if/then/else arguments are named at the top level for monomind, which keeps
+  own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref,
+  if/then/else and dependentSchemas/dependencies/dependentRequired arguments are
+  named at the top level for monomind, which keeps
   only top-level properties, and which is folded whole into the description; an
   enum that is not a list of strings is left out of what monomind gets; while the
   tools are passed, a schema that names no property and allows free-form keys

@@ -64,9 +64,10 @@ type argNames struct {
 // key from the call the client gets, so a schema that puts its arguments in the branches
 // of a root anyOf, oneOf or allOf, in a then or an else, or behind a root $ref, would give
 // the client {} at every call. The properties of those branches are named at the top level
-// too: a branch that may or may not apply (anyOf, oneOf, if, then, else, dependentSchemas)
-// makes what it names optional, one that applies (allOf, a $ref, the root itself) keeps
-// the schema's required names required. monomind holds a call to the type and the enum of
+// too: a branch that may or may not apply (anyOf, oneOf, if, then, else, dependentSchemas,
+// dependencies) makes what it names optional, one that applies (allOf, a $ref, the root itself)
+// keeps the schema's required names required; the names that dependentRequired and the lists of
+// dependencies ask for, and the properties that ask, are arguments a call may carry, optional. monomind holds a call to the type and the enum of
 // a property it is told of, so only what holds for every call gives them: a name that only a
 // branch that may not apply defines is any value, as is a name that a required list mentions
 // and nothing defines, and one that two definitions that hold for every call say differently
@@ -182,11 +183,7 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 			h.walk(sub, depth+1, true)
 		}
 	}
-	if deps, ok := m["dependentSchemas"].(map[string]any); ok {
-		for _, name := range sortedNames(deps) {
-			h.walk(deps[name], depth+1, true)
-		}
-	}
+	h.walkDependencies(m, depth)
 	for _, key := range []string{"additionalProperties", "unevaluatedProperties"} {
 		switch extra := m[key].(type) {
 		case bool:
@@ -197,6 +194,32 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 	}
 	if patterns, ok := m["patternProperties"].(map[string]any); ok && len(patterns) > 0 {
 		h.open = true
+	}
+}
+
+// walkDependencies reads what a property asks for when it is there: dependentSchemas, and
+// dependencies of draft-07 where an entry is a schema, bring a schema that may not apply (a
+// branch), and dependentRequired, and dependencies where an entry is a list, ask for names. The
+// property that asks and the names it asks for are arguments a call may carry, and none of them is
+// asked of every call.
+func (h *hoister) walkDependencies(m map[string]any, depth int) {
+	for _, key := range []string{"dependentSchemas", "dependentRequired", "dependencies"} {
+		deps, ok := m[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, name := range sortedNames(deps) {
+			h.require(name, true)
+			if asked, isList := deps[name].([]any); isList {
+				for _, v := range asked {
+					if s, ok := v.(string); ok {
+						h.require(s, true)
+					}
+				}
+				continue
+			}
+			h.walk(deps[name], depth+1, true)
+		}
 	}
 }
 

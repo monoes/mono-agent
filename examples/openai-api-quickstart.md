@@ -451,8 +451,9 @@ What to expect from a tool loop:
 - Put the whole JSON schema in `parameters`: monomind keeps only the top-level
   properties of it (and of each, its type and an enum of strings), so the server
   folds the schema into the function's description and names the arguments of a
-  root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`) and of an
-  `if`, `then` or `else` at the top level too (optional where the schema lets a
+  root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`), of an
+  `if`, `then` or `else` and of what `dependentSchemas`, `dependencies` and
+  `dependentRequired` ask for at the top level too (optional where the schema lets a
   call do without them, and as any value where only a branch that may not apply
   defines them), or the call would reach you as `{}`. A key that no property
   names is not passed on.

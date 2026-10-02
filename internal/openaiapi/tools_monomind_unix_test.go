@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -264,6 +265,29 @@ func TestArgumentsOutsideTheTopLevelPropertiesReachTheClientOverTheRealMonomind(
 		}
 		if calls := decodeToolReply(t, rec).Choices[0].Message.ToolCalls; len(calls) != 1 || calls[0].Function.Arguments != `{"city":"Paris"}` {
 			t.Errorf("%s: the call reached the client as %s", name, rec.Body)
+		}
+	}
+
+	// What a property asks for when it is there: the arguments of a dependency are named too, or
+	// monomind drops them from the call (the model's call, FAKE_CODEX_ARGS, carries them all).
+	const level = `{"type":"object","properties":{"city":{"type":"string"},"mode":{}},"required":["city"],"dependencies":{"mode":{"properties":{"level":{"type":"integer"}}}}}`
+	for name, row := range map[string]struct{ params, args string }{
+		"dependencies as a schema":              {level, `{"city":"Paris","mode":"fast","level":3}`},
+		"dependencies as a schema, key unnamed": {`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"dependencies":{"mode":{"properties":{"level":{"type":"integer"}}}}}`, `{"city":"Paris","mode":"fast","level":3}`},
+		"dependencies as a list":                {`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"dependencies":{"city":["zip"]}}`, `{"city":"Paris","zip":"75001"}`},
+		"dependentRequired":                     {`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"dependentRequired":{"city":["zip"]}}`, `{"city":"Paris","zip":"75001"}`},
+	} {
+		t.Setenv("FAKE_CODEX_ARGS", row.args)
+		tools := `"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather.","parameters":` + row.params + `}}]`
+		rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", tools, weatherQuestion))
+		if rec.Code != 200 {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+			continue
+		}
+		calls := decodeToolReply(t, rec).Choices[0].Message.ToolCalls
+		var got, want map[string]any
+		if len(calls) != 1 || json.Unmarshal([]byte(calls[0].Function.Arguments), &got) != nil || json.Unmarshal([]byte(row.args), &want) != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: the call reached the client as %s, want the arguments %s", name, rec.Body, row.args)
 		}
 	}
 }
