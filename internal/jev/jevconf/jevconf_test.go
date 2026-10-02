@@ -89,6 +89,35 @@ func TestEnabledAndThreshold(t *testing.T) {
 	}
 }
 
+// The `auto` model of the OpenAI-compatible API is a surface of its own: switched
+// on per profile like the others, and it must say what leaves the machine. Its
+// default threshold is 0: the top pick of Jev is accepted unless the profile
+// raises it.
+func TestAPIAutoSurface(t *testing.T) {
+	if !Known(APIAuto) {
+		t.Fatal("api_auto is not a surface `jev enable` accepts")
+	}
+	if string(APIAuto) != "api_auto" {
+		t.Errorf("the surface is named %q", APIAuto)
+	}
+	if got, ok := DefaultThreshold[APIAuto]; !ok || got != 0 {
+		t.Errorf("default threshold = %v, %v: want 0, always accept the top pick", got, ok)
+	}
+	egress := strings.Join(Egress[APIAuto], " | ")
+	for _, want := range []string{"first 4,000 characters of the last user message", "validated cost and latency"} {
+		if !strings.Contains(egress, want) {
+			t.Errorf("the egress list must say %q: %s", want, egress)
+		}
+	}
+	db := newDB(t)
+	if Enabled(db, "p1", APIAuto) {
+		t.Error("api_auto is on by default")
+	}
+	if err := SetEnabled(db, "p1", APIAuto, true); err != nil || !Enabled(db, "p1", APIAuto) || Enabled(db, "p2", APIAuto) {
+		t.Errorf("enabling api_auto for one profile: %v", err)
+	}
+}
+
 func TestNewClientRecordsUsage(t *testing.T) {
 	db := newDB(t)
 	srv := jevtest.NewServer(t, nil)
