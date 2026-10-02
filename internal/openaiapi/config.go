@@ -81,13 +81,17 @@ func (c Config) CanMakeImages(m ModelInfo) bool {
 	return m.Class >= Sandboxed && slices.Contains(c.ImageRuntimeList(), m.Runtime)
 }
 
-// Capabilities is what GET /v1/models says a model can do: text, and image for
-// a model that can generate images.
+// Capabilities is what GET /v1/models says a model can do: text, image for a
+// model that can generate images, and tools for one that serves tool calling.
 func (c Config) Capabilities(m ModelInfo) []string {
+	caps := []string{capText}
 	if c.CanMakeImages(m) {
-		return []string{"text", "image"}
+		caps = append(caps, capImage)
 	}
-	return []string{"text"}
+	if c.ServesTools(m) {
+		caps = append(caps, capTools)
+	}
+	return caps
 }
 
 // ParseImageRuntimes reads MONOAGENT_API_IMAGE_RUNTIMES: runtime ids separated

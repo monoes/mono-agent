@@ -120,12 +120,12 @@ func TestAutoModelReportsTheImageCapabilityOnlyWithImageCandidates(t *testing.T)
 	} {
 		list := decodeModelList(t, h.serve(c.p, http.MethodGet, "/v1/models", secret, ""))
 		a := list.Data[len(list.Data)-1]
-		if a.ID != "auto" || !slices.Equal(a.Monoagent.Capabilities, c.want) {
+		if a.ID != "auto" || !slices.Equal(noTools(a.Monoagent.Capabilities), c.want) {
 			t.Errorf("%+v: the list has auto with %v, want %v", c.p, a.Monoagent.Capabilities, c.want)
 		}
 		var one modelObject
 		decodeInto(t, h.serve(c.p, http.MethodGet, "/v1/models/auto", secret, ""), &one)
-		if !slices.Equal(one.Monoagent.Capabilities, c.want) {
+		if !slices.Equal(noTools(one.Monoagent.Capabilities), c.want) {
 			t.Errorf("%+v: GET /v1/models/auto has %v, want %v", c.p, one.Monoagent.Capabilities, c.want)
 		}
 	}

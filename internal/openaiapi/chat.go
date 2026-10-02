@@ -48,7 +48,11 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		if isAuto {
 			model = autoModelID
 			var e *apiError
-			if candidates, e = g.autoCandidates(r.Context(), pr, eff); e != nil {
+			needs := capText // a request with tools is for the models that call them
+			if req.toolsActive() {
+				needs = capTools
+			}
+			if candidates, e = g.autoCandidatesFor(r.Context(), pr, eff, needs); e != nil {
 				fail(e)
 				return
 			}

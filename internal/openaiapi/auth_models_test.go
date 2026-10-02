@@ -75,7 +75,7 @@ func TestModelsListRespectsThePolicy(t *testing.T) {
 	first := list.Data[0]
 	if first.ID != "claude/default" || first.Object != "model" || first.OwnedBy != "claude" ||
 		first.Monoagent.Runtime != "claude" || first.Monoagent.Model != "default" ||
-		first.Monoagent.Confinement != "chat-only" || len(first.Monoagent.Capabilities) != 1 || first.Monoagent.Capabilities[0] != "text" {
+		first.Monoagent.Confinement != "chat-only" || len(first.Monoagent.Capabilities) == 0 || first.Monoagent.Capabilities[0] != "text" {
 		t.Errorf("first model: %+v", first)
 	}
 	for _, m := range list.Data {
