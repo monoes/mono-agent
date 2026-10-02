@@ -133,8 +133,11 @@ func compactArgs(raw json.RawMessage) string {
 // declared schema accepts. Only the keywords that matter for arguments are
 // checked (type, enum, const, required, properties, additionalProperties,
 // items, anyOf, oneOf, allOf, the numeric and length bounds); a schema or a
-// keyword that is not understood accepts. The answer is for the log: a call that
-// does not match is still returned, and the client decides.
+// keyword that is not understood accepts. The answer is for the log: monomind has
+// rejected, before the gateway sees the call, one whose top-level types, string
+// enums or required names do not match; what it cannot see (nested properties,
+// items, patterns, formats, ranges, lengths) is returned even when it does not
+// match, and the client decides.
 func argsMatch(d toolDecl, args json.RawMessage) bool {
 	v, err := decodeFloats(args)
 	if err != nil {

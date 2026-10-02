@@ -115,8 +115,10 @@ func (g *Gateway) answerToolLeg(w http.ResponseWriter, r *http.Request, run tool
 // rememberCall gives the call the leg ended at an id, as the client will see it,
 // and keeps the runtime's session under that id so that the follow-up can continue
 // it. A leg that reported no session leaves no record, and the follow-up replays.
-// It also counts the call when it does not match its declared schema: such a call
-// is returned all the same, and the client decides.
+// It also counts the call when it does not match its declared schema: monomind has
+// already rejected a call that does not match what it reads of it (the type, the
+// string enum and the required names of the top-level properties), so what is
+// counted here is returned all the same, and the client decides.
 func (g *Gateway) rememberCall(run toolRun, pl plannedLeg) (call wireToolCall, badArgs int) {
 	name := run.req.declaredName(pl.Call.Name) // the client knows the function by the name it declared
 	call = wireToolCall{ID: newRequestID("call_"), Type: "function",

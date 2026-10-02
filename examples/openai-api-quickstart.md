@@ -433,8 +433,10 @@ What to expect from a tool loop:
   the call (same key, same model, same tools and the same conversation before
   the call, within ten minutes, once: about half the price of the alternative on
   claude); otherwise, after a restart, a retry, a long pause, or a change to an
-  earlier message or the system prompt, it starts again from the transcript you
-  send, which always works. Either way you send the whole conversation each time.
+  earlier message (on codex also to the system prompt, the tool choice or the
+  response format: a claude session is told the new ones), it starts again from
+  the transcript you send, which always works. Either way you send the whole
+  conversation each time.
 - **The functions are yours; the model's own tools are not.** claude's own tools
   stay denied: a tool turn requires monomind's sandbox, under which monomind lets
   only the prefixed names of your functions through, so a function called `Bash`
@@ -451,21 +453,39 @@ What to expect from a tool loop:
   folds the schema into the function's description and names the arguments of a
   root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`) and of an
   `if`, `then` or `else` at the top level too (optional where the schema lets a
-  call do without them), or the call would reach you as `{}`. A key that no
-  property names is not passed on, so a schema that names none and allows
-  free-form keys (`additionalProperties` true or a schema, `patternProperties`)
-  is refused (400 `invalid_value` on `tools[i].function.parameters`): list the
-  arguments in `properties`. A call whose arguments do not match the schema is
-  returned all the same. An `enum` that is not a list of strings is left out of
-  what the runtime's tool bridge gets (the model still reads it in the
-  description); more than 128 functions, a name that is not 1 to 64 characters
-  of `[A-Za-z0-9_-]` (a name of 55 or more reaches the model as an alias, and
-  you always see your own; an alias that is the name of another function is
-  refused), a schema that nests combinators and references more than
-  8 levels deep, a result larger than 256 KiB, and a call in the conversation
-  whose id or name is not printable ASCII without `[ ] < > & ' "` or a backtick
-  (what clients really send, such as `call_abc123`, `toolu_01A...` and
-  `functions.name:0`, is fine) are refused (400).
+  call do without them, and as any value where only a branch that may not apply
+  defines them), or the call would reach you as `{}`. A key that no property
+  names is not passed on.
+- monomind holds a call to the type, the enum of strings and the `required`
+  names of the top-level properties it was told of. A call that does not match
+  them is rejected inside monomind and never reaches you: the model tries again,
+  and after monomind's round cap (10) you get `200` whose content is
+  `[monomind] tool-call round cap (10) reached ...` with `finish_reason:
+  "length"` (and a `usage`) instead of a call, so a mismatch there looks like a
+  model that gave up. What monomind cannot see comes back as the model wrote it,
+  unchecked, and is yours to check before you run it: nested properties, the
+  items of an array, patterns, formats, numeric ranges, lengths (the server only
+  counts, in its log, the calls that do not match its own reading of the
+  schema). An `enum` that is not a list of strings is left out of what the
+  runtime's tool bridge gets (the model still reads it in the description).
+- Some requests are refused (400 `invalid_value`, naming the parameter and never
+  what you wrote). While the tools are passed to the model (a request with
+  `tool_choice` `none` passes none, reads no schema and is not refused for
+  them): a function whose schema names no property and allows free-form keys
+  (`additionalProperties` or `unevaluatedProperties` true or a schema,
+  `patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
+  `$ref` that is not local to the schema or leads nowhere), since no argument of
+  its calls could be passed on: list the arguments in `properties`; a schema that
+  nests combinators and references more than 8 levels deep or holds more than
+  2,000 schemas, and functions whose schemas together take more of the server
+  than it reads to name their arguments (100,000 steps for a request; a
+  reference counts once however it is spelled). Whatever the choice: more than
+  128 functions, a name that is not 1 to 64 characters of `[A-Za-z0-9_-]` (a name
+  of 55 or more reaches the model as an alias, and you always see your own; an
+  alias that is the name of another function is refused), a result larger than
+  256 KiB, and a call in the conversation whose id or name is not printable ASCII
+  without `[ ] < > & ' "` or a backtick (what clients really send, such as
+  `call_abc123`, `toolu_01A...` and `functions.name:0`, is fine).
 - Make tools with side effects idempotent. A model can ask for the same call
   again after a resume (1 of 19 single-result claude legs in the spike, none of
   18 on codex), and codex repeats an identical call two or three times within a

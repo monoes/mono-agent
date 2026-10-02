@@ -433,19 +433,26 @@ paths:
         model has `tools` only where monomind can apply its sandbox, which every
         tool turn requires (403 `policy_denied`, nothing run, when it cannot be
         applied). A key created with `--context` is refused tools (403
-        `policy_denied` naming `--context-confinement`, answered before
-        anything starts) unless the operator raised that cap above chat-only:
-        the captured pages in its system prompt could steer the calls the
-        client runs. monomind keeps only the top-level properties of a
-        schema, so the arguments that a root `anyOf`, `oneOf` or `allOf`, a
-        local `$ref`, an `if`, a `then` or an `else` define are named at the top
-        level too (optional unless the schema requires them), and the whole
-        schema is also folded into the function's description (an `enum` that
-        is not a list of strings is left out of what the runtime's tool bridge
-        gets, and the model still reads it there). A schema that names no
-        property and allows free-form keys (`additionalProperties` true or a
-        schema, `patternProperties`), or that nests combinators and references
-        more than 8 levels deep, is 400 `invalid_value` on
+        `policy_denied` naming the flag that would change it,
+        `--context-confinement` or, on a listener that is chat-only,
+        `--confinement`; answered before anything starts) unless the operator
+        raised that cap above chat-only: the captured pages in its system
+        prompt could steer the calls the client runs. monomind keeps only the
+        top-level properties of a schema, so the arguments that a root `anyOf`,
+        `oneOf` or `allOf`, a local `$ref`, an `if`, a `then` or an `else`
+        define are named at the top level too (optional unless the schema
+        requires them, and as any value where only a branch that may not apply
+        defines them), and the whole schema is also folded into the function's
+        description (an `enum` that is not a list of strings is left out of
+        what the runtime's tool bridge gets, and the model still reads it
+        there). While the tools are passed (`tool_choice` is not `none`), a
+        function whose schema names no property and allows free-form keys
+        (`additionalProperties` or `unevaluatedProperties` true or a schema,
+        `patternProperties`) or whose references cannot be followed
+        (`$dynamicRef`, a `$ref` that is not local or leads nowhere), a schema
+        that nests combinators and references more than 8 levels deep or holds
+        more than 2000 schemas, and functions whose schemas together take more
+        than 100,000 steps to read are 400 `invalid_value` on
         `tools[i].function.parameters`.
         **A response carries one call**: the turn ends at the
         model's first call, and the answer is an assistant message with one
@@ -459,8 +466,15 @@ paths:
         server remembers nothing of the conversation that you do not send: a
         follow-up continues the runtime's session when a short-lived record of the
         call fits (same key, model, function and tools, and the same
-        conversation before the call), and otherwise starts from the transcript. A call whose arguments do not match the schema is
-        returned all the same. With `tool_choice: "none"`, or tool messages and
+        conversation before the call), and otherwise starts from the transcript.
+        monomind holds a call to the type, the enum of strings and the
+        `required` names of the top-level properties it was told of: a call that
+        does not match them is rejected inside monomind and never comes back (the
+        model retries, and after monomind's round cap of 10 the answer is `200`
+        with the cap's text as the content and `finish_reason: "length"` instead
+        of a call). What monomind cannot see (nested properties, items, patterns,
+        formats, ranges, lengths) comes back as the model wrote it, and is the
+        client's to check. With `tool_choice: "none"`, or tool messages and
         no `tools`, the turn is a plain one and earlier rounds are text. A codex
         leg runs read-only. With `model: "auto"` and `tools`, Jev picks among the
         models that serve tools.

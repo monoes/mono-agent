@@ -737,8 +737,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   sends back are rendered as compact JSON, or defanged like a result when they
   are not JSON, and the id and the name of such a call must be printable ASCII
   without `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the
-  parameter, never the value). A call whose arguments do not
-  match the declared schema is returned all the same, and the client decides. A
+  parameter, never the value). monomind rejects a call whose top-level
+  types, string enums or required names do not match what it was told of the
+  schema: it never comes back (the model retries, and after monomind's round cap
+  of 10 the client gets 200 with the cap's text and `finish_reason: "length"`);
+  what monomind cannot see (nested properties, items, patterns, formats, ranges,
+  lengths) is returned as the model wrote it and counted in the log when it does
+  not match, and the client decides. A
   resumed leg can ask for the same call again instead of using the result (1 of
   19 single-result claude legs in the spike, 0 of 18 on codex), and codex repeats
   an identical call two or three times within a leg (the leg ends at the first

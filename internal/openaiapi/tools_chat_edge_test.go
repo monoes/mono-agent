@@ -184,7 +184,9 @@ func TestToolsALogLineCountsACallThatDoesNotMatchItsSchema(t *testing.T) {
 	})
 	h := toolHarness(t, bad)
 	rec := post(h, anyPolicy, h.key(t, "default", "app", false), toolChatBody("claude", weatherTools, weatherQuestion))
-	// The call is returned all the same: the client decides.
+	// The call is returned all the same: the client decides. (The runtime here is a fake: against the
+	// real monomind a call whose top-level types, string enums or required names do not match is
+	// rejected inside it and never gets this far; what monomind cannot see does.)
 	got := decodeToolReply(t, rec)
 	if rec.Code != 200 || len(got.Choices[0].Message.ToolCalls) != 1 || got.Choices[0].Message.ToolCalls[0].Function.Arguments != `{"town":"Paris"}` {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)

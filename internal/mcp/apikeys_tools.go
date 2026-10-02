@@ -31,7 +31,7 @@ func apiTools() []tool {
 		{
 			name: "api_models_list",
 			description: "List the models the OpenAI-compatible API (/v1) would serve, with each one's confinement class (chat-only, sandboxed or unconfined), " +
-				"its capabilities (text; image for a model of a runtime that makes images; tools for a model that serves tool calling), " +
+				"its capabilities (text; image for a model of a runtime that makes images; tools for a model that serves tool calling: its runtime is in the list below, monomind can apply the sandbox every turn with tools requires, and for a runtime that is not chat-only run it read-only), " +
 				"whether a listener of the given kind serves it, whether a key created with context may use it, whether the auto model may pick it, " +
 				"and whether the auto model works for the active profile: the document of `monoagentcli api models --json`. " +
 				"The policy comes from the arguments, else from MONOAGENT_API_CONFINEMENT, MONOAGENT_API_CONTEXT_CONFINEMENT and MONOAGENT_API_AUTO_CONFINEMENT " +

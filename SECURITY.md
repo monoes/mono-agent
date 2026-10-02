@@ -769,11 +769,14 @@ executes nothing of the caller's. What this changes, and what it does not:
   fetched a web page can return instructions, and a key created with `--context`
   puts excerpts of captured pages in the system prompt. Either can steer which
   calls the model proposes next, so a context key is refused tools unless the
-  operator raised `--context-confinement` above chat-only (403 `policy_denied`,
-  before anything starts; a result is still untrusted data on any other key). The
-  gateway cannot tell a steered call from an asked one, and it returns every
-  call, valid or not (a call that does not match its schema is returned too and
-  counted in the log). So a client that runs calls without asking runs whatever
+  operator raised `--context-confinement` (and, on a chat-only listener,
+  `--confinement`: the key is held to the lower of the two) above chat-only (403
+  `policy_denied`, before anything starts; a result is still untrusted data on
+  any other key). The gateway cannot tell a steered call from an asked one, and it
+  returns every call monomind lets through, valid or not: monomind rejects a call
+  whose top-level types, string enums or required names do not match what it was
+  told (such a call never comes back), and one that does not match the rest of its
+  schema is returned too and counted in the log. So a client that runs calls without asking runs whatever
   the model was steered to propose, with its own permissions: give such a client
   keys whose prompts you trust, and keep a person, or a policy of the client's
   own, between a call and its execution.

@@ -2747,10 +2747,18 @@ OPENAI-COMPATIBLE API (/v1)
   or more reaches monomind and the model as an alias of 54 and the client sees its
   own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref
   and if/then/else arguments are named at the top level for monomind, which keeps
-  only top-level properties, and which is folded whole into the description; a
-  schema that names no property and allows free-form keys is 400; an enum that
-  is not a list of strings is left out of what monomind gets), tool_choice
-  none (no tools), auto,
+  only top-level properties, and which is folded whole into the description; an
+  enum that is not a list of strings is left out of what monomind gets; while the
+  tools are passed, a schema that names no property and allows free-form keys
+  (additionalProperties or unevaluatedProperties true or a schema,
+  patternProperties) or has a reference that cannot be followed ($dynamicRef, a
+  $ref that is not local) is 400, and so is one nested more than 8 levels deep or
+  holding more than 2000 schemas, or functions whose schemas together take more
+  than 100,000 steps to read; monomind rejects a call whose top-level types,
+  string enums or required names do not match what it was told, which never comes
+  back: after its round cap of 10 the answer is 200, the cap's text and
+  finish_reason "length"; what it cannot see comes back unchecked), tool_choice
+  none (no tools, nothing of the schemas read), auto,
   required or a named function (a best-effort line), parallel_tool_calls (treated
   as false). A response carries ONE call: the turn ends, cancelled, at the model's
   first call, and the answer is an assistant message
