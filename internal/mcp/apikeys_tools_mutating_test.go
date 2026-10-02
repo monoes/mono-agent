@@ -133,6 +133,20 @@ func TestAPIMutatingToolAnnotations(t *testing.T) {
 	}
 }
 
+// The description tells the model the rule of a name, in the store's own words, so
+// that it cannot drift from what the store refuses.
+func TestAPIKeyCreateDescriptionCarriesTheStoresNameRule(t *testing.T) {
+	for _, def := range toolDefinitions(true) {
+		if def["name"] == "api_key_create" {
+			if d, _ := def["description"].(string); !strings.Contains(d, apikeys.ErrInvalidName.Error()) {
+				t.Errorf("the description of api_key_create lacks the store's name rule %q", apikeys.ErrInvalidName.Error())
+			}
+			return
+		}
+	}
+	t.Fatal("api_key_create is not listed")
+}
+
 func TestAPIKeyCreateReturnsTheKeyAndStoresOnlyItsHash(t *testing.T) {
 	s, dbPath := newAPIKeyServer(t, true)
 	k := decodeKey(t, mustCall(t, s, "api_key_create", map[string]any{"name": "app", "context": true}))

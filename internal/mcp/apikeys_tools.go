@@ -49,7 +49,7 @@ func apiTools() []tool {
 				"only its SHA-256 is stored, so no tool can show it again. It authenticates /v1 requests as this profile and nothing else. " +
 				"Treat it as a password and give it only to the user: it is now part of this conversation's transcript, which the host may keep " +
 				"(`monoagentcli api key create` prints it to a terminal only). " +
-				"name is 1-64 characters (letters, digits, space, '.', '_', '-', starting with a letter or digit) and unique among the profile's active keys. " +
+				"The name rule is the store's: " + apikeys.ErrInvalidName.Error() + ". A name must also be unique among the profile's active keys. " +
 				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models unless the server raises --context-confinement.",
 			schema: objSchema(map[string]interface{}{
 				"name":    strParam("Key name, unique among the profile's active keys"),
