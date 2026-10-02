@@ -2720,6 +2720,7 @@ OPENAI-COMPATIBLE API (/v1)
     GET  /v1/models                 models as <runtime>/<model> ids
     GET  /v1/models/{id}            one model
     POST /v1/chat/completions       chat, JSON or "stream": true (SSE)
+    POST /v1/images/generations     images, as b64_json, from a runtime that makes them
 
   Model ids look like "claude/sonnet" or "codex/gpt-6-astra" (each runtime's
   own list decides: read GET /v1/models); a bare runtime ("codex") is its
@@ -2728,14 +2729,40 @@ OPENAI-COMPATIBLE API (/v1)
   unsupported_parameter: n above 1, logprobs true, an audio object, a
   non-empty tools or functions, a tool_choice or function_call other than
   "none", tool and function messages, content parts that are not text and a
-  response_format other than text or json_object. Not available yet: images
-  and tool calling.
+  response_format other than text or json_object. Not available yet: image
+  input and tool calling.
+
+  Images: POST /v1/images/generations {model, prompt, n, size, response_format}
+  answers {"created":..., "data":[{"b64_json":"..."}]}: base64 only (response_format
+  "url" and stream true are 400 unsupported_parameter). n is 1 to 4, size is
+  auto or WxH with each side 64 to 8192, quality, style, output_format,
+  background and user are ignored, the body is capped at 64 KiB. Which runtimes
+  make images is a list, MONOAGENT_API_IMAGE_RUNTIMES (default codex,antigravity;
+  monomind does not report it): GET /v1/models and api models --json give their
+  models "capabilities":["text","image"], and a runtime of the list that runs as
+  chat-only cannot make images. model is <runtime>/<model>, a runtime of the
+  list, auto, or missing (the first installed runtime of the list the policy
+  allows); a model that cannot make images is 400 invalid_value. The runtime must
+  write the file, so the model must be sandboxed or unconfined: under
+  --confinement chat-only, or for a --context key held to chat-only, it is 403
+  policy_denied and says what to raise. The turn is a chat turn with a fixed
+  system prompt (use your built-in image capability, do not draw it, save each
+  file in the current directory, reply with the file names, NO_IMAGE_TOOL if you
+  cannot); afterwards, before the slot folder is emptied, the gateway reads the
+  PNG, JPEG, WebP and GIF files at its top (first bytes decide, 20 MiB each, the
+  first n by name), never following a link or opening a FIFO. NO_IMAGE_TOOL is
+  400 image_generation_unsupported, no image 502 image_generation_failed with the
+  runtime's reply (300 characters). About a minute and 40,000 input tokens per
+  image, on the runtime's account. "auto" picks among the image models auto may
+  pick: none while --auto-confinement is chat-only, then 404 model_not_found
+  saying what to raise.
 
   The "auto" model lets Jev pick, per request, among the models the listener
   serves (a --context key: among those its own cap allows). It is opt-in per
   profile: monoagentcli jev enable api_auto, with a Jev key (jev key set, or
   TYPESAFE_API_KEY in the server's environment). What leaves the machine: the
-  first 4,000 characters of the last user message, and each candidate's name,
+  first 4,000 characters of the last user message (of an image request, its
+  prompt), and each candidate's name,
   description and validated cost and latency. It picks among chat-only models
   unless the operator raised --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT;
   a prompt can steer the pick and its author need not hold the key), never above
@@ -2792,9 +2819,9 @@ OPENAI-COMPATIBLE API (/v1)
   serves /v1 at a time: a second httpapi serves its other routes without it,
   a second daemon is refused.
 
-  Limits: 2 MiB body; 4 concurrent turns (--max-concurrent; 429 with
+  Limits: 2 MiB body (64 KiB for an image request); 4 concurrent turns (--max-concurrent; 429 with
   Retry-After when full); 10 minute turn timeout (MONOAGENT_API_TURN_TIMEOUT);
-  no CORS. The errors of the three routes are OpenAI-shaped,
+  no CORS. The errors of the four routes are OpenAI-shaped,
   {"error":{"message","type","param","code"}}, with an X-Request-Id header;
   an unknown path or method gets the plain 404 or 405 of Go's mux.
 
