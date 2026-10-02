@@ -84,8 +84,10 @@ use the ones this prints. A bare runtime (`codex`) is its default model, and
 `agy` is accepted for `antigravity`. A model that is neither listed by the
 runtime nor in your agent roster is a 404, although a runtime's aliases (such
 as `claude/opus[1m]`) resolve without being listed. If a runtime's own listing
-fails, a built-in list stands in for it until it answers again (a few
-seconds), so its ids can differ for a moment.
+fails, a built-in list stands in for it until a later listing works, so its
+ids can differ meanwhile. The listing is tried again after 30 seconds, then
+after 1, 2 and 4 minutes, and every 5 minutes after that, each time a request
+arrives.
 
 ## 3. Call it
 
