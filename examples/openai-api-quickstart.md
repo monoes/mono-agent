@@ -333,8 +333,10 @@ curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \
 ```
 
 A key created with `--context` is not offered `tools` (and a request that
-declares them is a 403) unless the operator raised `--context-confinement`
-above chat-only.
+declares them is a 403) unless the operator raised its cap above chat-only:
+`--context-confinement`, and `--confinement` too on a listener that is chat-only,
+which holds the key to the lower of the two (the answer names the flag that
+would change it, or both).
 
 A round trip with curl. The first request declares the function; the answer ends
 at the model's call:
@@ -433,10 +435,12 @@ What to expect from a tool loop:
   the call (same key, same model, same tools and the same conversation before
   the call, within ten minutes, once: about half the price of the alternative on
   claude); otherwise, after a restart, a retry, a long pause, or a change to an
-  earlier message (on codex also to the system prompt, the tool choice or the
-  response format: a claude session is told the new ones), it starts again from
-  the transcript you send, which always works. Either way you send the whole
-  conversation each time.
+  earlier message (to what it says, not to how it is written: the arguments of a
+  call with their keys in another order or their characters escaped another way
+  are the same call, a value or a number written another way is not; on codex
+  also to the system prompt, the tool choice or the response format: a claude
+  session is told the new ones), it starts again from the transcript you send,
+  which always works. Either way you send the whole conversation each time.
 - **The functions are yours; the model's own tools are not.** claude's own tools
   stay denied: a tool turn requires monomind's sandbox, under which monomind lets
   only the prefixed names of your functions through, so a function called `Bash`
@@ -469,30 +473,36 @@ What to expect from a tool loop:
   counts, in its log, the calls that do not match its own reading of the
   schema). An `enum` that is not a list of strings is left out of what the
   runtime's tool bridge gets (the model still reads it in the description).
-- Some requests are refused (400 `invalid_value`, naming the parameter and never
-  what you wrote). While the tools are passed to the model (a request with
-  `tool_choice` `none` passes none, reads no schema and is not refused for
-  them): a function whose schema names no property and allows free-form keys
-  (`additionalProperties` or `unevaluatedProperties` true or a schema,
-  `patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
-  `$ref` that is not local to the schema or leads nowhere), since no argument of
-  its calls could be passed on: list the arguments in `properties`; a schema whose
-  `const` or `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a
-  value that is not an object, which no call could match; a schema that
-  nests combinators and references more than 8 levels deep or holds more than
-  2,000 schemas, and functions whose schemas together take more of the server
-  than it reads to name their arguments (100,000 steps for a request, a step
-  being a schema read, a reference followed, a property or a listed name met, an enum entry compared; a reference counts once however it is spelled). Whatever the choice: more than
-  128 functions, a name that is not 1 to 64 characters of `[A-Za-z0-9_-]` (a name
-  of 55 or more reaches the model as an alias, and you always see your own; an
-  alias that is the name of another function is refused), a result larger than
-  256 KiB, a call in the conversation whose name is not printable ASCII without
+- Some requests are refused: 400 `invalid_value`, naming the parameter and never
+  what you wrote. Whatever the `tool_choice` (the tools are checked when they are
+  declared): more than 128 functions; a name that is not 1 to 64 characters of
+  `[A-Za-z0-9_-]`, one declared twice, or an alias that is another function's name
+  (a name of 55 or more reaches the model as an alias of 54, and you always see
+  your own); a `description` of more than 16 KiB; `parameters` of more than 64 KiB,
+  that are not a JSON schema object, whose root `type` is not `object`, whose
+  `properties` is not an object or holds a property that is not a schema, or whose
+  `required` is not a list of strings; a `tool_choice` that names a function that
+  is not declared; and in the conversation more than 64 calls in one message, a
+  result of more than 256 KiB, a call whose name is not printable ASCII without
   `[ ] < > & ' "` or a backtick, and an id of no characters or of more than 128
-  bytes. An id that is not such a token (a bracket, a quote, a space, a line break:
-  what clients really send, such as `call_abc123`, `toolu_01A...` and
-  `functions.name:0`, is fine) is not refused: the model reads it as `call_1`,
-  `call_2`, ... in order of appearance, and the follow-up is served by a replay,
-  since only an id the server made can resume a session.
+  bytes. While the tools are passed to the model (`tool_choice` is not `none`,
+  which passes none, so no argument is named and these do not apply): a function
+  whose schema names no property and allows free-form keys (`additionalProperties`
+  or `unevaluatedProperties` true or a schema, `patternProperties`) or whose
+  references cannot be followed (`$dynamicRef`, a `$ref` that is not local to the
+  schema or leads nowhere), since no argument of its calls could be passed on:
+  list the arguments in `properties`; a schema whose `const` or `enum` (the root's,
+  an `allOf`'s or a `$ref`'s that applies) holds a value that is not an object,
+  which no call could match; a schema that nests combinators and references more
+  than 8 levels deep or holds more than 2,000 schemas; and functions whose schemas
+  together take more of the server than it reads to name their arguments (100,000
+  steps for a request, a step being a schema read, a reference followed, a
+  property or a listed name met, an enum entry compared; a reference counts once
+  however it is spelled). An id that is not such a token (a bracket, a quote, a
+  space, a line break: what clients really send, such as `call_abc123`,
+  `toolu_01A...` and `functions.name:0`, is fine) is not refused: the model reads
+  it as `call_1`, `call_2`, ... in order of appearance, and the follow-up is served
+  by a replay, since only an id the server made can resume a session.
 - Make tools with side effects idempotent. A model can ask for the same call
   again after a resume (1 of 19 single-result claude legs in the spike, none of
   18 on codex), and codex repeats an identical call two or three times within a
@@ -503,8 +513,9 @@ What to expect from a tool loop:
 - Read `SECURITY.md` ("Tool calling") before you let a client run calls without
   asking: a tool result, and with `--context` a captured page, can steer which
   calls the model proposes. So a key created with `--context` is refused tools
-  (403 `policy_denied` naming `--context-confinement`, before anything starts)
-  unless the operator raised that cap above chat-only; use a key without
+  (403 `policy_denied`, before anything starts, naming `--context-confinement`,
+  `--confinement` when the server is chat-only, or both) unless the operator
+  raised that cap above chat-only; use a key without
   `--context` for a client that calls tools.
 
 ## 4. Serve it beyond this machine

@@ -2740,12 +2740,15 @@ OPENAI-COMPATIBLE API (/v1)
   400 unsupported_parameter on tools, before anything starts; a key created with
   --context is refused tools, 403 policy_denied naming the flag that would change
   it (--context-confinement, or --confinement on a listener that is chat-only: the
-  key is held to the lower of the two), unless that cap is above chat-only). GET /v1/models and api models --json (a
+  key is held to the lower of the two, or both when both are), unless that cap is
+  above chat-only). GET /v1/models and api models --json (a
   TOOLS column in its table, and the MCP tool api_models_list) give the models
   that serve them "tools" among their capabilities. A request declares up to 128
   functions (name 1 to 64 characters of [A-Za-z0-9_-], unique, where a name of 55
   or more reaches monomind and the model as an alias of 54 and the client sees its
-  own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref,
+  own; description at most 16 KiB; parameters a JSON schema object of at most
+  64 KiB whose root type is object, whose properties is an object of schemas and
+  whose required is a list of strings, and whose root anyOf, oneOf, allOf, local $ref,
   if/then/else, dependentSchemas/dependencies/dependentRequired and const/enum
   arguments are named at the top level for monomind, which keeps
   only top-level properties, and which is folded whole into the description; an
@@ -2753,16 +2756,28 @@ OPENAI-COMPATIBLE API (/v1)
   tools are passed, a schema that names no property and allows free-form keys
   (additionalProperties or unevaluatedProperties true or a schema,
   patternProperties) or has a reference that cannot be followed ($dynamicRef, a
-  $ref that is not local) or whose const or enum (the root's, an allOf's or a $ref's
-  that applies) holds a value that is not an object is 400, and so is one nested
-  more than 8 levels deep or
-  holding more than 2000 schemas, or functions whose schemas together take more
-  than 100,000 steps to read (a step: a schema read, a reference followed, a property or a listed name met, an enum entry compared); monomind rejects a call
-  whose top-level types,
-  string enums or required names do not match what it was told, which never comes
-  back: after its round cap of 10 the answer is 200, the cap's text and
-  finish_reason "length"; what it cannot see comes back unchecked), tool_choice
-  none (no tools, nothing of the schemas read), auto,
+  $ref that is not local or leads nowhere) or whose const or enum (the root's, an
+  allOf's or a $ref's that applies) holds a value that is not an object is 400,
+  and so is one nested more than 8 levels deep or holding more than 2000
+  schemas, or functions whose schemas together take more than 100,000 steps to
+  read (a step: a schema read, a reference followed, a property or a listed name
+  met, an enum entry compared); whatever the tool_choice, the declaration is
+  checked and these are 400 invalid_value naming the parameter, never what was
+  written: more than 128 functions, a name that is not 1 to 64 characters of
+  [A-Za-z0-9_-], one declared twice or an alias that is another function's name,
+  a description of more than 16 KiB, parameters of more than 64 KiB, that are not
+  a JSON schema object, whose root type is not object, whose properties is not an
+  object or holds a property that is not a schema or whose required is not a list
+  of strings, a tool_choice that names a function that is not declared, and in
+  the conversation more than 64 calls in one message, a result of more than 256
+  KiB, a call whose name is not printable ASCII without [ ] < > & ' " or a
+  backtick, and an id of no characters or of more than 128 bytes; monomind rejects
+  a call whose top-level types, string enums or required names do not match what
+  it was told, which never comes back: after its round cap of 10 the answer is
+  200, the cap's text and finish_reason "length"; what it cannot see comes back
+  unchecked), tool_choice none (no tools: no argument is named, so none of the
+  refusals of the schemas applies, while the declaration is still checked),
+  auto,
   required or a named function (a best-effort line), parallel_tool_calls (treated
   as false). A response carries ONE call: the turn ends, cancelled, at the model's
   first call, and the answer is an assistant message

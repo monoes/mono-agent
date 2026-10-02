@@ -557,8 +557,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   default `chat-only`) is the strongest class the `auto` model may pick, never
   above the listener's or a context key's. A request that declares tools changes
   none of this, except that a key created with `--context` is refused tools (403
-  `policy_denied` naming `--context-confinement`, before anything starts) unless
-  that cap is above chat-only; its codex leg runs read-only (**Tool calling**).
+  `policy_denied`, before anything starts, naming `--context-confinement`, or
+  `--confinement` when the listener is chat-only, since the key is held to the
+  lower of the two, or both when both are) unless that cap is above chat-only; its
+  codex leg runs read-only (**Tool calling**).
 - **Images.** `POST /v1/images/generations` takes `{model, prompt, n, size,
   response_format}` and answers `{"created":…,"data":[{"b64_json":…}]}`: base64
   only, so `response_format: "url"` is 400 `unsupported_parameter`, as is
@@ -651,8 +653,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   characters of `[A-Za-z0-9_-]`, unique, where a name of 55 or more is known to
   monomind and to the model by an alias of 54 characters (its first 45, an
   underscore and 8 hex digits of its SHA-256) and the client sees its own name
-  everywhere, an alias that collides with another name being a 400; a `description`; `parameters`, a JSON
-  schema object whose `type` is `object`; `strict` is accepted and ignored),
+  everywhere, an alias that collides with another name being a 400; a `description` of at most 16 KiB;
+  `parameters`, a JSON schema object of at most 64 KiB whose `type` is `object`,
+  whose `properties` is an object of schemas and whose `required` is a list of
+  strings; `strict` is accepted and ignored),
   a `tool_choice` (`none` passes no tools, `auto`, `required`, or a named
   function: the last two are a best-effort instruction in the system prompt)
   and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
@@ -674,9 +678,20 @@ a key. It lives in `internal/openaiapi/`; the spec is
   together take more than 100,000 steps to read (a step is a schema read, a reference followed, a property or a listed name met, an enum entry compared,
   each time it is done; a reference is read once however it is spelled, so the
   cost is bounded by the request), is 400
-  `invalid_value` on `tools[i].function.parameters`, while the tools are passed:
-  with `tool_choice` `none` no schema is read for arguments and nothing of this
-  is refused (`internal/openaiapi/tools_hoist.go`). **A
+  `invalid_value` on `tools[i].function.parameters`, while the tools are passed
+  (`internal/openaiapi/tools_hoist.go`). `tool_choice` `none` passes no tools, so
+  no argument is named and none of those naming refusals applies; the declaration
+  is checked whatever the choice (`validateTools`, `inspectParams` and
+  `validateToolMessages`, 400 `invalid_value` on the parameter: more than 128
+  functions; a name that is not usable, is declared twice or is an alias that is
+  another function's name; a description of more than 16 KiB; `parameters` of more
+  than 64 KiB, that are not a JSON schema object, whose root `type` is not
+  `object`, whose `properties` is not an object or holds a property that is not a
+  schema, or whose `required` is not a list of strings; a `tool_choice` that names
+  a function that is not declared; and in the conversation more than 64 calls in
+  one message, a result of more than 256 KiB, a call whose name is not printable
+  ASCII without `[ ] < > & ' "` or a backtick, and an id of no characters or of
+  more than 128 bytes). **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
   process group; a group kill only if monomind has not exited within its grace,
@@ -700,8 +715,16 @@ a key. It lives in `internal/openaiapi/`; the spec is
   restart loses them), ten minutes, 1,024 in all and 64 per key, holding ids
   and names and hashes, never the arguments or the result. It must be the same
   key and profile, model, function (with the arguments the model gave the call,
-  compared as a hash of the compact JSON: a client that edited them gets a
-  replay) and declared tools, the conversation before
+  compared as a hash of a canonical form of what the JSON says: the keys of every
+  object in order, each string written one way (a character as itself or as an
+  escape, `<` as itself or as its JSON escape, `/` as itself or as `\/`), no
+  spacing, and each number as it was written; so a client that stores its history
+  and writes the arguments again, with the keys in another order or other
+  escapes, still resumes, while one that changed a value, a number (`1.0` is not
+  `1`), the order of an array or the normalisation of a string gets a replay;
+  text that is not JSON is compared as it is, trimmed; the arguments of the
+  earlier calls of the conversation are compared the same way) and declared
+  tools, the conversation before
   the call must be the one the session saw (a hash of the messages, and for
   codex also the system prompt among them, the tool choice and the response
   format: a client that edits or compacts its history gets a replay, and one that

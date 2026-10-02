@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -213,5 +214,47 @@ func TestValidateToolsSurvivesOddSchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = validateChat(decodeRequest(t, body)) // may accept or refuse, never panic
+	}
+}
+
+// tool_choice none passes no tools, so no argument is named and the refusals that name them do not
+// apply to it; what the declaration says is still checked, because a tool of the history is declared
+// whatever the choice. (The docs, ref api and the quickstart say which refusal is which.)
+func TestToolChoiceNoneStillChecksTheDeclarationAndSkipsTheNaming(t *testing.T) {
+	big := `{"type":"object","description":"` + strings.Repeat("x", maxToolSchema) + `"}`
+	deep := strings.Repeat(`{"anyOf":[`, maxHoistDepth+1) + `{}` + strings.Repeat(`]}`, maxHoistDepth+1)
+	const params = "tools[0].function.parameters"
+	for _, c := range []struct {
+		name, schema string
+		always       bool // refused whatever the choice, and not only while the tools are passed
+		param        string
+	}{
+		{"a root type that is not object", `{"type":"string"}`, true, params + ".type"},
+		{"properties that is not an object", `{"type":"object","properties":5}`, true, params + ".properties"},
+		{"a property that is not a schema", `{"type":"object","properties":{"a":5}}`, true, params + ".properties"},
+		{"required that is not a list of strings", `{"type":"object","required":"a"}`, true, params + ".required"},
+		{"a schema of more than 64 KiB", big, true, params},
+		{"parameters that are not an object", `[1]`, true, params},
+		{"free-form keys and nothing else", `{"type":"object","additionalProperties":true}`, false, params},
+		{"a reference that cannot be followed", `{"$ref":"https://example.com/x.json"}`, false, params},
+		{"a schema that nests too deep", deep, false, params},
+		{"a const that is no object", `{"const":5}`, false, params},
+	} {
+		for choice, refused := range map[string]bool{`"auto"`: true, `"none"`: c.always} {
+			body := toolBody(`"tools":[{"type":"function","function":{"name":"f","parameters":`+c.schema+`}}],"tool_choice":`+choice, userHi)
+			err := validateChat(decodeRequest(t, body))
+			switch {
+			case refused && (err == nil || err.Status != http.StatusBadRequest || err.Code != "invalid_value" || err.Param != c.param):
+				t.Errorf("%s with tool_choice %s: got %+v, want 400 invalid_value on %s", c.name, choice, err, c.param)
+			case !refused && err != nil:
+				t.Errorf("%s with tool_choice %s: refused: %+v", c.name, choice, err)
+			}
+		}
+	}
+	for choice := range map[string]bool{`"auto"`: true, `"none"`: true} {
+		body := toolBody(`"tools":[{"type":"function","function":{"name":"f","description":"`+strings.Repeat("d", maxToolDescription+1)+`"}}],"tool_choice":`+choice, userHi)
+		if err := validateChat(decodeRequest(t, body)); err == nil || err.Code != "invalid_value" || err.Param != "tools[0].function.description" {
+			t.Errorf("a description of more than 16 KiB with tool_choice %s: got %+v", choice, err)
+		}
 	}
 }

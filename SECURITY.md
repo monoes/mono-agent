@@ -566,7 +566,9 @@ machine your notes. It never goes above the listener's own `--confinement`,
 and raising it accepts that a captured page could steer that runtime. The same
 cap decides **tool calling**: a request that declares `tools` (and does not set
 `tool_choice` to `none`) with a context key is 403 `policy_denied`, before
-anything starts, unless `--context-confinement` is above chat-only, because an
+anything starts (naming `--context-confinement`, or `--confinement` when the
+listener is chat-only, which holds the key to the lower of the two, or both),
+unless that cap is above chat-only, because an
 instruction in a captured page could steer the calls the model proposes and the
 client runs those with its own authority. The
 excerpts leave the machine like any prompt, to the runtime's provider. The
@@ -870,6 +872,29 @@ The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
 the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
 timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing and takes no slot.
+Tools have bounds of their own, each a 400 `invalid_value` that names the
+parameter and never what was written, answered before anything starts. Whatever
+the `tool_choice` (the tools are checked when they are declared): more than 128
+functions; a name that is not 1 to 64 characters of `[A-Za-z0-9_-]`, one declared
+twice, or an alias that is another function's name; a description of more than
+16 KiB; `parameters` of more than 64 KiB, that are not a JSON schema object, whose
+root `type` is not `object`, whose `properties` is not an object or holds a
+property that is not a schema, or whose `required` is not a list of strings; a
+`tool_choice` that names a function that is not declared; and in the conversation
+more than 64 calls in one message, a result of more than 256 KiB, a call whose
+name is not printable ASCII without `[ ] < > & ' "` or a backtick, and an id of no
+characters or of more than 128 bytes. While the tools are passed to the model
+(`tool_choice` is not `none`, which passes none, so no argument is named and these
+do not apply): a function whose schema names no property and allows free-form keys
+(`additionalProperties` or `unevaluatedProperties` true or a schema,
+`patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
+`$ref` that is not local or leads nowhere); a schema whose `const` or `enum` (the
+root's, an `allOf`'s or a `$ref`'s that applies) holds a value that is not an
+object; a schema that nests combinators and references more than 8 levels deep or
+holds more than 2,000 schemas; and functions whose schemas together take more than
+100,000 steps to read (a step is a schema read, a reference followed, a property
+or a listed name met, an enum entry compared): the work of naming the arguments is
+bounded by the request, before a slot is held.
 
 **Logs and errors.** One line per chat completion or image request names the
 request id, key

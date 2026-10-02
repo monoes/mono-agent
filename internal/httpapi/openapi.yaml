@@ -421,8 +421,10 @@ paths:
         characters of `[A-Za-z0-9_-]`, unique (a name of 55 or more is known to
         the runtime and the model by an alias, and every response, record and
         history entry carries yours; an alias that is another function's name
-        is 400 `invalid_value`); a `description`; `parameters`, a
-        JSON schema object, at most 64 KiB; `strict` is accepted and ignored),
+        is 400 `invalid_value`); a `description` of at most 16 KiB;
+        `parameters`, a JSON schema object of at most 64 KiB whose `type` is
+        `object`, whose `properties` is an object of schemas and whose
+        `required` is a list of strings; `strict` is accepted and ignored),
         `tool_choice` (`none` passes no tools, `auto`, `required` or
         `{"type":"function","function":{"name":…}}`; the last two are a
         best-effort instruction) and `parallel_tool_calls` (accepted and treated
@@ -433,9 +435,10 @@ paths:
         model has `tools` only where monomind can apply its sandbox, which every
         tool turn requires (403 `policy_denied`, nothing run, when it cannot be
         applied). A key created with `--context` is refused tools (403
-        `policy_denied` naming the flag that would change it,
-        `--context-confinement` or, on a listener that is chat-only,
-        `--confinement`; answered before anything starts) unless the operator
+        `policy_denied` naming the flag that would change it:
+        `--context-confinement`, `--confinement` on a listener that is chat-only
+        (the key is held to the lower of the two), or both; answered before
+        anything starts) unless the operator
         raised that cap above chat-only: the captured pages in its system
         prompt could steer the calls the client runs. monomind keeps only the
         top-level properties of a schema, so the arguments that a root `anyOf`,
@@ -446,18 +449,30 @@ paths:
         defines them), and the whole schema is also folded into the function's
         description (an `enum` that is not a list of strings is left out of
         what the runtime's tool bridge gets, and the model still reads it
-        there). While the tools are passed (`tool_choice` is not `none`), a
-        function whose schema names no property and allows free-form keys
-        (`additionalProperties` or `unevaluatedProperties` true or a schema,
+        there). These are 400 `invalid_value`, naming the parameter and never
+        what was written. Whatever the `tool_choice` (the tools are checked when
+        they are declared): more than 128 functions; a name that is not 1 to 64
+        characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is
+        another function's name; a `description` of more than 16 KiB;
+        `parameters` of more than 64 KiB, that are not a JSON schema object,
+        whose root `type` is not `object`, whose `properties` is not an object or
+        holds a property that is not a schema, or whose `required` is not a list
+        of strings; a `tool_choice` that names a function that is not declared;
+        and in the conversation more than 64 calls in one message, a result of
+        more than 256 KiB, a call whose name is not printable ASCII without
+        `[ ] < > & ' "` or a backtick, and an id of no characters or of more than
+        128 bytes. While the tools are passed to the model (`tool_choice` is not
+        `none`, which passes none, so no argument is named and these do not
+        apply): a function whose schema names no property and allows free-form
+        keys (`additionalProperties` or `unevaluatedProperties` true or a schema,
         `patternProperties`) or whose references cannot be followed
         (`$dynamicRef`, a `$ref` that is not local or leads nowhere), a schema
         whose `const` or `enum` (the root's, an `allOf`'s or a `$ref`'s that
-        applies) holds a value that is not an object, a schema
-        that nests combinators and references more than 8 levels deep or holds
-        more than 2000 schemas, and functions whose schemas together take more
-        than 100,000 steps to read (a step is a schema read, a reference followed, a property or a listed name met, an enum entry compared)
-        are 400 `invalid_value` on
-        `tools[i].function.parameters`.
+        applies) holds a value that is not an object, a schema that nests
+        combinators and references more than 8 levels deep or holds more than
+        2000 schemas, and functions whose schemas together take more than 100,000
+        steps to read (a step is a schema read, a reference followed, a property
+        or a listed name met, an enum entry compared).
         **A response carries one call**: the turn ends at the
         model's first call, and the answer is an assistant message with one
         `tool_calls` entry (`id` `call_…`, `function.arguments` a string of JSON),
