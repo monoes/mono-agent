@@ -1,13 +1,20 @@
 package main
 
 // OpenAI-compatible API settings (Settings page → "OpenAI-compatible API").
-// Every method shells out to `monoagentcli api …` through runMonoCLI; this
+// Every method shells out to `monoagentcli api …` through runAPICLI; this
 // file never touches the key store, the database or the gateway. A key
 // created here is printed once by the CLI, in `api key create --json`, and
 // travels no further than the create dialog: no other method decodes one.
+//
+// What a CLI that predates a field does not send stays absent in what the
+// page receives (a pointer, or omitempty), so that the page can tell "the CLI
+// said no" from "the CLI said nothing".
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -40,8 +47,9 @@ type APIListener struct {
 	V1                 bool   `json:"v1"` // the listener is meant to serve /v1
 	Confinement        string `json:"confinement"`
 	ContextConfinement string `json:"context_confinement"`
-	AutoConfinement    string `json:"auto_confinement"`
-	ConfinementSource  string `json:"confinement_source"` // daemon | environment
+	AutoConfinement    string `json:"auto_confinement,omitempty"` // an older CLI sends none
+	ConfinementSource  string `json:"confinement_source"`         // daemon | environment
+	Scheme             string `json:"scheme,omitempty"`           // http | https, the one that answered; none when it did not (or an older CLI)
 	Reachable          bool   `json:"reachable"`
 	V1Answers          bool   `json:"v1_answers"`
 }
@@ -60,14 +68,15 @@ type APIStatusDaemon struct {
 
 // APIAuto says whether the auto model works for the profile and what is
 // missing when it does not (`api status|models --json`; Confinement,
-// Candidates and HeldBack are `api models` only).
+// Candidates and HeldBack are `api models` only, and the CLI leaves out a
+// count of 0).
 type APIAuto struct {
 	Available   bool   `json:"available"`
-	Missing     string `json:"missing"`
-	KeySource   string `json:"key_source"`
-	Confinement string `json:"confinement"`
-	Candidates  int    `json:"candidates"`
-	HeldBack    int    `json:"held_back"`
+	Missing     string `json:"missing,omitempty"`
+	KeySource   string `json:"key_source,omitempty"`
+	Confinement string `json:"confinement,omitempty"` // a class: chat-only | sandboxed | unconfined
+	Candidates  *int   `json:"candidates,omitempty"`
+	HeldBack    *int   `json:"held_back,omitempty"`
 }
 
 // APIStatusInfo mirrors `api status --json`.
@@ -75,7 +84,7 @@ type APIStatusInfo struct {
 	Profile   string          `json:"profile"`
 	Keys      APIStatusKeys   `json:"keys"`
 	Daemon    APIStatusDaemon `json:"daemon"`
-	Auto      APIAuto         `json:"auto"`
+	Auto      *APIAuto        `json:"auto,omitempty"` // an older CLI sends none
 	Listeners []APIListener   `json:"listeners"`
 }
 
@@ -89,7 +98,7 @@ type APIModel struct {
 	Validated      bool   `json:"validated"`
 	Allowed        bool   `json:"allowed"`
 	ContextAllowed bool   `json:"context_allowed"`
-	AutoAllowed    bool   `json:"auto_allowed"`
+	AutoAllowed    *bool  `json:"auto_allowed,omitempty"` // an older CLI sends none
 }
 
 // APIPolicy is the policy `api models --json` evaluated.
@@ -97,7 +106,7 @@ type APIPolicy struct {
 	For                string `json:"for"` // loopback | network
 	Confinement        string `json:"confinement"`
 	ContextConfinement string `json:"context_confinement"`
-	AutoConfinement    string `json:"auto_confinement"`
+	AutoConfinement    string `json:"auto_confinement,omitempty"` // an older CLI sends none
 	Source             string `json:"source"`
 }
 
@@ -105,7 +114,57 @@ type APIPolicy struct {
 type APIModelsInfo struct {
 	Policy APIPolicy  `json:"policy"`
 	Models []APIModel `json:"models"`
-	Auto   APIAuto    `json:"auto"`
+	Auto   *APIAuto   `json:"auto,omitempty"`
+}
+
+// apiCLIError is a failed `monoagentcli api …` call: its exit code
+// (cmd/monoagentcli/exitcodes.go: 2 not found, 3 invalid input) and the line it
+// printed last. The page needs the class to word the failure, and the only thing
+// a Wails error carries is its text, so the classes the CLI itself names in its
+// JSON errors lead the text: "not_found: …", "invalid_input: …".
+type apiCLIError struct {
+	code int
+	msg  string
+}
+
+func (e *apiCLIError) Error() string {
+	switch e.code {
+	case 2:
+		return "not_found: " + e.msg
+	case 3:
+		return "invalid_input: " + e.msg
+	}
+	return e.msg
+}
+
+// runAPICLI is runMonoCLI (--profile <active> --json, decoded stdout) keeping the
+// exit code. The message is the last stderr line: the CLI prints its error last,
+// after any warnings, such as the migrations a first run logs.
+func (a *App) runAPICLI(result interface{}, args ...string) error {
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil { // before startup, and in tests
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, cliBin, append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)...)
+	hideWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			lines := strings.Split(strings.TrimSpace(string(ee.Stderr)), "\n")
+			msg := strings.TrimSpace(lines[len(lines)-1])
+			if msg == "" {
+				msg = err.Error()
+			}
+			return &apiCLIError{code: ee.ExitCode(), msg: msg}
+		}
+		return err
+	}
+	return json.Unmarshal(out, result)
 }
 
 // apiKeyID refuses an empty id and anything that would parse as a flag.
@@ -123,7 +182,7 @@ func apiKeyID(id string) (string, error) {
 // APIStatus reports where the API listens and whether it answers.
 func (a *App) APIStatus() (APIStatusInfo, error) {
 	var st APIStatusInfo
-	if err := a.runMonoCLI("", &st, "api", "status"); err != nil {
+	if err := a.runAPICLI(&st, "api", "status"); err != nil {
 		return APIStatusInfo{}, err
 	}
 	if st.Listeners == nil {
@@ -148,7 +207,7 @@ func (a *App) APIModels(forListener, confinement, contextConfinement, autoConfin
 		}
 	}
 	var m APIModelsInfo
-	if err := a.runMonoCLI("", &m, args...); err != nil {
+	if err := a.runAPICLI(&m, args...); err != nil {
 		return APIModelsInfo{}, err
 	}
 	if m.Models == nil {
@@ -160,7 +219,7 @@ func (a *App) APIModels(forListener, confinement, contextConfinement, autoConfin
 // APIKeyList lists the active profile's active keys.
 func (a *App) APIKeyList() ([]APIKey, error) {
 	var keys []APIKey
-	if err := a.runMonoCLI("", &keys, "api", "key", "list"); err != nil {
+	if err := a.runAPICLI(&keys, "api", "key", "list"); err != nil {
 		return nil, err
 	}
 	if keys == nil {
@@ -181,7 +240,7 @@ func (a *App) APIKeyCreate(name string, withContext bool) (APIKeyCreated, error)
 		args = append(args, "--context")
 	}
 	var created APIKeyCreated
-	if err := a.runMonoCLI("", &created, args...); err != nil {
+	if err := a.runAPICLI(&created, args...); err != nil {
 		return APIKeyCreated{}, err
 	}
 	return created, nil
@@ -198,7 +257,7 @@ func (a *App) APIKeySetContext(id string, on bool) (APIKey, error) {
 		flag = "--context"
 	}
 	var key APIKey
-	if err := a.runMonoCLI("", &key, "api", "key", "update", id, flag); err != nil {
+	if err := a.runAPICLI(&key, "api", "key", "update", id, flag); err != nil {
 		return APIKey{}, err
 	}
 	return key, nil
@@ -212,7 +271,7 @@ func (a *App) APIKeyRevoke(id string) (APIKey, error) {
 		return APIKey{}, err
 	}
 	var key APIKey
-	if err := a.runMonoCLI("", &key, "api", "key", "revoke", id, "--yes"); err != nil {
+	if err := a.runAPICLI(&key, "api", "key", "revoke", id, "--yes"); err != nil {
 		return APIKey{}, err
 	}
 	return key, nil

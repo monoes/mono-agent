@@ -39,11 +39,11 @@ export namespace main {
 	
 	export class APIAuto {
 	    available: boolean;
-	    missing: string;
-	    key_source: string;
-	    confinement: string;
-	    candidates: number;
-	    held_back: number;
+	    missing?: string;
+	    key_source?: string;
+	    confinement?: string;
+	    candidates?: number;
+	    held_back?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new APIAuto(source);
@@ -120,8 +120,9 @@ export namespace main {
 	    v1: boolean;
 	    confinement: string;
 	    context_confinement: string;
-	    auto_confinement: string;
+	    auto_confinement?: string;
 	    confinement_source: string;
+	    scheme?: string;
 	    reachable: boolean;
 	    v1_answers: boolean;
 	
@@ -139,6 +140,7 @@ export namespace main {
 	        this.context_confinement = source["context_confinement"];
 	        this.auto_confinement = source["auto_confinement"];
 	        this.confinement_source = source["confinement_source"];
+	        this.scheme = source["scheme"];
 	        this.reachable = source["reachable"];
 	        this.v1_answers = source["v1_answers"];
 	    }
@@ -152,7 +154,7 @@ export namespace main {
 	    validated: boolean;
 	    allowed: boolean;
 	    context_allowed: boolean;
-	    auto_allowed: boolean;
+	    auto_allowed?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new APIModel(source);
@@ -175,7 +177,7 @@ export namespace main {
 	    for: string;
 	    confinement: string;
 	    context_confinement: string;
-	    auto_confinement: string;
+	    auto_confinement?: string;
 	    source: string;
 	
 	    static createFrom(source: any = {}) {
@@ -194,7 +196,7 @@ export namespace main {
 	export class APIModelsInfo {
 	    policy: APIPolicy;
 	    models: APIModel[];
-	    auto: APIAuto;
+	    auto?: APIAuto;
 	
 	    static createFrom(source: any = {}) {
 	        return new APIModelsInfo(source);
@@ -258,7 +260,7 @@ export namespace main {
 	    profile: string;
 	    keys: APIStatusKeys;
 	    daemon: APIStatusDaemon;
-	    auto: APIAuto;
+	    auto?: APIAuto;
 	    listeners: APIListener[];
 	
 	    static createFrom(source: any = {}) {
