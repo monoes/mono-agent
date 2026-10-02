@@ -401,7 +401,7 @@
         "namePlaceholder": "my-app",
         "nameHint": "1 to 64 characters: letters, digits, space, . _ -, starting with a letter or digit.",
         "context": "Add this profile's knowledge to requests (context)",
-        "contextHint": "Excerpts of its documents and captures go into each prompt, so they reach the model's provider. Served only by chat-only models unless the server raises --context-confinement.",
+        "contextHint": "Excerpts of this profile's documents and captures go into each prompt, so they reach the model's provider. A key with context is served only by chat-only models unless the server raises --context-confinement.",
         "submit": "Create key",
         "creating": "Creating…",
         "cancel": "Cancel",

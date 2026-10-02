@@ -401,7 +401,7 @@
         "namePlaceholder": "mi-app",
         "nameHint": "De 1 a 64 caracteres: letras, dígitos, espacio, . _ -, empezando por una letra o un dígito.",
         "context": "Añadir el conocimiento de este perfil a las peticiones (contexto)",
-        "contextHint": "Extractos de sus documentos y capturas se incluyen en cada prompt, así que llegan al proveedor del modelo. Solo la sirven modelos chat-only salvo que el servidor suba --context-confinement.",
+        "contextHint": "Extractos de los documentos y capturas de este perfil se incluyen en cada prompt, así que llegan al proveedor del modelo. Una clave con contexto solo la sirven modelos chat-only salvo que el servidor suba --context-confinement.",
         "submit": "Crear clave",
         "creating": "Creando…",
         "cancel": "Cancelar",

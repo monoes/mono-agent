@@ -162,7 +162,9 @@ describe('ApiKeysBlock', () => {
       await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
       const [message, opts] = mockConfirm.mock.calls[0]
       expect(message).toBe(en.settings.api.create.contextHint)
-      expect(message).toMatch(/so they reach the model's provider/)
+      // Read on its own, under "Turn on context for my-app?": whose documents, and who is served only by chat-only models.
+      expect(message).toMatch(/^Excerpts of this profile's documents and captures go into each prompt, so they reach the model's provider\./)
+      expect(message).toMatch(/A key with context is served only by chat-only models/)
       expect(opts).toMatchObject({ title: 'Turn on context for my-app?', confirmLabel: 'Turn on context', danger: false })
       await settle()
       expect(App.APIKeySetContext).not.toHaveBeenCalled()
