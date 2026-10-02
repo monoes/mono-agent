@@ -589,7 +589,9 @@ included), with no retry, and is sure enough for the surface's threshold; an
 outage, a timeout or a doubt falls back to a rule, never to a wider set: of the
 validated models the most confined, then the cheapest, then the fastest, so that
 an outage does not move a request to a less confined model for being cheaper. An
-outage does cost every `auto` request up to those 8 seconds, with its slot held.
+outage costs a profile's first three `auto` requests up to those 8 seconds each,
+with their slots held; then its questions stop for 30 seconds and the rule decides
+at once, and one question after that finds out whether Jev is back.
 Each question is recorded in `jev_usage` under `api_auto` (counts only), and the
 log line of the request says `auto=jev` or `auto=rule` and never the prompt. The
 gateway blanks `TYPESAFE_API_KEY` in the environment of its agent turns, which

@@ -2743,7 +2743,8 @@ OPENAI-COMPATIBLE API (/v1)
   failure, a timeout (8 s) or a
   doubt falls back to a rule (of the validated models the most confined, then the
   cheapest, then the fastest; with none validated, a runtime's default model),
-  never to a wider set. The answer carries X-Monoagent-Model (the pick) and
+  never to a wider set; three questions in a row without an answer stop a
+  profile's questions for 30 s. The answer carries X-Monoagent-Model (the pick) and
   X-Monoagent-Auto (jev or rule). "auto" is listed after the other models. While
   the surface or the key is missing it is not listed and answers 404
   model_not_found naming what is missing; api models and api status say it too.

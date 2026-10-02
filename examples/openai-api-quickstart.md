@@ -201,7 +201,9 @@ the surface's threshold, which `jev enable api_auto --threshold 0.8` raises) or
 when only one model was left to pick. Of the models that passed
 `monoagentcli agent validate` (which records the cost and latency to compare),
 the rule takes the most confined, then the cheapest, then the fastest; with none
-validated, a runtime's default model, claude first.
+validated, a runtime's default model, claude first. When Jev does not answer three
+questions in a row, the server stops asking for 30 seconds (the log says so) and
+`X-Monoagent-Auto` is `rule` until one question gets through again.
 
 Jev picks only among models the key may use, and by default only among the
 chat-only ones (claude): a prompt can steer the pick, and its author need not

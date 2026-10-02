@@ -397,8 +397,10 @@ paths:
         is not a candidate or a probability under the surface's threshold falls
         back to a rule: of the validated models the most confined, then the
         cheapest, then the fastest, and with none validated a runtime's default
-        model. The `X-Monoagent-Model` header and the response's `model` name
-        the pick, and `X-Monoagent-Auto` says who chose.
+        model. After three questions in a row that got no answer the profile's
+        questions stop for 30 seconds, and the rule picks at once. The
+        `X-Monoagent-Model` header and the response's `model` name the pick, and
+        `X-Monoagent-Auto` says who chose.
 
         Sampling parameters (`temperature`, `top_p`, `max_tokens`,
         `max_completion_tokens`, `stop`, `seed`, `presence_penalty`,

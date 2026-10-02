@@ -443,7 +443,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   probability under the surface's threshold (default 0, set it with `jev
   enable api_auto --threshold`) uses a rule instead: of the validated models
   the most confined, then the cheapest, then the fastest, and with none
-  validated a runtime's default model, claude first. The response names the
+  validated a runtime's default model, claude first. Three questions in a row
+  with no answer stop a profile's questions for 30 seconds (then one question
+  probes whether Jev is back), so an outage does not cost every request its 8
+  seconds: the rule decides meanwhile, and the log says when. The response names the
   pick in `model` and `X-Monoagent-Model`, and who chose in
   `X-Monoagent-Auto` (`jev` or `rule`; `rule` also when there was only one
   model to pick and Jev was not asked). A question to Jev is recorded under
