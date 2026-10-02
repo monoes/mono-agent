@@ -52,6 +52,19 @@ type turn struct {
 	// what the turn left in it is read there, and nowhere else. ctx is the request's:
 	// a caller who left is not waited for.
 	Collect func(ctx context.Context, dir string)
+
+	// The rest is for a leg of a conversation with tools (tools_leg.go). Tools
+	// are the functions the request declares and OnToolCall answers their calls.
+	// OnEvent sees every event of the turn in order, from the one goroutine that
+	// delivers them, but none after the policy has stopped it. Resume continues a
+	// runtime's own session, Access is monomind's access mode and MaxTurns caps
+	// the agent turns.
+	Tools      []monomind.ToolSpec
+	OnToolCall monomind.ToolHandler
+	OnEvent    func(monomind.Event)
+	Resume     string
+	Access     string
+	MaxTurns   int
 }
 
 // slotDir returns the working folder of a profile's limiter slot, created
@@ -137,7 +150,9 @@ func (g *Gateway) turnTempDir() (string, error) {
 // posture of agent.ask and chat without tools: default (scoped) access, the
 // workspace-write sandbox where the runtime has one, no caller tools, no
 // settings, nothing from the client but the prompt, the model and the effort
-// (all validated before this point).
+// (all validated before this point). The one widening is a leg of a
+// conversation with tools, which declares the request's functions (and, to keep
+// a runtime's own tools out of the way, may ask for read access): see turn.
 //
 // Exec's own error (the turn never started) is returned as is. When the
 // start event reports a confinement weaker than the policy allows, the turn
@@ -211,6 +226,11 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		RequireSandbox:   t.RequireSandbox,
 		WorkspacePurpose: scratchPurpose,
 		Timeout:          g.cfg.TurnTimeout,
+		Tools:            t.Tools,
+		OnToolCall:       t.OnToolCall,
+		Resume:           t.Resume,
+		Access:           t.Access,
+		MaxTurns:         t.MaxTurns,
 	}
 	if t.Model != "" && t.Model != agentroster.DefaultModel {
 		opts.Model = t.Model
@@ -228,6 +248,9 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 	res, err := g.deps.Exec(tctx, opts, func(ev monomind.Event) {
 		if denied {
 			return // monomind may deliver events already in flight; none of them reaches the client
+		}
+		if t.OnEvent != nil {
+			t.OnEvent(ev)
 		}
 		switch ev.Type {
 		case monomind.EventStart:
