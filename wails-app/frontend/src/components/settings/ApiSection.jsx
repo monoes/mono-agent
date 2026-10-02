@@ -15,22 +15,29 @@ import { Badge, hint, mono } from './api/ui.jsx'
 // terminal user runs. Folded by default like the Jev section: the status, which
 // is cheap, is read when Settings opens; the keys and the models, which start
 // monomind to scan the runtimes, are read when the section is first opened.
+// Settings stays mounted while another page is shown, so what was read is as
+// old as the visit: coming back to the page reads the status again, and the keys
+// and the models too once they had been read (the models only when the listener
+// they describe changed: a scan of the runtimes is not repeated for nothing).
 
 const card = {
   background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)',
   padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 16,
 }
 
+// What a loader says when a call that started after it has taken its place: there is nothing to go on with.
+const SUPERSEDED = Symbol('superseded')
+
 /**
- * @param {boolean} defaultExpanded Open from the start (a deep link).
  * @param {(page: string, data?: object) => void} onNavigate Settings' own: the jump to the Jev settings is
  *   `onNavigate('settings', { section: 'jev' })`, the dashboard's deep link.
+ * @param {boolean} isActive Whether Settings is the page on show (the app keeps visited pages mounted, hidden).
+ *   Without it, always.
  */
-export default function ApiSection({ defaultExpanded = false, onNavigate } = {}) {
+export default function ApiSection({ onNavigate, isActive = true } = {}) {
   const { t } = useTranslation()
   const bodyId = useId()
-  const [expanded, setExpanded] = useState(defaultExpanded)
-  useEffect(() => { if (defaultExpanded) setExpanded(true) }, [defaultExpanded])
+  const [expanded, setExpanded] = useState(false)
 
   const [status, setStatus] = useState(null)
   const [statusErr, setStatusErr] = useState('')
@@ -43,17 +50,44 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
   // A failure is worded when it happens, in the language of the moment; the loaders keep one identity.
   const tRef = useRef(t)
   tRef.current = t
+  // Each loader applies the answer of the call that started last: a slower one started before it (a refresh while a
+  // re-read runs, a retry) is dropped, so an older state never overwrites a newer one.
+  const seq = useRef({ status: 0, keys: 0, models: 0 })
+  const modelsFor = useRef(null) // the arguments of the models on show (null: none, or the last read of them failed)
 
   // Each part is read on its own: one that fails is shown as failed, and the others stay.
   const loadStatus = useCallback(async () => {
-    try { const st = await APIStatus(); setStatus(st); setStatusErr(''); return st } catch (e) { setStatusErr(apiError(e, tRef.current)); return null }
+    const mine = ++seq.current.status
+    try {
+      const st = await APIStatus()
+      if (mine !== seq.current.status) return SUPERSEDED
+      setStatus(st); setStatusErr(''); return st
+    } catch (e) {
+      if (mine !== seq.current.status) return SUPERSEDED
+      setStatusErr(apiError(e, tRef.current)); return null
+    }
   }, [])
   const loadKeys = useCallback(async () => {
-    try { setKeys(await APIKeyList()); setKeysErr('') } catch (e) { setKeysErr(apiError(e, tRef.current)) }
+    const mine = ++seq.current.keys
+    try {
+      const list = await APIKeyList()
+      if (mine === seq.current.keys) { setKeys(list); setKeysErr('') }
+    } catch (e) {
+      if (mine === seq.current.keys) setKeysErr(apiError(e, tRef.current))
+    }
   }, [])
   // The models are evaluated for the listener the header describes, so they wait for the status.
   const loadModels = useCallback(async (st) => {
-    try { setModels(await APIModels(...modelsArgs(pickListener(st)))); setModelsErr('') } catch (e) { setModelsErr(apiError(e, tRef.current)) }
+    const mine = ++seq.current.models
+    const args = modelsArgs(pickListener(st))
+    const key = JSON.stringify(args)
+    if (key !== modelsFor.current) setModels(null) // another policy: the table on show is not the answer to this
+    try {
+      const m = await APIModels(...args)
+      if (mine === seq.current.models) { setModels(m); setModelsErr(''); modelsFor.current = key }
+    } catch (e) {
+      if (mine === seq.current.models) { setModelsErr(apiError(e, tRef.current)); modelsFor.current = null }
+    }
   }, [])
 
   useEffect(() => { loadStatus() }, [loadStatus])
@@ -68,12 +102,26 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, statusSettled, loadKeys, loadModels])
 
+  // Coming back to the page (not the first time, which is the mount): what was read is as old as the visit.
+  const wasActive = useRef(isActive)
+  useEffect(() => {
+    const returned = isActive && !wasActive.current
+    wasActive.current = isActive
+    if (!returned) return
+    ;(async () => {
+      const st = await loadStatus()
+      if (st === SUPERSEDED || !detailsAsked.current) return
+      loadKeys()
+      if (JSON.stringify(modelsArgs(pickListener(st))) !== modelsFor.current) loadModels(st)
+    })()
+  }, [isActive, loadStatus, loadKeys, loadModels])
+
   const refresh = async () => {
     detailsAsked.current = true
     setRefreshing(true)
     try {
       const st = await loadStatus()
-      await Promise.all([loadKeys(), loadModels(st)])
+      if (st !== SUPERSEDED) await Promise.all([loadKeys(), loadModels(st)])
     } finally {
       setRefreshing(false)
     }

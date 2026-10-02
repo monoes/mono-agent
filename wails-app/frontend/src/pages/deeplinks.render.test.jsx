@@ -18,9 +18,10 @@ vi.mock('../wailsjs/go/main/App', () => ({
 }))
 vi.mock('../components/settings/HealthSection.jsx', () => ({ default: () => <div>health-section</div> }))
 vi.mock('../components/settings/JevSection.jsx', () => ({ default: () => <div>jev-section</div> }))
-// The API section asks Settings to take it to the Jev settings, as the dashboard's Jev row does.
+// The API section asks Settings to take it to the Jev settings, as the dashboard's Jev row does, and is told
+// whether Settings is the page on show (the app keeps it mounted, hidden, when another page is).
 vi.mock('../components/settings/ApiSection.jsx', () => ({
-  default: ({ onNavigate }) => <button onClick={() => onNavigate('settings', { section: 'jev' })}>api-section</button>,
+  default: ({ onNavigate, isActive }) => <button data-active={String(isActive)} onClick={() => onNavigate('settings', { section: 'jev' })}>api-section</button>,
 }))
 vi.mock('./connections/BrowserAutomations.jsx', () => ({
   default: ({ onOpen }) => <div>automations<button onClick={() => onOpen({ id: 'x' })}>open-x</button></div>,
@@ -66,6 +67,14 @@ describe('dashboard deep links', () => {
     expect(scrolled).toEqual([])
     fireEvent.click(screen.getByText('api-section'))
     await waitFor(() => expect(scrolled).toEqual(['jev']))
+  })
+  it('Settings tells the API section whether it is the page on show, so that it reads again on coming back', () => {
+    const { rerender } = render(<Settings onNavigate={vi.fn()} navData={null} />)
+    expect(screen.getByText('api-section')).toHaveAttribute('data-active', 'true') // without being told, it always is
+    rerender(<Settings onNavigate={vi.fn()} navData={null} isActive={false} />)
+    expect(screen.getByText('api-section')).toHaveAttribute('data-active', 'false')
+    rerender(<Settings onNavigate={vi.fn()} navData={null} isActive />)
+    expect(screen.getByText('api-section')).toHaveAttribute('data-active', 'true')
   })
   it('Connections opens the named automation on the named tab', async () => {
     render(<Connections navData={{ automationId: 'linkedin', tab: 'health' }} />)
