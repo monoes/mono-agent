@@ -46,6 +46,8 @@ func TestTheBudgetIsChargedForEverythingThatCostsWork(t *testing.T) {
 			`{"allOf":[{"$ref":"#/$defs/A"},{"$ref":"#/$defs/A"}],"$defs":{"A":{"required":["x"]}}}`, 1 + 2 + 2 + 1 + 1 + 1},
 		{"a definition read as optional and as applied is read twice, and charged twice",
 			`{"allOf":[{"anyOf":[{"$ref":"#/$defs/A"}]},{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"p":{}},"allOf":[{"properties":{"q":{}}}]}}}`, 1 + 7 + 6},
+		{"a definition read as applied is not read again as optional",
+			`{"allOf":[{"$ref":"#/$defs/A"},{"anyOf":[{"$ref":"#/$defs/A"}]}],"$defs":{"A":{"properties":{"p":{}}}}}`, 1 + 4 + 3},
 		{"the members of a const and the keys they name", `{"const":{"a":1,"b":2}}`, 1 + 1 + 2 + 2},
 		{"the members of an enum, and a key met again", `{"enum":[{"a":1},{"a":2},5]}`, 1 + 3 + 2 + 1},
 		{"what a dependency asks for, and the property that asks", `{"dependentRequired":{"a":["b","c"]}}`, 1 + 1 + 2 + 3},

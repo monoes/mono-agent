@@ -103,18 +103,26 @@ func TestAPropertyThatManyBranchesDefineIsMarshalledOnce(t *testing.T) {
 	}
 }
 
-// The definitions of a schema may refer to each other twice, level after level: the work is the
-// number of definitions, not the number of paths through them.
+// The definitions of a schema may refer to each other twice, level after level, and the work is the
+// number of definitions, not the number of paths through them. Each of these refers to the next both
+// directly and through an allOf, six levels in all: 2^6 paths to the last, 34 steps with a definition read
+// once, and no way through them that stays within the depth that is read if each path is walked (the
+// allOf adds two levels, the direct reference one). A chain of 40 levels, which this test had before,
+// went past the depth after 19 steps with the memory of what was read or without it, and tested nothing.
 func TestSharedDefinitionsCostWhatTheyAre(t *testing.T) {
+	const levels = 6
 	var defs []string
-	for i := range 40 {
-		defs = append(defs, fmt.Sprintf(`"D%d":{"properties":{"p%d":{"type":"string"}},"allOf":[{"$ref":"#/$defs/D%d"},{"$ref":"#/$defs/D%d"}]}`, i, i, i+1, i+1))
+	for i := range levels {
+		defs = append(defs, fmt.Sprintf(`"D%d":{"properties":{"p%d":{"type":"string"}},"$ref":"#/$defs/D%d","allOf":[{"$ref":"#/$defs/D%d"}]}`, i, i, i+1, i+1))
 	}
-	defs = append(defs, `"D40":{"properties":{"last":{"type":"string"}}}`)
+	defs = append(defs, fmt.Sprintf(`"D%d":{"properties":{"last":{"type":"string"}}}`, levels))
 	b := newHoistBudget()
-	nameArguments(json.RawMessage(`{"$ref":"#/$defs/D0","$defs":{`+strings.Join(defs, ",")+`}}`), b)
-	if b.used > 1000 {
-		t.Errorf("%d steps for 41 definitions", b.used)
+	got := nameArguments(json.RawMessage(`{"$ref":"#/$defs/D0","$defs":{`+strings.Join(defs, ",")+`}}`), b)
+	if got.TooDeep || got.TooWide || got.Spent || len(got.Props) != levels+1 {
+		t.Fatalf("the seven definitions are read once each: %v named, too deep %v, too wide %v, spent %v after %d steps", keysOf(got.Props), got.TooDeep, got.TooWide, got.Spent, b.used)
+	}
+	if b.used > 40 {
+		t.Errorf("%d steps for %d definitions that refer to each other twice", b.used, levels+1)
 	}
 }
 
