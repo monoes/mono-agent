@@ -61,29 +61,37 @@ func TestTwoUpdateCallsInFlightBothLand(t *testing.T) {
 }
 
 // The same, in bulk and without the lock, for the race detector: many keys, each
-// with two updates dispatched together, all landing.
+// with two updates in flight together, all landing. The session stays open until
+// every answer is in: a server cancels what it still runs postEOFGrace (3 seconds)
+// after its input ends, which 80 calls under the race detector on a slow or busy
+// machine can outlast, and that is not what this test is about.
 func TestManyUpdateCallsAtOnceAllLand(t *testing.T) {
 	s, dbPath := newAPIKeyServer(t, true)
 	store := apikeys.NewStore(sideDB(t, dbPath).DB)
 	const keys = 40
 	ids := make([]string, keys)
-	var lines []string
 	for i := range ids {
 		k, _, err := store.Create(context.Background(), "default", "key-"+strconv.Itoa(i), true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ids[i] = k.ID
-		lines = append(lines,
-			callToolReq(2*i+1, "api_key_update", map[string]any{"id": k.ID, "context": false}),
-			callToolReq(2*i+2, "api_key_update", map[string]any{"id": k.ID, "name": fmt.Sprintf("renamed-%d", i)}))
 	}
 
-	for _, resp := range serveLines(t, s, lines...) {
-		if text, isErr := toolText(t, resp); isErr {
+	w := newWireSession(t, s)
+	var sent []string
+	for i, id := range ids {
+		sent = append(sent,
+			w.send("api_key_update", map[string]any{"id": id, "context": false}),
+			w.send("api_key_update", map[string]any{"id": id, "name": fmt.Sprintf("renamed-%d", i)}))
+	}
+	for _, id := range sent {
+		if text, isErr := w.await(id); isErr {
 			t.Fatalf("an update of an active key failed: %s", scrubbed(text))
 		}
 	}
+	w.finish()
+
 	for i, id := range ids {
 		got, err := store.Get(context.Background(), "default", id)
 		if err != nil {
