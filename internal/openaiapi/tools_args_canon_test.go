@@ -69,7 +69,7 @@ func TestTheArgumentsTheClientGetsAreTheModelsOwnSpelling(t *testing.T) {
 
 // The calls of the history, as the client sends them back.
 func multiCall(id, name, arguments string) string {
-	return `{"id":"` + id + `","type":"function","function":{"name":"` + name + `","arguments":` + jsonString(arguments) + `}}`
+	return `{"id":` + jsonString(id) + `,"type":"function","function":{"name":` + jsonString(name) + `,"arguments":` + jsonString(arguments) + `}}`
 }
 
 func multiCallMsg(arguments string) string {

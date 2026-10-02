@@ -483,9 +483,13 @@ What to expect from a tool loop:
   128 functions, a name that is not 1 to 64 characters of `[A-Za-z0-9_-]` (a name
   of 55 or more reaches the model as an alias, and you always see your own; an
   alias that is the name of another function is refused), a result larger than
-  256 KiB, and a call in the conversation whose id or name is not printable ASCII
-  without `[ ] < > & ' "` or a backtick (what clients really send, such as
-  `call_abc123`, `toolu_01A...` and `functions.name:0`, is fine).
+  256 KiB, a call in the conversation whose name is not printable ASCII without
+  `[ ] < > & ' "` or a backtick, and an id of no characters or of more than 128
+  bytes. An id that is not such a token (a bracket, a quote, a space, a line break:
+  what clients really send, such as `call_abc123`, `toolu_01A...` and
+  `functions.name:0`, is fine) is not refused: the model reads it as `call_1`,
+  `call_2`, ... in order of appearance, and the follow-up is served by a replay,
+  since only an id the server made can resume a session.
 - Make tools with side effects idempotent. A model can ask for the same call
   again after a resume (1 of 19 single-result claude legs in the spike, none of
   18 on codex), and codex repeats an identical call two or three times within a

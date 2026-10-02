@@ -735,9 +735,11 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `[tool.poetry]` is not a marker: `internal/openaiapi/tools_defang.go`; the fence
   is the defence, this a second layer). The arguments of a call that the client
   sends back are rendered as compact JSON, or defanged like a result when they
-  are not JSON, and the id and the name of such a call must be printable ASCII
-  without `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the
-  parameter, never the value). monomind rejects a call whose top-level
+  are not JSON, and the name of such a call must be printable ASCII without
+  `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the parameter, never
+  the value), while an id that is not (1 to 128 bytes of anything) is shown as
+  `call_1`, `call_2`, ... in order of appearance (`labelCalls`; the follow-up
+  replays, only the gateway's own id resumes). monomind rejects a call whose top-level
   types, string enums or required names do not match what it was told of the
   schema: it never comes back (the model retries, and after monomind's round cap
   of 10 the client gets 200 with the cap's text and `finish_reason: "length"`);

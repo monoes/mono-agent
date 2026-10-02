@@ -2774,8 +2774,8 @@ OPENAI-COMPATIBLE API (/v1)
   leg runs read-only (--access read); declaring tools changes no confinement class.
   Tool results are untrusted data, fenced in the prompt with every way of writing
   a turn marker or a fence tag neutralised, and so are the arguments of a call of
-  the conversation, whose id and name must be printable ASCII without [ ] < > & '
-  " or a backtick (400); a steered call is the caller's to run or not: see
+  the conversation, whose name must be printable ASCII without [ ] < > & '
+  " or a backtick (400; an id that is not is shown as call_1, call_2, ...); a steered call is the caller's to run or not: see
   SECURITY.md. The log line adds tools=<n> leg=first|resume|replay.
 
   Images: POST /v1/images/generations {model, prompt, n, size, response_format}

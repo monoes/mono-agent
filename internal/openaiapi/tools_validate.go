@@ -264,13 +264,14 @@ func validateToolMessages(req *ChatRequest) *apiError {
 	return nil
 }
 
-// isCallToken reports whether s can be the id or the name of a tool call of the conversation:
-// 1 to limit printable ASCII characters (every id and name real clients send is, such as
-// call_abc123, toolu_01A09q90qw90lq917835lq9 and functions.get_weather:0), none of the
-// characters that the transcript gives a meaning to or that could end a line or
-// a tag: no space, no control character, and none of [ ] < > & ' " or a backtick. What it
-// allows is a list, not what it refuses: a character that renders as nothing, or as a
-// letter of another width, is not one of the 94.
+// isCallToken reports whether s can be the name of a tool call of the conversation, or the id of
+// one that the transcript shows as it is: 1 to limit printable ASCII characters (every id and name
+// real clients send is, such as call_abc123, toolu_01A09q90qw90lq917835lq9 and
+// functions.get_weather:0), none of the characters that the transcript gives a meaning to or that
+// could end a line or a tag: no space, no control character, and none of [ ] < > & ' " or a
+// backtick. What it allows is a list, not what it refuses: a character that renders as nothing, or
+// as a letter of another width, is not one of the 94. A name must be one; an id that is not is
+// shown as a positional one (labelCalls).
 func isCallToken(s string, limit int) bool {
 	if s == "" || len(s) > limit {
 		return false
@@ -286,8 +287,8 @@ func isCallToken(s string, limit int) bool {
 func validateHistoryCall(param string, c ToolCall) *apiError {
 	const tokenRule = "of 1 to %d printable ASCII characters, none of [ ] < > & ' \" or a backtick"
 	switch {
-	case !isCallToken(c.ID, maxCallID):
-		return errInvalid("invalid_value", param+".id", fmt.Sprintf("a tool call needs an id "+tokenRule, maxCallID))
+	case c.ID == "" || len(c.ID) > maxCallID: // any other id is shown to the model as a positional one
+		return errInvalid("invalid_value", param+".id", fmt.Sprintf("a tool call needs an id of 1 to %d bytes", maxCallID))
 	case c.Type != "" && c.Type != "function":
 		return errUnsupported(param+".type", "only tool calls of type function are supported")
 	case !isCallToken(c.Function.Name, maxCallName):

@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -87,6 +88,7 @@ func trailingRound(req *ChatRequest) (int, bool) {
 // the system prompt.
 func replayPrompt(req *ChatRequest, active bool) string {
 	names := map[string]string{} // call id to function name
+	labels := labelCalls(req)
 	var b strings.Builder
 	b.WriteString(transcriptIntro)
 	for _, m := range req.Messages {
@@ -104,7 +106,7 @@ func replayPrompt(req *ChatRequest, active bool) string {
 				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", names[c.ID], argumentsInPrompt(c.Function.Arguments))
 			}
 		case "tool":
-			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text))
+			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], labels[m.ToolCallID], fenceResult(m.Content.Text))
 		default:
 			fmt.Fprintf(&b, "\n\n[%s]\n%s", m.Role, m.Content.Text)
 		}
@@ -115,6 +117,43 @@ func replayPrompt(req *ChatRequest, active bool) string {
 		b.WriteString("\n\n" + plainToolOutro)
 	}
 	return b.String()
+}
+
+// callLabels says how the transcript names each call of the conversation, by the id the request
+// gave it. A client may send any id: those of real clients are tokens (isCallToken) and are shown as
+// they are, and any other (a bracket, a quote, a space, a line break) is shown as call_N for the
+// smallest N from 1 on that no call really has for its id and that no earlier such id was given, in
+// order of appearance, the same wherever the id is shown. The raw id never reaches the prompt.
+type callLabels map[string]string
+
+func labelCalls(req *ChatRequest) callLabels {
+	var order []string // the ids of the calls, in order of appearance, one of them more than once if the client reuses it
+	for _, m := range req.Messages {
+		for _, c := range m.ToolCalls {
+			order = append(order, c.ID)
+		}
+	}
+	labels := make(callLabels, len(order))
+	taken := make(map[string]bool, len(order))
+	for _, id := range order {
+		if isCallToken(id, maxCallID) {
+			labels[id], taken[id] = id, true
+		}
+	}
+	n := 0
+	for _, id := range order {
+		if _, shown := labels[id]; shown {
+			continue
+		}
+		for {
+			n++
+			if name := "call_" + strconv.Itoa(n); !taken[name] {
+				labels[id], taken[name] = name, true
+				break
+			}
+		}
+	}
+	return labels
 }
 
 // fenceResult renders the result of a function as data. A result is whatever the
@@ -143,6 +182,7 @@ func argumentsText(raw json.RawMessage) string {
 // the call is said in the system prompt of the leg (resumeNote).
 func resumePrompt(req *ChatRequest, ai int) string {
 	names := map[string]string{}
+	labels := labelCalls(req)
 	for _, c := range req.Messages[ai].ToolCalls {
 		names[c.ID] = req.wireName(c.Function.Name)
 	}
@@ -150,7 +190,7 @@ func resumePrompt(req *ChatRequest, ai int) string {
 	for _, m := range req.Messages[ai+1:] {
 		switch m.Role {
 		case "tool":
-			parts = append(parts, fmt.Sprintf("Result of %s (call %s):\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text)))
+			parts = append(parts, fmt.Sprintf("Result of %s (call %s):\n%s", names[m.ToolCallID], labels[m.ToolCallID], fenceResult(m.Content.Text)))
 		case "user":
 			parts = append(parts, m.Content.Text)
 		}

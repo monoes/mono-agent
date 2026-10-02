@@ -751,12 +751,16 @@ executes nothing of the caller's. What this changes, and what it does not:
   one and is defanged with the rest).
   The arguments of a call that a client sends back, which the transcript renders
   outside the fence, are rendered as compact JSON (with the characters that end a
-  line escaped) or, when they are not JSON, defanged as a result is; the id and
-  the name of such a call are refused (400) unless they are printable ASCII
-  without `[ ] < > & ' "` or a backtick. It does not look through letters of
-  another script that resemble Latin ones (a Cyrillic "е"), which would take a
-  table of confusables: against such a disguise the fence is the defence and the
-  second layer is not. The words of the
+  line escaped) or, when they are not JSON, defanged as a result is; the name
+  of such a call is refused (400) unless it is printable ASCII without
+  `[ ] < > & ' "` or a backtick. An id of that kind is shown as it is, and any
+  other id (a client may send one of 1 to 128 bytes of anything) is shown to the
+  model as `call_1`, `call_2`, ... in order of appearance, never as sent: the
+  transcript is the only place an id is shown, and a session is resumed only for
+  the id the gateway made, which is such a token. The second layer does not look
+  through letters of another script that resemble Latin ones (a Cyrillic "е"),
+  which would take a table of confusables: against such a disguise the fence is
+  the defence. The words of the
   user are rendered as the client sent them (they are the conversation). The words
   an assistant said before a call are not: a result can steer what a model says,
   and the client sends it back, so in a replay (a conversation with tool history,

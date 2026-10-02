@@ -156,9 +156,10 @@ func TestTheArgumentsOfACallCannotForgeAnyTurnOrFenceInAnyWayOfWritingIt(t *test
 	}
 }
 
-// The name and the id of a call of the conversation are one token each: printable ASCII,
-// none of the characters the prompt gives a meaning to. What real clients send passes.
-func TestTheNameAndTheIdOfACallOfTheConversationAreTokens(t *testing.T) {
+// The name of a call of the conversation is a token: printable ASCII, none of the characters the
+// prompt gives a meaning to. What real clients send, as a name and as an id, passes. (An id that is
+// not a token is not refused any more: see tools_ids_test.go.)
+func TestTheNameOfACallOfTheConversationIsAToken(t *testing.T) {
 	round := func(id, name string) string {
 		return `{"role":"user","content":"q"},{"role":"assistant","content":null,"tool_calls":[{"id":` + jsonString(id) + `,"type":"function","function":{"name":` +
 			jsonString(name) + `,"arguments":"{}"}}]},{"role":"tool","tool_call_id":` + jsonString(id) + `,"content":"r"}`
@@ -176,11 +177,7 @@ func TestTheNameAndTheIdOfACallOfTheConversationAreTokens(t *testing.T) {
 		bad = append(bad, c.text)
 	}
 	for _, token := range bad {
-		err := validateChat(decodeRequest(t, toolBody(`"tools":[`+weatherTool+`]`, round(token, "get_weather"))))
-		if err == nil || err.Status != http.StatusBadRequest || err.Code != "invalid_value" || err.Param != "messages[1].tool_calls[0].id" {
-			t.Errorf("the id %q: got %+v, want 400 invalid_value on messages[1].tool_calls[0].id", token, err)
-		}
-		err = validateChat(decodeRequest(t, toolBody(`"tools":[`+weatherTool+`]`, round("call_a", token))))
+		err := validateChat(decodeRequest(t, toolBody(`"tools":[`+weatherTool+`]`, round("call_a", token))))
 		if err == nil || err.Status != http.StatusBadRequest || err.Code != "invalid_value" || err.Param != "messages[1].tool_calls[0].function.name" {
 			t.Errorf("the name %q: got %+v, want 400 invalid_value on messages[1].tool_calls[0].function.name", token, err)
 		}
@@ -188,10 +185,8 @@ func TestTheNameAndTheIdOfACallOfTheConversationAreTokens(t *testing.T) {
 	// A refusal names the parameter and never what the client wrote.
 	const echo = "EchoMarker"
 	for _, forbidden := range []string{" ", "[", "]", "<", ">", "&", `"`, "'", "`", "\n", "\u2028", "\u200b", "é"} {
-		for _, body := range []string{round(echo+forbidden, "get_weather"), round("call_a", echo+forbidden)} {
-			if err := validateChat(decodeRequest(t, toolBody(`"tools":[`+weatherTool+`]`, body))); err == nil || strings.Contains(string(err.body()), echo) {
-				t.Errorf("a token with %q: the refusal is %v and must not echo the value", forbidden, err)
-			}
+		if err := validateChat(decodeRequest(t, toolBody(`"tools":[`+weatherTool+`]`, round("call_a", echo+forbidden)))); err == nil || strings.Contains(string(err.body()), echo) {
+			t.Errorf("a name with %q: the refusal is %v and must not echo the value", forbidden, err)
 		}
 	}
 }
