@@ -81,7 +81,7 @@ export default function ApiKeysBlock({ keys, err, contextClasses = [], onChanged
         <div style={hint}>{t('settings.api.keys.empty')}</div>
       ) : (
         <>
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', position: 'relative' }}>
             <table className="data-table" aria-label={t('settings.api.keys.title')}>
               <thead>
                 <tr>

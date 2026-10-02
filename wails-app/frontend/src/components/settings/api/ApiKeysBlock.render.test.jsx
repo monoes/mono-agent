@@ -60,6 +60,16 @@ describe('ApiKeysBlock', () => {
     expect(within(two).getByRole('switch', { name: 'Context for notes bot' })).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('keeps the hidden header of the revoke column inside the scroll box of the table: a narrow window must not widen the page', async () => {
+    await mount()
+    // It is positioned absolutely, so it is clipped by the box only if the box is what it is positioned against.
+    const hidden = within(screen.getByRole('table', { name: 'API keys' })).getByText('Revoke', { selector: 'th span' })
+    expect(getComputedStyle(hidden).position).toBe('absolute')
+    const box = hidden.closest('div')
+    expect(getComputedStyle(box).overflowX).toBe('auto')
+    expect(getComputedStyle(box).position).toBe('relative')
+  })
+
   it('says what context adds and which models such a key may use', async () => {
     await mount({ contextClasses: ['sandboxed'] })
     expect(screen.getByText(/Context adds excerpts of this profile's documents and captures/)).toHaveTextContent('up to sandboxed')
