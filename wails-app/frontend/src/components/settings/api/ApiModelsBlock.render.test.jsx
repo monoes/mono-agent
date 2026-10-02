@@ -34,6 +34,13 @@ describe('ApiModelsBlock: the table', () => {
     expect(screen.getAllByRole('row')).toHaveLength(1 + 8 + 1) // header, the models, the auto entry
   })
 
+  it('puts the auto entry first, where a long list does not hide it', () => {
+    mount(modelsDoc())
+    const rows = screen.getAllByRole('row')
+    expect(rows[1]).toBe(autoRow()) // right under the header row
+    expect(rows[2]).toBe(row('claude/default'))
+  })
+
   it('says a model the listener does not serve is not served by policy', () => {
     mount(modelsDoc({ confinement: 'chat-only', forListener: 'network' }), { listener: dedicatedListener() })
     expect(cells(row('claude/default')).slice(3)).toEqual(['yes', 'yes', 'yes'])

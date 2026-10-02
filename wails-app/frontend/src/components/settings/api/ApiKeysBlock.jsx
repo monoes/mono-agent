@@ -80,7 +80,9 @@ export default function ApiKeysBlock({ keys, err, contextClass, onChanged, onRet
               <tbody>
                 {keys.map(k => (
                   <tr key={k.id}>
-                    <td style={{ ...td, fontFamily: mono, color: 'var(--text)' }}>{k.name}</td>
+                    <td style={{ ...td, fontFamily: mono, color: 'var(--text)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }} title={k.name}>
+                      {k.name}
+                    </td>
                     <td style={{ ...td, fontFamily: mono, color: 'var(--text-muted)' }}>{k.prefix}…</td>
                     <td style={td}>
                       <Switch

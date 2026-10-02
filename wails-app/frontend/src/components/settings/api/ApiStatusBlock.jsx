@@ -71,7 +71,7 @@ export default function ApiStatusBlock({ status, err, refreshing, onRefresh, onR
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={label}>{t('settings.api.status.baseUrl')}</span>
+        {url && <span style={label}>{t('settings.api.status.baseUrl')}</span>}
         {url && <code data-testid="api-base-url" style={urlBox}>{url.url}</code>}
         {url && (
           <button type="button" className="btn btn-secondary btn-sm" aria-label={t('settings.api.status.copyUrl')} onClick={copy}>

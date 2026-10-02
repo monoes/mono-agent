@@ -96,6 +96,7 @@ describe('ApiStatusBlock: the other states of a listener (listenerNote of the CL
     expect(text('api-state')).toBe('Not serving /v1')
     expect(screen.getByText(/The daemon does not serve \/v1 on 127\.0\.0\.1:9322/)).toBeInTheDocument()
     expect(screen.queryByTestId('api-base-url')).not.toBeInTheDocument()
+    expect(screen.queryByText('Base URL')).not.toBeInTheDocument() // no label without a value
     expect(screen.queryByTestId('api-confinement')).not.toBeInTheDocument()
   })
 

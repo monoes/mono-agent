@@ -4,11 +4,13 @@ import { missingIsAboutJev } from './apiModel.js'
 import { Badge, ClassBadge, block, label, hint, errText, mono } from './ui.jsx'
 
 // The models the API would serve under the policy of the listener the header
-// describes, one row each, and the `auto` entry after them (as the API lists it).
-// Everything comes from `api models --json`; a field an older CLI does not send
+// describes, one row each, with the `auto` entry first (the API lists it last, so
+// that a client taking the first model is not moved to it; here a long list would
+// hide it). Everything comes from `api models --json`; a field an older CLI does not send
 // is absent here too (a dash, or a sentence without the number).
 
-const th = { fontSize: 9.5, padding: '6px 10px', position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }
+// Headers wrap: a long translation ("Clave con contexto") must not widen the table.
+const th = { fontSize: 9.5, padding: '6px 10px', whiteSpace: 'normal', verticalAlign: 'bottom', position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }
 const td = { fontSize: 11.5, padding: '7px 10px', verticalAlign: 'top' }
 const dash = <span style={{ ...hint, color: 'var(--text-dim)' }}>–</span>
 
@@ -62,6 +64,7 @@ export default function ApiModelsBlock({ models, err, listener, onOpenJev, onRet
               </tr>
             </thead>
             <tbody>
+              {models.auto && <AutoRow auto={models.auto} onOpenJev={onOpenJev} />}
               {list.map(m => (
                 <tr key={m.id} style={m.allowed ? undefined : { opacity: 0.6 }}>
                   <td style={{ ...td, maxWidth: 320 }}>
@@ -81,7 +84,6 @@ export default function ApiModelsBlock({ models, err, listener, onOpenJev, onRet
                   <td style={td}>{typeof m.auto_allowed === 'boolean' ? yes(m.auto_allowed) : dash}</td>
                 </tr>
               ))}
-              {models.auto && <AutoRow auto={models.auto} onOpenJev={onOpenJev} />}
             </tbody>
           </table>
         </div>

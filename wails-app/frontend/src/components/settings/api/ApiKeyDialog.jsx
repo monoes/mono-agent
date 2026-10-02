@@ -100,19 +100,19 @@ export default function ApiKeyDialog({ open, onClose, onCreated }) {
             </div>
             <div>
               <label className="form-label" htmlFor={keyId}>{t('settings.api.create.keyLabel')}</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  id={keyId} data-testid="api-key-secret" className="form-input" readOnly value={secret}
-                  spellCheck={false} autoComplete="off" onFocus={e => e.target.select()}
-                  style={{ flex: 1, minWidth: 0, fontFamily: mono, fontSize: 12 }}
-                />
-                <button ref={copyRef} type="button" className="btn btn-secondary" onClick={copy}>
-                  <Copy size={13} /> {t('settings.api.create.copy')}
+              <input
+                id={keyId} data-testid="api-key-secret" className="form-input" readOnly value={secret}
+                spellCheck={false} autoComplete="off" onFocus={e => e.target.select()}
+                style={{ fontFamily: mono, fontSize: 12 }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, minHeight: 30 }}>
+                <button ref={copyRef} type="button" className="btn btn-secondary btn-sm" onClick={copy}>
+                  <Copy size={12} /> {t('settings.api.create.copy')}
                 </button>
-              </div>
-              <div role="status" aria-live="polite" style={{ minHeight: 18, marginTop: 6 }}>
-                {copied === 'ok' && <span style={okText}><Check size={11} /> {t('settings.api.create.copied')}</span>}
-                {copied === 'failed' && <span style={errText}>{t('settings.api.create.copyFailed')}</span>}
+                <div role="status" aria-live="polite">
+                  {copied === 'ok' && <span style={okText}><Check size={11} /> {t('settings.api.create.copied')}</span>}
+                  {copied === 'failed' && <span style={errText}>{t('settings.api.create.copyFailed')}</span>}
+                </div>
               </div>
             </div>
             <div style={hint}>{t('settings.api.create.usage')}</div>

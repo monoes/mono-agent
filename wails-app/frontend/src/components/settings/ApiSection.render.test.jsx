@@ -63,7 +63,7 @@ describe('ApiSection: folded', () => {
   it('says a stopped server in the header, and one key in the singular', async () => {
     App.APIStatus.mockResolvedValue(statusOf([mainListener({ reachable: false, v1_answers: false })], { keys: { active: 1 } }))
     await mount()
-    expect(await screen.findByTestId('api-fold-state')).toHaveTextContent('Not running')
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Not running'))
     expect(screen.getByTestId('api-fold-keys')).toHaveTextContent('1 key')
   })
 })
@@ -73,7 +73,7 @@ describe('ApiSection: expanding', () => {
     App.APIStatus.mockResolvedValue(statusOf([mainListener({ v1: false }), dedicatedListener()], { daemon: { running: true } }))
     App.APIModels.mockResolvedValue(modelsDoc({ confinement: 'chat-only', forListener: 'network' }))
     await mount()
-    await screen.findByTestId('api-fold-state')
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Running'))
     fireEvent.click(toggle())
     expect(toggle()).toHaveAttribute('aria-expanded', 'true')
     expect(await screen.findByTestId('api-base-url')).toHaveTextContent('https://localhost:9443/v1')
@@ -219,7 +219,7 @@ describe('ApiSection: auto and the Jev settings', () => {
 describe('ApiSection: the rest', () => {
   it('is one button, named by what it shows, that unfolds the section', async () => {
     await mount()
-    await screen.findByTestId('api-fold-state')
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent('Running'))
     expect(toggle().tagName).toBe('BUTTON')
     expect(toggle()).toHaveAccessibleName(/OpenAI-compatible API\s+Running\s+2 keys/)
     fireEvent.click(toggle())
@@ -230,8 +230,8 @@ describe('ApiSection: the rest', () => {
   it('speaks the chosen language', async () => {
     await act(() => i18n.changeLanguage('es'))
     await mount({ defaultExpanded: true })
-    expect(await screen.findByTestId('api-fold-state')).toHaveTextContent(es.settings.api.status.stateServing)
-    expect(screen.getByTestId('api-fold-keys')).toHaveTextContent('2 claves')
+    await waitFor(() => expect(screen.getByTestId('api-fold-state')).toHaveTextContent(es.settings.api.status.stateServing))
+    await waitFor(() => expect(screen.getByTestId('api-fold-keys')).toHaveTextContent('2 claves'))
     expect(screen.getByRole('button', { name: es.settings.api.keys.create })).toBeInTheDocument()
     expect(screen.getAllByText(es.settings.api.sectionTitle).length).toBeGreaterThan(0)
   })

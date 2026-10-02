@@ -46,6 +46,8 @@ describe('ApiKeysBlock', () => {
     const table = screen.getByRole('table', { name: 'API keys' })
     for (const h of ['Name', 'Key', 'Context', 'Created', 'Last used']) expect(within(table).getByRole('columnheader', { name: h })).toBeInTheDocument()
     const one = row('my-app')
+    // A long name is cut to the column, and its tooltip says all of it.
+    expect(within(one).getByText('my-app')).toHaveAttribute('title', 'my-app')
     expect(within(one).getByText('sk-ma-AbCdEf…')).toBeInTheDocument()
     expect(within(one).getByText(/Sep 20, 2026/)).toBeInTheDocument()
     expect(within(one).getByText('3 minutes ago')).toBeInTheDocument()
