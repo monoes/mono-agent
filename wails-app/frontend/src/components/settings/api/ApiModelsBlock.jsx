@@ -1,13 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
-import { missingIsAboutJev } from './apiModel.js'
+import { missingIsAboutJev, pickListener, policyClass, servingListeners } from './apiModel.js'
 import { Badge, ClassBadge, block, label, hint, errText, mono } from './ui.jsx'
 
 // The models the API would serve under the policy of the listener the header
-// describes, one row each, with the `auto` entry first (the API lists it last, so
-// that a client taking the first model is not moved to it; here a long list would
-// hide it). Everything comes from `api models --json`; a field an older CLI does not send
-// is absent here too (a dash, or a sentence without the number).
+// describes (the first one that answers /v1: the status says which, and how many
+// others there are), one row each, with the `auto` entry first (the API lists it
+// last, so that a client taking the first model is not moved to it; here a long
+// list would hide it). Everything comes from `api models --json`; a field an older
+// CLI does not send is absent here too (a dash, or a sentence without the number).
 
 // Headers wrap: a long translation ("Clave con contexto") must not widen the table.
 const th = { fontSize: 9.5, padding: '6px 10px', whiteSpace: 'normal', verticalAlign: 'bottom', position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }
@@ -17,16 +18,24 @@ const dash = <span style={{ ...hint, color: 'var(--text-dim)' }}>–</span>
 /**
  * @param {object|null} models `api models --json`, or null while it loads.
  * @param {string} err Why it could not be read.
- * @param {object|null} listener The listener the header describes (its policy is what `models` was evaluated for).
+ * @param {object|null} status `api status --json`, or null while it loads or when it could not be read: the policy
+ *   `models` was evaluated for is that of the listener it picks.
+ * @param {string} statusErr Why the status could not be read: then no listener is known, and `models` was asked for
+ *   the CLI's own defaults.
  * @param {(() => void)|undefined} onOpenJev Opens the Jev settings, where auto is switched on.
  * @param {() => void} onRetry
  */
-export default function ApiModelsBlock({ models, err, listener, onOpenJev, onRetry }) {
+export default function ApiModelsBlock({ models, err, status, statusErr, onOpenJev, onRetry }) {
   const { t } = useTranslation()
   const list = models?.models || []
-  const caption = listener?.v1
-    ? t(listener.confinement_source === 'daemon' ? 'settings.api.models.policyDaemon' : 'settings.api.models.policyAssumed', { addr: listener.addr })
-    : t('settings.api.models.policyDefault')
+  const listener = pickListener(status)
+  const serving = servingListeners(status).length
+  let caption = '' // nothing is known while the status loads
+  if (statusErr) caption = t('settings.api.models.policyUnknown')
+  else if (status && listener?.v1) {
+    caption = t(listener.confinement_source === 'daemon' ? 'settings.api.models.policyDaemon' : 'settings.api.models.policyAssumed', { addr: listener.addr })
+    if (serving > 1) caption += ' ' + t('settings.api.models.policyMany', { count: serving, addr: listener.addr })
+  } else if (status) caption = t('settings.api.models.policyDefault')
 
   const yes = (v) => (
     <span style={{ fontFamily: mono, fontSize: 11, color: v ? 'var(--green-neon)' : 'var(--text-muted)' }}>
@@ -99,6 +108,9 @@ export default function ApiModelsBlock({ models, err, listener, onOpenJev, onRet
 function AutoRow({ auto, onOpenJev }) {
   const { t } = useTranslation()
   const counted = typeof auto.candidates === 'number' && !!auto.confinement
+  // The CLI says unconfined for the class and any for the policy (the flag, the status): one spelling on the page.
+  // What is held back is above the cap, which is then chat-only or sandboxed in both.
+  const cls = policyClass(auto.confinement)
   return (
     <tr style={{ background: 'rgba(0,180,216,.04)' }}>
       <td style={td}>
@@ -111,7 +123,7 @@ function AutoRow({ auto, onOpenJev }) {
             <>
               <div style={{ fontFamily: 'var(--font-body)', fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 {counted
-                  ? t('settings.api.models.autoOn', { count: auto.candidates, class: auto.confinement })
+                  ? t('settings.api.models.autoOn', { count: auto.candidates, class: cls })
                   : t('settings.api.models.autoOnPlain')}
               </div>
               {auto.held_back > 0 && !!auto.confinement && (

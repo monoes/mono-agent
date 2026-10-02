@@ -167,6 +167,7 @@ describe('ApiSection: expanding', () => {
     App.APIStatus.mockResolvedValue(statusOf([]))
     await mount({ defaultExpanded: true })
     await waitFor(() => expect(App.APIModels).toHaveBeenCalledWith('', '', '', ''))
+    expect(await screen.findByText(/No listener serves \/v1 right now/)).toBeInTheDocument()
     cleanup(); vi.clearAllMocks()
     App.APIStatus.mockRejectedValue(new Error('boom'))
     App.APIKeyList.mockResolvedValue([])
@@ -177,6 +178,9 @@ describe('ApiSection: expanding', () => {
     // The keys and the models are still shown: one failure does not blank the rest.
     expect(await screen.findByText(/No API keys yet/)).toBeInTheDocument()
     expect(await screen.findByRole('table', { name: 'Models' })).toBeInTheDocument()
+    // ... but the models do not claim that no listener serves /v1: they do not know.
+    expect(screen.getByText(/Couldn't read which listeners serve \/v1/)).toBeInTheDocument()
+    expect(screen.queryByText(/No listener serves \/v1 right now/)).not.toBeInTheDocument()
   })
 
   it('shows what each part could not read, with its own retry', async () => {

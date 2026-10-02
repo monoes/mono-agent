@@ -141,7 +141,7 @@ export default function ApiSection({ defaultExpanded = false, onNavigate } = {})
             onChanged={loadKeys} onRetry={loadKeys}
           />
           <ApiModelsBlock
-            models={models} err={modelsErr} listener={listener}
+            models={models} err={modelsErr} status={status} statusErr={statusErr}
             onOpenJev={onNavigate ? () => onNavigate('settings', { section: 'jev' }) : undefined}
             onRetry={() => loadModels(status)}
           />

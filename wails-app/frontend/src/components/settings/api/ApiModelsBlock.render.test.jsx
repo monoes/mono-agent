@@ -6,14 +6,14 @@ import { render, screen, fireEvent, cleanup, within, act } from '@testing-librar
 import i18n from '../../../i18n.js'
 import es from '../../../locales/es.json'
 import ApiModelsBlock from './ApiModelsBlock.jsx'
-import { mainListener, dedicatedListener, modelsDoc, oldModelsDoc, MISSING_SURFACE, MISSING_KEY } from './__fixtures__/apiFixtures.js'
+import { mainListener, dedicatedListener, statusOf, modelsDoc, oldModelsDoc, MISSING_SURFACE, MISSING_KEY } from './__fixtures__/apiFixtures.js'
 
 beforeEach(async () => { await i18n.changeLanguage('en') })
 afterEach(cleanup)
 
 function mount(models, props = {}) {
   const onOpenJev = vi.fn(); const onRetry = vi.fn()
-  render(<ApiModelsBlock models={models} err="" listener={mainListener()} onOpenJev={onOpenJev} onRetry={onRetry} {...props} />)
+  render(<ApiModelsBlock models={models} err="" status={statusOf([mainListener()])} statusErr="" onOpenJev={onOpenJev} onRetry={onRetry} {...props} />)
   return { onOpenJev, onRetry }
 }
 const row = (id) => screen.getByRole('row', { name: new RegExp(id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')) })
@@ -42,7 +42,7 @@ describe('ApiModelsBlock: the table', () => {
   })
 
   it('says a model the listener does not serve is not served by policy', () => {
-    mount(modelsDoc({ confinement: 'chat-only', forListener: 'network' }), { listener: dedicatedListener() })
+    mount(modelsDoc({ confinement: 'chat-only', forListener: 'network' }), { status: statusOf([dedicatedListener()]) })
     expect(cells(row('claude/default')).slice(3)).toEqual(['yes', 'yes', 'yes'])
     expect(cells(row('codex/default')).slice(3)).toEqual(['no (policy)', 'no', 'no'])
     expect(cells(row('pi/openrouter/nvidia/nemotron-3-super-120b-a12b:free'))[3]).toBe('no (policy)')
@@ -57,14 +57,53 @@ describe('ApiModelsBlock: the table', () => {
     mount(modelsDoc())
     expect(screen.getByText("Policy of the listener at 127.0.0.1:9322, assumed from this app's environment.")).toBeInTheDocument()
     cleanup()
-    mount(modelsDoc(), { listener: mainListener({ confinement_source: 'daemon' }) })
+    mount(modelsDoc(), { status: statusOf([mainListener({ confinement_source: 'daemon' })]) })
     expect(screen.getByText('Policy of the listener at 127.0.0.1:9322, as the running daemon reports it.')).toBeInTheDocument()
-    cleanup()
-    mount(modelsDoc(), { listener: null })
+  })
+
+  it('says no listener serves /v1 only when the status says so', () => {
+    mount(modelsDoc(), { status: statusOf([]) })
     expect(screen.getByText(/No listener serves \/v1 right now: this is what this app's own settings would serve on a loopback listener\./)).toBeInTheDocument()
     cleanup()
-    mount(modelsDoc(), { listener: mainListener({ v1: false }) })
+    mount(modelsDoc(), { status: statusOf([mainListener({ v1: false })]) })
     expect(screen.getByText(/No listener serves \/v1 right now/)).toBeInTheDocument()
+  })
+
+  it('does not say that when the status could not be read: it says it does not know which listeners serve', () => {
+    mount(modelsDoc(), { status: null, statusErr: 'boom' })
+    expect(screen.queryByText(/No listener serves \/v1/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Couldn't read which listeners serve \/v1, so this is what this app's own settings would serve on a loopback listener, not necessarily what the running server serves\./)).toBeInTheDocument()
+    cleanup()
+    // An older status that is still on screen does not outvote the failure to read a new one.
+    mount(modelsDoc(), { status: statusOf([mainListener()]), statusErr: 'boom' })
+    expect(screen.queryByText(/Policy of the listener at/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Couldn't read which listeners serve \/v1/)).toBeInTheDocument()
+  })
+
+  it('says nothing about a policy while the status is still loading', () => {
+    mount(modelsDoc(), { status: null, statusErr: '' })
+    expect(screen.queryByText(/No listener serves \/v1/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Policy of the listener/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't read which listeners/)).not.toBeInTheDocument()
+  })
+
+  it('says which listener the table is for when several serve /v1, each with its own policy', () => {
+    mount(modelsDoc(), { status: statusOf([mainListener(), dedicatedListener()]) })
+    expect(screen.getByText(/Policy of the listener at 127\.0\.0\.1:9322, assumed from this app's environment\./)).toBeInTheDocument()
+    expect(screen.getByText(/2 listeners serve \/v1, each with its own policy: this table is the one for 127\.0\.0\.1:9322\./)).toBeInTheDocument()
+    cleanup()
+    // The first one that answers: here the dedicated one, as the main one is down.
+    mount(modelsDoc({ confinement: 'chat-only', forListener: 'network' }), {
+      status: statusOf([mainListener({ reachable: false, v1_answers: false }), dedicatedListener()]),
+    })
+    expect(screen.getByText(/this table is the one for 0\.0\.0\.0:9443\./)).toBeInTheDocument()
+    cleanup()
+    mount(modelsDoc())
+    expect(screen.queryByText(/each with its own policy/)).not.toBeInTheDocument()
+    cleanup()
+    // Listed is not serving: a main listener that does not serve /v1 is not one of them.
+    mount(modelsDoc(), { status: statusOf([mainListener({ v1: false }), dedicatedListener()]) })
+    expect(screen.queryByText(/each with its own policy/)).not.toBeInTheDocument()
   })
 
   it('has an empty state, a loading state, and a load error with a retry', () => {
@@ -92,13 +131,24 @@ describe('ApiModelsBlock: the auto entry', () => {
     expect(within(r).queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('speaks of one model in the singular, and of none held back not at all', () => {
+  it('with one model to pick from says the rule uses it and Jev is not asked, and with none held back says nothing of it', () => {
     mount({ ...modelsDoc(), auto: { available: true, key_source: 'vault', confinement: 'chat-only', candidates: 1, held_back: 1 } })
-    expect(screen.getByText('On. Jev picks among the 1 model it may use here (up to chat-only).')).toBeInTheDocument()
+    expect(screen.getByText('On. Only 1 model is allowed here (up to chat-only), so auto uses it without asking Jev.')).toBeInTheDocument()
+    expect(screen.queryByText(/Jev picks among/)).not.toBeInTheDocument()
     expect(screen.getByText(/^1 more model is served here but is above chat-only, so auto may not pick it\./)).toBeInTheDocument()
     cleanup()
     mount({ ...modelsDoc(), auto: { available: true, key_source: 'vault', confinement: 'chat-only', candidates: 3 } })
+    expect(screen.getByText('On. Jev picks among the 3 models it may use here (up to chat-only).')).toBeInTheDocument()
     expect(screen.queryByText(/more model/)).not.toBeInTheDocument()
+  })
+
+  it('spells the class of auto the way the flag and the status do: any, where the CLI says unconfined', () => {
+    // The CLI's auto.confinement is a class (unconfined), the listeners' auto_confinement a policy (any).
+    const doc = modelsDoc({ confinement: 'any', context: 'any', auto: 'any' })
+    expect(doc.auto.confinement).toBe('unconfined')
+    mount(doc, { status: statusOf([mainListener({ auto_confinement: 'any' })]) })
+    expect(within(autoRow()).getByText('On. Jev picks among the 8 models it may use here (up to any).')).toBeInTheDocument()
+    expect(within(autoRow()).queryByText(/unconfined/)).not.toBeInTheDocument()
   })
 
   it('says when the Jev key is this app\'s environment, which a running server does not share', () => {
@@ -168,5 +218,18 @@ describe('ApiModelsBlock: language', () => {
     expect(screen.getByText(m.policyAssumed.replace('{{addr}}', '127.0.0.1:9322'))).toBeInTheDocument()
     expect(within(autoRow()).getByText(m.autoOff.replace('{{missing}}', MISSING_SURFACE))).toBeInTheDocument()
     expect(within(autoRow()).getByRole('button', { name: m.openJev })).toBeInTheDocument()
+  })
+
+  it('speaks the chosen language in the sentences about several listeners, an unreadable status and a single candidate', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    const m = es.settings.api.models
+    mount({ ...modelsDoc(), auto: { available: true, key_source: 'vault', confinement: 'chat-only', candidates: 1 } }, {
+      status: statusOf([mainListener(), dedicatedListener()]),
+    })
+    expect(screen.getByText(m.policyMany.replace('{{count}}', '2').replace('{{addr}}', '127.0.0.1:9322'), { exact: false })).toBeInTheDocument()
+    expect(within(autoRow()).getByText(m.autoOn_one.replace('{{count}}', '1').replace('{{class}}', 'chat-only'))).toBeInTheDocument()
+    cleanup()
+    mount(modelsDoc(), { status: null, statusErr: 'boom' })
+    expect(screen.getByText(m.policyUnknown)).toBeInTheDocument()
   })
 })
