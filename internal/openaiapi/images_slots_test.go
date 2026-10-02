@@ -102,17 +102,23 @@ func TestImagesGiveTheSlotBack(t *testing.T) {
 	}
 }
 
-// An image turn takes a minute: the server's write timeout, which the legacy HTTP
-// API sets, must not cut the response of one that runs longer than it.
-func TestImagesResponseOutlivesTheServersWriteTimeout(t *testing.T) {
+// An image turn takes a minute: the write and the read timeouts the servers set (the
+// legacy HTTP API sets a 5 minute write timeout and a 30 second read timeout, and the
+// dedicated listener a 30 second read timeout) must not cut a turn that runs longer
+// than they do, or the response of one.
+func TestImagesResponseOutlivesTheServersTimeouts(t *testing.T) {
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		time.Sleep(400 * time.Millisecond)
+		if ctx.Err() != nil { // the request was cut while the turn ran
+			return nil, ctx.Err()
+		}
 		return imageTurn("a.png", onePNG("a.png"))(ctx, o, onEvent)
 	})
 	mux := http.NewServeMux()
 	h.g.Mount(mux, anyPolicy)
 	srv := httptest.NewUnstartedServer(mux)
 	srv.Config.WriteTimeout = 150 * time.Millisecond
+	srv.Config.ReadTimeout = 150 * time.Millisecond
 	srv.Start()
 	t.Cleanup(srv.Close)
 
@@ -120,7 +126,7 @@ func TestImagesResponseOutlivesTheServersWriteTimeout(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+h.key(t, "default", "app", false))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("the server's WriteTimeout cut the response: %v", err)
+		t.Fatalf("a timeout of the server cut the request or the response: %v", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

@@ -250,11 +250,11 @@ func TestImagesReplyHandling(t *testing.T) {
 		out    []string // what it must not
 	}{
 		"no image tool":                  {"NO_IMAGE_TOOL", nil, 400, "image_generation_unsupported", nil, nil},
-		"no image tool, said politely":   {"I am sorry. NO_IMAGE_TOOL.", nil, 400, "image_generation_unsupported", nil, nil},
+		"no image tool, said politely":   {"I am sorry zqreply. NO_IMAGE_TOOL.", nil, 400, "image_generation_unsupported", nil, nil},
 		"no image tool, yet a file":      {"NO_IMAGE_TOOL", onePNG("drawn.png"), 400, "image_generation_unsupported", nil, nil},
-		"nothing saved":                  {"I could not save the image, the tool failed.", nil, 502, "image_generation_failed", []string{"the tool failed"}, nil},
+		"nothing saved":                  {"I could not save the image zqreply, the tool failed.", nil, 502, "image_generation_failed", []string{"the tool failed"}, nil},
 		"nothing saved and nothing said": {"", nil, 502, "image_generation_failed", nil, nil},
-		"only files that are no image":   {"done: notes.txt", map[string][]byte{"notes.txt": []byte("not a picture")}, 502, "image_generation_failed", []string{"done: notes.txt"}, []string{"not a picture"}},
+		"only files that are no image":   {"done: notes.txt zqreply", map[string][]byte{"notes.txt": []byte("not a picture")}, 502, "image_generation_failed", []string{"done: notes.txt zqreply"}, []string{"not a picture"}},
 		"a reply of many lines":          {"line one\n\n  line\ttwo\x00\x1b[31m red\n", nil, 502, "image_generation_failed", []string{"line one line two[31m red"}, []string{"\n", "\x00", "\x1b"}},
 		"a long reply":                   {long, nil, 502, "image_generation_failed", nil, []string{long}},
 	} {
@@ -288,7 +288,7 @@ func TestImagesReplyHandling(t *testing.T) {
 		}
 		// Neither the prompt nor what the runtime answered is for the log.
 		for _, line := range h.logged() {
-			if strings.Contains(line, "secret prompt") || strings.Contains(line, "tool failed") || strings.Contains(line, "notes.txt") {
+			if strings.Contains(line, "secret prompt") || strings.Contains(line, "zqreply") || strings.Contains(line, "tool failed") || strings.Contains(line, "notes.txt") {
 				t.Errorf("%s: the log holds the prompt or the reply: %q", name, line)
 			}
 		}
