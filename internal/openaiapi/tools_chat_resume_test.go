@@ -130,6 +130,54 @@ func TestToolsAResumeInWhichARuntimeToolRanIsNeitherReplayedNorGivenBack(t *test
 	}
 }
 
+// The session holds the call as the model made it. A follow-up whose assistant message says
+// other arguments for the call is not continuing that session (a client that edited the call,
+// or rebuilt the message from its own state): it is served by a replay, which tells the model
+// what the client says. The spacing of JSON, and blanks around text that is not JSON, are not
+// a change.
+func TestToolsAFollowUpThatChangedTheArgumentsOfTheCallIsReplayed(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		model, client string // the arguments the model gave the call, and the ones the client sends back
+		resumes       bool
+	}{
+		{"as they were given", `{"city":"Paris"}`, `{"city":"Paris"}`, true},
+		{"spaced out", `{"city":"Paris"}`, `{ "city": "Paris" }`, true},
+		{"another value", `{"city":"Paris"}`, `{"city":"Rome"}`, false},
+		{"another key", `{"city":"Paris"}`, `{"town":"Paris"}`, false},
+		{"an extra key", `{"city":"Paris"}`, `{"city":"Paris","units":"c"}`, false},
+		{"dropped", `{"city":"Paris"}`, `{}`, false},
+		{"none given, none sent", ``, `{}`, true},
+		{"none given, some sent", ``, `{"city":"Paris"}`, false},
+		{"text that is not JSON, as it was", `not json`, `not json`, true},
+		{"text that is not JSON, padded", `not json`, " not json\n", true},
+		{"text that is not JSON, changed", `not json`, `not json!`, false},
+	} {
+		model := c.model
+		leg := fakeLegExec(func(ctx context.Context, emit func(monomind.Event)) {
+			emit(evStart(true, "monomind"))
+			emit(evSession("sess-1"))
+			emit(evCall("get_weather", model))
+			<-ctx.Done()
+		})
+		script := &execScript{turns: []execFunc{leg, answers("It is 21 C.")}}
+		h := toolHarness(t, script.exec)
+		secret := h.key(t, "default", "app", false)
+		id := firstCall(t, h, secret)
+
+		body := strings.Replace(followUp(id, "21 C"), `"arguments":"{\"city\":\"Paris\"}"`, `"arguments":`+jsonString(c.client), 1)
+		rec := post(h, anyPolicy, secret, body)
+		calls := script.calls()
+		if rec.Code != http.StatusOK || len(calls) != 2 {
+			t.Errorf("%s: status %d, %d turns: %s", c.name, rec.Code, len(calls), rec.Body)
+			continue
+		}
+		if got := calls[1].Resume == "sess-1"; got != c.resumes {
+			t.Errorf("%s: the follow-up resumed the session = %v, want %v", c.name, got, c.resumes)
+		}
+	}
+}
+
 // deadlineRecorder is a response recorder that takes a write deadline as net/http's
 // real writer does, and keeps the last one it was given.
 type deadlineRecorder struct {

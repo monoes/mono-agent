@@ -197,7 +197,7 @@ func TestToolsAResumeTheRuntimeCannotContinueFallsBackToAReplay(t *testing.T) {
 	req := toolRequest(t, weatherTools, weatherQuestion)
 	secret := h.key(t, "default", "app", false)
 	h.g.conts.put(contRecord{CallID: "call_x", KeyID: keyIDOf(t, h, secret), ProfileID: "default", Model: "claude/default", Name: "get_weather",
-		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls), Convo: convoHash(req, len(req.Messages))})
+		Session: "sess-gone", ToolsHash: toolsHash(req.toolDecls), Convo: convoHash(req, len(req.Messages)), Args: argsHash(`{"city":"Paris"}`)})
 
 	rec := post(h, anyPolicy, secret, followUp("call_x", "21 C"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "It is 21 C.") {

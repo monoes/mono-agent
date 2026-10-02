@@ -740,7 +740,8 @@ executes nothing of the caller's. What this changes, and what it does not:
 - *What is kept.* No process waits for a result and no slot is held while the
   client runs the call. A continuation record (the id the client was given, key
   id, profile, model, function name, a hash of the declared tools, a hash of the
-  conversation the leg was given and the runtime's session id) lives in memory
+  conversation the leg was given, a hash of the call's arguments and the
+  runtime's session id) lives in memory
   for ten minutes, at most 1,024 in all and 64 per key, and is used once (given
   back only when a resume fails before the model ran, for a rate limit, the quota
   or a sign-in, and no tool of the runtime's own had run: such a tool is never

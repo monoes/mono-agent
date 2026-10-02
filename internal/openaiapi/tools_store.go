@@ -32,6 +32,11 @@ type contRecord struct {
 	// session is only continued by a follow-up whose conversation before the call is
 	// the same. A hash, never the words.
 	Convo string
+	// Args is the hash of the arguments the call was given to the client with
+	// (argsHash): the session holds the call as the model made it, so a follow-up
+	// whose assistant message says other arguments is not continuing it. A hash,
+	// never the arguments.
+	Args string
 	// Session is the runtime's session id.
 	Session string
 	Expires time.Time

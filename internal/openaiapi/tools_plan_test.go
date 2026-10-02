@@ -20,7 +20,7 @@ func planFixture(t *testing.T, messages string) (*harness, *ChatRequest, ModelIn
 	m := ModelInfo{ID: "claude/default", Runtime: "claude", Model: "default", Class: ChatOnly}
 	pr := Principal{KeyID: "key_a", ProfileID: "alice"}
 	rec := contRecord{CallID: "call_a", KeyID: "key_a", ProfileID: "alice", Model: "claude/default", Name: "get_weather",
-		Session: "sess-1", ToolsHash: toolsHash(req.toolDecls)}
+		Session: "sess-1", ToolsHash: toolsHash(req.toolDecls), Args: argsHash(`{"city":"Paris"}`)}
 	if ai, ok := trailingRound(req); ok { // the session saw the conversation as it was before the call
 		rec.Convo = convoHash(req, ai)
 	}
@@ -277,7 +277,9 @@ func planAfter(t *testing.T, callID, firstExtra, firstMsgs, followExtra, followM
 	tools := `"tools":[` + weatherTool + `,` + stockTool + `]`
 	first := toolRequest(t, tools+firstExtra, firstMsgs)
 	follow := toolRequest(t, tools+followExtra, followMsgs)
-	rec.CallID, rec.Convo, rec.ToolsHash = callID, convoHash(first, len(first.Messages)), toolsHash(first.toolDecls)
+	// The arguments the model gave each of the calls the cases use.
+	args := map[string]string{"call_a": `{"city":"Paris"}`, "call_b": `{"city":"Rome"}`, "call_c": `{"city":"Oslo"}`}
+	rec.CallID, rec.Convo, rec.ToolsHash, rec.Args = callID, convoHash(first, len(first.Messages)), toolsHash(first.toolDecls), argsHash(args[callID])
 	h.g.conts.put(rec)
 	return h.g.planLeg(pr, follow, m, "unused")
 }
@@ -295,6 +297,8 @@ func TestPlanLegResumesOnlyTheConversationTheSessionSaw(t *testing.T) {
 	}{
 		{"the conversation as it was", "call_a", "", first, "", followed, legResume},
 		{"a user message after the result", "call_a", "", first, "", followed + `,{"role":"user","content":"Also in French."}`, legResume},
+		{"the arguments of the call spaced out", "call_a", "", first, "", first + "," + parisSpaced + "," + paris21, legResume},
+		{"the arguments of the call edited", "call_a", "", first, "", first + "," + parisOtherArgs + "," + paris21, legReplay},
 		{"the same required choice", "call_a", required, first, required, followed, legResume},
 
 		{"the first message edited", "call_a", "", first, "", sysBrief + "," + askRome + "," + callParisMsg + "," + paris21, legReplay},
@@ -332,6 +336,29 @@ func TestPlanLegResumesOnlyTheConversationTheSessionSaw(t *testing.T) {
 		}
 		if c.want == legReplay && got.Session != "" {
 			t.Errorf("%s: a replay must not carry a session: %+v", c.name, got)
+		}
+	}
+}
+
+// The arguments of a call are the same to the session when the client spaces the JSON out
+// differently, or sends none for an empty object, and another when they say another thing.
+func TestArgsHashIsOfWhatTheArgumentsSayNotOfTheirSpelling(t *testing.T) {
+	same := [][]string{
+		{`{"a":1}`, ` {"a": 1} `, "{\n  \"a\": 1\n}"},
+		{"{}", "", "  ", `{ }`},
+		{"not json", "  not json\n"},
+	}
+	for _, group := range same {
+		for _, other := range group[1:] {
+			if argsHash(group[0]) != argsHash(other) {
+				t.Errorf("%q and %q are the same arguments", group[0], other)
+			}
+		}
+	}
+	different := [][2]string{{`{"a":1}`, `{"a":2}`}, {`{"a":1}`, `{"b":1}`}, {"{}", `{"a":1}`}, {"not json", "not  json"}, {"{}", "not json"}}
+	for _, pair := range different {
+		if argsHash(pair[0]) == argsHash(pair[1]) {
+			t.Errorf("%q and %q are other arguments", pair[0], pair[1])
 		}
 	}
 }

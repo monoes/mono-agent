@@ -681,7 +681,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the leg that made the call left a record that fits: single-use, in memory (a
   restart loses them), ten minutes, 1,024 in all and 64 per key, holding ids
   and names and hashes, never the arguments or the result. It must be the same
-  key and profile, model, function and declared tools, the conversation before
+  key and profile, model, function (with the arguments the model gave the call,
+  compared as a hash of the compact JSON: a client that edited them gets a
+  replay) and declared tools, the conversation before
   the call must be the one the session saw (a hash of the messages, the system
   prompt among them, the tool choice and the response format: a client that
   edits or compacts its history, or changes its system prompt, gets a replay),

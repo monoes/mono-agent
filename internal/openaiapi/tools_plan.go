@@ -48,8 +48,9 @@ type legPlan struct {
 //   - a record of that call exists, has not expired and has not been used (it is
 //     used up by this plan);
 //   - it belongs to the same key and profile, the same model, the same function
-//     and the same declared tools: a resumed codex session does not hear a new
-//     tool list, and another model cannot continue the session;
+//     with the arguments the model gave it (the session holds the call as it
+//     made it) and the same declared tools: a resumed codex session does not hear
+//     a new tool list, and another model cannot continue the session;
 //   - the conversation before the call is the one the session saw (convoHash):
 //     a client that edited or compacted its history, changed the system prompt or
 //     the choice of tool has a conversation the session no longer holds.
@@ -66,10 +67,10 @@ func (g *Gateway) planLeg(pr Principal, req *ChatRequest, m ModelInfo, firstProm
 	if len(calls) != 1 || !onlyTheResultAndUsers(req.Messages[ai+1:], calls[0].ID) {
 		return replay
 	}
-	hash, convo := toolsHash(req.toolDecls), convoHash(req, ai)
+	hash, convo, args := toolsHash(req.toolDecls), convoHash(req, ai), argsHash(argumentsText(calls[0].Function.Arguments))
 	rec, ok := g.conts.take(calls[0].ID, func(r contRecord) bool {
 		return r.KeyID == pr.KeyID && r.ProfileID == pr.ProfileID && r.Model == m.ID &&
-			r.Name == calls[0].Function.Name && r.ToolsHash == hash && r.Convo == convo
+			r.Name == calls[0].Function.Name && r.ToolsHash == hash && r.Convo == convo && r.Args == args
 	})
 	if !ok {
 		return replay
@@ -170,10 +171,26 @@ func convoHash(req *ChatRequest, upto int) string {
 // they are JSON, so that a client that spaces them out differently is not another
 // conversation.
 func normalArguments(raw json.RawMessage) string {
-	text := argumentsText(raw)
+	return normalArgumentsText(argumentsText(raw))
+}
+
+// normalArgumentsText is the text of a call's arguments, compact when it is JSON and
+// trimmed when it is not; {} when it is blank.
+func normalArgumentsText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "{}"
+	}
 	var buf bytes.Buffer
 	if json.Compact(&buf, []byte(text)) != nil {
 		return text
 	}
 	return buf.String()
+}
+
+// argsHash identifies the arguments of a call as the client has them: the string of
+// JSON the call was given to it with, or the one its assistant message sends back.
+func argsHash(text string) string {
+	sum := sha256.Sum256([]byte(normalArgumentsText(text)))
+	return hex.EncodeToString(sum[:])
 }

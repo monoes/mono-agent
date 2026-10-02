@@ -165,7 +165,7 @@ func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
 	// A resume of a thread codex does not know is replayed in the same request.
 	firstRequest := toolRequest(t, weatherTools, weatherQuestion)
 	h.g.conts.put(contRecord{CallID: "call_gone", KeyID: keyIDOf(t, h, secret), ProfileID: "default", Model: "codex/gpt-6-astra", Name: "get_weather",
-		Session: "th_that_never_existed", ToolsHash: toolsHash(firstRequest.toolDecls), Convo: convoHash(firstRequest, len(firstRequest.Messages))})
+		Session: "th_that_never_existed", ToolsHash: toolsHash(firstRequest.toolDecls), Convo: convoHash(firstRequest, len(firstRequest.Messages)), Args: argsHash(`{"city":"Paris"}`)})
 	rec = post(h, policy, secret, strings.Replace(followUp("call_gone", `{"city":"Paris","temp_c":16}`), `"model":"claude"`, `"model":"codex/gpt-6-astra"`, 1))
 	if rec.Code != 200 {
 		t.Fatalf("resume of a thread that is gone: %d %s", rec.Code, rec.Body)
