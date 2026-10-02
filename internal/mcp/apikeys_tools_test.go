@@ -20,17 +20,24 @@ import (
 // second handle to seed keys of other profiles and to see what was stored.
 func newAPIKeyServer(t *testing.T, allowMutations bool) (*Server, string) {
 	t.Helper()
-	t.Setenv("MONOAGENT_MCP_ALLOW_MUTATIONS", "")
 	dbPath := testdb.Path(t)
+	return serverOver(t, dbPath, "default", allowMutations), dbPath
+}
+
+// serverOver is a server over the database at dbPath, scoped to the profile given by
+// id or by name.
+func serverOver(t *testing.T, dbPath, profile string, allowMutations bool) *Server {
+	t.Helper()
+	t.Setenv("MONOAGENT_MCP_ALLOW_MUTATIONS", "")
 	s := NewServer(Options{
 		DBPath:         dbPath,
-		Profile:        "default",
+		Profile:        profile,
 		WorkflowsDir:   filepath.Join(t.TempDir(), "workflows"),
 		Version:        "test",
 		AllowMutations: allowMutations,
 	})
 	t.Cleanup(s.closeRuntime)
-	return s, dbPath
+	return s
 }
 
 // sideDB opens a second handle on the server's database file.
