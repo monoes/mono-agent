@@ -132,25 +132,17 @@ func (g *Gateway) runLeg(ctx context.Context, t turn) legResult {
 
 // legError says how a finished leg is answered: the error to send, nil when it
 // ended at a call or answered, gone when its caller left, so that nobody is left
-// to answer. In this order: the caller who left; a policy denial; a call, whatever
-// the cancelled result says, since the cancel was the leg's own; and then the
-// mapping of a turn's errors that chat uses.
+// to answer. In this order: the caller who left; a call, whatever the cancelled
+// result says, since the cancel was the leg's own (a policy denial has none:
+// the hook sees nothing after it); and then how any turn's result is classified.
 func (g *Gateway) legError(ctx context.Context, lr legResult, m ModelInfo, eff Policy) (e *apiError, gone bool) {
 	switch {
 	case ctx.Err() != nil:
 		return nil, true
-	case errors.Is(lr.Err, errPolicyDenied):
-		return policyDeniedAtStart(m, eff), false
 	case lr.Call != nil:
 		return nil, false
 	}
-	if e := turnError(lr.Res, lr.Err); e != nil {
-		return e, false
-	}
-	if lr.Res.Err != nil { // the only error turnError lets through: a cancellation, with the caller still there
-		return g.cancelledError(), false
-	}
-	return nil, false
+	return g.resultError(ctx, lr.Res, lr.Err, m, eff)
 }
 
 // resumeFailed reports whether a leg that continued a runtime's session could not:

@@ -19,13 +19,13 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		begin := time.Now()
 
-		status, model, ctxState, detail, autoBy := http.StatusOK, "", "", "", ""
+		status, model, ctxState, detail, autoBy, toolNote := http.StatusOK, "", "", "", "", ""
 		fail := func(e *apiError) {
 			status, detail = e.Status, e.detail
 			writeError(w, e)
 		}
 		// One line per request, whatever its outcome.
-		defer func() { g.logRequest(pr, begin, model, status, ctxState, autoBy, detail) }()
+		defer func() { g.logRequest(pr, begin, model, status, ctxState, autoBy, detail, toolNote) }()
 
 		var req ChatRequest
 		if e := decodeBody(w, r, g.cfg.BodyLimit, &req); e != nil {
@@ -38,10 +38,6 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		}
 		if e := validateChat(&req); e != nil {
 			fail(e)
-			return
-		}
-		if req.toolsActive() || req.hasToolHistory() { // until the tool path is wired in, none runs as a plain turn
-			fail(errUnsupported("tools", "tool calling is not supported yet"))
 			return
 		}
 
@@ -111,6 +107,16 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		w.Header().Set("X-Monoagent-Model", m.ID)
 		extendWriteDeadline(w, g.cfg.TurnTimeout+2*turnGrace)
 		id := newRequestID("chatcmpl-")
+
+		if req.toolsActive() { // declared tools: a leg of a conversation that ends at the model's first call
+			var tl toolLog
+			status, detail, tl = g.toolChat(w, r, pr, &req, t, m, eff, id)
+			toolNote = tl.String()
+			return
+		}
+		if req.hasToolHistory() { // earlier tool rounds, and nothing the model may call: they are text
+			t.Prompt = replayPrompt(&req, false)
+		}
 
 		if req.Stream {
 			status, detail = g.streamChat(w, r, t, id, m.ID, req.StreamOptions != nil && req.StreamOptions.IncludeUsage)
