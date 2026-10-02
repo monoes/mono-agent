@@ -439,7 +439,8 @@ AGENTS.md](AGENTS.md#runtime-environment-variables).
 ## OpenAI-compatible API surface
 
 `monoagentcli httpapi` and `monoagentcli daemon` serve `GET /v1/models`,
-`GET /v1/models/{id}` and `POST /v1/chat/completions` over the agent
+`GET /v1/models/{id}`, `POST /v1/chat/completions` and
+`POST /v1/images/generations` over the agent
 runtimes installed on the machine (`internal/openaiapi/`). A request is a
 real agent turn run through `monomind agent exec`; this section is what that
 means for exposure. Setup: `examples/openai-api-quickstart.md`.
@@ -571,7 +572,8 @@ jev enable api_auto` (which prints what follows and asks first) and has a Jev
 key: its vault entry, else the server's `TYPESAFE_API_KEY`, so with that
 variable set every profile that switches the surface on spends it. Then each
 such request sends TypeSafe, a third party besides the runtime's provider that
-answers the prompt, the first 4,000 characters of the last user message and,
+answers the prompt, the first 4,000 characters of the last user message (of an
+image request, its prompt) and,
 for every model the key may use, its name, description and validated cost and
 latency. Never the system prompt, earlier turns, the excerpts of a context key
 or a key. So whoever holds a key of that profile decides what is sent to
@@ -607,17 +609,65 @@ log line of the request says `auto=jev` or `auto=rule` and never the prompt. The
 gateway blanks `TYPESAFE_API_KEY` in the environment of its agent turns, which
 inherit the rest of the server's: a turn that runs commands could read it.
 
+**Image generation.** `POST /v1/images/generations` runs one turn of a runtime
+from `MONOAGENT_API_IMAGE_RUNTIMES` (codex and antigravity unless the operator
+changed it) that runs as `sandboxed` or `unconfined`: the runtime has to write
+the file, so a `chat-only` runtime cannot make images, and the route is refused
+under `--confinement chat-only` and, for a key created with `--context`, under
+`--context-confinement` (chat-only unless raised). It is the chat turn in the same
+slot folder, so everything above holds. Two things differ, and both reach further
+than chat does.
+
+- *The turn is told to use the runtime's native tools.* It makes the image with
+  its own tool and then copies the file into the slot folder with a shell
+  command from the runtime's own state folder (in the probes of 2026-10-01,
+  codex's `~/.codex/generated_images/` and antigravity's
+  `~/.gemini/antigravity-cli/brain/`), and a runtime may read its own skill files
+  outside the folder first. What a `sandboxed` or `unconfined` runtime can read
+  or run was already in reach of such a key through chat; here it is the normal
+  path.
+- *The gateway returns bytes.* After the turn, and before the folder is emptied,
+  it reads the files at the top of the slot folder that are PNG, JPEG, WebP or
+  GIF by their first bytes (at most 20 MiB each, at most `n` of them, `n` at most
+  4) and sends them in the response. A key holder, or a prompt that steers the
+  runtime, can therefore have it copy any image file it can read into that folder
+  and receive it. Under `sandboxed` and `unconfined` the runtime reads the disk as
+  the OS user, so this adds only the transport of image files: no other file is
+  ever returned. The gateway runs as that user outside the runtime's sandbox, so
+  the collection does not trust the folder. It never follows a link (one planted
+  to an image elsewhere is left out, and the log counts it), never opens a FIFO or
+  a device (a read would wait for a writer), ignores folders, and reads through the
+  folder's own handle, the one the emptying uses, which refuses a path that leaves
+  it; a file that is swapped between the look and the read, or grows past 20 MiB,
+  is left out. A copy or a hard link is a plain file and is returned: a runtime
+  can make one of anything it can read, which is the point above.
+
+An image turn took 40 to 52 seconds and about 40,000 input tokens in those
+probes, on the runtime's own account (codex and antigravity report no cost), and
+there is no quota per key: the concurrency cap is the bound. Its prompt goes to
+the runtime's provider, and with `auto` the first 4,000 characters of it also to
+TypeSafe. No excerpts of a context key's knowledge are added to an image
+request. `auto` picks among image models only within `--auto-confinement`, so by
+default none: image models are `sandboxed` or `unconfined` and `auto` is held to
+chat-only until the operator raises it. The runtimes keep the images they generate
+in their own state folders, as they do for any use of them: the gateway empties
+the slot folder, not those.
+
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
-model turn on your subscription or account, and some runtimes report no cost.
+model turn on your subscription or account, and some runtimes report no cost
+(an image request costs the most, see above).
 The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
-the 2 MiB request body and the 10 minute turn timeout. A request that is
+the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
+timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing.
 
-**Logs and errors.** One line per chat completion names the request id, key
+**Logs and errors.** One line per chat completion or image request names the
+request id, key
 id, profile, model, status, duration, how many knowledge excerpts were
-added and, for `auto`, who chose the model, plus, for a failure, the
+added (chat only) and, for `auto`, who chose the model, plus, for a failure, the
 operator-only detail (a Go error or a
-runtime's error code). A failure to list models, a failed knowledge search and
+runtime's error code; for an image request that made none, how many files the
+collection left out and why, never a file name). A failure to list models, a failed knowledge search and
 a failure to verify a key are logged too; a successful listing is not. None
 of the gateway's lines holds a prompt, an answer or a key. monomind's own
 diagnostics (its stderr) reach the server log as they do for any use, and
@@ -628,7 +678,10 @@ not read); a request that sent no credential at all is not logged. Error
 messages sent to callers are generic for internal failures and for a runtime
 error other than a setup hint, a rate limit, quota or a timeout; of those,
 only the part monomind classified reaches the caller, on one line and at most
-300 characters. Every response of the three routes carries an `X-Request-Id`
+300 characters. The one other place a runtime's words reach the caller is the
+502 of an image request whose turn made no image: what the runtime replied, on
+one line and at most 300 characters, the answer to the caller's own prompt.
+Every response of the four routes carries an `X-Request-Id`
 to quote to the operator. A path or method the API does not have gets Go's
 plain-text 404 or 405, without one. `GET /health` on the dedicated listener is
 unauthenticated and returns the server version.
