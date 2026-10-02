@@ -19,7 +19,7 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		begin := time.Now()
 
-		status, model, ctxState, detail := http.StatusOK, "", "", ""
+		status, model, ctxState, detail, autoBy := http.StatusOK, "", "", "", ""
 		fail := func(e *apiError) {
 			status, detail = e.Status, e.detail
 			writeError(w, e)
@@ -31,6 +31,9 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		defer func() {
 			line := fmt.Sprintf("req=%s key=%s profile=%s model=%s status=%d ms=%d context=%s",
 				pr.RequestID, pr.KeyID, pr.ProfileID, model, status, time.Since(begin).Milliseconds(), ctxState)
+			if autoBy != "" {
+				line += " auto=" + autoBy
+			}
 			if detail != "" {
 				line += fmt.Sprintf(" detail=%q", detail)
 			}
@@ -51,24 +54,37 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			return
 		}
 
-		m, err := g.catalog.Resolve(r.Context(), req.Model)
-		switch {
-		case errors.Is(err, ErrUnknownModel):
-			fail(errModelNotFound(req.Model))
-			return
-		case err != nil:
-			fail(catalogError(err))
-			return
-		}
-		model = m.ID
 		eff := policyFor(p, pr)
-		if !eff.Allows(m.Class) {
-			if p.Allows(m.Class) { // only the cap on a context key refuses it
-				fail(errPolicy(fmt.Sprintf("model %s runs as %s, which is above what a key created with --context may use here (%s): its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted; the operator can raise this with --context-confinement", m.ID, m.Class, eff)))
-			} else {
-				fail(errPolicy(fmt.Sprintf("model %s runs as %s, which this server's confinement policy (%s) does not allow; the operator can raise it with --confinement", m.ID, m.Class, p)))
+		var m ModelInfo
+		var candidates []ModelInfo // for auto: what Jev may pick among, all of them allowed
+		isAuto := req.Model == autoModelID
+		if isAuto {
+			model = autoModelID
+			var e *apiError
+			if candidates, e = g.autoCandidates(r.Context(), pr, eff); e != nil {
+				fail(e)
+				return
 			}
-			return
+		} else {
+			var err error
+			m, err = g.catalog.Resolve(r.Context(), req.Model)
+			switch {
+			case errors.Is(err, ErrUnknownModel):
+				fail(errModelNotFound(req.Model))
+				return
+			case err != nil:
+				fail(catalogError(err))
+				return
+			}
+			model = m.ID
+			if !eff.Allows(m.Class) {
+				if p.Allows(m.Class) { // only the cap on a context key refuses it
+					fail(errPolicy(fmt.Sprintf("model %s runs as %s, which is above what a key created with --context may use here (%s): its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted; the operator can raise this with --context-confinement", m.ID, m.Class, eff)))
+				} else {
+					fail(errPolicy(fmt.Sprintf("model %s runs as %s, which this server's confinement policy (%s) does not allow; the operator can raise it with --confinement", m.ID, m.Class, p)))
+				}
+				return
+			}
 		}
 
 		slot, release, ok := g.limiter.tryAcquire()
@@ -77,6 +93,14 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			return
 		}
 		defer release()
+
+		// The slot comes first, so that a request that would be refused for lack of
+		// one never costs a Jev call, and no more than MaxConcurrent picks run at once.
+		if isAuto {
+			pick := g.pickAuto(r.Context(), pr.ProfileID, lastUserText(&req), candidates)
+			m, autoBy, model = pick.Model, pick.By, pick.Model.ID
+			w.Header().Set("X-Monoagent-Auto", autoBy)
+		}
 
 		var ctxBlock string
 		if pr.Context {

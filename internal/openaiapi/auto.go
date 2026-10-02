@@ -45,6 +45,35 @@ func (g *Gateway) autoStatus(ctx context.Context, profileID string) AutoStatus {
 	return g.deps.Auto.Status(ctx, profileID)
 }
 
+// autoCandidates returns the models auto may pick among for a key whose
+// effective policy is eff, or the 404 that says why auto is not available: Jev
+// has no key or the surface is off for the profile, or the policy allows no model.
+func (g *Gateway) autoCandidates(ctx context.Context, pr Principal, eff Policy) ([]ModelInfo, *apiError) {
+	if st := g.autoStatus(ctx, pr.ProfileID); !st.Available {
+		return nil, errAutoUnavailable(st.Missing)
+	}
+	models, err := g.catalog.Visible(ctx, eff)
+	if err != nil {
+		return nil, catalogError(err)
+	}
+	if len(models) == 0 {
+		return nil, errAutoUnavailable("at least one model the server's confinement policy allows")
+	}
+	return models, nil
+}
+
+// autoObject is auto as a model of the list. Its confinement is the strongest
+// class the key's policy allows: what Jev picks is never above it.
+func autoObject(eff Policy) modelObject {
+	return modelObject{
+		ID: autoModelID, Object: "model", OwnedBy: "jev",
+		Monoagent: modelMeta{
+			Runtime: autoModelID, Model: autoModelID, Label: "Jev picks the model for each request",
+			Confinement: eff.Max.String(), Capabilities: []string{"text"},
+		},
+	}
+}
+
 // autoPick is the model auto chose, and by what.
 type autoPick struct {
 	Model ModelInfo

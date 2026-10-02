@@ -75,18 +75,20 @@ func errAuth() *apiError {
 		Message: "Incorrect API key provided. Send it as `Authorization: Bearer sk-ma-…`."}
 }
 
-// autoModelID is the model that will let Jev pick a runtime and model for a
-// request. It is a later phase: until then it is refused like any unknown model,
-// but the message says why.
+// autoModelID is the model that lets Jev pick a runtime and model for a request.
 const autoModelID = "auto"
+
+// errAutoUnavailable is the 404 for a request that asks for auto where it does
+// not work (no Jev key for the profile, the api_auto surface off, no model the
+// policy allows): a model that does not exist for this key, and what to set up.
+func errAutoUnavailable(missing string) *apiError {
+	return &apiError{Status: http.StatusNotFound, Type: "invalid_request_error", Code: "model_not_found", Param: "model",
+		Message: `The model "auto" is not available here: it needs ` + missing + `. List the available ids with GET /v1/models.`}
+}
 
 // errModelNotFound quotes the client's string so control characters never
 // reach a log line or a terminal.
 func errModelNotFound(model string) *apiError {
-	if model == autoModelID {
-		return &apiError{Status: http.StatusNotFound, Type: "invalid_request_error", Code: "model_not_found", Param: "model",
-			Message: `The model "auto" is not available in this version: choosing the model automatically is not implemented yet. List the available ids with GET /v1/models.`}
-	}
 	if len(model) > 64 {
 		model = model[:64]
 	}
