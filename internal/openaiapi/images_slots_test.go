@@ -93,47 +93,117 @@ func TestImagesRequestsAtTheSameTimeWorkInDifferentSlotFolders(t *testing.T) {
 	}
 }
 
-// A slot is given back when the request ends, whatever way it ends.
+// A slot is given back when the request ends, whatever way it ends: after each ending
+// the next request is served by the one slot there is.
 func TestImagesGiveTheSlotBack(t *testing.T) {
-	h := newHarness(t, imageTurn("a.png", onePNG("a.png")), func(_ *Deps, c *Config) { c.MaxConcurrent = 1 })
+	var next execFunc
+	var leave context.CancelFunc // the client that leaves while Jev is asked
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		return next(ctx, o, onEvent)
+	}, func(d *Deps, c *Config) {
+		c.MaxConcurrent = 1
+		d.Auto = AutoFuncs{
+			Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
+			Choose: func(cx context.Context, _, _ string, _ map[string]string) (string, float64, error) {
+				leave()
+				<-cx.Done()
+				return "", 0, cx.Err()
+			},
+		}
+	})
 	secret := h.key(t, "default", "app", false)
-	for i, body := range []string{`{"prompt":"x"}`, `{"prompt":"x"}`, `{"prompt":"x"}`} {
-		if rec := postImages(h, anyPolicy, secret, body); rec.Code != http.StatusOK {
-			t.Fatalf("request %d: %d %s: the slot of the one before was not given back", i+1, rec.Code, rec.Body)
+	success := func(when string) {
+		t.Helper()
+		next = imageTurn("a.png", onePNG("a.png"))
+		if rec := postImages(h, anyPolicy, secret, `{"prompt":"x"}`); rec.Code != http.StatusOK {
+			t.Fatalf("%s: the next request got %d %s: the slot was not given back", when, rec.Code, rec.Body)
 		}
 	}
+	success("at the start")
+
+	for name, c := range map[string]struct {
+		exec   execFunc
+		status int
+	}{
+		"a quota":                   {scriptedExec(evStart(false, "workspace-write"), evError(monomind.ErrQuota, "usage limit reached"), evDone(1)), 429},
+		"a turn that made no image": {imageTurn("nothing was made", nil), 502},
+		"no image tool":             {imageTurn("NO_IMAGE_TOOL", nil), 400},
+		"a turn that did not start": {func(context.Context, monomind.ExecOptions, func(monomind.Event)) (*monomind.TurnResult, error) {
+			return nil, monomind.ErrSandboxRequired
+		}, 403},
+	} {
+		next = c.exec
+		if rec := postImages(h, anyPolicy, secret, `{"prompt":"x"}`); rec.Code != c.status {
+			t.Fatalf("%s: %d %s, want %d", name, rec.Code, rec.Body, c.status)
+		}
+		success("after " + name)
+	}
+
+	// A client that leaves while the turn runs.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	next = func(c context.Context, o monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
+		cancel()
+		<-c.Done()
+		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil
+	}
+	r := httptest.NewRequest(http.MethodPost, imagesURL, strings.NewReader(`{"prompt":"x"}`)).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+secret)
+	h.do(anyPolicy, r)
+	success("after a client that left")
+
+	// A client that leaves while Jev is asked, before any turn has started.
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	leave = cancel
+	r = httptest.NewRequest(http.MethodPost, imagesURL, strings.NewReader(autoImage)).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+secret)
+	h.do(autoAnyPolicy, r)
+	success("after a client that left while Jev was asked")
 }
 
-// An image turn takes a minute: the write and the read timeouts the servers set (the
-// legacy HTTP API sets a 5 minute write timeout and a 30 second read timeout, and the
-// dedicated listener a 30 second read timeout) must not cut a turn that runs longer
-// than they do, or the response of one.
-func TestImagesResponseOutlivesTheServersTimeouts(t *testing.T) {
+// An image turn takes a minute: the write timeout a server sets (the legacy HTTP API's is
+// 5 minutes) must not cut the answer to a turn that ran longer than it does, whether the
+// answer is the images or a failure (the images get a write budget of their own, so it is
+// the failure that needs the connection's deadline to have been moved). The read timeout is
+// not tested: net/http stops it when the request body has been read, which is before the
+// turn starts, and the gateway does nothing about it.
+func TestImagesResponseOutlivesTheServersWriteTimeout(t *testing.T) {
+	var turns atomic.Int32
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		time.Sleep(900 * time.Millisecond)
 		if ctx.Err() != nil { // the request was cut while the turn ran
 			return nil, ctx.Err()
 		}
-		return imageTurn("a.png", onePNG("a.png"))(ctx, o, onEvent)
+		if turns.Add(1) == 1 {
+			return imageTurn("a.png", onePNG("a.png"))(ctx, o, onEvent)
+		}
+		return imageTurn("nothing was made", nil)(ctx, o, onEvent)
 	})
 	mux := http.NewServeMux()
 	h.g.Mount(mux, anyPolicy)
 	srv := httptest.NewUnstartedServer(mux)
 	srv.Config.WriteTimeout = 400 * time.Millisecond
-	srv.Config.ReadTimeout = 400 * time.Millisecond
 	srv.Start()
 	t.Cleanup(srv.Close)
+	secret := h.key(t, "default", "app", false)
 
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+imagesURL, strings.NewReader(`{"prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer "+h.key(t, "default", "app", false))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("a timeout of the server cut the request or the response: %v", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"b64_json"`) {
-		t.Fatalf("status %d body %s", resp.StatusCode, body)
+	for _, want := range []struct { // in this order: the first turn makes the images
+		name   string
+		status int
+		in     string
+	}{{"the images", http.StatusOK, `"b64_json"`}, {"a failure", http.StatusBadGateway, "image_generation_failed"}} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+imagesURL, strings.NewReader(`{"prompt":"x"}`))
+		req.Header.Set("Authorization", "Bearer "+secret)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: a timeout of the server cut the response: %v", want.name, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != want.status || !strings.Contains(string(body), want.in) {
+			t.Fatalf("%s: status %d body %s", want.name, resp.StatusCode, body)
+		}
 	}
 }
 

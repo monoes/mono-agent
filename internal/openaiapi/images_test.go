@@ -218,16 +218,26 @@ func TestImagesAskForNAndSizeAndReturnWhatWasSaved(t *testing.T) {
 	}
 }
 
-// A request that is refused starts nothing and takes no slot.
+// A request that is refused starts nothing and takes no slot: with the only slot held by
+// a turn that is running, each of them is still answered with its own refusal and not
+// with a 429.
 func TestImagesRejectBeforeSpawningAnything(t *testing.T) {
 	var spawned atomic.Int32
+	started, release := make(chan struct{}, 1), make(chan struct{})
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		spawned.Add(1)
+		if spawned.Add(1) == 1 { // the turn that holds the slot
+			started <- struct{}{}
+			<-release
+		}
 		return imageTurn("x", onePNG("a.png"))(ctx, o, onEvent)
-	})
+	}, func(_ *Deps, c *Config) { c.MaxConcurrent = 1 })
 	secret := h.key(t, "default", "app", false)
 	ctxKey := h.key(t, "default", "notes", true)
 	chatOnly, sandboxed := Policy{Max: ChatOnly}, Policy{Max: Sandboxed}
+
+	holder := make(chan int, 1)
+	go func() { holder <- postImages(h, anyPolicy, secret, `{"prompt":"hold the slot"}`).Code }()
+	waitStarted(t, started)
 
 	for _, c := range []struct {
 		name   string
@@ -267,8 +277,12 @@ func TestImagesRejectBeforeSpawningAnything(t *testing.T) {
 			t.Errorf("%s: no X-Request-Id", c.name)
 		}
 	}
-	if n := spawned.Load(); n != 0 {
-		t.Fatalf("%d turns were spawned for requests that had to be refused first", n)
+	if n := spawned.Load(); n != 1 {
+		t.Fatalf("%d turns were spawned, want only the one that holds the slot: requests that had to be refused first start nothing", n)
+	}
+	close(release)
+	if code := <-holder; code != http.StatusOK {
+		t.Errorf("the request that held the slot: %d", code)
 	}
 }
 
@@ -433,21 +447,43 @@ func TestImagesLogLine(t *testing.T) {
 	}
 }
 
-// Nothing one request leaves can reach the next: the second request must not be
-// answered with the first one's image.
+// Nothing one request leaves can reach the next: not its image in the answer, and not its
+// files in the folder the next runtime starts in. Both requests work in the same slot
+// folder, which is emptied when a turn is over and, for what was written since, again
+// before the next one starts.
 func TestImagesOneRequestsFilesNeverReachTheNext(t *testing.T) {
 	var turns atomic.Int32
+	var found [][]string // what the runtime of each turn found in its working folder when it started
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		found = append(found, besidesTmp(o.Cwd))
 		if turns.Add(1) == 1 {
+			_ = os.WriteFile(filepath.Join(o.Cwd, "left-behind.png"), pngBytes, 0o600)
 			return imageTurn("a.png", onePNG("a.png"))(ctx, o, onEvent)
 		}
 		return imageTurn("I made nothing", nil)(ctx, o, onEvent)
-	})
+	}, func(_ *Deps, c *Config) { c.MaxConcurrent = 1 })
 	secret := h.key(t, "default", "app", false)
+	slot := filepath.Join(h.scratch, profileFolder("default"), "slot-0")
+
 	if rec := postImages(h, anyPolicy, secret, `{"prompt":"x"}`); rec.Code != http.StatusOK {
 		t.Fatalf("the first request: %d %s", rec.Code, rec.Body)
 	}
+	if entries, _ := os.ReadDir(slot); len(entries) != 0 {
+		t.Fatalf("the folder must be empty when a turn is over: %d entries", len(entries))
+	}
+	// A process of the first turn that is still running writes again, after the turn is over.
+	if err := os.WriteFile(filepath.Join(slot, "late.png"), pngBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(slot, "late-folder"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if rec := postImages(h, anyPolicy, secret, `{"prompt":"x"}`); rec.Code != http.StatusBadGateway {
 		t.Fatalf("the second request: %d, want a 502: it must not be answered with the first one's image: %s", rec.Code, rec.Body)
+	}
+	for i, names := range found {
+		if len(names) != 1 || !regexp.MustCompile(`^out-[a-z2-7]{16}$`).MatchString(names[0]) {
+			t.Errorf("turn %d started among %v, want its own output folder and nothing else", i+1, names)
+		}
 	}
 }
