@@ -297,9 +297,9 @@ What to expect:
   from 64 to 8192, a preference the runtime may not follow. `quality`, `style`,
   `output_format`, `background` and `user` are accepted and ignored.
 - The runtime makes the image with its own tool and copies the file into a
-  folder the server made for the turn (its name is new every time); the server
-  reads the PNG, JPEG, WebP and GIF files there, and in nothing else, (up to
-  20 MiB each) before it empties the working folder, and never follows a link
+  folder the server made for the turn (its name is new every time); before it
+  empties the working folder the server reads the PNG, JPEG, WebP and GIF files
+  in that folder (up to 20 MiB each) and nowhere else, and never follows a link
   in it. A runtime that says it has no image tool is a 400
   `image_generation_unsupported`; one that saves nothing, or saves it
   elsewhere, is a 502 `image_generation_failed` with what it said.
@@ -393,7 +393,7 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images, `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
+| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images (or image generation switched off), `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
 | 400 | `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no image tool |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
 | 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
