@@ -244,6 +244,10 @@ func TestArgumentsOutsideTheTopLevelPropertiesReachTheClientOverTheRealMonomind(
 		"a root allOf":                `{"allOf":[` + city + `]}`,
 		"a root $ref":                 `{"$ref":"#/$defs/Args","$defs":{"Args":` + city + `}}`,
 		"a then":                      `{"type":"object","properties":{"units":{"type":"string"}},"if":{"required":["units"]},"then":` + city + `}`,
+		// A number that float64 cannot hold made every property unnamed, and every call {}.
+		"a bound of 1e400 in a property":     `{"type":"object","properties":{"city":{"type":"string"},"n":{"type":"number","maximum":1e400}},"required":["city"]}`,
+		"an integer of 400 digits in a root": `{"default":` + fourHundredDigits + `,"anyOf":[` + city + `,` + zip + `]}`,
+		"a negative bound in a branch":       `{"allOf":[{"properties":{"city":{"type":"string"},"n":{"type":"number","minimum":-1e400}},"required":["city"]}]}`,
 	} {
 		tools := `"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather.","parameters":` + params + `}}]`
 		rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", tools, weatherQuestion))

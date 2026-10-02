@@ -83,19 +83,30 @@ func parseToolDecl(i int, raw json.RawMessage, budget *hoistBudget) (toolDecl, *
 		return toolDecl{}, e
 	}
 	names := nameArguments(d.Params, budget)
-	switch {
-	case names.Spent:
-		return toolDecl{}, errInvalid("invalid_value", param,
-			"the parameters of the functions of the request together hold more schemas and properties than are read to name their arguments: list the arguments in properties, or declare fewer functions with such schemas")
-	case names.Overrun:
-		return toolDecl{}, errInvalid("invalid_value", param,
-			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref too deeply to name their arguments: list the arguments in properties")
-	case names.Open && len(names.Props) == 0:
-		return toolDecl{}, errInvalid("invalid_value", param,
-			"the parameters name no property but allow other keys, so no argument of a call could be passed on: list the arguments in properties")
+	if e := unnameable(param, names); e != nil {
+		return toolDecl{}, e
 	}
 	d.Props, d.Required = names.Props, names.Required
 	return d, nil
+}
+
+// unnameable is the refusal of a function whose arguments could not be named for monomind, or
+// nil. The messages are fixed: what the client wrote, a property name included, stays out.
+func unnameable(param string, names argNames) *apiError {
+	switch {
+	case names.Unreadable:
+		return errInvalid("invalid_value", param, "the parameters could not be read to name their arguments: they must be a JSON schema object")
+	case names.Spent:
+		return errInvalid("invalid_value", param,
+			"the parameters of the functions of the request together hold more schemas and properties than are read to name their arguments: list the arguments in properties, or declare fewer functions with such schemas")
+	case names.Overrun:
+		return errInvalid("invalid_value", param,
+			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref too deeply to name their arguments: list the arguments in properties")
+	case names.Open && len(names.Props) == 0:
+		return errInvalid("invalid_value", param,
+			"the parameters name no property but allow other keys, so no argument of a call could be passed on: list the arguments in properties")
+	}
+	return nil
 }
 
 // inspectParams checks a parameters schema and returns it compact. An absent or

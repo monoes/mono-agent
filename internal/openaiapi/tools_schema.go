@@ -31,8 +31,7 @@ func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 	for _, d := range decls {
 		props := make(map[string]interface{}, len(d.Props))
 		for name, raw := range d.Props {
-			var v interface{}
-			if json.Unmarshal(raw, &v) == nil {
+			if v, err := decodeKeepingNumbers(raw); err == nil {
 				leaveOutForeignEnum(v)
 				props[name] = v
 			}
@@ -137,8 +136,8 @@ func compactArgs(raw json.RawMessage) string {
 // keyword that is not understood accepts. The answer is for the log: a call that
 // does not match is still returned, and the client decides.
 func argsMatch(d toolDecl, args json.RawMessage) bool {
-	var v interface{}
-	if json.Unmarshal(args, &v) != nil {
+	v, err := decodeFloats(args)
+	if err != nil {
 		return false
 	}
 	if _, ok := v.(map[string]interface{}); !ok {
@@ -147,8 +146,8 @@ func argsMatch(d toolDecl, args json.RawMessage) bool {
 	if len(d.Params) == 0 {
 		return true
 	}
-	var schema interface{}
-	if json.Unmarshal(d.Params, &schema) != nil {
+	schema, err := decodeFloats(d.Params)
+	if err != nil {
 		return true
 	}
 	return schemaAccepts(schema, v, 0)
@@ -224,7 +223,7 @@ func typeAccepts(t, v interface{}) bool {
 			return ok
 		case "integer":
 			f, ok := v.(float64)
-			return ok && f == math.Trunc(f) && !math.IsInf(f, 0)
+			return ok && f == math.Trunc(f) // a number too large for a float64 is ±Inf: it may be one, and accepts
 		case "boolean":
 			_, ok := v.(bool)
 			return ok

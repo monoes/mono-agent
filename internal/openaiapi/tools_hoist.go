@@ -53,6 +53,8 @@ type argNames struct {
 	Overrun bool
 	// Spent says the request has spent what it may on naming arguments (hoistBudget).
 	Spent bool
+	// Unreadable says the schema could not be read as a JSON object at all.
+	Unreadable bool
 }
 
 // nameArguments says which arguments monomind has to be told of. monomind builds the
@@ -70,9 +72,19 @@ type argNames struct {
 // monomind: the caller refuses the function. With some named, the keys outside them are
 // not passed on, which the docs say.
 func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
-	var doc map[string]any
-	if len(params) == 0 || json.Unmarshal(params, &doc) != nil {
+	if len(params) == 0 {
 		return argNames{}
+	}
+	v, err := decodeKeepingNumbers(params)
+	if err != nil {
+		return argNames{Unreadable: true}
+	}
+	if v == nil {
+		return argNames{} // null: no schema
+	}
+	doc, isObject := v.(map[string]any)
+	if !isObject {
+		return argNames{Unreadable: true}
 	}
 	if budget == nil {
 		budget = newHoistBudget()
