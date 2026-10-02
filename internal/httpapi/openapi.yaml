@@ -440,8 +440,8 @@ paths:
         prompt could steer the calls the client runs. monomind keeps only the
         top-level properties of a schema, so the arguments that a root `anyOf`,
         `oneOf` or `allOf`, a local `$ref`, an `if`, a `then`, an `else`, a
-        `dependentSchemas`, a `dependencies` or a `dependentRequired`
-        define or ask for are named at the top level too (optional unless the schema
+        `dependentSchemas`, a `dependencies`, a `dependentRequired`, or a `const`
+        or an `enum` of objects define or ask for are named at the top level too (optional unless the schema
         requires them, and as any value where only a branch that may not apply
         defines them), and the whole schema is also folded into the function's
         description (an `enum` that is not a list of strings is left out of
@@ -451,6 +451,8 @@ paths:
         (`additionalProperties` or `unevaluatedProperties` true or a schema,
         `patternProperties`) or whose references cannot be followed
         (`$dynamicRef`, a `$ref` that is not local or leads nowhere), a schema
+        whose `const` or `enum` (the root's, an `allOf`'s or a `$ref`'s that
+        applies) holds a value that is not an object, a schema
         that nests combinators and references more than 8 levels deep or holds
         more than 2000 schemas, and functions whose schemas together take more
         than 100,000 steps to read are 400 `invalid_value` on

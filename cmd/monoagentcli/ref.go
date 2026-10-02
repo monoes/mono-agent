@@ -2746,14 +2746,16 @@ OPENAI-COMPATIBLE API (/v1)
   functions (name 1 to 64 characters of [A-Za-z0-9_-], unique, where a name of 55
   or more reaches monomind and the model as an alias of 54 and the client sees its
   own; parameters a JSON schema object, whose root anyOf, oneOf, allOf, local $ref,
-  if/then/else and dependentSchemas/dependencies/dependentRequired arguments are
-  named at the top level for monomind, which keeps
+  if/then/else, dependentSchemas/dependencies/dependentRequired and const/enum
+  arguments are named at the top level for monomind, which keeps
   only top-level properties, and which is folded whole into the description; an
   enum that is not a list of strings is left out of what monomind gets; while the
   tools are passed, a schema that names no property and allows free-form keys
   (additionalProperties or unevaluatedProperties true or a schema,
   patternProperties) or has a reference that cannot be followed ($dynamicRef, a
-  $ref that is not local) is 400, and so is one nested more than 8 levels deep or
+  $ref that is not local) or whose const or enum (the root's, an allOf's or a $ref's
+  that applies) holds a value that is not an object is 400, and so is one nested
+  more than 8 levels deep or
   holding more than 2000 schemas, or functions whose schemas together take more
   than 100,000 steps to read; monomind rejects a call whose top-level types,
   string enums or required names do not match what it was told, which never comes

@@ -256,6 +256,10 @@ func TestArgumentsOutsideTheTopLevelPropertiesReachTheClientOverTheRealMonomind(
 		"a bound of 1e400 in a property":     `{"type":"object","properties":{"city":{"type":"string"},"n":{"type":"number","maximum":1e400}},"required":["city"]}`,
 		"an integer of 400 digits in a root": `{"default":` + fourHundredDigits + `,"anyOf":[` + city + `,` + zip + `]}`,
 		"a negative bound in a branch":       `{"allOf":[{"properties":{"city":{"type":"string"},"n":{"type":"number","minimum":-1e400}},"required":["city"]}]}`,
+		// A const or an enum of objects names no property: the call came back as {}.
+		"a root const":                      `{"const":{"city":"Paris"}}`,
+		"a root enum of objects":            `{"enum":[{"city":"Paris"},{"city":"Rome"}]}`,
+		"a const in the branch of an anyOf": `{"anyOf":[{"const":{"city":"Paris"}},` + zip + `]}`,
 	} {
 		tools := `"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather.","parameters":` + params + `}}]`
 		rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", tools, weatherQuestion))

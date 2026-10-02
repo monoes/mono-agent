@@ -119,6 +119,9 @@ func unnameable(param string, names argNames) *apiError {
 	case names.TooWide:
 		return errInvalid("invalid_value", param, fmt.Sprintf(
 			"the parameters hold more than %d schemas (each branch and each reference counts) to name their arguments: list the arguments in properties", maxHoistNodes))
+	case names.Impossible:
+		return errInvalid("invalid_value", param,
+			"the parameters have a const or an enum that every call must match and that holds a value that is not an object: the arguments of a call are always an object")
 	case names.Open && len(names.Props) == 0:
 		return errInvalid("invalid_value", param,
 			"the parameters name no property but allow other keys, so no argument of a call could be passed on: list the arguments in properties")

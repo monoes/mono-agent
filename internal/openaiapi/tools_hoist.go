@@ -57,6 +57,9 @@ type argNames struct {
 	Spent bool
 	// Unreadable says the schema could not be read as a JSON object at all.
 	Unreadable bool
+	// Impossible says a const or an enum that every call must match holds a value that is not an
+	// object, and the arguments of a call are always one: no call could match.
+	Impossible bool
 }
 
 // nameArguments says which arguments monomind has to be told of. monomind builds the
@@ -73,9 +76,11 @@ type argNames struct {
 // and nothing defines, and one that two definitions that hold for every call say differently
 // (monomind reads a property's type and an enum of strings, and nothing else of it).
 //
-// With no property to name and Open set, nothing about the arguments could be told to
-// monomind: the caller refuses the function. With some named, the keys outside them are
-// not passed on, which the docs say.
+// A const or an enum of objects names the keys of its members too (optional, any value). With no
+// property to name and Open set, nothing about the arguments could be told to monomind, and with
+// a const or an enum that every call must match and that holds something other than an object no
+// call could match (Impossible): the caller refuses the function. With some named, the keys
+// outside them are not passed on, which the docs say.
 func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	if len(params) == 0 {
 		return argNames{}
@@ -97,7 +102,7 @@ func nameArguments(params json.RawMessage, budget *hoistBudget) argNames {
 	h := &hoister{doc: doc, budget: budget, props: map[string]json.RawMessage{}, views: map[string]string{}, sure: map[string]bool{},
 		followed: map[uintptr]int{}, mentioned: map[string]bool{}, required: map[string]bool{}}
 	h.walk(doc, 0, false)
-	out := argNames{Props: h.props, Open: h.open, TooDeep: h.tooDeep, TooWide: h.tooWide, Spent: h.spent}
+	out := argNames{Props: h.props, Open: h.open, TooDeep: h.tooDeep, TooWide: h.tooWide, Spent: h.spent, Impossible: h.impossible}
 	for _, name := range h.names {
 		if _, has := h.props[name]; !has {
 			h.props[name] = json.RawMessage("true")
@@ -121,6 +126,8 @@ type hoister struct {
 	open     bool
 	tooDeep  bool
 	tooWide  bool
+	// impossible says a const or an enum that applies to every call holds a value that is no object.
+	impossible bool
 	// The names that required lists mention, once each and in the order they come, and
 	// which of them are required of the call.
 	names     []string
@@ -166,6 +173,7 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 			}
 		}
 	}
+	h.walkValues(m, optional)
 	if ref, ok := m["$ref"].(string); ok {
 		h.follow(ref, depth, optional)
 	}
@@ -194,6 +202,36 @@ func (h *hoister) walk(node any, depth int, optional bool) {
 	}
 	if patterns, ok := m["patternProperties"].(map[string]any); ok && len(patterns) > 0 {
 		h.open = true
+	}
+}
+
+// walkValues reads the const and the enum of a schema. The arguments of a call are an object, so the
+// members that are objects name arguments: a call that is one of them carries those keys, and
+// monomind would drop every one of them if no property named it. Where the schema applies to every
+// call (the root, an allOf, a reference that applies) a member that is not an object leaves no call
+// that could match, which the caller refuses; in a branch that may not apply it only leaves a branch
+// that cannot.
+func (h *hoister) walkValues(m map[string]any, optional bool) {
+	var members []any
+	if v, has := m["const"]; has {
+		members = append(members, v)
+	}
+	if list, ok := m["enum"].([]any); ok {
+		members = append(members, list...)
+	}
+	for _, v := range members {
+		if !h.step() {
+			return
+		}
+		obj, isObject := v.(map[string]any)
+		switch {
+		case isObject:
+			for _, name := range sortedNames(obj) {
+				h.require(name, true)
+			}
+		case !optional:
+			h.impossible = true
+		}
 	}
 }
 

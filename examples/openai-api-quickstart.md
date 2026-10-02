@@ -452,9 +452,9 @@ What to expect from a tool loop:
   properties of it (and of each, its type and an enum of strings), so the server
   folds the schema into the function's description and names the arguments of a
   root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`), of an
-  `if`, `then` or `else` and of what `dependentSchemas`, `dependencies` and
-  `dependentRequired` ask for at the top level too (optional where the schema lets a
-  call do without them, and as any value where only a branch that may not apply
+  `if`, `then` or `else`, of what `dependentSchemas`, `dependencies` and
+  `dependentRequired` ask for and of a `const` or an `enum` of objects at the top
+  level too (optional where the schema lets a call do without them, and as any value where only a branch that may not apply
   defines them), or the call would reach you as `{}`. A key that no property
   names is not passed on.
 - monomind holds a call to the type, the enum of strings and the `required`
@@ -476,7 +476,9 @@ What to expect from a tool loop:
   (`additionalProperties` or `unevaluatedProperties` true or a schema,
   `patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
   `$ref` that is not local to the schema or leads nowhere), since no argument of
-  its calls could be passed on: list the arguments in `properties`; a schema that
+  its calls could be passed on: list the arguments in `properties`; a schema whose
+  `const` or `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a
+  value that is not an object, which no call could match; a schema that
   nests combinators and references more than 8 levels deep or holds more than
   2,000 schemas, and functions whose schemas together take more of the server
   than it reads to name their arguments (100,000 steps for a request; a

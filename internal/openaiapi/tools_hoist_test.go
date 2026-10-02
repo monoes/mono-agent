@@ -89,6 +89,17 @@ func TestArgumentsOfRootCombinatorsAndReferencesAreNamedAtTheTopLevel(t *testing
 		{"dependencies of both forms in a branch", `{"anyOf":[{"dependencies":{"a":["b"],"c":{"properties":{"d":{"type":"string"}}}}}]}`, []string{"a", "b", "c", "d"}, nil},
 		{"a boolean schema and other things that are no schema as a dependency", `{"properties":{"x":{"type":"string"}},"dependencies":{"x":true,"y":false,"z":"nope","w":[1,null]}}`, []string{"w", "x", "y", "z"}, nil},
 		{"a name a dependency asks for that the schema requires anyway", `{"required":["b"],"dependentRequired":{"a":["b"]}}`, []string{"a", "b"}, []string{"b"}},
+		// The arguments of a call are an object, so a const or an enum of objects names arguments: a
+		// call that is one of them has those keys.
+		{"a root const that is an object", `{"const":{"city":"Paris"}}`, []string{"city"}, nil},
+		{"a root enum of objects", `{"enum":[{"city":"Paris"},{"zip":"75001"}]}`, []string{"city", "zip"}, nil},
+		{"a const beside properties", `{"type":"object","properties":{"city":{"type":"string"}},"const":{"city":"Paris","units":"c"}}`, []string{"city", "units"}, nil},
+		{"a const in the branches of an anyOf", `{"anyOf":[{"const":{"city":"Paris"}},{"enum":[{"zip":"1"}]}]}`, []string{"city", "zip"}, nil},
+		{"a const behind a $ref", `{"$ref":"#/$defs/A","$defs":{"A":{"const":{"city":"Paris"}}}}`, []string{"city"}, nil},
+		{"a branch that no call can match is not an error", `{"anyOf":[{"const":5},{"properties":{"city":{"type":"string"}}}]}`, []string{"city"}, nil},
+		{"the const of an if is a condition", `{"if":{"const":5},"then":{"properties":{"city":{"type":"string"}}}}`, []string{"city"}, nil},
+		{"the const of a property is not the schema's", `{"properties":{"mode":{"const":5,"type":"integer"}}}`, []string{"mode"}, nil},
+		{"an empty enum", `{"enum":[]}`, nil, nil},
 	}
 	for _, c := range cases {
 		props, required := named(t, c.params)
@@ -133,6 +144,8 @@ func TestAPropertyKeepsItsTypeAndEnumOnlyWhereTheSchemaIsCertainOfThem(t *testin
 		{"a dependent schema", `{"dependentSchemas":{"zip":{"properties":{"id":{"type":"integer"}}}}}`, "any"},
 		{"a dependency that is a schema", `{"dependencies":{"zip":{"properties":{"id":{"type":"integer"}}}}}`, "any"},
 		{"a name that a dependency asks for", `{"dependencies":{"zip":["id"]}}`, "any"},
+		{"a name of a const", `{"const":{"id":"Paris"}}`, "any"},
+		{"a name of an enum", `{"enum":[{"id":1},{"id":2}]}`, "any"},
 		{"an anyOf branch that is a reference", `{"anyOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"properties":{"id":` + city + `}}}}`, "any"},
 		{"an allOf inside an anyOf branch: still optional", `{"anyOf":[{"allOf":[{"properties":{"id":` + city + `}}]}]}`, "any"},
 		{"branches that say the same: still any value", `{"anyOf":[{"properties":{"id":` + city + `}},{"properties":{"id":` + city + `}}]}`, "any"},
@@ -206,6 +219,53 @@ func TestAFunctionWhoseArgumentsCannotBeNamedIsRefused(t *testing.T) {
 		}
 		if b := string(err.body()); strings.Contains(b, marker) {
 			t.Errorf("%s: the error echoes what the client wrote: %s", c.name, b)
+		}
+	}
+}
+
+// The arguments of a call are always an object: a const or an enum that every call must match (the
+// root's, an allOf's, a reference that applies) and that holds anything else leaves no call that could
+// match, and the function is refused with a message that names no value. A branch that may not apply
+// is only a branch that cannot match, and what is not the schema's own const (a property's) is not
+// looked at; with tool_choice none no schema is read.
+func TestAConstOrEnumThatNoCallCanMatchIsRefused(t *testing.T) {
+	const marker = "MARKERvalue"
+	for _, c := range []struct{ name, params string }{
+		{"a root const that is a number", `{"const":5,"description":"` + marker + `"}`},
+		{"a root const that is a string", `{"const":"` + marker + `"}`},
+		{"a root const that is null", `{"const":null,"description":"` + marker + `"}`},
+		{"a root const that is a list", `{"const":["` + marker + `"]}`},
+		{"a root enum of strings", `{"enum":["` + marker + `","b"]}`},
+		{"a root enum with one value that is no object", `{"enum":[{"city":"Paris"},"` + marker + `"]}`},
+		{"a const that is false", `{"const":false}`},
+		{"a const in an allOf", `{"allOf":[{"const":"` + marker + `"}]}`},
+		{"an enum behind a $ref that applies", `{"$ref":"#/$defs/A","$defs":{"A":{"enum":["` + marker + `"]}}}`},
+		{"a const beside properties", `{"type":"object","properties":{"city":{"type":"string"}},"const":"` + marker + `"}`},
+	} {
+		body := toolBody(`"tools":[{"type":"function","function":{"name":"get_weather","parameters":`+c.params+`}}]`, userHi)
+		err := validateChat(decodeRequest(t, body))
+		if err == nil || err.Status != http.StatusBadRequest || err.Code != "invalid_value" || err.Param != "tools[0].function.parameters" {
+			t.Errorf("%s: got %+v, want 400 invalid_value on tools[0].function.parameters", c.name, err)
+			continue
+		}
+		if b := string(err.body()); strings.Contains(b, marker) {
+			t.Errorf("%s: the error echoes what the client wrote: %s", c.name, b)
+		}
+		none := toolBody(`"tools":[{"type":"function","function":{"name":"get_weather","parameters":`+c.params+`}}],"tool_choice":"none"`, userHi)
+		if err := validateChat(decodeRequest(t, none)); err != nil {
+			t.Errorf("%s: refused with tool_choice none, which passes no tools: %+v", c.name, err)
+		}
+	}
+	for _, params := range []string{
+		`{"anyOf":[{"const":5},{"properties":{"city":{"type":"string"}}}]}`,
+		`{"if":{"const":5},"then":{"properties":{"city":{"type":"string"}}}}`,
+		`{"properties":{"mode":{"const":5}}}`,
+		`{"enum":[]}`,
+		`{"const":{"city":"Paris"}}`,
+		`{"enum":[{"city":"Paris"},{"city":"Rome"}]}`,
+	} {
+		if err := validateChat(decodeRequest(t, oneTool(params))); err != nil {
+			t.Errorf("%s was refused: %+v", params, err)
 		}
 	}
 }

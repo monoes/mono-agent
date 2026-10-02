@@ -659,15 +659,17 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the top-level properties of a schema, and of a property only its type and an
   enum of strings (any other enum there rejects every call), so the arguments of
   a root `anyOf`, `oneOf` or `allOf`, of a local `$ref`, of an `if`, `then` or
-  `else` and of what `dependentSchemas`, `dependencies` and `dependentRequired` ask
-  for are named at the top level too (optional where the schema lets a call do
-  without them, and as any value where only a branch that may not apply defines
+  `else`, of what `dependentSchemas`, `dependencies` and `dependentRequired` ask
+  for and of a `const` or an `enum` of objects are named at the top level too
+  (optional where the schema lets a call do without them, and as any value where only a branch that may not apply defines
   them: monomind rejects a call that does not match the type or the enum it was
   told of, so they come only from what holds for every call; without naming them
   monomind drops every one and the client gets `{}`),
   the whole schema is also folded into the tool's description, and an enum that
   is not a list of strings is left out of what monomind gets, not refused. A
-  schema that names no property and allows free-form keys, or that nests more
+  schema that names no property and allows free-form keys, or whose `const` or
+  `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a value that
+  is not an object (the arguments of a call are one), or that nests more
   than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
   together take more than 100,000 steps to read (a reference is read once
   however it is spelled, so the cost is bounded by the request), is 400
