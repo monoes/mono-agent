@@ -757,8 +757,12 @@ executes nothing of the caller's. What this changes, and what it does not:
   another script that resemble Latin ones (a Cyrillic "е"), which would take a
   table of confusables: against such a disguise the fence is the defence and the
   second layer is not. The words of the
-  user and of the assistant are rendered as the client sent them (they are the
-  conversation), and the tags of the fence carry no per-request token. The
+  user are rendered as the client sent them (they are the conversation). The words
+  an assistant said before a call are not: a result can steer what a model says,
+  and the client sends it back, so in a replay (a conversation with tool history,
+  whether or not tools are still offered) they are defanged as a result is, and
+  are not fenced (a conversation without tools is rendered as it always was).
+  The tags of the fence carry no per-request token. The
   knowledge excerpts of a context key have their own, narrower defence: only
   their `<knowledge` tags are defanged.
   None of that keeps a model from following what a result says: a tool that

@@ -95,7 +95,9 @@ func replayPrompt(req *ChatRequest, active bool) string {
 		case "assistant":
 			b.WriteString("\n\n[assistant]")
 			if strings.TrimSpace(m.Content.Text) != "" {
-				b.WriteString("\n" + m.Content.Text)
+				// What the assistant said before a call may be steered by a result and sent back by
+				// the client: it is defanged as a result is, and stays plain text.
+				b.WriteString("\n" + defangResult(m.Content.Text))
 			}
 			for _, c := range m.ToolCalls {
 				names[c.ID] = req.wireName(c.Function.Name)
