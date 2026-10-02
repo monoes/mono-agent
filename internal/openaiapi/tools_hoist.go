@@ -76,11 +76,12 @@ type argNames struct {
 // too: a branch that may or may not apply (anyOf, oneOf, if, then, else, dependentSchemas,
 // dependencies) makes what it names optional, one that applies (allOf, a $ref, the root itself)
 // keeps the schema's required names required; the names that dependentRequired and the lists of
-// dependencies ask for, and the properties that ask, are arguments a call may carry, optional. monomind holds a call to the type and the enum of
-// a property it is told of, so only what holds for every call gives them: a name that only a
-// branch that may not apply defines is any value, as is a name that a required list mentions
-// and nothing defines, and one that two definitions that hold for every call say differently
-// (monomind reads a property's type and an enum of strings, and nothing else of it).
+// dependencies ask for, and the properties that ask, are arguments a call may carry, optional.
+// monomind holds a call to the type and the enum of a property it is told of, so only what holds
+// for every call gives them: a name that only a branch that may not apply defines is any value, as
+// is a name that a required list mentions and nothing defines, and one that two definitions that
+// hold for every call say differently (monomind reads a property's type and an enum of strings,
+// and nothing else of it).
 //
 // A const or an enum of objects names the keys of its members too (optional, any value). With no
 // property to name and Open set, nothing about the arguments could be told to monomind, and with

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// The defang reads a text a client wrote, and some characters are taken apart into many (NFKC
+// The defang reads a text a client wrote, and some characters are taken apart into many (NFKD
 // makes of one Arabic ligature eighteen letters): what a skeleton costs is bounded by the text,
 // whatever it holds.
 func TestACharacterThatExpandsCostsABoundedSkeleton(t *testing.T) {
