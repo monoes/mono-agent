@@ -119,21 +119,26 @@ type fakeAuto struct {
 	asked   int
 	prompt  string
 	options map[string]string
+	// the profile each call was made for
+	chooseProfile, thresholdProfile string
 }
 
 func (f *fakeAuto) funcs() AutoFuncs {
 	return AutoFuncs{
 		Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
-		Choose: func(ctx context.Context, _ string, prompt string, options map[string]string) (string, float64, error) {
+		Choose: func(ctx context.Context, profile string, prompt string, options map[string]string) (string, float64, error) {
 			f.asked++
-			f.prompt, f.options = prompt, options
+			f.chooseProfile, f.prompt, f.options = profile, prompt, options
 			if f.block {
 				<-ctx.Done()
 				return "", 0, ctx.Err()
 			}
 			return f.id, f.p, f.err
 		},
-		Threshold: func(string) float64 { return f.thr },
+		Threshold: func(profile string) float64 {
+			f.thresholdProfile = profile
+			return f.thr
+		},
 	}
 }
 
@@ -156,6 +161,9 @@ func TestPickAutoUsesJevsChoice(t *testing.T) {
 	}
 	if f.prompt != "write a poem" {
 		t.Errorf("Jev was sent %q", f.prompt)
+	}
+	if f.chooseProfile != "alice" || f.thresholdProfile != "alice" {
+		t.Errorf("the question and the threshold are the profile's: asked for %q, threshold of %q", f.chooseProfile, f.thresholdProfile)
 	}
 }
 

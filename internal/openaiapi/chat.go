@@ -98,6 +98,10 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		// one never costs a Jev call, and no more than MaxConcurrent picks run at once.
 		if isAuto {
 			pick := g.pickAuto(r.Context(), pr.ProfileID, lastUserText(&req), candidates)
+			if r.Context().Err() != nil { // the caller left while Jev was asked: there is nobody to answer
+				status = 499
+				return
+			}
 			m, autoBy, model = pick.Model, pick.By, pick.Model.ID
 			w.Header().Set("X-Monoagent-Auto", autoBy)
 		}

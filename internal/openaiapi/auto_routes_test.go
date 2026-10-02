@@ -143,6 +143,9 @@ func TestAutoRunsTheModelJevPicks(t *testing.T) {
 	if f.prompt != "write a haiku" {
 		t.Errorf("Jev was sent %q: only the last user message", f.prompt)
 	}
+	if f.chooseProfile != "alice" || f.thresholdProfile != "alice" {
+		t.Errorf("the key's profile is alice, but the question was asked for %q and the threshold read for %q", f.chooseProfile, f.thresholdProfile)
+	}
 }
 
 // Jev only picks among what the policy allows: under chat-only it is offered
@@ -164,6 +167,9 @@ func TestAutoOffersOnlyWhatThePolicyAllows(t *testing.T) {
 		rec := h.serve(c.policy, http.MethodPost, autoChatURL, secret, autoChat)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+		if f.asked == 0 {
+			t.Fatalf("%s: Jev was not asked, so there are no options to check", name)
 		}
 		eff := c.policy
 		if c.context {
@@ -248,5 +254,37 @@ func TestAutoAvailabilityIsPerProfile(t *testing.T) {
 	}
 	if rec := h.serve(anyPolicy, http.MethodPost, autoChatURL, bob, autoChat); rec.Code != http.StatusNotFound || asked.Load() != "bob" {
 		t.Errorf("bob does not: %d (Status asked about %v)", rec.Code, asked.Load())
+	}
+}
+
+// A client that leaves while Jev is being asked is not a Jev failure: nothing
+// runs, and the log neither blames Jev nor says who chose.
+func TestAutoClientLeavingDuringTheQuestionRunsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := &execLog{}
+	h := newHarness(t, log.exec("x"), func(d *Deps, _ *Config) {
+		d.Auto = AutoFuncs{
+			Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
+			Choose: func(c context.Context, _, _ string, _ map[string]string) (string, float64, error) {
+				cancel() // the client hangs up
+				<-c.Done()
+				return "", 0, c.Err()
+			},
+		}
+	})
+	secret := h.key(t, "default", "app", false)
+
+	r := httptest.NewRequest(http.MethodPost, autoChatURL, strings.NewReader(autoChat)).WithContext(ctx)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+secret)
+	h.do(anyPolicy, r)
+
+	lines := strings.Join(h.logged(), "\n")
+	if log.count() != 0 {
+		t.Errorf("%d turns ran for a client that had left", log.count())
+	}
+	if !strings.Contains(lines, "status=499") || strings.Contains(lines, "did not decide") || strings.Contains(lines, "auto=") {
+		t.Errorf("want a 499 that blames nobody and names no chooser: %q", lines)
 	}
 }

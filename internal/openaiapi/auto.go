@@ -98,6 +98,9 @@ func (g *Gateway) pickAuto(ctx context.Context, profileID, prompt string, candid
 	cctx, cancel := context.WithTimeout(ctx, g.cfg.AutoTimeout)
 	defer cancel()
 	id, p, err := g.ask(cctx, profileID, clipRunes(prompt, autoPromptRunes), options)
+	if ctx.Err() != nil { // the caller left: nothing was decided, and Jev is not to blame
+		return autoPick{Model: ruleChoice(candidates), By: "rule"}
+	}
 	reason := ""
 	switch {
 	case err != nil:
