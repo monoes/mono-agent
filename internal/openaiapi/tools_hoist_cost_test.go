@@ -57,7 +57,7 @@ func TestAReferenceIsReadOnceHoweverItIsSpelled(t *testing.T) {
 	if b.used > 3*900+300+10 {
 		t.Errorf("%d steps for 900 spellings of one reference", b.used)
 	}
-	if took := time.Since(begin); took > 2*time.Second {
+	if took := time.Since(begin); took > 2*time.Second*slowdown {
 		t.Errorf("took %v", took)
 	}
 }
@@ -151,7 +151,7 @@ func TestARequestThatIsMostlySchemaCostsLittleAndTooMuchIsRefused(t *testing.T) 
 	if err := validateChat(decodeRequest(t, toolBody(`"tools":[`+strings.Join(tools, ",")+`]`, userHi))); err != nil {
 		t.Errorf("32 functions of 900 spellings each: %+v", err)
 	}
-	if took := time.Since(begin); took > 3*time.Second {
+	if took := time.Since(begin); took > 3*time.Second*slowdown {
 		t.Errorf("32 functions of 900 spellings each took %v", took)
 	}
 
@@ -182,7 +182,7 @@ func TestARequestThatIsMostlySchemaCostsLittleAndTooMuchIsRefused(t *testing.T) 
 	if strings.Contains(string(err.body()), `"g`) {
 		t.Errorf("the refusal names a function: %s", err.body())
 	}
-	if took := time.Since(begin); took > 3*time.Second {
+	if took := time.Since(begin); took > 3*time.Second*slowdown {
 		t.Errorf("the refusal took %v", took)
 	}
 }
@@ -259,7 +259,7 @@ func TestAnyOfFanOutOverSharedDefinitionsIsLinear(t *testing.T) {
 	if b.used > 4*2*100 {
 		t.Errorf("%d steps for four definitions", b.used)
 	}
-	if took := time.Since(begin); took > 2*time.Second {
+	if took := time.Since(begin); took > 2*time.Second*slowdown {
 		t.Errorf("took %v", took)
 	}
 }
@@ -317,7 +317,7 @@ func TestTheMostFunctionsInTheLargestBodyAreAnsweredAtOnce(t *testing.T) {
 		secret := h.key(t, "default", "app", false)
 		begin := time.Now()
 		rec := post(h, anyPolicy, secret, body)
-		if took := time.Since(begin); took > 3*time.Second {
+		if took := time.Since(begin); took > 3*time.Second*slowdown {
 			t.Errorf("%s: the request took %v", c.name, took)
 		}
 		switch {

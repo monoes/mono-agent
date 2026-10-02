@@ -147,7 +147,7 @@ func TestHashingTheArgumentsOfALargeCallCostsLittle(t *testing.T) {
 	for range 3 {
 		_ = argsHash(b.String())
 	}
-	if took := time.Since(begin); took > 3*time.Second {
+	if took := time.Since(begin); took > 3*time.Second*slowdown {
 		t.Errorf("hashing %d bytes of arguments three times took %v", b.Len(), took)
 	}
 }

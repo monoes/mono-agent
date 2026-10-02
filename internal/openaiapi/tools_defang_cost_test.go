@@ -39,7 +39,7 @@ func TestTheDefangOfAResultCostsLittleWhateverItHolds(t *testing.T) {
 		text := strings.Repeat(unit, maxToolResult/len(unit))
 		begin := time.Now()
 		defangResult(text)
-		if took := time.Since(begin); took > 3*time.Second {
+		if took := time.Since(begin); took > 3*time.Second*slowdown {
 			t.Errorf("%s: %d bytes took %v", name, len(text), took)
 		}
 	}
