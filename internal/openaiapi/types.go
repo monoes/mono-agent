@@ -24,8 +24,15 @@ type ChatRequest struct {
 	Audio           json.RawMessage   `json:"audio"`
 	Tools           []json.RawMessage `json:"tools"`
 	ToolChoice      json.RawMessage   `json:"tool_choice"`
-	Functions       []json.RawMessage `json:"functions"`
-	FunctionCall    json.RawMessage   `json:"function_call"`
+	// ParallelToolCalls is accepted and treated as false: a response carries one
+	// tool call, and the model asks for the rest in the next round.
+	ParallelToolCalls *bool             `json:"parallel_tool_calls"`
+	Functions         []json.RawMessage `json:"functions"`
+	FunctionCall      json.RawMessage   `json:"function_call"`
+
+	// toolDecls and toolPick are what validateChat made of Tools and ToolChoice.
+	toolDecls []toolDecl
+	toolPick  toolChoice
 }
 
 // StreamOptions is the request's stream_options.
@@ -42,6 +49,10 @@ type ResponseFormat struct {
 type Message struct {
 	Role    string  `json:"role"`
 	Content Content `json:"content"`
+	// ToolCalls are the calls an assistant message made; ToolCallID is the call
+	// a tool message answers.
+	ToolCalls  []ToolCall `json:"tool_calls"`
+	ToolCallID string     `json:"tool_call_id"`
 }
 
 // Content is a message's content: a string, or an array of parts of which
@@ -136,8 +147,9 @@ type chunkChoice struct {
 }
 
 type delta struct {
-	Role    string  `json:"role,omitempty"`
-	Content *string `json:"content,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Content   *string         `json:"content,omitempty"`
+	ToolCalls []deltaToolCall `json:"tool_calls,omitempty"`
 }
 
 func strPtr(s string) *string { return &s }

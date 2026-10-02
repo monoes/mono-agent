@@ -40,6 +40,10 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			fail(e)
 			return
 		}
+		if req.toolsActive() || req.hasToolHistory() { // until the tool path is wired in, none runs as a plain turn
+			fail(errUnsupported("tools", "tool calling is not supported yet"))
+			return
+		}
 
 		eff := policyFor(p, pr)
 		var m ModelInfo

@@ -43,9 +43,9 @@ func validateChat(req *ChatRequest) *apiError {
 	for i, m := range req.Messages {
 		param := fmt.Sprintf("messages[%d]", i)
 		switch m.Role {
-		case "system", "developer", "user", "assistant":
-		case "tool", "function":
-			return errUnsupported(param+".role", "tool and function messages need tool calling, which this server does not support yet")
+		case "system", "developer", "user", "assistant", "tool":
+		case "function":
+			return errUnsupported(param+".role", "the function role is not supported: answer a function call with a message of role tool")
 		default:
 			return errInvalid("invalid_value", param+".role", "unknown role "+strconv.Quote(clipRunes(m.Role, 32)))
 		}
@@ -70,19 +70,18 @@ func validateChat(req *ChatRequest) *apiError {
 		return errUnsupported("logprobs", "logprobs are not supported")
 	case present(req.Audio):
 		return errUnsupported("audio", "audio output is not supported")
-	case len(req.Tools) > 0:
-		return errUnsupported("tools", "tool calling is not supported yet")
-	case present(req.ToolChoice) && !isNone(req.ToolChoice):
-		return errUnsupported("tool_choice", "tool calling is not supported yet")
 	case len(req.Functions) > 0:
-		return errUnsupported("functions", "function calling is not supported yet")
+		return errUnsupported("functions", "functions is not supported: declare functions with tools")
 	case present(req.FunctionCall) && !isNone(req.FunctionCall):
-		return errUnsupported("function_call", "function calling is not supported yet")
+		return errUnsupported("function_call", "function_call is not supported: use tool_choice")
 	}
 	if rf := req.ResponseFormat; rf != nil && rf.Type != "" && rf.Type != "text" && rf.Type != "json_object" {
 		return errUnsupported("response_format", "only response_format types text and json_object are supported")
 	}
-	return nil
+	if e := validateTools(req); e != nil {
+		return e
+	}
+	return validateToolMessages(req)
 }
 
 func present(raw []byte) bool {
