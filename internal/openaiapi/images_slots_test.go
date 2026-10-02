@@ -108,7 +108,7 @@ func TestImagesGiveTheSlotBack(t *testing.T) {
 // than they do, or the response of one.
 func TestImagesResponseOutlivesTheServersTimeouts(t *testing.T) {
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(900 * time.Millisecond)
 		if ctx.Err() != nil { // the request was cut while the turn ran
 			return nil, ctx.Err()
 		}
@@ -117,8 +117,8 @@ func TestImagesResponseOutlivesTheServersTimeouts(t *testing.T) {
 	mux := http.NewServeMux()
 	h.g.Mount(mux, anyPolicy)
 	srv := httptest.NewUnstartedServer(mux)
-	srv.Config.WriteTimeout = 150 * time.Millisecond
-	srv.Config.ReadTimeout = 150 * time.Millisecond
+	srv.Config.WriteTimeout = 400 * time.Millisecond
+	srv.Config.ReadTimeout = 400 * time.Millisecond
 	srv.Start()
 	t.Cleanup(srv.Close)
 

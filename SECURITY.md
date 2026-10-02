@@ -655,7 +655,7 @@ the slot folder, not those.
 
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost
-(an image request costs the most, see above).
+(for what an image turn took, see above).
 The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
 the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
 timeout. A request that is

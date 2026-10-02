@@ -67,7 +67,7 @@ func isImage(b []byte) bool {
 // link is never followed (a runtime could plant one to any image on the disk), a
 // FIFO or a device is never opened, a file is read at most up to maxImageBytes, and
 // everything is done through the handle of the folder (openFolder), which refuses
-// a path that leaves it. It reads nothing it will not keep: it stops at n images.
+// a path that leaves it. It stops at n images.
 func collectImages(dir string, n int) collected {
 	var out collected
 	root, err := openFolder(dir)
