@@ -145,6 +145,21 @@ func (g *Gateway) legError(ctx context.Context, lr legResult, m ModelInfo, eff P
 	return g.resultError(ctx, lr.Res, lr.Err, m, eff)
 }
 
+// sessionUntouched reports whether a leg ended before the model ran, in a way that
+// says nothing about the runtime's session: the runtime was rate limited, out of
+// quota or budget, or not signed in, and nothing was said or called. The session
+// is as it was, and a retry may continue it.
+func (lr legResult) sessionUntouched() bool {
+	if lr.Err != nil || lr.Res == nil || lr.Res.Err == nil || lr.Call != nil || lr.SawText {
+		return false
+	}
+	switch lr.Res.Err.Code {
+	case monomind.ErrRateLimited, monomind.ErrQuota, monomind.ErrBudget, monomind.ErrAuth:
+		return true
+	}
+	return false
+}
+
 // resumeFailed reports whether a leg that continued a runtime's session could not:
 // it ended in an error of the runtime's own (an unknown session ends that way,
 // on claude and on codex) before the model said or called anything, or the

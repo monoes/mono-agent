@@ -70,6 +70,7 @@ func (g *Gateway) answerToolLeg(w http.ResponseWriter, r *http.Request, run tool
 	case gone:
 		return 499, "", tl
 	case e != nil:
+		g.keepSession(run.plan, pl)
 		writeError(w, e)
 		return e.Status, e.detail, tl
 	}

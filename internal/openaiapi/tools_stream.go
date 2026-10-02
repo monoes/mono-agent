@@ -30,6 +30,7 @@ func (g *Gateway) streamToolLeg(w http.ResponseWriter, r *http.Request, run tool
 	case gone:
 		return 499, "", tl
 	case e != nil:
+		g.keepSession(run.plan, pl)
 		if !sw.fail(e) {
 			writeError(w, e)
 		}

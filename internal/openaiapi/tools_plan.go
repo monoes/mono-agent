@@ -24,11 +24,13 @@ const (
 )
 
 // legPlan is how a request's turn starts: its kind (legFirst, legResume or
-// legReplay), the prompt, and for a resume the runtime session to continue.
+// legReplay), the prompt, and for a resume the runtime session to continue and the
+// record that was used up to find it.
 type legPlan struct {
 	Kind    string
 	Prompt  string
 	Session string
+	rec     *contRecord
 }
 
 // planLeg decides how the turn of a request that declares tools starts. m is the
@@ -72,7 +74,19 @@ func (g *Gateway) planLeg(pr Principal, req *ChatRequest, m ModelInfo, firstProm
 	if !ok {
 		return replay
 	}
-	return legPlan{Kind: legResume, Prompt: resumePrompt(req, ai), Session: rec.Session}
+	return legPlan{Kind: legResume, Prompt: resumePrompt(req, ai), Session: rec.Session, rec: &rec}
+}
+
+// keepSession gives back the record a resume used up when the resume failed before
+// the model ran, for a reason that says nothing about the session (a rate limit,
+// the quota, a runtime that is not signed in): the client's retry then continues the
+// session and does not pay for a replay of the whole transcript. A session the
+// runtime could not continue stays used up, and so does one that the model may have
+// gone on in.
+func (g *Gateway) keepSession(plan legPlan, pl plannedLeg) {
+	if plan.rec != nil && !pl.FellBack && pl.sessionUntouched() {
+		g.conts.put(*plan.rec)
+	}
 }
 
 // plannedLeg is a leg that ran as a plan said, or as the replay that took the
