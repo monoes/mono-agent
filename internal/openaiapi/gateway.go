@@ -64,6 +64,7 @@ func DefaultDeps(db *sql.DB, version string) Deps {
 		Knowledge: func(ctx context.Context, profileID, query string) ([]monomind.KnowledgeResult, error) {
 			return monomind.SearchKnowledge(ctx, db, profileID, query)
 		},
+		Auto:    DefaultAuto(db),
 		Logf:    func(format string, args ...any) { fmt.Fprintf(os.Stderr, "api: "+format+"\n", args...) },
 		Version: version,
 	}
