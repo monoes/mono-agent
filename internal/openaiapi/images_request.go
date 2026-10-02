@@ -121,14 +121,22 @@ func imagePrompt(prompt string, n int, size string) string {
 
 // imageSystemPrompt is the whole of what the runtime is told besides the client's
 // prompt. The image is the runtime's own work: it is made by a tool the runtime has,
-// saved in the turn's folder, and the gateway reads it from there.
-const imageSystemPrompt = "You generate images for an API client.\n" +
-	"Generate each requested image with your own built-in image generation capability. " +
-	"Do not draw it programmatically: no code, scripts, SVG or plotting libraries.\n" +
-	"Save each finished image as a file in the current directory. If your image tool saves it elsewhere, " +
-	"copy it into the current directory (copy, do not link).\n" +
-	"When you are done, reply with the file names only, one per line.\n" +
-	"If you have no built-in image generation capability, reply with exactly NO_IMAGE_TOOL and create no file."
+// saved in the folder it is given, a fresh one for every turn, and the gateway reads
+// it from there and from nowhere else.
+func imageSystemPrompt(folder string) string {
+	return "You generate images for an API client.\n" +
+		"Generate each requested image with your own built-in image generation capability. " +
+		"Do not draw it programmatically: no code, scripts, SVG or plotting libraries.\n" +
+		"Save each finished image as a file in the folder ./" + folder + "/, which exists already inside the current directory. " +
+		"If your image tool saves it elsewhere, copy it into that folder (copy, do not link). Save nothing anywhere else.\n" +
+		"When you are done, reply with the file names only, one per line.\n" +
+		"If you have no built-in image generation capability, reply with exactly NO_IMAGE_TOOL on a line of its own and create no file."
+}
+
+// newImageFolder names the output folder of one turn: unpredictable, so that a process
+// an earlier turn left running, which writes to the paths it knew, does not put its
+// files where this turn's images are read from.
+func newImageFolder() string { return newRequestID("out-") }
 
 // noImageToolMarker is what the runtime replies when it cannot make an image.
 const noImageToolMarker = "NO_IMAGE_TOOL"

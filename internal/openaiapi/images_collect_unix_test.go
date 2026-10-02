@@ -3,6 +3,7 @@
 package openaiapi
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -11,17 +12,18 @@ import (
 	"time"
 )
 
-// collectWithin runs collectImages and fails the test if it does not return: a
-// FIFO that something opens for reading waits for a writer for ever.
+// collectWithin reads the images at the top of dir and fails the test if that does
+// not return: a FIFO that something opens for reading waits for a writer for ever.
 func collectWithin(t *testing.T, dir string, n int) collected {
 	t.Helper()
+	root := openRoot(t, dir)
 	done := make(chan collected, 1)
-	go func() { done <- collectImages(dir, n) }()
+	go func() { done <- readImages(context.Background(), root, n, time.Now().Add(time.Minute)) }()
 	select {
 	case got := <-done:
 		return got
 	case <-time.After(5 * time.Second):
-		t.Fatal("collectImages hung: it opened something that waits for a writer")
+		t.Fatal("the collection hung: it opened something that waits for a writer")
 		return collected{}
 	}
 }
@@ -115,13 +117,18 @@ func TestCollectImagesCannotBeSwungBetweenTheLookAndTheOpen(t *testing.T) {
 	}
 }
 
-// A turn that replaced its own folder with a link (a sandbox that confines writes
-// below the folder lets it) must not have the collection read what is behind it.
+// A turn that replaced a folder of its own with a link (a sandbox that confines writes
+// below the working folder lets it) must not have the collection read what is behind
+// it: neither the working folder nor the output folder in it.
 func TestCollectImagesDoesNotReadThroughAFolderReplacedWithALink(t *testing.T) {
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "secret.png"), pngBytes, 0o600); err != nil {
+	if err := os.Mkdir(filepath.Join(outside, "out-x"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	writeFiles(t, filepath.Join(outside, "out-x"), map[string][]byte{"secret.png": pngBytes})
+	ctx := context.Background()
+
+	// The working folder is a link to a folder that holds an output folder with an image.
 	dir := slotFolder(t)
 	if err := os.Remove(dir); err != nil {
 		t.Fatal(err)
@@ -129,10 +136,44 @@ func TestCollectImagesDoesNotReadThroughAFolderReplacedWithALink(t *testing.T) {
 	if err := os.Symlink(outside, dir); err != nil {
 		t.Fatal(err)
 	}
+	if got := collectImages(ctx, dir, "out-x", 4); len(got.images) != 0 || got.note() == "" {
+		t.Errorf("read %d images through a link standing where the working folder was (note %q)", len(got.images), got.note())
+	}
 
-	got := collectWithin(t, dir, 4)
-	if len(got.images) != 0 || got.note() == "" {
-		t.Fatalf("read %d images through a link standing where the folder was (note %q)", len(got.images), got.note())
+	// The output folder is a link: to a folder elsewhere, and to another folder of the working folder.
+	dir = slotFolder(t)
+	if err := os.Mkdir(filepath.Join(dir, "out-y"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, filepath.Join(dir, "out-y"), map[string][]byte{"other.png": jpegBytes})
+	for name, target := range map[string]string{"elsewhere": filepath.Join(outside, "out-x"), "a sibling": "out-y"} {
+		link := filepath.Join(dir, "out-x")
+		_ = os.Remove(link)
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if got := collectImages(ctx, dir, "out-x", 4); len(got.images) != 0 || got.note() == "" {
+			t.Errorf("%s: read %d images through a link standing where the output folder was (note %q)", name, len(got.images), got.note())
+		}
+	}
+}
+
+// A FIFO standing where the output folder was is not opened for reading either: the
+// collection ends.
+func TestCollectImagesDoesNotHangOnAFifoWhereTheOutputFolderWas(t *testing.T) {
+	dir := slotFolder(t)
+	if err := syscall.Mkfifo(filepath.Join(dir, "out-x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan collected, 1)
+	go func() { done <- collectImages(context.Background(), dir, "out-x", 4) }()
+	select {
+	case got := <-done:
+		if len(got.images) != 0 || got.note() == "" {
+			t.Errorf("%d images, note %q", len(got.images), got.note())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the collection hung on a FIFO standing where the output folder was")
 	}
 }
 

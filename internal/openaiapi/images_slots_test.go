@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -143,7 +145,7 @@ func TestRunTurnHandsTheFolderToCollectBeforeItIsEmptied(t *testing.T) {
 	var calls int
 	var then []string
 	_, err := h.g.runTurn(context.Background(), turn{Runtime: "codex", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice",
-		Collect: func(d string) { calls, dir, then = calls+1, d, besidesTmp(d) }})
+		Collect: func(_ context.Context, d string) { calls, dir, then = calls+1, d, besidesTmp(d) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +154,60 @@ func TestRunTurnHandsTheFolderToCollectBeforeItIsEmptied(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("the folder must be emptied after Collect: %d entries", len(entries))
+	}
+}
+
+// A turn that is given an output folder finds it in its working folder when it starts:
+// empty, and for its owner alone. It goes with the rest when the turn is over. A turn
+// that is given none finds none.
+func TestRunTurnMakesTheOutputFolderBeforeTheTurnStarts(t *testing.T) {
+	var cwd string
+	var mode os.FileMode
+	var inside, beside []string
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		cwd = o.Cwd
+		mode, inside = 0, nil
+		if fi, err := os.Lstat(filepath.Join(o.Cwd, "out-abc")); err == nil && fi.IsDir() {
+			mode = fi.Mode().Perm()
+		}
+		entries, _ := os.ReadDir(filepath.Join(o.Cwd, "out-abc"))
+		for _, e := range entries {
+			inside = append(inside, e.Name())
+		}
+		beside = besidesTmp(o.Cwd)
+		return okTurn("x")(ctx, o, onEvent)
+	})
+	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice", Subdir: "out-abc"}); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 0o700 || len(inside) != 0 || !slices.Equal(beside, []string{"out-abc"}) {
+		t.Errorf("the turn found a folder of mode %v holding %v, and %v in its working folder: want an empty out-abc for its owner alone", mode, inside, beside)
+	}
+	if left := besidesTmp(cwd); len(left) != 0 {
+		t.Errorf("the output folder must go with the rest of the turn's files: %v", left)
+	}
+
+	if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(beside) != 0 {
+		t.Errorf("a turn that was given no output folder found %v", beside)
+	}
+}
+
+// The name of the output folder is a name: one that leads out of the working folder, or
+// onto the turn's temp folder, is refused before anything runs.
+func TestRunTurnRefusesAnOutputFolderThatIsNotAPlainName(t *testing.T) {
+	var ran atomic.Bool
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		ran.Store(true)
+		return okTurn("x")(ctx, o, onEvent)
+	})
+	for _, name := range []string{"../out", "a/b", ".", "..", turnTmpName, "/tmp/out"} {
+		_, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, ProfileID: "alice", Subdir: name})
+		if err == nil || ran.Load() {
+			t.Errorf("%q: error %v, the turn ran: %v: a name that is not a plain one is refused", name, err, ran.Load())
+		}
 	}
 }
 
@@ -170,7 +226,7 @@ func TestRunTurnDoesNotCollectAfterATurnThatDidNotEndCleanly(t *testing.T) {
 	} {
 		h := newHarness(t, c.exec)
 		collected := false
-		_, _ = h.g.runTurn(context.Background(), turn{Runtime: "codex", Model: "default", Prompt: "p", Policy: c.policy, Collect: func(string) { collected = true }})
+		_, _ = h.g.runTurn(context.Background(), turn{Runtime: "codex", Model: "default", Prompt: "p", Policy: c.policy, Collect: func(context.Context, string) { collected = true }})
 		if collected {
 			t.Errorf("%s: the folder was handed to Collect", name)
 		}

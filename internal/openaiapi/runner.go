@@ -43,10 +43,15 @@ type turn struct {
 	// OnDelta receives incremental assistant text, only from a runtime that
 	// streams incrementally.
 	OnDelta func(text string)
+	// Subdir, when set, is the name of a folder inside the working folder that runTurn
+	// makes (mode 0700) before the turn starts, for a turn that is told to save what it
+	// makes there. It is emptied with the rest of the working folder.
+	Subdir string
 	// Collect, when set, receives the turn's folder after a turn that ended
 	// without an error, having said it was done, and before the folder is emptied:
-	// what the turn left in it is read there, and nowhere else.
-	Collect func(dir string)
+	// what the turn left in it is read there, and nowhere else. ctx is the request's:
+	// a caller who left is not waited for.
+	Collect func(ctx context.Context, dir string)
 }
 
 // slotDir returns the working folder of a profile's limiter slot, created
@@ -143,6 +148,9 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		return nil, errShuttingDown
 	}
 	defer g.turnEnded()
+	if t.Subdir != "" && t.Subdir != filepath.Base(t.Subdir) { // a name, not a path that leads out of the working folder
+		return nil, fmt.Errorf("the turn's output folder %q is not a plain name", t.Subdir)
+	}
 
 	bin, err := g.bin.get(ctx)
 	if err != nil {
@@ -167,6 +175,11 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 	turnTmp := filepath.Join(dir, turnTmpName)
 	if err := os.Mkdir(turnTmp, 0o700); err != nil {
 		return nil, fmt.Errorf("creating the turn's temp folder: %w", err)
+	}
+	if t.Subdir != "" {
+		if err := os.Mkdir(filepath.Join(dir, t.Subdir), 0o700); err != nil {
+			return nil, fmt.Errorf("creating the turn's output folder: %w", err)
+		}
 	}
 
 	tctx, cancel := context.WithTimeout(ctx, g.cfg.TurnTimeout+turnGrace)
@@ -240,7 +253,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		res.Err = &monomind.ProtocolError{Code: monomind.ErrTimeout, Message: "the turn exceeded the time limit of " + g.cfg.TurnTimeout.String()}
 	}
 	if t.Collect != nil && err == nil && res != nil && res.Err == nil && res.SawDone {
-		t.Collect(dir) // the deferred emptyDir runs after this
+		t.Collect(ctx, dir) // the deferred emptyDir runs after this
 	}
 	return res, err
 }

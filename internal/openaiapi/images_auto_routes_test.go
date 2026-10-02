@@ -61,9 +61,10 @@ func TestImagesAutoRunsTheImageModelJevPicks(t *testing.T) {
 	if log.count() != 1 || log.opts[0].Runtime != "antigravity" || log.opts[0].Model != "gemini-3.8-flash-high" || log.opts[0].RequireSandbox {
 		t.Errorf("the runner ran %+v, want one unconfined turn of antigravity/gemini-3.8-flash-high", log.opts)
 	}
-	if log.opts[0].Prompt != "a red circle on a white background\n\nCreate 2 distinct images. Preferred size: 1024x1024." || log.opts[0].SystemPrompt != imageSystemPrompt {
-		t.Errorf("the turn is told %q / %q", log.opts[0].Prompt, log.opts[0].SystemPrompt)
+	if log.opts[0].Prompt != "a red circle on a white background\n\nCreate 2 distinct images. Preferred size: 1024x1024." {
+		t.Errorf("the turn is told %q", log.opts[0].Prompt)
 	}
+	wantImageSystemPrompt(t, log.opts[0])
 	offered := make([]string, 0, len(f.options))
 	for id := range f.options {
 		offered = append(offered, id)

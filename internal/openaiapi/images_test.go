@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -24,12 +25,35 @@ func postImages(h *harness, p Policy, secret, body string) *httpRecorder {
 	return h.serve(p, http.MethodPost, imagesURL, secret, body)
 }
 
-// imageTurn is a turn of an image runtime: it saves files in its folder, as a
-// runtime does after it made them, and replies.
+// imageFolderRE finds the output folder a turn's system prompt names.
+var imageFolderRE = regexp.MustCompile(`\./(out-[a-z2-7]{16})/`)
+
+// givenFolder is the folder an image turn was told to save its images in: the one
+// its system prompt names, inside its working folder. A turn that was told none (a
+// chat turn) has its working folder.
+func givenFolder(o monomind.ExecOptions) string {
+	if m := imageFolderRE.FindStringSubmatch(o.SystemPrompt); m != nil {
+		return filepath.Join(o.Cwd, m[1])
+	}
+	return o.Cwd
+}
+
+// imageTurn is a turn of an image runtime: it saves files in the folder it was given,
+// as a runtime does after it made them, and replies.
 func imageTurn(reply string, files map[string][]byte) execFunc {
+	return imageTurnAt(givenFolder, reply, files)
+}
+
+// imageTurnTop is imageTurn for a runtime that ignores the folder it was given and
+// saves at the top of its working folder.
+func imageTurnTop(reply string, files map[string][]byte) execFunc {
+	return imageTurnAt(func(o monomind.ExecOptions) string { return o.Cwd }, reply, files)
+}
+
+func imageTurnAt(where func(monomind.ExecOptions) string, reply string, files map[string][]byte) execFunc {
 	return func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		for name, b := range files {
-			if err := os.WriteFile(filepath.Join(opts.Cwd, name), b, 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(where(opts), name), b, 0o600); err != nil {
 				return nil, err
 			}
 		}
@@ -53,6 +77,16 @@ func (l *execLog) imageExec(reply string, files map[string][]byte) execFunc {
 }
 
 func onePNG(name string) map[string][]byte { return map[string][]byte{name: pngBytes} }
+
+// wantImageSystemPrompt fails the test unless the system prompt of a turn is the fixed
+// one, naming one output folder of the random shape.
+func wantImageSystemPrompt(t *testing.T, o monomind.ExecOptions) {
+	t.Helper()
+	m := imageFolderRE.FindStringSubmatch(o.SystemPrompt)
+	if m == nil || o.SystemPrompt != imageSystemPrompt(m[1]) {
+		t.Errorf("the system prompt of an image turn is the fixed one with its folder in it: %q", o.SystemPrompt)
+	}
+}
 
 // waitStarted fails the test when the turn it waits for never starts, instead of
 // blocking until the test binary's own timeout.
@@ -139,11 +173,12 @@ func TestImagesHappyPath(t *testing.T) {
 			t.Errorf("a turn's environment is its temp folder and nothing else, got %s", k)
 		}
 	}
-	for _, want := range []string{"NO_IMAGE_TOOL", "current directory", "built-in image generation", "Do not draw", "copy"} {
+	for _, want := range []string{"NO_IMAGE_TOOL", "current directory", "built-in image generation", "Do not draw", "copy", "Save nothing anywhere else"} {
 		if !strings.Contains(o.SystemPrompt, want) {
 			t.Errorf("the system prompt must say %q: %s", want, o.SystemPrompt)
 		}
 	}
+	wantImageSystemPrompt(t, o)
 	// What was collected was read before the folder was emptied, and the folder is empty now.
 	if entries, _ := os.ReadDir(o.Cwd); len(entries) != 0 {
 		t.Errorf("the slot folder must be left empty: %d entries", len(entries))

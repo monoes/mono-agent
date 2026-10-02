@@ -32,7 +32,7 @@ func TestImagesRuntimeErrors(t *testing.T) {
 	} {
 		// A runtime that failed may still have left an image: only a clean turn is collected.
 		failing := func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-			_ = os.WriteFile(filepath.Join(o.Cwd, "a.png"), pngBytes, 0o600)
+			_ = os.WriteFile(filepath.Join(givenFolder(o), "a.png"), pngBytes, 0o600)
 			return c.exec(ctx, o, onEvent)
 		}
 		h := newHarness(t, failing)
@@ -50,7 +50,7 @@ func TestImagesRuntimeErrors(t *testing.T) {
 // a turn that is weaker than the policy allows is cancelled, and its image is not served.
 func TestImagesTurnThatStartsWeakerThanThePolicyIsRefused(t *testing.T) {
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		_ = os.WriteFile(filepath.Join(o.Cwd, "a.png"), pngBytes, 0o600)
+		_ = os.WriteFile(filepath.Join(givenFolder(o), "a.png"), pngBytes, 0o600)
 		return scriptedExec(evStart(false, "none"), evText("a.png"), evResult("a.png", monomind.StopEndTurn), evDone(0))(ctx, o, onEvent)
 	})
 	rec := postImages(h, Policy{Max: Sandboxed}, h.key(t, "default", "app", false), `{"model":"codex","prompt":"x"}`)
@@ -117,7 +117,7 @@ func TestImagesAClientThatLeavesIsNotAFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h := newHarness(t, func(c context.Context, o monomind.ExecOptions, _ func(monomind.Event)) (*monomind.TurnResult, error) {
-		_ = os.WriteFile(filepath.Join(o.Cwd, "a.png"), pngBytes, 0o600)
+		_ = os.WriteFile(filepath.Join(givenFolder(o), "a.png"), pngBytes, 0o600)
 		cancel() // the client hangs up
 		<-c.Done()
 		return &monomind.TurnResult{SawDone: true, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled"}}, nil

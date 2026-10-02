@@ -84,10 +84,12 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 		}
 
 		var found collected
+		folder := newImageFolder()
 		t := turn{
-			Runtime: m.Runtime, Model: m.Model, System: imageSystemPrompt, Prompt: imagePrompt(req.Prompt, n, size),
+			Runtime: m.Runtime, Model: m.Model, System: imageSystemPrompt(folder), Prompt: imagePrompt(req.Prompt, n, size),
 			Policy: eff, ProfileID: pr.ProfileID, Slot: slot, RequireSandbox: m.Class == Sandboxed,
-			Collect: func(dir string) { found = collectImages(dir, n) },
+			Subdir:  folder,
+			Collect: func(ctx context.Context, dir string) { found = collectImages(ctx, dir, folder, n) },
 		}
 		w.Header().Set("X-Monoagent-Model", m.ID)
 		extendWriteDeadline(w, g.cfg.TurnTimeout+2*turnGrace)

@@ -116,9 +116,10 @@ func TestImagesForAContextKeyFollowTheContextCap(t *testing.T) {
 	}
 	// The excerpts of the knowledge are for chat: an image prompt is the client's own.
 	for _, o := range log.opts {
-		if strings.Contains(o.SystemPrompt, "<knowledge>") || o.SystemPrompt != imageSystemPrompt {
-			t.Errorf("the system prompt of an image turn is fixed: %q", o.SystemPrompt)
+		if strings.Contains(o.SystemPrompt, "<knowledge>") {
+			t.Errorf("an image turn is not given knowledge: %q", o.SystemPrompt)
 		}
+		wantImageSystemPrompt(t, o)
 	}
 	if rec := postImages(h, raised, ctxKey, `{"model":"codex","prompt":"x"}`); rec.Header().Get("X-Monoagent-Context") != "" {
 		t.Errorf("an image request adds no knowledge, so it reports none: %q", rec.Header().Get("X-Monoagent-Context"))

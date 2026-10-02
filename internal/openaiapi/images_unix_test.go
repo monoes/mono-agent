@@ -5,10 +5,14 @@ package openaiapi
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -28,10 +32,10 @@ func TestImagesNeverAnswerWithWhatALinkPointsTo(t *testing.T) {
 	}
 	plant := func(files map[string][]byte) execFunc {
 		return func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-			if err := os.Symlink(secret, filepath.Join(o.Cwd, "a-image.png")); err != nil {
+			if err := os.Symlink(secret, filepath.Join(givenFolder(o), "a-image.png")); err != nil {
 				return nil, err
 			}
-			if err := os.Symlink(outside, filepath.Join(o.Cwd, "b-folder")); err != nil {
+			if err := os.Symlink(outside, filepath.Join(givenFolder(o), "b-folder")); err != nil {
 				return nil, err
 			}
 			return imageTurn("a-image.png", files)(ctx, o, onEvent)
@@ -65,11 +69,74 @@ func TestImagesNeverAnswerWithWhatALinkPointsTo(t *testing.T) {
 	}
 }
 
+// A process a runtime left running keeps writing where it wrote before. The next turn of
+// the same profile works in the same slot folder, and a process of the first one writes
+// there, at the top of the folder and in the folder the first turn had: what it writes is
+// not an image of the next turn, which is read from a folder that only that turn was told.
+func TestImagesAProcessThatOutlivedAnEarlierTurnCannotAnswerTheNextOne(t *testing.T) {
+	var turns atomic.Int32
+	var mu sync.Mutex
+	var procs []*exec.Cmd
+	var firstFolder string
+	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		poison := filepath.Join(o.Cwd, "0-poison.png")
+		if turns.Add(1) == 1 {
+			// The first turn makes its image, and leaves a process behind that writes a PNG
+			// at the top of the working folder, and in the first turn's own folder (made again
+			// when it is gone), for as long as it lives.
+			firstFolder = givenFolder(o)
+			const loop = `while :; do printf '\211PNG\r\n\032\nPOISON' > "$1/0-poison.png"; mkdir -p "$2" && printf '\211PNG\r\n\032\nPOISON' > "$2/0-poison.png"; sleep 0.02; done`
+			cmd := exec.Command("sh", "-c", loop, "sh", o.Cwd, firstFolder)
+			if err := cmd.Start(); err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			procs = append(procs, cmd)
+			mu.Unlock()
+			return imageTurn("a.png", onePNG("a.png"))(ctx, o, onEvent)
+		}
+		// The second turn makes nothing, and replies once the process has written in both places.
+		wrote := func() bool {
+			for _, p := range []string{poison, filepath.Join(firstFolder, "0-poison.png")} {
+				if _, err := os.Lstat(p); err != nil {
+					return false
+				}
+			}
+			return true
+		}
+		for end := time.Now().Add(10 * time.Second); !wrote() && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		}
+		if !wrote() {
+			return nil, errors.New("the process of the first turn never wrote")
+		}
+		return imageTurn("I made nothing", nil)(ctx, o, onEvent)
+	}, func(_ *Deps, c *Config) { c.MaxConcurrent = 1 })
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range procs {
+			_ = c.Process.Kill()
+			_, _ = c.Process.Wait()
+		}
+	})
+
+	if rec := postImages(h, anyPolicy, h.key(t, "default", "appA", false), `{"prompt":"x"}`); rec.Code != http.StatusOK {
+		t.Fatalf("the first request: %d %s", rec.Code, rec.Body)
+	}
+	rec := postImages(h, anyPolicy, h.key(t, "default", "appB", false), `{"prompt":"x"}`)
+	if rec.Code != http.StatusBadGateway || decodeErrorBody(t, rec)["code"] != "image_generation_failed" {
+		t.Fatalf("the second request: %d %s: it made nothing, and what a process of the first one wrote is not its image", rec.Code, rec.Body.String()[:min(rec.Body.Len(), 300)])
+	}
+	if strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nPOISON"))[:16]) {
+		t.Error("the answer carries what the process of the first turn wrote")
+	}
+}
+
 // A FIFO standing where an image should be is never opened for reading, which
 // would wait for a writer for ever: the request ends.
 func TestImagesDoNotHangOnAFifo(t *testing.T) {
 	h := newHarness(t, func(ctx context.Context, o monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		if err := syscall.Mkfifo(filepath.Join(o.Cwd, "image.png"), 0o600); err != nil {
+		if err := syscall.Mkfifo(filepath.Join(givenFolder(o), "image.png"), 0o600); err != nil {
 			return nil, err
 		}
 		return imageTurn("image.png", nil)(ctx, o, onEvent)

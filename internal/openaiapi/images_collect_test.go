@@ -2,10 +2,12 @@ package openaiapi
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // What a runtime's image looks like as far as the collection can tell: the first
@@ -36,6 +38,13 @@ func writeFiles(t *testing.T, dir string, files map[string][]byte) {
 	}
 }
 
+// collectIn reads the images at the top of dir, as the collection reads a turn's own
+// output folder.
+func collectIn(t *testing.T, dir string, n int) collected {
+	t.Helper()
+	return readImages(context.Background(), openRoot(t, dir), n, time.Now().Add(time.Minute))
+}
+
 func equalImages(got [][]byte, want ...[]byte) bool {
 	if len(got) != len(want) {
 		return false
@@ -63,13 +72,13 @@ func TestCollectImagesTakesPNGJPEGWebPAndGIFByTheirFirstBytes(t *testing.T) {
 		"k.jpeg.png": []byte("\xff\xd8 two bytes of a JPEG are not enough"),
 	})
 
-	got := collectImages(dir, 4)
+	got := collectIn(t, dir, 4)
 	if !equalImages(got.images, pngBytes, jpegBytes, webpBytes, gifBytes) {
 		t.Fatalf("collected %d images, want the PNG, the JPEG, the WebP and the GIF in name order", len(got.images))
 	}
 	// With room for more, only a file that is an image by its bytes follows, whatever its name.
 	writeFiles(t, dir, map[string][]byte{"z.data": pngBytes})
-	if got := collectImages(dir, 10); !equalImages(got.images, pngBytes, jpegBytes, webpBytes, gifBytes, pngBytes) {
+	if got := collectIn(t, dir, 10); !equalImages(got.images, pngBytes, jpegBytes, webpBytes, gifBytes, pngBytes) {
 		t.Fatalf("collected %d images, want the four and z.data: the name does not decide", len(got.images))
 	}
 }
@@ -104,13 +113,13 @@ func TestCollectImagesKeepsTheFirstNByName(t *testing.T) {
 	dir := slotFolder(t)
 	one, two, three := append([]byte("\x89PNG\r\n\x1a\n"), 1), append([]byte("\x89PNG\r\n\x1a\n"), 2), append([]byte("\x89PNG\r\n\x1a\n"), 3)
 	writeFiles(t, dir, map[string][]byte{"img-3.png": three, "img-1.png": one, "img-2.png": two})
-	if got := collectImages(dir, 2); !equalImages(got.images, one, two) {
+	if got := collectIn(t, dir, 2); !equalImages(got.images, one, two) {
 		t.Fatalf("n=2 gave %d images, want img-1 and img-2", len(got.images))
 	}
-	if got := collectImages(dir, 1); !equalImages(got.images, one) {
+	if got := collectIn(t, dir, 1); !equalImages(got.images, one) {
 		t.Fatalf("n=1 gave %d images, want img-1", len(got.images))
 	}
-	if got := collectImages(dir, 4); len(got.images) != 3 {
+	if got := collectIn(t, dir, 4); len(got.images) != 3 {
 		t.Fatalf("n=4 over three files gave %d images, want the three there are", len(got.images))
 	}
 }
@@ -125,11 +134,11 @@ func TestCollectImagesReadsOneLevelOnly(t *testing.T) {
 		}
 		writeFiles(t, filepath.Join(dir, d), map[string][]byte{"inner.png": pngBytes})
 	}
-	if got := collectImages(dir, 4); len(got.images) != 0 || len(got.skipped) != 0 {
+	if got := collectIn(t, dir, 4); len(got.images) != 0 || len(got.skipped) != 0 {
 		t.Fatalf("collected %d images from folders of the turn's folder, and left out %v: a folder is not a file that was left out", len(got.images), got.skipped)
 	}
 	writeFiles(t, dir, map[string][]byte{"top.png": jpegBytes})
-	if got := collectImages(dir, 4); !equalImages(got.images, jpegBytes) {
+	if got := collectIn(t, dir, 4); !equalImages(got.images, jpegBytes) {
 		t.Fatalf("the file at the top level was not the only one collected: %d images", len(got.images))
 	}
 }
@@ -155,7 +164,7 @@ func TestCollectImagesTakesAtMost20MiBPerImage(t *testing.T) {
 	big("a-exact.png", maxImageBytes)
 	big("b-over.png", maxImageBytes+1)
 
-	got := collectImages(dir, 4)
+	got := collectIn(t, dir, 4)
 	if len(got.images) != 1 || len(got.images[0]) != maxImageBytes {
 		t.Fatalf("collected %d images, want only the one of exactly 20 MiB", len(got.images))
 	}
@@ -191,18 +200,32 @@ func TestCollectImagesDoesNotReadPastTheLimitWhenAFileGrows(t *testing.T) {
 	})
 	t.Cleanup(func() { afterImageLstatHook.set(nil) })
 
-	got := collectImages(dir, 4)
+	got := collectIn(t, dir, 4)
 	if len(got.images) != 0 || got.skipped["too large"] != 1 {
 		t.Fatalf("a file that grew past 20 MiB: %d images, skipped %v", len(got.images), got.skipped)
 	}
 }
 
-// A folder that cannot be opened (it is not there, or it is not a plain folder)
-// gives nothing and says so.
+// A folder that cannot be opened (the working folder is not there, or the turn's own
+// folder in it is not there or is not a plain folder) gives nothing and says so.
 func TestCollectImagesOfAFolderThatIsNotThere(t *testing.T) {
-	got := collectImages(filepath.Join(t.TempDir(), "missing"), 4)
+	ctx := context.Background()
+	got := collectImages(ctx, filepath.Join(t.TempDir(), "missing"), "out-x", 4)
 	if len(got.images) != 0 || got.note() == "" {
-		t.Errorf("a missing folder: %d images, note %q", len(got.images), got.note())
+		t.Errorf("a missing working folder: %d images, note %q", len(got.images), got.note())
+	}
+	dir := slotFolder(t)
+	got = collectImages(ctx, dir, "out-x", 4)
+	if len(got.images) != 0 || got.note() == "" {
+		t.Errorf("a missing output folder: %d images, note %q", len(got.images), got.note())
+	}
+	writeFiles(t, dir, map[string][]byte{"out-x": pngBytes}) // a file where the folder should be
+	got = collectImages(ctx, dir, "out-x", 4)
+	if len(got.images) != 0 || got.note() == "" {
+		t.Errorf("a file standing where the output folder was: %d images, note %q", len(got.images), got.note())
+	}
+	if got.skipped["outside the turn's folder"] != 0 {
+		t.Errorf("the file standing where the output folder was is not one saved beside it: %v", got.skipped)
 	}
 }
 
@@ -218,7 +241,7 @@ func TestCollectedNoteCountsByReasonAndNamesNothing(t *testing.T) {
 	}
 	dir := slotFolder(t)
 	writeFiles(t, dir, map[string][]byte{"secret-name.txt": []byte("not an image")})
-	if note := collectImages(dir, 1).note(); strings.Contains(note, "secret-name") || note == "" {
+	if note := collectIn(t, dir, 1).note(); strings.Contains(note, "secret-name") || note == "" {
 		t.Errorf("note = %q: it must count the file by reason and not name it", note)
 	}
 }
