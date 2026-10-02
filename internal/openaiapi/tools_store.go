@@ -84,18 +84,26 @@ func (s *contStore) giveBack(r contRecord) {
 	s.addLocked(r)
 }
 
-// addLocked adds a record with the expiry it carries. Expired ones are dropped first,
-// then the oldest record of a key that is at its cap, then the oldest of all while the
-// store is at its cap. The record goes where its expiry puts it, so that the sweep, which
-// looks at the front only, never has an expired record behind one that is not.
+// addLocked adds a record with the expiry it carries. Expired ones are dropped first. Then,
+// while a key is at its cap and while the store is at its, the record that expires first goes,
+// and when that is the new one (a record that is given back keeps the expiry it had, which may
+// be sooner than any other) it is not put: a cap keeps the records that live longest. The record
+// goes where its expiry puts it, so that the sweep, which looks at the front only, never has an
+// expired record behind one that is not.
 func (s *contStore) addLocked(r contRecord) {
 	now := s.now()
 	for len(s.order) > 0 && !now.Before(s.order[0].Expires) {
 		s.removeLocked(s.order[0])
 	}
-	for s.perKey[r.KeyID] >= s.maxPerKey && s.dropOldestLocked(func(x *contRecord) bool { return x.KeyID == r.KeyID }) {
+	for s.perKey[r.KeyID] >= s.maxPerKey {
+		if !s.makeRoomLocked(r, func(x *contRecord) bool { return x.KeyID == r.KeyID }) {
+			return
+		}
 	}
-	for len(s.order) >= s.maxTotal && s.dropOldestLocked(func(*contRecord) bool { return true }) {
+	for len(s.order) >= s.maxTotal {
+		if !s.makeRoomLocked(r, func(*contRecord) bool { return true }) {
+			return
+		}
 	}
 	if old := s.byCall[r.CallID]; old != nil { // an id is never reused, but a record must never be counted twice
 		s.removeLocked(old)
@@ -137,12 +145,16 @@ func (s *contStore) size() int {
 	return len(s.order)
 }
 
-// dropOldestLocked removes the oldest record that pick accepts and reports
-// whether there was one.
-func (s *contStore) dropOldestLocked(pick func(*contRecord) bool) bool {
-	for _, r := range s.order {
-		if pick(r) {
-			s.removeLocked(r)
+// makeRoomLocked removes the record that expires first of those pick accepts, to make room for
+// r, and reports whether it did. It does not when there is none, or when r would expire before
+// it: then r is the record that goes.
+func (s *contStore) makeRoomLocked(r contRecord, pick func(*contRecord) bool) bool {
+	for _, x := range s.order {
+		if pick(x) {
+			if r.Expires.Before(x.Expires) {
+				return false
+			}
+			s.removeLocked(x)
 			return true
 		}
 	}

@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -263,4 +264,99 @@ func TestContStoreConcurrentUseKeepsItsBooks(t *testing.T) {
 	if total != s.size() {
 		t.Errorf("the per-key counts add up to %d, there are %d records", total, s.size())
 	}
+}
+
+// At a cap the record that expires first goes, and a record that is given back keeps the expiry
+// it had, so it may be that one: a1 was made a minute before a2 and a3 and expires before them,
+// so when it comes back to a key that is full it is not put, and the newer records stay. (A test
+// that only counts the records cannot tell which of them stayed.)
+func TestContStoreAGivenBackRecordThatExpiresFirstIsTheOneThatGoesAtTheKeyCap(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.maxPerKey = 2
+	s.put(record("a1", "key_a"))
+	r, _ := s.take("a1", matchAll)
+	clock.advance(time.Minute)
+	s.put(record("a2", "key_a"))
+	s.put(record("a3", "key_a"))
+	s.giveBack(r)
+	if got := survivors(s, "a1", "a2", "a3"); got != "a2 a3" {
+		t.Errorf("the records left are %q, want a2 and a3: a1 expires first, so it is the one the cap takes", got)
+	}
+}
+
+// And when the given back record expires after another of its key, that one goes.
+func TestContStoreAGivenBackRecordThatExpiresBetweenTwoPushesOutTheSoonerOne(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.maxPerKey = 2
+	s.put(record("x", "key_a")) // expires at 10 minutes
+	clock.advance(30 * time.Second)
+	s.put(record("z", "key_a")) // 10.5
+	r, _ := s.take("z", matchAll)
+	clock.advance(30 * time.Second)
+	s.put(record("y", "key_a")) // 11: the key is full again
+	s.giveBack(r)
+	if got := survivors(s, "x", "y", "z"); got != "y z" {
+		t.Errorf("the records left are %q, want y and z: x expires before the one that came back", got)
+	}
+}
+
+func TestContStoreAGivenBackRecordThatExpiresFirstIsTheOneThatGoesAtTheTotalCap(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.maxTotal = 2
+	s.put(record("a", "key_a"))
+	r, _ := s.take("a", matchAll)
+	clock.advance(time.Minute)
+	s.put(record("b", "key_b"))
+	s.put(record("c", "key_c"))
+	s.giveBack(r)
+	if got := survivors(s, "a", "b", "c"); got != "b c" {
+		t.Errorf("the records left are %q, want b and c: a expires first", got)
+	}
+
+	// And one that expires after the soonest of the others takes its place.
+	s = newContStore(clock.now)
+	s.maxTotal = 2
+	s.put(record("d", "key_d")) // expires at 10 minutes after now
+	clock.advance(30 * time.Second)
+	s.put(record("e", "key_e"))
+	r, _ = s.take("e", matchAll)
+	clock.advance(30 * time.Second)
+	s.put(record("f", "key_f"))
+	s.giveBack(r)
+	if got := survivors(s, "d", "e", "f"); got != "e f" {
+		t.Errorf("the records left are %q, want e and f: d expires before the one that came back", got)
+	}
+}
+
+// The cap of a key is about that key: the record that goes is the one of the key that expires
+// first, even when a record of another key expires before it.
+func TestContStoreTheCapOfAKeyNeverTakesTheRecordOfAnotherKey(t *testing.T) {
+	clock := newTestClock()
+	s := newContStore(clock.now)
+	s.maxPerKey = 2
+	s.put(record("b1", "key_b")) // the soonest of all
+	clock.advance(time.Second)
+	s.put(record("a1", "key_a"))
+	clock.advance(time.Second)
+	s.put(record("a2", "key_a"))
+	clock.advance(time.Second)
+	s.put(record("a3", "key_a")) // key_a is full: a1 goes, not b1
+	if got := survivors(s, "a1", "a2", "a3", "b1"); got != "a2 a3 b1" {
+		t.Errorf("the records left are %q, want a2, a3 and b1", got)
+	}
+}
+
+// survivors says which of the calls the store still holds, in the order given. It takes them
+// out as it looks, so it is the last thing a test does.
+func survivors(s *contStore, calls ...string) string {
+	var held []string
+	for _, id := range calls {
+		if _, ok := s.take(id, matchAll); ok {
+			held = append(held, id)
+		}
+	}
+	return strings.Join(held, " ")
 }
