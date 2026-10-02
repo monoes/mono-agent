@@ -2727,10 +2727,35 @@ OPENAI-COMPATIBLE API (/v1)
   default model, and "agy" is an alias of "antigravity".
   Sampling parameters are accepted and ignored. These are rejected with 400
   unsupported_parameter: n above 1, logprobs true, an audio object, a
-  non-empty tools or functions, a tool_choice or function_call other than
-  "none", tool and function messages, content parts that are not text and a
-  response_format other than text or json_object. Not available yet: image
-  input and tool calling.
+  non-empty functions, a function_call other than "none", function messages
+  (declare functions with tools), content parts that are not text and a
+  response_format other than text or json_object. Not available: image input.
+
+  Tool calling: tools, tool_choice, tool_calls and tool messages work on
+  POST /v1/chat/completions, streaming and not, on the runtimes of
+  MONOAGENT_API_TOOL_RUNTIMES (default claude,codex; a model of another runtime,
+  or of a non-chat-only runtime that monomind cannot run read-only, is 400
+  unsupported_parameter on tools, before anything starts). GET /v1/models and
+  api models --json give the models that serve them "tools" among their
+  capabilities. A request declares up to 64 functions (name 1 to 54 characters of
+  [A-Za-z0-9_-], unique; parameters a JSON schema object, folded whole into the
+  description because monomind keeps only top-level properties; an enum of a
+  top-level property must list strings), tool_choice none (no tools), auto,
+  required or a named function (a best-effort line), parallel_tool_calls (treated
+  as false). A response carries ONE call: the turn ends at the model's first
+  call and the runtime's process is killed, and the answer is an assistant message
+  with one tool_calls entry (id call_<random>, function.arguments a JSON string),
+  finish_reason "tool_calls", content null or what the model said first, and no
+  usage; streamed, delta.tool_calls chunks, then [DONE]. The client runs the call
+  and sends the conversation again with that assistant message and a message of
+  role "tool" (tool_call_id, text result up to 256 KiB). No process waits and no
+  slot is held meanwhile. The follow-up continues the runtime's session when a
+  single-use in-memory record fits (same key, profile, model, function and tools;
+  10 minutes; ids and names only) and otherwise replays the transcript, which
+  always works. A codex leg runs read-only (--access read); declaring tools
+  changes no confinement class. Tool results are untrusted text in the prompt and
+  a steered call is the caller's to run or not: see SECURITY.md. The log line
+  adds tools=<n> leg=first|resume|replay.
 
   Images: POST /v1/images/generations {model, prompt, n, size, response_format}
   answers {"created":..., "data":[{"b64_json":"..."}]}: base64 only (response_format

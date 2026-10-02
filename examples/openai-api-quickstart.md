@@ -9,9 +9,10 @@ it on a headless Linux server. Paths and schemas:
 
 Today it serves `GET /v1/models`, `GET /v1/models/{id}`,
 `POST /v1/chat/completions` (JSON and `"stream": true`) and
-`POST /v1/images/generations` (see "Make images" below). Tool calling is not
-available yet. The model `auto` lets Jev pick the model of
-each request once you switch it on (see "Let Jev pick" below); until then
+`POST /v1/images/generations` (see "Make images" below). OpenAI tool calling
+works on claude and codex (see "Call your own tools" below). The model `auto`
+lets Jev pick the model of each request once you switch it on (see "Let Jev
+pick" below); until then
 asking for it is a 404 `model_not_found` that says what is missing. A `404 page
 not found` in plain text instead means the server running is older than this
 API and has no `/v1` at all (`monoagentcli daemon` and `httpapi` serve it only
@@ -154,11 +155,11 @@ What to expect:
   server answers 429 with `Retry-After`).
 - Requests are stateless. Sampling parameters (`temperature`, `max_tokens`,
   `stop`, …) are accepted and ignored, because the agent runtimes have none.
-  `n` above 1, a non-empty `tools`, `logprobs: true`, `response_format` of
-  type `json_schema`, tool messages and parts that are not text (images, audio,
-  files) are rejected with 400 `unsupported_parameter`
-  (`response_format: {"type":"json_object"}` works, as a best-effort
-  instruction; `tools: []` and `tool_choice: "none"` are accepted).
+  `n` above 1, `logprobs: true`, `response_format` of type `json_schema`, the
+  legacy `functions` and `function_call` (use `tools`), the `function` role
+  and parts that are not text (images, audio, files) are rejected with 400
+  `unsupported_parameter` (`response_format: {"type":"json_object"}` works, as a
+  best-effort instruction; `tools: []` and `tool_choice: "none"` are accepted).
 - `curl -i` shows `X-Monoagent-Model` (the model that answered),
   `X-Monoagent-Sandbox` (how monomind sandboxed that turn: `sandboxed`,
   `scoped`, `unsupported`, …; sent on a successful non-streaming response
@@ -313,6 +314,139 @@ What to expect:
 - Read `SECURITY.md` ("Image generation"): the runtime may read and copy files
   from outside its folder, and the server returns any file it left in the
   turn's folder that begins like an image (the test is on the first bytes).
+
+### Call your own tools
+
+With `tools`, the model can ask your program to run a function and use the
+result: the OpenAI tool loop, over claude and codex. The server never runs
+anything of yours. It returns the call, you run it wherever you like (or refuse
+to), and you send the result back. Which models serve tools is in
+`GET /v1/models` (the capability `tools`) and in `api models --json`; any other
+model answers 400 `unsupported_parameter` and says which runtimes serve them
+(`MONOAGENT_API_TOOL_RUNTIMES`, default `claude,codex`):
+
+```bash
+curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \
+  | jq -r '.data[] | select(.monoagent.capabilities | index("tools")) | .id'
+```
+
+A round trip with curl. The first request declares the function; the answer ends
+at the model's call:
+
+```bash
+TOOLS='[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]'
+Q='What is the weather in Paris?'
+
+curl -s http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$Q" --argjson tools "$TOOLS" '{model: "claude", messages: [{role: "user", content: $q}], tools: $tools}')" \
+  > first.json
+jq '.choices[0] | {finish_reason, tool_calls: .message.tool_calls}' first.json
+```
+
+```json
+{
+  "finish_reason": "tool_calls",
+  "tool_calls": [
+    { "id": "call_k3j2h1g4f5d6s7a8", "type": "function",
+      "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } }
+  ]
+}
+```
+
+Run the call yourself, then send the conversation again: the assistant message as
+it came, and a `tool` message with the result:
+
+```bash
+curl -s http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$Q" --argjson tools "$TOOLS" --slurpfile first first.json '
+    $first[0].choices[0].message as $call
+    | {model: "claude", tools: $tools, messages: [
+        {role: "user", content: $q}, $call,
+        {role: "tool", tool_call_id: $call.tool_calls[0].id, content: "{\"temp_c\": 21, \"conditions\": \"fog\"}"}]}')" \
+  | jq -r '.choices[0].message.content'
+```
+
+The same loop with the Python SDK (it is the usual one: stop when a response has
+no `tool_calls`, and cap the rounds yourself, the server does not):
+
+```python
+import json
+import os
+
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:9322/v1", api_key=os.environ["KEY"])
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}]
+
+
+def get_weather(city: str) -> dict:  # your own code: any function, on any machine
+    return {"city": city, "temp_c": 21, "conditions": "fog"}
+
+
+messages = [{"role": "user", "content": "What is the weather in Paris?"}]
+for _ in range(8):
+    reply = client.chat.completions.create(model="claude", messages=messages, tools=tools)
+    message = reply.choices[0].message
+    if not message.tool_calls:
+        print(message.content)
+        break
+    messages.append(message)  # the assistant message, as it came
+    for call in message.tool_calls:
+        result = get_weather(**json.loads(call.function.arguments))  # yours to run, or to refuse
+        messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+```
+
+Streaming works too: `stream: true` sends the words before the call as content
+deltas, then the call as `delta.tool_calls` chunks (an index, then the id, type
+and name, then the arguments), then a chunk that finishes with `tool_calls`, and
+`[DONE]`; the SDKs' stream helpers assemble them as for any OpenAI model.
+
+To point a coding client at it, give the client the base URL
+`http://127.0.0.1:9322/v1`, a key and a model id that has the `tools` capability
+(clients built on the OpenAI SDKs read `OPENAI_BASE_URL` and `OPENAI_API_KEY`).
+What to expect from a tool loop:
+
+- **One call per response.** The turn ends at the model's first call, so a model
+  that wants several asks for them in successive rounds: `parallel_tool_calls` is
+  accepted and treated as false. A client written for parallel calls just loops
+  more.
+- **Each round is a turn.** A round takes seconds (the spike's medians: about 6
+  seconds to the first call on claude and 11 on codex), on the runtime's account,
+  and no process waits for your result, so a slow tool costs the server nothing.
+  The follow-up continues the runtime's session when the server still remembers
+  the call (same key, same model, same tools, within ten minutes, once: about
+  half the price of the alternative on claude); otherwise, after a restart, a
+  retry or a long pause, it starts again from the transcript you send, which
+  always works. Either way you send the whole conversation each time.
+- **The functions are yours; the model's own tools are not.** claude's own tools
+  stay denied by monomind. A codex leg runs read-only (`--access read`): it
+  cannot write files, so a coding client's edits must go through its declared
+  functions, which is the point. A model whose runtime monomind cannot run
+  read-only is refused.
+- `tool_choice` `required` or a named function is an instruction in the system
+  prompt, not a guarantee (it worked 9 of 9 for a named function and 5 of 6 for
+  `required` in the spike); `none` passes no tools.
+- Put the whole JSON schema in `parameters`: monomind keeps only the top-level
+  properties, so the server also folds the schema into the function's
+  description, and a call whose arguments do not match is returned all the same.
+  A top-level property whose `enum` is not a list of strings is refused (400),
+  and so are more than 64 functions, a name that is not 1 to 54 characters of
+  `[A-Za-z0-9_-]` and a result larger than 256 KiB.
+- A conversation that has tool messages but no `tools` (a client that dropped
+  them for its last round) is answered as text.
+- Read `SECURITY.md` ("Tool calling") before you let a client run calls without
+  asking: a tool result, and with `--context` a captured page, can steer which
+  calls the model proposes.
 
 ## 4. Serve it beyond this machine
 

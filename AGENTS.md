@@ -449,10 +449,11 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `agy` is accepted for `antigravity`. Sampling parameters are accepted and
   ignored, because `agent exec` has none. These are rejected with 400
   `unsupported_parameter`: `n` above 1, `logprobs: true`, an `audio` object, a
-  non-empty `tools` or `functions`, a `tool_choice` or `function_call` other
-  than `"none"`, `tool` and `function` messages, content parts that are not
-  text (images, audio, files) and a `response_format` other than `text` or
-  `json_object`. Image input and tool calling are not available yet.
+  non-empty `functions`, a `function_call` other than `"none"` and `function`
+  messages (declare functions with `tools`, see **Tool calling** below),
+  content parts that are not text (images, audio, files) and a
+  `response_format` other than `text` or `json_object`. Image input is not
+  available.
 - **The `auto` model.** `"model": "auto"` lets [TypeSafe Jev](#typesafe-jev-decisions-only)
   pick, per request, among the models the listener serves (a `--context` key:
   among those its own cap allows). It is the `api_auto` Jev surface: off until
@@ -515,7 +516,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
 - **Isolation.** Every request is one `monomind agent exec` turn in a slot
   folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
   (`<hash>` is a hash of the profile id; never the profile's own folder;
-  emptied before and after every turn), with no tools, no settings and the
+  emptied before and after every turn), with no tools (but the functions a
+  request declares, see **Tool calling**), no settings and the
   workspace-write sandbox where the runtime has one. The folders are fixed
   because agent CLIs keep per-folder session state that a folder per request
   would pile up, and per profile so that state is never shared between
@@ -552,7 +554,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   class a key created with `--context` may use, never above the listener's.
   `--auto-confinement chat-only|sandboxed|any` (`MONOAGENT_API_AUTO_CONFINEMENT`,
   default `chat-only`) is the strongest class the `auto` model may pick, never
-  above the listener's or a context key's.
+  above the listener's or a context key's. A request that declares tools changes
+  none of this; its codex leg runs read-only (**Tool calling**).
 - **Images.** `POST /v1/images/generations` takes `{model, prompt, n, size,
   response_format}` and answers `{"created":…,"data":[{"b64_json":…}]}`: base64
   only, so `response_format: "url"` is 400 `unsupported_parameter`, as is
@@ -624,6 +627,65 @@ a key. It lives in `internal/openaiapi/`; the spec is
   picks among them (`X-Monoagent-Auto` as for chat), and sends TypeSafe the first
   4,000 characters of the image prompt. The `auto` model object lists `image` among its
   capabilities only when it has image candidates.
+- **Tool calling.** `tools`, `tool_choice`, `tool_calls` and `tool` messages
+  work on `POST /v1/chat/completions`, streaming and not, so a client that runs
+  its own tools (a coding assistant, an SDK tool loop) can use the runtimes.
+  They are served on `claude` and `codex` (`MONOAGENT_API_TOOL_RUNTIMES`,
+  default `claude,codex`: antigravity called its own tools instead of the
+  declared one in the spike, so any other runtime, and a model of a listed one
+  that monomind cannot run read-only (see below), is 400 `unsupported_parameter`
+  on `tools` before anything starts; `GET /v1/models` gives `"tools"` among the
+  capabilities of the models that serve them, and `api models --json` the same).
+  A request declares up to 64 `tools` of type `function` (a name of 1 to 54
+  characters of `[A-Za-z0-9_-]`, unique; a `description`; `parameters`, a JSON
+  schema object whose `type` is `object`; `strict` is accepted and ignored),
+  a `tool_choice` (`none` passes no tools, `auto`, `required`, or a named
+  function: the last two are a best-effort instruction in the system prompt)
+  and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
+  the top-level properties of a schema, and a numeric `enum` there rejects every
+  call, so the whole schema is also folded into the tool's description and an
+  `enum` of a top-level property that does not list strings is 400. **A
+  response carries one call.** The turn (a leg) ends at the model's first call:
+  the runtime's process group is killed, and the answer is a message with one
+  `tool_calls` entry (`id` `call_<random>`, `type` `function`, `function`
+  `{name, arguments}` with `arguments` a string of JSON) and
+  `finish_reason: "tool_calls"`, `content` null or what the model said before the
+  call, and no `usage`; streamed, a chunk with the call's `index`, `id`, `type`
+  and `name` and empty `arguments`, a chunk with the arguments, a chunk that
+  finishes with `tool_calls`, then `[DONE]`. The model asks for the other calls
+  of a batch in the next round, which costs a round (two calls in one leg
+  resumed with both results worked once in three on claude). The client runs the
+  call and sends the conversation again with an assistant message carrying the
+  `tool_calls` (its `content` may be null) and a `role: "tool"` message with the
+  `tool_call_id` (it must answer a call of an earlier assistant message) and the
+  result (text, at most 256 KiB), and the next leg answers or calls again. A
+  leg that calls nothing is an ordinary answer. No process waits for the
+  result and no slot is held meanwhile; a leg is a turn like any other (slot,
+  timeout, cleanup). The follow-up **resumes** the runtime's own session when
+  the leg that made the call left a record that fits: single-use, in memory (a
+  restart loses them), ten minutes, 1,024 in all and 64 per key, holding ids
+  and names, never the arguments or the result. It must be the same key and
+  profile, model, function and declared tools, and the result must answer that
+  one call; otherwise, and when the runtime cannot continue the session (an
+  error of its own before it said or called anything), the transcript is
+  **replayed** in a new turn with the tools declared again, which always works.
+  A call whose arguments do not match the declared schema is returned all the
+  same, and the client decides. With `tool_choice: "none"`, or tool history and
+  no `tools`, the turn is a plain one and earlier rounds are text in its
+  transcript. Declaring tools changes no confinement field or policy check.
+  claude's own tools stay denied by monomind. codex's would stay in play and
+  pull the model away from the declared ones (31 of 31 native attempts in the
+  spike, and the declared tool used 0 of 4 times), so a codex leg runs with
+  `--access read`, which monomind turns into a read-only sandbox (its start
+  event says `native_sandbox: read-only`, still `sandboxed`): it cannot write
+  files, reads and the runtime's own MCP servers stay open. A runtime that
+  monomind cannot run read-only is not served. `auto` with tools picks among the
+  models that serve them within `--auto-confinement`; none is a 404
+  `model_not_found` that says what to raise. The log line adds
+  `tools=<n> leg=first|resume|replay` (and `badargs=1`), never a name, an
+  argument or a result. Tool results are untrusted text in the prompt, and the
+  agent CLIs' own session stores keep the arguments and results of a leg: see
+  [SECURITY.md](SECURITY.md#openai-compatible-api-surface).
 - **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
   is loopback (default `127.0.0.1:9322`, where every runtime is allowed
   unless `--confinement` says otherwise). To serve it
@@ -651,7 +713,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   a path or method the API does not have gets Go's plain-text 404 or 405.
   The server logs one line per chat completion, per image request and per failed authentication
   (and per failure to list models or to search a context key's knowledge,
-  among others), and never a prompt, an answer or a key. Stopping the server
+  among others), and never a prompt, an answer, a tool name, argument or
+  result, or a key. Stopping the server
   answers a turn in flight with a 503 the client can retry.
 - **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
   folded until opened, read again when Settings is shown again) runs the
@@ -1680,6 +1743,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
 | `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
 | `MONOAGENT_API_IMAGE_RUNTIMES` | Runtimes whose models can generate images on the OpenAI-compatible API (`POST /v1/images/generations`), comma-separated runtime ids in the order "the first installed one" is looked for (`agy` means `antigravity`; case and spaces do not matter). A runtime that runs as chat-only cannot make images however it is listed. `none` switches image generation off: no model gets the `image` capability and every image request says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `codex,antigravity`. |
+| `MONOAGENT_API_TOOL_RUNTIMES` | Runtimes that serve tool calling on the OpenAI-compatible API (`tools` on `POST /v1/chat/completions`), comma-separated runtime ids (`agy` means `antigravity`; case and spaces do not matter). A model of a listed runtime that is not chat-only is served only where monomind can run it read-only (`agent-exec-access-read`, and `read` among the runtime's access modes). A request for tools on any other model is 400 `unsupported_parameter`. A bad value stops `httpapi` and `daemon` at start. Default: unset — `claude,codex`. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |

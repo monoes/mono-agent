@@ -69,7 +69,7 @@ Probed here against monomind 2.22.0 (fake codex under the real monomind, real cl
 - [ ] Commit `feat(openaiapi): tool calls on chat completions, streaming and not`.
 
 ### Task 7: after the rebase onto `feat/openai-api-images`
-- [ ] `auto` with tools picks among servable candidates (none: the same 404); the `tools` capability on `GET /v1/models`; the `tools=` and `leg=` log fields; `api models --json` gets a `tools` flag per model.
+- [ ] `auto` with tools picks among servable candidates (none: the same 404); the `tools` capability on `GET /v1/models`; the `tools=` and `leg=` log fields; `tools` among the capabilities of `api models --json`.
 
 ### Task 8: docs
 - [ ] `AGENTS.md`, `SECURITY.md` (what tool calling changes: the caller's tools run on the caller's side, results are untrusted prompt text, the CLIs' sessions hold arguments and results, codex runs read-only; what it does not), `CHANGELOG.md`, `openapi.yaml` (lint with `npx --yes @redocly/cli@2.49.0 lint`), `examples/openai-api-quickstart.md`, `ref api`, spec section 10 as built.
