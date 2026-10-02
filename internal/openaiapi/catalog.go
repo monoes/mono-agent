@@ -82,6 +82,8 @@ type Catalog struct {
 	// failing marks the runtimes whose last listing failed, so a streak is
 	// logged once and not on every retry.
 	failing map[string]bool
+	// onFirstLoad, when set, is given the first list that loads, once.
+	onFirstLoad func([]ModelInfo)
 }
 
 type catalogFlight struct {
@@ -246,6 +248,7 @@ func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelI
 	fl.models, fl.err = models, err
 	if err == nil {
 		c.mu.Lock()
+		first := !c.loaded
 		c.cached, c.loaded, c.at = models, true, c.now()
 		if retrySoon {
 			c.failStreak++
@@ -254,6 +257,9 @@ func (c *Catalog) runLoad(ctx context.Context, fl *catalogFlight, stale []ModelI
 			c.failStreak = 0
 		}
 		c.mu.Unlock()
+		if first && c.onFirstLoad != nil {
+			c.onFirstLoad(models)
+		}
 	}
 }
 

@@ -46,8 +46,9 @@ type Config struct {
 	// "auto"; past it the rule picks.
 	AutoTimeout time.Duration
 	// ImageRuntimes are the runtimes whose models can generate images, in the
-	// order the first installed one is looked for. Empty means
-	// defaultImageRuntimes; read it through ImageRuntimeList.
+	// order the first installed one is looked for. nil means defaultImageRuntimes,
+	// and a list with nothing in it switches image generation off; read it through
+	// ImageRuntimeList.
 	ImageRuntimes []string
 }
 
@@ -57,13 +58,18 @@ type Config struct {
 var defaultImageRuntimes = []string{"codex", "antigravity"}
 
 // ImageRuntimeList is the runtimes whose models can generate images: the
-// configured ones, or the defaults. The result is read only.
+// configured ones, or the defaults when none were configured. A list configured
+// with nothing in it is empty, not the default. The result is read only.
 func (c Config) ImageRuntimeList() []string {
-	if len(c.ImageRuntimes) == 0 {
+	if c.ImageRuntimes == nil {
 		return defaultImageRuntimes
 	}
 	return c.ImageRuntimes
 }
+
+// ImagesOff reports whether image generation is switched off: the list is empty,
+// which MONOAGENT_API_IMAGE_RUNTIMES=none makes it.
+func (c Config) ImagesOff() bool { return len(c.ImageRuntimeList()) == 0 }
 
 // CanMakeImages reports whether m can generate an image: its runtime is in the
 // image list and it can write the file, which a chat-only runtime has no native
@@ -84,14 +90,21 @@ func (c Config) Capabilities(m ModelInfo) []string {
 // ParseImageRuntimes reads MONOAGENT_API_IMAGE_RUNTIMES: runtime ids separated
 // by commas, in the order the first installed one is looked for. Case and
 // spaces do not matter, "agy" means antigravity and a repeat counts once. An
-// empty value is the default list.
+// empty value is the default list, and "none" alone is the off switch: a list
+// with nothing in it, so that no model makes images.
 func ParseImageRuntimes(v string) ([]string, error) {
 	if strings.TrimSpace(v) == "" {
 		return slices.Clone(defaultImageRuntimes), nil
 	}
+	if strings.EqualFold(strings.TrimSpace(v), "none") {
+		return []string{}, nil
+	}
 	var out []string
 	for _, part := range strings.Split(v, ",") {
 		rt := strings.ToLower(strings.TrimSpace(part))
+		if rt == "none" {
+			return nil, fmt.Errorf("MONOAGENT_API_IMAGE_RUNTIMES: none switches image generation off and is not a runtime to list with others, got %q", v)
+		}
 		if alias, ok := aliases[rt]; ok {
 			rt = alias
 		}

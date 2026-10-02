@@ -48,6 +48,18 @@ func TestAPIModelsShowsWhichModelsMakeImages(t *testing.T) {
 		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=agy: %v", got)
 	}
 
+	// none switches image generation off: no model makes images.
+	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "none")
+	out, _, err = runAPI(t, db, "default", true, "models")
+	if err != nil {
+		t.Fatalf("MONOAGENT_API_IMAGE_RUNTIMES=none: %v", err)
+	}
+	for id, caps := range capabilitiesByID(decodeModels(t, out)) {
+		if !slices.Equal(caps, text) {
+			t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=none: %s has capabilities %v, want text alone", id, caps)
+		}
+	}
+
 	// The existing fields are where they were.
 	if !strings.Contains(out, `"auto_allowed":`) || !strings.Contains(out, `"context_allowed":`) {
 		t.Errorf("the existing fields are gone:\n%s", out)

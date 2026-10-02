@@ -122,6 +122,9 @@ func (g *Gateway) handleImages(p Policy) func(http.ResponseWriter, *http.Request
 // may pick among (the model is chosen later), without a model the first installed
 // runtime of the image list that the policy allows, otherwise the model named.
 func (g *Gateway) resolveImageModel(ctx context.Context, pr Principal, p, eff Policy, name string) (ModelInfo, []ModelInfo, *apiError) {
+	if g.cfg.ImagesOff() && (name == "" || name == autoModelID) {
+		return ModelInfo{}, nil, errImagesOff() // before anything else is asked: auto's Jev included
+	}
 	switch name {
 	case autoModelID:
 		candidates, e := g.autoCandidatesFor(ctx, pr, eff, capImage)
@@ -137,7 +140,7 @@ func (g *Gateway) resolveImageModel(ctx context.Context, pr Principal, p, eff Po
 	case err != nil:
 		return ModelInfo{}, nil, catalogError(err)
 	case !g.cfg.CanMakeImages(m):
-		return m, nil, g.errNotAnImageModel(ctx, m)
+		return m, nil, g.errNotAnImageModel(ctx, eff, m)
 	}
 	return m, nil, policyRefusal(m, p, eff, imageContextWhy)
 }
@@ -146,14 +149,17 @@ func (g *Gateway) resolveImageModel(ctx context.Context, pr Principal, p, eff Po
 // image list that can make images and that the policy allows.
 func (g *Gateway) defaultImageModel(ctx context.Context, pr Principal, p, eff Policy) (ModelInfo, *apiError) {
 	var denied Class // the weakest class among the image models the policy refuses; 0 when none was refused
+	var why []string // what keeps each runtime of the list that is out from making images
 	for _, runtime := range g.cfg.ImageRuntimeList() {
 		m, err := g.catalog.Resolve(ctx, runtime) // a bare runtime is its default model
 		switch {
-		case errors.Is(err, ErrUnknownModel): // not installed
+		case errors.Is(err, ErrUnknownModel):
+			why = append(why, runtime+" is not installed")
 			continue
 		case err != nil:
 			return ModelInfo{}, catalogError(err)
 		case !g.cfg.CanMakeImages(m):
+			why = append(why, runtime+" runs as chat-only, which has no tool to save a file")
 			continue
 		case !eff.Allows(m.Class):
 			if denied == 0 || m.Class < denied {
@@ -166,19 +172,45 @@ func (g *Gateway) defaultImageModel(ctx context.Context, pr Principal, p, eff Po
 	if denied != 0 {
 		return ModelInfo{}, errNoImagePolicy(pr, p, eff, denied)
 	}
-	return ModelInfo{}, errNoImageRuntime(g.cfg.ImageRuntimeList())
+	return ModelInfo{}, errNoImageRuntime(why)
 }
 
-// imageRuntimes are the installed runtimes that can make images, in the order of the
-// model list.
-func (g *Gateway) imageRuntimes(ctx context.Context) []string {
-	models, err := g.catalog.Models(ctx)
+// logImageRuntimes says, with the first list of models, which runtimes of the image
+// list cannot make images here: one that is not installed (a typo, say) and one that is
+// installed but chat-only. The operator hears it at the start, and not from a client's
+// 404.
+func (g *Gateway) logImageRuntimes(models []ModelInfo) {
+	var problems []string
+	for _, runtime := range g.cfg.ImageRuntimeList() {
+		installed, capable := false, false
+		for _, m := range models {
+			if m.Runtime == runtime {
+				installed, capable = true, capable || g.cfg.CanMakeImages(m)
+			}
+		}
+		switch {
+		case !installed:
+			problems = append(problems, runtime+" is not installed")
+		case !capable:
+			problems = append(problems, runtime+" runs as chat-only, which has no tool to save a file")
+		}
+	}
+	if len(problems) > 0 {
+		g.deps.Logf("image runtimes (MONOAGENT_API_IMAGE_RUNTIMES) that make no images here: %s", strings.Join(problems, "; "))
+	}
+}
+
+// imageRuntimes are the runtimes with a model that can make images and that a key with
+// the policy eff may use, in the order of the model list: the ones GET /v1/models marks
+// for that key.
+func (g *Gateway) imageRuntimes(ctx context.Context, eff Policy) []string {
+	models, err := g.catalog.Visible(ctx, eff)
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, m := range models {
-		if !m.Alias && g.cfg.CanMakeImages(m) && !slices.Contains(out, m.Runtime) {
+		if g.cfg.CanMakeImages(m) && !slices.Contains(out, m.Runtime) {
 			out = append(out, m.Runtime)
 		}
 	}
@@ -187,16 +219,22 @@ func (g *Gateway) imageRuntimes(ctx context.Context) []string {
 
 // errNotAnImageModel is the 400 for a model that exists but cannot make images: a bad
 // value for model, not a 404 (it exists) and not a 403 (no policy would make it work).
-func (g *Gateway) errNotAnImageModel(ctx context.Context, m ModelInfo) *apiError {
-	why := "its runtime is not one of the image runtimes"
-	if slices.Contains(g.cfg.ImageRuntimeList(), m.Runtime) {
+// It points to the models the key may use that can, or says there are none.
+func (g *Gateway) errNotAnImageModel(ctx context.Context, eff Policy, m ModelInfo) *apiError {
+	var why string
+	switch {
+	case g.cfg.ImagesOff():
+		return errInvalid("invalid_value", "model", fmt.Sprintf("The model %s cannot generate images: image generation is %s.", strconv.Quote(m.ID), imagesOffBy))
+	case slices.Contains(g.cfg.ImageRuntimeList(), m.Runtime):
 		why = "it runs as chat-only, which has no tool to save a file"
+	default:
+		why = "its runtime is not one of the image runtimes"
 	}
 	msg := fmt.Sprintf("The model %s cannot generate images: %s.", strconv.Quote(m.ID), why)
-	if runtimes := g.imageRuntimes(ctx); len(runtimes) > 0 {
+	if runtimes := g.imageRuntimes(ctx, eff); len(runtimes) > 0 {
 		msg += " Models of " + strings.Join(runtimes, ", ") + " can; GET /v1/models marks the models that can with the capability image."
 	} else {
-		msg += " No model on this server can."
+		msg += " None of the models this key may use can generate images."
 	}
 	return errInvalid("invalid_value", "model", msg)
 }
@@ -229,11 +267,22 @@ func contextCapAllows(p Policy, c Class) bool {
 	return p.ForContextKey().Allows(c)
 }
 
-// errNoImageRuntime is the 404 for a request that names no model when no runtime of
-// the image list is installed.
-func errNoImageRuntime(list []string) *apiError {
+// imagesOffBy says that image generation was switched off, and by what.
+const imagesOffBy = "switched off on this server (the operator set MONOAGENT_API_IMAGE_RUNTIMES to none)"
+
+// errImagesOff is the 404 for a request that names no model, or auto, when image
+// generation is switched off.
+func errImagesOff() *apiError {
 	return &apiError{Status: http.StatusNotFound, Type: "invalid_request_error", Code: "model_not_found", Param: "model",
-		Message: "No model on this server can generate images: none of the image runtimes (" + strings.Join(list, ", ") + ") is installed. List the available ids with GET /v1/models."}
+		Message: "Image generation is " + imagesOffBy + "."}
+}
+
+// errNoImageRuntime is the 404 for a request that names no model when none of the
+// runtimes of the image list can make images: why says what keeps each one out, an
+// installed chat-only runtime apart from one that is not installed.
+func errNoImageRuntime(why []string) *apiError {
+	return &apiError{Status: http.StatusNotFound, Type: "invalid_request_error", Code: "model_not_found", Param: "model",
+		Message: "No model on this server can generate images: " + strings.Join(why, "; ") + ". List the available ids with GET /v1/models."}
 }
 
 // errNoImageTool is the 400 for a runtime that said it has no image tool.

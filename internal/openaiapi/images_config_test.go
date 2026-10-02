@@ -36,10 +36,34 @@ func TestParseImageRuntimes(t *testing.T) {
 			t.Errorf("ParseImageRuntimes(%q) = %v, %v, want %v", c.in, got, err, c.want)
 		}
 	}
-	for _, in := range []string{",", "codex,", ",codex", "codex,,agy", "--x", "a b", "co/dex", "codex;ls", strings.Repeat("a", 33)} {
+	for _, in := range []string{",", "codex,", ",codex", "codex,,agy", "--x", "a b", "co/dex", "codex;ls", strings.Repeat("a", 33), "none,codex", "codex,none"} {
 		if _, err := ParseImageRuntimes(in); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_IMAGE_RUNTIMES") {
 			t.Errorf("ParseImageRuntimes(%q) = %v, want an error that names the variable", in, err)
 		}
+	}
+}
+
+// none is the off switch: a list with nothing in it, which is not the default one, however
+// it is written, and it is not a runtime to list with others.
+func TestParseImageRuntimesNoneSwitchesImagesOff(t *testing.T) {
+	for _, in := range []string{"none", " None ", "NONE"} {
+		got, err := ParseImageRuntimes(in)
+		if err != nil || got == nil || len(got) != 0 {
+			t.Errorf("ParseImageRuntimes(%q) = %#v, %v, want a list that is empty and not nil", in, got, err)
+		}
+	}
+	off, err := ConfigFromEnv(imageEnv("none"))
+	if err != nil || off.ImageRuntimes == nil || !off.ImagesOff() || len(off.ImageRuntimeList()) != 0 {
+		t.Fatalf("ConfigFromEnv(none) = %#v, %v: image generation is off, and the list is not the default", off.ImageRuntimes, err)
+	}
+	if off.CanMakeImages(ModelInfo{Runtime: "codex", Class: Sandboxed}) || off.CanMakeImages(ModelInfo{Runtime: "antigravity", Class: Unconfined}) {
+		t.Error("a model can make images with image generation switched off")
+	}
+	if got := off.Capabilities(ModelInfo{Runtime: "codex", Class: Sandboxed}); !slices.Equal(got, []string{"text"}) {
+		t.Errorf("capabilities with image generation off: %v", got)
+	}
+	if (Config{}).ImagesOff() || (Config{ImageRuntimes: []string{"codex"}}).ImagesOff() {
+		t.Error("image generation is on unless the list was set to nothing")
 	}
 }
 
@@ -111,6 +135,10 @@ func TestModelsAdvertiseTheImageCapability(t *testing.T) {
 			"codex/default": text, "codex/gpt-6-astra": text,
 			"antigravity/default": text, "antigravity/gemini-3.8-flash-high": text,
 			"hermes/default": both,
+		}},
+		"switched off": {[]string{}, map[string][]string{
+			"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+			"antigravity/default": text, "hermes/default": text,
 		}},
 	} {
 		h := newHarness(t, okTurn("x"), func(_ *Deps, cfg *Config) { cfg.ImageRuntimes = c.list })
