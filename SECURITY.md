@@ -698,8 +698,10 @@ executes nothing of the caller's. What this changes, and what it does not:
   made 31 of 31 native attempts and edited files itself while the caller got
   nothing), so its leg runs with read access: for codex monomind makes the
   sandbox read-only (the start event says `native_sandbox: read-only`, which is
-  still the `sandboxed` class). That is stricter than `workspace-write`: such a
-  leg cannot write files. It does not shut anything else out: reads anywhere the
+  still the `sandboxed` class; `sandbox_applied` in it only echoes the sandbox
+  the gateway requested, and a write probe in the spike found the environment
+  read-only). That is stricter than `workspace-write`: such a leg cannot write
+  files. It does not shut anything else out: reads anywhere the
   OS user can read, the runtime's own MCP servers and its instruction files stay
   open (the spike saw codex use one of the user's own MCP servers once, in a run
   with tools declared). A model whose runtime monomind cannot run read-only is
@@ -708,10 +710,13 @@ executes nothing of the caller's. What this changes, and what it does not:
   operator changed it). claude's own tools stay denied by monomind: it denied
   all 15 attempts in the spike.
 - *What the model proposes can be steered, and the caller decides.* A tool
-  result is untrusted text in the prompt: a tool that fetched a web page can
-  return instructions, and a key created with `--context` puts excerpts of
-  captured pages in the system prompt. Either can steer which calls the model
-  proposes next. The gateway cannot tell a steered call from an asked one, and
+  result is untrusted data. The prompt fences it (`<function_result>`) and
+  defangs the fence's tags and any line of it that would open a turn of the
+  transcript, as it does for knowledge excerpts, so a result cannot pass for the
+  user's or the assistant's words. That does not keep a model from following
+  what is in it: a tool that fetched a web page can return instructions, and a
+  key created with `--context` puts excerpts of captured pages in the system
+  prompt. Either can steer which calls the model proposes next. The gateway cannot tell a steered call from an asked one, and
   it returns every call, valid or not (a call that does not match its schema is
   returned too and counted in the log). So a client that runs calls without
   asking runs whatever the model was steered to propose, with its own
@@ -719,10 +724,13 @@ executes nothing of the caller's. What this changes, and what it does not:
   person, or a policy of the client's own, between a call and its execution.
 - *What is kept.* No process waits for a result and no slot is held while the
   client runs the call. A continuation record (the id the client was given, key
-  id, profile, model, function name, a hash of the declared tools and the
-  runtime's session id) lives in memory for ten minutes, at most 1,024 in all and
-  64 per key, and is used once; a restart loses them and the follow-ups then start
-  from their transcripts. It holds no argument and no result. A record belongs to
+  id, profile, model, function name, a hash of the declared tools, a hash of the
+  conversation the leg was given and the runtime's session id) lives in memory
+  for ten minutes, at most 1,024 in all and 64 per key, and is used once (given
+  back only when a resume fails before the model ran, for a rate limit, the quota
+  or a sign-in); a restart loses them and the follow-ups then start from their
+  transcripts. It holds no argument and no result, and a follow-up continues the
+  session only when its conversation before the call hashes the same. A record belongs to
   its key: another key, even of the same profile, finds nothing and is served by
   replaying the transcript it sends, and a revoked key cannot authenticate at all.
   The session id comes from the record, never from the client. The agent CLIs
@@ -733,6 +741,14 @@ executes nothing of the caller's. What this changes, and what it does not:
   `badargs=1` when a call did not match its schema). It never holds a function
   name, an argument or a result, and an error sent to the caller names a
   parameter, never what the client put in it, and never echoes a tool result.
+- *Reliability, not security.* A resumed leg can ask for the same call again
+  instead of using the result: 1 of 19 single-result claude legs did in the
+  spike, 0 of 18 on codex, and nothing detects it. codex repeats an identical
+  call two or three times within a leg (7 of 16 legs): the leg ends at the first
+  and ignores the repeats. A client whose tool has a side effect (a write, a
+  send) should make it idempotent, or look at a call identical to the last it
+  ran before running it again. Neither crosses a boundary; both are why side
+  effects the client cannot take back deserve a look first.
 - *Cost.* Every leg is a real turn, and a loop of N calls is N + 1 of them, each
   on the runtime's account; a leg that cannot continue a session pays for the
   whole transcript again (a resumed leg cost about half of a replayed one on

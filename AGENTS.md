@@ -642,9 +642,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   a `tool_choice` (`none` passes no tools, `auto`, `required`, or a named
   function: the last two are a best-effort instruction in the system prompt)
   and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
-  the top-level properties of a schema, and a numeric `enum` there rejects every
-  call, so the whole schema is also folded into the tool's description and an
-  `enum` of a top-level property that does not list strings is 400. **A
+  the top-level properties of a schema, and of a property only its type and an
+  enum of strings (any other enum there rejects every call), so the whole schema
+  is also folded into the tool's description, and an enum that is not a list of
+  strings is left out of what monomind gets, not refused. **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   the runtime's process group is killed, and the answer is a message with one
   `tool_calls` entry (`id` `call_<random>`, `type` `function`, `function`
@@ -664,27 +665,49 @@ a key. It lives in `internal/openaiapi/`; the spec is
   timeout, cleanup). The follow-up **resumes** the runtime's own session when
   the leg that made the call left a record that fits: single-use, in memory (a
   restart loses them), ten minutes, 1,024 in all and 64 per key, holding ids
-  and names, never the arguments or the result. It must be the same key and
-  profile, model, function and declared tools, and the result must answer that
-  one call; otherwise, and when the runtime cannot continue the session (an
-  error of its own before it said or called anything), the transcript is
-  **replayed** in a new turn with the tools declared again, which always works.
-  A call whose arguments do not match the declared schema is returned all the
-  same, and the client decides. With `tool_choice: "none"`, or tool history and
+  and names and hashes, never the arguments or the result. It must be the same
+  key and profile, model, function and declared tools, the conversation before
+  the call must be the one the session saw (a hash of the messages, the system
+  prompt among them, the tool choice and the response format: a client that
+  edits or compacts its history, or changes its system prompt, gets a replay),
+  the result must answer that one call, and nothing but user messages may follow
+  it; otherwise, and when the runtime cannot continue the session (an error of
+  its own before it said or called anything: claude's `No conversation found`
+  and codex's `no rollout found` both end that way within a few seconds, and no
+  wording is matched), the transcript is **replayed** in a new turn with the
+  tools declared again, which always works. A resume that fails before the model
+  ran for a rate limit, the quota, a budget or a sign-in gives its record back,
+  so the retry resumes. The system prompt of a resumed leg says that the caller
+  ran the call and that its result is real: cancelling a leg at its call makes
+  the claude CLI write a rejected result and an interrupt marker into the
+  session, and a model that read them distrusted the result (0 of 3 with the
+  note in the user message, 3 of 3 in the system prompt). A result is fenced in
+  the prompt (`<function_result>`), with the fence's tags and any line that
+  would open a turn of the transcript defanged. A call whose arguments do not
+  match the declared schema is returned all the same, and the client decides. A
+  resumed leg can ask for the same call again instead of using the result (1 of
+  19 single-result claude legs in the spike, 0 of 18 on codex), and codex repeats
+  an identical call two or three times within a leg (the leg ends at the first
+  and ignores the repeats): nothing detects either, so a client whose tools have
+  side effects should make them idempotent. That is reliability, not security.
+  With `tool_choice: "none"`, or tool history and
   no `tools`, the turn is a plain one and earlier rounds are text in its
   transcript. Declaring tools changes no confinement field or policy check.
   claude's own tools stay denied by monomind. codex's would stay in play and
   pull the model away from the declared ones (31 of 31 native attempts in the
   spike, and the declared tool used 0 of 4 times), so a codex leg runs with
   `--access read`, which monomind turns into a read-only sandbox (its start
-  event says `native_sandbox: read-only`, still `sandboxed`): it cannot write
-  files, reads and the runtime's own MCP servers stay open. A runtime that
+  event says `native_sandbox: read-only`, still `sandboxed`; `sandbox_applied`
+  in it only echoes the sandbox the gateway requested, and a write probe found
+  the environment read-only): it cannot write files, reads and the runtime's own
+  MCP servers stay open. A runtime that
   monomind cannot run read-only is not served. `auto` with tools picks among the
   models that serve them within `--auto-confinement`; none is a 404
   `model_not_found` that says what to raise. The log line adds
   `tools=<n> leg=first|resume|replay` (and `badargs=1`), never a name, an
-  argument or a result. Tool results are untrusted text in the prompt, and the
-  agent CLIs' own session stores keep the arguments and results of a leg: see
+  argument or a result. Tool results are untrusted data (fenced in the prompt,
+  but a model can still follow what is in them), and the agent CLIs' own session
+  stores keep the arguments and results of a leg: see
   [SECURITY.md](SECURITY.md#openai-compatible-api-surface).
 - **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
   is loopback (default `127.0.0.1:9322`, where every runtime is allowed

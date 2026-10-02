@@ -424,10 +424,11 @@ What to expect from a tool loop:
   seconds to the first call on claude and 11 on codex), on the runtime's account,
   and no process waits for your result, so a slow tool costs the server nothing.
   The follow-up continues the runtime's session when the server still remembers
-  the call (same key, same model, same tools, within ten minutes, once: about
-  half the price of the alternative on claude); otherwise, after a restart, a
-  retry or a long pause, it starts again from the transcript you send, which
-  always works. Either way you send the whole conversation each time.
+  the call (same key, same model, same tools and the same conversation before
+  the call, within ten minutes, once: about half the price of the alternative on
+  claude); otherwise, after a restart, a retry, a long pause, or a change to an
+  earlier message or the system prompt, it starts again from the transcript you
+  send, which always works. Either way you send the whole conversation each time.
 - **The functions are yours; the model's own tools are not.** claude's own tools
   stay denied by monomind. A codex leg runs read-only (`--access read`): it
   cannot write files, so a coding client's edits must go through its declared
@@ -439,9 +440,15 @@ What to expect from a tool loop:
 - Put the whole JSON schema in `parameters`: monomind keeps only the top-level
   properties, so the server also folds the schema into the function's
   description, and a call whose arguments do not match is returned all the same.
-  A top-level property whose `enum` is not a list of strings is refused (400),
-  and so are more than 64 functions, a name that is not 1 to 54 characters of
-  `[A-Za-z0-9_-]` and a result larger than 256 KiB.
+  An `enum` that is not a list of strings is left out of what the runtime's tool
+  bridge gets (the model still reads it in the description); more than 64
+  functions, a name that is not 1 to 54 characters of `[A-Za-z0-9_-]` and a
+  result larger than 256 KiB are refused (400).
+- Make tools with side effects idempotent. A model can ask for the same call
+  again after a resume (1 of 19 single-result claude legs in the spike, none of
+  18 on codex), and codex repeats an identical call two or three times within a
+  leg: the server returns only the first of them, but cannot tell a repeat of a
+  round from a new request for the same thing.
 - A conversation that has tool messages but no `tools` (a client that dropped
   them for its last round) is answered as text.
 - Read `SECURITY.md` ("Tool calling") before you let a client run calls without

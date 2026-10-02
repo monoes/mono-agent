@@ -428,8 +428,9 @@ paths:
         other is 400 `unsupported_parameter` on `tools`, answered before
         anything starts. monomind keeps only the top-level properties of a
         schema, so the whole schema is also folded into the function's
-        description, and an `enum` of a top-level property that does not list
-        strings is 400. **A response carries one call**: the turn ends at the
+        description (an `enum` that is not a list of strings is left out of what
+        the runtime's tool bridge gets, and the model still reads it there).
+        **A response carries one call**: the turn ends at the
         model's first call, and the answer is an assistant message with one
         `tool_calls` entry (`id` `call_…`, `function.arguments` a string of JSON),
         `content` null or what the model said before the call,
@@ -440,8 +441,8 @@ paths:
         256 KiB; it must answer a call of an earlier assistant message). The
         server remembers nothing of the conversation that you do not send: a
         follow-up continues the runtime's session when a short-lived record of the
-        call fits (same key, model, function and tools), and otherwise starts
-        from the transcript. A call whose arguments do not match the schema is
+        call fits (same key, model, function and tools, and the same
+        conversation before the call), and otherwise starts from the transcript. A call whose arguments do not match the schema is
         returned all the same. With `tool_choice: "none"`, or tool messages and
         no `tools`, the turn is a plain one and earlier rounds are text. A codex
         leg runs read-only. With `model: "auto"` and `tools`, Jev picks among the
@@ -856,7 +857,9 @@ components:
               type: object
               description: >
                 A JSON schema whose `type` is `object`, at most 64 KiB. An `enum`
-                of a top-level property must list strings only.
+                of a top-level property that is not a list of strings is left out
+                of what the runtime's tool bridge gets; the model still reads it in
+                the description.
               additionalProperties: true
             strict: { type: boolean, description: Accepted and ignored. }
     ChatCompletionRequest:
