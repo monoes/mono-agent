@@ -408,7 +408,7 @@ export default function Settings({ onNavigate, navData }) {
         <CoderModeSection />
 
         <div ref={sectionRefs.jev} data-section="jev">
-          <JevSection collapsible defaultExpanded={section === 'jev'} />
+          <JevSection collapsible defaultExpanded={section === 'jev'} expandToken={section === 'jev' ? navData : null} />
         </div>
 
         <ApiSection onNavigate={onNavigate} />

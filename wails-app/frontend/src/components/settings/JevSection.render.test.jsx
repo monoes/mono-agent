@@ -197,6 +197,42 @@ describe('JevSection', () => {
     expect(await screen.findByLabelText('TypeSafe API key')).toBeInTheDocument()
   })
 
+  // A jump to the Jev settings (the API section's, the dashboard's) passes a token that is new each time:
+  // the section opens on each one, also after it was folded by hand, and not on a re-render with the same token.
+  it('expands each time its expand token changes, even after it was folded by hand', async () => {
+    App.JevStatus.mockResolvedValue(status('none'))
+    App.JevUsage.mockResolvedValue(emptyUsage)
+    const { default: JevSection } = await import('./JevSection.jsx')
+    const first = { section: 'jev' }
+    const { rerender } = render(<JevSection collapsible expandToken={null} />)
+    const toggle = () => screen.getByTestId('jev-fold-toggle')
+    await screen.findByTestId('jev-fold-key-chip')
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+
+    rerender(<JevSection collapsible expandToken={first} />)
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(toggle()) // folded by hand
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+    rerender(<JevSection collapsible expandToken={first} />) // the same token: a re-render, not a jump
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+
+    rerender(<JevSection collapsible expandToken={{ section: 'jev' }} />) // a jump again
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(toggle())
+    rerender(<JevSection collapsible expandToken={null} />) // no token: nothing to open
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('opens on a token it is mounted with', async () => {
+    App.JevStatus.mockResolvedValue(status('none'))
+    App.JevUsage.mockResolvedValue(emptyUsage)
+    const { default: JevSection } = await import('./JevSection.jsx')
+    render(<JevSection collapsible expandToken={{ section: 'jev' }} />)
+    expect(await screen.findByTestId('jev-fold-toggle')).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('renders fold toggle while loading when collapsible is true', async () => {
     let resolveStatus
     App.JevStatus.mockReturnValue(new Promise(r => { resolveStatus = r }))
