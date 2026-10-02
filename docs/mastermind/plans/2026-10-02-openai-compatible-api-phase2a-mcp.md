@@ -21,13 +21,14 @@
 ## Decisions this plan adds to spec §8.3
 
 1. **Inputs and results mirror the CLI's `--json`.** `api_key_list {include_revoked}` returns `[]apikeys.Key`; no `all_profiles` and no `show` (keys are scoped to the MCP profile). `api_key_create {name, context}` returns the key's metadata plus `key`. `api_key_update {id, name?, context?}` and `api_key_revoke {id}` take an id or the name of an active key, and return the key's metadata. `api_models_list {for?, confinement?, context_confinement?, auto_confinement?}` (the flags of `api models`) returns the document of `api models --json`.
-2. **The key appears once.** Only in `api_key_create`'s `key` field. Every other result and every error of the key tools is metadata or static text, and none echoes the `id` argument (a caller may paste a key there). Nothing in the new code logs.
+2. **The key appears once.** Only in `api_key_create`'s `key` field. Every other result and every error of the five tools is metadata or static text, and none repeats an argument (a caller may paste a key anywhere): `api_models_list` refuses with fixed texts, and a value over 32 characters before it looks at it. The store refuses a name that holds `sk-ma-`. Nothing in the new code logs.
 3. **Another profile's key is `api key not found`**, the same text as an unknown id.
 4. **No `confirm` on revoke** (like `secret_delete`): the host gates on `destructiveHint`. Annotations: the two reads `readOnlyHint` + `idempotentHint`; create and update `readOnlyHint:false`; revoke `readOnlyHint:false, destructiveHint:true`.
 5. **`policy.source` is `mcp`** for the tool (`shell` for the CLI): the policy comes from the MCP server's own flags and environment, which a running `/v1` server may not share.
 6. **Not served in grant mode.** An org role's tool provider cannot mint or revoke keys.
 7. **The shared part** is the data and the rules: the report types (field order, tags and `omitempty` verbatim), the pure `NewModelsReport` (the row marks, the candidate count, the "at least one model" override, what an unavailable auto clears), the four parsers (`ListenerAddr`, `EffectivePolicy`, `EffectiveContextMax`, `EffectiveAutoMax`) and `LoadModels` (the production catalog). Parsers return plain errors; the CLI and the tool prefix them with their own argument names, so the CLI's messages do not change. `autoNote` is presentation: it stays in `package main` as a plain function, since a method cannot stay on an alias of another package's type.
 8. **The secrets doctrine has no exceptions list in AGENTS.md**, only "values are never returned by any tool" on the `secret_list` line. The exception goes there (vault values; the one secret a tool returns is `api_key_create`'s key, once) and into the mutating list; no new section, and the `secret_list` tool description stays (it is about vault values, and chat shares it).
+9. **`api_models_list` loads once per server.** One `openaiapi.Catalog` on the MCP runtime (single flight, a one-minute TTL, the previous list served while a new one loads), asked with `ModelsBound` so that a load ends with the call; the gateway keeps its detached `Models`.
 
 ## File Structure
 
@@ -75,3 +76,16 @@
 - Tests drive dependent calls through `callTool` on a server that stays open, because `Serve` answers on goroutines and closes the database when its input ends; only the wire-level checks (the key exactly once, a refused create, grant mode) go through `Serve`, over a pipe.
 - Failure messages of the key tests go through `scrubbed`, and fields are read without a panicking assertion: a mutation run printed a throwaway key and panicked once, which is how both were found.
 - Verified against the real binary: the recorded output of `api models` and `api status` (235 invocations) is byte-identical before and after the move; `api models --json` and `api_models_list` give the same document, field order included, apart from `source`; over stdio every line is JSON-RPC and the key is on stdout once.
+
+## Review round
+
+Two read-only reviews (security, correctness) found eight things. Each was fixed test-first and mutation-checked, in its own commit:
+
+1. **A key accepted as a key name** (`api_key_list` would show it): `validName` in `internal/apikeys` refuses `sk-ma-` in any case, so the CLI and every front end have it too.
+2. **`Store.Update` lost updates and wrote revoked rows** (it read, checked and wrote apart): one `UPDATE … COALESCE … AND revoked_at IS NULL`. The tests hold a write lock on a second connection so that both calls have read the row first.
+3. **`api_models_list` built a catalog per call** (twenty calls started a hundred processes) **and could not be cancelled**: one catalog per MCP runtime, and `Catalog.ModelsBound` ends a load with its caller (`api models` uses it too) without changing the gateway's detached load.
+4. **`api_models_list` repeated its arguments in errors**: fixed texts and a 32-character cap. The claim is now true of all five tools and the docs say so.
+5. **Profile scoping was not pinned**: the old tests ran as `default`, which a hard-coded `default` also satisfies. New ones run as a profile whose id is neither `default` nor its name, opened by name (a test gap: no code changed).
+6. **The docs said `api key create` "prints to your terminal only"**: it writes the key to stdout, also with `--json`. Reworded wherever it appeared.
+7. **The promised comparison with the CLI was missing**: `cmd/monoagentcli/api_models_mcp_test.go` drives `mcp.Server` over a pipe and compares the tool with `api models --json` byte for byte, apart from `policy.source`.
+8. The unused `apiModelJSON` alias is gone.

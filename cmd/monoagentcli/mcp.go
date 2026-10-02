@@ -40,8 +40,9 @@ unconditionally before this flag existed — add --allow-mutations to an
 existing MCP client config that relies on them.
 
 api_key_create returns the new API key once, in its result, which makes it part
-of the host's transcript: monoagentcli api key create prints it to a terminal
-only.
+of the host's transcript. monoagentcli api key create writes the key to its
+stdout: run in your own terminal, and not through an agent's shell tool, it
+stays out of that transcript.
 
 Honors the global --profile flag (or the MONOAGENT_PROFILE environment
 variable) and --db-path, exactly like every other command.`,

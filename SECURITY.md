@@ -456,8 +456,12 @@ The MCP tools over keys (`api_key_list`, and with `mcp --allow-mutations`
 `api_key_create`, `api_key_update` and `api_key_revoke`) act on the MCP
 server's own profile only. `api_key_create` returns the new key in its result,
 once, so that key passes through the MCP host: into its transcript and, for a
-hosted model, to its provider. Create keys with `api key create`, which prints
-to your terminal only, when that matters.
+hosted model, to its provider. When that matters, run `api key create` in your
+own terminal and not through an agent's shell tool: it writes the key to its
+stdout (also with `--json`), so whatever runs it, an agent included, receives
+the key. A key is refused as the name of a key (names are listed, and one
+holding `sk-ma-` or shaped like a key id is refused), and no error of these
+tools repeats an argument.
 The legacy HTTP API token (vault entry `httpapi-token`) is a separate
 credential for the other routes: a key never opens them and the token never
 opens `/v1`. Treat a key like a password; it has no scopes and no expiry.

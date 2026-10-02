@@ -333,8 +333,11 @@ dangerous calls.
   `/v1` would serve with each one's confinement class. It takes the flags of
   that command as `for`, `confinement`, `context_confinement` and
   `auto_confinement`, otherwise reads this MCP server's own environment, and
-  asks the installed runtimes for their model lists, so it takes a few
-  seconds)
+  asks the installed runtimes for their model lists: the first call takes a
+  few seconds, calls at once share that load, the list is reused for a minute,
+  and after that the previous one is served at once while a new one loads in
+  the background, as `/v1/models` does. The load ends with the call or the
+  server)
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -355,15 +358,22 @@ existing MCP client config that relies on them.
   preview unless `confirm:true`)
 - `api_key_create`, `api_key_update`, `api_key_revoke` — the active profile's
   API keys, under the rules of `api key create|update|revoke` (names, the
-  context switch, the errors); a key of another profile is "not found".
+  context switch, the errors); a key of another profile is "not found". A name
+  can be neither a key (anything holding `sk-ma-`, in any case) nor the shape
+  of a key id (`key_` and 12 characters of a-z and 2-7), because `api_key_list`
+  shows names: a key pasted where a name goes is refused, by the key store, so
+  by `api key create|update` too. No error of any `api_*` tool repeats an
+  argument, since a caller may paste a key anywhere.
   `api_key_revoke` is annotated destructive and asks for no confirmation: the
   host gates it. **`api_key_create` is the one tool that returns a secret:** the
   new key, once, in the `key` field of its result. Only its SHA-256 is stored,
   so no tool, `api_key_list` included, can show it again. It also makes the key
   part of the MCP host's transcript, which the host may keep and, for a hosted
-  model, send to its provider: `monoagentcli api key create`, which prints to
-  your terminal only, avoids that. The `api_*` tools are MCP only (the chat
-  assistant has none), and a grant-mode server serves none of them.
+  model, send to its provider. `monoagentcli api key create` writes the key to
+  its stdout (also with `--json`): run in your own terminal it stays out of any
+  transcript, but run by an agent through a shell tool it lands in that
+  transcript too. The `api_*` tools are MCP only (the chat assistant has
+  none), and a grant-mode server serves none of them.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
