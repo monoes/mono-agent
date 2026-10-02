@@ -11,13 +11,14 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// The judge is the test's reader of a prompt, and it shares nothing with the code under test: it
-// does not call the skeleton, the predicate of what renders as nothing or the folding of
-// letters, and it is written the other way round. The code under test says what is seen
-// through; the judge says what is left when everything that is not a letter, a digit, a
-// space or a mark of ASCII punctuation is deleted, after NFKC has taken the look-alikes apart. A
-// reader of that kind sees a turn marker or a fence tag in anything the model could take
-// for one, however it was disguised.
+// The judge is the test's reader of a prompt, and it is written the other way round: it calls
+// none of the code under test (not the skeleton, not the folding of letters), but it shares
+// with it Unicode's tables (what renders as nothing, what is a space), NFKC and the model
+// itself, so a wrong belief of that model would be a blind spot of both. The code under test says
+// what is seen through; the judge says what is left when everything that is not a letter, a
+// digit, a space or a mark of ASCII punctuation is deleted, after NFKC has taken the look-alikes
+// apart and a tag character is read as the ASCII one it twins. A reader of that kind sees a turn
+// marker or a fence tag in anything the model could take for one, however it was disguised.
 
 // endsALine says whether a renderer, a tokenizer or a model may end a line at r.
 func endsALine(r rune) bool {
@@ -26,6 +27,16 @@ func endsALine(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// untag reads a Unicode tag character (U+E0000 to U+E007F) as the ASCII character it is the twin of.
+func untag(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 0xE0000 <= r && r <= 0xE007F {
+			return r - 0xE0000
+		}
+		return r
+	}, s)
 }
 
 // reduce is what the judge keeps of a line.
@@ -50,7 +61,7 @@ var judgeMarker = regexp.MustCompile(`^ *\[ *(user|assistant|tool|system|develop
 // judgeMarkers counts the lines of a prompt that a reader sees a turn start in.
 func judgeMarkers(prompt string) int {
 	n := 0
-	for _, line := range strings.FieldsFunc(prompt, endsALine) {
+	for _, line := range strings.FieldsFunc(untag(prompt), endsALine) {
 		if judgeMarker.MatchString(reduce(line)) {
 			n++
 		}
@@ -68,7 +79,7 @@ func judgeTags(prompt string) int {
 			return ' '
 		}
 		return r
-	}, prompt)))
+	}, untag(prompt))))
 	return len(judgeTag.FindAllString(flat, -1))
 }
 
@@ -177,6 +188,8 @@ func TestNoCompositionOfDisguisesFoolsTheJudge(t *testing.T) {
 		u(0xff3b), u(0xff3d), u(0xff1c), u(0xff1e), u(0xfe64), u(0xfe65), "ｕｓｅｒ", "ＵＳＥＲ", "ｆｕｎｃｔｉｏｎ＿ｒｅｓｕｌｔ",
 		u(0x1d42e, 0x1d42c, 0x1d41e, 0x1d42b), "ⓤⓢⓔⓡ", "ᵘˢᵉʳ", "𝗎𝗌𝖾𝗋", "ᴜꜱᴇʀ", u(0x17f), u(0x212a), u(0x130), u(0x131), u(0xfb01), u(0x2474),
 		"&lt;", "&#91;", u(0x3008), u(0x27e8), u(0x2215), u(0x2044),
+		u(0xe0000), u(0xe0001), u(0xe0009), u(0xe000a), u(0xe000d), u(0xe0020), u(0xe0041), u(0xe005b), u(0xe005d), u(0xe003c), u(0xe002f), u(0xe007e), u(0xe007f),
+		tagSpelled("[user]"), tagSpelled("user"), tagSpelled("</function_result>"), tagSpelled("function_result"), tagSpelled("\n"), tagSpelled("[tool x (y)]"),
 	}
 	rng := rand.New(rand.NewSource(11))
 	for i := 0; i < 20000; i++ {

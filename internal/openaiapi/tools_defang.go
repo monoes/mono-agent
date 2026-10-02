@@ -24,8 +24,11 @@ import (
 // What is matched is not the text but its skeleton, the text as such a reader takes it: any
 // character a renderer or a tokenizer may end a line at ends one, every kind of space is a
 // space, case does not matter, a look-alike of an ASCII character (full-width, bold, circled,
-// superscript, a ligature) is that character (NFKC), and whatever renders as nothing (control and
-// format characters, the blank-looking fillers, combining marks, symbols) is not there. A
+// superscript, a ligature) is that character (NFKC), a Unicode tag character (U+E0000 to
+// U+E007F: it renders as nothing and is the twin of the ASCII character at the same offset, so a
+// model may read it as that character, "ASCII smuggling") is that character, and whatever
+// renders as nothing (control and format characters, the blank-looking fillers, combining
+// marks, symbols) is not there. A
 // match is neutralised where the original has it (a bracket or an angle bracket becomes an
 // entity) and everything else is left as it was: line ends of every kind included, so that a
 // file with CRLF line ends reaches the model as it is. A letter of another script that looks like
@@ -57,9 +60,16 @@ type skeleton struct {
 	at   []int32 // at[i] is the offset in the original of the character that gave byte i
 }
 
+// tagBlock is the Unicode block of the tag characters: each is the twin of the ASCII character
+// at the same place in the first 128 (U+E0041 is an "A"), and renders as nothing.
+const tagBlock = 0xe0000
+
 // see is what a reader makes of one character (one of those NFKC left): a line end, a space, an
 // upper case ASCII character, a mark for a letter or a digit of another script, or nothing.
 func see(r rune) (byte, bool) {
+	if tagBlock <= r && r <= tagBlock+0x7f { // a model may read a tag character as the ASCII one it twins
+		r -= tagBlock
+	}
 	switch {
 	case r == '\n' || r == '\r' || r == '\v' || r == '\f' || (0x1c <= r && r <= 0x1e) || r == 0x85 || r == 0x2028 || r == 0x2029:
 		return '\n', true
@@ -156,8 +166,9 @@ func applyEdits(s string, edits []edit) string {
 	return b.String()
 }
 
-// neutralise rewrites the fence tags in text, and the turn markers when markers is set.
-func neutralise(text string, markers bool) string {
+// defangResult is text of a client's function or of a model as the prompt may carry it: no
+// fence tag and no turn marker the model could read in it, and nothing else changed.
+func defangResult(text string) string {
 	sk := newSkeleton(text)
 	var edits []edit
 	if strings.IndexByte(sk.text, '<') >= 0 {
@@ -166,7 +177,7 @@ func neutralise(text string, markers bool) string {
 			edits = append(edits, edit{int(flat.at[m[0]]), "&lt;"}) // the "<"
 		}
 	}
-	if markers && strings.IndexByte(sk.text, '[') >= 0 {
+	if strings.IndexByte(sk.text, '[') >= 0 {
 		for _, m := range turnMarkerRE.FindAllStringSubmatchIndex(sk.text, -1) {
 			edits = append(edits, edit{int(sk.at[m[3]]), "&#91;"}) // the "[", behind the spaces of group 1
 		}
@@ -174,26 +185,24 @@ func neutralise(text string, markers bool) string {
 	return applyEdits(text, edits)
 }
 
-// defangResult is text of a client's function or of a model as the prompt may carry it: no
-// fence tag and no turn marker the model could read in it, and nothing else changed.
-func defangResult(text string) string { return neutralise(text, true) }
-
 // rawLineBreaks are the three characters that end a line and that JSON lets through raw
-// inside a string (every other one is a control character, which JSON forbids there): they
-// are escaped in the arguments of a call, which stay the JSON they were.
+// inside a string (every other one is a control character, which JSON forbids there, but for the
+// tag characters that a reader may take for one: defangResult finds those): they are escaped in
+// the arguments of a call, which stay the JSON they were.
 var rawLineBreaks = strings.NewReplacer("\u0085", `\u0085`, "\u2028", `\u2028`, "\u2029", `\u2029`)
 
 // argumentsInPrompt is the arguments of a call of the request as the transcript renders
-// them, outside any fence. JSON is compact, which leaves no line break in it but the three
-// that rawLineBreaks escapes, and is otherwise as the model made it (code goes through the
-// arguments of a write or an edit, and a model that reads its own call back with its angle
-// brackets and ampersands escaped reads something it never wrote); the fence tags a
-// skeleton finds in it are neutralised all the same. Anything else is defanged as a result is.
+// them, outside any fence. JSON is compact, which leaves no line break in it but those a
+// reader may take for one in the tag characters, and is otherwise as the model made it (code goes
+// through the arguments of a write or an edit, and a model that reads its own call back with
+// its angle brackets and ampersands escaped reads something it never wrote); the fence tags and
+// the turn markers a skeleton finds in it are neutralised all the same. Anything else is
+// defanged as a result is.
 func argumentsInPrompt(raw json.RawMessage) string {
 	text := argumentsText(raw)
 	var compact bytes.Buffer
 	if json.Compact(&compact, []byte(text)) != nil {
 		return defangResult(text)
 	}
-	return neutralise(rawLineBreaks.Replace(compact.String()), false)
+	return defangResult(rawLineBreaks.Replace(compact.String()))
 }

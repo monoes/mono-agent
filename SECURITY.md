@@ -739,11 +739,17 @@ executes nothing of the caller's. What this changes, and what it does not:
   the information separators, NEL, the line and paragraph separators) ends one,
   every kind of space is a space, case does not matter, a look-alike of an ASCII
   character (full-width, bold, circled or superscript letters, full-width
-  brackets, ligatures: NFKC) is that character, and whatever renders as nothing
-  (control and format characters, the Hangul and braille blanks, combining marks)
-  is not there, so spelling a marker or a tag with them gains nothing against a
-  reader of that kind (a fuzz of random compositions of them, judged by a reader that
-  shares nothing with the code, is in the tests). A match is neutralised in
+  brackets, ligatures: NFKC) is that character, a Unicode tag character
+  (U+E0000 to U+E007F, which renders as nothing and which a model may read as the
+  ASCII character it is the twin of: "ASCII smuggling") is that character, and
+  whatever renders as nothing (control and format characters, the Hangul and
+  braille blanks, combining marks) is not there, so spelling a marker or a tag
+  with them gains nothing against a reader of that kind (a fuzz of random
+  compositions of them, judged by a reader written the other way round, is in the
+  tests: that judge calls none of the code, but it shares with it Unicode's
+  tables, `unicode.IsSpace`, NFKC and the model of deleting everything that is not
+  a letter, a digit, a space or ASCII, so a wrong belief of that model is a blind
+  spot of both). A match is neutralised in
   place and nothing else of a result is changed: line ends of every kind reach the
   model as they were (a file with CRLF line ends is read as it is), and so does a
   header such as `[tool.poetry]` (a role marker is the role word followed by a

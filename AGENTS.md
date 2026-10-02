@@ -730,7 +730,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the prompt (`<function_result>`), with the fence's tags and any line that
   would open a turn of the transcript defanged, reading the text as a model does
   (every kind of line break ends a line, whatever renders as nothing is not
-  there, look-alikes of ASCII are ASCII by NFKC, case does not matter; a match is
+  there, look-alikes of ASCII are ASCII by NFKC and Unicode tag characters
+  (U+E0000 to U+E007F) are their ASCII twins, case does not matter; a match is
   neutralised in place and nothing else changes, CRLF included, and
   `[tool.poetry]` is not a marker: `internal/openaiapi/tools_defang.go`; the fence
   is the defence, this a second layer). The arguments of a call that the client
