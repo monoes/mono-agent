@@ -448,11 +448,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   because agent CLIs keep per-folder session state that a folder per request
   would pile up, and per profile so that state is never shared between
   profiles. Requests are stateless. A folder that cannot be emptied (a tree
-  deeper than 100 levels, say), or that a turn replaced with a link, is moved
+  deeper than 100 levels, or one that takes more than 30 seconds to empty,
+  say), or that a turn replaced with a link, is moved
   to `~/.monoagent/workspaces/api/.quarantine` and replaced by an empty one, and
   the log says where: delete it when you like. A turn's prompt files live in a
   private (mode 0700) folder under `~/.monoagent/workspaces/api/.tmp` until it
-  ends. Only one process per home serves `/v1` at a time, because the slot
+  ends, and its own temp directory (`TMPDIR`, `TMP`, `TEMP`) is a folder inside
+  its working folder, emptied with it. Only one process per home serves `/v1` at a time, because the slot
   folders are emptied around every turn. A second `httpapi` serves its other
   routes without `/v1` and says why (`httpapi --v1-addr` exits), a second
   `daemon` is refused outright (one daemon per home), and a process that
@@ -1089,8 +1091,12 @@ login (and its bill) is what the turn uses.
   - **Temp files.** `monomind.Exec` writes the prompt, system-prompt and tools
     files it hands monomind in `~/.monoagent/tmp` (mode 0700; files of its own
     older than a day are swept), unless the caller gives it a `TempDir`. It
-    does not use the system temp directory, which a workspace-write turn may
-    write: another turn could rewrite those files before monomind reads them.
+    does not use the system temp directory (but for a home that cannot hold
+    that folder), which a workspace-write turn may write: another turn could
+    rewrite those files before monomind reads them. monomind's own copies of a
+    prompt (hermes, cline and kimicode write one under their temp directory) go
+    where the child's `TMPDIR` points: a caller that runs turns for others sets
+    `ExecOptions.Env` `TMPDIR`, `TMP` and `TEMP`, as the API gateway does.
   - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
     `scoped`, `unsupported` (after #396, a runtime that can't honour it),
     `awaiting-monomind`, `needs-monomind` or `off`. Once monomind reports

@@ -598,15 +598,27 @@ unauthenticated and returns the server version.
   machine or an OS user of its own.
 - A turn's prompt and system prompt (which carry a context key's excerpts) are
   written to files in a private folder (mode 0700) under
-  `~/.monoagent/workspaces/api/.tmp`, outside a sandboxed turn's writable
-  area, and removed when the turn ends (a crash leaves them until the next
-  start, which clears the folder). The mode keeps other OS users out, not
-  other turns: a runtime that can read the disk can read them while the turn
-  runs, another profile's included, and an unconfined runtime can write there.
-  Every other `monomind.Exec` caller writes its files in `~/.monoagent/tmp`
-  (mode 0700, files older than a day swept) for the same reason: the system
-  temp directory is writable by a sandboxed turn, which could rewrite a prompt
-  file before monomind reads it.
+  `~/.monoagent/workspaces/api/.tmp`, outside every turn's writable area, and
+  removed when the turn ends (a crash leaves them until the next start, which
+  clears the folder). The mode keeps other OS users out, not other turns: a
+  runtime that can read the disk can read them while the turn runs, another
+  profile's included, and an unconfined runtime can write there.
+- monomind keeps copies of its own: its hermes, cline and kimicode runners write
+  the prompt, or an agent file, under the temp directory and hand the CLI its
+  path. A sandboxed turn can write the system temp directory and `/tmp`
+  (checked with codex's `workspace-write` on macOS), so it could rewrite such a
+  copy before it is read. Each API turn therefore gets a temp directory of its
+  own (`TMPDIR`, `TMP` and `TEMP`), a folder inside its own folder that no other
+  turn's sandbox reaches, emptied with the rest of the turn's files. That
+  protects the turns of the API, and only those. A turn that does not come
+  through it (a workflow, a chat) keeps monomind's copies in the system temp
+  directory, and a sandboxed API turn can still write `/tmp`: where that is the
+  temp directory (Linux), it could rewrite such a turn's prompt file. On a host
+  that also runs hermes, cline or kimicode turns as the same OS user, run the
+  API server as a user of its own, or with `--confinement chat-only`. The files
+  `monomind.Exec` itself makes for every other caller go to `~/.monoagent/tmp`
+  (mode 0700, files older than a day swept), or to the system temp directory
+  when that folder cannot be made.
 - A runtime can leave a process behind it (a command started with `nohup`, say)
   that keeps its write access to the turn's folder. Emptying the folder does
   not stop it. A sandbox that only confines writes below the turn's folder
@@ -614,9 +626,12 @@ unauthenticated and returns the server version.
   its place. The gateway looks at the folder from its parent, which no turn can
   change, and acts on it through open handles: a link is set aside, not
   followed, so neither such a process nor such a turn can send the emptying
-  outside the folder, and a folder it makes impossible to empty (a tree deeper
-  than 100 levels) is moved to `~/.monoagent/workspaces/api/.quarantine` and
-  replaced. Nothing ends the process. Run the server as a dedicated OS user and
+  outside the folder. A folder it makes impossible to empty (a tree deeper
+  than 100 levels), or too slow to (more than 30 seconds: it keeps changing the
+  tree, or swaps a directory for a FIFO that the walk then waits on) is moved to
+  `~/.monoagent/workspaces/api/.quarantine` and replaced. A walk that was given
+  up on is not waited for; one stuck on a FIFO holds a thread and a few file
+  descriptors until the server restarts. Nothing ends the process. Run the server as a dedicated OS user and
   look at what it leaves.
 - Where a turn's sandbox is rooted is a path: the turn's folder. A process that
   outlives its turn can replace that folder with a link in the moment between
