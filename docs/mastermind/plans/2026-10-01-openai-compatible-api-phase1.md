@@ -12334,6 +12334,51 @@ Expected: The last entry must be older than `061_api_keys.sql`. If master has a 
 
 ---
 
+## Execution record
+
+Executed on 2026-10-01 and 2026-10-02 with `mastermind-execute`, task by task from this plan: 20 task commits (`4bedba53` to
+`2bf42e86`; Task 21 is verification only). Three rounds of independent read-only review of the result followed (round 1: security,
+correctness, CLI, docs and the whole branch; round 2: correctness, security, CLI and docs against code; round 3: the lifecycle of the
+working folders, and a security gate on the round 2 code). Every finding was checked against the code, or reproduced by experiment,
+before anything changed, and every fix began with a test that failed for the right reason and was mutation-checked.
+
+**The code blocks above are the code as first written.** The fixes are separate commits, so where a later commit changed a file the
+tree is authoritative, not this plan.
+
+Round 1 (`0783b199` to `ac46f55e`): read-only leftovers in a slot folder and symlinked folders; one gateway per home (a lock) and a gateway
+built only when something serves it; turns that end cleanly when the server stops or a stream stalls; the model catalog keeps a runtime's
+last good list and never blocks a request on a refresh; monomind's paths and the catalog's errors stay out of responses; a turn's prompt
+files in a private folder; `httpapi` keeps its profile and validates the API settings; `api status` believes a running daemon; key names
+cannot look like key ids; the docs rewritten to match the code.
+
+Round 2 (`6205004d` to `295fb564`): a forced exit waits for the kill timer (an agent CLI could survive it on macOS); a turn the server cuts
+short is a 503; slot folders emptied through an open `os.Root` handle, walked to a bounded depth and set aside in `.quarantine` when they
+cannot be emptied; `monomind.Exec` writes its prompt files in `~/.monoagent/tmp` instead of the system temp directory for every caller; a
+built-in model list that stands in for a failed listing is not trusted; no turn runs for nobody (a context that ended while it started,
+a failed flush, a chunked request's client); only the classified, short part of a runtime's message reaches a caller; `api status` says
+what a daemon that did not mount `/v1`, or has no dedicated listener, means; a listener that cannot bind does not keep the home's
+folders; the docs a second time.
+
+Round 3 (`52f7f40f` to `bde3c52b`): a sandbox that only confines writes below the turn's folder still lets the turn remove that folder and
+put a link in its place (checked with a Seatbelt profile), and the post-turn emptying then wiped what the link pointed to as the OS user:
+the folder is now looked at from its parent, compared with what is opened, and a link is set aside instead of followed; the first requests
+of a new profile no longer fail when they create its folder together; `api status` no longer blames another process for a daemon's
+off-loopback main listener; the model catalog backs off while a runtime's listing keeps failing; every API turn gets a temp directory of
+its own inside its folder (monomind's hermes, cline and kimicode runners write their own copy of a prompt under the temp directory, which a
+sandboxed codex turn may write: checked with `codex sandbox`); emptying a folder is bounded to 30 seconds and in depth (an open on a FIFO
+swapped in for a listed directory waited for a writer that never came: reproduced), after which the folder is set aside; a second
+interrupt no longer waits for the gateway to be built.
+
+Left as they are, on purpose and documented: `--confinement` is one value per process; a path or method the API does not have gets Go's
+plain 404 or 405; the daemon only warns when `--v1-addr` cannot start (`httpapi` exits); the daemon's main listener gives requests no
+grace on shutdown; quarantined folders are never deleted automatically; a process a runtime leaves behind is not ended, and one that
+outlives its turn can re-root the next turn's path-based sandbox in a window of milliseconds; monomind's own copies of a prompt, for turns
+that do not come through the API, stay in the system temp directory, where a sandboxed turn can still write `/tmp` (Linux's default); a
+walk stuck on a FIFO costs a thread until the server restarts. Not fixed here, and not part of this feature: the daemon's workflow engine
+lets the legacy token run another profile's workflow (see below).
+
+---
+
 ## After phase 1
 
 - **Finish the branch.** Run the whole-branch review and then merge or open a pull request. Re-check the migration number first (Task 21).
