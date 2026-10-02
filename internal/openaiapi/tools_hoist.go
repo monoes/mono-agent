@@ -46,8 +46,9 @@ type argNames struct {
 	Props    map[string]json.RawMessage
 	Required []string
 	// Open says the schema lets arguments through that no property names: free-form keys
-	// (additionalProperties that is true or a schema, a non-empty patternProperties), or a
-	// reference that cannot be followed.
+	// (additionalProperties or unevaluatedProperties that is true or a schema, a non-empty
+	// patternProperties), or a reference that cannot be followed ($dynamicRef, a $ref that is not
+	// local or leads nowhere).
 	Open bool
 	// TooDeep says the schema nests combinators and references deeper than is read, and TooWide
 	// that it holds more schemas than is read.
