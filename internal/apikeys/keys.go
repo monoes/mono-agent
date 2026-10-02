@@ -66,6 +66,10 @@ type Update struct {
 	Context *bool
 }
 
+// IsEmpty reports whether the update sets nothing, which a front end refuses as a
+// request for no change. A field set to its zero value (context off) is set.
+func (u Update) IsEmpty() bool { return u.Name == nil && u.Context == nil }
+
 // GenerateKey returns a new random key: KeyPrefix plus 32 random bytes in
 // unpadded base64url.
 func GenerateKey() (string, error) {
