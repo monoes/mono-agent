@@ -43,6 +43,10 @@ type turn struct {
 	// OnDelta receives incremental assistant text, only from a runtime that
 	// streams incrementally.
 	OnDelta func(text string)
+	// Collect, when set, receives the turn's folder after a turn that ended
+	// without an error and before the folder is emptied: what the turn left in it
+	// is read there, and nowhere else.
+	Collect func(dir string)
 }
 
 // slotDir returns the working folder of a profile's limiter slot, created
@@ -234,6 +238,9 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		ctx.Err() == nil && errors.Is(tctx.Err(), context.DeadlineExceeded) {
 		// Our own deadline ended the turn, not a caller who left: a timeout.
 		res.Err = &monomind.ProtocolError{Code: monomind.ErrTimeout, Message: "the turn exceeded the time limit of " + g.cfg.TurnTimeout.String()}
+	}
+	if t.Collect != nil && err == nil && res != nil && res.Err == nil {
+		t.Collect(dir) // the deferred emptyDir runs after this
 	}
 	return res, err
 }
