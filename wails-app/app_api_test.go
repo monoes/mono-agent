@@ -1,0 +1,312 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// fakeAPIKey is a stand-in for the key `api key create` prints once, built
+// at run time so that no key-shaped literal sits in the source. It must never
+// appear in an argv line, nor in any method's result but the create's.
+var fakeAPIKey = "sk-ma-" + strings.Repeat("F", 43)
+
+const (
+	apiStatusJSON = `{"v":1,"profile":"work","keys":{"active":2},` +
+		`"daemon":{"running":true,"api_addr":"127.0.0.1:9322","v1_addr":"0.0.0.0:9443"},` +
+		`"auto":{"available":false,"missing":"the api_auto surface switched on for the profile (monoagentcli jev enable api_auto)"},` +
+		`"listeners":[` +
+		`{"name":"main","addr":"127.0.0.1:9322","loopback":true,"v1":true,"confinement":"any","context_confinement":"chat-only","auto_confinement":"chat-only","confinement_source":"daemon","reachable":true,"v1_answers":true},` +
+		`{"name":"v1","addr":"0.0.0.0:9443","loopback":false,"v1":true,"confinement":"chat-only","context_confinement":"chat-only","auto_confinement":"chat-only","confinement_source":"daemon","reachable":true,"v1_answers":true,"a_field_from_the_future":{"x":1}}]}`
+
+	apiModelsJSON = `{"v":1,"policy":{"for":"network","confinement":"chat-only","context_confinement":"chat-only","auto_confinement":"chat-only","source":"shell"},` +
+		`"models":[` +
+		`{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true},` +
+		`{"id":"codex/gpt-6-astra","runtime":"codex","model":"gpt-6-astra","label":"GPT-6-Astra","confinement":"sandboxed","validated":false,"allowed":false,"context_allowed":false,"auto_allowed":false}],` +
+		`"auto":{"available":true,"key_source":"vault","confinement":"chat-only","candidates":1,"held_back":2}}`
+
+	apiKeyOne = `{"id":"key_abcdefghijkl","profile_id":"work","name":"my-app","prefix":"sk-ma-AbCdEf","context":false,` +
+		`"created_at":"2026-10-01T09:15:00Z","last_used_at":"2026-10-02T08:30:00Z","revoked_at":null}`
+	apiKeyTwo = `{"id":"key_mnopqrstuvwx","profile_id":"work","name":"notes bot","prefix":"sk-ma-GhIjKl","context":true,` +
+		`"created_at":"2026-10-02T07:00:00Z","last_used_at":null,"revoked_at":null}`
+)
+
+// fakeAPICLI installs a monoagentcli stand-in that logs argv (one line per
+// call) and answers each api subcommand with a canned JSON document. The
+// create and the update answers carry a key, so that a method that let one
+// through would show.
+func fakeAPICLI(t *testing.T) (argsLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsLog = filepath.Join(dir, "args.log")
+	withKey := strings.TrimSuffix(apiKeyOne, "}") + `,"key":"` + fakeAPIKey + `"}`
+	revoked := strings.Replace(apiKeyOne, `"revoked_at":null`, `"revoked_at":"2026-10-02T10:00:00Z"`, 1)
+	script := `#!/bin/sh
+echo "$*" >> '` + argsLog + `'
+case "$*" in
+  *" api status"*) echo '` + apiStatusJSON + `';;
+  *" api models"*) echo '` + apiModelsJSON + `';;
+  *" api key list"*) echo '[` + apiKeyOne + `,` + apiKeyTwo + `]';;
+  *" api key create"*) echo '` + withKey + `';;
+  *" api key update"*) echo '` + withKey + `';;
+  *" api key revoke"*) echo '` + revoked + `';;
+  *) echo 'unexpected' >&2; exit 2;;
+esac
+`
+	bin := filepath.Join(dir, "monoagentcli")
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOAGENTCLI_BIN", bin)
+	return argsLog
+}
+
+func TestAPIFuncsShellOutToCLI(t *testing.T) {
+	argsLog := fakeAPICLI(t)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	a.setActiveProfileID("work")
+
+	st, err := a.APIStatus()
+	if err != nil || st.Profile != "work" || st.Keys.Active != 2 || !st.Daemon.Running || st.Daemon.V1Addr != "0.0.0.0:9443" ||
+		st.Auto.Available || !strings.Contains(st.Auto.Missing, "api_auto") || len(st.Listeners) != 2 {
+		t.Fatalf("APIStatus = %+v, %v", st, err)
+	}
+	if l := st.Listeners[1]; l.Name != "v1" || l.Loopback || !l.V1 || l.Confinement != "chat-only" || l.AutoConfinement != "chat-only" ||
+		l.ConfinementSource != "daemon" || !l.Reachable || !l.V1Answers {
+		t.Fatalf("v1 listener = %+v", l)
+	}
+
+	// No policy given: the CLI's own defaults.
+	if _, err := a.APIModels("", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	m, err := a.APIModels("network", "chat-only", "chat-only", "chat-only")
+	if err != nil || m.Policy.For != "network" || m.Policy.AutoConfinement != "chat-only" || len(m.Models) != 2 ||
+		!m.Auto.Available || m.Auto.Candidates != 1 || m.Auto.HeldBack != 2 || m.Auto.Confinement != "chat-only" || m.Auto.KeySource != "vault" {
+		t.Fatalf("APIModels = %+v, %v", m, err)
+	}
+	if x := m.Models[1]; x.ID != "codex/gpt-6-astra" || x.Confinement != "sandboxed" || x.Allowed || x.ContextAllowed || x.AutoAllowed || x.Validated {
+		t.Fatalf("model = %+v", x)
+	}
+
+	keys, err := a.APIKeyList()
+	if err != nil || len(keys) != 2 || keys[0].Name != "my-app" || keys[0].Prefix != "sk-ma-AbCdEf" || keys[0].LastUsedAt == "" ||
+		keys[1].LastUsedAt != "" || !keys[1].Context || keys[0].RevokedAt != "" {
+		t.Fatalf("APIKeyList = %+v, %v", keys, err)
+	}
+
+	created, err := a.APIKeyCreate("my-app", false)
+	if err != nil || created.Key != fakeAPIKey || created.ID != "key_abcdefghijkl" || created.Name != "my-app" {
+		t.Fatalf("APIKeyCreate = %+v, %v", created.APIKey, err)
+	}
+	if _, err := a.APIKeyCreate("notes bot", true); err != nil {
+		t.Fatal(err)
+	}
+	// Only the create returns a key: what update answers is metadata.
+	updated, err := a.APIKeySetContext("key_abcdefghijkl", true)
+	if err != nil || updated.ID != "key_abcdefghijkl" {
+		t.Fatalf("APIKeySetContext = %+v, %v", updated, err)
+	}
+	if raw, _ := json.Marshal(updated); strings.Contains(string(raw), fakeAPIKey) {
+		t.Fatal("a key came out of APIKeySetContext")
+	}
+	if _, err := a.APIKeySetContext("key_abcdefghijkl", false); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := a.APIKeyRevoke("key_abcdefghijkl")
+	if err != nil || revoked.RevokedAt != "2026-10-02T10:00:00Z" {
+		t.Fatalf("APIKeyRevoke = %+v, %v", revoked, err)
+	}
+
+	want := []string{
+		"--profile work --json api status",
+		"--profile work --json api models",
+		"--profile work --json api models --for=network --confinement=chat-only --context-confinement=chat-only --auto-confinement=chat-only",
+		"--profile work --json api key list",
+		"--profile work --json api key create --name=my-app",
+		"--profile work --json api key create --name=notes bot --context",
+		"--profile work --json api key update key_abcdefghijkl --context",
+		"--profile work --json api key update key_abcdefghijkl --no-context",
+		"--profile work --json api key revoke key_abcdefghijkl --yes",
+	}
+	got := loggedArgs(t, argsLog)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if raw, _ := os.ReadFile(argsLog); strings.Contains(string(raw), fakeAPIKey) {
+		t.Fatal("a key appeared in argv")
+	}
+}
+
+// Only the flags that were given reach the CLI, and a value stays the value of
+// its flag whatever it looks like.
+func TestAPIModelsPassesOnlyWhatWasGiven(t *testing.T) {
+	argsLog := fakeAPICLI(t)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	a.setActiveProfileID("work")
+
+	if _, err := a.APIModels("loopback", "", "sandboxed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.APIKeyCreate("--yes", false); err != nil { // the CLI refuses the name; the binding must not let it become a flag
+		t.Fatal(err)
+	}
+	if _, err := a.APIKeyCreate("  padded  ", false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"--profile work --json api models --for=loopback --context-confinement=sandboxed",
+		"--profile work --json api key create --name=--yes",
+		"--profile work --json api key create --name=padded",
+	}
+	if got := loggedArgs(t, argsLog); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestAPIRefusesBadInputBeforeCLI(t *testing.T) {
+	argsLog := fakeAPICLI(t)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	if _, err := a.APIKeyCreate("   ", false); err == nil {
+		t.Fatal("an empty name must be refused")
+	}
+	for _, id := range []string{"", "  ", "--yes", "-x", " --profile"} {
+		if _, err := a.APIKeySetContext(id, true); err == nil {
+			t.Errorf("APIKeySetContext(%q) must be refused", id)
+		}
+		if _, err := a.APIKeyRevoke(id); err == nil {
+			t.Errorf("APIKeyRevoke(%q) must be refused", id)
+		}
+	}
+	if _, err := os.Stat(argsLog); !os.IsNotExist(err) {
+		t.Fatalf("the CLI ran for invalid input: %v", err)
+	}
+}
+
+// An empty list is [] and not null, so the page can map over it.
+func TestAPIEmptyListsAreNotNull(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monoagentcli")
+	script := `#!/bin/sh
+case "$*" in
+  *" api status"*) echo '{"profile":"work","keys":{"active":0},"daemon":{"running":false},"auto":{"available":false},"listeners":null}';;
+  *" api models"*) echo '{"policy":{},"models":null,"auto":{"available":false}}';;
+  *" api key list"*) echo 'null';;
+esac
+`
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOAGENTCLI_BIN", bin)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	st, err := a.APIStatus()
+	if err != nil || st.Listeners == nil {
+		t.Fatalf("APIStatus listeners = %#v, %v", st.Listeners, err)
+	}
+	m, err := a.APIModels("", "", "", "")
+	if err != nil || m.Models == nil {
+		t.Fatalf("APIModels models = %#v, %v", m.Models, err)
+	}
+	keys, err := a.APIKeyList()
+	if err != nil || keys == nil || len(keys) != 0 {
+		t.Fatalf("APIKeyList = %#v, %v", keys, err)
+	}
+}
+
+// CLI errors (stderr) surface as the returned error: the duplicate-name and
+// not-found messages the CLI words are the ones the page shows.
+func TestAPICLIErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monoagentcli")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'an active key with that name already exists in this profile' >&2\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOAGENTCLI_BIN", bin)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	if _, err := a.APIKeyCreate("my-app", false); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := a.APIStatus(); err == nil {
+		t.Fatal("a failing CLI must be an error")
+	}
+}
+
+// TestAPIRealCLI drives the real monoagentcli (opt-in: API_REAL_CLI=1 with
+// MONOAGENTCLI_BIN set): the shapes of its JSON are the ones the structs here
+// decode. It runs the CLI in a scratch HOME with nothing listening where the API
+// would be, so it touches neither the real data nor a real daemon, and it never
+// prints a key.
+func TestAPIRealCLI(t *testing.T) {
+	if os.Getenv("API_REAL_CLI") != "1" || os.Getenv("MONOAGENTCLI_BIN") == "" {
+		t.Skip("set API_REAL_CLI=1 and MONOAGENTCLI_BIN to run against the real CLI")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "none.json"))
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", "127.0.0.1:1")
+	t.Setenv("MONOAGENT_API_V1_ADDR", "")
+	a := newTestApp(t)
+	a.ctx = context.Background()
+
+	if keys, err := a.APIKeyList(); err != nil || len(keys) != 0 {
+		t.Fatalf("initial keys = %+v, %v", keys, err)
+	}
+	created, err := a.APIKeyCreate("real-cli", false)
+	if err != nil || created.ID == "" || created.Name != "real-cli" || created.Context || created.CreatedAt == "" ||
+		created.LastUsedAt != "" || created.RevokedAt != "" || created.ProfileID == "" {
+		t.Fatalf("APIKeyCreate metadata = %+v, %v", created.APIKey, err)
+	}
+	if !strings.HasPrefix(created.Key, "sk-ma-") || len(created.Key) != 49 || !strings.HasPrefix(created.Key, created.Prefix) {
+		t.Fatalf("the created key is not a key (length %d)", len(created.Key))
+	}
+	if _, err := a.APIKeyCreate("real-cli", false); err == nil {
+		t.Fatal("a second key with the same name must be refused")
+	}
+	keys, err := a.APIKeyList()
+	if err != nil || len(keys) != 1 || keys[0].ID != created.ID || keys[0].Prefix != created.Prefix || keys[0].Context {
+		t.Fatalf("keys after create = %+v, %v", keys, err)
+	}
+	if k, err := a.APIKeySetContext(created.ID, true); err != nil || !k.Context {
+		t.Fatalf("context on = %+v, %v", k, err)
+	}
+	if k, err := a.APIKeySetContext(created.ID, false); err != nil || k.Context {
+		t.Fatalf("context off = %+v, %v", k, err)
+	}
+	if _, err := a.APIKeySetContext("key_doesnotexist", true); err == nil {
+		t.Fatal("an unknown key must be an error")
+	}
+
+	st, err := a.APIStatus()
+	if err != nil || st.Profile == "" || st.Keys.Active != 1 || st.Listeners == nil {
+		t.Fatalf("status = %+v, %v", st, err)
+	}
+	for _, l := range st.Listeners {
+		if l.Name == "" || l.Addr == "" || l.Confinement == "" || l.ContextConfinement == "" || l.AutoConfinement == "" || l.ConfinementSource == "" {
+			t.Fatalf("a listener lacks a field: %+v", l)
+		}
+	}
+	m, err := a.APIModels("network", "", "", "")
+	if err != nil || m.Policy.For != "network" || m.Policy.Confinement != "chat-only" || m.Policy.AutoConfinement == "" || m.Models == nil {
+		t.Fatalf("models = %+v, %v", m, err)
+	}
+	for _, x := range m.Models {
+		if x.ID == "" || x.Runtime == "" || x.Confinement == "" {
+			t.Fatalf("a model lacks a field: %+v", x)
+		}
+	}
+
+	revoked, err := a.APIKeyRevoke(created.ID)
+	if err != nil || revoked.RevokedAt == "" {
+		t.Fatalf("revoke = %+v, %v", revoked, err)
+	}
+	if keys, err := a.APIKeyList(); err != nil || len(keys) != 0 {
+		t.Fatalf("keys after revoke = %+v, %v", keys, err)
+	}
+}
