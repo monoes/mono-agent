@@ -325,7 +325,6 @@
     "api": {
       "sectionTitle": "OpenAI-compatible API",
       "intro": "Lets other programs use the agent runtimes installed on this computer through the standard OpenAI API: point any OpenAI SDK or tool at the base URL with one of this profile's API keys.",
-      "toggle": "Show or hide the OpenAI-compatible API settings",
       "loading": "Loading…",
       "statusError": "Error reading status",
       "loadError": "Couldn't read the API status: {{error}}",
@@ -355,7 +354,6 @@
         "exposureLoopbackHint": "Only programs on this computer can reach it.",
         "exposureNetworkHint": "Other computers can reach it, over TLS.",
         "confinement": "Confinement: {{class}}",
-        "confinementHint": "The strongest class of runtime this listener serves.",
         "capsContext": "Keys with context: up to {{class}}",
         "capsAuto": "auto picks up to {{class}}",
         "noteNone": "No listener serves /v1.",

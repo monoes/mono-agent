@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Dashboard deep links: Settings scrolls to a section, Connections opens an
 // automation's drawer on the tab the link names.
+import { useState } from 'react'
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react'
@@ -17,6 +18,10 @@ vi.mock('../wailsjs/go/main/App', () => ({
 }))
 vi.mock('../components/settings/HealthSection.jsx', () => ({ default: () => <div>health-section</div> }))
 vi.mock('../components/settings/JevSection.jsx', () => ({ default: () => <div>jev-section</div> }))
+// The API section asks Settings to take it to the Jev settings, as the dashboard's Jev row does.
+vi.mock('../components/settings/ApiSection.jsx', () => ({
+  default: ({ onNavigate }) => <button onClick={() => onNavigate('settings', { section: 'jev' })}>api-section</button>,
+}))
 vi.mock('./connections/BrowserAutomations.jsx', () => ({
   default: ({ onOpen }) => <div>automations<button onClick={() => onOpen({ id: 'x' })}>open-x</button></div>,
   RecordHelpDialog: () => null,
@@ -50,6 +55,17 @@ describe('dashboard deep links', () => {
   it('Settings without navData does not scroll', () => {
     render(<Settings onNavigate={vi.fn()} navData={null} />)
     expect(scrolled).toEqual([])
+  })
+  it("the API section's jump takes Settings to the Jev section, through the app's own navigate", async () => {
+    // What App.jsx does with navigate(page, data): the page gets the data as navData.
+    function App() {
+      const [navData, setNavData] = useState(null)
+      return <Settings onNavigate={(page, data) => setNavData(data || null)} navData={navData} />
+    }
+    render(<App />)
+    expect(scrolled).toEqual([])
+    fireEvent.click(screen.getByText('api-section'))
+    await waitFor(() => expect(scrolled).toEqual(['jev']))
   })
   it('Connections opens the named automation on the named tab', async () => {
     render(<Connections navData={{ automationId: 'linkedin', tab: 'health' }} />)

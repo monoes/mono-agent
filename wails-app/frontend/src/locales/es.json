@@ -325,7 +325,6 @@
     "api": {
       "sectionTitle": "API compatible con OpenAI",
       "intro": "Permite que otros programas usen los entornos de agentes instalados en este equipo a través de la API estándar de OpenAI: apunta cualquier SDK o herramienta de OpenAI a la URL base con una de las claves de API de este perfil.",
-      "toggle": "Mostrar u ocultar los ajustes de la API compatible con OpenAI",
       "loading": "Cargando…",
       "statusError": "Error al leer el estado",
       "loadError": "No se pudo leer el estado de la API: {{error}}",
@@ -355,7 +354,6 @@
         "exposureLoopbackHint": "Solo los programas de este equipo pueden llegar a ella.",
         "exposureNetworkHint": "Otros equipos pueden llegar a ella, por TLS.",
         "confinement": "Confinamiento: {{class}}",
-        "confinementHint": "La clase más fuerte de entorno que sirve este punto de escucha.",
         "capsContext": "Claves con contexto: hasta {{class}}",
         "capsAuto": "auto elige hasta {{class}}",
         "noteNone": "Ningún punto de escucha sirve /v1.",

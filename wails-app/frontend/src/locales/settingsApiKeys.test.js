@@ -34,4 +34,9 @@ describe('settings.api i18n', () => {
     expect(used.filter(k => !has(enKeys, k))).toEqual([])
     expect(used.filter(k => !has(esKeys, k))).toEqual([])
   })
+
+  it('no settings.api key is left unused', () => {
+    const base = k => k.replace(/_(one|other)$/, '')
+    expect(mine(enKeys).filter(k => !used.includes(base(k)))).toEqual([])
+  })
 })

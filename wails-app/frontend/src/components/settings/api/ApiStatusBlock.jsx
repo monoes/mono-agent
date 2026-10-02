@@ -10,7 +10,7 @@ import { Badge, ClassBadge, label, hint, errText, okText, mono } from './ui.jsx'
 // it says of a listener is what `api status` says (its listenerNote), worded for
 // the page; the policy shown is the running daemon's when it reported one.
 
-const STATE = {
+export const STATE = {
   serving: { tone: 'ok', text: 'settings.api.status.stateServing' },
   down: { tone: 'muted', text: 'settings.api.status.stateDown', note: 'settings.api.status.noteDown' },
   stale: { tone: 'warn', text: 'settings.api.status.stateStale', note: 'settings.api.status.noteStale' },

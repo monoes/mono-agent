@@ -8,6 +8,7 @@ import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
 import BrowserBindingsSection from '../components/settings/BrowserBindingsSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
+import ApiSection from '../components/settings/ApiSection.jsx'
 import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
 import CoderModeSection from '../components/settings/CoderModeSection.jsx'
 
@@ -409,6 +410,8 @@ export default function Settings({ onNavigate, navData }) {
         <div ref={sectionRefs.jev} data-section="jev">
           <JevSection collapsible defaultExpanded={section === 'jev'} />
         </div>
+
+        <ApiSection onNavigate={onNavigate} />
 
         {/* Application Info */}
         <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
