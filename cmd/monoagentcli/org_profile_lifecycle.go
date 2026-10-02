@@ -113,7 +113,7 @@ func newOrgTeardownProfileCmd(env *orgEnv) *cobra.Command {
 	var dryRun bool
 	c := &cobra.Command{
 		Use:   "teardown-profile",
-		Short: "Stop the profile folder's orgs and org daemon and revoke every org grant, endpoint, and autonomy setting of the profile",
+		Short: "Stop the profile folder's orgs and org daemon and revoke every org grant, endpoint, autonomy setting and API key of the profile",
 		Long: "The org half of deleting a profile (select it with the global --profile). It revokes every " +
 			"automation grant and automation-role endpoint of the profile (endpoint ids in a rotation grace " +
 			"window included), removes its autonomy settings, and expires its pending delegated decisions; " +

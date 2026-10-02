@@ -270,8 +270,9 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 // killed. The listeners' own graceful shutdown has already had its share.
 const apiDrainWait = 30 * time.Second
 
-// drain ends every turn of the OpenAI-compatible API that is still running and
-// waits for them to be gone, then for the dedicated listener to stop. A command
+// drain stops the dedicated listener, which gives its running requests their
+// grace and then ends the turns it still has, and waits for it; then it ends
+// every turn that is still running and waits for them to be gone. A command
 // calls it after its servers were told to stop, so that no agent CLI outlives
 // the process that was supposed to supervise it.
 func (a *apiRuntime) drain() {

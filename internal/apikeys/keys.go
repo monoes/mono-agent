@@ -39,7 +39,7 @@ var (
 	// ErrNameTaken means an active key of the profile already has the name.
 	ErrNameTaken = errors.New("an active key with that name already exists in this profile")
 	// ErrInvalidName means the name breaks the naming rule.
-	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit, and not the shape of a key id (key_ and 12 letters or digits)")
+	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit, and not the shape of a key id (key_ followed by 12 characters from a-z and 2-7)")
 )
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)

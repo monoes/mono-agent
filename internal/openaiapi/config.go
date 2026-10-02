@@ -74,9 +74,9 @@ func (c Config) withDefaults() (Config, error) {
 	return c, nil
 }
 
-// ConfigFromEnv reads MONOAGENT_API_MAX_CONCURRENT (a positive integer) and
-// MONOAGENT_API_TURN_TIMEOUT (a duration of at least 10s, such as 15m). An
-// unset variable keeps the default.
+// ConfigFromEnv reads MONOAGENT_API_MAX_CONCURRENT (an integer from 1 to
+// MaxConcurrentLimit) and MONOAGENT_API_TURN_TIMEOUT (a duration of at least
+// 10s, such as 15m). An unset variable keeps the default.
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	var c Config
 	if v := getenv("MONOAGENT_API_MAX_CONCURRENT"); v != "" {
