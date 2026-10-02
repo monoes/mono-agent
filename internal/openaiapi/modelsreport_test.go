@@ -143,7 +143,7 @@ func TestModelsReportJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"v":1,"policy":{"for":"loopback","confinement":"any","context_confinement":"chat-only","auto_confinement":"chat-only","source":"shell"},` +
-		`"models":[{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true,"capabilities":["text"]}],` +
+		`"models":[{"id":"claude/default","runtime":"claude","model":"default","label":"Default","confinement":"chat-only","validated":true,"allowed":true,"context_allowed":true,"auto_allowed":true,"capabilities":["text","tools"]}],` +
 		`"auto":{"available":true,"key_source":"env","confinement":"chat-only","candidates":1}}`
 	if string(got) != want {
 		t.Errorf("json\n got %s\nwant %s", got, want)
@@ -161,17 +161,18 @@ func TestModelsReportJSONShape(t *testing.T) {
 // runtimes of the image list, as far as they can write a file. The report lists every
 // model, whether or not the policy serves it, and so does this.
 func TestModelsReportSaysWhichModelsMakeImages(t *testing.T) {
-	text, both := []string{"text"}, []string{"text", "image"}
+	// claude calls tools whatever the image list says: that is another list.
+	claude, text, both := []string{"text", "tools"}, []string{"text"}, []string{"text", "image"}
 	for _, c := range []struct {
 		name string
 		list []string
 		want map[string][]string
 	}{
-		{"the default list", nil, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": both}},
-		{"a list of one", []string{"antigravity"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": text, "antigravity/default": both}},
-		{"a chat-only runtime in the list cannot", []string{"claude", "codex"}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": both, "antigravity/default": text}},
+		{"the default list", nil, map[string][]string{"claude/default": claude, "codex/gpt-6-astra": both, "antigravity/default": both}},
+		{"a list of one", []string{"antigravity"}, map[string][]string{"claude/default": claude, "codex/gpt-6-astra": text, "antigravity/default": both}},
+		{"a chat-only runtime in the list cannot", []string{"claude", "codex"}, map[string][]string{"claude/default": claude, "codex/gpt-6-astra": both, "antigravity/default": text}},
 		// A list with nothing in it is image generation switched off, which is not the default list.
-		{"switched off", []string{}, map[string][]string{"claude/default": text, "codex/gpt-6-astra": text, "antigravity/default": text}},
+		{"switched off", []string{}, map[string][]string{"claude/default": claude, "codex/gpt-6-astra": text, "antigravity/default": text}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := NewModelsReport(ModelsReportInput{For: "loopback", Policy: Policy{Max: ChatOnly}, Source: ReportSourceShell, Models: reportModels, ImageRuntimes: c.list})

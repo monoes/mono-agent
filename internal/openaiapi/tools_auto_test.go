@@ -170,3 +170,18 @@ func TestAutoWithToolsHasNoCandidatesWhenNoModelCallsThem(t *testing.T) {
 		t.Errorf("%d %s", rec.Code, msg)
 	}
 }
+
+// With tool calling switched off there is no model auto could pick for tools, and the
+// 404 says that and by what, not what to raise.
+func TestAutoWithToolsSaysWhenToolCallingIsSwitchedOff(t *testing.T) {
+	f := &fakeAuto{id: "claude/default", p: 1}
+	h := autoGateway(t, f, withReadAccess, func(_ *Deps, c *Config) { c.ToolRuntimes = []string{} })
+	rec := post(h, autoAnyPolicy, h.key(t, "default", "app", false), toolChatBody("auto", weatherTools, weatherQuestion))
+	msg, _ := decodeErrorBody(t, rec)["message"].(string)
+	if rec.Code != http.StatusNotFound || !strings.Contains(msg, "switched off") || !strings.Contains(msg, "MONOAGENT_API_TOOL_RUNTIMES") || strings.Contains(msg, "--auto-confinement") {
+		t.Errorf("%d %s", rec.Code, msg)
+	}
+	if f.asked != 0 {
+		t.Errorf("Jev was asked %d times for a request without candidates", f.asked)
+	}
+}

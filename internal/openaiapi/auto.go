@@ -106,6 +106,9 @@ func (g *Gateway) withCapability(models []ModelInfo, capability string) []ModelI
 // request that needs capability, for a key whose effective policy is eff.
 func (g *Gateway) noAutoCandidates(ctx context.Context, eff Policy, capability string) string {
 	if capability == capTools {
+		if g.cfg.ToolsOff() {
+			return "a model that calls tools, and tool calling is " + toolsOffBy
+		}
 		if usable, err := g.catalog.Visible(ctx, eff); err == nil && len(g.withCapability(usable, capTools)) > 0 {
 			return fmt.Sprintf("a model that calls tools within what auto may pick (%s here): the models this key may use that call tools run as sandboxed or unconfined, "+
 				"and the operator can raise --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT) to sandboxed or any", eff.ForAuto())

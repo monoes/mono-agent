@@ -31,8 +31,11 @@ type ModelReport struct {
 	// AutoAllowed is true when the auto model may pick it: allowed, and within
 	// --auto-confinement.
 	AutoAllowed bool `json:"auto_allowed"`
-	// Capabilities is what GET /v1/models says the model can do: "text", and "image" for
-	// a model of a runtime in MONOAGENT_API_IMAGE_RUNTIMES that can write the file.
+	// Capabilities is what GET /v1/models says the model can do: "text", "image" for
+	// a model of a runtime in MONOAGENT_API_IMAGE_RUNTIMES that can write the file, and
+	// "tools" for a model that serves tool calling (a runtime of
+	// MONOAGENT_API_TOOL_RUNTIMES whose own tools monomind gates or that monomind can
+	// run read-only).
 	Capabilities []string `json:"capabilities"`
 }
 
@@ -100,6 +103,11 @@ type ModelsReportInput struct {
 	// EffectiveImageRuntimes makes of MONOAGENT_API_IMAGE_RUNTIMES=none, is image
 	// generation switched off.
 	ImageRuntimes []string
+	// ToolRuntimes are the runtimes that serve tool calling, as Config.ToolRuntimes has
+	// them: nil is the default list, and a list with nothing in it, which
+	// EffectiveToolRuntimes makes of MONOAGENT_API_TOOL_RUNTIMES=none, is tool calling
+	// switched off.
+	ToolRuntimes []string
 }
 
 // NewModelsReport marks which models the policy serves, which a key created with
@@ -112,7 +120,7 @@ func NewModelsReport(in ModelsReportInput) ModelsReport {
 		For: in.For, Confinement: in.Policy.String(), ContextConfinement: forContext.String(),
 		AutoConfinement: forAuto.String(), Source: in.Source,
 	}
-	images := Config{ImageRuntimes: in.ImageRuntimes} // the gateway's own rule: nil is the default list, empty is off
+	rules := Config{ImageRuntimes: in.ImageRuntimes, ToolRuntimes: in.ToolRuntimes} // the gateway's own rules: nil is the default list, empty is off
 	allowed, candidates := 0, 0
 	for _, m := range in.Models {
 		if m.Alias {
@@ -122,7 +130,7 @@ func NewModelsReport(in ModelsReportInput) ModelsReport {
 			ID: m.ID, Runtime: m.Runtime, Model: m.Model, Label: m.Label,
 			Confinement: m.Class.String(), Validated: m.Validated, Allowed: in.Policy.Allows(m.Class),
 			ContextAllowed: forContext.Allows(m.Class), AutoAllowed: forAuto.Allows(m.Class),
-			Capabilities: images.Capabilities(m),
+			Capabilities: rules.Capabilities(m),
 		}
 		if row.Allowed {
 			allowed++
@@ -210,6 +218,13 @@ func EffectiveAutoMax(explicit string, getenv func(string) string) (Class, error
 // for "none" (see ParseImageRuntimes).
 func EffectiveImageRuntimes(getenv func(string) string) ([]string, error) {
 	return ParseImageRuntimes(getenv("MONOAGENT_API_IMAGE_RUNTIMES"))
+}
+
+// EffectiveToolRuntimes is the runtimes that serve tool calling: those of
+// MONOAGENT_API_TOOL_RUNTIMES, else the default list, and a list with nothing in it
+// for "none" (see ParseToolRuntimes).
+func EffectiveToolRuntimes(getenv func(string) string) ([]string, error) {
+	return ParseToolRuntimes(getenv("MONOAGENT_API_TOOL_RUNTIMES"))
 }
 
 func effectiveMax(explicit, envName string, getenv func(string) string) (Class, error) {

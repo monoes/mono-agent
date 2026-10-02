@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	goruntime "runtime" // the package has a type named runtime
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,21 +19,31 @@ import (
 // a real monomind 2.22 reports: claude (chat-only), codex (sandboxed) and
 // antigravity (unconfined). The CLI's tests use the same script; it is a test
 // helper of package main and cannot be imported.
-func fakeAPIMonomind(t *testing.T) {
+func fakeAPIMonomind(t *testing.T) { fakeAPIMonomindWith(t, false) }
+
+// fakeAPIMonomindWith is the fake monomind of these tests, and with readOnly one that
+// can run claude and codex read-only (agent-exec-access-read, and "read" among their
+// access modes), which is what a tool leg on codex needs.
+func fakeAPIMonomindWith(t *testing.T, readOnly bool) {
 	t.Helper()
 	if goruntime.GOOS == "windows" {
 		t.Skip("the fake monomind is a shell script")
 	}
+	caps, read, noRead := "", "", ""
+	if readOnly {
+		caps = `,"agent-exec-access-read"`
+		read, noRead = `,"access_modes":["scoped","read","full"]`, `,"access_modes":["scoped","full"]`
+	}
 	script := `#!/bin/sh
 if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
-  echo '{"v":1,"version":"2.22.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","agent-models","agent-exec-sandbox"]}'
+  echo '{"v":1,"version":"2.22.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1","agent-models","agent-exec-sandbox"` + caps + `]}'
   exit 0
 fi
 if [ "$1" = "agent" ] && [ "$2" = "scan" ]; then
   echo '{"v":1,"agents":[
-    {"id":"claude","installed":true,"binary":"/usr/local/bin/claude","version":"2.1.0","install_hint":"","native_sandbox":"monomind","sandbox_modes":["read-only","workspace-write","full"]},
-    {"id":"codex","installed":true,"binary":"/usr/local/bin/codex","version":null,"install_hint":"","native_sandbox":"full","sandbox_modes":["read-only","workspace-write","full"]},
-    {"id":"antigravity","installed":true,"binary":"/usr/local/bin/agy","version":"1.2.14","install_hint":"","native_sandbox":"none","sandbox_modes":["restricted","full"]}]}'
+    {"id":"claude","installed":true,"binary":"/usr/local/bin/claude","version":"2.1.0","install_hint":"","native_sandbox":"monomind","sandbox_modes":["read-only","workspace-write","full"]` + read + `},
+    {"id":"codex","installed":true,"binary":"/usr/local/bin/codex","version":null,"install_hint":"","native_sandbox":"full","sandbox_modes":["read-only","workspace-write","full"]` + read + `},
+    {"id":"antigravity","installed":true,"binary":"/usr/local/bin/agy","version":"1.2.14","install_hint":"","native_sandbox":"none","sandbox_modes":["restricted","full"]` + noRead + `}]}'
   exit 0
 fi
 if [ "$1" = "agent" ] && [ "$2" = "models" ]; then
@@ -58,7 +69,7 @@ exit 2
 // MCP server, so a test sets exactly what it means to.
 func pinAPIEnv(t *testing.T) {
 	t.Helper()
-	for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "TYPESAFE_API_KEY"} {
+	for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "MONOAGENT_API_TOOL_RUNTIMES", "TYPESAFE_API_KEY"} {
 		t.Setenv(v, "")
 	}
 }
@@ -235,10 +246,11 @@ func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
 	pinAPIEnv(t)
 	fakeAPIMonomind(t)
 	s, _ := newAPIKeyServer(t, false)
-	text, both := []string{"text"}, []string{"text", "image"}
+	// claude calls tools whatever the image list says: that is another list.
+	claude, text, both := []string{"text", "tools"}, []string{"text"}, []string{"text", "image"}
 
 	want := map[string][]string{
-		"claude/default": text, "codex/default": both, "codex/gpt-6-astra": both,
+		"claude/default": claude, "codex/default": both, "codex/gpt-6-astra": both,
 		"antigravity/default": both, "antigravity/gemini-3.8-flash-high": both,
 	}
 	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
@@ -247,7 +259,7 @@ func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
 
 	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "agy")
 	want = map[string][]string{
-		"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+		"claude/default": claude, "codex/default": text, "codex/gpt-6-astra": text,
 		"antigravity/default": both, "antigravity/gemini-3.8-flash-high": both,
 	}
 	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
@@ -257,7 +269,7 @@ func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
 	// none switches image generation off: no model makes images.
 	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "none")
 	want = map[string][]string{
-		"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+		"claude/default": claude, "codex/default": text, "codex/gpt-6-astra": text,
 		"antigravity/default": text, "antigravity/gemini-3.8-flash-high": text,
 	}
 	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
@@ -269,6 +281,55 @@ func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
 	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "co dex")
 	if _, err := callAPITool(t, s, "api_models_list", nil); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_IMAGE_RUNTIMES") || strings.Contains(err.Error(), "co dex") {
 		t.Errorf("a bad MONOAGENT_API_IMAGE_RUNTIMES: %v, want a fixed text that names the variable", err)
+	}
+}
+
+// The document says which models call tools, from the MCP server's own environment
+// (MONOAGENT_API_TOOL_RUNTIMES), as `api models --json` does from the shell's: the
+// default list when it is unset, as far as monomind can run a runtime read-only.
+func TestAPIModelsListSaysWhichModelsCallTools(t *testing.T) {
+	callers := func(r openaiapi.ModelsReport) string {
+		var ids []string
+		for _, m := range r.Models {
+			if slices.Contains(m.Capabilities, "tools") {
+				ids = append(ids, m.ID)
+			}
+		}
+		return strings.Join(ids, ",")
+	}
+	for _, c := range []struct {
+		name     string
+		readOnly bool   // monomind can run claude and codex read-only
+		list     string // MONOAGENT_API_TOOL_RUNTIMES
+		want     string
+	}{
+		{"the default list", true, "", "claude/default,codex/default,codex/gpt-6-astra"},
+		{"monomind that cannot run codex read-only", false, "", "claude/default"},
+		{"codex alone", true, "codex", "codex/default,codex/gpt-6-astra"},
+		{"a runtime that cannot run read-only is not served", true, "agy", ""},
+		{"switched off", true, "none", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pinAPIEnv(t)
+			fakeAPIMonomindWith(t, c.readOnly)
+			s, _ := newAPIKeyServer(t, false)
+			t.Setenv("MONOAGENT_API_TOOL_RUNTIMES", c.list)
+			if got := callers(modelsReport(t, s, nil)); got != c.want {
+				t.Errorf("the models that call tools: %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	// A bad list is the server's own mistake: the refusal names the variable and, as for
+	// the others, repeats nothing.
+	pinAPIEnv(t)
+	fakeAPIMonomind(t)
+	s, _ := newAPIKeyServer(t, false)
+	for _, bad := range []string{"co dex", "none,codex"} {
+		t.Setenv("MONOAGENT_API_TOOL_RUNTIMES", bad)
+		if _, err := callAPITool(t, s, "api_models_list", nil); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_TOOL_RUNTIMES") || strings.Contains(err.Error(), bad) {
+			t.Errorf("a bad MONOAGENT_API_TOOL_RUNTIMES (%q): %v, want a fixed text that names the variable", bad, err)
+		}
 	}
 }
 

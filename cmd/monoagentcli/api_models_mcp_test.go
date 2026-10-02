@@ -191,7 +191,7 @@ func TestAPIModelsListIsTheDocumentOfAPIModelsJSON(t *testing.T) {
 			case "none":
 				fakeMonomindWithAgents(t, "")
 			}
-			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "TYPESAFE_API_KEY"} {
+			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "MONOAGENT_API_TOOL_RUNTIMES", "TYPESAFE_API_KEY"} {
 				t.Setenv(v, "")
 			}
 			for k, v := range c.env {
@@ -271,6 +271,53 @@ func TestAPIModelsListSaysWhichModelsMakeImagesLikeAPIModels(t *testing.T) {
 			sort.Strings(images)
 			if got := strings.Join(images, ","); got != c.images {
 				t.Errorf("the models that make images: %s, want %s", got, c.images)
+			}
+			asTool := strings.Replace(strings.TrimSuffix(cli, "\n"), `"source": "shell"`, `"source": "mcp"`, 1)
+			if tool != asTool {
+				t.Errorf("api_models_list is not the document of api models --json: %s", firstDifference(asTool, tool))
+			}
+		})
+	}
+}
+
+// Both say which models call tools, from the environment each of them runs in, and say
+// the same: the capability is part of the one document. A monomind that can run runtimes
+// read-only is what lets codex call them.
+func TestAPIModelsListSaysWhichModelsCallToolsLikeAPIModels(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		env   string // MONOAGENT_API_TOOL_RUNTIMES
+		tools string // the models that call tools, sorted
+	}{
+		{"the default list", "", "claude/default,codex/default,codex/gpt-6-astra"},
+		{"codex alone", "codex", "codex/default,codex/gpt-6-astra"},
+		{"claude alone", "claude", "claude/default"},
+		{"a runtime that cannot run read-only", "agy", ""},
+		{"switched off", "none", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := newAPITestDB(t)
+			fakeReadOnlyMonomind(t)
+			for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "TYPESAFE_API_KEY"} {
+				t.Setenv(v, "")
+			}
+			t.Setenv("MONOAGENT_API_TOOL_RUNTIMES", c.env)
+
+			cli, _, err := runAPI(t, db, "default", true, "models")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool := mcpModelsList(t, db, "default", nil)
+
+			var tools []string
+			for _, m := range decodeModels(t, cli).Models {
+				if slices.Contains(m.Capabilities, "tools") {
+					tools = append(tools, m.ID)
+				}
+			}
+			sort.Strings(tools)
+			if got := strings.Join(tools, ","); got != c.tools {
+				t.Errorf("the models that call tools: %q, want %q", got, c.tools)
 			}
 			asTool := strings.Replace(strings.TrimSuffix(cli, "\n"), `"source": "shell"`, `"source": "mcp"`, 1)
 			if tool != asTool {

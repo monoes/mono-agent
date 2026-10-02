@@ -152,6 +152,9 @@ func New(d Deps, c Config) (*Gateway, error) {
 	if cfg.ImagesOff() {
 		d.Logf("image generation is %s", imagesOffBy)
 	}
+	if cfg.ToolsOff() {
+		d.Logf("tool calling is %s", toolsOffBy)
+	}
 	g.catalog.onFirstLoad = g.logImageRuntimes
 	return g, nil
 }

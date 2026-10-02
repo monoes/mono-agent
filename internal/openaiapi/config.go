@@ -50,8 +50,9 @@ type Config struct {
 	// and a list with nothing in it switches image generation off; read it through
 	// ImageRuntimeList.
 	ImageRuntimes []string
-	// ToolRuntimes are the runtimes that serve tool calling. Empty means
-	// defaultToolRuntimes; read it through ToolRuntimeList.
+	// ToolRuntimes are the runtimes that serve tool calling. nil means
+	// defaultToolRuntimes, and a list with nothing in it switches tool calling
+	// off; read it through ToolRuntimeList.
 	ToolRuntimes []string
 }
 

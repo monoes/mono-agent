@@ -250,6 +250,10 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if err != nil { // a fixed text, like the others: the shared parser quotes the value
 		return nil, errors.New("MONOAGENT_API_IMAGE_RUNTIMES must be a comma-separated list of runtime ids, such as codex,antigravity")
 	}
+	toolRuntimes, err := openaiapi.EffectiveToolRuntimes(os.Getenv)
+	if err != nil { // a fixed text too
+		return nil, errors.New("MONOAGENT_API_TOOL_RUNTIMES must be a comma-separated list of runtime ids, such as claude,codex")
+	}
 	rt, err := s.runtime()
 	if err != nil {
 		return nil, err
@@ -261,7 +265,7 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 	return openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
-		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models, ImageRuntimes: imageRuntimes,
+		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models, ImageRuntimes: imageRuntimes, ToolRuntimes: toolRuntimes,
 		Auto: openaiapi.DefaultAuto(rt.db.DB).Status(ctx, rt.profileID),
 	}), nil
 }

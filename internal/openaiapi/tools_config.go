@@ -14,24 +14,39 @@ import (
 var defaultToolRuntimes = []string{"claude", "codex"}
 
 // ToolRuntimeList is the runtimes that serve tool calling: the configured ones,
-// or the defaults. The result is read only.
+// or the defaults when none were configured. A list configured with nothing in it
+// is empty, not the default. The result is read only.
 func (c Config) ToolRuntimeList() []string {
-	if len(c.ToolRuntimes) == 0 {
+	if c.ToolRuntimes == nil {
 		return defaultToolRuntimes
 	}
 	return c.ToolRuntimes
 }
 
+// ToolsOff reports whether tool calling is switched off: the list is empty, which
+// MONOAGENT_API_TOOL_RUNTIMES=none makes it.
+func (c Config) ToolsOff() bool { return len(c.ToolRuntimeList()) == 0 }
+
+// toolsOffBy says that tool calling was switched off, and by what.
+const toolsOffBy = "switched off on this server (the operator set MONOAGENT_API_TOOL_RUNTIMES to none)"
+
 // ParseToolRuntimes reads MONOAGENT_API_TOOL_RUNTIMES: runtime ids separated by
 // commas. Case and spaces do not matter, "agy" means antigravity and a repeat
-// counts once. An empty value is the default list.
+// counts once. An empty value is the default list, and "none" alone is the off
+// switch: a list with nothing in it, so that no model serves tool calling.
 func ParseToolRuntimes(v string) ([]string, error) {
 	if strings.TrimSpace(v) == "" {
 		return slices.Clone(defaultToolRuntimes), nil
 	}
+	if strings.EqualFold(strings.TrimSpace(v), "none") {
+		return []string{}, nil
+	}
 	var out []string
 	for _, part := range strings.Split(v, ",") {
 		rt := strings.ToLower(strings.TrimSpace(part))
+		if rt == "none" {
+			return nil, fmt.Errorf("MONOAGENT_API_TOOL_RUNTIMES: none switches tool calling off and is not a runtime to list with others, got %q", v)
+		}
 		if alias, ok := aliases[rt]; ok {
 			rt = alias
 		}
@@ -57,6 +72,8 @@ func (c Config) ServesTools(m ModelInfo) bool { return c.toolsRefusal(m) == nil 
 func (c Config) toolsRefusal(m ModelInfo) *apiError {
 	list := c.ToolRuntimeList()
 	switch {
+	case len(list) == 0:
+		return errUnsupported("tools", "tool calling is "+toolsOffBy)
 	case !slices.Contains(list, m.Runtime):
 		return errUnsupported("tools", fmt.Sprintf("tool calling is not available on model %s: it is served on %s only (the operator sets that list with MONOAGENT_API_TOOL_RUNTIMES)", m.ID, strings.Join(list, ", ")))
 	case m.Class != ChatOnly && !m.ReadAccess:
