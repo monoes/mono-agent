@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -96,7 +97,7 @@ func (g *Gateway) pickAuto(ctx context.Context, profileID, prompt string, candid
 	}
 	cctx, cancel := context.WithTimeout(ctx, g.cfg.AutoTimeout)
 	defer cancel()
-	id, p, err := g.deps.Auto.Choose(cctx, profileID, clipRunes(prompt, autoPromptRunes), options)
+	id, p, err := g.ask(cctx, profileID, clipRunes(prompt, autoPromptRunes), options)
 	reason := ""
 	switch {
 	case err != nil:
@@ -111,6 +112,35 @@ func (g *Gateway) pickAuto(ctx context.Context, profileID, prompt string, candid
 	}
 	g.deps.Logf("auto: Jev did not decide for profile %s (%s): the rule picks", profileID, reason)
 	return autoPick{Model: ruleChoice(candidates), By: "rule"}
+}
+
+// ask puts the question to Jev and gives up when ctx ends, even when Choose does
+// not look at ctx: resolving the profile's Jev key can wait on a keyring, and the
+// request holds a slot meanwhile. An abandoned question finishes in its own
+// goroutine, which is why a panic in it is turned into an error here: nothing
+// else would recover it, and it would take the server down.
+func (g *Gateway) ask(ctx context.Context, profileID, prompt string, options map[string]string) (string, float64, error) {
+	type answer struct {
+		id  string
+		p   float64
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		defer func() {
+			if recover() != nil { // what it says is dropped: it could quote the prompt
+				done <- answer{err: errors.New("the question panicked")}
+			}
+		}()
+		id, p, err := g.deps.Auto.Choose(ctx, profileID, prompt, options)
+		done <- answer{id, p, err}
+	}()
+	select {
+	case a := <-done:
+		return a.id, a.p, a.err
+	case <-ctx.Done():
+		return "", 0, ctx.Err()
+	}
 }
 
 // ruleChoice is the model auto uses when Jev does not decide: the cheapest, then

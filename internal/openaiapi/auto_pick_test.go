@@ -196,3 +196,57 @@ func TestPickAutoSendsAtMostTheFirst4000Characters(t *testing.T) {
 		t.Errorf("Jev was sent %d characters, want 4000", n)
 	}
 }
+
+// A question that does not look at its context (resolving the profile's Jev key
+// can wait on a keyring) must not hold the request past the budget either: the
+// slot is held while Jev is asked.
+func TestPickAutoDoesNotWaitForAQuestionThatIgnoresItsContext(t *testing.T) {
+	hang := make(chan struct{})
+	t.Cleanup(func() { close(hang) })
+	h := newHarness(t, okTurn("ok"), func(d *Deps, c *Config) {
+		d.Auto = AutoFuncs{
+			Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
+			Choose: func(context.Context, string, string, map[string]string) (string, float64, error) {
+				<-hang
+				return "codex/gpt-6-astra", 1, nil
+			},
+		}
+		c.AutoTimeout = 50 * time.Millisecond
+	})
+	cands := []ModelInfo{cand("claude/default", ChatOnly, true, 0.001, true, 900), cand("codex/gpt-6-astra", Sandboxed, true, 0.01, true, 4000)}
+
+	done := make(chan autoPick, 1)
+	go func() { done <- h.g.pickAuto(context.Background(), "alice", "hi", cands) }()
+	select {
+	case pick := <-done:
+		if pick.By != "rule" || pick.Model.ID != "claude/default" {
+			t.Errorf("pick = %s by %s, want the rule's claude/default", pick.Model.ID, pick.By)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("pickAuto waited for a question that never returns")
+	}
+}
+
+// A panic in the question takes the rule's way out, and what it says is not logged:
+// it would run in a goroutine of its own, where nothing recovers it.
+func TestPickAutoSurvivesAQuestionThatPanics(t *testing.T) {
+	h := newHarness(t, okTurn("ok"), func(d *Deps, _ *Config) {
+		d.Auto = AutoFuncs{
+			Status: func(context.Context, string) AutoStatus { return AutoStatus{Available: true} },
+			Choose: func(_ context.Context, _ string, prompt string, _ map[string]string) (string, float64, error) {
+				panic("boom: " + prompt)
+			},
+		}
+	})
+	cands := []ModelInfo{cand("claude/default", ChatOnly, true, 0.001, true, 900), cand("codex/gpt-6-astra", Sandboxed, true, 0.01, true, 4000)}
+
+	pick := h.g.pickAuto(context.Background(), "alice", "a secret prompt", cands)
+	if pick.By != "rule" || pick.Model.ID != "claude/default" {
+		t.Errorf("pick = %s by %s, want the rule's claude/default", pick.Model.ID, pick.By)
+	}
+	for _, line := range h.logged() {
+		if strings.Contains(line, "secret prompt") {
+			t.Errorf("the panic's message reached the log: %q", line)
+		}
+	}
+}
