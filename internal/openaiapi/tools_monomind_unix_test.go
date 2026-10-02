@@ -185,6 +185,27 @@ func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
 	}
 }
 
+// monomind refuses a function whose name, with its prefix, is longer than 64 characters (a
+// name of 60 failed in the spike), so a name of 55 to 64 is given to it, and to the model, by
+// an alias: the real monomind takes the alias and the call that comes back is the client's own
+// name again, with its arguments.
+//
+//	MONOMIND_SMOKE=1 go test ./internal/openaiapi -run TestALongToolName -v
+func TestALongToolNameOverTheRealMonomind(t *testing.T) {
+	h, _ := realMonomindWithAFakeCodex(t, "single") // one call, of the function named by FAKE_CODEX_TOOL
+	t.Setenv("FAKE_CODEX_TOOL", aliasOf(longTool))  // what the model is told to call
+	secret := h.key(t, "default", "app", false)
+	tool := `{"type":"function","function":{"name":"` + longTool + `","description":"Does a thing.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}`
+	rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", `"tools":[`+tool+`]`, weatherQuestion))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a function of 58 characters: %d %s", rec.Code, rec.Body)
+	}
+	calls := decodeToolReply(t, rec).Choices[0].Message.ToolCalls
+	if len(calls) != 1 || calls[0].Function.Name != longTool || calls[0].Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("the call must carry the name the client declared and its arguments: %s", rec.Body)
+	}
+}
+
 // A coding client sends every tool of every MCP server it has, which is more than 64: the most
 // the gateway takes is 128, and the real monomind must take that many in one tools file.
 //

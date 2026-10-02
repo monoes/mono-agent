@@ -9,8 +9,11 @@ import (
 const (
 	maxTools = 128
 	// maxToolName is 54, not the 64 of the runtimes: monomind puts a prefix
-	// (mcp__org__) in front of the name before the runtime sees it.
+	// (mcp__org__) in front of the name before the runtime sees it. A name of 55 to
+	// maxDeclaredName characters, which is OpenAI's own limit, is known to monomind and
+	// to the model by an alias (toolAlias).
 	maxToolName        = 54
+	maxDeclaredName    = 64
 	maxToolDescription = 16 << 10
 	maxToolSchema      = 64 << 10
 	// maxToolResult is the longest text of one tool message.
@@ -23,11 +26,14 @@ const (
 	maxCallName     = 128
 )
 
-var toolNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,54}$`)
+var toolNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // toolDecl is one function the request declares, validated.
 type toolDecl struct {
+	// Name is the name the client declared, and the one it sees. Wire is the one monomind
+	// and the model know the function by: Name, or the alias of a name of 55 or more.
 	Name        string
+	Wire        string
 	Description string
 	// Params is the parameters schema as the client sent it, compacted: nil when
 	// it sent none.

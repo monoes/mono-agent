@@ -33,6 +33,9 @@ type ChatRequest struct {
 	// toolDecls and toolPick are what validateChat made of Tools and ToolChoice.
 	toolDecls []toolDecl
 	toolPick  toolChoice
+	// toolWire maps the name of a declared function that monomind knows by an alias to
+	// the alias, and toolDeclared maps it back: only functions with an alias are in them.
+	toolWire, toolDeclared map[string]string
 }
 
 // StreamOptions is the request's stream_options.

@@ -417,8 +417,11 @@ paths:
         `tools`), content parts that are not text (images, audio, files), and a
         `response_format` of any other type than `text` or `json_object`.
 
-        **Tool calling.** `tools` (up to 128 functions: `name` of 1 to 54
-        characters of `[A-Za-z0-9_-]`, unique; a `description`; `parameters`, a
+        **Tool calling.** `tools` (up to 128 functions: `name` of 1 to 64
+        characters of `[A-Za-z0-9_-]`, unique (a name of 55 or more is known to
+        the runtime and the model by an alias, and every response, record and
+        history entry carries yours; an alias that is another function's name
+        is 400 `invalid_value`); a `description`; `parameters`, a
         JSON schema object, at most 64 KiB; `strict` is accepted and ignored),
         `tool_choice` (`none` passes no tools, `auto`, `required` or
         `{"type":"function","function":{"name":…}}`; the last two are a
@@ -868,7 +871,7 @@ components:
           type: object
           required: [name]
           properties:
-            name: { type: string, pattern: '^[A-Za-z0-9_-]{1,54}$', description: "Unique among the request's tools." }
+            name: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$', description: "Unique among the request's tools. A name of 55 or more is known to the model by an alias of 54 characters." }
             description: { type: string, maxLength: 16384 }
             parameters:
               type: object

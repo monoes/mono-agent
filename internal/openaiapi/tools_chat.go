@@ -56,7 +56,9 @@ func (g *Gateway) toolChat(w http.ResponseWriter, r *http.Request, pr Principal,
 	// function called Bash would open the runtime's own Bash. Exec refuses the leg
 	// (ErrSandboxRequired) rather than run it without.
 	t.RequireSandbox = true
-	if line := toolChoiceLine(req.toolPick); line != "" {
+	pick := req.toolPick
+	pick.Name = req.wireName(pick.Name) // the model knows the function by its alias, if it has one
+	if line := toolChoiceLine(pick); line != "" {
 		t.System = strings.TrimSpace(t.System + "\n\n" + line)
 	}
 	run := toolRun{pr: pr, req: req, m: m, eff: eff, id: id, t: t, plan: g.planLeg(pr, req, m, t.Prompt)}
@@ -116,16 +118,17 @@ func (g *Gateway) answerToolLeg(w http.ResponseWriter, r *http.Request, run tool
 // It also counts the call when it does not match its declared schema: such a call
 // is returned all the same, and the client decides.
 func (g *Gateway) rememberCall(run toolRun, pl plannedLeg) (call wireToolCall, badArgs int) {
+	name := run.req.declaredName(pl.Call.Name) // the client knows the function by the name it declared
 	call = wireToolCall{ID: newRequestID("call_"), Type: "function",
-		Function: wireToolFunc{Name: pl.Call.Name, Arguments: compactArgs(pl.Call.Args)}}
+		Function: wireToolFunc{Name: name, Arguments: compactArgs(pl.Call.Args)}}
 	if sid := pl.Res.SessionID; sid != "" {
 		g.conts.put(contRecord{CallID: call.ID, KeyID: run.pr.KeyID, ProfileID: run.pr.ProfileID, Model: run.m.ID,
-			Name: pl.Call.Name, Session: sid, ToolsHash: toolsHash(run.req.toolDecls), Convo: convoHash(run.m.Runtime, run.req, len(run.req.Messages)),
+			Name: name, Session: sid, ToolsHash: toolsHash(run.req.toolDecls), Convo: convoHash(run.m.Runtime, run.req, len(run.req.Messages)),
 			Args: argsHash(call.Function.Arguments)})
 	}
 	badArgs = 1
 	for _, d := range run.req.toolDecls {
-		if d.Name == pl.Call.Name {
+		if d.Name == name {
 			if argsMatch(d, pl.Call.Args) {
 				badArgs = 0
 			}

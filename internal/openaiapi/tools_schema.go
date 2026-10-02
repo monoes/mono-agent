@@ -48,7 +48,7 @@ func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 			}
 			desc += "Parameters (JSON Schema):\n" + string(d.Params)
 		}
-		specs = append(specs, monomind.ToolSpec{Name: d.Name, Description: desc, Schema: schema})
+		specs = append(specs, monomind.ToolSpec{Name: d.Wire, Description: desc, Schema: schema})
 	}
 	return specs
 }

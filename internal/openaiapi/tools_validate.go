@@ -19,6 +19,8 @@ func validateTools(req *ChatRequest) *apiError {
 	}
 	decls := make([]toolDecl, 0, len(req.Tools))
 	declared := make(map[string]bool, len(req.Tools))
+	known := make(map[string]bool, len(req.Tools)) // the names the runtime knows the functions by
+	var wire, back map[string]string
 	for i, raw := range req.Tools {
 		d, e := parseToolDecl(i, raw)
 		if e != nil {
@@ -27,7 +29,16 @@ func validateTools(req *ChatRequest) *apiError {
 		if declared[d.Name] {
 			return errInvalid("invalid_value", fmt.Sprintf("tools[%d].function.name", i), "tool names must be unique")
 		}
-		declared[d.Name] = true
+		if known[d.Wire] { // an alias that is the name of another function, or of another alias
+			return errInvalid("invalid_value", fmt.Sprintf("tools[%d].function.name", i), "a function name collides with the name another function is known by: rename one of them")
+		}
+		declared[d.Name], known[d.Wire] = true, true
+		if d.Wire != d.Name {
+			if wire == nil {
+				wire, back = map[string]string{}, map[string]string{}
+			}
+			wire[d.Name], back[d.Wire] = d.Wire, d.Name
+		}
 		decls = append(decls, d)
 	}
 	pick, e := parseToolChoice(req.ToolChoice, declared)
@@ -35,6 +46,7 @@ func validateTools(req *ChatRequest) *apiError {
 		return e
 	}
 	req.toolDecls, req.toolPick = decls, pick
+	req.toolWire, req.toolDeclared = wire, back
 	return nil
 }
 
@@ -63,7 +75,7 @@ func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
 		return toolDecl{}, errInvalid("invalid_value", base+".function.description",
 			fmt.Sprintf("a description may have at most %d bytes", maxToolDescription))
 	}
-	d := toolDecl{Name: t.Function.Name, Description: t.Function.Description}
+	d := toolDecl{Name: t.Function.Name, Wire: toolAlias(t.Function.Name), Description: t.Function.Description}
 	param := base + ".function.parameters"
 	var e *apiError
 	if d.Params, e = inspectParams(param, t.Function.Parameters); e != nil {

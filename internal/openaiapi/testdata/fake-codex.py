@@ -16,6 +16,7 @@ the result) behaves like a resume:
 Env:
   FAKE_CODEX_LOG    a file that gets one JSON line per process (pid, argv, prompt)
   FAKE_CODEX_STATE  a folder where it counts the rounds of each thread
+  FAKE_CODEX_TOOL   the function it calls (default get_weather)
 """
 import json
 import os
@@ -25,6 +26,7 @@ import sys
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 mode = os.environ.get("FAKE_CODEX_MODE", "single")
+tool = os.environ.get("FAKE_CODEX_TOOL", "get_weather")
 state = os.environ.get("FAKE_CODEX_STATE", "/tmp")
 os.makedirs(state, exist_ok=True)
 
@@ -63,9 +65,9 @@ if mode == "text":
 elif temps:
     text = "FINAL: temps seen %s" % ",".join(temps)
 elif mode == "parallel":
-    text = "looking both up\n" + fence("get_weather", {"city": "Paris"}) + "\n" + fence("get_weather", {"city": "Tokyo"})
+    text = "looking both up\n" + fence(tool, {"city": "Paris"}) + "\n" + fence(tool, {"city": "Tokyo"})
 else:
-    text = "checking\n" + fence("get_weather", {"city": "Paris"})
+    text = "checking\n" + fence(tool, {"city": "Paris"})
 
 emit({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": text}})
 emit({"type": "turn.completed", "usage": {"input_tokens": 1000 + len(prompt) // 4, "cached_input_tokens": 0, "output_tokens": 30}})

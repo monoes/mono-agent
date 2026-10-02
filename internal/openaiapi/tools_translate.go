@@ -98,8 +98,8 @@ func replayPrompt(req *ChatRequest, active bool) string {
 				b.WriteString("\n" + m.Content.Text)
 			}
 			for _, c := range m.ToolCalls {
-				names[c.ID] = c.Function.Name
-				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", c.Function.Name, argumentsInPrompt(c.Function.Arguments))
+				names[c.ID] = req.wireName(c.Function.Name)
+				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", names[c.ID], argumentsInPrompt(c.Function.Arguments))
 			}
 		case "tool":
 			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text))
@@ -142,7 +142,7 @@ func argumentsText(raw json.RawMessage) string {
 func resumePrompt(req *ChatRequest, ai int) string {
 	names := map[string]string{}
 	for _, c := range req.Messages[ai].ToolCalls {
-		names[c.ID] = c.Function.Name
+		names[c.ID] = req.wireName(c.Function.Name)
 	}
 	var parts []string
 	for _, m := range req.Messages[ai+1:] {
