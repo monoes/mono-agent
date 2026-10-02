@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -211,121 +210,6 @@ func (g *Gateway) cleanSlots() {
 			}
 		}
 	}
-}
-
-// maxCleanDepth is how deep emptyDir walks. A runtime builds nothing this deep
-// by accident (a node_modules tree is a few dozen levels), and a walk holds a
-// file descriptor per level: a chain of directories deeper than this is a way to
-// exhaust the process's descriptors, so such a folder is set aside, not walked.
-const maxCleanDepth = 100
-
-// afterLstatHook runs after emptyDir has looked at the folder it was asked to
-// empty and before it opens it: a variable so a test can change what is at that
-// path at the moment a process that outlived its turn would.
-var afterLstatHook func()
-
-// afterListHook runs after emptyDir has listed a directory and before it acts
-// on what it found: a variable so a test can change the tree at the moment a
-// process that outlived its turn would.
-var afterListHook func()
-
-// emptyDir removes everything inside dir and keeps dir. It reports whether the
-// folder is empty afterwards, and false, without removing anything, for a tree
-// deeper than maxCleanDepth. A runtime can leave a read-only directory behind it
-// (Go's module cache does), which a removal cannot empty, so the directories are
-// opened up first: the gateway owns these folders.
-//
-// All of it is done through open handles, never by path. dir is first looked at
-// from its parent, which no turn can change (a sandbox that confines writes
-// below the turn's folder still lets the turn remove that folder and put a link
-// in its place): a link, or anything that is not a directory, is not a folder to
-// empty, whatever it points to. The handle opened on it must be the one that was
-// looked at, since a link that stays inside the parent is followed by a root
-// handle. Below dir a process can outlive its turn and keep changing the tree, and
-// a directory it swaps for a link while this walks cannot send the chmod, the
-// listing or the removal outside dir: the handle refuses a link that leaves it.
-func emptyDir(dir string) bool {
-	parent, err := os.OpenRoot(filepath.Dir(dir))
-	if err != nil {
-		return false
-	}
-	defer parent.Close()
-	name := filepath.Base(dir)
-	fi, err := parent.Lstat(name) // a link at name is not followed
-	if err != nil || !fi.IsDir() {
-		return false
-	}
-	if afterLstatHook != nil {
-		afterLstatHook()
-	}
-	_ = parent.Chmod(name, 0o700)
-	root, err := parent.OpenRoot(name)
-	if err != nil {
-		return false
-	}
-	defer root.Close()
-	if cur, err := root.Lstat("."); err != nil || !os.SameFile(fi, cur) {
-		return false
-	}
-	if !openUp(root, 0) {
-		return false
-	}
-	entries, err := readDir(root)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		_ = root.RemoveAll(e.Name())
-	}
-	left, err := readDir(root)
-	return err == nil && len(left) == 0
-}
-
-// readDir lists the directory root is.
-func readDir(root *os.Root) ([]os.DirEntry, error) {
-	f, err := root.Open(".")
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return f.ReadDir(-1)
-}
-
-// openUp gives the owner access to every real directory under root, down to
-// maxCleanDepth, and reports whether the tree is no deeper. A link is reported
-// as a link by the listing, so it is neither opened nor entered; a directory
-// that was swapped for one after the listing is refused by the handle, and the
-// folder is then reported as one that cannot be emptied.
-func openUp(root *os.Root, depth int) bool {
-	entries, err := readDir(root)
-	if err != nil {
-		return false
-	}
-	if afterListHook != nil {
-		afterListHook()
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if depth+1 > maxCleanDepth {
-			return false
-		}
-		_ = root.Chmod(e.Name(), 0o700)
-		sub, err := root.OpenRoot(e.Name())
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // removed meanwhile
-		}
-		if err != nil {
-			return false
-		}
-		ok := openUp(sub, depth+1)
-		sub.Close()
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // setAside moves a folder that could not be emptied under the scratch root's

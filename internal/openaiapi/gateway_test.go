@@ -192,7 +192,7 @@ func TestEmptyDirChecksThatWhatItOpenedIsWhatItLookedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	swapped := false
-	afterLstatHook = func() {
+	afterLstatHook.set(func() {
 		if swapped {
 			return
 		}
@@ -201,8 +201,8 @@ func TestEmptyDirChecksThatWhatItOpenedIsWhatItLookedAt(t *testing.T) {
 		if err := os.Symlink("slot-1", slot0); err != nil { // a link inside the parent
 			t.Error(err)
 		}
-	}
-	t.Cleanup(func() { afterLstatHook = nil })
+	})
+	t.Cleanup(func() { afterLstatHook.set(nil) })
 
 	if emptyDir(slot0) {
 		t.Error("the folder it opened was not the one it looked at: it must say it could not empty it")
@@ -236,7 +236,7 @@ func TestEmptyDirSurvivesALinkPlantedWhileItWalks(t *testing.T) {
 		t.Fatal(err)
 	}
 	swapped := false
-	afterListHook = func() {
+	afterListHook.set(func() {
 		if swapped {
 			return
 		}
@@ -245,8 +245,8 @@ func TestEmptyDirSurvivesALinkPlantedWhileItWalks(t *testing.T) {
 		if err := os.Symlink(outside, filepath.Join(dir, "z")); err != nil {
 			t.Error(err)
 		}
-	}
-	t.Cleanup(func() { afterListHook = nil })
+	})
+	t.Cleanup(func() { afterListHook.set(nil) })
 
 	emptyDir(dir)
 	if !swapped {

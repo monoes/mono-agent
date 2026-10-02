@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 )
@@ -62,6 +63,60 @@ func TestRunTurnSetsAsideAFolderItCannotEmptyAndRunsInAFreshOne(t *testing.T) {
 	}
 	if lines := strings.Join(h.logged(), "\n"); !strings.Contains(lines, quarantineDirName) {
 		t.Errorf("the operator must be told where the folder went: %q", lines)
+	}
+}
+
+// A folder a process that outlived its turn keeps changing may never be finished
+// with, so emptying it is bounded in time, and one that takes too long is set aside
+// as one that cannot be emptied, instead of holding the request, and its slot of
+// the limiter, until it ends.
+func TestRunTurnSetsAsideAFolderThatTakesTooLongToEmpty(t *testing.T) {
+	withBudget(t, 200*time.Millisecond)
+	var cwd string
+	var leftovers int
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		cwd, leftovers = opts.Cwd, len(besidesTmp(opts.Cwd))
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	slot := filepath.Join(h.scratch, profileFolder(""), "slot-0")
+	if err := os.MkdirAll(slot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slot, "old.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	var calls atomic.Int32
+	afterLstatHook.set(func() { // the first emptying, before the turn, never finishes
+		if calls.Add(1) == 1 {
+			<-release
+		}
+	})
+	t.Cleanup(func() { afterLstatHook.set(nil) })
+	t.Cleanup(func() { close(release) })
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0})
+		errc <- err
+	}()
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("a folder that takes too long to empty must be set aside, not refuse the request: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request waited for a folder it should have given up on")
+	}
+	if cwd != slot || leftovers != 0 {
+		t.Errorf("the turn must run in an empty folder at the same path: cwd=%q (want %q), %d entries", cwd, slot, leftovers)
+	}
+	aside, _ := os.ReadDir(filepath.Join(h.scratch, quarantineDirName))
+	if len(aside) != 1 {
+		t.Fatalf("the old folder must be set aside under %s: %d entries", quarantineDirName, len(aside))
+	}
+	if _, err := os.Stat(filepath.Join(h.scratch, quarantineDirName, aside[0].Name(), "old.txt")); err != nil {
+		t.Errorf("what was in the folder must be in the set-aside one: %v", err)
 	}
 }
 
