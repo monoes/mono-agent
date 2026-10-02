@@ -71,7 +71,7 @@
 
 ## Outcome
 
-- Live canary, 2026-10-02 (monomind 2.22.0): antigravity passed (a 496,150 byte JPEG in 71.9 s, the runtime saved it at the top of the slot folder, `X-Monoagent-Sandbox: unsupported`); codex was skipped, its usage limit answered 429 `insufficient_quota`, so the codex path is untested live.
+- Live canary, 2026-10-02 (monomind 2.22.0): antigravity passed (a 496,150 byte JPEG in 71.9 s, the runtime saved it at the top of the slot folder, `X-Monoagent-Sandbox: unsupported`); codex was skipped, its usage limit answered 429 `insufficient_quota` (it was run after the review round: see below).
 - `go test ./...` shows only the 8 failures known on this machine; `GOOS=windows go build ./...`, `go build -tags nosocial ./...` and `redocly lint` pass.
 
 ## Review round (2026-10-02)
@@ -84,4 +84,4 @@ Two read-only reviews (security, correctness) of the branch led to these changes
 - [x] Earlier in the round: images win over `NO_IMAGE_TOOL` (a line of its own only), no collection after a turn that never said done, a field of the wrong type is `invalid_value`, refusals log the model, a success logs what was left out.
 - [x] The slot and emptying tests test what they say (one slot, a start-of-turn case, the endings of a request, a refused request while the slot is held).
 - [x] SECURITY.md, AGENTS.md, CHANGELOG, `openapi.yaml`, the quickstart (the proxy timeout), `ref api` and spec §7.3 say the same.
-- Live: antigravity returned a JPEG from the folder it was given (74.9 s).
+- Live, after the per-turn folder: antigravity returned a JPEG (74.9 s) and codex, for the first time through the gateway, a PNG (105.3 s), each from the folder it was given.

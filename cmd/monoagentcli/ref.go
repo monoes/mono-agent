@@ -2755,7 +2755,7 @@ OPENAI-COMPATIBLE API (/v1)
   at no more than 64 entries. NO_IMAGE_TOOL is 400 image_generation_unsupported,
   no image 502 image_generation_failed with the runtime's reply (300
   characters). The body is streamed and the client has two minutes to read it.
-  About a minute and 40,000 input tokens per
+  A minute or two and 40,000 input tokens per
   image, on the runtime's account. "auto" picks among the image models auto may
   pick: none while --auto-confinement is chat-only, then 404 model_not_found
   saying what to raise.

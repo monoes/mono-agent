@@ -497,7 +497,7 @@ paths:
       summary: Generate images (OpenAI-compatible API)
       description: |
         Runs one turn of a runtime that can make images and returns the image
-        files the turn saved, as base64. Expect about a minute and some 40,000
+        files the turn saved, as base64. Expect a minute or two and some 40,000
         input tokens per request, on the runtime's own account.
 
         Which runtimes make images is configuration: `MONOAGENT_API_IMAGE_RUNTIMES`

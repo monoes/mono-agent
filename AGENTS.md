@@ -611,9 +611,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   was left out by reason and count, never by name, for a success too. The
   response is written as the images are encoded, the slot is given back as soon
   as the turn is over, and a client has two minutes to read the body. In the
-  probes of 2026-10-01 a turn took 40 to 52 s and about
-  40,000 input tokens, on the runtime's account (codex and antigravity report no
-  cost). `"model": "auto"` has Jev pick among the image models `auto` may pick:
+  probes and live checks of 2026-10-01 and 2026-10-02 a turn took 40 to 105 s
+  (codex 105 s, antigravity 75 s) and about 40,000 input tokens, on the
+  runtime's account (codex and antigravity report no cost). `"model": "auto"` has Jev pick among the image models `auto` may pick:
   image runtimes are `sandboxed` or `unconfined`, so with `--auto-confinement`
   at its default `chat-only` there are none and it answers 404 `model_not_found`
   saying what to raise (`--auto-confinement`, or the confinement flags when the

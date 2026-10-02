@@ -668,7 +668,7 @@ of the turn, before they are returned): the name keeps a writer that does not lo
 out, it does not keep out one that does. Run the server as a dedicated OS user and
 look at what it leaves, as below.
 
-An image turn took 40 to 75 seconds and about 40,000 input tokens in the
+An image turn took 40 to 105 seconds and about 40,000 input tokens in the
 probes, on the runtime's own account (codex and antigravity report no cost), and
 there is no quota per key: the concurrency cap is the bound. Its prompt goes to
 the runtime's provider, and with `auto` the first 4,000 characters of it also to

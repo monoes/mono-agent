@@ -288,8 +288,8 @@ fs.writeFileSync(`circle.${ext}`, bytes);
 
 What to expect:
 
-- A request takes about a minute and uses some 40,000 input tokens of the
-  runtime, on your account (the probes: 40, 52 and 75 seconds; codex and
+- A request takes a minute or two and uses some 40,000 input tokens of the
+  runtime, on your account (the probes: 40, 52, 75 and 105 seconds; codex and
   antigravity report no cost). The 10 minute turn timeout and the 4 turns at
   once are the same as for chat. The body is capped at 64 KiB.
 - `n` is 1 to 4 and is passed on in words: a runtime may save fewer images, and
@@ -343,7 +343,7 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
   set, the listener speaks TLS even on a loopback bind. Turn proxy buffering
   off for streaming (the server already sends `X-Accel-Buffering: no`).
 - Raise the proxy's read timeout above the turn time. An image request sends no
-  byte while its turn runs, a minute or more (40 to 75 seconds in the probes, up
+  byte while its turn runs, a minute or more (40 to 105 seconds in the probes, up
   to `MONOAGENT_API_TURN_TIMEOUT`, 10 minutes by default), and nginx's default
   `proxy_read_timeout` is 60 seconds: the client would get a 504 from the
   proxy while the turn is still running. For nginx, `proxy_read_timeout 11m;`
