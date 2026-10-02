@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go; `internal/mcp`, `internal/apikeys`, `internal/openaiapi`; `internal/testdb`; a fake monomind script (`MONOMIND_BIN`) as the CLI tests use.
 
-**Base:** `d0f9fb16` (branch `feat/openai-api-jev-auto`, which added `--auto-confinement`). `api models --json` there carries `policy.auto_confinement`, `models[].auto_allowed` and `auto.{confinement,candidates,held_back}`; the shared report and the tool carry them too.
+**Base:** branch `feat/openai-api-jev-auto` at `eab85b0d` (it added `--auto-confinement` at `d0f9fb16`, and the breaker of the Jev questions after it). `api models --json` there carries `policy.auto_confinement`, `models[].auto_allowed` and `auto.{confinement,candidates,held_back}`; the shared report and the tool carry them too.
 
 ## Global Constraints
 
@@ -70,7 +70,7 @@
 
 ## How it was executed
 
-- The base moved from `0aff731f` to `d0f9fb16` (`--auto-confinement`) before any code was written, so the branch starts there and the shared report carries `auto_allowed`, `policy.auto_confinement` and `auto.{confinement,held_back}`.
+- The base moved from `0aff731f` to `d0f9fb16` (`--auto-confinement`) before any code was written, so the branch started there and the shared report carries `auto_allowed`, `policy.auto_confinement` and `auto.{confinement,held_back}`. It moved on to `eab85b0d` (the breaker) before the end, and the branch was rebased onto it: only the CHANGELOG had a conflict, in prose.
 - Added to the plan: `apikeys.Update.IsEmpty`, so that `api key update` and `api_key_update` refuse "nothing to change" on one rule (task 3, its own commit).
 - Tests drive dependent calls through `callTool` on a server that stays open, because `Serve` answers on goroutines and closes the database when its input ends; only the wire-level checks (the key exactly once, a refused create, grant mode) go through `Serve`, over a pipe.
 - Failure messages of the key tests go through `scrubbed`, and fields are read without a panicking assertion: a mutation run printed a throwaway key and panicked once, which is how both were found.
