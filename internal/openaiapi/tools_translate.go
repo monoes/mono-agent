@@ -3,6 +3,7 @@ package openaiapi
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -78,9 +79,9 @@ func trailingRound(req *ChatRequest) (int, bool) {
 // replayPrompt renders a whole conversation that carries tool calls and results
 // as one prompt, for a turn that starts from nothing: a call is the line "(called
 // the function NAME with arguments ARGS)" under the assistant's words, and a
-// result is "[tool NAME (ID)]" and its text. active says whether the turn may
-// call a function again. System messages are not part of it: they are the system
-// prompt.
+// result is "[tool NAME (ID)]" and its text, fenced as data. active says whether
+// the turn may call a function again. System messages are not part of it: they are
+// the system prompt.
 func replayPrompt(req *ChatRequest, active bool) string {
 	names := map[string]string{} // call id to function name
 	var b strings.Builder
@@ -98,7 +99,7 @@ func replayPrompt(req *ChatRequest, active bool) string {
 				fmt.Fprintf(&b, "\n(called the function %s with arguments %s)", c.Function.Name, argumentsText(c.Function.Arguments))
 			}
 		case "tool":
-			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], m.ToolCallID, m.Content.Text)
+			fmt.Fprintf(&b, "\n\n[tool %s (%s)]\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text))
 		default:
 			fmt.Fprintf(&b, "\n\n[%s]\n%s", m.Role, m.Content.Text)
 		}
@@ -109,6 +110,26 @@ func replayPrompt(req *ChatRequest, active bool) string {
 		b.WriteString("\n\n" + plainToolOutro)
 	}
 	return b.String()
+}
+
+var (
+	// resultFenceRE matches an opening or closing tag of the fence a result sits
+	// in, in any case and spacing.
+	resultFenceRE = regexp.MustCompile(`(?i)<\s*/?\s*function_result`)
+	// turnMarkerRE matches the start of a line that would open a turn of the
+	// transcript: [user], [assistant], [tool NAME (ID)] and the other roles.
+	turnMarkerRE = regexp.MustCompile(`(?im)^([ \t]*)\[(user|assistant|tool|system|developer|function)\b`)
+)
+
+// fenceResult renders the result of a function as data. A result is whatever the
+// client's function returned (a file, a page, an API's answer), so nothing in it
+// may close the fence or pass for a turn of the transcript: the tags of the fence
+// and the markers at the start of a line are defanged, as the knowledge excerpts'
+// are, and the words stay readable.
+func fenceResult(text string) string {
+	text = resultFenceRE.ReplaceAllStringFunc(text, func(m string) string { return "&lt;" + m[1:] })
+	text = turnMarkerRE.ReplaceAllString(text, "${1}&#91;${2}")
+	return "<function_result>\n" + text + "\n</function_result>"
 }
 
 // argumentsText is the arguments of a call of the request as text: the string
@@ -122,8 +143,8 @@ func argumentsText(raw json.RawMessage) string {
 }
 
 // resumePrompt is what a resumed session is told: the results of the call it
-// ended at and whatever the user said after them. ai is the index of the
-// assistant message that made the call (trailingRound). The session already
+// ended at, fenced as data, and whatever the user said after them. ai is the index
+// of the assistant message that made the call (trailingRound). The session already
 // holds everything before, so nothing before is repeated.
 func resumePrompt(req *ChatRequest, ai int) string {
 	names := map[string]string{}
@@ -134,7 +155,7 @@ func resumePrompt(req *ChatRequest, ai int) string {
 	for _, m := range req.Messages[ai+1:] {
 		switch m.Role {
 		case "tool":
-			parts = append(parts, fmt.Sprintf("Result of %s (call %s): %s", names[m.ToolCallID], m.ToolCallID, m.Content.Text))
+			parts = append(parts, fmt.Sprintf("Result of %s (call %s):\n%s", names[m.ToolCallID], m.ToolCallID, fenceResult(m.Content.Text)))
 		case "user":
 			parts = append(parts, m.Content.Text)
 		}

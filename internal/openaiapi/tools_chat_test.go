@@ -162,7 +162,7 @@ func TestToolsALegEndsAtItsCallAndTheFollowUpResumesTheSession(t *testing.T) {
 	if resumed.Resume != "sess-1" || len(resumed.Tools) != 1 {
 		t.Errorf("the follow-up must continue the session with the tools declared: resume %q tools %d", resumed.Resume, len(resumed.Tools))
 	}
-	if !strings.Contains(resumed.Prompt, "Result of get_weather (call "+call.ID+"): 21 C, fog") || strings.Contains(resumed.Prompt, "What is the weather") {
+	if !strings.Contains(resumed.Prompt, "Result of get_weather (call "+call.ID+"):\n"+fenced("21 C, fog")) || strings.Contains(resumed.Prompt, "What is the weather") {
 		t.Errorf("the resumed prompt is the result and nothing the session already holds: %q", resumed.Prompt)
 	}
 }
@@ -178,7 +178,7 @@ func TestToolsAFollowUpWithoutARecordReplaysTheTranscript(t *testing.T) {
 	if opts.Resume != "" || len(opts.Tools) != 1 {
 		t.Errorf("a replay starts a session of its own and declares the tools again: resume %q tools %d", opts.Resume, len(opts.Tools))
 	}
-	for _, want := range []string{"[user]\nWhat is the weather in Paris?", "(called the function get_weather with arguments {\"city\":\"Paris\"})", "[tool get_weather (call_from_another_server)]\n21 C", toolOutro} {
+	for _, want := range []string{"[user]\nWhat is the weather in Paris?", "(called the function get_weather with arguments {\"city\":\"Paris\"})", "[tool get_weather (call_from_another_server)]\n" + fenced("21 C"), toolOutro} {
 		if !strings.Contains(opts.Prompt, want) {
 			t.Errorf("the transcript lacks %q:\n%s", want, opts.Prompt)
 		}
@@ -324,7 +324,7 @@ func TestToolsChoiceNonePassesNoTools(t *testing.T) {
 	if len(opts.Tools) != 0 || opts.OnToolCall != nil || opts.Resume != "" || opts.MaxTurns != 0 || opts.Access != "" {
 		t.Errorf("a turn without tools carries none of a leg's options: %+v", opts)
 	}
-	if !strings.Contains(opts.Prompt, "[tool get_weather (call_1)]\n21 C") || !strings.HasSuffix(opts.Prompt, plainToolOutro) {
+	if !strings.Contains(opts.Prompt, "[tool get_weather (call_1)]\n"+fenced("21 C")) || !strings.HasSuffix(opts.Prompt, plainToolOutro) {
 		t.Errorf("the history is rendered for a turn that cannot call:\n%s", opts.Prompt)
 	}
 }
