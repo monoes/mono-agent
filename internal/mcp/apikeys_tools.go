@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -179,6 +180,16 @@ func toolAPIKeyRevoke(ctx context.Context, s *Server, args json.RawMessage) (int
 	return store.Revoke(ctx, profileID, a.ID)
 }
 
+// maxEnumArgLen is far above the longest value any argument of api_models_list takes
+// ("sandboxed", "loopback"): a longer one is refused before it is looked at.
+const maxEnumArgLen = 32
+
+// errBadClass is the refusal of a confinement class. It names the environment
+// variable too, because that is what gives the value when the argument is left out.
+func errBadClass(arg, env string) error {
+	return fmt.Errorf("%s (or %s, when it is left out) must be chat-only, sandboxed or any", arg, env)
+}
+
 func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
 	var a struct {
 		For                string `json:"for"`
@@ -189,22 +200,33 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if err := decodeArgs(args, &a); err != nil {
 		return nil, err
 	}
+	// The refusals below are fixed texts, and a value is looked at only after its
+	// length: a caller may have put anything, a key included, into an argument, and
+	// what it sent does not come back. The shared parsers say more (they quote the
+	// value, which suits a command line) and are left as they are.
+	for _, arg := range []struct{ name, value string }{
+		{"for", a.For}, {"confinement", a.Confinement}, {"context_confinement", a.ContextConfinement}, {"auto_confinement", a.AutoConfinement},
+	} {
+		if len(arg.value) > maxEnumArgLen {
+			return nil, fmt.Errorf("%s is too long", arg.name)
+		}
+	}
 	if a.For == "" {
 		a.For = "loopback"
 	}
 	addr, err := openaiapi.ListenerAddr(a.For)
 	if err != nil {
-		return nil, fmt.Errorf("for %v", err)
+		return nil, errors.New("for must be loopback or network")
 	}
 	policy, err := openaiapi.EffectivePolicy(addr, a.Confinement, os.Getenv)
 	if err != nil {
-		return nil, fmt.Errorf("confinement (MONOAGENT_API_CONFINEMENT): %v", err)
+		return nil, errBadClass("confinement", "MONOAGENT_API_CONFINEMENT")
 	}
 	if policy.ContextMax, err = openaiapi.EffectiveContextMax(a.ContextConfinement, os.Getenv); err != nil {
-		return nil, fmt.Errorf("context_confinement (MONOAGENT_API_CONTEXT_CONFINEMENT): %v", err)
+		return nil, errBadClass("context_confinement", "MONOAGENT_API_CONTEXT_CONFINEMENT")
 	}
 	if policy.AutoMax, err = openaiapi.EffectiveAutoMax(a.AutoConfinement, os.Getenv); err != nil {
-		return nil, fmt.Errorf("auto_confinement (MONOAGENT_API_AUTO_CONFINEMENT): %v", err)
+		return nil, errBadClass("auto_confinement", "MONOAGENT_API_AUTO_CONFINEMENT")
 	}
 	rt, err := s.runtime()
 	if err != nil {

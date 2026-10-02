@@ -187,20 +187,36 @@ func TestAPIModelsListRefusesBadValues(t *testing.T) {
 	fakeAPIMonomind(t)
 	s, _ := newAPIKeyServer(t, false)
 
+	// The refusals are fixed texts: a caller may have put anything, a key included,
+	// into an argument, and the answer does not repeat it.
 	for _, c := range []struct {
 		args map[string]any
 		want string
 	}{
-		{map[string]any{"for": "moon"}, `for must be loopback or network, got "moon"`},
-		{map[string]any{"confinement": "everything"}, "confinement (MONOAGENT_API_CONFINEMENT): unknown confinement"},
-		{map[string]any{"context_confinement": "everything"}, "context_confinement (MONOAGENT_API_CONTEXT_CONFINEMENT): unknown confinement"},
-		{map[string]any{"auto_confinement": "everything"}, "auto_confinement (MONOAGENT_API_AUTO_CONFINEMENT): unknown confinement"},
-		{map[string]any{"for": 3}, "invalid arguments"},
+		{map[string]any{"for": "moon"}, "for must be loopback or network"},
+		{map[string]any{"confinement": "everything"}, "confinement (or MONOAGENT_API_CONFINEMENT, when it is left out) must be chat-only, sandboxed or any"},
+		{map[string]any{"context_confinement": "everything"}, "context_confinement (or MONOAGENT_API_CONTEXT_CONFINEMENT, when it is left out) must be chat-only, sandboxed or any"},
+		{map[string]any{"auto_confinement": "everything"}, "auto_confinement (or MONOAGENT_API_AUTO_CONFINEMENT, when it is left out) must be chat-only, sandboxed or any"},
+		{map[string]any{"for": strings.Repeat("x", 32)}, "for must be loopback or network"}, // the longest that is looked at
+		{map[string]any{"for": strings.Repeat("x", 33)}, "for is too long"},
+		{map[string]any{"confinement": strings.Repeat("x", 33)}, "confinement is too long"},
+		{map[string]any{"context_confinement": strings.Repeat("x", 33)}, "context_confinement is too long"},
+		{map[string]any{"auto_confinement": strings.Repeat("x", 33)}, "auto_confinement is too long"},
 	} {
 		text, err := callAPITool(t, s, "api_models_list", c.args)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%v: %q, %v; want an error containing %q", c.args, text, err, c.want)
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%v: %q, %v; want exactly %q", c.args, text, err, c.want)
 		}
+	}
+	if _, err := callAPITool(t, s, "api_models_list", map[string]any{"for": 3}); err == nil || !strings.Contains(err.Error(), "invalid arguments") {
+		t.Errorf("for must be a string: %v", err)
+	}
+
+	// When the bad value is the MCP server's own environment, the refusal names the
+	// variable, so that whoever reads it knows where to look.
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "everything")
+	if _, err := callAPITool(t, s, "api_models_list", nil); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_CONFINEMENT") || strings.Contains(err.Error(), "everything") {
+		t.Errorf("a bad MONOAGENT_API_CONFINEMENT: %v, want a fixed text that names the variable", err)
 	}
 }
 
