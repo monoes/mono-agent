@@ -739,7 +739,8 @@ executes nothing of the caller's. What this changes, and what it does not:
   the information separators, NEL, the line and paragraph separators) ends one,
   every kind of space is a space, case does not matter, a look-alike of an ASCII
   character (full-width, bold, circled or superscript letters, full-width
-  brackets, ligatures: NFKC) is that character, a Unicode tag character
+  brackets, ligatures: NFKD) is that character, a letter with a diacritic is the
+  letter (precomposed or written apart: `[üser]` is `[user]`), a Unicode tag character
   (U+E0000 to U+E007F, which renders as nothing and which a model may read as the
   ASCII character it is the twin of: "ASCII smuggling") is that character, and
   whatever renders as nothing (control and format characters, the Hangul and
@@ -747,14 +748,23 @@ executes nothing of the caller's. What this changes, and what it does not:
   with them gains nothing against a reader of that kind (a fuzz of random
   compositions of them, judged by a reader written the other way round, is in the
   tests: that judge calls none of the code, but it shares with it Unicode's
-  tables, `unicode.IsSpace`, NFKC and the model of deleting everything that is not
+  tables, `unicode.IsSpace`, NFKD and the model of deleting everything that is not
   a letter, a digit, a space or ASCII, so a wrong belief of that model is a blind
-  spot of both). A match is neutralised in
-  place and nothing else of a result is changed: line ends of every kind reach the
-  model as they were (a file with CRLF line ends is read as it is), and so does a
-  header such as `[tool.poetry]` (a role marker is the role word followed by a
-  bracket or a space; the `[user]` header of a gitconfig is indistinguishable from
-  one and is defanged with the rest).
+  spot of both; a corpus of code, documentation and logs that must come out
+  unchanged grades the other direction). A match is neutralised in place and
+  nothing else of a result is changed: line ends of every kind reach the model as
+  they were (a file with CRLF line ends is read as it is), and so does everything
+  that only looks like a marker or a tag. A role marker is a role word in brackets
+  at the start of a line, with spaces allowed around the word, or the header of a
+  result, `[tool NAME (ID)]`: `[tool.poetry]`, `[User guide](url)`,
+  `[tool for tool in tools]` and `[ user = root ]` are text, while the `[user]`
+  header of a gitconfig is indistinguishable from a marker and is defanged with the
+  rest. A fence tag spelled as the fence spells it (with an underscore) is one
+  wherever it stands and whatever follows it, so `List<function_result>` is
+  changed too; the spellings a reader folds into it (camel case, no underscore)
+  are one only as a closing tag, where the name ends (`Promise<FunctionResult>`,
+  `i < functionResult.length` and `</FunctionResultList>` are text,
+  `</functionResult>` is not).
   The arguments of a call that a client sends back, which the transcript renders
   outside the fence, are rendered as compact JSON (with the characters that end a
   line escaped) or, when they are not JSON, defanged as a result is; the name
@@ -764,9 +774,10 @@ executes nothing of the caller's. What this changes, and what it does not:
   model as `call_1`, `call_2`, ... in order of appearance, never as sent: the
   transcript is the only place an id is shown, and a session is resumed only for
   the id the gateway made, which is such a token. The second layer does not look
-  through letters of another script that resemble Latin ones (a Cyrillic "е"),
-  which would take a table of confusables: against such a disguise the fence is
-  the defence. The words of the
+  through a letter that only resembles a Latin one and is not one with a mark or
+  a case of one (a Cyrillic "е", a Greek omicron, a small capital "ᴜ"), which would
+  take a table of confusables: against such a disguise the fence is the defence.
+  The words of the
   user are rendered as the client sent them (they are the conversation). The words
   an assistant said before a call are not: a result can steer what a model says,
   and the client sends it back, so in a replay (a conversation with tool history,

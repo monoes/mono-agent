@@ -730,11 +730,15 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the prompt (`<function_result>`), with the fence's tags and any line that
   would open a turn of the transcript defanged, reading the text as a model does
   (every kind of line break ends a line, whatever renders as nothing is not
-  there, look-alikes of ASCII are ASCII by NFKC and Unicode tag characters
-  (U+E0000 to U+E007F) are their ASCII twins, case does not matter; a match is
-  neutralised in place and nothing else changes, CRLF included, and
-  `[tool.poetry]` is not a marker: `internal/openaiapi/tools_defang.go`; the fence
-  is the defence, this a second layer). The arguments of a call that the client
+  there, look-alikes of ASCII are ASCII by NFKD, a letter with a diacritic is the
+  letter and Unicode tag characters (U+E0000 to U+E007F) are their ASCII twins,
+  case does not matter; a match is neutralised in place and nothing else changes,
+  CRLF included. A marker is a role word in brackets at the start of a line or
+  `[tool NAME (ID)]`, so `[tool.poetry]`, `[User guide](url)` and
+  `[tool for tool in tools]` are text; the fence's tag spelled with an underscore
+  is a tag anywhere, the spellings without one only as a closing tag where the
+  name ends: `internal/openaiapi/tools_defang.go`; the fence is the defence, this
+  a second layer). The arguments of a call that the client
   sends back are rendered as compact JSON, or defanged like a result when they
   are not JSON, and the name of such a call must be printable ASCII without
   `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the parameter, never
