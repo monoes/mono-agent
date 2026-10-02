@@ -858,7 +858,7 @@ components:
           required: [name, arguments]
           properties:
             name: { type: string }
-            arguments: { type: string, description: "A string of JSON: the arguments the model gave, at most 256 KiB in a request.", example: '{"city":"Paris"}' }
+            arguments: { type: string, description: "A string of JSON: the arguments the model gave. A request is bounded by its body limit and nothing else (a result is at most 256 KiB).", example: '{"city":"Paris"}' }
     ToolDefinition:
       type: object
       required: [type, function]

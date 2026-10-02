@@ -117,7 +117,6 @@ func TestValidateToolsRejections(t *testing.T) {
 		{"a call of another type", toolBody(``, call(`{"id":"c","type":"custom","function":{"name":"f","arguments":"{}"}}`)), "unsupported_parameter", "messages[1].tool_calls[0].type"},
 		{"a call without a name", toolBody(``, call(`{"id":"c","type":"function","function":{"arguments":"{}"}}`)), "invalid_value", "messages[1].tool_calls[0].function.name"},
 		{"arguments as an object", toolBody(``, call(`{"id":"c","type":"function","function":{"name":"f","arguments":{"a":1}}}`)), "invalid_value", "messages[1].tool_calls[0].function.arguments"},
-		{"arguments too long", toolBody(``, call(`{"id":"c","type":"function","function":{"name":"f","arguments":"`+strings.Repeat("a", maxCallArguments+1)+`"}}`)), "invalid_value", "messages[1].tool_calls[0].function.arguments"},
 	}
 	for _, c := range cases {
 		err := validateChat(decodeRequest(t, c.body))

@@ -253,9 +253,6 @@ func validateHistoryCall(param string, c ToolCall) *apiError {
 		if args[0] != '"' {
 			return errInvalid("invalid_value", param+".function.arguments", "arguments must be a string of JSON")
 		}
-		if len(args) > maxCallArguments {
-			return errInvalid("invalid_value", param+".function.arguments", fmt.Sprintf("arguments may have at most %d bytes", maxCallArguments))
-		}
 	}
 	return nil
 }

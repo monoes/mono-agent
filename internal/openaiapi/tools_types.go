@@ -16,11 +16,11 @@ const (
 	// maxToolResult is the longest text of one tool message.
 	maxToolResult = 256 << 10
 	// The calls of an assistant message of the request: how many, and how long
-	// the id, the name and the arguments of each may be.
-	maxHistoryCalls  = 64
-	maxCallID        = 128
-	maxCallName      = 128
-	maxCallArguments = 256 << 10
+	// the id and the name of each may be. Their arguments have no limit of their own:
+	// a model may write a file into them, and the request's body limit bounds them.
+	maxHistoryCalls = 64
+	maxCallID       = 128
+	maxCallName     = 128
 )
 
 var toolNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,54}$`)
