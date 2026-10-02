@@ -332,7 +332,8 @@ dangerous calls.
   [OpenAI-compatible API](#openai-compatible-api-v1): metadata only, never a
   key), `api_models_list` (the document of `api models --json`: the models
   `/v1` would serve with each one's confinement class and capabilities, `image`
-  among them for the models of `MONOAGENT_API_IMAGE_RUNTIMES`. It takes the flags of
+  among them for the models of `MONOAGENT_API_IMAGE_RUNTIMES` and `tools` for
+  those of `MONOAGENT_API_TOOL_RUNTIMES` that can call them. It takes the flags of
   that command as `for`, `confinement`, `context_confinement` and
   `auto_confinement`, otherwise reads this MCP server's own environment, and
   asks the installed runtimes for their model lists: the first call takes a
@@ -635,7 +636,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   declared one in the spike, so any other runtime, and a model of a listed one
   that monomind cannot run read-only (see below), is 400 `unsupported_parameter`
   on `tools` before anything starts; `GET /v1/models` gives `"tools"` among the
-  capabilities of the models that serve them, and `api models --json` the same).
+  capabilities of the models that serve them, and `api models --json` the same,
+  per model, with `api models` also as a TOOLS column of its table and the MCP
+  tool `api_models_list`, which is that document, from its own server's
+  `MONOAGENT_API_TOOL_RUNTIMES`; `none` switches tool calling off: no model has
+  the capability, a request that declares tools is 400 `unsupported_parameter`
+  saying it is switched off, `auto` has nothing to pick for one, and the server
+  logs it once at start).
   A request declares up to 64 `tools` of type `function` (a name of 1 to 54
   characters of `[A-Za-z0-9_-]`, unique; a `description`; `parameters`, a JSON
   schema object whose `type` is `object`; `strict` is accepted and ignored),
@@ -1773,7 +1780,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
 | `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
 | `MONOAGENT_API_IMAGE_RUNTIMES` | Runtimes whose models can generate images on the OpenAI-compatible API (`POST /v1/images/generations`), comma-separated runtime ids in the order "the first installed one" is looked for (`agy` means `antigravity`; case and spaces do not matter). A runtime that runs as chat-only cannot make images however it is listed. `none` switches image generation off: no model gets the `image` capability and every image request says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `codex,antigravity`. |
-| `MONOAGENT_API_TOOL_RUNTIMES` | Runtimes that serve tool calling on the OpenAI-compatible API (`tools` on `POST /v1/chat/completions`), comma-separated runtime ids (`agy` means `antigravity`; case and spaces do not matter). A model of a listed runtime that is not chat-only is served only where monomind can run it read-only (`agent-exec-access-read`, and `read` among the runtime's access modes). A request for tools on any other model is 400 `unsupported_parameter`. A bad value stops `httpapi` and `daemon` at start. Default: unset — `claude,codex`. |
+| `MONOAGENT_API_TOOL_RUNTIMES` | Runtimes that serve tool calling on the OpenAI-compatible API (`tools` on `POST /v1/chat/completions`), comma-separated runtime ids (`agy` means `antigravity`; case and spaces do not matter). A model of a listed runtime that is not chat-only is served only where monomind can run it read-only (`agent-exec-access-read`, and `read` among the runtime's access modes). A request for tools on any other model is 400 `unsupported_parameter`. `none` switches tool calling off: no model gets the `tools` capability and every request that declares tools says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `claude,codex`. |
 | `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
 | `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |

@@ -321,9 +321,11 @@ With `tools`, the model can ask your program to run a function and use the
 result: the OpenAI tool loop, over claude and codex. The server never runs
 anything of yours. It returns the call, you run it wherever you like (or refuse
 to), and you send the result back. Which models serve tools is in
-`GET /v1/models` (the capability `tools`) and in `api models --json`; any other
-model answers 400 `unsupported_parameter` and says which runtimes serve them
-(`MONOAGENT_API_TOOL_RUNTIMES`, default `claude,codex`):
+`GET /v1/models` (the capability `tools`) and in `api models` (a TOOLS column, and
+`--json`, which the MCP tool `api_models_list` returns too); any other model
+answers 400 `unsupported_parameter` and says which runtimes serve them
+(`MONOAGENT_API_TOOL_RUNTIMES`, default `claude,codex`; `none` switches tool
+calling off and says so):
 
 ```bash
 curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \

@@ -2733,11 +2733,12 @@ OPENAI-COMPATIBLE API (/v1)
 
   Tool calling: tools, tool_choice, tool_calls and tool messages work on
   POST /v1/chat/completions, streaming and not, on the runtimes of
-  MONOAGENT_API_TOOL_RUNTIMES (default claude,codex; a model of another runtime,
-  or of a non-chat-only runtime that monomind cannot run read-only, is 400
-  unsupported_parameter on tools, before anything starts). GET /v1/models and
-  api models --json give the models that serve them "tools" among their
-  capabilities. A request declares up to 64 functions (name 1 to 54 characters of
+  MONOAGENT_API_TOOL_RUNTIMES (default claude,codex; none switches tool calling
+  off; a model of another runtime, or of a non-chat-only runtime that monomind
+  cannot run read-only, is 400 unsupported_parameter on tools, before anything
+  starts). GET /v1/models and api models --json (a TOOLS column in its table, and
+  the MCP tool api_models_list) give the models that serve them "tools" among
+  their capabilities. A request declares up to 64 functions (name 1 to 54 characters of
   [A-Za-z0-9_-], unique; parameters a JSON schema object, folded whole into the
   description because monomind keeps only top-level properties; an enum that
   is not a list of strings is left out of what monomind gets), tool_choice

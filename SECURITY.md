@@ -707,7 +707,8 @@ executes nothing of the caller's. What this changes, and what it does not:
   with tools declared). A model whose runtime monomind cannot run read-only is
   refused with a 400 instead of run with its own tools in play, and so is any
   runtime outside `MONOAGENT_API_TOOL_RUNTIMES` (claude and codex unless the
-  operator changed it). claude's own tools stay denied by monomind: it denied
+  operator changed it; an operator who wants no caller tools reachable on a
+  listener at all sets it to `none`). claude's own tools stay denied by monomind: it denied
   all 15 attempts in the spike.
 - *What the model proposes can be steered, and the caller decides.* A tool
   result is untrusted data. The prompt fences it (`<function_result>`) and

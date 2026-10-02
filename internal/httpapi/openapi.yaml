@@ -423,10 +423,10 @@ paths:
         `tool_choice` (`none` passes no tools, `auto`, `required` or
         `{"type":"function","function":{"name":…}}`; the last two are a
         best-effort instruction) and `parallel_tool_calls` (accepted and treated
-        as false) work on `claude` and `codex` (`MONOAGENT_API_TOOL_RUNTIMES`),
-        and only on a model whose `monoagent.capabilities` has `tools`: any
-        other is 400 `unsupported_parameter` on `tools`, answered before
-        anything starts. monomind keeps only the top-level properties of a
+        as false) work on `claude` and `codex` (`MONOAGENT_API_TOOL_RUNTIMES`;
+        `none` switches tool calling off), and only on a model whose
+        `monoagent.capabilities` has `tools`: any other is 400
+        `unsupported_parameter` on `tools`, answered before anything starts. monomind keeps only the top-level properties of a
         schema, so the whole schema is also folded into the function's
         description (an `enum` that is not a list of strings is left out of what
         the runtime's tool bridge gets, and the model still reads it there).
