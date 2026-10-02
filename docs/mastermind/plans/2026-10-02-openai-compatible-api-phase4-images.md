@@ -24,10 +24,10 @@
 
 ## File structure
 
-- Create `internal/openaiapi/images.go` (handler, model resolution, reply mapping), `images_request.go` (`ImageRequest`, validation, prompt), `images_collect.go` (`collectImages`, magic bytes).
-- Modify `config.go` (`ImageRuntimes`, parsing, `CanMakeImages`, `Capabilities`), `register.go` (route), `models.go` (`objectFor` takes the capabilities; `autoObject`), `auto.go` (`autoCandidatesFor`, `autoCapabilities`), `empty.go` (`openFolder`), `runner.go` (`turn.Collect`, one call), `chat.go` (three extractions: `policyRefusal`, `logRequest`, `resultError`, `autoPick`), `internal/jev/jevconf/jevconf.go` (egress line).
+- Create `internal/openaiapi/images.go` (handler, model resolution, reply mapping), `images_request.go` (`ImageRequest`, validation, prompt), `images_collect.go` (`collectImages`, magic bytes), `request.go` (what chat and images share: `logRequest`, `policyRefusal`, `resultError`, `pickForRequest`).
+- Modify `config.go` (`ImageRuntimes`, parsing, `CanMakeImages`, `Capabilities`), `register.go` (route), `models.go` (`objectFor` takes the capabilities), `auto.go` (`autoCandidatesFor`, `withCapability`, `autoObject`), `empty.go` (`openFolder`), `runner.go` (`turn.Collect`, one call), `chat.go` (its four inline pieces now call `request.go`), `internal/jev/jevconf/jevconf.go` (egress line).
 - Modify `cmd/monoagentcli/api_models.go` (capabilities per model, an IMAGES column), `ref.go`.
-- Tests (new files): `images_config_test.go`, `images_collect_test.go`, `images_collect_unix_test.go`, `images_request_test.go`, `images_test.go`, `images_models_test.go`, `images_auto_test.go`, `cmd/monoagentcli/api_models_images_test.go`; `live_test.go` gets one canary.
+- Tests (new files, each under 500 lines): `images_config_test.go`, `openfolder_test.go`, `images_collect_test.go`, `images_collect_unix_test.go`, `images_request_test.go`, `images_auto_test.go`, `images_test.go`, `images_policy_test.go`, `images_turn_test.go`, `images_slots_test.go`, `images_unix_test.go`, `images_auto_routes_test.go`, `cmd/monoagentcli/api_models_images_test.go`; `live_test.go` gets one canary, `jevconf_test.go` one test.
 - Docs: `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, `internal/httpapi/openapi.yaml`, `examples/openai-api-quickstart.md`, `ref api`, spec §7.3.
 
 ## Tasks

@@ -5,6 +5,7 @@ Status: Approved by the user on 2026-10-01, including the dedicated off-loopback
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
 Phase 3 (§9, the `auto` model) is implemented on `feat/openai-api-jev-auto`, stacked on the phase 1 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase3-jev-auto.md`.
 Phase 2a (§8.3, the MCP tools) is implemented on `feat/openai-api-mcp`, stacked on the phase 3 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase2a-mcp.md`.
+Phase 4 (§7.3, images) is implemented on `feat/openai-api-images`, stacked on the phase 2 branch (`feat/openai-api-p2`: the MCP tools and the desktop section); its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase4-images.md`.
 
 ## 1. Goal
 
@@ -167,7 +168,7 @@ Base `…/v1`. Auth `Authorization: Bearer sk-ma-…`. Errors use the OpenAI sha
 - Only models the listener's policy allows are listed, and a model the policy disallows is 404 on retrieve. Using one in a completion or image request gives 403 `policy_denied`, so operators see why. `auto` is listed only when §9 holds.
 - The list is the installed runtimes' own model lists, fetched in parallel (catalog cache 5 min, single-flight, scan cache 60 s). A runtime without a listing command uses `ListModels`' built-in list, or just `<runtime>/default`. `validated` comes from the roster when a row exists.
 - Ids match `^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$`, never start with `-`, and must be in the catalog or roster. `<runtime>/default` omits `--model`.
-- `capabilities` includes `image` for runtimes in `MONOAGENT_API_IMAGE_RUNTIMES` (default `codex,antigravity`; monomind does not advertise image output).
+- `capabilities` includes `image` for runtimes in `MONOAGENT_API_IMAGE_RUNTIMES` (default `codex,antigravity`; monomind does not advertise image output). As built, only for a model that can write the file (class `sandboxed` or `unconfined`), and `auto` lists it only when it has image candidates.
 
 ### 7.2 Chat completions
 
@@ -208,6 +209,15 @@ Response:
   - `response_format: "url"` → 400, b64 only. `quality`, `style`, `output_format` and `background` are ignored.
 - Expect 40–60 s and about 40k input tokens per image turn (App. A).
 
+**Built in phase 4** (`internal/openaiapi/images*.go`; plan `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase4-images.md`). As built, with what the spec left open or changed:
+
+- **What an image model is.** A model of a runtime in the image list that runs as `sandboxed` or `unconfined` (`Config.CanMakeImages`). A chat-only runtime in the list is not one: it has no tool to save a file. A model that exists but cannot make images is 400 `invalid_value` on `model` (an unknown one is 404). Without a model the first installed runtime of the list that the policy allows is used; if some are installed and none allowed that is the 403 below, if none is installed a 404 `model_not_found`.
+- **Policy.** 403 `policy_denied` names what to raise: `--confinement` and, for a key created with `--context`, `--context-confinement`. A `--context` key is held to the context maximum on this route, and no knowledge excerpts are added to an image request.
+- **Request.** The body is capped at the smaller of the configured limit and 64 KiB (§6.4). `n` is 1 to 4 (default 1; above or below is 400 `invalid_value`; "Create N distinct images." is added for n above 1; a runtime that saves fewer than `n` still answers with what it saved). `size` is `auto` or `WxH` (digits only, each side 64 to 8192) and reaches the prompt only as that canonical form. `response_format` is `b64_json` or absent (`url` is 400 `unsupported_parameter`, anything else `invalid_value`), `stream: true` is 400 `unsupported_parameter`, and `quality`, `style`, `output_format`, `background` and `user` are ignored.
+- **Collection.** `turn.Collect` runs inside `runTurn`, after a turn that ended without an error and before the deferred emptying of the slot folder. The folder is opened by `openFolder`, the look from the parent and the same-file check that `emptyDirBy` always did (extracted, so the emptying and the collection share one discipline). Only the top level is read, only `Lstat`-regular files (a link is never followed, a FIFO or a device is never opened), the file is opened `O_NONBLOCK` and checked against what was looked at (a swap between the two cannot hang or redirect it), at most 20 MiB are read, the first four signatures (PNG, JPEG, WebP, GIF) decide, and the first `n` by name are kept. What was left out is counted by reason, never by name, in the log.
+- **Reply.** `NO_IMAGE_TOOL` in the reply is 400 `image_generation_unsupported`, checked before the files: a runtime that says it has no tool and left a file drew it, which the system prompt forbids. No image is 502 `image_generation_failed` with the reply through `runtimeWords` (300 characters, one line). The shape is exactly `{"created":…,"data":[{"b64_json":…}]}`: no content type (the first bytes say it) and no usage.
+- **`auto`.** The candidates are the image models within what `auto` may pick (D17), by a capability filter on `autoCandidates`. Image runtimes are `sandboxed` or `unconfined`, so with `--auto-confinement` at its default there are none: 404 `model_not_found` saying what to raise (`--auto-confinement`, or the confinement flags when the key could not use an image model at all). Jev's question is the same as for chat, with the image prompt as `untrusted_prompt`; the `api_auto` egress list says so.
+- **Not done:** a per-image content type or usage in the response, and a switch that turns the route off: `--confinement chat-only` refuses it, and a list of runtimes that are not installed leaves it nothing to run (an empty `MONOAGENT_API_IMAGE_RUNTIMES` is the default list).
 ### 7.4 Errors
 
 | Condition | HTTP | `type` / `code` |
@@ -321,7 +331,7 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
 
 ## 9. Jev auto
 
-Implemented in phase 3, for text; the image options wait for P4.
+Implemented in phase 3, for text; the image options are phase 4 (§7.3, "Built in phase 4").
 
 - **Surface.** New `api_auto`, opt-in per profile through `jev enable api_auto`. The egress list says that the first 4,000 characters of the last user message and the candidate model names, descriptions and any validation cost and latency leave the machine. The surface's threshold is the minimum top-option probability Jev's pick must reach; its default is 0 (always accept the top pick), and below a raised threshold the rule fallback is used.
 - **Availability.** `auto` is listed and accepted only when the profile has a Jev key and the surface is enabled for it. Otherwise 404 `model_not_found` with a hint. Listing is gated on the non-decrypting `jevconf.KeySource`; the key itself is resolved (`ResolveKey`, which decrypts the vault on every call) only when a pick actually runs.
@@ -371,7 +381,7 @@ Implemented in phase 3, for text; the image options wait for P4.
 | P1 | `apikeys` + migration, gateway (models, chat, stream, context), confinement and limits, dedicated listener and TLS, CLI, docs and OpenAPI |
 | P2 | MCP tools (phase 2a: implemented), GUI section and bindings |
 | P3 | Jev `api_auto` (surface, chooser, fallback, CLI exposure): implemented; its GUI exposure goes with P2's GUI section |
-| P4 | Images |
+| P4 | Images: implemented (§7.3) |
 | P5 | Tool calling (spike, then build) |
 
 ## 13. Not in scope
