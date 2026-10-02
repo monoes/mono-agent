@@ -12359,7 +12359,7 @@ a failed flush, a chunked request's client); only the classified, short part of 
 what a daemon that did not mount `/v1`, or has no dedicated listener, means; a listener that cannot bind does not keep the home's
 folders; the docs a second time.
 
-Round 3 (`52f7f40f` to `bde3c52b`): a sandbox that only confines writes below the turn's folder still lets the turn remove that folder and
+Round 3 (from `52f7f40f` on): a sandbox that only confines writes below the turn's folder still lets the turn remove that folder and
 put a link in its place (checked with a Seatbelt profile), and the post-turn emptying then wiped what the link pointed to as the OS user:
 the folder is now looked at from its parent, compared with what is opened, and a link is set aside instead of followed; the first requests
 of a new profile no longer fail when they create its folder together; `api status` no longer blames another process for a daemon's
