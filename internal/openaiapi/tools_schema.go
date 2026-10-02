@@ -18,12 +18,14 @@ import (
 //
 // monomind keeps only the top-level properties of a schema, and of those only
 // the type and a string enum: a property's description, the items of an array
-// and every nested key are dropped. So a spec carries the flat schema monomind
-// can use, and the whole parameters schema, compact, goes at the end of the
-// description, where the model reads it (a rule that lived only in a property's
-// description was lost with the flat schema and kept when folded in). A schema
-// with no top-level properties (a root anyOf, a $ref, free-form properties) is
-// folded too: the description is all the model would have of it.
+// and every nested key are dropped, and so is every argument of a call that no
+// top-level property names. So a spec carries the flat schema monomind can use,
+// which names the arguments of a root anyOf, oneOf or allOf, of a local $ref and
+// of an if, a then and an else at the top level too (nameArguments), and the
+// whole parameters schema, compact, goes at the end of the description, where
+// the model reads it (a rule that lived only in a property's description was
+// lost with the flat schema and kept when folded in). A schema with nothing at
+// its top level is folded too: the description is all the model would have of it.
 func toolSpecs(decls []toolDecl) []monomind.ToolSpec {
 	specs := make([]monomind.ToolSpec, 0, len(decls))
 	for _, d := range decls {

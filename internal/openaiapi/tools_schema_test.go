@@ -100,20 +100,37 @@ func TestToolSpecsOfToolsWithLittleToFold(t *testing.T) {
 }
 
 // A schema without top-level properties still tells the model how to call: it is
-// all in the description, which is the only place monomind does not shrink.
+// all in the description, which is the only place monomind does not shrink. The flat
+// copy, which is what a call is parsed with, names the arguments of the branches and
+// the references (tools_hoist_test.go has the rules): without that monomind would
+// drop every argument of the call. The two rows of free-form keys have a property
+// beside them now: a schema that names none is refused, which tools_hoist_test.go
+// checks.
 func TestToolSpecsFoldASchemaThatHasNoTopLevelProperties(t *testing.T) {
-	for name, params := range map[string]string{
-		"a root anyOf":         `{"anyOf":[{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]},{"type":"object","properties":{"b":{"type":"integer"}},"required":["b"]}]}`,
-		"free-form properties": `{"type":"object","additionalProperties":{"type":"string"}}`,
-		"a reference":          `{"$ref":"#/$defs/Args","$defs":{"Args":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}`,
-		"a description only":   `{"type":"object","description":"Pass the city as city."}`,
-		"pattern properties":   `{"type":"object","patternProperties":{"^x-":{"type":"string"}},"properties":{}}`,
-		"required only":        `{"type":"object","required":["city"]}`,
-		"properties as null":   `{"type":"object","properties":null,"oneOf":[{"required":["a"]}]}`,
+	for name, c := range map[string]struct {
+		params string
+		flat   string // the properties of the flat copy, sorted and joined by commas
+	}{
+		"a root anyOf":                           {`{"anyOf":[{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]},{"type":"object","properties":{"b":{"type":"integer"}},"required":["b"]}]}`, "a,b"},
+		"free-form properties beside a property": {`{"type":"object","properties":{"city":{"type":"string"}},"additionalProperties":{"type":"string"}}`, "city"},
+		"a reference":                            {`{"$ref":"#/$defs/Args","$defs":{"Args":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}`, "city"},
+		"a description only":                     {`{"type":"object","description":"Pass the city as city."}`, ""},
+		"pattern properties beside a property":   {`{"type":"object","patternProperties":{"^x-":{"type":"string"}},"properties":{"city":{"type":"string"}}}`, "city"},
+		"required only":                          {`{"type":"object","required":["city"]}`, "city"},
+		"properties as null":                     {`{"type":"object","properties":null,"oneOf":[{"required":["a"]}]}`, "a"},
 	} {
-		specs := toolSpecs(toolDecls(t, `{"type":"function","function":{"name":"f","description":"Does it.","parameters":`+params+`}}`))
-		if want := "Does it.\n\nParameters (JSON Schema):\n" + params; specs[0].Description != want {
+		specs := toolSpecs(toolDecls(t, `{"type":"function","function":{"name":"f","description":"Does it.","parameters":`+c.params+`}}`))
+		if want := "Does it.\n\nParameters (JSON Schema):\n" + c.params; specs[0].Description != want {
 			t.Errorf("%s: description %q, want %q", name, specs[0].Description, want)
+		}
+		flat, _ := specs[0].Schema["properties"].(map[string]interface{})
+		var names []string
+		for k := range flat {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		if got := strings.Join(names, ","); got != c.flat {
+			t.Errorf("%s: the flat copy names %q, want %q", name, got, c.flat)
 		}
 	}
 }

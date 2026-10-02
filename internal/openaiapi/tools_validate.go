@@ -63,55 +63,67 @@ func parseToolDecl(i int, raw json.RawMessage) (toolDecl, *apiError) {
 			fmt.Sprintf("a description may have at most %d bytes", maxToolDescription))
 	}
 	d := toolDecl{Name: t.Function.Name, Description: t.Function.Description}
+	param := base + ".function.parameters"
 	var e *apiError
-	if d.Params, d.Props, d.Required, e = inspectParams(base+".function.parameters", t.Function.Parameters); e != nil {
+	if d.Params, e = inspectParams(param, t.Function.Parameters); e != nil {
 		return toolDecl{}, e
 	}
+	names := nameArguments(d.Params)
+	switch {
+	case names.Overrun:
+		return toolDecl{}, errInvalid("invalid_value", param,
+			"the parameters nest anyOf, oneOf, allOf, if, then, else or $ref too deeply to name their arguments: list the arguments in properties")
+	case names.Open && len(names.Props) == 0:
+		return toolDecl{}, errInvalid("invalid_value", param,
+			"the parameters name no property but allow other keys, so no argument of a call could be passed on: list the arguments in properties")
+	}
+	d.Props, d.Required = names.Props, names.Required
 	return d, nil
 }
 
-// inspectParams checks a parameters schema and returns it compact, with its
-// top-level properties and its required list, which are what monomind keeps of
-// it. An absent or null schema gives nothing. Only what would break the tool is
-// refused: a type other than object, and a top-level property that is not a
-// schema. Nested properties are not looked at: monomind drops them. An enum that
-// monomind cannot take is not refused either: toolSpecs leaves it out of what
-// monomind gets.
-func inspectParams(param string, raw json.RawMessage) (compact json.RawMessage, props map[string]json.RawMessage, required []string, e *apiError) {
+// inspectParams checks a parameters schema and returns it compact. An absent or
+// null schema gives nothing. Only what would break the tool is refused: a type
+// other than object, a top-level property that is not a schema and a required
+// list that is not strings. Nested properties are not looked at: monomind drops
+// them (nameArguments says which arguments it is told of). An enum that monomind
+// cannot take is not refused either: toolSpecs leaves it out of what monomind gets.
+func inspectParams(param string, raw json.RawMessage) (json.RawMessage, *apiError) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil, nil, nil
+		return nil, nil
 	}
 	if len(raw) > maxToolSchema {
-		return nil, nil, nil, errInvalid("invalid_value", param, fmt.Sprintf("a parameters schema may have at most %d bytes", maxToolSchema))
+		return nil, errInvalid("invalid_value", param, fmt.Sprintf("a parameters schema may have at most %d bytes", maxToolSchema))
 	}
 	var top map[string]json.RawMessage
 	if raw[0] != '{' || json.Unmarshal(raw, &top) != nil {
-		return nil, nil, nil, errInvalid("invalid_value", param, "parameters must be a JSON schema object")
+		return nil, errInvalid("invalid_value", param, "parameters must be a JSON schema object")
 	}
 	if v, ok := top["type"]; ok && string(bytes.TrimSpace(v)) != `"object"` {
-		return nil, nil, nil, errInvalid("invalid_value", param+".type", "the type of the parameters must be object")
+		return nil, errInvalid("invalid_value", param+".type", "the type of the parameters must be object")
 	}
 	if v, ok := top["properties"]; ok && string(bytes.TrimSpace(v)) != "null" {
+		var props map[string]json.RawMessage
 		if err := json.Unmarshal(v, &props); err != nil {
-			return nil, nil, nil, errInvalid("invalid_value", param+".properties", "properties must be an object")
+			return nil, errInvalid("invalid_value", param+".properties", "properties must be an object")
 		}
 		for _, p := range props {
 			if e := inspectProperty(param+".properties", p); e != nil {
-				return nil, nil, nil, e
+				return nil, e
 			}
 		}
 	}
 	if v, ok := top["required"]; ok && string(bytes.TrimSpace(v)) != "null" {
+		var required []string
 		if err := json.Unmarshal(v, &required); err != nil {
-			return nil, nil, nil, errInvalid("invalid_value", param+".required", "required must be a list of strings")
+			return nil, errInvalid("invalid_value", param+".required", "required must be a list of strings")
 		}
 	}
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, raw); err != nil {
-		return nil, nil, nil, errInvalid("invalid_value", param, "parameters must be a JSON schema object")
+		return nil, errInvalid("invalid_value", param, "parameters must be a JSON schema object")
 	}
-	return buf.Bytes(), props, required, nil
+	return buf.Bytes(), nil
 }
 
 // inspectProperty checks one top-level property: a schema object, or a boolean. The

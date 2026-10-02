@@ -650,9 +650,15 @@ a key. It lives in `internal/openaiapi/`; the spec is
   function: the last two are a best-effort instruction in the system prompt)
   and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
   the top-level properties of a schema, and of a property only its type and an
-  enum of strings (any other enum there rejects every call), so the whole schema
-  is also folded into the tool's description, and an enum that is not a list of
-  strings is left out of what monomind gets, not refused. **A
+  enum of strings (any other enum there rejects every call), so the arguments of
+  a root `anyOf`, `oneOf` or `allOf`, of a local `$ref` and of an `if`, `then` or
+  `else` are named at the top level too (optional where the schema lets a call do
+  without them; without that monomind drops every one and the client gets `{}`),
+  the whole schema is also folded into the tool's description, and an enum that
+  is not a list of strings is left out of what monomind gets, not refused. A
+  schema that names no property and allows free-form keys, or that nests more
+  than 8 levels deep, is 400 `invalid_value` on `tools[i].function.parameters`
+  (`internal/openaiapi/tools_hoist.go`). **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
   process group; a group kill only if monomind has not exited within its grace,

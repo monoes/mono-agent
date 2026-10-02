@@ -430,9 +430,16 @@ paths:
         model has `tools` only where monomind can apply its sandbox, which every
         tool turn requires (403 `policy_denied`, nothing run, when it cannot be
         applied). monomind keeps only the top-level properties of a
-        schema, so the whole schema is also folded into the function's
-        description (an `enum` that is not a list of strings is left out of what
-        the runtime's tool bridge gets, and the model still reads it there).
+        schema, so the arguments that a root `anyOf`, `oneOf` or `allOf`, a
+        local `$ref`, an `if`, a `then` or an `else` define are named at the top
+        level too (optional unless the schema requires them), and the whole
+        schema is also folded into the function's description (an `enum` that
+        is not a list of strings is left out of what the runtime's tool bridge
+        gets, and the model still reads it there). A schema that names no
+        property and allows free-form keys (`additionalProperties` true or a
+        schema, `patternProperties`), or that nests combinators and references
+        more than 8 levels deep, is 400 `invalid_value` on
+        `tools[i].function.parameters`.
         **A response carries one call**: the turn ends at the
         model's first call, and the answer is an assistant message with one
         `tool_calls` entry (`id` `call_…`, `function.arguments` a string of JSON),

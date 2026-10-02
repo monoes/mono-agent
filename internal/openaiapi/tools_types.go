@@ -32,8 +32,10 @@ type toolDecl struct {
 	// Params is the parameters schema as the client sent it, compacted: nil when
 	// it sent none.
 	Params json.RawMessage
-	// Props are the top-level properties of Params, and Required its required
-	// list: the only part of a schema monomind keeps.
+	// Props and Required are the flat schema monomind is given of Params, the only
+	// part of a schema it keeps: the top-level properties and required names, and
+	// those of its root anyOf, oneOf and allOf, its local $ref and its if, then and
+	// else named at the top level too (nameArguments).
 	Props    map[string]json.RawMessage
 	Required []string
 }

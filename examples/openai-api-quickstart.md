@@ -443,12 +443,20 @@ What to expect from a tool loop:
   prompt, not a guarantee (it worked 9 of 9 for a named function and 5 of 6 for
   `required` in the spike); `none` passes no tools.
 - Put the whole JSON schema in `parameters`: monomind keeps only the top-level
-  properties, so the server also folds the schema into the function's
-  description, and a call whose arguments do not match is returned all the same.
-  An `enum` that is not a list of strings is left out of what the runtime's tool
-  bridge gets (the model still reads it in the description); more than 64
-  functions, a name that is not 1 to 54 characters of `[A-Za-z0-9_-]` and a
-  result larger than 256 KiB are refused (400).
+  properties of it (and of each, its type and an enum of strings), so the server
+  folds the schema into the function's description and names the arguments of a
+  root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`) and of an
+  `if`, `then` or `else` at the top level too (optional where the schema lets a
+  call do without them), or the call would reach you as `{}`. A key that no
+  property names is not passed on, so a schema that names none and allows
+  free-form keys (`additionalProperties` true or a schema, `patternProperties`)
+  is refused (400 `invalid_value` on `tools[i].function.parameters`): list the
+  arguments in `properties`. A call whose arguments do not match the schema is
+  returned all the same. An `enum` that is not a list of strings is left out of
+  what the runtime's tool bridge gets (the model still reads it in the
+  description); more than 64 functions, a name that is not 1 to 54 characters
+  of `[A-Za-z0-9_-]`, a schema that nests combinators and references more than
+  8 levels deep and a result larger than 256 KiB are refused (400).
 - Make tools with side effects idempotent. A model can ask for the same call
   again after a resume (1 of 19 single-result claude legs in the spike, none of
   18 on codex), and codex repeats an identical call two or three times within a

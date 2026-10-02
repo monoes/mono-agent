@@ -67,17 +67,14 @@ func noneAlive(pids []int) []int {
 	}
 }
 
-// The whole loop against the real monomind, with a fake codex in place of the
-// model (monomind drives it as it drives codex, fence protocol and resume
-// included): a leg ends at the call and kills what it started, the follow-up
-// continues the thread, a follow-up nobody remembers starts from its transcript,
-// and the start event of a read-only codex leg is accepted by a sandboxed policy.
-// No model is called.
-//
-//	MONOMIND_SMOKE=1 go test ./internal/openaiapi -run TestToolsOverTheRealMonomind -v
-func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
+// realMonomindWithAFakeCodex is a gateway whose legs run on the real monomind, which
+// drives the fake codex in place of the model (as it drives codex, fence protocol and
+// resume included). spawnLog is the file the fake writes one line per process to; mode
+// is what the fake does (testdata/fake-codex.py). No model is called.
+func realMonomindWithAFakeCodex(t *testing.T, mode string) (h *harness, spawnLog string) {
+	t.Helper()
 	if os.Getenv("MONOMIND_SMOKE") != "1" {
-		t.Skip("set MONOMIND_SMOKE=1 to run the tool loop against the real monomind and python3, with a fake codex (no model is called)")
+		t.Skip("set MONOMIND_SMOKE=1 to run tools against the real monomind and python3, with a fake codex (no model is called)")
 	}
 	bin, err := monomind.Find()
 	if err != nil {
@@ -90,15 +87,26 @@ func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spawnLog := filepath.Join(t.TempDir(), "spawns.jsonl")
+	spawnLog = filepath.Join(t.TempDir(), "spawns.jsonl")
 	t.Setenv("CODEX_CLI_BIN", fake)
 	t.Setenv("FAKE_CODEX_STATE", t.TempDir())
 	t.Setenv("FAKE_CODEX_LOG", spawnLog)
-	t.Setenv("FAKE_CODEX_MODE", "parallel") // both calls arrive together: a response carries the first
-
-	h := newHarness(t, monomind.Exec, withReadAccess, func(d *Deps, _ *Config) {
+	t.Setenv("FAKE_CODEX_MODE", mode)
+	h = newHarness(t, monomind.Exec, withReadAccess, func(d *Deps, _ *Config) {
 		d.Bin = func(context.Context) (string, error) { return bin, nil }
 	})
+	return h, spawnLog
+}
+
+// The whole loop against the real monomind, with a fake codex in place of the
+// model: a leg ends at the call and kills what it started, the follow-up
+// continues the thread, a follow-up nobody remembers starts from its transcript,
+// and the start event of a read-only codex leg is accepted by a sandboxed policy.
+// No model is called.
+//
+//	MONOMIND_SMOKE=1 go test ./internal/openaiapi -run TestToolsOverTheRealMonomind -v
+func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
+	h, spawnLog := realMonomindWithAFakeCodex(t, "parallel") // both calls arrive together: a response carries the first
 	secret := h.key(t, "default", "app", false)
 	policy := Policy{Max: Sandboxed}
 
@@ -172,5 +180,36 @@ func TestToolsOverTheRealMonomindWithAFakeCodex(t *testing.T) {
 	}
 	if alive := noneAlive(pids); len(alive) != 0 {
 		t.Errorf("processes of the fake codex are still running: %v", alive)
+	}
+}
+
+// monomind keeps of a call only the keys of the top-level properties of the schema it was
+// given, so a schema whose arguments sit in a root anyOf, oneOf or allOf, behind a root
+// $ref, or in a then, gave the client {} at every call: nameArguments names the arguments
+// of the branches at the top level, and the call arrives whole. No model is called.
+//
+//	MONOMIND_SMOKE=1 go test ./internal/openaiapi -run TestArgumentsOutsideTheTopLevel -v
+func TestArgumentsOutsideTheTopLevelPropertiesReachTheClientOverTheRealMonomind(t *testing.T) {
+	h, _ := realMonomindWithAFakeCodex(t, "single") // one call: get_weather for Paris
+	secret := h.key(t, "default", "app", false)
+	const city = `{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`
+	const zip = `{"type":"object","properties":{"zip":{"type":"string"}},"required":["zip"]}`
+	for name, params := range map[string]string{
+		"properties at the top level": city,
+		"a root anyOf":                `{"anyOf":[` + city + `,` + zip + `]}`,
+		"a root oneOf":                `{"type":"object","oneOf":[` + city + `,` + zip + `]}`,
+		"a root allOf":                `{"allOf":[` + city + `]}`,
+		"a root $ref":                 `{"$ref":"#/$defs/Args","$defs":{"Args":` + city + `}}`,
+		"a then":                      `{"type":"object","properties":{"units":{"type":"string"}},"if":{"required":["units"]},"then":` + city + `}`,
+	} {
+		tools := `"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather.","parameters":` + params + `}}]`
+		rec := post(h, Policy{Max: Sandboxed}, secret, toolChatBody("codex/gpt-6-astra", tools, weatherQuestion))
+		if rec.Code != 200 {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+			continue
+		}
+		if calls := decodeToolReply(t, rec).Choices[0].Message.ToolCalls; len(calls) != 1 || calls[0].Function.Arguments != `{"city":"Paris"}` {
+			t.Errorf("%s: the call reached the client as %s", name, rec.Body)
+		}
 	}
 }
