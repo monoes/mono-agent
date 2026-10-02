@@ -100,6 +100,9 @@ func TestTheKeyIsOnTheWireExactlyOnce(t *testing.T) {
 	w.call("api_key_create", map[string]any{"name": ""})                     // an invalid name
 	w.call("api_key_update", map[string]any{"id": secret, "name": "x"})      // the key pasted where an id goes
 	w.call("api_key_revoke", map[string]any{"id": secret})                   // the same
+	w.call("api_key_update", map[string]any{"id": id, "name": secret})       // the key pasted where a name goes
+	w.call("api_key_create", map[string]any{"name": secret})                 // the same, for a new key
+	w.call("api_key_list", map[string]any{"include_revoked": true})          // it must not be listed
 	w.call("api_key_revoke", map[string]any{"id": id})                       // revoked
 	w.call("api_key_revoke", map[string]any{"id": id})                       // revoked again
 	w.call("api_key_revoke", map[string]any{"id": "key_zzzzzzzzzzzz"})       // unknown

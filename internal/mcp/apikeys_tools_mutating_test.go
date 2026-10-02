@@ -15,7 +15,7 @@ import (
 
 // A key is never printed, not even a throwaway one in a failing test: whatever a
 // failure message shows of a tool's answer goes through scrubbed.
-var keyRE = regexp.MustCompile(`sk-ma-[A-Za-z0-9_-]{43}`)
+var keyRE = regexp.MustCompile(`(?i)sk-ma-[A-Za-z0-9_-]{43}`)
 
 func scrubbed(s string) string { return keyRE.ReplaceAllString(s, "sk-ma-<redacted>") }
 
@@ -207,10 +207,15 @@ func TestAPIKeyCreateWithoutContextIsAPlainKey(t *testing.T) {
 // own words, and nothing is created.
 func TestAPIKeyCreateRefusesWhatTheStoreRefuses(t *testing.T) {
 	s, dbPath := newAPIKeyServer(t, true)
+	pasted, err := apikeys.GenerateKey() // a key where a name goes
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	for _, bad := range []any{"", " lead", "-dash", strings.Repeat("a", 65), "semi;colon", "new\nline", "key_isqzhh2a5itg"} {
+	for _, bad := range []any{"", " lead", "-dash", strings.Repeat("a", 65), "semi;colon", "new\nline", "key_isqzhh2a5itg",
+		pasted, strings.ToUpper(pasted), "my " + pasted, "sk-ma-"} {
 		if text, err := callAPITool(t, s, "api_key_create", map[string]any{"name": bad}); err == nil || err.Error() != apikeys.ErrInvalidName.Error() {
-			t.Errorf("name %q: %q, %v; want the store's invalid-name error", bad, scrubbed(text), err)
+			t.Errorf("name %q: %q, %v; want the store's invalid-name error", scrubbed(fmt.Sprint(bad)), scrubbed(text), err)
 		}
 	}
 	if _, err := callAPITool(t, s, "api_key_create", nil); err == nil || err.Error() != apikeys.ErrInvalidName.Error() {
@@ -261,6 +266,27 @@ func TestAPIKeyUpdateRenamesAndSwitchesContext(t *testing.T) {
 	// The key is not part of an update, and not changed by it.
 	if _, has := k["key"]; has || k["prefix"] != created["prefix"] || k["created_at"] != created["created_at"] {
 		t.Errorf("update returned or changed more than the metadata: %s", describe(k))
+	}
+}
+
+// A key cannot be renamed into its own name, or any other: the name would be stored
+// in clear, and the read-only api_key_list would hand it to whoever asks.
+func TestAPIKeyUpdateRefusesAKeyAsAName(t *testing.T) {
+	s, _ := newAPIKeyServer(t, true)
+	id, secret := createKey(t, s, "app", false)
+
+	for _, bad := range []string{secret, strings.ToUpper(secret), "backup " + secret, secret[:20]} {
+		_, err := callAPITool(t, s, "api_key_update", map[string]any{"id": id, "name": bad})
+		if err == nil || err.Error() != apikeys.ErrInvalidName.Error() {
+			t.Errorf("renaming to a key: %v, want the store's invalid-name error", err)
+		} else if strings.Contains(err.Error(), secret) {
+			t.Error("the refusal repeats the name")
+		}
+	}
+
+	list := mustCall(t, s, "api_key_list", map[string]any{"include_revoked": true})
+	if strings.Contains(list, secret) || !reflect.DeepEqual(namesOf(decodeKeys(t, list)), []string{"app"}) {
+		t.Error("a refused rename reached the stored keys, or the list holds the key")
 	}
 }
 

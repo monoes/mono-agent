@@ -39,7 +39,7 @@ var (
 	// ErrNameTaken means an active key of the profile already has the name.
 	ErrNameTaken = errors.New("an active key with that name already exists in this profile")
 	// ErrInvalidName means the name breaks the naming rule.
-	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit, and not the shape of a key id (key_ followed by 12 characters from a-z and 2-7)")
+	ErrInvalidName = errors.New("key name must be 1-64 characters: letters, digits, space, '.', '_' or '-', starting with a letter or digit, not the shape of a key id (key_ followed by 12 characters from a-z and 2-7), and not holding sk-ma-, the start of every API key")
 )
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
@@ -100,4 +100,14 @@ func newID() (string, error) {
 	return idPrefix + strings.ToLower(enc)[:idRandom], nil
 }
 
-func validName(name string) bool { return nameRE.MatchString(name) && !idShapeRE.MatchString(name) }
+// holdsKey reports whether a name holds KeyPrefix, in any case: a key, or the
+// start of one, pasted where a name goes. The alphabet of a name has every
+// character a key is made of, and a name is stored in clear and listed by every
+// front end, so a key in one would be shown to whoever can list keys, where only
+// its hash is meant to be kept. A key cut short is no better, hence the prefix
+// and not a whole key.
+func holdsKey(name string) bool { return strings.Contains(strings.ToLower(name), KeyPrefix) }
+
+func validName(name string) bool {
+	return nameRE.MatchString(name) && !idShapeRE.MatchString(name) && !holdsKey(name)
+}
