@@ -618,6 +618,15 @@ unauthenticated and returns the server version.
   than 100 levels) is moved to `~/.monoagent/workspaces/api/.quarantine` and
   replaced. Nothing ends the process. Run the server as a dedicated OS user and
   look at what it leaves.
+- Where a turn's sandbox is rooted is a path: the turn's folder. A process that
+  outlives its turn can replace that folder with a link in the moment between
+  the gateway's last look at it and the start of the next turn of the slot, and
+  that turn's sandbox is then rooted where the link points, an OS user's home
+  included. The gateway looks right before it starts the process, which narrows
+  the window to milliseconds and cannot close it: only a runtime that roots its
+  sandbox on an open directory could. Read `sandboxed` as confining a prompt,
+  not a determined key holder, and keep the OS user's own files out of reach (a
+  dedicated user, as above).
 
 **Not part of this surface (yet).** Image generation, OpenAI tool calling and
 Jev's `auto` model are later phases. Today a request cannot hand the agent
