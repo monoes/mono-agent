@@ -609,11 +609,15 @@ unauthenticated and returns the server version.
   file before monomind reads it.
 - A runtime can leave a process behind it (a command started with `nohup`, say)
   that keeps its write access to the turn's folder. Emptying the folder does
-  not stop it. The gateway acts on the folder through an open handle, so such
-  a process cannot send the emptying outside it, and a folder it makes
-  impossible to empty (a tree deeper than 100 levels) is moved to
-  `~/.monoagent/workspaces/api/.quarantine` and replaced, but nothing ends the
-  process. Run the server as a dedicated OS user and look at what it leaves.
+  not stop it. A sandbox that only confines writes below the turn's folder
+  (macOS's, checked) still lets the turn remove that folder and put a link in
+  its place. The gateway looks at the folder from its parent, which no turn can
+  change, and acts on it through open handles: a link is set aside, not
+  followed, so neither such a process nor such a turn can send the emptying
+  outside the folder, and a folder it makes impossible to empty (a tree deeper
+  than 100 levels) is moved to `~/.monoagent/workspaces/api/.quarantine` and
+  replaced. Nothing ends the process. Run the server as a dedicated OS user and
+  look at what it leaves.
 
 **Not part of this surface (yet).** Image generation, OpenAI tool calling and
 Jev's `auto` model are later phases. Today a request cannot hand the agent

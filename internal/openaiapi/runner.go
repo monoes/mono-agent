@@ -63,9 +63,15 @@ func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
 	// Both must be real directories: a link planted in place of either would
 	// send the emptying, and the turn, somewhere else. Each is looked at before
 	// anything is created in it, so nothing is created behind a link.
-	for _, d := range []string{profileDir, dir} {
-		if err := plainDir(d); err != nil {
-			return "", fmt.Errorf("the turn's folder: %w", err)
+	if err := plainDir(profileDir); err != nil {
+		return "", fmt.Errorf("the turn's folder: %w", err)
+	}
+	if err := plainDir(dir); err != nil {
+		// Only a turn (or an operator) can have left a link or a file where the
+		// slot's folder belongs. It is set aside, whatever it points to, and the
+		// turn starts in an empty folder: a slot is never wedged by one.
+		if err := g.quarantine(dir); err != nil {
+			return "", fmt.Errorf("the turn's folder %s is not a plain directory and could not be set aside: %w", dir, err)
 		}
 	}
 	if !emptyDir(dir) {
@@ -76,13 +82,26 @@ func (g *Gateway) slotDir(profileID string, slot int) (string, error) {
 	return dir, nil
 }
 
+// beforeMkdirHook runs after plainDir has found a folder missing and before it
+// creates it: a variable so a test can have another request create it first.
+var beforeMkdirHook func()
+
 // plainDir makes sure path is a directory of its own, creating it when it is
 // missing. A link or a file there is refused.
 func plainDir(path string) error {
 	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if beforeMkdirHook != nil {
+			beforeMkdirHook()
+		}
+		// Another request of the same profile may create it between the look and
+		// the mkdir: that is fine, and what is there is looked at again.
+		if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err = os.Lstat(path)
+	}
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return os.Mkdir(path, 0o700)
 	case err != nil:
 		return err
 	case !fi.IsDir():

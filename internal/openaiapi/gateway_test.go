@@ -142,6 +142,79 @@ func TestDefaultDepsListModelsStrictly(t *testing.T) {
 	}
 }
 
+// A turn in a sandbox that only confines writes below its folder can still remove
+// that folder and put a link in its place (macOS's sandbox allows it: checked with
+// a Seatbelt profile). Emptying what the link points to would wipe a directory the
+// turn has no right to touch, as the OS user: a link is not a folder to empty.
+func TestEmptyDirRefusesALinkWhereTheFolderShouldBe(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o755); err != nil { // the mode a followed link would change
+		t.Fatal(err)
+	}
+	precious := filepath.Join(outside, "precious.txt")
+	if err := os.WriteFile(precious, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(root, "slot")
+	if err := os.Symlink(outside, slot); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+
+	if emptyDir(slot) {
+		t.Error("a link is not a folder that was emptied")
+	}
+	if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("the chmod followed the link: %v %v", fi, err)
+	}
+	if _, err := os.Stat(precious); err != nil {
+		t.Errorf("what is behind the link was removed: %v", err)
+	}
+}
+
+// A link between the check and the open: a root handle follows a link that stays
+// inside its parent, so the folder opened could be another slot's, which a turn
+// of the same profile may be running in. What was opened is compared with what
+// was looked at.
+func TestEmptyDirChecksThatWhatItOpenedIsWhatItLookedAt(t *testing.T) {
+	parent := t.TempDir()
+	slot0, slot1 := filepath.Join(parent, "slot-0"), filepath.Join(parent, "slot-1")
+	for _, d := range []string{slot0, slot1} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	running := filepath.Join(slot1, "running.txt") // what a turn in the other slot is working with
+	if err := os.WriteFile(running, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	swapped := false
+	afterLstatHook = func() {
+		if swapped {
+			return
+		}
+		swapped = true
+		_ = os.RemoveAll(slot0)
+		if err := os.Symlink("slot-1", slot0); err != nil { // a link inside the parent
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterLstatHook = nil })
+
+	if emptyDir(slot0) {
+		t.Error("the folder it opened was not the one it looked at: it must say it could not empty it")
+	}
+	if !swapped {
+		t.Fatal("the hook never ran: the test does not exercise the race")
+	}
+	if _, err := os.Stat(running); err != nil {
+		t.Errorf("the other slot's folder was emptied through the link: %v", err)
+	}
+}
+
 // A process can outlive its turn and keep changing the tree while it is emptied.
 // A directory swapped for a link between the listing and the chmod must not send
 // the chmod, the listing or a removal outside the folder: the gateway acts on

@@ -298,11 +298,21 @@ func TestRunTurnRefusesASymlinkedFolder(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err == nil {
-				t.Fatal("a turn must not run in a folder that is a symlink")
-			}
-			if ran.Load() {
-				t.Error("nothing must run")
+			_, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0})
+			if name == "profile folder" {
+				// Only an operator can have planted this one: it is refused.
+				if err == nil || ran.Load() {
+					t.Fatalf("a turn must not run under a profile folder that is a symlink: err=%v ran=%v", err, ran.Load())
+				}
+			} else {
+				// A turn can leave a link where its folder was: the link is set aside
+				// and the turn runs in a real folder.
+				if err != nil || !ran.Load() {
+					t.Fatalf("a link in place of a slot folder is set aside, and the turn runs: err=%v ran=%v", err, ran.Load())
+				}
+				if fi, lerr := os.Lstat(linkAt(h.scratch)); lerr != nil || !fi.IsDir() {
+					t.Errorf("the slot folder must be a real folder again: %v %v", fi, lerr)
+				}
 			}
 			if _, err := os.Stat(precious); err != nil {
 				t.Errorf("the emptying followed the link and removed what is behind it: %v", err)

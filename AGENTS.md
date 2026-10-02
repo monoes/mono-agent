@@ -448,8 +448,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   because agent CLIs keep per-folder session state that a folder per request
   would pile up, and per profile so that state is never shared between
   profiles. Requests are stateless. A folder that cannot be emptied (a tree
-  deeper than 100 levels, say) is moved to
-  `~/.monoagent/workspaces/api/.quarantine` and replaced by an empty one, and
+  deeper than 100 levels, say), or that a turn replaced with a link, is moved
+  to `~/.monoagent/workspaces/api/.quarantine` and replaced by an empty one, and
   the log says where: delete it when you like. A turn's prompt files live in a
   private (mode 0700) folder under `~/.monoagent/workspaces/api/.tmp` until it
   ends. Only one process per home serves `/v1` at a time, because the slot

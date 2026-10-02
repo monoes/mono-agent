@@ -86,6 +86,102 @@ func TestRunTurnRefusesWhenTheFolderCanBeNeitherEmptiedNorSetAside(t *testing.T)
 	}
 }
 
+// A turn that replaced its own folder with a link (the sandbox of macOS lets it)
+// must not have the cleanup follow it, and the next turn of that slot starts in
+// a fresh folder: the link is set aside, so a slot can never be wedged by one.
+func TestRunTurnDoesNotFollowAFolderTheTurnReplacedWithALink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	precious := filepath.Join(outside, "precious.txt")
+	if err := os.WriteFile(precious, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var turns int
+	var cwds []string
+	h := newHarness(t, func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
+		turns++
+		cwds = append(cwds, opts.Cwd)
+		if turns == 1 { // what a turn confined only by "write below your folder" can do to that folder
+			_ = os.RemoveAll(opts.Cwd)
+			if err := os.Symlink(outside, opts.Cwd); err != nil {
+				t.Error(err)
+			}
+		}
+		return okTurn("ok")(ctx, opts, onEvent)
+	})
+	run := func() {
+		t.Helper()
+		if _, err := h.g.runTurn(context.Background(), turn{Runtime: "claude", Model: "default", Prompt: "p", Policy: anyPolicy, Slot: 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intact := func(when string) {
+		t.Helper()
+		if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o755 {
+			t.Errorf("%s: the cleanup followed the link and changed what is behind it: %v %v", when, fi, err)
+		}
+		if _, err := os.Stat(precious); err != nil {
+			t.Errorf("%s: the cleanup followed the link and removed what is behind it: %v", when, err)
+		}
+	}
+
+	run() // the turn replaces its folder with a link; the cleanup after it must not follow the link
+	intact("after the turn")
+
+	run() // the next turn of the slot
+	intact("after the next turn")
+	slot := cwds[1]
+	if fi, err := os.Lstat(slot); err != nil || !fi.IsDir() {
+		t.Errorf("the next turn must run in a real folder at the same path: %v %v", fi, err)
+	}
+	if aside, _ := os.ReadDir(filepath.Join(h.scratch, quarantineDirName)); len(aside) != 1 {
+		t.Errorf("the link must be set aside, not left to wedge the slot: %d entries", len(aside))
+	}
+}
+
+// Two requests of a profile that has never run one can reach its folder at the
+// same moment: neither may fail because the other created it first.
+func TestSlotDirToleratesAConcurrentCreation(t *testing.T) {
+	h := newHarness(t, okTurn("ok"))
+	created := false
+	beforeMkdirHook = func() {
+		if created {
+			return
+		}
+		created = true
+		_ = os.MkdirAll(filepath.Join(h.scratch, profileFolder("racer")), 0o700) // the other request wins
+	}
+	t.Cleanup(func() { beforeMkdirHook = nil })
+
+	if _, err := h.g.slotDir("racer", 0); err != nil {
+		t.Fatalf("a folder another request created a moment earlier is fine: %v", err)
+	}
+	if !created {
+		t.Fatal("the hook never ran: the test does not exercise the race")
+	}
+}
+
+func TestSlotDirIsSafeForConcurrentFirstRequests(t *testing.T) {
+	h := newHarness(t, okTurn("ok"))
+	errs := make(chan error, 8)
+	for slot := 0; slot < 8; slot++ {
+		go func() {
+			_, err := h.g.slotDir("fresh", slot)
+			errs <- err
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("a first request of a profile failed: %v", err)
+		}
+	}
+}
+
 // A link planted in place of the profile's folder must not get a slot folder
 // created in what it points to before the turn is refused.
 func TestSlotDirCreatesNothingBehindAPlantedLink(t *testing.T) {
