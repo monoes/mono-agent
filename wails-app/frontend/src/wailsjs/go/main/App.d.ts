@@ -5,6 +5,18 @@ import {main} from '../models';
 import {connections} from '../models';
 import {workflow} from '../models';
 
+export function APIKeyCreate(arg1:string,arg2:boolean):Promise<main.APIKeyCreated>;
+
+export function APIKeyList():Promise<Array<main.APIKey>>;
+
+export function APIKeyRevoke(arg1:string):Promise<main.APIKey>;
+
+export function APIKeySetContext(arg1:string,arg2:boolean):Promise<main.APIKey>;
+
+export function APIModels(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.APIModelsInfo>;
+
+export function APIStatus():Promise<main.APIStatusInfo>;
+
 export function AddApplication(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<string>;
 
 export function AddAutomationRole(arg1:string,arg2:string):Promise<string>;
