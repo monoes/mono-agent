@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,18 @@ func liveGatewayDB(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string
 	}
 	db := testdb.Open(t)
 
+	// The harness keeps the log lines too (and they still reach stderr), so that a
+	// canary can read what the server logged for a request.
+	h := &harness{}
 	deps := DefaultDeps(db.DB, "live")
 	deps.Knowledge = nil
+	stderrLogf := deps.Logf
+	deps.Logf = func(format string, args ...any) {
+		h.mu.Lock()
+		h.logs = append(h.logs, fmt.Sprintf(format, args...))
+		h.mu.Unlock()
+		stderrLogf(format, args...)
+	}
 	if wrap != nil {
 		deps.Exec = wrap(deps.Exec)
 	}
@@ -59,7 +70,8 @@ func liveGatewayDB(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string
 	if err != nil {
 		t.Fatal(err)
 	}
-	return g, secret, &harness{g: g}, db.DB
+	h.g = g
+	return g, secret, h, db.DB
 }
 
 // usableOrSkip ends a canary early: skipped when claude cannot answer right now
