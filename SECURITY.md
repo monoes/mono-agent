@@ -499,8 +499,13 @@ which is not the class above; a streamed response and an error have none.
 Be precise about what is and is not guaranteed. claude's `chat-only` rests on
 monomind's design (its allow-list gate); the live check
 `MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run TestLiveClaudeIsChatOnly`
-tries to make it do otherwise, and until you have run it on your machine, read
-the class as the design, not a measured guarantee. codex under
+tries to make it do otherwise: it asks claude to run `ls /`, read `/etc/hosts`
+and write a file. It was run on 2026-10-02 against claude 2.1.287 and monomind
+2.22.0: claude did try its Bash, Read and Write tools, monomind refused every
+call ("not in the tool list this exec call was given"), nothing ran and no file
+was written. That is one machine and one version of each, so run it again after
+upgrading either; read the class as measured for that pair and as the design
+beyond it. codex under
 `workspace-write` can still read files outside its folder, and antigravity
 can run a shell command with the permissions of the OS user. **Run the server
 as a dedicated unprivileged OS user**, with nothing of value readable by it,
