@@ -417,6 +417,53 @@ func TestToolsAResumeThatFailedBeforeTheModelRanKeepsItsSession(t *testing.T) {
 	}
 }
 
+// deadlineRecorder is a response recorder that takes a write deadline as net/http's
+// real writer does, and keeps the last one it was given.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.deadline = t
+	return nil
+}
+
+// serveTimed posts a chat request and says how long after its start the response
+// was given to be written.
+func serveTimed(h *harness, secret, body string) (*deadlineRecorder, time.Duration) {
+	mux := http.NewServeMux()
+	h.g.Mount(mux, anyPolicy)
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+secret)
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	begin := time.Now()
+	mux.ServeHTTP(rec, r)
+	return rec, rec.deadline.Sub(begin)
+}
+
+// A resume the runtime cannot continue is run again from the transcript in the same
+// request: a second turn. The response has the time of both, so that the answer of the
+// second is not lost to the deadline set for the first.
+func TestToolsAResumeIsGivenTheTimeOfTwoTurns(t *testing.T) {
+	script := &execScript{turns: []execFunc{callsWeather(true, "sess-1", ""), answers("It is 21 C.")}}
+	h := toolHarness(t, script.exec)
+	secret := h.key(t, "default", "app", false)
+
+	rec, first := serveTimed(h, secret, toolChatBody("claude", weatherTools, weatherQuestion))
+	id := decodeToolReply(t, rec.ResponseRecorder).Choices[0].Message.ToolCalls[0].ID
+	_, resumed := serveTimed(h, secret, followUp(id, "21 C"))
+
+	turn := h.g.cfg.TurnTimeout
+	if first < turn || first > turn+3*turnGrace {
+		t.Errorf("a first leg is one turn: its response was given %v", first)
+	}
+	if resumed < first+turn {
+		t.Errorf("a resume may be followed by a replay, a second turn: its response was given %v, a first leg's %v", resumed, first)
+	}
+}
+
 // A first leg that hit the quota has no session to keep and no record to give back.
 func TestToolsAFirstLegThatHitTheQuotaIsATooManyRequests(t *testing.T) {
 	quota := scriptedExec(evStart(false, "monomind"), evError(monomind.ErrQuota, "usage limit"), evDone(1))

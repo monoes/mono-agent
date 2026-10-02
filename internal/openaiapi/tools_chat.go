@@ -55,6 +55,11 @@ func (g *Gateway) toolChat(w http.ResponseWriter, r *http.Request, pr Principal,
 		t.System = strings.TrimSpace(t.System + "\n\n" + line)
 	}
 	run := toolRun{pr: pr, req: req, m: m, eff: eff, id: id, t: t, plan: g.planLeg(pr, req, m, t.Prompt)}
+	if run.plan.Kind == legResume {
+		// A resume the runtime cannot continue is run again from the transcript: a
+		// second turn, and the response has the time of both.
+		extendWriteDeadline(w, 2*g.cfg.TurnTimeout+3*turnGrace)
+	}
 	if req.Stream {
 		return g.streamToolLeg(w, r, run, req.StreamOptions != nil && req.StreamOptions.IncludeUsage)
 	}
