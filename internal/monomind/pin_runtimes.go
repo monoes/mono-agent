@@ -29,6 +29,7 @@ var runtimeBinEnv = []struct{ name, env string }{
 	{"cline", "CLINE_CLI_BIN"},
 	{"aider", "AIDER_CLI_BIN"},
 	{"dsh", "DSH_CLI_BIN"},
+	{"kilo", "KILO_CLI_BIN"},
 }
 
 var runtimePins struct {
