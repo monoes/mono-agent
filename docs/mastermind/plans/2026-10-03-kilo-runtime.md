@@ -21,4 +21,4 @@
 - [x] Extend `runtimeLabels.test.js` and add `cmd/monoagentcli/kilo_runtime_test.go` using the existing installation/coder fixtures for Kilo's npm recipe, unknown-runner refusal and scan capability gating.
 - [x] Open monomind issue #601 with verified source references, protocol mapping, permissions and acceptance criteria; document the dependency in `docs/kilo-runtime.md` and AGENTS.md.
 - [x] Run affected Go suites, race checks, CLI/frontend builds and runtime-label tests. All selected checks passed; known baseline exclusions are documented in the PR. Independent review found no actionable defects.
-- [ ] Review the diff, commit/push only `feat/kilo-runtime`, and open a monoagent PR linking the issue.
+- [x] Review the diff, commit/push only `feat/kilo-runtime`, and open a monoagent PR linking the issue: https://github.com/monoes/mono-agent/pull/324.
