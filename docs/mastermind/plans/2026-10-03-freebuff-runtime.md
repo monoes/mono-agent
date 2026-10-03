@@ -37,4 +37,9 @@
 
 - [x] Review the diff for confinement, executable selection and accidental writes outside the worktree. Independent read-only review found no actionable defects.
 - [x] Open monoes/monomind issue with source evidence, runner contracts and acceptance criteria: https://github.com/monoes/monomind/issues/600.
-- [ ] Commit and push only this branch; open a monoagent PR linking that issue and stating no live Freebuff execution was verified.
+- [x] Commit and push only this branch; open a monoagent PR linking that issue and stating no live Freebuff execution was verified: https://github.com/monoes/mono-agent/pull/323.
+
+Baseline comparison: an untouched origin/master export reproduced all four
+full-CLI failures (capture-task paths, coder conversation-folder paths,
+coder-root paths and cancellation of a defunct process). The two excluded
+config/monomind discovery failures occurred before production changes.
