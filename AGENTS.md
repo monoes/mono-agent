@@ -991,6 +991,12 @@ login (and its bill) is what the turn uses.
   `pi-rpc` transports). `monoagentcli agent install <runtime>` installs one
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
+- **Freebuff.** Compatibility preparation is documented in
+  [docs/freebuff-runtime.md](docs/freebuff-runtime.md). Execution requires
+  monomind's `freebuff` runner ([monomind#600](https://github.com/monoes/monomind/issues/600));
+  installing the interactive Freebuff CLI alone does not enable it. Its
+  executable override is `FREEBUFF_CLI_BIN`. Runtime capabilities still come
+  from monomind's scan.
 - **Pinned binaries (#301).** monomind, its node and every agent CLI it
   starts by name run from global installs a project can't redirect. A
   version-manager shim (mise, asdf, Volta, nodenv) is resolved once from

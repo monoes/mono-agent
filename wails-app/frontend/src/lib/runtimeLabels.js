@@ -2,6 +2,7 @@
 // own. Every other runtime shows its id (claude, codex, cline, …).
 const RUNTIME_LABELS = {
   dsh: 'DeepSeek Harness',
+  freebuff: 'Freebuff',
 }
 
 // runtimeLabel is how a runtime id reads in pickers and lists.
