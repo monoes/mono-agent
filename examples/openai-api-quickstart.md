@@ -3,8 +3,8 @@
 `monoagentcli` can serve the agent runtimes installed on your machine
 (claude, codex, antigravity, …) through standard OpenAI endpoints, so any
 OpenAI SDK or tool works by changing its base URL and key. This guide
-creates a key, starts the server, calls it with curl and the SDKs, and runs
-it on a headless Linux server. Paths and schemas:
+creates a key, starts the server, calls it with curl and the SDKs, saves its
+settings, and runs it on a headless Linux server. Paths and schemas:
 `internal/httpapi/openapi.yaml`. Threat model: `SECURITY.md`.
 
 Today it serves `GET /v1/models`, `GET /v1/models/{id}`,
@@ -73,7 +73,7 @@ list, so yours will differ):
 
 ```
 Confinement policy for a loopback listener: any (keys created with --context: chat-only)
-From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).
+From this shell's flags, environment and saved settings: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).
 
 MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY  AUTO  IMAGES
 claude/default           chat-only    false      yes     yes          yes   no
@@ -82,9 +82,9 @@ codex/gpt-6-astra        sandboxed    false      yes     no           no    yes
 antigravity/default      unconfined   false      yes     no           no    yes
 ```
 
-`api models` works out what a listener with the flags and environment of
-*this shell* would serve; it does not ask a running server (`api status`
-shows what a running daemon applies). `SERVED` is whether the model is served
+`api models` works out what a listener with the flags, environment and saved
+settings (section 5) of *this shell* would serve; it does not ask a running
+server (`api status` shows what a running daemon applies). `SERVED` is whether the model is served
 under that policy, `CONTEXT KEY` whether a key created with `--context`
 may use it, `AUTO` whether the `auto` model may pick it and `IMAGES` whether
 it makes images (see "Make images"); `--json` adds a `capabilities` list per
@@ -560,7 +560,97 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
   proxy while the turn is still running. For nginx, `proxy_read_timeout 11m;`
   on the location of `/v1/`.
 
-## 5. A headless Linux server
+## 5. Save the server's settings
+
+A flag or an environment variable is read when a server starts, so the daemon
+that the login service starts (`daemon install`) has neither. Save the settings
+in the database instead, and every start reads them. There are ten, named by
+these keys:
+
+| Key | What it sets | Server flag | Environment variable |
+|---|---|---|---|
+| `v1_addr` | the dedicated listener | `--v1-addr` | `MONOAGENT_API_V1_ADDR` |
+| `tls_cert_file`, `tls_key_file` | the PEM files of that listener, both or neither | none | `MONOAGENT_API_TLS_CERT`, `MONOAGENT_API_TLS_KEY` |
+| `confinement` | the strongest class served | `--confinement` | `MONOAGENT_API_CONFINEMENT` |
+| `context_confinement` | the strongest class a `--context` key may use | `--context-confinement` | `MONOAGENT_API_CONTEXT_CONFINEMENT` |
+| `auto_confinement` | the strongest class `auto` may pick | `--auto-confinement` | `MONOAGENT_API_AUTO_CONFINEMENT` |
+| `max_concurrent` | turns at once, 1 to 64 | `--max-concurrent` | `MONOAGENT_API_MAX_CONCURRENT` |
+| `turn_timeout` | the cap on one turn, at least `10s` | none | `MONOAGENT_API_TURN_TIMEOUT` |
+| `image_runtimes`, `tool_runtimes` | the runtimes that make images and that serve tools, or `none` | none | `MONOAGENT_API_IMAGE_RUNTIMES`, `MONOAGENT_API_TOOL_RUNTIMES` |
+
+```bash
+monoagentcli api config set --max-concurrent 8 --turn-timeout 15m
+# Saved: max_concurrent, turn_timeout.
+# No daemon is running: the server reads these settings when it starts.
+```
+
+`set` changes only the settings it is given and checks each value as the flag
+or the variable would (a bad one is exit 3 and names the setting).
+`unset max_concurrent` or `unset --all` removes saved values. For each setting a
+server uses the first of: its flag, its environment variable, the saved value,
+the default. A variable in the service's own environment therefore holds
+whatever is saved. `api models` and `api status` read the saved settings too,
+so what they say is what a server started now would do.
+
+`api config show` says, for each setting, what is saved, what a server started
+from this shell would use and, when a daemon is running, what that daemon
+started with and where each value came from. Here the daemon started with
+`max_concurrent` 8, and 12 was saved afterwards:
+
+```
+SETTING              SAVED  EFFECTIVE (this shell)  RUNNING (daemon)             STATE
+v1_addr              -      -                       - (default)                  applied
+tls_cert_file        -      -                       - (default)                  applied
+tls_key_file         -      -                       - (default)                  applied
+confinement          -      -                       - (default)                  applied
+context_confinement  -      chat-only               chat-only (default)          applied
+auto_confinement     -      chat-only               chat-only (default)          applied
+max_concurrent       12     12 (saved)              8 (saved)                    restart needed
+turn_timeout         15m    15m (saved)             15m (saved)                  applied
+image_runtimes       -      codex,antigravity       codex,antigravity (default)  applied
+tool_runtimes        -      claude,codex            claude,codex (default)       applied
+```
+
+A server reads its settings only when it starts. `restart needed` is a saved
+value that the running daemon does not have yet; `overridden` is a setting the
+daemon was given as a flag or a variable of its own, so what is saved for it has
+no effect until that is removed. `--json` gives the same as a document
+(`restart_needed`, and per setting `saved`, `effective`, `source`, `running`,
+`running_source` and `state`).
+
+```bash
+monoagentcli daemon restart
+```
+
+restarts the daemon through the service it is registered with (a LaunchAgent, a
+systemd user unit or a Scheduled Task; `daemon install` registers it) so that it
+reads them. **That interrupts whatever the daemon is running**, workflows and org
+runs included, and the command says so first. A daemon that is not registered is
+not restarted by it: it exits 3 and tells you to stop the daemon and start it
+again. If you started one by hand while the service is registered, stop that one
+first: the service's daemon would find the home taken and exit.
+
+A change that makes the server reach further than it did needs `--yes`: a
+listener beyond this machine, a higher confinement class, a runtime outside the
+default list. Without it the command refuses (exit 3) and says why; there is no
+prompt, so a script has to mean it. `--dry-run` shows the reasons and saves
+nothing:
+
+```
+$ monoagentcli api config set --v1-addr 0.0.0.0:9443 --tls-cert-file /etc/monoagent/fullchain.pem --tls-key-file /etc/monoagent/privkey.pem --confinement chat-only --dry-run
+Dry run: nothing was saved. It would change: v1_addr, tls_cert_file, tls_key_file, confinement.
+This change makes the server reach further, so applying it needs --yes:
+  - The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and serve runtimes up to chat-only; it did not listen beyond this machine before.
+```
+
+Raising `confinement` to `sandboxed` or `any` always needs `--yes`, even with no
+listener beyond this machine saved, because the daemon's own environment may name
+one. Removing a value that held the server below its default (`unset confinement`
+of a `chat-only`, an `image_runtimes` of `none`) is the same kind of change.
+The settings are in the database of the user the daemon runs as
+(`~/.monoagent/monoagent.db`), so run `api config` as that user.
+
+## 6. A headless Linux server
 
 1. Install monomind and the agent CLIs you want to serve, and sign them in as
    the user that will run the service. `monoagentcli doctor` shows what is
@@ -570,28 +660,33 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
    keyring and no GUI.
 3. Install the service: `monoagentcli daemon install` writes the systemd user
    unit `monoagent-daemon.service`. The unit has no environment or flags, so
-   add a drop-in that survives a reinstall:
+   save the server's settings (section 5) as the user that runs it, and restart
+   the service:
 
    ```bash
-   systemctl --user edit monoagent-daemon
+   monoagentcli api config set --v1-addr 0.0.0.0:9443 \
+     --tls-cert-file /etc/monoagent/fullchain.pem \
+     --tls-key-file /etc/monoagent/privkey.pem \
+     --confinement chat-only --yes
+   monoagentcli daemon restart
    ```
 
-   ```ini
-   [Service]
-   Environment=MONOAGENT_API_V1_ADDR=0.0.0.0:9443
-   Environment=MONOAGENT_API_TLS_CERT=/etc/monoagent/fullchain.pem
-   Environment=MONOAGENT_API_TLS_KEY=/etc/monoagent/privkey.pem
-   Environment=MONOAGENT_API_CONFINEMENT=chat-only
-   ```
+   `--yes` is there because the listener is beyond this machine; `--dry-run`
+   in its place says why. `--confinement` is one value for the whole
+   process, so `chat-only` here also limits `/v1` on the daemon's loopback main
+   listener. `daemon restart` runs `systemctl --user restart
+   monoagent-daemon.service` and interrupts what the daemon is running.
 
-   If monomind or an agent CLI is not found under systemd's minimal `PATH`, add
-   an `Environment=PATH=…` line too. `MONOAGENT_API_CONFINEMENT` is one value
-   for the whole process, so `chat-only` here also limits `/v1` on the
-   daemon's loopback main listener. Then `systemctl --user restart
-   monoagent-daemon`, and as root `loginctl enable-linger <user>` so the
-   service starts at boot. Logs: `journalctl --user -u monoagent-daemon -f`.
+   The same variables in a systemd drop-in work too (`systemctl --user edit
+   monoagent-daemon`, then `[Service]` and `Environment=MONOAGENT_API_V1_ADDR=…`),
+   and a variable of the unit wins over a saved value: `api config show` marks
+   such a setting `overridden`. A drop-in is where an `Environment=PATH=…` line
+   goes if monomind or an agent CLI is not found under systemd's minimal `PATH`.
+   As root, `loginctl enable-linger <user>` so the service starts at boot. Logs:
+   `journalctl --user -u monoagent-daemon -f`.
 4. Check that the listener came up: `monoagentcli api status`, run as the same
-   user, lists it and says whether it answers `/v1`. The daemon only logs a
+   user, lists it and says whether it answers `/v1`; `monoagentcli api config
+   show` says whether the daemon runs what is saved. The daemon only logs a
    warning when it cannot start the listener (an unreadable certificate, a
    port in use) and keeps running, so the unit looks healthy either way. A
    listener it could not start is missing from the list, and `api status` says
