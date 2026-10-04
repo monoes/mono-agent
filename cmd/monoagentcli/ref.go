@@ -1884,11 +1884,13 @@ generations at once) without the runs interfering.`,
 		Usage: "monoagentcli daemon [subcommand]",
 		Flags: `  install          Register the daemon to start automatically at login (macOS/Linux/Windows) and start it now
   uninstall        Stop it and remove the login registration
+  restart          Restart the registered service, so the daemon reads the API settings saved with "api config"
   --api=false      Don't serve the HTTP API in this process
   --bridge=false   Don't hold the Chrome extension bridge open in this process`,
 		Examples: []string{
 			"monoagentcli daemon",
 			"monoagentcli daemon install     # auto-start at login on this machine or a fresh one — see \"daemon install\" below",
+			"monoagentcli daemon restart     # after \"api config set\"; interrupts what the daemon is running",
 			"monoagentcli daemon uninstall",
 		},
 	},
@@ -1899,6 +1901,16 @@ generations at once) without the runs interfering.`,
 		Flags: `  (no flags)`,
 		Examples: []string{
 			"monoagentcli daemon install     # writes a per-user LaunchAgent (macOS), systemd --user unit (Linux), or Scheduled Task (Windows)",
+		},
+	},
+	{
+		Name:  "daemon restart",
+		Short: "Restart the daemon through its auto-start service, so it reads the saved API settings again",
+		Usage: "monoagentcli daemon restart [--json]",
+		Flags: `  (no flags)`,
+		Examples: []string{
+			"monoagentcli daemon restart     # launchd, systemd --user or the Scheduled Task; interrupts workflows and org runs; exit 3 when no service is registered",
+			"monoagentcli daemon restart --json   # {\"restarted\":true,\"via\":\"launchd\"}",
 		},
 	},
 	{
@@ -2866,8 +2878,10 @@ OPENAI-COMPATIBLE API (/v1)
     monoagentcli api key list [--all-profiles] | show | update | revoke
     monoagentcli api models        each model with its confinement class and
                                    whether it makes images, as this shell's
-                                   flags and environment see it
+                                   flags, environment and saved settings see it
     monoagentcli api status        listeners, key count, reachability
+    monoagentcli api config ...    the server's settings, saved in the database
+                                   (see "Server settings" below)
 
   monoagentcli mcp has the same management as tools, for its own profile:
   api_key_list and api_models_list, and with --allow-mutations api_key_create
@@ -2906,6 +2920,72 @@ OPENAI-COMPATIBLE API (/v1)
   no CORS. The errors of the four routes are OpenAI-shaped,
   {"error":{"message","type","param","code"}}, with an X-Request-Id header;
   an unknown path or method gets the plain 404 or 405 of Go's mux.
+
+  Server settings: what a server reads at start (--v1-addr, the TLS files, the
+  three confinement classes, --max-concurrent, the turn timeout and the two
+  runtime lists: ten settings) can be saved, so that a daemon the login service
+  starts, which has no flags and not this shell's environment, has them:
+
+    monoagentcli api config show     saved, in effect here, and what the running
+                                     daemon started with, per setting
+    monoagentcli api config set [--v1-addr A] [--tls-cert-file P]
+          [--tls-key-file P] [--confinement C] [--context-confinement C]
+          [--auto-confinement C] [--max-concurrent N] [--turn-timeout D]
+          [--image-runtimes L] [--tool-runtimes L] [--yes] [--dry-run]
+    monoagentcli api config unset <setting>... | --all [--yes] [--dry-run]
+    monoagentcli daemon restart      restart the auto-start service, so that the
+                                     daemon reads them
+
+  Keys: v1_addr, tls_cert_file, tls_key_file, confinement, context_confinement,
+  auto_confinement, max_concurrent, turn_timeout, image_runtimes, tool_runtimes
+  (unset also takes a flag's dashes: v1-addr). A value has the syntax of its
+  environment variable and is refused where the flag or the variable would be
+  (exit 3, naming the setting); an empty value is not one: use unset. They are
+  one row of the settings table (api_gateway_config), machine-wide like the
+  daemon, not per profile, and set keeps the settings it is not given. Order,
+  per setting: flag, then environment variable, then saved, then default (the
+  TLS files, the turn timeout and the runtime lists have no flag on httpapi or
+  daemon; the two TLS files are one setting: if either variable is set both come
+  from the environment). A server reads them when it starts and never changes
+  while it runs: set saves, daemon restart applies. api models and api status
+  read the same layers, so they say what a server started now would do.
+
+  show --json: {"v":1, "environment":"shell", "settings":[{key, server_flag, env,
+  saved, default, effective, source, running, running_source, state}],
+  "daemon":{running, reports_settings, autostart}, "restart_needed",
+  "problems":[{key, message}]}. effective and source (env, saved or default) are
+  what a server started from this shell would use. running and running_source
+  (flag, env, saved or default) are what the daemon's heartbeat says it started
+  with, and are absent when no daemon reports the setting. state is applied,
+  pending_restart (the daemon runs the saved value or the default and a start now
+  would resolve another), overridden (the daemon was given a flag or a variable
+  of its own: a saved value has no effect until that is removed, whether or not
+  one is saved), not_running or unknown (a daemon that predates the report). set
+  and unset --json print that document for the state after the change, plus
+  applied, changed (keys) and widening ([{key, reason}]).
+
+  A change that makes the server reach further needs --yes: without it, exit 3
+  and the reasons, on a terminal too (there is no prompt). That is: a dedicated
+  listener beyond this machine where there was none or a loopback one (v1_addr);
+  a higher class of confinement, context_confinement or auto_confinement, on a
+  listener on this machine or on one beyond it (both kinds are judged whether or
+  not a listener is saved, since the daemon's own environment may name one: so
+  raising confinement to sandboxed or any always needs --yes, and chat-only never
+  does); a runtime list that gains a runtime outside the default list or leaves
+  none. Narrowing never needs it, nor do max_concurrent, turn_timeout or the TLS
+  files. Unsetting a value that was below its default (confinement chat-only, a
+  list none) is a widening like any other. A move from one listener beyond the
+  machine to another is not seen as one. --dry-run says what a change would do
+  and whether it needs --yes, and saves nothing.
+
+  daemon restart restarts the daemon through the service it is registered as
+  (launchd, systemd --user, the Windows Scheduled Task; see daemon install), says
+  first, on stderr, that this interrupts what the daemon is running (workflows,
+  org runs), and with --json prints {"restarted":true,"via":"launchd"}. A daemon
+  that is not registered is not restarted by it: exit 3, stop it and start it
+  again. If a daemon was started by hand while the service is registered, stop it
+  first. --db-path on api config edits a database that the login service's daemon
+  does not read.
 
   Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.
 
