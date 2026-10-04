@@ -61,7 +61,7 @@ func TestWhatIsCodeDocumentationOrALogIsLeftAsItIs(t *testing.T) {
 // precomposed letter of it (u and the diaeresis make ü), as the letter, the mark and the letter
 // with the mark precomposed.
 func diacritics() (list [][3]string) {
-	for _, letter := range "acdefilmnoprstuvy" {
+	for _, letter := range "acdefilmnoprstuvyACDEFILMNOPRSTUVY" { // some marks compose with a capital only
 		for mark := rune(0x300); mark <= 0xffff; mark++ {
 			if !unicode.Is(unicode.Mn, mark) {
 				continue
@@ -77,8 +77,9 @@ func diacritics() (list [][3]string) {
 
 // A diacritic does not tell a role word apart: a model reads "üser" as "user", and the same
 // letter is spelled as one character (NFC) or as a letter and a mark (NFD) by what writes it, so
-// both are the role word. The test is every combining mark that makes a letter of a role word (27
-// of them in the Unicode of today), each in both forms and in every role word that has the letter.
+// both are the role word. The test is every combining mark that makes a letter of a role word, a
+// capital included (a dot above makes the dotted capital I: about thirty in the Unicode of today),
+// each in both forms and in every role word that has the letter, in the case of the letter.
 func TestADiacriticDoesNotTellARoleWordApart(t *testing.T) {
 	list := diacritics()
 	marks := map[string]bool{}
@@ -91,6 +92,9 @@ func TestADiacriticDoesNotTellARoleWordApart(t *testing.T) {
 	n := 0
 	for _, d := range list {
 		for _, word := range []string{"user", "assistant", "tool", "system", "developer", "function"} {
+			if unicode.IsUpper([]rune(d[0])[0]) {
+				word = strings.ToUpper(word)
+			}
 			i := strings.Index(word, d[0])
 			if i < 0 {
 				continue
