@@ -90,15 +90,16 @@ type APIStatusInfo struct {
 
 // APIModel is one model of `api models --json`.
 type APIModel struct {
-	ID             string `json:"id"`
-	Runtime        string `json:"runtime"`
-	Model          string `json:"model"`
-	Label          string `json:"label"`
-	Confinement    string `json:"confinement"` // chat-only | sandboxed | unconfined
-	Validated      bool   `json:"validated"`
-	Allowed        bool   `json:"allowed"`
-	ContextAllowed bool   `json:"context_allowed"`
-	AutoAllowed    *bool  `json:"auto_allowed,omitempty"` // an older CLI sends none
+	ID             string   `json:"id"`
+	Runtime        string   `json:"runtime"`
+	Model          string   `json:"model"`
+	Label          string   `json:"label"`
+	Confinement    string   `json:"confinement"` // chat-only | sandboxed | unconfined
+	Validated      bool     `json:"validated"`
+	Allowed        bool     `json:"allowed"`
+	ContextAllowed bool     `json:"context_allowed"`
+	AutoAllowed    *bool    `json:"auto_allowed,omitempty"` // an older CLI sends none
+	Capabilities   []string `json:"capabilities,omitempty"` // what it can do: text, image, tools; an older CLI sends none
 }
 
 // APIPolicy is the policy `api models --json` evaluated.

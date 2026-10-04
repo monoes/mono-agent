@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react'
 import i18n from '../../../i18n.js'
+import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
 import ApiModelsBlock from './ApiModelsBlock.jsx'
 import { mainListener, dedicatedListener, statusOf, modelsDoc, oldModelsDoc, MISSING_SURFACE, MISSING_KEY } from './__fixtures__/apiFixtures.js'
@@ -24,12 +25,12 @@ describe('ApiModelsBlock: the table', () => {
   it('lists every model with its class, validation, and what the policy lets it do', () => {
     mount(modelsDoc())
     const table = screen.getByRole('table', { name: 'Models' })
-    for (const h of ['Model', 'Confinement', 'Validated', 'Served', 'Context key', 'Auto']) {
+    for (const h of ['Model', 'Confinement', 'Capabilities', 'Validated', 'Served', 'Context key', 'Auto']) {
       expect(within(table).getByRole('columnheader', { name: h })).toBeInTheDocument()
     }
-    // id and label, class, validated, served, context key, auto
-    expect(cells(row('claude/sonnet'))).toEqual(['claude/sonnetSonnet 5', 'chat-only', 'validated', 'yes', 'yes', 'yes'])
-    expect(cells(row('codex/gpt-6-astra'))).toEqual(['codex/gpt-6-astraGPT-6-Astra', 'sandboxed', '–', 'yes', 'no', 'no'])
+    // id and label, class, capabilities, validated, served, context key, auto
+    expect(cells(row('claude/sonnet'))).toEqual(['claude/sonnetSonnet 5', 'chat-only', 'texttools', 'validated', 'yes', 'yes', 'yes'])
+    expect(cells(row('codex/gpt-6-astra'))).toEqual(['codex/gpt-6-astraGPT-6-Astra', 'sandboxed', 'textimagetools', '–', 'yes', 'no', 'no'])
     expect(cells(row('antigravity/default'))[1]).toBe('unconfined')
     expect(screen.getAllByRole('row')).toHaveLength(1 + 8 + 1) // header, the models, the auto entry
   })
@@ -43,9 +44,9 @@ describe('ApiModelsBlock: the table', () => {
 
   it('says a model the listener does not serve is not served by policy', () => {
     mount(modelsDoc({ confinement: 'chat-only', forListener: 'network' }), { status: statusOf([dedicatedListener()]) })
-    expect(cells(row('claude/default')).slice(3)).toEqual(['yes', 'yes', 'yes'])
-    expect(cells(row('codex/default')).slice(3)).toEqual(['no (policy)', 'no', 'no'])
-    expect(cells(row('pi/openrouter/nvidia/nemotron-3-super-120b-a12b:free'))[3]).toBe('no (policy)')
+    expect(cells(row('claude/default')).slice(4)).toEqual(['yes', 'yes', 'yes'])
+    expect(cells(row('codex/default')).slice(4)).toEqual(['no (policy)', 'no', 'no'])
+    expect(cells(row('pi/openrouter/nvidia/nemotron-3-super-120b-a12b:free'))[4]).toBe('no (policy)')
   })
 
   it('names the full label of a long model on hover', () => {
@@ -179,10 +180,108 @@ describe('ApiModelsBlock: the auto entry', () => {
   })
 })
 
+describe('ApiModelsBlock: what each model can do', () => {
+  // The badges of a model's row as the page shows them, and the cell they are in.
+  const caps = (id) => within(row(id)).queryAllByRole('listitem').map(li => li.textContent)
+  const capsCell = (id) => within(row(id)).getAllByRole('cell')[2]
+
+  it('has a column for it, between the class and the validation', () => {
+    mount(modelsDoc())
+    const headers = within(screen.getByRole('table', { name: 'Models' })).getAllByRole('columnheader').map(h => h.textContent)
+    expect(headers).toEqual(['Model', 'Confinement', 'Capabilities', 'Validated', 'Served', 'Context key', 'Auto'])
+  })
+
+  it('shows one badge for each capability the CLI lists, in its order: text; text and image; text and tools; all three', () => {
+    mount(modelsDoc())
+    expect(caps('copilot/default')).toEqual(['text'])
+    expect(caps('antigravity/default')).toEqual(['text', 'image'])
+    expect(caps('claude/sonnet')).toEqual(['text', 'tools'])
+    expect(caps('codex/gpt-6-astra')).toEqual(['text', 'image', 'tools'])
+  })
+
+  it('says what each one is in words, not in colour: the label is the text and the title says what it means', () => {
+    mount(modelsDoc())
+    const r = within(row('codex/gpt-6-astra'))
+    expect(r.getByText('text')).toHaveAttribute('title', en.settings.api.models.capTextHint)
+    expect(r.getByText('image')).toHaveAttribute('title', expect.stringMatching(/^Image generation: /))
+    expect(r.getByText('tools')).toHaveAttribute('title', expect.stringMatching(/^Tool calling \(function calling\): /))
+    // The words are the same on every row: a model's tools mean what another's do.
+    expect(within(row('claude/sonnet')).getByText('tools')).toHaveAttribute('title', r.getByText('tools').getAttribute('title'))
+  })
+
+  it('names the badges of a row for the model, for a screen reader', () => {
+    mount(modelsDoc())
+    const list = within(row('codex/gpt-6-astra')).getByRole('list', { name: 'Capabilities of codex/gpt-6-astra' })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3)
+    expect(within(row('claude/sonnet')).getByRole('list', { name: 'Capabilities of claude/sonnet' })).toBeInTheDocument()
+  })
+
+  it('shows a dash for a model the CLI listed no capabilities for: the field missing, null, empty or not a list', () => {
+    const doc = modelsDoc()
+    delete doc.models[1].capabilities // claude/sonnet: the CLI predates the field
+    doc.models[2].capabilities = null // claude/haiku
+    doc.models[3].capabilities = [] // codex/default
+    doc.models[4].capabilities = 'text' // codex/gpt-6-astra: not a list
+    mount(doc)
+    for (const id of ['claude/sonnet', 'claude/haiku', 'codex/default', 'codex/gpt-6-astra']) {
+      expect(capsCell(id).textContent, id).toBe('–')
+      expect(caps(id), id).toEqual([])
+    }
+    expect(caps('claude/default')).toEqual(['text', 'tools']) // the others are as they were
+  })
+
+  it('renders the document of a CLI that predates the field: a dash for every model, and nothing fails', () => {
+    mount(oldModelsDoc())
+    const modelRows = screen.getAllByRole('row').slice(2) // under the header and the auto entry
+    expect(modelRows).toHaveLength(8)
+    for (const r of modelRows) expect(within(r).getAllByRole('cell')[2].textContent).toBe('–')
+    expect(screen.getByRole('columnheader', { name: 'Capabilities' })).toBeInTheDocument()
+  })
+
+  it('shows a capability it does not know as the CLI named it, without a meaning to give it', () => {
+    const doc = modelsDoc()
+    doc.models[0].capabilities = ['text', 'audio', 'constructor'] // a name that is also a property of every object
+    mount(doc)
+    expect(caps('claude/default')).toEqual(['text', 'audio', 'constructor'])
+    expect(within(row('claude/default')).getByText('audio')).not.toHaveAttribute('title')
+    expect(within(row('claude/default')).getByText('constructor')).not.toHaveAttribute('title')
+  })
+
+  it('shows only the entries of the list that name a capability', () => {
+    const doc = modelsDoc()
+    doc.models[0].capabilities = [null, 7, '', 'text', { x: 1 }, 'tools']
+    mount(doc)
+    expect(caps('claude/default')).toEqual(['text', 'tools'])
+  })
+
+  it('leaves the auto entry alone, which has no capabilities: it spans the columns after the model', () => {
+    mount(modelsDoc())
+    const autoCells = within(autoRow()).getAllByRole('cell')
+    expect(autoCells).toHaveLength(2)
+    expect(autoCells[1]).toHaveAttribute('colspan', '6') // the six that follow the model's
+    expect(within(autoRow()).queryAllByRole('listitem')).toHaveLength(0)
+    expect(within(autoRow()).getByText('On. Jev picks among the 3 models it may use here (up to chat-only).')).toBeInTheDocument()
+  })
+
+  it('speaks the chosen language: the header, the labels, what they mean and the name of the list', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    mount(modelsDoc())
+    const m = es.settings.api.models
+    expect(screen.getByRole('columnheader', { name: m.colCapabilities })).toBeInTheDocument()
+    expect(caps('codex/gpt-6-astra')).toEqual([m.capText, m.capImage, m.capTools])
+    expect(m.capText).not.toBe(en.settings.api.models.capText) // really translated
+    const r = within(row('codex/gpt-6-astra'))
+    expect(r.getByText(m.capText)).toHaveAttribute('title', m.capTextHint)
+    expect(r.getByText(m.capImage)).toHaveAttribute('title', expect.stringMatching(/^Generación de imágenes: /))
+    expect(r.getByText(m.capTools)).toHaveAttribute('title', expect.stringMatching(/\(function calling\)/))
+    expect(r.getByRole('list', { name: m.capsOf.replace('{{model}}', 'codex/gpt-6-astra') })).toBeInTheDocument()
+  })
+})
+
 describe('ApiModelsBlock: documents of other CLI versions', () => {
   it('renders a CLI that predates --auto-confinement: dashes, and an auto line without numbers', () => {
     mount(oldModelsDoc())
-    expect(cells(row('claude/sonnet')).slice(3)).toEqual(['yes', 'yes', '–'])
+    expect(cells(row('claude/sonnet')).slice(4)).toEqual(['yes', 'yes', '–'])
     expect(within(autoRow()).getByText('On. Jev picks among the models it may use here.')).toBeInTheDocument()
     expect(screen.queryByText(/more model/)).not.toBeInTheDocument()
     cleanup()
@@ -197,7 +296,7 @@ describe('ApiModelsBlock: documents of other CLI versions', () => {
     doc.policy.and_one_more = true
     doc.v = 2
     mount(doc)
-    expect(cells(row('claude/sonnet'))).toEqual(['claude/sonnetSonnet 5', 'chat-only', 'validated', 'yes', 'yes', 'yes'])
+    expect(cells(row('claude/sonnet'))).toEqual(['claude/sonnetSonnet 5', 'chat-only', 'texttools', 'validated', 'yes', 'yes', 'yes'])
     expect(within(autoRow()).getByText(/On\. Jev picks among the 3 models/)).toBeInTheDocument()
   })
 
