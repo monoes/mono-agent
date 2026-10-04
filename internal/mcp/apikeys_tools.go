@@ -31,11 +31,12 @@ func apiTools() []tool {
 		{
 			name: "api_models_list",
 			description: "List the models the OpenAI-compatible API (/v1) would serve, with each one's confinement class (chat-only, sandboxed or unconfined), " +
-				"its capabilities (text, and image for a model of a runtime that makes images), " +
+				"its capabilities (text; image for a model of a runtime that makes images; tools for a model that serves tool calling: its runtime is in the list below, monomind can apply the sandbox every turn with tools requires, and for a runtime that is not chat-only run it read-only), " +
 				"whether a listener of the given kind serves it, whether a key created with context may use it, whether the auto model may pick it, " +
 				"and whether the auto model works for the active profile: the document of `monoagentcli api models --json`. " +
 				"The policy comes from the arguments, else from MONOAGENT_API_CONFINEMENT, MONOAGENT_API_CONTEXT_CONFINEMENT and MONOAGENT_API_AUTO_CONFINEMENT " +
-				"in this MCP server's environment, else the listener's defaults, and the runtimes that make images from MONOAGENT_API_IMAGE_RUNTIMES there (default codex and antigravity), " +
+				"in this MCP server's environment, else the listener's defaults, the runtimes that make images from MONOAGENT_API_IMAGE_RUNTIMES there (default codex and antigravity) " +
+				"and the runtimes that serve tool calling from MONOAGENT_API_TOOL_RUNTIMES there (default claude and codex; none switches it off), " +
 				"so it can differ from what a running server applies (`monoagentcli api status` shows that). " +
 				"Loading the models asks every installed agent runtime for its list, which takes a few seconds: calls at once share one load, the list is reused for a minute, " +
 				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does.",
@@ -55,7 +56,7 @@ func apiTools() []tool {
 				"Treat it as a password and give it only to the user: it is now part of this conversation's transcript, which the host may keep " +
 				"(`monoagentcli api key create` writes the key to stdout: run by the user in their own terminal it keeps the key out of any transcript, run by an agent through a shell tool it puts the key in that transcript too). " +
 				"The name rule is the store's: " + apikeys.ErrInvalidName.Error() + ". A name must also be unique among the profile's active keys. " +
-				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models unless the server raises --context-confinement.",
+				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models, and is refused tool calling, unless the server raises --context-confinement (and --confinement, on a chat-only listener) above chat-only.",
 			schema: objSchema(map[string]interface{}{
 				"name":    strParam("Key name, unique among the profile's active keys"),
 				"context": boolParam("Add the profile's own knowledge (documents and captures) to requests made with this key (default false)"),
@@ -250,6 +251,10 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if err != nil { // a fixed text, like the others: the shared parser quotes the value
 		return nil, errors.New("MONOAGENT_API_IMAGE_RUNTIMES must be a comma-separated list of runtime ids, such as codex,antigravity")
 	}
+	toolRuntimes, err := openaiapi.EffectiveToolRuntimes(os.Getenv)
+	if err != nil { // a fixed text too
+		return nil, errors.New("MONOAGENT_API_TOOL_RUNTIMES must be a comma-separated list of runtime ids, such as claude,codex")
+	}
 	rt, err := s.runtime()
 	if err != nil {
 		return nil, err
@@ -261,7 +266,7 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 	return openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
-		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models, ImageRuntimes: imageRuntimes,
+		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models, ImageRuntimes: imageRuntimes, ToolRuntimes: toolRuntimes,
 		Auto: openaiapi.DefaultAuto(rt.db.DB).Status(ctx, rt.profileID),
 	}), nil
 }

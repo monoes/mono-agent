@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 )
@@ -24,6 +25,17 @@ func objectFor(m ModelInfo, capabilities []string) modelObject {
 			Capabilities: capabilities,
 		},
 	}
+}
+
+// forKey is a model object as the key asking sees it: without the tools capability when
+// a request that declares tools would be refused for the key (a key created with
+// --context is refused them unless the operator raised its cap), so that the lists do
+// not offer what the key cannot use.
+func forKey(o modelObject, pr Principal, eff Policy) modelObject {
+	if contextToolsRefused(pr, eff) {
+		o.Monoagent.Capabilities = slices.DeleteFunc(slices.Clone(o.Monoagent.Capabilities), func(c string) bool { return c == capTools })
+	}
+	return o
 }
 
 // catalogError turns a failure to list models into a response. The error goes
@@ -60,13 +72,13 @@ func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request
 		}
 		out := modelList{Object: "list", Data: make([]modelObject, 0, len(models)+1)}
 		for _, m := range models {
-			out.Data = append(out.Data, objectFor(m, g.cfg.Capabilities(m)))
+			out.Data = append(out.Data, forKey(objectFor(m, g.cfg.Capabilities(m)), pr, eff))
 		}
 		// Auto comes last, where it works: a client that takes the first model of
 		// the list must not be moved to it, and its prompts to TypeSafe, by an
 		// operator switching the surface on.
 		if len(models) > 0 && g.autoStatus(r.Context(), pr.ProfileID).Available {
-			out.Data = append(out.Data, g.autoObject(eff, models))
+			out.Data = append(out.Data, forKey(g.autoObject(eff, models), pr, eff))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -87,7 +99,7 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 				writeError(w, e)
 				return
 			}
-			writeJSON(w, http.StatusOK, g.autoObject(eff, candidates))
+			writeJSON(w, http.StatusOK, forKey(g.autoObject(eff, candidates), pr, eff))
 			return
 		}
 		m, err := g.catalog.Resolve(r.Context(), id)
@@ -101,7 +113,7 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 		case !policyFor(p, pr).Allows(m.Class):
 			writeError(w, errModelNotFound(id))
 		default:
-			writeJSON(w, http.StatusOK, objectFor(m, g.cfg.Capabilities(m)))
+			writeJSON(w, http.StatusOK, forKey(objectFor(m, g.cfg.Capabilities(m)), pr, policyFor(p, pr)))
 		}
 	}
 }

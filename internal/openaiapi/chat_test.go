@@ -175,7 +175,7 @@ func TestChatRejectsBeforeSpawningAnything(t *testing.T) {
 		{"flag-shaped model", anyPolicy, secret, `{"model":"claude/--dangerously-skip-permissions","messages":[{"role":"user","content":"x"}]}`, 404, "model_not_found"},
 		{"policy denies the runtime", Policy{Max: ChatOnly}, secret, `{"model":"codex/gpt-6-astra","messages":[{"role":"user","content":"x"}]}`, 403, "policy_denied"},
 		{"policy denies an unconfined runtime", Policy{Max: Sandboxed}, secret, `{"model":"antigravity","messages":[{"role":"user","content":"x"}]}`, 403, "policy_denied"},
-		{"tools", anyPolicy, secret, `{"model":"claude","tools":[{"type":"function","function":{"name":"f"}}],"messages":[{"role":"user","content":"x"}]}`, 400, "unsupported_parameter"},
+		{"tools on a runtime that does not serve them", anyPolicy, secret, `{"model":"antigravity","tools":[{"type":"function","function":{"name":"f"}}],"messages":[{"role":"user","content":"x"}]}`, 400, "unsupported_parameter"},
 		{"image input", anyPolicy, secret, `{"model":"claude","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"u"}}]}]}`, 400, "unsupported_parameter"},
 		{"no messages", anyPolicy, secret, `{"model":"claude","messages":[]}`, 400, "invalid_value"},
 	}

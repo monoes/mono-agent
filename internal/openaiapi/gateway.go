@@ -88,6 +88,10 @@ type Gateway struct {
 	breakerMu sync.Mutex
 	breakers  map[string]*autoBreaker // by profile
 
+	// conts keeps where each leg of a conversation with tools that ended at a
+	// call left its runtime session (tools_store.go).
+	conts *contStore
+
 	// shutdownCtx ends when the server is stopping: every turn in flight
 	// watches it, so closing a listener cannot leave an agent CLI running.
 	shutdownCtx context.Context
@@ -142,10 +146,14 @@ func New(d Deps, c Config) (*Gateway, error) {
 		breakers: map[string]*autoBreaker{},
 	}
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
+	g.conts = newContStore(func() time.Time { return g.now() })
 	g.cleanSlots() // only now: nothing of another process can be running in them
 	_ = os.RemoveAll(filepath.Join(cfg.ScratchRoot, tmpDirName))
 	if cfg.ImagesOff() {
 		d.Logf("image generation is %s", imagesOffBy)
+	}
+	if cfg.ToolsOff() {
+		d.Logf("tool calling is %s", toolsOffBy)
 	}
 	g.catalog.onFirstLoad = g.logImageRuntimes
 	return g, nil

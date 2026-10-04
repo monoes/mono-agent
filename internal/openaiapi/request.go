@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -17,13 +18,16 @@ import (
 // logRequest writes the one line a request leaves in the server log. It names the
 // request, the key, the profile, the model and the outcome, and never a prompt, an
 // answer or a key. detail is what a failure keeps for the operator: a Go error or a
-// runtime's error code, never what the client sent.
-func (g *Gateway) logRequest(pr Principal, begin time.Time, model string, status int, ctxState, autoBy, detail string) {
+// runtime's error code, never what the client sent. notes are more fields of the
+// line, each with its leading space, that a route adds (chat with tools says how
+// many tools and how its leg started): never a prompt, a name or a result.
+func (g *Gateway) logRequest(pr Principal, begin time.Time, model string, status int, ctxState, autoBy, detail string, notes ...string) {
 	line := fmt.Sprintf("req=%s key=%s profile=%s model=%s status=%d ms=%d context=%s",
 		pr.RequestID, pr.KeyID, pr.ProfileID, model, status, time.Since(begin).Milliseconds(), ctxState)
 	if autoBy != "" {
 		line += " auto=" + autoBy
 	}
+	line += strings.Join(notes, "")
 	if detail != "" {
 		line += fmt.Sprintf(" detail=%q", detail)
 	}

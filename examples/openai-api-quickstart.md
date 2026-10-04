@@ -9,9 +9,10 @@ it on a headless Linux server. Paths and schemas:
 
 Today it serves `GET /v1/models`, `GET /v1/models/{id}`,
 `POST /v1/chat/completions` (JSON and `"stream": true`) and
-`POST /v1/images/generations` (see "Make images" below). Tool calling is not
-available yet. The model `auto` lets Jev pick the model of
-each request once you switch it on (see "Let Jev pick" below); until then
+`POST /v1/images/generations` (see "Make images" below). OpenAI tool calling
+works on claude and codex (see "Call your own tools" below). The model `auto`
+lets Jev pick the model of each request once you switch it on (see "Let Jev
+pick" below); until then
 asking for it is a 404 `model_not_found` that says what is missing. A `404 page
 not found` in plain text instead means the server running is older than this
 API and has no `/v1` at all (`monoagentcli daemon` and `httpapi` serve it only
@@ -154,11 +155,11 @@ What to expect:
   server answers 429 with `Retry-After`).
 - Requests are stateless. Sampling parameters (`temperature`, `max_tokens`,
   `stop`, …) are accepted and ignored, because the agent runtimes have none.
-  `n` above 1, a non-empty `tools`, `logprobs: true`, `response_format` of
-  type `json_schema`, tool messages and parts that are not text (images, audio,
-  files) are rejected with 400 `unsupported_parameter`
-  (`response_format: {"type":"json_object"}` works, as a best-effort
-  instruction; `tools: []` and `tool_choice: "none"` are accepted).
+  `n` above 1, `logprobs: true`, `response_format` of type `json_schema`, the
+  legacy `functions` and `function_call` (use `tools`), the `function` role
+  and parts that are not text (images, audio, files) are rejected with 400
+  `unsupported_parameter` (`response_format: {"type":"json_object"}` works, as a
+  best-effort instruction; `tools: []` and `tool_choice: "none"` are accepted).
 - `curl -i` shows `X-Monoagent-Model` (the model that answered),
   `X-Monoagent-Sandbox` (how monomind sandboxed that turn: `sandboxed`,
   `scoped`, `unsupported`, …; sent on a successful non-streaming response
@@ -314,6 +315,216 @@ What to expect:
   from outside its folder, and the server returns any file it left in the
   turn's folder that begins like an image (the test is on the first bytes).
 
+### Call your own tools
+
+With `tools`, the model can ask your program to run a function and use the
+result: the OpenAI tool loop, over claude and codex. The server never runs
+anything of yours. It returns the call, you run it wherever you like (or refuse
+to), and you send the result back. Which models serve tools is in
+`GET /v1/models` (the capability `tools`) and in `api models` (a TOOLS column, and
+`--json`, which the MCP tool `api_models_list` returns too); any other model
+answers 400 `unsupported_parameter` and says which runtimes serve them
+(`MONOAGENT_API_TOOL_RUNTIMES`, default `claude,codex`; `none` switches tool
+calling off and says so):
+
+```bash
+curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \
+  | jq -r '.data[] | select(.monoagent.capabilities | index("tools")) | .id'
+```
+
+A key created with `--context` is not offered `tools` (and a request that
+declares them is a 403) unless the operator raised its cap above chat-only:
+`--context-confinement`, and `--confinement` too on a listener that is chat-only,
+which holds the key to the lower of the two (the answer names the flag that
+would change it, or both).
+
+A round trip with curl. The first request declares the function; the answer ends
+at the model's call:
+
+```bash
+TOOLS='[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]'
+Q='What is the weather in Paris?'
+
+curl -s http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$Q" --argjson tools "$TOOLS" '{model: "claude", messages: [{role: "user", content: $q}], tools: $tools}')" \
+  > first.json
+jq '.choices[0] | {finish_reason, tool_calls: .message.tool_calls}' first.json
+```
+
+```json
+{
+  "finish_reason": "tool_calls",
+  "tool_calls": [
+    { "id": "call_k3j2h1g4f5d6s7a8", "type": "function",
+      "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } }
+  ]
+}
+```
+
+Run the call yourself, then send the conversation again: the assistant message as
+it came, and a `tool` message with the result:
+
+```bash
+curl -s http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$Q" --argjson tools "$TOOLS" --slurpfile first first.json '
+    $first[0].choices[0].message as $call
+    | {model: "claude", tools: $tools, messages: [
+        {role: "user", content: $q}, $call,
+        {role: "tool", tool_call_id: $call.tool_calls[0].id, content: "{\"temp_c\": 21, \"conditions\": \"fog\"}"}]}')" \
+  | jq -r '.choices[0].message.content'
+```
+
+The same loop with the Python SDK (it is the usual one: stop when a response has
+no `tool_calls`, and cap the rounds yourself, the server does not):
+
+```python
+import json
+import os
+
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:9322/v1", api_key=os.environ["KEY"])
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}]
+
+
+def get_weather(city: str) -> dict:  # your own code: any function, on any machine
+    return {"city": city, "temp_c": 21, "conditions": "fog"}
+
+
+messages = [{"role": "user", "content": "What is the weather in Paris?"}]
+for _ in range(8):
+    reply = client.chat.completions.create(model="claude", messages=messages, tools=tools)
+    message = reply.choices[0].message
+    if not message.tool_calls:
+        print(message.content)
+        break
+    messages.append(message)  # the assistant message, as it came
+    for call in message.tool_calls:
+        result = get_weather(**json.loads(call.function.arguments))  # yours to run, or to refuse
+        messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+```
+
+Streaming works too: `stream: true` sends the words before the call as content
+deltas, then the call as `delta.tool_calls` chunks (an index, then the id, type
+and name, then the arguments), then a chunk that finishes with `tool_calls`, and
+`[DONE]`; the SDKs' stream helpers assemble them as for any OpenAI model.
+
+To point a coding client at it, give the client the base URL
+`http://127.0.0.1:9322/v1`, a key and a model id that has the `tools` capability
+(clients built on the OpenAI SDKs read `OPENAI_BASE_URL` and `OPENAI_API_KEY`).
+What to expect from a tool loop:
+
+- **One call per response.** The turn ends at the model's first call, so a model
+  that wants several asks for them in successive rounds: `parallel_tool_calls` is
+  accepted and treated as false. A client written for parallel calls just loops
+  more.
+- **Each round is a turn.** A round takes seconds (the spike's medians: about 6
+  seconds to the first call on claude and 11 on codex), on the runtime's account,
+  and no process waits for your result, so a slow tool costs the server nothing.
+  The follow-up continues the runtime's session when the server still remembers
+  the call (same key, same model, same tools and the same conversation before
+  the call, within ten minutes, once: about half the price of the alternative on
+  claude); otherwise, after a restart, a retry, a long pause, or a change to an
+  earlier message (to what it says, not to how it is written: the arguments of a
+  call with their keys in another order or their characters escaped another way
+  are the same call, a value or a number written another way is not; on codex
+  also to the system prompt, the tool choice or the response format: a claude
+  session is told the new ones), it starts again from the transcript you send,
+  which always works. Either way you send the whole conversation each time.
+- **The functions are yours; the model's own tools are not.** claude's own tools
+  stay denied: a tool turn requires monomind's sandbox, under which monomind lets
+  only the prefixed names of your functions through, so a function called `Bash`
+  cannot open claude's own, and the turn is refused (403) when the sandbox cannot
+  be applied. A codex leg runs read-only (`--access read`): it cannot write files,
+  so a coding client's edits must go through its declared functions, which is the
+  point. A model whose runtime monomind cannot run read-only, or whose sandbox it
+  cannot apply, is refused.
+- `tool_choice` `required` or a named function is an instruction in the system
+  prompt, not a guarantee (it worked 9 of 9 for a named function and 5 of 6 for
+  `required` in the spike); `none` passes no tools.
+- Put the whole JSON schema in `parameters`: monomind keeps only the top-level
+  properties of it (and of each, its type and an enum of strings), so the server
+  folds the schema into the function's description and names the arguments of a
+  root `anyOf`, `oneOf` or `allOf`, of a local `$ref` (`#/$defs/...`), of an
+  `if`, `then` or `else`, of what `dependentSchemas`, `dependencies` and
+  `dependentRequired` ask for and of a `const` or an `enum` of objects at the top
+  level too (optional where the schema lets a call do without them, and as any value where only a branch that may not apply
+  defines them), or the call would reach you as `{}`. A key that no property
+  names is not passed on.
+- monomind holds a call to the type, the enum of strings and the `required`
+  names of the top-level properties it was told of. A call that does not match
+  them is rejected inside monomind and never reaches you: the model tries again,
+  and after monomind's round cap (10) you get `200` whose content is
+  `[monomind] tool-call round cap (10) reached ...` with `finish_reason:
+  "length"` (and a `usage`) instead of a call, so a mismatch there looks like a
+  model that gave up. What monomind cannot see comes back as the model wrote it,
+  unchecked, and is yours to check before you run it: nested properties, the
+  items of an array, patterns, formats, numeric ranges, lengths (the server only
+  counts, in its log, the calls that do not match its own reading of the
+  schema). An `enum` that is not a list of strings is left out of what the
+  runtime's tool bridge gets (the model still reads it in the description).
+- Some requests are refused: 400 `invalid_value`, naming the parameter and never
+  what you wrote. Whatever the `tool_choice` (the tools are checked when they are declared): more
+  than 128 functions; a tool that is not an object; a name that is not 1 to 64
+  characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is another
+  function's name (a name of 55 or more reaches the model as an alias of 54, and
+  you always see your own); a `description` of more than 16 KiB; `parameters` of
+  more than 64 KiB, that are not a JSON schema object, whose root `type` is not
+  `object`, whose `properties` is not an object or holds a property that is not
+  a schema, or whose `required` is not a list of strings; a `tool_choice` that
+  is not `none`, `auto`, `required` or a function, or that names a function that
+  is not declared; and in the conversation more than 64 calls in one message, a
+  call with an id of no characters or of more than 128 bytes, a call whose name
+  is not printable ASCII without `[ ] < > & ' "` or a backtick, a call whose
+  `arguments` is not a string, a result of more than 256 KiB, and a tool message
+  that answers no call of an earlier assistant message. Other codes: 400
+  `unsupported_parameter` for a tool or a call of a type other than `function`,
+  a `tool_choice` of another type, and a `tool_choice` that forces a call when
+  no tools are declared; 400 `missing_required_parameter` for a tool with no
+  `function`, a `tool_choice` that names no function, and a tool message with no
+  `tool_call_id`. While the tools are passed to the model (`tool_choice` is not `none`,
+  which passes none, so no argument is named and these do not apply): a function
+  whose schema names no property and allows free-form keys (`additionalProperties`
+  or `unevaluatedProperties` true or a schema, `patternProperties`) or whose
+  references cannot be followed (`$dynamicRef`, a `$ref` that is not local to the
+  schema or leads nowhere), since no argument of its calls could be passed on:
+  list the arguments in `properties`; a schema whose `const` or `enum` (the root's,
+  an `allOf`'s or a `$ref`'s that applies) holds a value that is not an object,
+  which no call could match; a schema that nests combinators and references more
+  than 8 levels deep or holds more than 2,000 schemas; and functions whose schemas
+  together take more of the server than it reads to name their arguments (100,000
+  steps for a request, a step being a schema read, a reference followed, a
+  property or a listed name met, an enum entry compared; a reference counts once
+  however it is spelled). An id that is not such a token (a bracket, a quote, a
+  space, a line break: what clients really send, such as `call_abc123`,
+  `toolu_01A...` and `functions.name:0`, is fine) is not refused: the model reads
+  it as `call_1`, `call_2`, ... in order of appearance, and the follow-up is served
+  by a replay, since only an id the server made can resume a session.
+- Make tools with side effects idempotent. A model can ask for the same call
+  again after a resume (1 of 19 single-result claude legs in the spike, none of
+  18 on codex), and codex repeats an identical call two or three times within a
+  leg: the server returns only the first of them, but cannot tell a repeat of a
+  round from a new request for the same thing.
+- A conversation that has tool messages but no `tools` (a client that dropped
+  them for its last round) is answered as text.
+- Read `SECURITY.md` ("Tool calling") before you let a client run calls without
+  asking: a tool result, and with `--context` a captured page, can steer which
+  calls the model proposes. So a key created with `--context` is refused tools
+  (403 `policy_denied`, before anything starts, naming `--context-confinement`,
+  `--confinement` when the server is chat-only, or both) unless the operator
+  raised that cap above chat-only; use a key without
+  `--context` for a client that calls tools.
+
 ## 4. Serve it beyond this machine
 
 The main listener serves `/v1` only on loopback. To reach it from another
@@ -393,10 +604,10 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images (or image generation switched off), `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
+| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (`tools` for a model that does not serve them, a function schema that names no argument, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images (or image generation switched off), `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
 | 400 | `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no image tool |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
-| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
+| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; a completion that declares `tools` (without `tool_choice` `none`) with a key created with `--context` while its cap, the lower of the listener's `--confinement` and `--context-confinement`, is chat-only; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
 | 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows). For an image request without a model also: no runtime of `MONOAGENT_API_IMAGE_RUNTIMES` can make images here (the message says, for each, not installed or installed but chat-only), or image generation is switched off (`none`) |
 | 413 | `request_too_large` | Body over 2 MiB (64 KiB for an image request) |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |

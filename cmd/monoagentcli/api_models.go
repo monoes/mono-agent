@@ -41,6 +41,11 @@ func autoNote(a apiAutoJSON) string {
 	return note
 }
 
+// toolsNote is the line under the table for the TOOLS column, which is the models that can serve
+// tool calling on this machine and not what a given key may do.
+const toolsNote = "tools: a model serves them only where monomind can apply the sandbox every turn with tools requires; " +
+	"a key created with --context is refused them unless --context-confinement (and the listener's policy) is above chat-only"
+
 func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 	var forListener, confinement, contextConfinement, autoConfinement string
 	cmd := &cobra.Command{
@@ -52,7 +57,12 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			"loopback, chat-only on a network bind. A key created with --context is held to --context-confinement, " +
 			"else MONOAGENT_API_CONTEXT_CONFINEMENT, else chat-only, and never above the listener's policy. " +
 			"The auto model is held to --auto-confinement, else MONOAGENT_API_AUTO_CONFINEMENT, else chat-only, the same way. " +
-			"IMAGES (capabilities in --json) says which models make images, from MONOAGENT_API_IMAGE_RUNTIMES, else codex and antigravity.",
+			"IMAGES (capabilities in --json) says which models make images, from MONOAGENT_API_IMAGE_RUNTIMES, else codex and antigravity. " +
+			"TOOLS says which models serve tool calling, from MONOAGENT_API_TOOL_RUNTIMES, else claude and codex (a runtime that is not " +
+			"chat-only also needs monomind to run it read-only, and every turn with tools requires monomind's sandbox, " +
+			"agent-exec-sandbox, to be applicable to its runtime). Either list can be none, which switches that off. " +
+			"A key created with --context is refused tools whatever this column says, unless --context-confinement is above chat-only " +
+			"(and the listener's policy is too: it is held to the lower of the two).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			addr, err := representativeAddr(forListener)
@@ -73,6 +83,10 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return errInvalidInput("%v", err)
 			}
+			toolRuntimes, err := openaiapi.EffectiveToolRuntimes(os.Getenv)
+			if err != nil {
+				return errInvalidInput("%v", err)
+			}
 			forContext := policy.ForContextKey()
 			db, err := initDB(cfg)
 			if err != nil {
@@ -84,7 +98,7 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			out := openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
-				For: forListener, Policy: policy, Source: openaiapi.ReportSourceShell, Models: models, ImageRuntimes: imageRuntimes,
+				For: forListener, Policy: policy, Source: openaiapi.ReportSourceShell, Models: models, ImageRuntimes: imageRuntimes, ToolRuntimes: toolRuntimes,
 				Auto: openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID),
 			})
 			if cfg.JSONOutput {
@@ -94,9 +108,9 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			fmt.Fprintf(w, "Confinement policy for a %s listener: %s (keys created with --context: %s)\n", forListener, policy, forContext)
 			fmt.Fprint(w, "From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).\n\n")
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY\tAUTO\tIMAGES")
+			fmt.Fprintln(tw, "MODEL\tCONFINEMENT\tVALIDATED\tSERVED\tCONTEXT KEY\tAUTO\tIMAGES\tTOOLS")
 			for _, m := range out.Models {
-				served, withContext, withAuto, withImages := "yes", "yes", "yes", "no"
+				served, withContext, withAuto, withImages, withTools := "yes", "yes", "yes", "no", "no"
 				if !m.Allowed {
 					served = "no (policy)"
 				}
@@ -109,12 +123,16 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 				if slices.Contains(m.Capabilities, "image") {
 					withImages = "yes"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext, withAuto, withImages)
+				if slices.Contains(m.Capabilities, "tools") {
+					withTools = "yes"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Confinement, m.Validated, served, withContext, withAuto, withImages, withTools)
 			}
 			if err := tw.Flush(); err != nil {
 				return err
 			}
 			fmt.Fprintf(w, "\nauto: %s\n", autoNote(out.Auto))
+			fmt.Fprintln(w, toolsNote)
 			return nil
 		},
 	}

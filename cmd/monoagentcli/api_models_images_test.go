@@ -21,7 +21,9 @@ func TestAPIModelsShowsWhichModelsMakeImages(t *testing.T) {
 	fakeAPIMonomind(t)
 	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
 	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "")
-	text, both := []string{"text"}, []string{"text", "image"}
+	// claude makes no images, and calls tools (its own are gated by monomind); the
+	// fake monomind cannot run codex read-only, so codex does not.
+	text, both, claude := []string{"text"}, []string{"text", "image"}, []string{"text", "tools"}
 
 	out, _, err := runAPI(t, db, "default", true, "models")
 	if err != nil {
@@ -29,7 +31,7 @@ func TestAPIModelsShowsWhichModelsMakeImages(t *testing.T) {
 	}
 	got := capabilitiesByID(decodeModels(t, out))
 	for id, want := range map[string][]string{
-		"claude/default": text, "codex/default": both, "codex/gpt-6-astra": both,
+		"claude/default": claude, "codex/default": both, "codex/gpt-6-astra": both,
 		"antigravity/default": both, "antigravity/gemini-3.8-flash-high": both,
 	} {
 		if !slices.Equal(got[id], want) {
@@ -44,7 +46,7 @@ func TestAPIModelsShowsWhichModelsMakeImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = capabilitiesByID(decodeModels(t, out))
-	if !slices.Equal(got["antigravity/default"], both) || !slices.Equal(got["codex/default"], text) || !slices.Equal(got["claude/default"], text) {
+	if !slices.Equal(got["antigravity/default"], both) || !slices.Equal(got["codex/default"], text) || !slices.Equal(got["claude/default"], claude) {
 		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=agy: %v", got)
 	}
 
@@ -55,8 +57,8 @@ func TestAPIModelsShowsWhichModelsMakeImages(t *testing.T) {
 		t.Fatalf("MONOAGENT_API_IMAGE_RUNTIMES=none: %v", err)
 	}
 	for id, caps := range capabilitiesByID(decodeModels(t, out)) {
-		if !slices.Equal(caps, text) {
-			t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=none: %s has capabilities %v, want text alone", id, caps)
+		if !slices.Equal(withoutTools(caps), text) {
+			t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=none: %s has capabilities %v, want text alone (apart from tools)", id, caps)
 		}
 	}
 
@@ -98,11 +100,11 @@ func TestAPIModelsTableHasAnImagesColumn(t *testing.T) {
 			rows[f[0]] = f
 		}
 	}
-	if !strings.HasSuffix(strings.TrimSpace(header), "AUTO  IMAGES") {
-		t.Fatalf("the IMAGES column goes last: %q", header)
+	if !strings.HasSuffix(strings.TrimSpace(header), "AUTO  IMAGES  TOOLS") {
+		t.Fatalf("the IMAGES column goes after the ones that were there, and TOOLS after it: %q", header)
 	}
 	for id, want := range map[string]string{"claude/default": "no", "codex/gpt-6-astra": "yes", "antigravity/default": "yes"} {
-		if f := rows[id]; len(f) == 0 || f[len(f)-1] != want {
+		if f := rows[id]; len(f) < 2 || f[len(f)-2] != want {
 			t.Errorf("%s: %v, want the IMAGES column to say %s", id, f, want)
 		}
 	}

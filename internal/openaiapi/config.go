@@ -50,6 +50,10 @@ type Config struct {
 	// and a list with nothing in it switches image generation off; read it through
 	// ImageRuntimeList.
 	ImageRuntimes []string
+	// ToolRuntimes are the runtimes that serve tool calling. nil means
+	// defaultToolRuntimes, and a list with nothing in it switches tool calling
+	// off; read it through ToolRuntimeList.
+	ToolRuntimes []string
 }
 
 // defaultImageRuntimes make images when MONOAGENT_API_IMAGE_RUNTIMES is not
@@ -78,13 +82,17 @@ func (c Config) CanMakeImages(m ModelInfo) bool {
 	return m.Class >= Sandboxed && slices.Contains(c.ImageRuntimeList(), m.Runtime)
 }
 
-// Capabilities is what GET /v1/models says a model can do: text, and image for
-// a model that can generate images.
+// Capabilities is what GET /v1/models says a model can do: text, image for a
+// model that can generate images, and tools for one that serves tool calling.
 func (c Config) Capabilities(m ModelInfo) []string {
+	caps := []string{capText}
 	if c.CanMakeImages(m) {
-		return []string{"text", "image"}
+		caps = append(caps, capImage)
 	}
-	return []string{"text"}
+	if c.ServesTools(m) {
+		caps = append(caps, capTools)
+	}
+	return caps
 }
 
 // ParseImageRuntimes reads MONOAGENT_API_IMAGE_RUNTIMES: runtime ids separated
@@ -156,8 +164,9 @@ func (c Config) withDefaults() (Config, error) {
 
 // ConfigFromEnv reads MONOAGENT_API_MAX_CONCURRENT (an integer from 1 to
 // MaxConcurrentLimit), MONOAGENT_API_TURN_TIMEOUT (a duration of at least 10s,
-// such as 15m) and MONOAGENT_API_IMAGE_RUNTIMES (see ParseImageRuntimes). An
-// unset variable keeps the default.
+// such as 15m), MONOAGENT_API_IMAGE_RUNTIMES (see ParseImageRuntimes) and
+// MONOAGENT_API_TOOL_RUNTIMES (see ParseToolRuntimes). An unset variable keeps
+// the default.
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	var c Config
 	if v := getenv("MONOAGENT_API_MAX_CONCURRENT"); v != "" {
@@ -180,6 +189,13 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 		c.ImageRuntimes = list
+	}
+	if v := getenv("MONOAGENT_API_TOOL_RUNTIMES"); v != "" {
+		list, err := ParseToolRuntimes(v)
+		if err != nil {
+			return Config{}, err
+		}
+		c.ToolRuntimes = list
 	}
 	return c, nil
 }

@@ -111,7 +111,7 @@ func TestCanMakeImages(t *testing.T) {
 	if got := def.Capabilities(ModelInfo{Runtime: "codex", Class: Sandboxed}); !slices.Equal(got, []string{"text", "image"}) {
 		t.Errorf("an image model: %v", got)
 	}
-	if got := def.Capabilities(ModelInfo{Runtime: "claude", Class: ChatOnly}); !slices.Equal(got, []string{"text"}) {
+	if got := def.Capabilities(ModelInfo{Runtime: "claude", Class: ChatOnly}); !slices.Equal(noTools(got), []string{"text"}) {
 		t.Errorf("a text model: %v", got)
 	}
 }
@@ -149,14 +149,14 @@ func TestModelsAdvertiseTheImageCapability(t *testing.T) {
 			got[m.ID] = m.Monoagent.Capabilities
 		}
 		for id, want := range c.want {
-			if !slices.Equal(got[id], want) {
+			if !slices.Equal(noTools(got[id]), want) {
 				t.Errorf("%s: GET /v1/models: %s has capabilities %v, want %v", name, id, got[id], want)
 			}
 		}
 		for _, id := range []string{"codex/gpt-6-astra", "claude/default", "hermes/default"} {
 			var m modelObject
 			decodeInto(t, h.serve(anyPolicy, http.MethodGet, "/v1/models/"+id, secret, ""), &m)
-			if !slices.Equal(m.Monoagent.Capabilities, c.want[id]) {
+			if !slices.Equal(noTools(m.Monoagent.Capabilities), c.want[id]) {
 				t.Errorf("%s: GET /v1/models/%s has capabilities %v, want %v", name, id, m.Monoagent.Capabilities, c.want[id])
 			}
 		}

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -19,13 +18,13 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 	return func(w http.ResponseWriter, r *http.Request, pr Principal) {
 		begin := time.Now()
 
-		status, model, ctxState, detail, autoBy := http.StatusOK, "", "", "", ""
+		status, model, ctxState, detail, autoBy, toolNote := http.StatusOK, "", "", "", "", ""
 		fail := func(e *apiError) {
 			status, detail = e.Status, e.detail
 			writeError(w, e)
 		}
 		// One line per request, whatever its outcome.
-		defer func() { g.logRequest(pr, begin, model, status, ctxState, autoBy, detail) }()
+		defer func() { g.logRequest(pr, begin, model, status, ctxState, autoBy, detail, toolNote) }()
 
 		var req ChatRequest
 		if e := decodeBody(w, r, g.cfg.BodyLimit, &req); e != nil {
@@ -42,13 +41,23 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		}
 
 		eff := policyFor(p, pr)
+		if req.toolsActive() { // before anything starts: no model is resolved, no pick, no slot, no knowledge search
+			if e := contextToolsRefusal(pr, p, eff); e != nil {
+				fail(e)
+				return
+			}
+		}
 		var m ModelInfo
 		var candidates []ModelInfo // for auto: what Jev may pick among, all of them allowed
 		isAuto := req.Model == autoModelID
 		if isAuto {
 			model = autoModelID
 			var e *apiError
-			if candidates, e = g.autoCandidates(r.Context(), pr, eff); e != nil {
+			needs := capText // a request with tools is for the models that call them
+			if req.toolsActive() {
+				needs = capTools
+			}
+			if candidates, e = g.autoCandidatesFor(r.Context(), pr, eff, needs); e != nil {
 				fail(e)
 				return
 			}
@@ -67,6 +76,12 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			if e := policyRefusal(m, p, eff, "its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted"); e != nil {
 				fail(e)
 				return
+			}
+			if req.toolsActive() { // a refusal starts nothing: no slot, no knowledge search, no turn
+				if e := g.cfg.toolsRefusal(m); e != nil {
+					fail(e)
+					return
+				}
 			}
 		}
 
@@ -107,6 +122,16 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		w.Header().Set("X-Monoagent-Model", m.ID)
 		extendWriteDeadline(w, g.cfg.TurnTimeout+2*turnGrace)
 		id := newRequestID("chatcmpl-")
+
+		if req.toolsActive() { // declared tools: a leg of a conversation that ends at the model's first call
+			var tl toolLog
+			status, detail, tl = g.toolChat(w, r, pr, &req, t, m, eff, id)
+			toolNote = tl.String()
+			return
+		}
+		if req.hasToolHistory() { // earlier tool rounds, and nothing the model may call: they are text
+			t.Prompt = replayPrompt(&req, false)
+		}
 
 		if req.Stream {
 			status, detail = g.streamChat(w, r, t, id, m.ID, req.StreamOptions != nil && req.StreamOptions.IncludeUsage)
@@ -164,36 +189,8 @@ func (g *Gateway) streamChat(w http.ResponseWriter, r *http.Request, t turn, id,
 	// Commit the stream if the turn stays silent, then keep it alive. However
 	// this function ends, even in a panic, the helper stops: a ticker must
 	// never write to a response that is finished.
-	stop := make(chan struct{})
-	var once sync.Once
-	var wg sync.WaitGroup
-	stopKeepAlive := func() {
-		once.Do(func() { close(stop) })
-		wg.Wait()
-	}
+	stopKeepAlive := sw.startKeepAlive(g.cfg.StreamCommitAfter, g.cfg.KeepAlive)
 	defer stopKeepAlive()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		timer := time.NewTimer(g.cfg.StreamCommitAfter)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			sw.commit()
-		case <-stop:
-			return
-		}
-		tick := time.NewTicker(g.cfg.KeepAlive)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				sw.keepAlive()
-			case <-stop:
-				return
-			}
-		}
-	}()
 
 	res, err := g.runTurn(ctx, t)
 	stopKeepAlive()

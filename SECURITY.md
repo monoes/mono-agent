@@ -471,7 +471,8 @@ opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
 in a slot folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
 (`<hash>` is a hash of the profile id, so two profiles never share a folder;
 never the profile's own folder; emptied before and after every turn), with no
-tools, no settings and the workspace-write sandbox where the runtime has
+tools (the functions a request declares aside: see **Tool calling**), no
+settings and the workspace-write sandbox where the runtime has
 one. What that confines depends on the runtime, and
 `monoagentcli api models` reports it per model instead of pretending
 otherwise:
@@ -562,7 +563,14 @@ models**: a runtime with native tools could be steered into using them.
 `--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
 raises that on purpose, for example to give a coding agent on your own
 machine your notes. It never goes above the listener's own `--confinement`,
-and raising it accepts that a captured page could steer that runtime. The
+and raising it accepts that a captured page could steer that runtime. The same
+cap decides **tool calling**: a request that declares `tools` (and does not set
+`tool_choice` to `none`) with a context key is 403 `policy_denied`, before
+anything starts (naming `--context-confinement`, or `--confinement` when the
+listener is chat-only, which holds the key to the lower of the two, or both),
+unless that cap is above chat-only, because an
+instruction in a captured page could steer the calls the model proposes and the
+client runs those with its own authority. The
 excerpts leave the machine like any prompt, to the runtime's provider. The
 personal brain and other profiles are never searched.
 
@@ -685,6 +693,179 @@ client that starts requests and does not read them holds that for those two
 minutes for as many requests as it can start turns for: the concurrency cap
 bounds the turns, not the responses that wait to be read.
 
+**Tool calling.** A request that declares `tools` gives the model functions of
+the caller's own. The model proposes a call and the caller's program runs it,
+wherever that program runs and whatever it is allowed to do: the gateway
+executes nothing of the caller's. What this changes, and what it does not:
+
+- *The confinement class does not change.* Declaring tools moves no class, no
+  policy and no check of the start event, and a `sandboxed` model's turn still
+  requires its sandbox. A tool leg of any model, a chat-only one included,
+  requires the sandbox too (below): the one thing tools change for chat-only
+  models. A runtime that is not `chat-only` keeps its own tools in
+  play, which pulled the model away from the declared ones in the spike (codex
+  made 31 of 31 native attempts and edited files itself while the caller got
+  nothing), so its leg runs with read access: for codex monomind makes the
+  sandbox read-only (the start event says `native_sandbox: read-only`, which is
+  still the `sandboxed` class; `sandbox_applied` in it only echoes the sandbox
+  the gateway requested, and a write probe in the spike found the environment
+  read-only). That is stricter than `workspace-write`: such a leg cannot write
+  files. It does not shut anything else out: reads anywhere the
+  OS user can read, the runtime's own MCP servers and its instruction files stay
+  open (the spike saw codex use one of the user's own MCP servers once, in a run
+  with tools declared). A model whose runtime monomind cannot run read-only is
+  refused with a 400 instead of run with its own tools in play, and so is any
+  runtime outside `MONOAGENT_API_TOOL_RUNTIMES` (claude and codex unless the
+  operator changed it; an operator who wants no caller tools reachable on a
+  listener at all sets it to `none`). claude's own tools stay denied by monomind
+  (it denied all 15 attempts in the spike), and that holds only because every
+  tool leg requires monomind's sandbox. Under it monomind lets only the prefixed
+  names (`mcp__org__<name>`) of the declared functions through; without it a
+  declared function is allow-listed by its bare name too, so a function called
+  `Bash`, `Write` or `Read` would open the native tool of that name, for a key
+  holder, a tool result or a captured page that can steer the call. So every
+  leg (first, resume and replay, every runtime) is started with the sandbox
+  required, and `monomind.Exec` refuses it (403 `policy_denied`, nothing run, the
+  answer names no function) when the sandbox cannot be applied: the scan or the
+  handshake failed, or monomind is one whose claude lists no `workspace-write`
+  mode (2.19.0 lists only `full`). A model has the `tools` capability only where
+  it can be applied, and a request that declares tools for any other is 400
+  `unsupported_parameter` before anything starts.
+- *What the model proposes can be steered, and for the client's own functions the
+  caller decides.* A tool result is untrusted data. The prompt fences it
+  (`<function_result>`): the fence is the defence, a model is told that what is
+  inside is data. A second layer defangs the fence's tags and any line of a result
+  that would open a turn of the transcript, so a result does not pass for the
+  user's or the assistant's words, and it reads the result as a model does, not as
+  an ASCII pattern does: every character a renderer may end a line at (CR, VT, FF,
+  the information separators, NEL, the line and paragraph separators) ends one,
+  every kind of space is a space, case does not matter, a look-alike of an ASCII
+  character (full-width, bold, circled or superscript letters, full-width
+  brackets, ligatures: NFKD) is that character, a letter with a diacritic is the
+  letter (precomposed or written apart: `[üser]` is `[user]`), a Unicode tag character
+  (U+E0000 to U+E007F, which renders as nothing and which a model may read as the
+  ASCII character it is the twin of: "ASCII smuggling") is that character, and
+  whatever renders as nothing (control and format characters, the Hangul and
+  braille blanks, combining marks) is not there, so spelling a marker or a tag
+  with them gains nothing against a reader of that kind (a fuzz of random
+  compositions of them, judged by a reader written the other way round, is in the
+  tests: that judge calls none of the code, but it shares with it Unicode's
+  tables, `unicode.IsSpace`, NFKD and the model of deleting everything that is not
+  a letter, a digit, a space or ASCII, so a wrong belief of that model is a blind
+  spot of both; a corpus of code, documentation and logs that must come out
+  unchanged grades the other direction). A match is neutralised in place and
+  nothing else of a result is changed: line ends of every kind reach the model as
+  they were (a file with CRLF line ends is read as it is), and so does everything
+  that only looks like a marker or a tag. A role marker is a role word in brackets
+  at the start of a line, with spaces allowed around the word, or the header of a
+  result, `[tool NAME (ID)]`: `[tool.poetry]`, `[User guide](url)`,
+  `[tool for tool in tools]` and `[ user = root ]` are text, while the `[user]`
+  header of a gitconfig is indistinguishable from a marker and is defanged with the
+  rest. A fence tag spelled as the fence spells it (with an underscore) is one
+  wherever it stands and whatever follows it, so `List<function_result>` is
+  changed too; the spellings a reader folds into it (camel case, no underscore)
+  are one only as a closing tag, where the name ends (`Promise<FunctionResult>`,
+  `i < functionResult.length` and `</FunctionResultList>` are text,
+  `</functionResult>` is not).
+  The arguments of a call that a client sends back, which the transcript renders
+  outside the fence, are rendered as compact JSON (with the characters that end a
+  line escaped, and a marker or a tag found in it defanged as in a result) or, when
+  they are not JSON, defanged as a result is; the name
+  of such a call is refused (400) unless it is printable ASCII without
+  `[ ] < > & ' "` or a backtick. An id of that kind is shown as it is, and any
+  other id (a client may send one of 1 to 128 bytes of anything) is shown to the
+  model as `call_1`, `call_2`, ... in order of appearance, never as sent: the
+  transcript is the only place an id is shown, and a session is resumed only for
+  the id the gateway made, which is such a token. The second layer does not look
+  through a letter that only resembles a Latin one and is not one with a mark or
+  a case of one (a Cyrillic "е", a Greek omicron, a small capital "ᴜ"), which would
+  take a table of confusables: against such a disguise the fence is the defence.
+  The words of the
+  user are rendered as the client sent them (they are the conversation). The words
+  an assistant said before a call are not: a result can steer what a model says,
+  and the client sends it back, so in a replay (a conversation with tool history,
+  whether or not tools are still offered) they are defanged as a result is, and
+  are not fenced (a conversation without tools is rendered as it always was).
+  The tags of the fence carry no per-request token. The
+  knowledge excerpts of a context key have their own, narrower defence: only
+  their `<knowledge` tags are defanged.
+  None of that keeps a model from following what a result says: a tool that
+  fetched a web page can return instructions, and a key created with `--context`
+  puts excerpts of captured pages in the system prompt. Either can steer which
+  calls the model proposes next, so a context key is refused tools unless the
+  operator raised `--context-confinement` (and, on a chat-only listener,
+  `--confinement`: the key is held to the lower of the two) above chat-only (403
+  `policy_denied`, before anything starts; a result is still untrusted data on
+  any other key). The gateway cannot tell a steered call from an asked one, and it
+  returns every call monomind lets through, valid or not: monomind rejects a call
+  whose top-level types, string enums or required names do not match what it was
+  told (such a call never comes back), and one that does not match the rest of its
+  schema is returned too and counted in the log. So a client that runs calls without asking runs whatever
+  the model was steered to propose, with its own permissions: give such a client
+  keys whose prompts you trust, and keep a person, or a policy of the client's
+  own, between a call and its execution.
+- *Not every call is the client's.* What the caller decides is its own functions.
+  A codex leg may use a tool of one of the user's own MCP servers (the spike saw
+  it once): the runtime makes that call itself, the gateway never sees it as a
+  call to return, the read-only sandbox of the leg does not cover it (it limits
+  what the runtime writes, not which servers it talks to) and the caller does not
+  decide it, so a steered model can reach it without the client. A leg in which
+  such a tool ran is never replayed or given back (so it does not run twice), but
+  it ran once. An operator who does not want that removes those servers from
+  codex's configuration, or leaves codex out of `MONOAGENT_API_TOOL_RUNTIMES`
+  (claude's own tools are denied by monomind, which is stricter).
+- *What is kept.* No process waits for a result and no slot is held while the
+  client runs the call. A continuation record (the id the client was given, key
+  id, profile, model, function name, a hash of the declared tools, a hash of the
+  conversation the leg was given, a hash of the call's arguments and the
+  runtime's session id) lives in memory
+  for ten minutes, at most 1,024 in all and 64 per key, and is used once (given
+  back, with the expiry it had, only when a resume fails before the model ran, for
+  a rate limit, the quota or a sign-in, and no tool of the runtime's own had
+  run: such a tool is never run a second time by a replay or a retry, and a
+  retry does not extend how long a session lives); a restart loses them and the follow-ups then start from their
+  transcripts. It holds no argument and no result, and a follow-up continues the
+  session only when its conversation before the call hashes the same. A record belongs to
+  its key: another key, even of the same profile, finds nothing and is served by
+  replaying the transcript it sends, and a revoked key cannot authenticate at all.
+  The session id comes from the record, never from the client. The agent CLIs
+  keep the sessions they resumed or cancelled in their own stores, which hold the
+  arguments and results of every leg, as they hold prompts (see below).
+- *Logs and errors.* The line of a request with tools adds how many tools it
+  declared and how its leg started (`tools=<n> leg=first|resume|replay`, and
+  `badargs=1` when a call did not match its schema). It never holds a function
+  name, an argument or a result, and an error sent to the caller names a
+  parameter, never what the client put in it, and never echoes a tool result.
+- *A cancelled leg's runtime can outlive it a few seconds.* A leg ends by
+  cancelling its turn: monomind's cancel for claude, SIGTERM to the process group
+  for codex, and a group kill only if monomind has not exited within its grace.
+  The slot's folder is emptied and the slot freed when Exec returns, not when the
+  runtime's process is gone, and in the live check claude's own binary outlived
+  a cancelled leg by about 5 s, an orphan of monomind that exited by itself (codex
+  left nothing). For those seconds a process of the cancelled leg still has the
+  slot's folder as its working directory. A freed slot joins the back of the
+  queue, so with the default four another request takes that folder only after
+  three others have been served, and `--max-concurrent 1` makes it the next one;
+  a turn starts in an emptied folder, and the process wrote nothing there in the
+  live check. It is the same runtime under the same confinement, so no policy is
+  crossed; a runtime that hung would not be killed, which is a matter for
+  `monomind.Exec`.
+- *Reliability, not security.* A resumed leg can ask for the same call again
+  instead of using the result: 1 of 19 single-result claude legs did in the
+  spike, 0 of 18 on codex, and nothing detects it. codex repeats an identical
+  call two or three times within a leg (7 of 16 legs): the leg ends at the first
+  and ignores the repeats. A client whose tool has a side effect (a write, a
+  send) should make it idempotent, or look at a call identical to the last it
+  ran before running it again. Neither crosses a boundary; both are why side
+  effects the client cannot take back deserve a look first.
+- *Cost.* Every leg is a real turn, and a loop of N calls is N + 1 of them, each
+  on the runtime's account; a leg that cannot continue a session pays for the
+  whole transcript again (a resumed leg cost about half of a replayed one on
+  claude in the spike). There is no limit on the rounds of a client's loop and no
+  quota per key: the concurrency cap, the body size and the turn timeout are the
+  bounds, as for chat. A response carries one call, so a model that wants several
+  asks for them in successive rounds.
+
 **Cost and abuse limits.** There are no per-key quotas: every request is a real
 model turn on your subscription or account, and some runtimes report no cost
 (for what an image turn took, see above).
@@ -692,6 +873,37 @@ The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
 the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
 timeout. A request that is
 rejected (invalid, over policy, or busy) starts nothing and takes no slot.
+Tools have bounds of their own, each a 400 `invalid_value` that names the
+parameter and never what was written, answered before anything starts. Whatever the `tool_choice` (the tools are checked when they are declared): more
+than 128 functions; a tool that is not an object; a name that is not 1 to 64
+characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is another
+function's name (a name of 55 or more reaches the model as an alias of 54, and
+you always see your own); a `description` of more than 16 KiB; `parameters` of
+more than 64 KiB, that are not a JSON schema object, whose root `type` is not
+`object`, whose `properties` is not an object or holds a property that is not a
+schema, or whose `required` is not a list of strings; a `tool_choice` that is
+not `none`, `auto`, `required` or a function, or that names a function that is
+not declared; and in the conversation more than 64 calls in one message, a call
+with an id of no characters or of more than 128 bytes, a call whose name is not
+printable ASCII without `[ ] < > & ' "` or a backtick, a call whose `arguments`
+is not a string, a result of more than 256 KiB, and a tool message that answers
+no call of an earlier assistant message. Other codes: 400
+`unsupported_parameter` for a tool or a call of a type other than `function`, a
+`tool_choice` of another type, and a `tool_choice` that forces a call when no
+tools are declared; 400 `missing_required_parameter` for a tool with no
+`function`, a `tool_choice` that names no function, and a tool message with no
+`tool_call_id`. While the tools are passed to the model
+(`tool_choice` is not `none`, which passes none, so no argument is named and these
+do not apply): a function whose schema names no property and allows free-form keys
+(`additionalProperties` or `unevaluatedProperties` true or a schema,
+`patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
+`$ref` that is not local or leads nowhere); a schema whose `const` or `enum` (the
+root's, an `allOf`'s or a `$ref`'s that applies) holds a value that is not an
+object; a schema that nests combinators and references more than 8 levels deep or
+holds more than 2,000 schemas; and functions whose schemas together take more than
+100,000 steps to read (a step is a schema read, a reference followed, a property
+or a listed name met, an enum entry compared): the work of naming the arguments is
+bounded by the request, before a slot is held.
 
 **Logs and errors.** One line per chat completion or image request names the
 request id, key
@@ -730,7 +942,8 @@ unauthenticated and returns the server version.
   seconds to finish; the daemon's main listener does not.
 - The agent CLIs keep session transcripts of their turns in their own stores
   (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
-  they do for any use. The fixed slot folders keep the number of those
+  they do for any use, and the arguments and results of the tool calls of a
+  conversation with tools. The fixed slot folders keep the number of those
   folders bounded (one per profile and slot), not their content, and keep
   one profile's apart from another's.
 - Some runtimes (antigravity) pass the prompt on their command line, which
@@ -791,7 +1004,6 @@ unauthenticated and returns the server version.
   not a determined key holder, and keep the OS user's own files out of reach (a
   dedicated user, as above).
 
-**Not part of this surface (yet).** OpenAI tool calling is a later phase. Today a request cannot hand the agent
-tools of the caller's own (a non-empty `tools` is rejected); the runtime's
-native tools are
-a separate matter, covered by the classes above.
+**Not part of this surface.** Running a caller's tool: the gateway returns the
+call and the caller runs it. The runtime's own native tools are a separate matter,
+covered by the classes above.
