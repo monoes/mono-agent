@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,44 @@ func TestRenderUnitQuotesTheBinaryPath(t *testing.T) {
 func TestSystemdQuoteEscapesQuotesAndBackslashes(t *testing.T) {
 	if got, want := systemdQuote(`/a"b\c`), `"/a\"b\\c"`; got != want {
 		t.Fatalf("systemdQuote = %s, want %s", got, want)
+	}
+}
+
+// A restart is systemd's own, for the user's unit. Nothing here runs systemctl.
+func TestRestartRestartsTheUnit(t *testing.T) {
+	var calls [][]string
+	origCtl, origAvail := systemctl, systemdAvailable
+	t.Cleanup(func() { systemctl, systemdAvailable = origCtl, origAvail })
+	systemdAvailable = func() bool { return true }
+	systemctl = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return nil, nil
+	}
+	if err := (linuxInstaller{}).Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "--user restart "+unitName {
+		t.Errorf("systemctl was run as %v", calls)
+	}
+
+	// A failure carries what systemctl wrote to its stderr, which Output keeps in the ExitError.
+	systemctl = func(context.Context, ...string) ([]byte, error) {
+		return nil, &exec.ExitError{Stderr: []byte("Unit monoagent-daemon.service not found.")}
+	}
+	err := (linuxInstaller{}).Restart(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "systemctl --user restart "+unitName) || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("a failed restart should say what ran and what systemctl said: %v", err)
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Errorf("the error should wrap the failure of the command: %v", err)
+	}
+
+	// No systemd user session: nothing is run, and the message is Install's.
+	systemdAvailable = func() bool { return false }
+	calls = nil
+	if err := (linuxInstaller{}).Restart(context.Background()); err == nil || !strings.Contains(err.Error(), "no systemd user session") || len(calls) != 0 {
+		t.Errorf("without systemd: %v, systemctl run as %v", err, calls)
 	}
 }
 

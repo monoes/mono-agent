@@ -4,6 +4,7 @@ package autostart
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -160,6 +161,25 @@ func (linuxInstaller) Status(ctx context.Context) (bool, string) {
 	}
 	return false, fmt.Sprintf("%s exists but systemd reports it %s (systemctl --user is-enabled %s) — run `monoagentcli daemon install` again",
 		path, state, unitName)
+}
+
+// Restart is systemd's own, for the user's unit: it stops the unit and starts it again, and
+// starts it when it was not running.
+func (linuxInstaller) Restart(ctx context.Context) error {
+	if !systemdAvailable() {
+		return fmt.Errorf("no systemd user session detected (/run/systemd/system missing), so there is no service to restart")
+	}
+	out, err := systemctl(ctx, "--user", "restart", unitName)
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		// Output keeps stdout; what systemctl complained of is in the ExitError.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			detail = strings.TrimSpace(detail + " " + strings.TrimSpace(string(ee.Stderr)))
+		}
+		return fmt.Errorf("systemctl --user restart %s: %w: %s", unitName, err, detail)
+	}
+	return nil
 }
 
 func (linuxInstaller) Start(ctx context.Context) error {
