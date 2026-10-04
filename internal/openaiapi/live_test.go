@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -269,5 +270,51 @@ func TestLiveStreamedChatOverTLS(t *testing.T) {
 	data, _ := sseEvents(rec.Body.String())
 	if len(data) < 3 || data[len(data)-1] != "[DONE]" || strings.TrimSpace(content(t, data)) == "" {
 		t.Fatalf("stream: %q", data)
+	}
+}
+
+// One real image per installed runtime that makes images: what comes back must be an
+// image of one of the four formats. A runtime that cannot answer right now (not
+// signed in, out of quota, a runner that fails) is skipped; a turn that ended without
+// an image is a failure, because the collection of what the runtime saved is what
+// this check measures. It costs about 40,000 input tokens of the runtime per image.
+func TestLiveImagePerImageRuntime(t *testing.T) {
+	_, secret, h := liveGateway(t, nil)
+	var runtimes []string
+	for _, m := range decodeModelList(t, h.serve(anyPolicy, http.MethodGet, "/v1/models", secret, "")).Data {
+		if slices.Contains(m.Monoagent.Capabilities, "image") && !slices.Contains(runtimes, m.Monoagent.Runtime) {
+			runtimes = append(runtimes, m.Monoagent.Runtime)
+		}
+	}
+	if len(runtimes) == 0 {
+		t.Skip("no runtime that makes images is installed here")
+	}
+	for _, rt := range runtimes {
+		t.Run(rt, func(t *testing.T) {
+			begin := time.Now()
+			rec := h.serve(anyPolicy, http.MethodPost, "/v1/images/generations", secret,
+				`{"model":"`+rt+`","prompt":"A small red circle on a white background.","size":"1024x1024"}`)
+			switch rec.Code {
+			case http.StatusOK:
+			case http.StatusServiceUnavailable, http.StatusTooManyRequests:
+				t.Skipf("%s is not usable right now: %d %s", rt, rec.Code, rec.Body)
+			case http.StatusBadGateway:
+				if decodeErrorBody(t, rec)["code"] == "runtime_error" {
+					t.Skipf("%s's runner failed on this machine: %d %s", rt, rec.Code, rec.Body)
+				}
+				t.Fatalf("%s: the turn made no image: %d %s", rt, rec.Code, rec.Body)
+			default:
+				t.Fatalf("%s: %d %s", rt, rec.Code, rec.Body)
+			}
+			_, images := decodeImages(t, rec)
+			if len(images) != 1 {
+				t.Fatalf("%s: %d images, want 1", rt, len(images))
+			}
+			img := images[0]
+			if !isImage(img) || len(img) < 1024 || len(img) > maxImageBytes {
+				t.Fatalf("%s: %d bytes that are not an image of a known format", rt, len(img))
+			}
+			t.Logf("%s: %.1fs, %d bytes of %s, sandbox %q", rt, time.Since(begin).Seconds(), len(img), http.DetectContentType(img), rec.Header().Get("X-Monoagent-Sandbox"))
+		})
 	}
 }

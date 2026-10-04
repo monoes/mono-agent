@@ -144,6 +144,10 @@ func New(d Deps, c Config) (*Gateway, error) {
 	g.shutdownCtx, g.shutdown = context.WithCancel(context.Background())
 	g.cleanSlots() // only now: nothing of another process can be running in them
 	_ = os.RemoveAll(filepath.Join(cfg.ScratchRoot, tmpDirName))
+	if cfg.ImagesOff() {
+		d.Logf("image generation is %s", imagesOffBy)
+	}
+	g.catalog.onFirstLoad = g.logImageRuntimes
 	return g, nil
 }
 

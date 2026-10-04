@@ -31,10 +31,12 @@ func apiTools() []tool {
 		{
 			name: "api_models_list",
 			description: "List the models the OpenAI-compatible API (/v1) would serve, with each one's confinement class (chat-only, sandboxed or unconfined), " +
+				"its capabilities (text, and image for a model of a runtime that makes images), " +
 				"whether a listener of the given kind serves it, whether a key created with context may use it, whether the auto model may pick it, " +
 				"and whether the auto model works for the active profile: the document of `monoagentcli api models --json`. " +
 				"The policy comes from the arguments, else from MONOAGENT_API_CONFINEMENT, MONOAGENT_API_CONTEXT_CONFINEMENT and MONOAGENT_API_AUTO_CONFINEMENT " +
-				"in this MCP server's environment, else the listener's defaults, so it can differ from what a running server applies (`monoagentcli api status` shows that). " +
+				"in this MCP server's environment, else the listener's defaults, and the runtimes that make images from MONOAGENT_API_IMAGE_RUNTIMES there (default codex and antigravity), " +
+				"so it can differ from what a running server applies (`monoagentcli api status` shows that). " +
 				"Loading the models asks every installed agent runtime for its list, which takes a few seconds: calls at once share one load, the list is reused for a minute, " +
 				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does.",
 			schema: objSchema(map[string]interface{}{
@@ -244,6 +246,10 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if policy.AutoMax, err = openaiapi.EffectiveAutoMax(a.AutoConfinement, os.Getenv); err != nil {
 		return nil, errBadClass("auto_confinement", "MONOAGENT_API_AUTO_CONFINEMENT")
 	}
+	imageRuntimes, err := openaiapi.EffectiveImageRuntimes(os.Getenv)
+	if err != nil { // a fixed text, like the others: the shared parser quotes the value
+		return nil, errors.New("MONOAGENT_API_IMAGE_RUNTIMES must be a comma-separated list of runtime ids, such as codex,antigravity")
+	}
 	rt, err := s.runtime()
 	if err != nil {
 		return nil, err
@@ -255,7 +261,7 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 	return openaiapi.NewModelsReport(openaiapi.ModelsReportInput{
-		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models,
+		For: a.For, Policy: policy, Source: openaiapi.ReportSourceMCP, Models: models, ImageRuntimes: imageRuntimes,
 		Auto: openaiapi.DefaultAuto(rt.db.DB).Status(ctx, rt.profileID),
 	}), nil
 }

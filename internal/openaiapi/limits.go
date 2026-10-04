@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -42,14 +43,25 @@ func (l *limiter) tryAcquire() (slot int, release func(), ok bool) {
 // decodeBody reads the request's JSON body into dst, refusing more than
 // limit bytes.
 func decodeBody(w http.ResponseWriter, r *http.Request, limit int64, dst any) *apiError {
+	return decodeBodyWith(w, r, limit, dst, nil)
+}
+
+// decodeBodyWith is decodeBody that answers a field of the wrong JSON type through
+// typeError (the field's name and the Go type it wanted) instead of "not valid
+// JSON". nil keeps decodeBody's answer. A body that is not an object at all has no
+// field to name and stays "not valid JSON".
+func decodeBodyWith(w http.ResponseWriter, r *http.Request, limit int64, dst any, typeError func(field string, want reflect.Type) *apiError) *apiError {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		var tooBig *http.MaxBytesError
+		var wrongType *json.UnmarshalTypeError
 		switch {
 		case errors.As(err, &tooBig):
 			return errTooLarge(limit)
 		case errors.Is(err, io.EOF):
 			return errInvalid("invalid_json", "", "the request body is empty")
+		case typeError != nil && errors.As(err, &wrongType) && wrongType.Field != "":
+			return typeError(wrongType.Field, wrongType.Type)
 		}
 		return errInvalid("invalid_json", "", "the request body is not valid JSON")
 	}

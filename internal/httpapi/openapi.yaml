@@ -327,6 +327,8 @@ paths:
         or `codex/gpt-6-astra`; each runtime's own list decides), only those
         the listener's confinement policy allows. For a key created with `--context` only those at or below
         `--context-confinement` (chat-only unless the operator raised it).
+        `monoagent.capabilities` is `["text"]`, plus `"image"` for a model that
+        can generate images (`POST /v1/images/generations`).
         While the key's profile has the `api_auto` Jev surface on (`monoagentcli
         jev enable api_auto`) and a Jev key, the list ends with the model
         `auto` (`owned_by` is `jev`), after the others so that a client that
@@ -425,7 +427,7 @@ paths:
         the policy allows) ends with the error event, not a 403. A client that
         disconnects cancels the turn.
 
-        The errors of the three `/v1` paths are OpenAI-shaped
+        The errors of the four `/v1` paths are OpenAI-shaped
         (`{"error":{"message","type","param","code"}}`) and carry an
         `X-Request-Id` header; a path or method this API does not have gets the
         plain-text 404 or 405 of Go's mux instead:
@@ -479,6 +481,120 @@ paths:
                 description: >
                   `data: <chat.completion.chunk JSON>` events ending with
                   `data: [DONE]`.
+        "400": { $ref: "#/components/responses/OpenAIError" }
+        "401": { $ref: "#/components/responses/OpenAIError" }
+        "403": { $ref: "#/components/responses/OpenAIError" }
+        "404": { $ref: "#/components/responses/OpenAIError" }
+        "413": { $ref: "#/components/responses/OpenAIError" }
+        "429": { $ref: "#/components/responses/OpenAIError" }
+        "500": { $ref: "#/components/responses/OpenAIError" }
+        "502": { $ref: "#/components/responses/OpenAIError" }
+        "503": { $ref: "#/components/responses/OpenAIError" }
+        "504": { $ref: "#/components/responses/OpenAIError" }
+  /v1/images/generations:
+    post:
+      operationId: createImage
+      summary: Generate images (OpenAI-compatible API)
+      description: |
+        Runs one turn of a runtime that can make images and returns the image
+        files the turn saved, as base64. Expect a minute or two and some 40,000
+        input tokens per request, on the runtime's own account.
+
+        Which runtimes make images is configuration: `MONOAGENT_API_IMAGE_RUNTIMES`
+        (default `codex,antigravity`; `none` switches image generation off),
+        because monomind does not report image output. `GET /v1/models` marks their
+        models with the capability `image`. `model` is `<runtime>/<model>`, a
+        runtime of that list (its default model), `auto`, or missing, which means
+        the first installed runtime of the list that the key's policy allows. A
+        model that exists but cannot make images (a chat-only runtime, or one that
+        is not in the list) is 400 `invalid_value` on `model`, and its message
+        names the runtimes whose models the key may use that can, or says that
+        none can; an unknown one is 404. When no runtime of the list can make
+        images, a request without a model is a 404 that says why for each (not
+        installed, or installed but chat-only). With image generation switched
+        off, a request without a model, or for `auto`, is a 404 that says so, and
+        a model named is a 400.
+
+        The runtime has to write the file, so the model must run as `sandboxed`
+        or `unconfined`. Under `--confinement chat-only`, or for a key created
+        with `--context` while `--context-confinement` is chat-only, a request
+        without a model is 403 `policy_denied` and the message says what to
+        raise (`--confinement`, and `--context-confinement` for such a key); one
+        that names a model above the policy is 403 as for chat. No knowledge
+        excerpts are added to an image request.
+
+        `model` may be `auto`: Jev then picks among the image models that `auto`
+        may pick, which are held to `--auto-confinement` (chat-only unless the
+        operator raised it) like the models of a chat request. Image models are
+        `sandboxed` or `unconfined`, so with that setting at its default there
+        are none and the answer is 404 `model_not_found`, which says what to
+        raise (`--auto-confinement`, or the confinement flags when the key could
+        not use an image model at all). The first 4,000 characters of the prompt
+        are what Jev is sent. `X-Monoagent-Auto` says who chose.
+
+        The turn is a chat turn (an emptied working folder of the key's profile,
+        no tools, the sandbox required for a `sandboxed` model) with a fixed
+        system prompt: generate each image with the runtime's own built-in image
+        capability, do not draw it programmatically, save each file in a folder
+        made for the turn inside the working folder (its name is new every time),
+        reply with the file names, and reply `NO_IMAGE_TOOL` on a line of its own
+        if there is no such capability. After the turn the gateway reads the files
+        at the top of that folder, and of nothing else, that are PNG, JPEG, WebP
+        or GIF by their first bytes, at most 20 MiB each and the first `n` by
+        name. It never follows a link and never opens a FIFO or a device, because
+        the folder is the runtime's to write, and it looks at no more than 64
+        entries and gives up after a minute. A runtime that saves fewer than `n`
+        images still answers with what it saved; one that saves none, or saves
+        them outside the folder it was given, is 502. The images are returned in
+        the order of their names, and carry no content type: tell the format from
+        the first bytes. The body is written as the images are encoded and is
+        about a third larger than they are; the client has two minutes to read it.
+        No byte of the response is sent while the turn runs (a minute or more), so
+        a reverse proxy has to wait that long for one.
+
+        `size` is `auto` or `WxH` in pixels with each side from 64 to 8192, and
+        is a preference the runtime is asked to follow, not a guarantee.
+        `quality`, `style`, `output_format`, `background`, `user` and any other
+        field are accepted and ignored. The body is capped at 64 KiB.
+
+        Errors are OpenAI-shaped and carry an `X-Request-Id`; the common ones are
+        listed with `POST /v1/chat/completions`. Those specific to this path:
+
+        | Status | `type` / `code` | Cause |
+        |---|---|---|
+        | 400 | `invalid_request_error` / `invalid_value`, `missing_required_parameter` | `prompt` missing or blank; `n` not from 1 to 4, or of the wrong type; `size` not `auto` or `WxH` within the bounds, or of the wrong type; `response_format` neither `b64_json` nor `url`; `model` cannot make images, or image generation is switched off |
+        | 400 | `invalid_request_error` / `unsupported_parameter` | `response_format: "url"` (this server has no address to serve an image from) or `stream: true` |
+        | 400 | `invalid_request_error` / `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL` on a line of its own and saved no image: it has no built-in image generation capability |
+        | 403 | `permission_error` / `policy_denied` | The key's policy allows no runtime that can write a file, or the named model is above it (see above) |
+        | 404 | `invalid_request_error` / `model_not_found` | Unknown model; no runtime of the image list can make images here (none installed, or installed but chat-only); image generation is switched off and no model was named; or `auto` with no image model it may pick |
+        | 413 | `invalid_request_error` / `request_too_large` | Body over 64 KiB |
+        | 502 | `api_error` / `image_generation_failed` | The turn ended without an image to return; the message has what the runtime replied, on one line and at most 300 characters |
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageGenerationRequest" }
+      responses:
+        "200":
+          description: The images the turn saved, one to four.
+          headers:
+            X-Request-Id:
+              description: Request id, also in the server log.
+              schema: { type: string }
+            X-Monoagent-Model:
+              description: The `<runtime>/<model>` that answered.
+              schema: { type: string }
+            X-Monoagent-Auto:
+              description: For a request for the model `auto`, who chose the model, `jev` or `rule` (also when only one model was left to pick).
+              schema: { type: string, enum: [jev, rule] }
+            X-Monoagent-Sandbox:
+              description: How monomind sandboxed the turn (`sandboxed`, `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), not the confinement class.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImagesResponse" }
         "400": { $ref: "#/components/responses/OpenAIError" }
         "401": { $ref: "#/components/responses/OpenAIError" }
         "403": { $ref: "#/components/responses/OpenAIError" }
@@ -628,7 +744,16 @@ components:
               enum: [chat-only, sandboxed, unconfined]
               description: How much a turn on this runtime can do on the machine.
             validated: { type: boolean, description: A recent `agent validate` passed for this model. }
-            capabilities: { type: array, items: { type: string, enum: [text] } }
+            capabilities:
+              type: array
+              description: >
+                `text` for every model, and `image` for one that can generate
+                images through `POST /v1/images/generations`: a model of a runtime
+                in `MONOAGENT_API_IMAGE_RUNTIMES` that runs as `sandboxed` or
+                `unconfined` (with the variable set to `none`, no model has it).
+                `auto` lists `image` only while it has an image model it may
+                pick.
+              items: { type: string, enum: [text, image] }
     ModelList:
       type: object
       required: [object, data]
@@ -707,3 +832,38 @@ components:
             prompt_tokens: { type: integer }
             completion_tokens: { type: integer }
             total_tokens: { type: integer }
+    ImageGenerationRequest:
+      type: object
+      required: [prompt]
+      description: >
+        `quality`, `style`, `output_format`, `background`, `user` and any other
+        field are accepted and ignored. What is rejected, and the bounds, are
+        described with `POST /v1/images/generations`.
+      additionalProperties: true
+      properties:
+        prompt: { type: string, example: "A small red circle on a white background." }
+        model:
+          type: string
+          example: codex
+          description: "`<runtime>/<model>`, a runtime of the image list, or `auto` to have Jev pick. Missing: the first installed runtime of the list that the policy allows."
+        n: { type: integer, minimum: 1, maximum: 4, default: 1, description: "How many images to ask for. A runtime may save fewer." }
+        size:
+          type: string
+          example: 1024x1024
+          description: "`auto`, or width x height in pixels, `WxH` with each side from 64 to 8192. A preference passed to the runtime in words."
+        response_format: { type: string, enum: [b64_json], default: b64_json, description: "Only `b64_json`; `url` is 400." }
+        stream: { type: boolean, default: false, description: "Only false; true is 400." }
+    ImagesResponse:
+      type: object
+      required: [created, data]
+      properties:
+        created: { type: integer, description: Unix time of the response. }
+        data:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: object
+            required: [b64_json]
+            properties:
+              b64_json: { type: string, format: byte, description: "The image file, base64. PNG, JPEG, WebP or GIF: tell which from the first bytes." }

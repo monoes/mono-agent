@@ -15,13 +15,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func objectFor(m ModelInfo) modelObject {
+func objectFor(m ModelInfo, capabilities []string) modelObject {
 	return modelObject{
 		ID: m.ID, Object: "model", OwnedBy: m.Runtime,
 		Monoagent: modelMeta{
 			Runtime: m.Runtime, Model: m.Model, Label: m.Label,
 			Confinement: m.Class.String(), Validated: m.Validated,
-			Capabilities: []string{"text"},
+			Capabilities: capabilities,
 		},
 	}
 }
@@ -60,13 +60,13 @@ func (g *Gateway) handleModels(p Policy) func(http.ResponseWriter, *http.Request
 		}
 		out := modelList{Object: "list", Data: make([]modelObject, 0, len(models)+1)}
 		for _, m := range models {
-			out.Data = append(out.Data, objectFor(m))
+			out.Data = append(out.Data, objectFor(m, g.cfg.Capabilities(m)))
 		}
 		// Auto comes last, where it works: a client that takes the first model of
 		// the list must not be moved to it, and its prompts to TypeSafe, by an
 		// operator switching the surface on.
 		if len(models) > 0 && g.autoStatus(r.Context(), pr.ProfileID).Available {
-			out.Data = append(out.Data, autoObject(eff))
+			out.Data = append(out.Data, g.autoObject(eff, models))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -79,14 +79,15 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 		id := r.PathValue("id")
 		if id == autoModelID {
 			eff := policyFor(p, pr)
-			if _, e := g.autoCandidates(r.Context(), pr, eff); e != nil {
+			candidates, e := g.autoCandidates(r.Context(), pr, eff)
+			if e != nil {
 				if e.Status != http.StatusNotFound { // the list could not be loaded
 					g.logFailure(pr, "get model", e)
 				}
 				writeError(w, e)
 				return
 			}
-			writeJSON(w, http.StatusOK, autoObject(eff))
+			writeJSON(w, http.StatusOK, g.autoObject(eff, candidates))
 			return
 		}
 		m, err := g.catalog.Resolve(r.Context(), id)
@@ -100,7 +101,7 @@ func (g *Gateway) handleModel(p Policy) func(http.ResponseWriter, *http.Request,
 		case !policyFor(p, pr).Allows(m.Class):
 			writeError(w, errModelNotFound(id))
 		default:
-			writeJSON(w, http.StatusOK, objectFor(m))
+			writeJSON(w, http.StatusOK, objectFor(m, g.cfg.Capabilities(m)))
 		}
 	}
 }

@@ -7,9 +7,10 @@ creates a key, starts the server, calls it with curl and the SDKs, and runs
 it on a headless Linux server. Paths and schemas:
 `internal/httpapi/openapi.yaml`. Threat model: `SECURITY.md`.
 
-Today it serves `GET /v1/models`, `GET /v1/models/{id}` and
-`POST /v1/chat/completions` (JSON and `"stream": true`). Images and tool
-calling are not available yet. The model `auto` lets Jev pick the model of
+Today it serves `GET /v1/models`, `GET /v1/models/{id}`,
+`POST /v1/chat/completions` (JSON and `"stream": true`) and
+`POST /v1/images/generations` (see "Make images" below). Tool calling is not
+available yet. The model `auto` lets Jev pick the model of
 each request once you switch it on (see "Let Jev pick" below); until then
 asking for it is a 404 `model_not_found` that says what is missing. A `404 page
 not found` in plain text instead means the server running is older than this
@@ -73,18 +74,20 @@ list, so yours will differ):
 Confinement policy for a loopback listener: any (keys created with --context: chat-only)
 From this shell's flags and environment: a running server may be set up differently (`monoagentcli api status` shows what a running daemon applies).
 
-MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY
-claude/default           chat-only    false      yes     yes
-claude/sonnet            chat-only    false      yes     yes
-codex/gpt-6-astra        sandboxed    false      yes     no
-antigravity/default      unconfined   false      yes     no
+MODEL                    CONFINEMENT  VALIDATED  SERVED  CONTEXT KEY  AUTO  IMAGES
+claude/default           chat-only    false      yes     yes          yes   no
+claude/sonnet            chat-only    false      yes     yes          yes   no
+codex/gpt-6-astra        sandboxed    false      yes     no           no    yes
+antigravity/default      unconfined   false      yes     no           no    yes
 ```
 
 `api models` works out what a listener with the flags and environment of
 *this shell* would serve; it does not ask a running server (`api status`
 shows what a running daemon applies). `SERVED` is whether the model is served
-under that policy and `CONTEXT KEY` whether a key created with `--context`
-may use it. The ids are `<runtime>/<model>`, as each runtime lists them, so
+under that policy, `CONTEXT KEY` whether a key created with `--context`
+may use it, `AUTO` whether the `auto` model may pick it and `IMAGES` whether
+it makes images (see "Make images"); `--json` adds a `capabilities` list per
+model. The ids are `<runtime>/<model>`, as each runtime lists them, so
 use the ones this prints. A bare runtime (`codex`) is its default model, and
 `agy` is accepted for `antigravity`. A model that is neither listed by the
 runtime nor in your agent roster is a 404, although a runtime's aliases (such
@@ -216,6 +219,101 @@ may pick. `GET /v1/models` lists `auto` after the other models, so a client that
 takes the first one is not moved to it, and leaves it out while it does not work;
 `monoagentcli api status` says what is missing.
 
+### Make images
+
+`POST /v1/images/generations` has a runtime that can make images do it, and
+returns the files it saved. Which runtimes can is a list, `MONOAGENT_API_IMAGE_RUNTIMES`
+(default `codex,antigravity`: monomind does not say which CLIs have an image
+tool; `none` switches image generation off, and every image request then says
+so). `GET /v1/models` marks their models with the capability `image`, and so
+does `api models --json`:
+
+```bash
+curl -s http://127.0.0.1:9322/v1/models -H "Authorization: Bearer $KEY" \
+  | jq -r '.data[] | select(.monoagent.capabilities | index("image")) | .id'
+```
+
+An image turn needs a runtime that can write the file, so a `sandboxed` or
+`unconfined` one: on the default loopback listener that is allowed, but a
+listener started with `--confinement chat-only` (the default off loopback), or
+a key created with `--context` while `--context-confinement` is chat-only,
+answers 403 `policy_denied` and says what to raise. Without `model` it is the
+first installed runtime of the list that the key may use. Only `b64_json` is
+returned (`response_format: "url"` is a 400). Save it:
+
+```bash
+curl -s http://127.0.0.1:9322/v1/images/generations \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"codex","prompt":"A small red circle on a white background.","size":"1024x1024"}' \
+  | jq -r '.data[0].b64_json' | base64 --decode > circle.img
+file circle.img      # PNG image data (codex made a PNG in the probes, antigravity a JPEG)
+```
+
+The response is `{"created":…,"data":[{"b64_json":"…"}]}` and says nothing of
+the format: the runtime chose it (PNG, JPEG, WebP or GIF), so look at the first
+bytes. Python:
+
+```python
+import base64
+
+# client = OpenAI(base_url="http://127.0.0.1:9322/v1", api_key=os.environ["KEY"]), as above
+result = client.images.generate(
+    model="codex",
+    prompt="A small red circle on a white background.",
+    size="1024x1024",
+    response_format="b64_json",
+)
+data = base64.b64decode(result.data[0].b64_json)
+ext = "png" if data[:4] == b"\x89PNG" else "jpg" if data[:2] == b"\xff\xd8" else "webp" if data[8:12] == b"WEBP" else "gif"
+with open(f"circle.{ext}", "wb") as f:
+    f.write(data)
+```
+
+JavaScript:
+
+```js
+import fs from "node:fs";
+
+// client = new OpenAI({ baseURL: "http://127.0.0.1:9322/v1", apiKey: process.env.KEY }), as above
+const result = await client.images.generate({
+  model: "codex",
+  prompt: "A small red circle on a white background.",
+  size: "1024x1024",
+  response_format: "b64_json",
+});
+const bytes = Buffer.from(result.data[0].b64_json, "base64");
+const ext = bytes.subarray(0, 4).toString("hex") === "89504e47" ? "png" : bytes[0] === 0xff ? "jpg" : "img";
+fs.writeFileSync(`circle.${ext}`, bytes);
+```
+
+What to expect:
+
+- A request takes a minute or two and uses some 40,000 input tokens of the
+  runtime, on your account (the probes: 40, 52, 75 and 105 seconds; codex and
+  antigravity report no cost). The 10 minute turn timeout and the 4 turns at
+  once are the same as for chat. The body is capped at 64 KiB.
+- `n` is 1 to 4 and is passed on in words: a runtime may save fewer images, and
+  you get what it saved (at least one). `size` is `auto` or `WxH` with each side
+  from 64 to 8192, a preference the runtime may not follow. `quality`, `style`,
+  `output_format`, `background` and `user` are accepted and ignored.
+- The runtime makes the image with its own tool and copies the file into a
+  folder the server made for the turn (its name is new every time); before it
+  empties the working folder the server reads the PNG, JPEG, WebP and GIF files
+  in that folder (up to 20 MiB each) and nowhere else, and never follows a link
+  in it. A runtime that says it has no image tool is a 400
+  `image_generation_unsupported`; one that saves nothing, or saves it
+  elsewhere, is a 502 `image_generation_failed` with what it said.
+- Nothing is sent until the turn is over, a minute or more: a reverse proxy has
+  to wait that long (see "Behind a reverse proxy" below).
+- `"model": "auto"` has Jev pick among the image models, but `auto` is held to
+  chat-only until you start the server with `--auto-confinement sandboxed` (or
+  `any`): image runtimes are sandboxed or unconfined, so by default it is a 404
+  `model_not_found` that says what to raise. Raised, `jev enable api_auto` sends
+  TypeSafe the first 4,000 characters of the image prompt, as it does for chat.
+- Read `SECURITY.md` ("Image generation"): the runtime may read and copy files
+  from outside its folder, and the server returns any file it left in the
+  turn's folder that begins like an image (the test is on the first bytes).
+
 ## 4. Serve it beyond this machine
 
 The main listener serves `/v1` only on loopback. To reach it from another
@@ -244,6 +342,12 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
   certificate variables for a proxy that forwards plain HTTP: while they are
   set, the listener speaks TLS even on a loopback bind. Turn proxy buffering
   off for streaming (the server already sends `X-Accel-Buffering: no`).
+- Raise the proxy's read timeout above the turn time. An image request sends no
+  byte while its turn runs, a minute or more (40 to 105 seconds in the probes, up
+  to `MONOAGENT_API_TURN_TIMEOUT`, 10 minutes by default), and nginx's default
+  `proxy_read_timeout` is 60 seconds: the client would get a 504 from the
+  proxy while the turn is still running. For nginx, `proxy_read_timeout 11m;`
+  on the location of `/v1/`.
 
 ## 5. A headless Linux server
 
@@ -289,18 +393,20 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …) |
+| 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …). For an image request also a `model` that cannot make images (or image generation switched off), `n` outside 1 to 4, a bad `size`, `response_format: "url"` and `stream: true` |
+| 400 | `image_generation_unsupported` | The runtime replied `NO_IMAGE_TOOL`: it has no image tool |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
-| 403 | `policy_denied` | A completion names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
-| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
-| 413 | `request_too_large` | Body over 2 MiB |
+| 403 | `policy_denied` | A completion or an image request names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; an image request without a model when the key's policy allows no runtime that can write a file (the message says what to raise); or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
+| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows). For an image request without a model also: no runtime of `MONOAGENT_API_IMAGE_RUNTIMES` can make images here (the message says, for each, not installed or installed but chat-only), or image generation is switched off (`none`) |
+| 413 | `request_too_large` | Body over 2 MiB (64 KiB for an image request) |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
 | 500 | `internal_error` | An internal failure. The message is generic; the detail is in the server log under the response's `X-Request-Id` |
 | 502 | `runtime_error` | The runtime reported an error, or ended the turn without finishing it. The message is generic too, and the runtime's own words reach you only for a sign-in hint, a rate limit, quota or a timeout, on one line and at most 300 characters |
+| 502 | `image_generation_failed` | An image turn ended without an image to return. The message has what the runtime replied, on one line and at most 300 characters |
 | 503 | `runtime_not_available` | monomind or the runtime is not installed or not signed in, or the server is shutting down |
 | 504 | `timeout` | The turn exceeded 10 minutes (`MONOAGENT_API_TURN_TIMEOUT`) |
 
-Every error of the three routes has the body
+Every error of the four routes has the body
 `{"error":{"message","type","param","code"}}` and an `X-Request-Id` header. A
 path or method the API does not have (for example `GET /v1/embeddings`) gets
 Go's plain-text 404 or 405 instead. A stream starts (status 200) on its first

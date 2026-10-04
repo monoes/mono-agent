@@ -50,12 +50,24 @@ func (g *Gateway) autoStatus(ctx context.Context, profileID string) AutoStatus {
 	return g.deps.Auto.Status(ctx, profileID)
 }
 
-// autoCandidates returns the models auto may pick among for a key whose
-// effective policy is eff: the ones that policy allows, within what the operator
-// let auto pick (chat-only unless they raised it). Or the 404 that says why auto
-// is not available: Jev has no key or the surface is off for the profile, or
-// there is no such model.
+// What a request needs of the model that serves it, for the models auto may pick.
+const (
+	capText  = "text" // every model has it: chat works in every class
+	capImage = "image"
+)
+
+// autoCandidates returns the models auto may pick among for a chat request from a
+// key whose effective policy is eff: see autoCandidatesFor.
 func (g *Gateway) autoCandidates(ctx context.Context, pr Principal, eff Policy) ([]ModelInfo, *apiError) {
+	return g.autoCandidatesFor(ctx, pr, eff, capText)
+}
+
+// autoCandidatesFor returns the models auto may pick among, for a request that
+// needs capability, from a key whose effective policy is eff: the ones that policy
+// allows, within what the operator let auto pick (chat-only unless they raised it),
+// that have the capability. Or the 404 that says why auto is not available: Jev has
+// no key or the surface is off for the profile, or there is no such model.
+func (g *Gateway) autoCandidatesFor(ctx context.Context, pr Principal, eff Policy, capability string) ([]ModelInfo, *apiError) {
 	if st := g.autoStatus(ctx, pr.ProfileID); !st.Available {
 		return nil, errAutoUnavailable(st.Missing)
 	}
@@ -63,23 +75,67 @@ func (g *Gateway) autoCandidates(ctx context.Context, pr Principal, eff Policy) 
 	if err != nil {
 		return nil, catalogError(err)
 	}
-	if len(models) == 0 {
-		return nil, errAutoUnavailable("at least one model the server's confinement policy allows auto to pick (chat-only, unless --auto-confinement says more)")
+	if models = g.withCapability(models, capability); len(models) == 0 {
+		return nil, errAutoUnavailable(g.noAutoCandidates(ctx, eff, capability))
 	}
 	return models, nil
 }
 
+// withCapability keeps the models that have the capability.
+func (g *Gateway) withCapability(models []ModelInfo, capability string) []ModelInfo {
+	if capability != capImage {
+		return models
+	}
+	out := make([]ModelInfo, 0, len(models))
+	for _, m := range models {
+		if g.cfg.CanMakeImages(m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// noAutoCandidates says what is missing when auto has nothing to pick among for a
+// request that needs capability, for a key whose effective policy is eff.
+func (g *Gateway) noAutoCandidates(ctx context.Context, eff Policy, capability string) string {
+	if capability != capImage {
+		return "at least one model the server's confinement policy allows auto to pick (chat-only, unless --auto-confinement says more)"
+	}
+	if usable, err := g.catalog.Visible(ctx, eff); err == nil && len(g.withCapability(usable, capImage)) > 0 {
+		return fmt.Sprintf("an image model within what auto may pick (%s here): the image models this key may use run as sandboxed or unconfined, "+
+			"and the operator can raise --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT) to sandboxed or any", eff.ForAuto())
+	}
+	return fmt.Sprintf("an image model this key may use, and there is none: no installed runtime of the image list (%s) can make images under "+
+		"the server's confinement policy (--confinement, and --context-confinement for a key created with --context)", strings.Join(g.cfg.ImageRuntimeList(), ", "))
+}
+
 // autoObject is auto as a model of the list. Its confinement is the strongest
 // class it picks within: the key's policy, capped by what the operator let auto
-// pick. What Jev picks is never above it.
-func autoObject(eff Policy) modelObject {
+// pick. What Jev picks is never above it. visible are the models the key may use,
+// and auto says it makes images only when one of those it may pick does.
+func (g *Gateway) autoObject(eff Policy, visible []ModelInfo) modelObject {
+	capabilities := []string{capText}
+	if len(g.withCapability(autoWithin(visible, eff.ForAuto()), capImage)) > 0 {
+		capabilities = append(capabilities, capImage)
+	}
 	return modelObject{
 		ID: autoModelID, Object: "model", OwnedBy: "jev",
 		Monoagent: modelMeta{
 			Runtime: autoModelID, Model: autoModelID, Label: "Jev picks the model for each request",
-			Confinement: eff.ForAuto().Max.String(), Capabilities: []string{"text"},
+			Confinement: eff.ForAuto().Max.String(), Capabilities: capabilities,
 		},
 	}
+}
+
+// autoWithin keeps the models a policy allows.
+func autoWithin(models []ModelInfo, p Policy) []ModelInfo {
+	out := make([]ModelInfo, 0, len(models))
+	for _, m := range models {
+		if p.Allows(m.Class) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // autoPick is the model auto chose, and by what.

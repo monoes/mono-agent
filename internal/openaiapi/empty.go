@@ -2,6 +2,7 @@ package openaiapi
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -82,37 +83,60 @@ func emptyDir(dir string) bool {
 // which a removal cannot empty, so the directories are opened up first: the
 // gateway owns these folders.
 //
-// All of it is done through open handles, never by path. dir is first looked at
-// from its parent, which no turn can change (a sandbox that confines writes
-// below the turn's folder still lets the turn remove that folder and put a link
-// in its place): a link, or anything that is not a directory, is not a folder to
-// empty, whatever it points to. The handle opened on it must be the one that was
-// looked at, since a link that stays inside the parent is followed by a root
-// handle. Below dir a process can outlive its turn and keep changing the tree, and
-// a directory it swaps for a link while this walks cannot send the chmod, the
-// listing or the removal outside dir: the handle refuses a link that leaves it.
+// All of it is done through open handles, never by path: dir is opened by
+// openFolder. Below dir a process can outlive its turn and keep changing the
+// tree, and a directory it swaps for a link while this walks cannot send the
+// chmod, the listing or the removal outside dir: the handle refuses a link that
+// leaves it.
 func emptyDirBy(dir string, deadline time.Time) bool {
-	parent, err := os.OpenRoot(filepath.Dir(dir))
+	root, err := openFolder(dir)
 	if err != nil {
 		return false
 	}
+	defer root.Close()
+	return openUp(root, 0, deadline) && purge(root, 0, deadline)
+}
+
+// openFolder opens a turn's folder as a root, for everything the gateway does
+// to it: emptying it, and reading what the turn left in it. dir is first looked at
+// from its parent, which no turn can change (a sandbox that confines writes
+// below the turn's folder still lets the turn remove that folder and put a link
+// in its place): a link, or anything that is not a directory, is not a folder to
+// open, whatever it points to. The handle opened on it must be the one that was
+// looked at, since a link that stays inside the parent is followed by a root
+// handle. The gateway owns the folder, so it is opened up first: a runtime may
+// have left it unreadable.
+func openFolder(dir string) (*os.Root, error) {
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return nil, err
+	}
 	defer parent.Close()
-	name := filepath.Base(dir)
+	return openChild(parent, filepath.Base(dir))
+}
+
+// openChild is openFolder for a folder of one that is open already: a turn's own
+// output folder, inside its working folder, which the turn can swap for a link as
+// well as the working folder itself.
+func openChild(parent *os.Root, name string) (*os.Root, error) {
 	fi, err := parent.Lstat(name) // a link at name is not followed
-	if err != nil || !fi.IsDir() {
-		return false
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, fmt.Errorf("%s is not a plain directory", name)
 	}
 	afterLstatHook.run()
 	_ = parent.Chmod(name, 0o700)
 	root, err := parent.OpenRoot(name)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	defer root.Close()
 	if cur, err := root.Lstat("."); err != nil || !os.SameFile(fi, cur) {
-		return false
+		root.Close()
+		return nil, fmt.Errorf("%s was replaced while it was opened", name)
 	}
-	return openUp(root, 0, deadline) && purge(root, 0, deadline)
+	return root, nil
 }
 
 // expired reports whether deadline has passed.

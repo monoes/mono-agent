@@ -58,7 +58,7 @@ exit 2
 // MCP server, so a test sets exactly what it means to.
 func pinAPIEnv(t *testing.T) {
 	t.Helper()
-	for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "TYPESAFE_API_KEY"} {
+	for _, v := range []string{"MONOAGENT_API_CONFINEMENT", "MONOAGENT_API_CONTEXT_CONFINEMENT", "MONOAGENT_API_AUTO_CONFINEMENT", "MONOAGENT_API_IMAGE_RUNTIMES", "TYPESAFE_API_KEY"} {
 		t.Setenv(v, "")
 	}
 }
@@ -217,6 +217,58 @@ func TestAPIModelsListRefusesBadValues(t *testing.T) {
 	t.Setenv("MONOAGENT_API_CONFINEMENT", "everything")
 	if _, err := callAPITool(t, s, "api_models_list", nil); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_CONFINEMENT") || strings.Contains(err.Error(), "everything") {
 		t.Errorf("a bad MONOAGENT_API_CONFINEMENT: %v, want a fixed text that names the variable", err)
+	}
+}
+
+func capabilitiesOf(r openaiapi.ModelsReport) map[string][]string {
+	out := map[string][]string{}
+	for _, m := range r.Models {
+		out[m.ID] = m.Capabilities
+	}
+	return out
+}
+
+// The document says which models make images, from the MCP server's own environment
+// (MONOAGENT_API_IMAGE_RUNTIMES), as `api models --json` does from the shell's: the
+// default list when it is unset.
+func TestAPIModelsListSaysWhichModelsMakeImages(t *testing.T) {
+	pinAPIEnv(t)
+	fakeAPIMonomind(t)
+	s, _ := newAPIKeyServer(t, false)
+	text, both := []string{"text"}, []string{"text", "image"}
+
+	want := map[string][]string{
+		"claude/default": text, "codex/default": both, "codex/gpt-6-astra": both,
+		"antigravity/default": both, "antigravity/gemini-3.8-flash-high": both,
+	}
+	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
+		t.Errorf("the default list: %v, want %v", got, want)
+	}
+
+	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "agy")
+	want = map[string][]string{
+		"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+		"antigravity/default": both, "antigravity/gemini-3.8-flash-high": both,
+	}
+	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
+		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=agy: %v, want %v", got, want)
+	}
+
+	// none switches image generation off: no model makes images.
+	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "none")
+	want = map[string][]string{
+		"claude/default": text, "codex/default": text, "codex/gpt-6-astra": text,
+		"antigravity/default": text, "antigravity/gemini-3.8-flash-high": text,
+	}
+	if got := capabilitiesOf(modelsReport(t, s, nil)); !reflect.DeepEqual(got, want) {
+		t.Errorf("MONOAGENT_API_IMAGE_RUNTIMES=none: %v, want %v", got, want)
+	}
+
+	// A bad list is the server's own mistake: the refusal names the variable and, as for
+	// the others, repeats nothing.
+	t.Setenv("MONOAGENT_API_IMAGE_RUNTIMES", "co dex")
+	if _, err := callAPITool(t, s, "api_models_list", nil); err == nil || !strings.Contains(err.Error(), "MONOAGENT_API_IMAGE_RUNTIMES") || strings.Contains(err.Error(), "co dex") {
+		t.Errorf("a bad MONOAGENT_API_IMAGE_RUNTIMES: %v, want a fixed text that names the variable", err)
 	}
 }
 

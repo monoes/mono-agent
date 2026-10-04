@@ -24,21 +24,8 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 			status, detail = e.Status, e.detail
 			writeError(w, e)
 		}
-		// One line per request. It names the request, the key, the profile, the
-		// model and the outcome, and never a prompt, an answer or a key. detail
-		// is what a failure keeps for the operator: a Go error or a runtime's
-		// error code, never what the client sent.
-		defer func() {
-			line := fmt.Sprintf("req=%s key=%s profile=%s model=%s status=%d ms=%d context=%s",
-				pr.RequestID, pr.KeyID, pr.ProfileID, model, status, time.Since(begin).Milliseconds(), ctxState)
-			if autoBy != "" {
-				line += " auto=" + autoBy
-			}
-			if detail != "" {
-				line += fmt.Sprintf(" detail=%q", detail)
-			}
-			g.deps.Logf("%s", line)
-		}()
+		// One line per request, whatever its outcome.
+		defer func() { g.logRequest(pr, begin, model, status, ctxState, autoBy, detail) }()
 
 		var req ChatRequest
 		if e := decodeBody(w, r, g.cfg.BodyLimit, &req); e != nil {
@@ -77,12 +64,8 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 				return
 			}
 			model = m.ID
-			if !eff.Allows(m.Class) {
-				if p.Allows(m.Class) { // only the cap on a context key refuses it
-					fail(errPolicy(fmt.Sprintf("model %s runs as %s, which is above what a key created with --context may use here (%s): its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted; the operator can raise this with --context-confinement", m.ID, m.Class, eff)))
-				} else {
-					fail(errPolicy(fmt.Sprintf("model %s runs as %s, which this server's confinement policy (%s) does not allow; the operator can raise it with --confinement", m.ID, m.Class, p)))
-				}
+			if e := policyRefusal(m, p, eff, "its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted"); e != nil {
+				fail(e)
 				return
 			}
 		}
@@ -97,13 +80,12 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		// The slot comes first, so that a request that would be refused for lack of
 		// one never costs a Jev call, and no more than MaxConcurrent picks run at once.
 		if isAuto {
-			pick := g.pickAuto(r.Context(), pr.ProfileID, lastUserText(&req), candidates)
-			if r.Context().Err() != nil { // the caller left while Jev was asked: there is nobody to answer
+			pick, gone := g.pickForRequest(w, r, pr, lastUserText(&req), candidates)
+			if gone { // the caller left while Jev was asked: there is nobody to answer
 				status = 499
 				return
 			}
 			m, autoBy, model = pick.Model, pick.By, pick.Model.ID
-			w.Header().Set("X-Monoagent-Auto", autoBy)
 		}
 
 		var ctxBlock string
@@ -132,20 +114,13 @@ func (g *Gateway) handleChat(p Policy) func(http.ResponseWriter, *http.Request, 
 		}
 
 		res, err := g.runTurn(r.Context(), t)
-		if errors.Is(err, errPolicyDenied) {
-			fail(policyDeniedAtStart(m, eff))
+		e, gone := g.resultError(r.Context(), res, err, m, eff)
+		if gone {
+			status = 499 // the caller left; there is nobody to answer
 			return
 		}
-		if e := turnError(res, err); e != nil {
+		if e != nil {
 			fail(e)
-			return
-		}
-		if res.Err != nil { // the only error turnError lets through: a cancellation
-			if r.Context().Err() != nil {
-				status = 499 // the caller left; there is nobody to answer
-				return
-			}
-			fail(g.cancelledError())
 			return
 		}
 		if res.SandboxStatus != "" {

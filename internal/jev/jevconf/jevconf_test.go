@@ -89,6 +89,14 @@ func TestEnabledAndThreshold(t *testing.T) {
 	}
 }
 
+// An image request for the `auto` model sends TypeSafe the prompt of the image, so
+// the list `jev enable` prints before switching the surface on says so.
+func TestAPIAutoEgressSaysImagePromptsToo(t *testing.T) {
+	if egress := strings.Join(Egress[APIAuto], " | "); !strings.Contains(egress, "of an image request, its prompt") {
+		t.Errorf("the egress list must say that an image request's prompt is sent: %s", egress)
+	}
+}
+
 // The `auto` model of the OpenAI-compatible API is a surface of its own: switched
 // on per profile like the others, and it must say what leaves the machine. Its
 // default threshold is 0: the top pick of Jev is accepted unless the profile

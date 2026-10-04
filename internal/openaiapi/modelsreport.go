@@ -31,6 +31,9 @@ type ModelReport struct {
 	// AutoAllowed is true when the auto model may pick it: allowed, and within
 	// --auto-confinement.
 	AutoAllowed bool `json:"auto_allowed"`
+	// Capabilities is what GET /v1/models says the model can do: "text", and "image" for
+	// a model of a runtime in MONOAGENT_API_IMAGE_RUNTIMES that can write the file.
+	Capabilities []string `json:"capabilities"`
 }
 
 // AutoReport says whether the auto model works for the profile, and what is
@@ -92,6 +95,11 @@ type ModelsReportInput struct {
 	Source string
 	Models []ModelInfo
 	Auto   AutoStatus
+	// ImageRuntimes are the runtimes whose models make images, as Config.ImageRuntimes
+	// has them: nil is the default list, and a list with nothing in it, which
+	// EffectiveImageRuntimes makes of MONOAGENT_API_IMAGE_RUNTIMES=none, is image
+	// generation switched off.
+	ImageRuntimes []string
 }
 
 // NewModelsReport marks which models the policy serves, which a key created with
@@ -104,6 +112,7 @@ func NewModelsReport(in ModelsReportInput) ModelsReport {
 		For: in.For, Confinement: in.Policy.String(), ContextConfinement: forContext.String(),
 		AutoConfinement: forAuto.String(), Source: in.Source,
 	}
+	images := Config{ImageRuntimes: in.ImageRuntimes} // the gateway's own rule: nil is the default list, empty is off
 	allowed, candidates := 0, 0
 	for _, m := range in.Models {
 		if m.Alias {
@@ -113,6 +122,7 @@ func NewModelsReport(in ModelsReportInput) ModelsReport {
 			ID: m.ID, Runtime: m.Runtime, Model: m.Model, Label: m.Label,
 			Confinement: m.Class.String(), Validated: m.Validated, Allowed: in.Policy.Allows(m.Class),
 			ContextAllowed: forContext.Allows(m.Class), AutoAllowed: forAuto.Allows(m.Class),
+			Capabilities: images.Capabilities(m),
 		}
 		if row.Allowed {
 			allowed++
@@ -193,6 +203,13 @@ func EffectiveContextMax(explicit string, getenv func(string) string) (Class, er
 // raising it is a choice the operator makes on purpose.
 func EffectiveAutoMax(explicit string, getenv func(string) string) (Class, error) {
 	return effectiveMax(explicit, "MONOAGENT_API_AUTO_CONFINEMENT", getenv)
+}
+
+// EffectiveImageRuntimes is the runtimes whose models make images: those of
+// MONOAGENT_API_IMAGE_RUNTIMES, else the default list, and a list with nothing in it
+// for "none" (see ParseImageRuntimes).
+func EffectiveImageRuntimes(getenv func(string) string) ([]string, error) {
+	return ParseImageRuntimes(getenv("MONOAGENT_API_IMAGE_RUNTIMES"))
 }
 
 func effectiveMax(explicit, envName string, getenv func(string) string) (Class, error) {
