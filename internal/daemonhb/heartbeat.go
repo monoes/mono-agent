@@ -36,10 +36,24 @@ type Heartbeat struct {
 	V1Confinement      string `json:"v1_confinement,omitempty"`
 	ContextConfinement string `json:"context_confinement,omitempty"`
 	AutoConfinement    string `json:"auto_confinement,omitempty"`
-	Version            string `json:"version,omitempty"`
+	// APISettings is, for each setting of the OpenAI-compatible API's server (by its key:
+	// v1_addr, confinement, max_concurrent, ...), the value the daemon started with and where
+	// it came from, so that a reader can tell what a restart would change. A daemon that
+	// predates it has none.
+	APISettings map[string]APISetting `json:"api_settings,omitempty"`
+	Version     string                `json:"version,omitempty"`
 	// Schedules are the registered schedule triggers with the scheduler's
 	// own next fire time, refreshed on every write.
 	Schedules []Schedule `json:"schedules,omitempty"`
+}
+
+// APISetting is one effective setting of the OpenAI-compatible API's server.
+type APISetting struct {
+	// Value is the canonical text of the effective value: "" where the setting has no value
+	// (no dedicated listener, a policy that follows the listener, no certificate).
+	Value string `json:"value"`
+	// Source is where it came from: flag, env, saved or default.
+	Source string `json:"source"`
 }
 
 // Schedule is one registered schedule trigger.

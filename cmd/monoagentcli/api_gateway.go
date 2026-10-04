@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/apiconfig"
+	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/httpapi"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/openaiapi"
@@ -253,6 +254,28 @@ func (a *apiRuntime) contextReport() string {
 // autoReport is the auto maximum to record in the daemon's heartbeat.
 func (a *apiRuntime) autoReport() string {
 	return openaiapi.Policy{Max: a.autoMax}.String()
+}
+
+// settingsReport is the effective value of every setting and where it came from, for the
+// daemon's heartbeat.
+func (a *apiRuntime) settingsReport() map[string]daemonhb.APISetting {
+	out := make(map[string]daemonhb.APISetting, len(a.resolved))
+	for _, r := range a.resolved {
+		out[r.Key] = daemonhb.APISetting{Value: r.Text, Source: r.Source}
+	}
+	return out
+}
+
+// heartbeat is the daemon's heartbeat before its schedules: what it serves, the policies it
+// applies and the setting each of them came from. apiAddr, bridgeAddr and v1Addr are the
+// addresses it is serving, "" for what it does not.
+func (a *apiRuntime) heartbeat(apiAddr, bridgeAddr, v1Addr string) daemonhb.Heartbeat {
+	return daemonhb.Heartbeat{
+		APIAddr: apiAddr, BridgeAddr: bridgeAddr, V1Addr: v1Addr, Version: getVersion(),
+		APIConfinement: a.confinementReport(apiAddr, false), V1Confinement: a.confinementReport(v1Addr, true),
+		ContextConfinement: a.contextReport(), AutoConfinement: a.autoReport(),
+		APISettings: a.settingsReport(),
+	}
 }
 
 // mainMount returns the route registrar that serves /v1 on the main HTTP API

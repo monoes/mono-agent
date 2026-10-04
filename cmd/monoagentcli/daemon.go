@@ -156,11 +156,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
-			go daemonhb.RunWith(ctx, daemonhb.Heartbeat{
-				APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, V1Addr: v1ServingAddr, Version: getVersion(),
-				APIConfinement: apiRT.confinementReport(servingAddr, false), V1Confinement: apiRT.confinementReport(v1ServingAddr, true),
-				ContextConfinement: apiRT.contextReport(), AutoConfinement: apiRT.autoReport(),
-			},
+			go daemonhb.RunWith(ctx, apiRT.heartbeat(servingAddr, bridgeServingAddr, v1ServingAddr),
 				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
 			orgs.start(ctx, engine)
 			// Automatic roster re-validation (#230): off unless the user
