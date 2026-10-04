@@ -46,11 +46,12 @@ type Options struct {
 	// Version is reported in initialize serverInfo.
 	Version string
 	// AllowMutations enables mutating tools (workflow_run, hil_approve/
-	// reject, and every create/update/delete-class monoagent tool). When
-	// false (default), mutating tools are omitted from tools/list and
-	// refuse with an explanatory error if called by name. Also settable
-	// via MONOAGENT_MCP_ALLOW_MUTATIONS=="1". Mirrors internal/httpapi's
-	// identically-named/shaped AllowMutations gate.
+	// reject, every create/update/delete-class monoagent tool, and
+	// api_key_create/update/revoke). When false (default), mutating tools
+	// are omitted from tools/list and refuse with an explanatory error if
+	// called by name. Also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=="1".
+	// Mirrors internal/httpapi's identically-named/shaped AllowMutations
+	// gate.
 	AllowMutations bool
 	// Grant, when set, serves grant mode: only the automations of that
 	// grant's (org, role) bundle, for monomind's role tool provider. See

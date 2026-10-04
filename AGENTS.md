@@ -232,6 +232,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
   - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
   - `org stop|pause|resume <org>` are the bubble's controls.
+- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
 
 ## monoes.me library
 
@@ -320,12 +321,25 @@ dangerous calls.
   description for values), `node_schema`
 - `hil_list`
 - `vault_item_list`, `vault_item_get_path`, `profile_document_search`
-- `secret_list` (metadata only — values are never returned by any tool)
+- `secret_list` (metadata only — vault values are never returned by any tool;
+  the one secret a tool returns is the new key of `api_key_create`, below)
 - `person_list`, `person_get`
 - `message_list`, `message_get` (results carry an untrusted-content
   provenance fence)
 - `social_list_list`, `template_list`
 - `org_list`, `org_get`, `org_validate`
+- `api_key_list` (the active profile's API keys for the
+  [OpenAI-compatible API](#openai-compatible-api-v1): metadata only, never a
+  key), `api_models_list` (the document of `api models --json`: the models
+  `/v1` would serve with each one's confinement class. It takes the flags of
+  that command as `for`, `confinement`, `context_confinement` and
+  `auto_confinement`, otherwise reads this MCP server's own environment, and
+  asks the installed runtimes for their model lists: the first call takes a
+  few seconds, calls at once share that load, the list is reused for a minute,
+  and after that the previous one is served at once while a new one loads in
+  the background, as `/v1/models` does. The load a call waits for ends with
+  the call or the server; the background reload is detached, as the gateway's
+  is, and takes at most 90 seconds)
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -344,6 +358,24 @@ existing MCP client config that relies on them.
   `org_role_set_reports_to`, `org_role_remove`, `org_reload`
 - `org_automation_add`, `org_grant_set`, `org_autonomy_set` (the last two
   preview unless `confirm:true`)
+- `api_key_create`, `api_key_update`, `api_key_revoke` — the active profile's
+  API keys, under the rules of `api key create|update|revoke` (names, the
+  context switch, the errors); a key of another profile is "not found". A name
+  can be neither a key (anything holding `sk-ma-`, in any case) nor the shape
+  of a key id (`key_` and 12 characters of a-z and 2-7), because `api_key_list`
+  shows names: a key pasted where a name goes is refused, by the key store, so
+  by `api key create|update` too. No error of any `api_*` tool repeats an
+  argument, since a caller may paste a key anywhere.
+  `api_key_revoke` is annotated destructive and asks for no confirmation: the
+  host gates it. **`api_key_create` is the one tool that returns a secret:** the
+  new key, once, in the `key` field of its result. Only its SHA-256 is stored,
+  so no tool, `api_key_list` included, can show it again. It also makes the key
+  part of the MCP host's transcript, which the host may keep and, for a hosted
+  model, send to its provider. `monoagentcli api key create` writes the key to
+  its stdout (also with `--json`): run in your own terminal it stays out of any
+  transcript, but run by an agent through a shell tool it lands in that
+  transcript too. The `api_*` tools are MCP only (the chat assistant has
+  none), and a grant-mode server serves none of them.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -352,9 +384,9 @@ granted automations (`automation_<alias>`, `automation_status`,
 calls in `monoagentcli daemon`, and refuses a grant used by another org or
 role. Plain `mcp` refuses to start inside an org role's process.
 
-Most of this surface (vault, secrets, people, orgs) is the same
-implementation the chat feature already uses natively — see "Assistant
-chat & tools" below for the safety properties (metadata-only secrets,
+Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is
+the same implementation the chat feature already uses natively — see
+"Assistant chat & tools" below for the safety properties (metadata-only secrets,
 pre-delete backups, `confirm:true` previews on destructive/cascading
 actions, untrusted-content fencing on messages), which apply unchanged
 here; MCP is just a second transport onto the same tool implementations.
@@ -469,6 +501,11 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `api key list --all-profiles` is the one command that spans profiles
   (metadata only). `api models` evaluates this shell's flags and environment,
   not a running server; `api status` reports what a running daemon applies.
+  `monoagentcli mcp` serves the same key management and the model list as tools
+  for its own profile, with no `--all-profiles`: `api_key_list` and
+  `api_models_list`, and with `--allow-mutations` `api_key_create`,
+  `api_key_update` and `api_key_revoke` (see [MCP server](#mcp-server): creating
+  a key there puts it in the host's transcript).
   `org teardown-profile` revokes a profile's keys. A key never opens the
   legacy routes, and the legacy token never opens `/v1`. Revoking applies to
   the next request: a turn already running finishes, within its timeout.
@@ -527,7 +564,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `httpapi` exits when the dedicated listener cannot start (a bad
   certificate, a port in use); `daemon` only prints a warning and keeps
   running without it, so check `api status`, which says when the daemon
-  reports no dedicated listener. Read
+  reports no dedicated listener, and which scheme each listener that answers
+  speaks (`scheme`, `http` or `https`, in `--json`, absent for one that does not
+  answer; `serves /v1 over https` in the text): the address does not tell a
+  dedicated loopback listener that has a certificate from one that has not. Read
   [SECURITY.md](SECURITY.md#openai-compatible-api-surface) before exposing it.
 - **Limits.** 2 MiB request body, 4 concurrent turns (`--max-concurrent`,
   `MONOAGENT_API_MAX_CONCURRENT`; a full server answers 429 with
@@ -539,6 +579,27 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (and per failure to list models or to search a context key's knowledge,
   among others), and never a prompt, an answer or a key. Stopping the server
   answers a turn in flight with a 503 the client can retry.
+- **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
+  folded until opened, read again when Settings is shown again) runs the
+  commands above through `wails-app/app_api.go`. It shows every listener that
+  serves `/v1`, a network one never left out for a loopback one that answers:
+  its base URL with a copy button (the scheme is the one `api status` saw
+  answer, derived only for a listener that did not or a CLI that predates it;
+  an address that is not a host name or IP address and a port gets no URL),
+  whether it runs, "bound to loopback" or "network" (a proxy, tunnel or port
+  forward on the machine can still expose a loopback one) and the confinement
+  the running daemon reports, or that is assumed from the app's environment.
+  The header says Network when any listener that serves `/v1` is bound beyond
+  loopback. The active profile's keys: create with a show-once panel (Escape
+  does not close it, only Done: the key is not shown again), a context switch
+  (turning it on asks first, since excerpts of the profile's documents reach the
+  model's provider) and revoke after a confirmation. The models: their class,
+  whether the policy of the first listener that answers `/v1` (the first listed
+  when none does) serves them, and whether a context key and `auto` may use them. `auto` says what it picks among
+  (with one model the rule uses it and Jev is not asked) and how many served
+  models `--auto-confinement` holds back, or what it is missing, with a link to
+  the Jev settings when that is where it is switched on (the `api_auto` surface,
+  a Jev key).
 
 Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 `examples/openai-api-quickstart.md`; paths and schemas:

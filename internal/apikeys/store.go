@@ -149,7 +149,11 @@ func (s *Store) list(ctx context.Context, q string, args ...any) ([]Key, error) 
 	return out, rows.Err()
 }
 
-// Update renames an active key and/or changes its context switch.
+// Update renames an active key and/or changes its context switch. It writes only
+// what u sets, in one statement that holds only while the key is active, so that
+// two updates at once both land (each used to rewrite both columns from what it
+// had read, and the later one undid the other), and an update that loses a race
+// to a revoke changes nothing and finds no key.
 func (s *Store) Update(ctx context.Context, profileID, ref string, u Update) (Key, error) {
 	k, err := s.Get(ctx, profileID, ref)
 	if err != nil {
@@ -158,22 +162,31 @@ func (s *Store) Update(ctx context.Context, profileID, ref string, u Update) (Ke
 	if k.RevokedAt != nil {
 		return Key{}, ErrNotFound
 	}
-	name, withContext := k.Name, k.Context
+	if u.Name != nil && !validName(*u.Name) {
+		return Key{}, ErrInvalidName
+	}
+	var name, withContext any // NULL leaves a column as it is
 	if u.Name != nil {
-		if !validName(*u.Name) {
-			return Key{}, ErrInvalidName
-		}
 		name = *u.Name
 	}
 	if u.Context != nil {
-		withContext = *u.Context
+		withContext = boolInt(*u.Context)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE api_keys SET name = ?, context = ? WHERE id = ?`, name, boolInt(withContext), k.ID)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET name = COALESCE(?, name), context = COALESCE(?, context)
+		 WHERE id = ? AND profile_id = ? AND revoked_at IS NULL`, name, withContext, k.ID, profileID)
 	if isNameClash(err) {
 		return Key{}, ErrNameTaken
 	}
 	if err != nil {
 		return Key{}, fmt.Errorf("updating api key: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Key{}, fmt.Errorf("updating api key: %w", err)
+	}
+	if n == 0 { // revoked since it was read
+		return Key{}, ErrNotFound
 	}
 	return s.byID(ctx, profileID, k.ID)
 }

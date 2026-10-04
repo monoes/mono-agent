@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -38,8 +39,12 @@ type apiListenerJSON struct {
 	// environment and the defaults, which a server started with
 	// --confinement may not share.
 	ConfinementSource string `json:"confinement_source"`
-	Reachable         bool   `json:"reachable"`  // GET /health answers 200
-	V1Answers         bool   `json:"v1_answers"` // GET /v1/models without a key answers 401: the gateway is mounted
+	// Scheme is "http" or "https": the one that answered the probe, so a client
+	// does not have to guess whether the listener speaks TLS. Omitted when the
+	// listener is not reachable.
+	Scheme    string `json:"scheme,omitempty"`
+	Reachable bool   `json:"reachable"`  // GET /health answers 200
+	V1Answers bool   `json:"v1_answers"` // GET /v1/models without a key answers 401: the gateway is mounted
 }
 
 type apiStatusJSON struct {
@@ -152,6 +157,9 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				main.AutoConfinement = autoConfinementFor(main.Confinement, autoMax)
 				// The main listener is always plain HTTP: only the dedicated one has TLS.
 				main.Reachable, main.V1Answers = probeListener("http://"+mainAddr, main.V1)
+				if main.Reachable {
+					main.Scheme = "http"
+				}
 				add(main, mainFromDaemon)
 			}
 			if v1Addr != "" {
@@ -166,7 +174,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				}
 				dedicated.ContextConfinement = contextConfinementFor(dedicated.Confinement, contextMax)
 				dedicated.AutoConfinement = autoConfinementFor(dedicated.Confinement, autoMax)
-				dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, loop, true)
+				dedicated.Scheme, dedicated.Reachable, dedicated.V1Answers = probeAddr(v1Addr, loop, true)
 				add(dedicated, v1FromDaemon)
 			}
 
@@ -175,7 +183,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Profile %s: %d active API key(s)\n", st.Profile, st.Keys.Active)
-			fmt.Fprintf(w, "Auto model: %s\n", st.Auto.autoNote())
+			fmt.Fprintf(w, "Auto model: %s\n", autoNote(st.Auto))
 			if st.Daemon.Running {
 				fmt.Fprintln(w, "Daemon: running")
 			} else {
@@ -239,7 +247,7 @@ func listenerNote(l apiListenerJSON) string {
 	case !l.V1:
 		return "reachable, but does not serve /v1 (bound off-loopback; use --v1-addr)"
 	case l.V1Answers:
-		note := "serves /v1, confinement " + l.Confinement + ", keys created with --context: " + l.ContextConfinement + ", auto picks up to: " + l.AutoConfinement
+		note := "serves /v1 over " + l.Scheme + ", confinement " + l.Confinement + ", keys created with --context: " + l.ContextConfinement + ", auto picks up to: " + l.AutoConfinement
 		if l.ConfinementSource != "daemon" {
 			note += " (assumed from this shell's environment: a server started with --confinement, --context-confinement or --auto-confinement may differ)"
 		}
@@ -261,14 +269,15 @@ func probeSchemes(loopback bool) []string {
 }
 
 // probeAddr probes a listener at addr without knowing whether it speaks TLS
-// (see probeSchemes), and, when wantV1, whether it answers /v1.
-func probeAddr(addr string, loopback, wantV1 bool) (reachable, v1Answers bool) {
-	for _, scheme := range probeSchemes(loopback) {
-		if reachable, v1Answers = probeListener(scheme+addr, wantV1); reachable {
-			return reachable, v1Answers
+// (see probeSchemes), and, when wantV1, whether it answers /v1. It says which
+// scheme answered ("http" or "https"), and none when nothing did.
+func probeAddr(addr string, loopback, wantV1 bool) (scheme string, reachable, v1Answers bool) {
+	for _, s := range probeSchemes(loopback) {
+		if reachable, v1Answers = probeListener(s+addr, wantV1); reachable {
+			return strings.TrimSuffix(s, "://"), reachable, v1Answers
 		}
 	}
-	return false, false
+	return "", false, false
 }
 
 // probeListener asks a listener, with a 2 s timeout each, whether GET /health

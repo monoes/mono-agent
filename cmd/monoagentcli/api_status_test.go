@@ -305,11 +305,98 @@ func TestProbeSchemesTryTLSFirstOffLoopback(t *testing.T) {
 // not expected to serve it, so it is not probed for it.
 func TestProbeAddrAsksForV1OnlyWhenWanted(t *testing.T) {
 	addr := apiServer(t, true) // answers 401 on /v1/models
-	if reachable, v1 := probeAddr(addr, true, false); !reachable || v1 {
+	if _, reachable, v1 := probeAddr(addr, true, false); !reachable || v1 {
 		t.Errorf("a listener not expected to serve /v1 is not asked: reachable=%v v1=%v", reachable, v1)
 	}
-	if reachable, v1 := probeAddr(addr, true, true); !reachable || !v1 {
+	if _, reachable, v1 := probeAddr(addr, true, true); !reachable || !v1 {
 		t.Errorf("a listener expected to serve /v1 is asked: reachable=%v v1=%v", reachable, v1)
+	}
+}
+
+// The probe says which scheme answered, and none when nothing did.
+func TestProbeAddrSaysTheSchemeThatAnswered(t *testing.T) {
+	plain := apiServer(t, true)
+	if scheme, reachable, _ := probeAddr(plain, true, true); !reachable || scheme != "http" {
+		t.Errorf("a plain listener answers over http: scheme=%q reachable=%v", scheme, reachable)
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	tlsAddr := strings.TrimPrefix(srv.URL, "https://")
+	// A loopback listener is tried in the clear first and a network one over TLS first:
+	// the scheme is the one that answered, whichever was tried first.
+	for _, loopback := range []bool{true, false} {
+		if scheme, reachable, _ := probeAddr(tlsAddr, loopback, false); !reachable || scheme != "https" {
+			t.Errorf("a TLS listener (loopback=%v) answers over https: scheme=%q reachable=%v", loopback, scheme, reachable)
+		}
+	}
+	if scheme, reachable, v1 := probeAddr("127.0.0.1:1", true, true); reachable || v1 || scheme != "" {
+		t.Errorf("nothing answers there, so there is no scheme: scheme=%q reachable=%v v1=%v", scheme, reachable, v1)
+	}
+}
+
+// api status says the scheme of each listener that answered, in the JSON and in
+// the text, and leaves it out of a listener that does not: a client, such as the
+// desktop app, then builds the base URL without guessing whether TLS is on.
+func TestAPIStatusSaysTheSchemeOfEachListener(t *testing.T) {
+	db := newAPITestDB(t)
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "none.json"))
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_TLS_CERT", "")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/models":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", apiServer(t, true))                     // the main listener: plain HTTP
+	t.Setenv("MONOAGENT_API_V1_ADDR", strings.TrimPrefix(srv.URL, "https://")) // a dedicated one that speaks TLS
+
+	out, _, err := runAPI(t, db, "default", true, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ls := decodeStatus(t, out).Listeners
+	if len(ls) != 2 || ls[0].Name != "main" || ls[0].Scheme != "http" || ls[1].Name != "v1" || ls[1].Scheme != "https" {
+		t.Fatalf("schemes: %+v", ls)
+	}
+	human, _, err := runAPI(t, db, "default", false, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"serves /v1 over http,", "serves /v1 over https,"} {
+		if !strings.Contains(human, want) {
+			t.Errorf("the text must say %q:\n%s", want, human)
+		}
+	}
+
+	// A listener nothing answers at has no scheme: the key is absent, not empty.
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", "127.0.0.1:1")
+	t.Setenv("MONOAGENT_API_V1_ADDR", "127.0.0.1:2")
+	out, _, err = runAPI(t, db, "default", true, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Listeners []map[string]any `json:"listeners"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil || len(raw.Listeners) != 2 {
+		t.Fatalf("not a status document: %v\n%s", err, out)
+	}
+	for _, l := range raw.Listeners {
+		if _, has := l["scheme"]; has || l["reachable"] != false {
+			t.Errorf("an unreachable listener must carry no scheme: %v", l)
+		}
 	}
 }
 func TestAPIStatusReadsTheDaemonHeartbeat(t *testing.T) {

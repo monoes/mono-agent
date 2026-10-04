@@ -55,7 +55,7 @@ function formatUSD(v) {
   return `$${v.toFixed(v < 1 ? 4 : 2)}`
 }
 
-function Switch({ on, disabled, label: aria, onChange }) {
+export function Switch({ on, disabled, label: aria, onChange }) {
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={aria} disabled={disabled}
@@ -208,11 +208,17 @@ function UsageTable({ usage, titles }) {
   )
 }
 
-export default function JevSection({ collapsible = false, defaultExpanded = false } = {}) {
+// expandToken is what a jump to this section passes (Settings gives the navigation data, a new object for each
+// navigation): the section opens whenever it changes to a value, also after the user folded it by hand, which
+// defaultExpanded cannot do because it does not change from one jump to the next.
+export default function JevSection({ collapsible = false, defaultExpanded = false, expandToken = null } = {}) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   useEffect(() => {
     if (defaultExpanded) setIsExpanded(true)
   }, [defaultExpanded])
+  useEffect(() => {
+    if (expandToken) setIsExpanded(true)
+  }, [expandToken])
 
   const [status, setStatus] = useState(null)
   const [loadErr, setLoadErr] = useState('')

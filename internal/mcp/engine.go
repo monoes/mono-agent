@@ -17,6 +17,7 @@ import (
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/nodes"
+	"github.com/monoes/mono-agent/internal/openaiapi"
 	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -34,6 +35,12 @@ type runtime struct {
 	engine    *workflow.WorkflowEngine
 	sched     *scheduler.Scheduler
 	chat      *aichat.MonoagentTools
+
+	// catalog is the one catalog of models behind api_models_list, made on first
+	// use (see modelCatalog). It has its own Once and not mu, which ensureEngine
+	// holds across engine.Start.
+	catalogOnce sync.Once
+	catalog     *openaiapi.Catalog
 
 	// mu guards the lazy engine/registry/scheduler/chat bootstrap: requests
 	// are dispatched concurrently, so several tools/call invocations may

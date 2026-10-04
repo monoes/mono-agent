@@ -4,6 +4,7 @@ Date: 2026-10-01
 Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3). Amended the same day after two independent reviews of the phase 1 code, and the user then decided the two open points: a context key is served only by `chat-only` models unless the operator raises `--context-confinement` (D2, §5, §6.3, §7.2), and each concurrency slot has a fixed working folder per profile instead of one folder per request (§4.2, §5). The other amendments: a sandbox that cannot be applied refuses the turn (§6.1), stopping the server ends the turns in flight (§6.4), and error messages stay generic (§7.4).
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
 Phase 3 (§9, the `auto` model) is implemented on `feat/openai-api-jev-auto`, stacked on the phase 1 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase3-jev-auto.md`.
+Phase 2a (§8.3, the MCP tools) is implemented on `feat/openai-api-mcp`, stacked on the phase 3 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase2a-mcp.md`.
 
 ## 1. Goal
 
@@ -257,7 +258,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_profile_name_active
 ```
 
 - The key is `sk-ma-` plus base64url of 32 random bytes (49 characters). Only its SHA-256 (hex) is stored, plus a display `prefix` (first 12 characters). The key is shown once.
-- Names are 1–64 characters of `[A-Za-z0-9 ._-]`, unique per profile among active keys. Ids are `key_` plus random base32.
+- Names are 1–64 characters of `[A-Za-z0-9 ._-]`, unique per profile among active keys. Ids are `key_` plus random base32. A name is not the shape of an id (so `show <id|name>` is never ambiguous) and does not hold `sk-ma-` in any case: names are listed, and a key pasted into a name field would be shown. The store enforces it, so every front end has it.
 - `Authenticate` checks the shape, hashes the token, looks it up, rejects a revoked row, then re-compares the hash in constant time. There is no auth cache, so revocation is immediate.
 - `last_used_at` is written at most once a minute per key.
 
@@ -286,6 +287,20 @@ api status [--json]                         # listeners, exposure, confinement, 
 | `api_key_revoke` | mutating, destructive | |
 
 All carry annotations. Keys are scoped to the MCP profile; another profile's id is "not found". Names are added to `AGENTS.md` and `cmd/monoagentcli/mcp.go`.
+
+**As built (phase 2a).**
+- **Inputs and results.**
+  - `api_key_list {include_revoked}` returns the metadata of the server's profile's keys.
+  - `api_models_list {for, confinement, context_confinement, auto_confinement}` returns the document of `api models --json`, evaluated from its arguments and the MCP server's own environment. `policy.source` is `mcp` where the CLI says `shell`.
+  - `api_key_create {name, context}` returns the key's metadata and `key`.
+  - `api_key_update {id, name, context}` and `api_key_revoke {id}` take an id or the name of an active key and return its metadata. An argument left out of an update is not changed, and `context: false` turns it off.
+- **Errors.** The tools pass `internal/apikeys`' errors on as they are. Another profile's id therefore gives exactly the error of an id nobody has (`api key not found`), and no error of any of the five tools repeats an argument: a caller may have pasted a key anywhere. `api_models_list`'s refusals are fixed texts (a bad confinement names its environment variable, not its value), and a value over 32 characters is refused before it is looked at; the shared parsers quote the value, which suits a command line, so the tool replaces their messages with its own. Nothing in the new code logs.
+- **Names and updates.** `internal/apikeys` refuses a name that holds `sk-ma-` (any case) as it refuses the shape of a key id. `Update` is one statement, `UPDATE api_keys SET name = COALESCE(?, name), context = COALESCE(?, context) WHERE id = ? AND profile_id = ? AND revoked_at IS NULL`: two updates of one key at once both land, and a revoke that wins the race leaves the key untouched (`api key not found`, no rows affected).
+- **The load of `api_models_list`.** One `openaiapi.Catalog` per MCP server, made on first use: calls at once share one load, a list is reused for a minute, and after that the previous one is served while a new one loads in the background, as `/v1/models` does. The tool and `api models` use `ModelsBound`, whose load ends with the caller's context (the server cancels its calls three seconds after its input ends; `api models` ends on Ctrl+C): the leader waits on its load, not on the pipes of monomind's children, and a load whose starter left is not cached. The gateway keeps `Models`, whose load is detached from the first request that starts it. This binds only the first load, which a call waits for: the background reload of an expired list is detached in both (90 seconds at most, as the gateway's is), so monomind processes of a reload in flight can outlive a stopped MCP server by a few seconds.
+- **Annotations.** The reads carry `readOnlyHint` and `idempotentHint`, create and update `readOnlyHint: false`, revoke `readOnlyHint: false` and `destructiveHint: true`. Revoke asks for no confirmation, like `secret_delete`: the host gates on the hint.
+- **Grant mode.** A grant-mode server serves none of them, so an org role cannot mint or revoke keys.
+- **Shared code.** What is not presentation in `api models` (the report types, the row marks, the candidate count, the parsers of the listener kind and of the three caps, and the production catalog) moved to `internal/openaiapi/modelsreport.go`, so that the CLI and the tool print the same document. `Update.IsEmpty` in `internal/apikeys` is the one rule for "nothing to change".
+- **D9.** AGENTS.md has no list of exceptions to "no tool returns secrets", only the `secret_list` line: it and the mutating list name `api_key_create` as the one tool that returns a secret, and SECURITY.md says that the key then passes through the MCP host.
 
 ### 8.4 GUI
 
@@ -354,7 +369,7 @@ Implemented in phase 3, for text; the image options wait for P4.
 | Phase | Content |
 |---|---|
 | P1 | `apikeys` + migration, gateway (models, chat, stream, context), confinement and limits, dedicated listener and TLS, CLI, docs and OpenAPI |
-| P2 | MCP tools, GUI section and bindings |
+| P2 | MCP tools (phase 2a: implemented), GUI section and bindings |
 | P3 | Jev `api_auto` (surface, chooser, fallback, CLI exposure): implemented; its GUI exposure goes with P2's GUI section |
 | P4 | Images |
 | P5 | Tool calling (spike, then build) |

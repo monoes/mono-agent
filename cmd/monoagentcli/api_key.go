@@ -177,7 +177,7 @@ func newAPIKeyUpdateCmd(cfg *globalConfig) *cobra.Command {
 				off := false
 				u.Context = &off
 			}
-			if u.Name == nil && u.Context == nil {
+			if u.IsEmpty() {
 				return errInvalidInput("nothing to change: pass --name, --context or --no-context")
 			}
 			return withKeys(cfg, cmd, func(ctx context.Context, store *apikeys.Store, profileID string) error {
