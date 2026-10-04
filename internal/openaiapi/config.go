@@ -10,16 +10,23 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
+// The limits an operator can set, which internal/apiconfig names too.
+const (
+	// DefaultMaxConcurrent is how many turns run at once when nothing says otherwise.
+	DefaultMaxConcurrent = 4
+	// DefaultTurnTimeout is the wall-clock cap of one turn when nothing says otherwise.
+	DefaultTurnTimeout = 10 * time.Minute
+	// MinTurnTimeout is the shortest turn timeout accepted.
+	MinTurnTimeout = 10 * time.Second
+)
+
 // Defaults of Config.
 const (
-	defaultMaxConcurrent     = 4
-	defaultTurnTimeout       = 10 * time.Minute
 	defaultBodyLimit         = 2 << 20 // 2 MiB
 	defaultCatalogTTL        = 5 * time.Minute
 	defaultStreamCommitAfter = 5 * time.Second
 	defaultKeepAlive         = 15 * time.Second
 	defaultAutoTimeout       = 8 * time.Second
-	minTurnTimeout           = 10 * time.Second
 )
 
 // Config tunes a Gateway. The zero value of any field means its default.
@@ -130,12 +137,35 @@ func ParseImageRuntimes(v string) ([]string, error) {
 // a real agent process, and the limiter allocates a slot per turn.
 const MaxConcurrentLimit = 64
 
+// ParseMaxConcurrent reads MONOAGENT_API_MAX_CONCURRENT and its saved twin: a whole
+// number from 1 to MaxConcurrentLimit, as strconv.Atoi reads one (a sign and leading
+// zeros are accepted, space is not). The error says the rule and not the name of the
+// setting, which each caller puts in front of it.
+func ParseMaxConcurrent(v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > MaxConcurrentLimit {
+		return 0, fmt.Errorf("must be an integer from 1 to %d", MaxConcurrentLimit)
+	}
+	return n, nil
+}
+
+// ParseTurnTimeout reads MONOAGENT_API_TURN_TIMEOUT and its saved twin: a Go duration
+// of at least MinTurnTimeout, such as 15m (time.ParseDuration takes no space around
+// it). The error says the rule and not the name of the setting.
+func ParseTurnTimeout(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	if err != nil || d < MinTurnTimeout {
+		return 0, fmt.Errorf("must be a duration of at least %v, such as 15m", MinTurnTimeout)
+	}
+	return d, nil
+}
+
 func (c Config) withDefaults() (Config, error) {
 	if c.MaxConcurrent <= 0 {
-		c.MaxConcurrent = defaultMaxConcurrent
+		c.MaxConcurrent = DefaultMaxConcurrent
 	}
 	if c.TurnTimeout <= 0 {
-		c.TurnTimeout = defaultTurnTimeout
+		c.TurnTimeout = DefaultTurnTimeout
 	}
 	if c.BodyLimit <= 0 {
 		c.BodyLimit = defaultBodyLimit
@@ -170,16 +200,16 @@ func (c Config) withDefaults() (Config, error) {
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	var c Config
 	if v := getenv("MONOAGENT_API_MAX_CONCURRENT"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > MaxConcurrentLimit {
-			return Config{}, fmt.Errorf("MONOAGENT_API_MAX_CONCURRENT must be an integer from 1 to %d, got %q", MaxConcurrentLimit, v)
+		n, err := ParseMaxConcurrent(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MONOAGENT_API_MAX_CONCURRENT %w, got %q", err, v)
 		}
 		c.MaxConcurrent = n
 	}
 	if v := getenv("MONOAGENT_API_TURN_TIMEOUT"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d < minTurnTimeout {
-			return Config{}, fmt.Errorf("MONOAGENT_API_TURN_TIMEOUT must be a duration of at least %v, such as 15m, got %q", minTurnTimeout, v)
+		d, err := ParseTurnTimeout(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MONOAGENT_API_TURN_TIMEOUT %w, got %q", err, v)
 		}
 		c.TurnTimeout = d
 	}
