@@ -170,6 +170,29 @@ func TestJevEnableYesAndThreshold(t *testing.T) {
 	}
 }
 
+// The auto model of the OpenAI-compatible API is switched on like any surface,
+// after saying what it sends: the first 4,000 characters of the last user message
+// and the model names go to TypeSafe.
+func TestJevEnableAPIAutoSaysWhatItSends(t *testing.T) {
+	setJevTTY(t, false)
+	cfg := jevTestCfg(t, false)
+	if _, _, err := runJev(t, cfg, "", "enable", "api_auto"); err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("enabling without consent: %v", err)
+	}
+	out, _, err := runJev(t, cfg, "", "enable", "api_auto", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"surface api_auto", "first 4,000 characters of the last user message", "threshold 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q missing from:\n%s", want, out)
+		}
+	}
+	if !jevconf.Enabled(openJevDB(t, cfg), "default", jevconf.APIAuto) {
+		t.Fatal("api_auto not enabled")
+	}
+}
+
 func TestJevEnableBadThreshold(t *testing.T) {
 	cfg := jevTestCfg(t, false)
 	for _, v := range []string{"0", "1.5", "-1"} {

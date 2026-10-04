@@ -389,7 +389,7 @@ Some features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decisio
 | `people.sync_outlook_message` | Sync an Outlook message into People history |
 | `vault.secret_get` / `vault.secret_save` | Read or write an entry in the encrypted secrets vault |
 
-> **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key in Settings › TypeSafe Jev or with `monoagentcli jev key set` (key on stdin), check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
+> **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links, the `auto` model of the [OpenAI-compatible API](examples/openai-api-quickstart.md)) answers typed questions in ~0.3 s and never generates text. Store a key in Settings › TypeSafe Jev or with `monoagentcli jev key set` (key on stdin), check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
 
 > **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` (and `service.openrouter`, plus `service.huggingface`'s `generate_text` operation) still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt), or `ai.choose` to classify. `ai.embed` has no replacement.
 

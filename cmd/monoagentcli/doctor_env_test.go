@@ -74,6 +74,9 @@ func TestDaemonArgsCarryDoctorsFlags(t *testing.T) {
 	if got := daemonArgs(&globalConfig{DBPath: defaultDBPath}, "default"); strings.Join(got, " ") != "daemon" {
 		t.Errorf("defaults: %v", got)
 	}
+	if got := daemonArgs(&globalConfig{DBPath: defaultDBPath, ProfileID: "default"}, "default"); strings.Join(got, " ") != "daemon" {
+		t.Errorf("default profile: %v", got)
+	}
 	got := daemonArgs(&globalConfig{DBPath: "/tmp/x.db", ProfileID: "Work"}, "p-123")
 	if strings.Join(got, " ") != "daemon --db-path /tmp/x.db --profile p-123" {
 		t.Errorf("flags: %v", got)
