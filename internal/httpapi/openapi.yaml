@@ -11,6 +11,11 @@ info:
     server's profile, even when hosted by the daemon; another profile's
     workflow returns 404. Legacy workflows without a profile ID belong
     to default. Start the server with `monoagentcli httpapi`.
+
+
+    The `/v1` paths are a separate surface: an OpenAI-compatible API over the
+    local agent runtimes, authenticated by per-profile API keys
+    (`monoagentcli api key`) instead of the token above.
   version: "1.0.0"
   license:
     name: MIT
@@ -313,6 +318,181 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List the models this listener serves (OpenAI-compatible API)
+      description: >
+        Part of the OpenAI-compatible API. It is authenticated by an API key
+        from `monoagentcli api key create`, not by the legacy token, and is
+        served on the main listener only while that is loopback, and always on
+        the dedicated `--v1-addr` listener. Lists the models of the installed
+        agent runtimes as `<runtime>/<model>` ids (for example `claude/sonnet`
+        or `codex/gpt-6-astra`; each runtime's own list decides), only those
+        the listener's confinement policy allows. For a key created with `--context` only those at or below
+        `--context-confinement` (chat-only unless the operator raised it).
+        While the key's profile has the `api_auto` Jev surface on (`monoagentcli
+        jev enable api_auto`) and a Jev key, the list ends with the model
+        `auto` (`owned_by` is `jev`), after the others so that a client that
+        takes the first model is not moved to it: a request for it has Jev pick
+        the model among the others. Its `confinement` is the strongest class it
+        picks within: the key's policy, capped by what the operator let auto
+        pick (`--auto-confinement`, chat-only unless raised).
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
+        "401": { $ref: "#/components/responses/OpenAIError" }
+        "500": { $ref: "#/components/responses/OpenAIError" }
+        "503": { $ref: "#/components/responses/OpenAIError" }
+  /v1/models/{id}:
+    get:
+      operationId: getModel
+      summary: Retrieve one model (OpenAI-compatible API)
+      description: >
+        The id contains a slash (`claude/sonnet`) and is sent as is, not
+        encoded. A bare runtime name (`codex`) means its default model, and
+        `agy` is accepted for `antigravity`. A model the listener's
+        confinement policy does not allow (for a key created with `--context`,
+        `--context-confinement` too) is a 404, as is an unknown one, and `auto`
+        while it is not set up for the key's profile.
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: "codex/gpt-6-astra" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Model" }
+        "401": { $ref: "#/components/responses/OpenAIError" }
+        "404": { $ref: "#/components/responses/OpenAIError" }
+        "500": { $ref: "#/components/responses/OpenAIError" }
+        "503": { $ref: "#/components/responses/OpenAIError" }
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion (OpenAI-compatible API)
+      description: |
+        Runs one turn of the chosen agent runtime and returns its answer.
+        `model` is `<runtime>/<model>`, a bare runtime (its default model) or
+        `agy` for `antigravity`. Requests are stateless: each one runs with no
+        tools in an emptied working folder that belongs to its key's profile.
+        A key created with `--context` also gets excerpts of its profile's
+        knowledge added to the prompt, and is served only by models at or
+        below `--context-confinement` (chat-only by default).
+
+        `model` may be `auto`: TypeSafe Jev then picks the model of this
+        request among the ones the key may use (the listener's policy, the
+        operator's `--auto-confinement`, chat-only unless raised, and for a key
+        created with `--context` its own cap, decide which). It is off
+        until the key's profile runs `monoagentcli jev enable api_auto` and has
+        a Jev key; the first 4,000 characters of the last user message and the
+        names, descriptions and validated cost and latency of the candidates
+        are what Jev is sent. A failure, a timeout (8 seconds), an answer that
+        is not a candidate or a probability under the surface's threshold falls
+        back to a rule: of the validated models the most confined, then the
+        cheapest, then the fastest, and with none validated a runtime's default
+        model. After three questions in a row that got no answer the profile's
+        questions stop for 30 seconds, and the rule picks at once. The
+        `X-Monoagent-Model` header and the response's `model` name the pick, and
+        `X-Monoagent-Auto` says who chose.
+
+        Sampling parameters (`temperature`, `top_p`, `max_tokens`,
+        `max_completion_tokens`, `stop`, `seed`, `presence_penalty`,
+        `frequency_penalty`, `user`, `metadata`) are accepted and ignored.
+        `reasoning_effort` is passed on when the model lists that level, and
+        `response_format` `json_object` adds a best-effort instruction. These
+        are rejected with 400 `unsupported_parameter`: `n` above 1, `logprobs`
+        true, an `audio` object, a non-empty `tools` or `functions`, a
+        `tool_choice` or `function_call` other than `none`, `tool` and
+        `function` messages, content parts that are not text (images, audio,
+        files), and a `response_format` of any other type than `text` or
+        `json_object`.
+
+        With `stream: true` the response is `text/event-stream`: a role chunk,
+        content deltas, a final chunk with `finish_reason`, an optional usage
+        chunk (`stream_options.include_usage`), then `data: [DONE]`, with
+        `: keep-alive` comments while the turn is silent. A failure before the
+        first byte is a normal HTTP error; after streaming has started it is a
+        `data: {"error": …}` event followed by `[DONE]`. The 200 response is
+        committed on the first content or after 5 seconds of silence, so a turn
+        refused later than that (a runtime that reports less confinement than
+        the policy allows) ends with the error event, not a 403. A client that
+        disconnects cancels the turn.
+
+        The errors of the three `/v1` paths are OpenAI-shaped
+        (`{"error":{"message","type","param","code"}}`) and carry an
+        `X-Request-Id` header; a path or method this API does not have gets the
+        plain-text 404 or 405 of Go's mux instead:
+
+        | Status | `type` / `code` | Cause |
+        |---|---|---|
+        | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter |
+        | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
+        | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
+        | 404 | `invalid_request_error` / `model_not_found` | Unknown model, or `auto` while it is not set up for the key's profile (the message says what is missing: the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
+        | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
+        | 429 | `rate_limit_error` / `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
+        | 502 | `api_error` / `runtime_error` | The runtime failed or ended the turn without finishing it (the message is generic: quote `X-Request-Id` to the operator) |
+        | 503 | `api_error` / `runtime_not_available` | monomind or the runtime is not installed or not signed in, or the server is shutting down |
+        | 504 | `api_error` / `timeout` | The turn exceeded the turn timeout (10 minutes by default) |
+        | 500 | `api_error` / `internal_error` | Anything else (the message is generic: quote `X-Request-Id` to the operator) |
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+      responses:
+        "200":
+          description: >
+            The completion, or with `stream: true` an event stream of
+            `chat.completion.chunk` objects.
+          headers:
+            X-Request-Id:
+              description: Request id, also in the server log.
+              schema: { type: string }
+            X-Monoagent-Model:
+              description: The `<runtime>/<model>` that answered.
+              schema: { type: string }
+            X-Monoagent-Auto:
+              description: For a request for the model `auto`, who chose the model, `jev` or `rule` (also when only one model was left to pick).
+              schema: { type: string, enum: [jev, rule] }
+            X-Monoagent-Sandbox:
+              description: How monomind sandboxed the turn (`sandboxed`, `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), not the confinement class. Sent on a successful non-streaming response only.
+              schema: { type: string }
+            X-Monoagent-Context:
+              description: For a key created with `--context`, the number of knowledge excerpts added, `none` or `unavailable`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatCompletion" }
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  `data: <chat.completion.chunk JSON>` events ending with
+                  `data: [DONE]`.
+        "400": { $ref: "#/components/responses/OpenAIError" }
+        "401": { $ref: "#/components/responses/OpenAIError" }
+        "403": { $ref: "#/components/responses/OpenAIError" }
+        "404": { $ref: "#/components/responses/OpenAIError" }
+        "413": { $ref: "#/components/responses/OpenAIError" }
+        "429": { $ref: "#/components/responses/OpenAIError" }
+        "500": { $ref: "#/components/responses/OpenAIError" }
+        "502": { $ref: "#/components/responses/OpenAIError" }
+        "503": { $ref: "#/components/responses/OpenAIError" }
+        "504": { $ref: "#/components/responses/OpenAIError" }
 components:
   securitySchemes:
     bearerAuth:
@@ -321,6 +501,14 @@ components:
       description: >
         Token generated on first server start and stored in this profile's
         secrets vault (name "httpapi-token"). Not required for GET /health.
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: sk-ma-…
+      description: >
+        A per-profile API key from `monoagentcli api key create`, sent as
+        `Authorization: Bearer sk-ma-…`. Used by the `/v1` paths only: it never
+        opens the other routes, and the token above never opens `/v1`.
   parameters:
     WorkflowID:
       name: id
@@ -348,6 +536,13 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    OpenAIError:
+      description: >
+        An OpenAI-shaped error, `{"error":{"message","type","param","code"}}`.
+        The `code` values per status are listed with `POST /v1/chat/completions`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/OpenAIError" }
   schemas:
     Error:
       type: object
@@ -403,3 +598,116 @@ components:
         readonly_data: { type: object }
         editable_data: { type: object }
         created_at: { type: string, format: date-time }
+    OpenAIError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message: { type: string }
+            type:
+              type: string
+              enum: [invalid_request_error, authentication_error, permission_error, rate_limit_error, api_error]
+            param: { type: string, nullable: true }
+            code: { type: string, example: invalid_api_key }
+    Model:
+      type: object
+      required: [id, object, created, owned_by, monoagent]
+      properties:
+        id: { type: string, example: "codex/gpt-6-astra" }
+        object: { type: string, enum: [model] }
+        created: { type: integer, description: Always 0. }
+        owned_by: { type: string, description: "The runtime that serves the model (`jev` for `auto`).", example: codex }
+        monoagent:
+          type: object
+          description: Extra fields that plain OpenAI clients ignore.
+          properties:
+            runtime: { type: string }
+            model: { type: string, description: 'The runtime''s own model id; "default" means no --model.' }
+            label: { type: string }
+            confinement:
+              type: string
+              enum: [chat-only, sandboxed, unconfined]
+              description: How much a turn on this runtime can do on the machine.
+            validated: { type: boolean, description: A recent `agent validate` passed for this model. }
+            capabilities: { type: array, items: { type: string, enum: [text] } }
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object: { type: string, enum: [list] }
+        data: { type: array, items: { $ref: "#/components/schemas/Model" } }
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, developer, user, assistant] }
+        content:
+          description: >
+            A string, or an array of `{"type":"text","text":"…"}` parts. Other
+            part types are rejected.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                required: [type, text]
+                properties:
+                  type: { type: string, enum: [text] }
+                  text: { type: string }
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      description: >
+        Sampling parameters not listed here (`temperature`, `top_p`,
+        `max_tokens`, `stop`, …) are accepted and ignored. What is rejected,
+        and the few values of those parameters that are accepted
+        (`tools: []`, `tool_choice: "none"`, `logprobs: false`, `n: 1`), is
+        described with `POST /v1/chat/completions`.
+      additionalProperties: true
+      properties:
+        model: { type: string, example: "claude/sonnet", description: "`<runtime>/<model>`, a bare runtime, or `auto` to have Jev pick." }
+        messages:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ChatMessage" }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: object
+          properties:
+            include_usage: { type: boolean, description: "Send a final chunk with the token usage (its choices array is empty)." }
+        reasoning_effort: { type: string, description: "Passed on when the model lists this level, otherwise ignored." }
+        response_format:
+          type: object
+          properties:
+            type: { type: string, enum: [text, json_object] }
+        n: { type: integer, description: Only 1 is supported. }
+    ChatCompletion:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id: { type: string, example: "chatcmpl-k3j2h1g4f5d6s7a8" }
+        object: { type: string, enum: [chat.completion] }
+        created: { type: integer }
+        model: { type: string, description: "The `<runtime>/<model>` that answered (for a request for `auto`, the one Jev or the rule picked)." }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message:
+                type: object
+                properties:
+                  role: { type: string, enum: [assistant] }
+                  content: { type: string }
+              finish_reason: { type: string, enum: [stop, length] }
+        usage:
+          type: object
+          description: Present only when the runtime reported token counts.
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }

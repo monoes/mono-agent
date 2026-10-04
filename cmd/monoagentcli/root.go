@@ -102,6 +102,7 @@ func newRootCmd() *cobra.Command {
 		newOrgCmd(cfg),
 		newMCPCmd(cfg),
 		newHTTPAPICmd(cfg),
+		newAPICmd(cfg),
 		newJevCmd(cfg),
 		newAutomationCmd(cfg),
 		newRecordCmd(cfg),

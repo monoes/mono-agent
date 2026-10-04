@@ -246,7 +246,7 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 	cmd.AddCommand(newLoginConfirmCmd(cfg))
 
 	// Subcommand: login status
-	cmd.AddCommand(newLoginStatusCmd(cfg))
+	cmd.AddCommand(newLoginStatusCmd(cfg), newLoginNamesCmd(cfg))
 
 	// Subcommands: login test|delete <session-id>
 	cmd.AddCommand(newLoginTestCmd(cfg), newLoginDeleteCmd(cfg))
@@ -318,10 +318,12 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("marshalling cookies: %w", err)
 			}
 
-			// Without DOM access there's no reliable way to read the actual
-			// username here — "unknown" matches the existing fallback these
-			// bots already use when ExtractUsername can't determine one.
+			// The login tab shows who is logged in; "unknown" is the fallback
+			// when its page doesn't say.
 			username := automation.UnknownUsername
+			if name := resolveAccountName(bridge.NewPage(tabID), platform); name != "" {
+				username = name
+			}
 
 			if err := upsertSessionRow(cmd.Context(), db.DB, cfg.ProfileID, strings.ToLower(platform), username, cookiesJSON); err != nil {
 				return fmt.Errorf("saving session: %w", err)
