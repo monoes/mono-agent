@@ -178,11 +178,7 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 // invalid input (exit 3), as a bad flag is; a document that cannot be read is an error.
 func savedSettings(ctx context.Context, db *sql.DB) (apiconfig.Settings, error) {
 	saved, err := apiconfig.LoadValid(ctx, db)
-	var invalid *apiconfig.ValidationError
-	if errors.As(err, &invalid) {
-		return apiconfig.Settings{}, errInvalidInput("%v", err)
-	}
-	return saved, err
+	return saved, asCLIError(err)
 }
 
 // savedEnv is the process environment with the saved settings under it: what a server started
