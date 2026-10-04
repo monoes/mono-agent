@@ -38,6 +38,8 @@ Each is a choice the lead can overrule; none changes a field of the contract exc
 - **P9. A known gap in D39 (a), left as written.** A move between two non-loopback binds is not a widening, so `192.168.1.10:9443` to `:9443` (one interface to every interface) passes the gate. Closing it means ordering binds by reach; the rule here is D39's.
 - **P10. Damaged documents.** A document that is not a JSON object, or whose `v` is not a whole number of at least 1 (a missing `v` is read as 1), is an error for every command (exit 1, naming the row `api_gateway_config`); one with a higher `v` than this binary knows is never rewritten. An invalid value in a document that parses (a hand edit) is reported by `show` (`problems`), refuses the server start (exit 3, naming the setting and `api config unset`), and does not stop `unset` from removing it; `set` looks only at the settings it sets and at the TLS pair. There is no repair command for a document that is not JSON.
 - **P11. `api status --json` keeps its document.** Its `confinement_source: "environment"` now means this process's environment, then the saved settings, then the defaults; the human note says so. The builder moves to `internal/apiconfig` (`BuildStatus`), with the probes, so the MCP tool `api_status` is the same code.
+- **P12. D40's "after the daemon's own graceful stop" is not claimed.** The service managers end the process their own way (`launchctl kickstart -k` kills the running instance), and whether `schtasks /end` stops the process the task's `cmd` wrapper started was not verified on Windows. The command says that it interrupts what the daemon is running, and no document of this stage says a graceful stop happens.
+- **P13. Two small changes outside the file list, found when the documents were checked against the running CLI** (each with its test): the messages that say image generation or tool calling is switched off named only the environment variable, which sent the operator to the wrong place when the saved list is `none`, so they now also name `monoagentcli api config`; and the note of `api models` says it evaluates the saved settings too.
 
 ## File structure
 
@@ -47,23 +49,23 @@ Modified: `internal/openaiapi/config.go` (two parsers and the defaults exported)
 
 ## Tasks
 
-- [ ] **1.** This plan. `docs(api): the plan of phase 6, stage 1: saved server settings`.
-- [ ] **2.** `openaiapi`: `ParseMaxConcurrent`, `ParseTurnTimeout`, `DefaultMaxConcurrent`, `DefaultTurnTimeout`, `MinTurnTimeout` exported, `ConfigFromEnv` uses them with its messages unchanged (the existing tests are the proof).
-- [ ] **3.** `apiconfig` settings: the ten keys, `Settings`, `Defaults`, `Validate`, the canonical spellings. Table test: one list of cases (padded, signed, empty and blank values among them) run against the flags and the environment (through `newAPIRuntime`) and against `Validate`, which must accept and refuse the same; the one row where `set` differs on purpose is a blank value (P6).
-- [ ] **4.** `apiconfig` store: `Load`, `Update` in one `BEGIN IMMEDIATE` transaction, unknown fields kept, a higher `v` refused. Test: many parallel updates of different fields, under `-race`, lose nothing.
-- [ ] **5.** `apiconfig` resolution: `ResolveKey`, `ResolveAll`, `Overlay`, `EnvWithSaved`.
-- [ ] **6.** `apiconfig.Widens`: table test of every rule of D39 as P1 and P1b read it: narrowing, unsetting (above, at and below the default), both kinds of listener in every document (including a network listener the document does not name), loopback and non-loopback addresses.
-- [ ] **7.** `tlsserve.Config.CertFile/KeyFile`: the environment pair wins as a pair, else the explicit pair.
-- [ ] **8.** `newAPIRuntime` and `startV1` read the saved layer; no saved settings changes nothing.
-- [ ] **9.** `api models` and `api status` read the saved layer.
-- [ ] **10.** `BuildStatus` moves to `apiconfig` (the document and the existing tests unchanged).
-- [ ] **11.** The heartbeat carries `api_settings`; the daemon writes it.
-- [ ] **12.** `State` and `Show` (the report).
-- [ ] **13.** `Apply` (validation, the gate run inside the transaction on the row it replaces, dry run, atomic). A test makes two callers race: one raises `confinement`, the other widens `v1_addr`; neither is judged on a stale row.
-- [ ] **14.** `api config show|set|unset`.
-- [ ] **15.** `autostart` `Restart` on the interface and the three backends (a fake runner on macOS and Linux as for `Status`; Windows gets a runner variable and a wait for the daemon's lock to be released between `/end` and `/run`, both replaceable, and its test is compiled with `GOOS=windows go vet` since it cannot run here). The existing `fakeAutostart` of the doctor tests gets a `Restart`.
-- [ ] **16.** `autostart.RestartRegistered` and `daemon restart` (the CLI takes its installer from a package variable that every test replaces).
-- [ ] **17.** Documents: `ref api`, AGENTS.md, SECURITY.md, CHANGELOG, the quickstart, the spec (section 11 and D36 to D43), this plan ticked.
+- [x] **1.** This plan. `docs(api): the plan of phase 6, stage 1: saved server settings`.
+- [x] **2.** `openaiapi`: `ParseMaxConcurrent`, `ParseTurnTimeout`, `DefaultMaxConcurrent`, `DefaultTurnTimeout`, `MinTurnTimeout` exported, `ConfigFromEnv` uses them with its messages unchanged (the existing tests are the proof).
+- [x] **3.** `apiconfig` settings: the ten keys, `Settings`, `Defaults`, `Validate`, the canonical spellings. Table test: one list of cases (padded, signed, empty and blank values among them) run against the flags and the environment (through `newAPIRuntime`) and against `Validate`, which must accept and refuse the same; the one row where `set` differs on purpose is a blank value (P6).
+- [x] **4.** `apiconfig` store: `Load`, `Update` in one `BEGIN IMMEDIATE` transaction, unknown fields kept, a higher `v` refused. Test: many parallel updates of different fields, under `-race`, lose nothing.
+- [x] **5.** `apiconfig` resolution: `ResolveKey`, `ResolveAll`, `Overlay`, `EnvWithSaved`.
+- [x] **6.** `apiconfig.Widens`: table test of every rule of D39 as P1 and P1b read it: narrowing, unsetting (above, at and below the default), both kinds of listener in every document (including a network listener the document does not name), loopback and non-loopback addresses.
+- [x] **7.** `tlsserve.Config.CertFile/KeyFile`: the environment pair wins as a pair, else the explicit pair.
+- [x] **8.** `newAPIRuntime` and `startV1` read the saved layer; no saved settings changes nothing.
+- [x] **9.** `api models` and `api status` read the saved layer.
+- [x] **10.** `BuildStatus` moves to `apiconfig` (the document and the existing tests unchanged).
+- [x] **11.** The heartbeat carries `api_settings`; the daemon writes it.
+- [x] **12.** `State` and `Show` (the report).
+- [x] **13.** `Apply` (validation, the gate run inside the transaction on the row it replaces, dry run, atomic). A test makes two callers race: one raises `confinement`, the other widens `v1_addr`; neither is judged on a stale row.
+- [x] **14.** `api config show|set|unset`.
+- [x] **15.** `autostart` `Restart` on the interface and the three backends (a fake runner on macOS and Linux as for `Status`; Windows gets a runner variable and a wait for the daemon's lock to be released between `/end` and `/run`, both replaceable, and its test is compiled with `GOOS=windows go vet` since it cannot run here). The existing `fakeAutostart` of the doctor tests gets a `Restart`.
+- [x] **16.** `autostart.RestartRegistered` and `daemon restart` (the CLI takes its installer from a package variable that every test replaces).
+- [x] **17.** Documents: `ref api`, AGENTS.md, SECURITY.md, CHANGELOG, the quickstart, the spec (section 11 and D36 to D43), this plan ticked.
 - [ ] **18.** Verification, the smoke run of the built CLI under a temp `HOME`, the report.
 
 ---
@@ -195,7 +197,7 @@ Per setting, from the saved layer and the live daemon's heartbeat (`apiconfig.St
 
 Exit codes: 0; 1 when the database or the saved document cannot be read (not JSON, a higher format version than this binary knows). Stdout is one document; notes go to stderr.
 
-Text: a table (`SETTING`, `SAVED`, `EFFECTIVE`, `RUNNING`, `STATE`) followed by sentences: whether a daemon runs, whether `daemon restart` can restart it, which settings need a restart, which are overridden and by what, which the shell's environment overrides, and the problems.
+Text: a table (`SETTING`, `SAVED`, `EFFECTIVE (this shell)`, `RUNNING (daemon)`, `STATE`, where `effective` and `running` carry their source in brackets unless it is the default, and the state reads `restart needed` for `pending_restart` and `daemon not running` for `not_running`) followed by sentences: whether a daemon runs, whether `daemon restart` can restart it, which settings need a restart, which are overridden and by what, which the shell's environment overrides, and the problems. The text is for people: a consumer reads `--json`.
 
 ## Document: `api config set|unset --json` (and `Apply`)
 
@@ -207,7 +209,7 @@ The `show` document of the state **after** the change (the same fields and order
   "applied": true,
   "changed": ["v1_addr", "confinement"],
   "widening": [
-    {"key": "v1_addr", "reason": "The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and it did not before."}
+    {"key": "v1_addr", "reason": "The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and serve runtimes up to chat-only; it did not listen beyond this machine before."}
   ]
 }
 ```
@@ -375,6 +377,45 @@ type NotRegisteredError struct{ Detail string }                      // errors.A
 `RestartRegistered` asks `Status` first and returns `*NotRegisteredError` without calling `Restart` when the service is not registered. The caller maps it: the CLI to exit 3, MCP to a tool error.
 
 `internal/daemonhb`: `Heartbeat.APISettings`, `APISetting`, as above.
+
+### As built, in addition to the lists above
+
+Additions only: nothing above changed a name, a key, a field or a code. What the stages after this one may also use:
+
+```go
+// internal/apiconfig
+const FormatVersion = 1                  // the highest "v" this binary reads
+const Row = "api_gateway_config"         // the settings-table key
+var ErrTooNew error                      // a row with a higher "v": errors.Is; such a row is never rewritten
+const KeyV1Addr, KeyTLSCertFile, KeyTLSKeyFile, KeyConfinement, KeyContextConfinement, KeyAutoConfinement,
+	KeyMaxConcurrent, KeyTurnTimeout, KeyImageRuntimes, KeyToolRuntimes = "v1_addr", ... // the ten keys
+const SourceFlag, SourceEnv, SourceSaved, SourceDefault = "flag", "env", "saved", "default"
+const StateApplied, StatePendingRestart, StateOverridden, StateNotRunning, StateUnknown = "applied", ...
+type Spec struct{ Key, ServerFlag, Env, Default string }
+func Specs() []Spec                      // the ten, in document order
+func LoadValid(ctx context.Context, db *sql.DB) (Settings, error) // Load, then Validate: what a server may start on; the error wraps a *ValidationError that names each setting and how to fix it
+func ValidListenAddr(addr string) error  // host:port, numeric port, host may be empty
+type InputError struct{ Err error }      // a flag or an environment value that fails its rule: the caller's input (the CLI: exit 3); its message names the setting and the rule
+func EffectivePolicy(addr, explicit string, getenv func(string) string) (openaiapi.Policy, error) // the policy of a listener bound to addr: explicit (a flag), else getenv, else the default of that kind of bind; a bad value is an *InputError
+func EffectiveContextMax(explicit string, getenv func(string) string) (openaiapi.Class, error)
+func EffectiveAutoMax(explicit string, getenv func(string) string) (openaiapi.Class, error)
+type ProbeFunc func(base string, wantV1 bool) (reachable, v1Answers bool) // Env.Probe: GET /health, and /v1/models without a key (401: mounted)
+func ProbeListener(base string, wantV1 bool) (reachable, v1Answers bool) // the real one, Env.Probe's default
+func ProbeSchemes(loopback bool) []string
+func ProbeAddr(addr string, loopback, wantV1 bool, probe ProbeFunc) (scheme string, reachable, v1Answers bool)
+type StatusReport struct{ ... }          // the document of api status --json, moved from cmd unchanged
+type ListenerReport struct{ ... }
+
+// internal/openaiapi
+func ParseMaxConcurrent(v string) (int, error)
+func ParseTurnTimeout(v string) (time.Duration, error)
+const DefaultMaxConcurrent = 4; DefaultTurnTimeout = 10 * time.Minute; MinTurnTimeout = 10 * time.Second
+
+// internal/tlsserve
+type Config struct { /* ... */ CertFile, KeyFile string } // an explicit pair, used when the environment names none
+```
+
+The MCP tool `api_models_list` (`internal/mcp/apikeys_tools.go`) still passes `os.Getenv` to the `openaiapi.Effective*` functions: it reads the environment and not the saved settings until stage 2 passes `apiconfig.EnvWithSaved` (or `Overlay`) there. The CLI's `api models` and `api status` already do.
 
 ## Mapping of errors per surface
 
