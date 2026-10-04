@@ -7,7 +7,11 @@ info:
     (`monoagentcli mcp`). Mirrors the MCP tool set and the `workflow`/
     `node`/`hil` CLI commands: every handler is a thin adapter over the
     same underlying store/engine calls, with the same credential-key
-    output redaction. Start the server with `monoagentcli httpapi`.
+    output redaction. Workflow reads and mutations are scoped to the
+    server's profile, even when hosted by the daemon; another profile's
+    workflow returns 404. Legacy workflows without a profile ID belong
+    to default. Start the server with `monoagentcli httpapi`.
+
 
     The `/v1` paths are a separate surface: an OpenAI-compatible API over the
     local agent runtimes, authenticated by per-profile API keys

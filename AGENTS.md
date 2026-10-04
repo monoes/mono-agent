@@ -412,7 +412,11 @@ the token is generated on first start and stored in the active profile's
 secrets vault (`secret list`, name `httpapi-token`). Output items go
 through the same redaction as `workflow run --json` — pass
 `X-Full-Outputs: 1` to opt out per request, mirroring
-`workflow run --full-outputs`. Full endpoint list:
+`workflow run --full-outputs`. Workflow reads and mutations are scoped to
+the server's profile in both standalone and daemon-hosted mode: another
+profile's workflow ID returns 404. Legacy workflows with no profile ID
+belong to `default`. The daemon still serves every profile's triggers
+internally. Full endpoint list:
 `internal/httpapi/openapi.yaml` (OpenAPI 3, validated in CI); curl
 walkthrough: `examples/httpapi-quickstart.md`; offline copy of this
 section: `monoagentcli ref api`.

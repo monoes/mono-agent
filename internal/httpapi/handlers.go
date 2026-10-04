@@ -16,6 +16,34 @@ import (
 
 // ── workflows ─────────────────────────────────────────────────────────────
 
+func (s *Server) workflowInProfile(wf *workflow.Workflow) bool {
+	if wf == nil {
+		return false
+	}
+	owner := wf.ProfileID
+	if owner == "" {
+		owner = "default"
+	}
+	return owner == s.rt.profileID
+}
+
+// Load through the API's profile boundary even when the host's engine
+// intentionally serves all profiles (the daemon). Legacy unscoped workflows
+// belong to default, matching the engine's single-profile guard.
+func (s *Server) loadWorkflow(w http.ResponseWriter, r *http.Request) *workflow.Workflow {
+	id := r.PathValue("id")
+	wf, err := s.rt.store.GetWorkflow(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get workflow: "+err.Error())
+		return nil
+	}
+	if !s.workflowInProfile(wf) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("workflow %q not found", id))
+		return nil
+	}
+	return wf
+}
+
 // GET /workflows
 func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -44,6 +72,9 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 
 	out := []map[string]interface{}{}
 	for _, wf := range wfs {
+		if !s.workflowInProfile(&wf) {
+			continue
+		}
 		nodeCount := len(wf.Nodes)
 		if nodeCount == 0 {
 			nodeCount = nodeCounts[wf.ID]
@@ -60,14 +91,8 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 
 // GET /workflows/{id}
 func (s *Server) handleWorkflowGet(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	wf, err := s.rt.store.GetWorkflow(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "get workflow: "+err.Error())
-		return
-	}
-	if wf == nil || (wf.ProfileID != "" && wf.ProfileID != s.rt.profileID) {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("workflow %q not found", id))
+	wf := s.loadWorkflow(w, r)
+	if wf == nil {
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
@@ -78,13 +103,7 @@ func (s *Server) handleWorkflowExecutions(w http.ResponseWriter, r *http.Request
 	id := r.PathValue("id")
 	ctx := r.Context()
 
-	wf, err := s.rt.store.GetWorkflow(ctx, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "get workflow: "+err.Error())
-		return
-	}
-	if wf == nil || (wf.ProfileID != "" && wf.ProfileID != s.rt.profileID) {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("workflow %q not found", id))
+	if s.loadWorkflow(w, r) == nil {
 		return
 	}
 
@@ -129,8 +148,6 @@ func parseWorkflowBytes(raw []byte) (workflow.Workflow, error) {
 // but only used to shape the URL — this mirrors the MCP workflow_validate
 // tool's id/workflow modes without a second route).
 func (s *Server) handleWorkflowValidate(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx := r.Context()
 
 	var wf workflow.Workflow
 	body, err := readLimitedBody(r)
@@ -145,13 +162,8 @@ func (s *Server) handleWorkflowValidate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		loaded, err := s.rt.store.GetWorkflow(ctx, id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "get workflow: "+err.Error())
-			return
-		}
-		if loaded == nil || (loaded.ProfileID != "" && loaded.ProfileID != s.rt.profileID) {
-			writeError(w, http.StatusNotFound, fmt.Sprintf("workflow %q not found", id))
+		loaded := s.loadWorkflow(w, r)
+		if loaded == nil {
 			return
 		}
 		wf = *loaded
@@ -173,6 +185,9 @@ func (s *Server) handleWorkflowValidate(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
+	if s.loadWorkflow(w, r) == nil {
+		return
+	}
 
 	var body struct {
 		Input          map[string]interface{} `json:"input"`
@@ -296,6 +311,9 @@ func clampTimeoutSeconds(secs float64) time.Duration {
 func (s *Server) handleWorkflowActivate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
+	if s.loadWorkflow(w, r) == nil {
+		return
+	}
 	if err := s.rt.ensureEngine(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -315,6 +333,9 @@ func (s *Server) handleWorkflowActivate(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleWorkflowDeactivate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
+	if s.loadWorkflow(w, r) == nil {
+		return
+	}
 	if err := s.rt.ensureEngine(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

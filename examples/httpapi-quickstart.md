@@ -23,6 +23,11 @@ Reveal it with `monoagentcli secret reveal httpapi-token --reveal --json`
 (the `--reveal` flag is a deliberate confirmation step, not optional), or
 use `secret export` for a scripted bulk-export flow.
 
+Workflow reads and mutations are scoped to the server's profile, including
+when `monoagentcli daemon --allow-mutations` hosts the API. Requests for
+another profile's workflow return 404. Legacy workflows without a profile
+ID belong to `default`. The daemon's own triggers still serve all profiles.
+
 ## List workflows, then run one
 
 With the token in `$TOKEN`:

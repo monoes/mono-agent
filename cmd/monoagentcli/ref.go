@@ -2709,6 +2709,11 @@ AUTH
   print it). Loopback-only bind by default (127.0.0.1:9322) — override
   with --addr or MONOAGENT_HTTPAPI_ADDR.
 
+  Workflow reads and mutations are scoped to the server's profile,
+  including when the daemon hosts this API. Another profile's workflow
+  ID returns 404. Legacy workflows with no profile ID belong to default.
+  The daemon's own triggers still serve all profiles internally.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OPENAI-COMPATIBLE API (/v1)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
