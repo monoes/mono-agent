@@ -184,6 +184,19 @@ type Problem struct {
 	Message string `json:"message"`
 }
 
+// ValidationError is a change or a document refused for what is wrong with its settings: the
+// error of Apply for an unknown key, a value that fails its rule, nothing to change, one TLS
+// file without the other, or a key in both Set and Unset.
+type ValidationError struct{ Problems []Problem }
+
+func (e *ValidationError) Error() string {
+	msgs := make([]string, len(e.Problems))
+	for i, p := range e.Problems {
+		msgs[i] = p.Message
+	}
+	return strings.Join(msgs, "; ")
+}
+
 // Validate checks every saved value with the parsers the flags and the environment use, on
 // the text as it was typed, and the pair of TLS files as a whole. A setting that is not
 // saved is skipped. The messages name the setting and the rule and repeat what was typed
