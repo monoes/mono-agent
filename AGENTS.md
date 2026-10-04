@@ -671,7 +671,10 @@ a key. It lives in `internal/openaiapi/`; the spec is
   monomind drops every one and the client gets `{}`),
   the whole schema is also folded into the tool's description, and an enum that
   is not a list of strings is left out of what monomind gets, not refused. A
-  schema that names no property and allows free-form keys, or whose `const` or
+  schema that names no property and allows free-form keys
+  (`additionalProperties` or `unevaluatedProperties` true or a schema,
+  `patternProperties`), or whose references cannot be followed (`$dynamicRef`, a
+  `$ref` that is not local or leads nowhere), or whose `const` or
   `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a value that
   is not an object (the arguments of a call are one), or that nests more
   than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
@@ -682,16 +685,24 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (`internal/openaiapi/tools_hoist.go`). `tool_choice` `none` passes no tools, so
   no argument is named and none of those naming refusals applies; the declaration
   is checked whatever the choice (`validateTools`, `inspectParams` and
-  `validateToolMessages`, 400 `invalid_value` on the parameter: more than 128
-  functions; a name that is not usable, is declared twice or is an alias that is
-  another function's name; a description of more than 16 KiB; `parameters` of more
-  than 64 KiB, that are not a JSON schema object, whose root `type` is not
-  `object`, whose `properties` is not an object or holds a property that is not a
-  schema, or whose `required` is not a list of strings; a `tool_choice` that names
-  a function that is not declared; and in the conversation more than 64 calls in
-  one message, a result of more than 256 KiB, a call whose name is not printable
-  ASCII without `[ ] < > & ' "` or a backtick, and an id of no characters or of
-  more than 128 bytes). **A
+  `validateToolMessages`, 400 `invalid_value` on the parameter: more than 128 functions; a tool that is not an object; a name that is not 1 to
+  64 characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is
+  another function's name (a name of 55 or more reaches the model as an alias of
+  54, and you always see your own); a `description` of more than 16 KiB;
+  `parameters` of more than 64 KiB, that are not a JSON schema object, whose
+  root `type` is not `object`, whose `properties` is not an object or holds a
+  property that is not a schema, or whose `required` is not a list of strings; a
+  `tool_choice` that is not `none`, `auto`, `required` or a function, or that
+  names a function that is not declared; and in the conversation more than 64
+  calls in one message, a call with an id of no characters or of more than 128
+  bytes, a call whose name is not printable ASCII without `[ ] < > & ' "` or a
+  backtick, a call whose `arguments` is not a string, a result of more than 256
+  KiB, and a tool message that answers no call of an earlier assistant message;
+  with other codes, 400 `unsupported_parameter` for a tool or a call of a type
+  other than `function`, a `tool_choice` of another type, and a `tool_choice`
+  that forces a call when no tools are declared; 400
+  `missing_required_parameter` for a tool with no `function`, a `tool_choice`
+  that names no function, and a tool message with no `tool_call_id`). **A
   response carries one call.** The turn (a leg) ends at the model's first call:
   it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
   process group; a group kill only if monomind has not exited within its grace,

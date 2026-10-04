@@ -474,18 +474,25 @@ What to expect from a tool loop:
   schema). An `enum` that is not a list of strings is left out of what the
   runtime's tool bridge gets (the model still reads it in the description).
 - Some requests are refused: 400 `invalid_value`, naming the parameter and never
-  what you wrote. Whatever the `tool_choice` (the tools are checked when they are
-  declared): more than 128 functions; a name that is not 1 to 64 characters of
-  `[A-Za-z0-9_-]`, one declared twice, or an alias that is another function's name
-  (a name of 55 or more reaches the model as an alias of 54, and you always see
-  your own); a `description` of more than 16 KiB; `parameters` of more than 64 KiB,
-  that are not a JSON schema object, whose root `type` is not `object`, whose
-  `properties` is not an object or holds a property that is not a schema, or whose
-  `required` is not a list of strings; a `tool_choice` that names a function that
+  what you wrote. Whatever the `tool_choice` (the tools are checked when they are declared): more
+  than 128 functions; a tool that is not an object; a name that is not 1 to 64
+  characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is another
+  function's name (a name of 55 or more reaches the model as an alias of 54, and
+  you always see your own); a `description` of more than 16 KiB; `parameters` of
+  more than 64 KiB, that are not a JSON schema object, whose root `type` is not
+  `object`, whose `properties` is not an object or holds a property that is not
+  a schema, or whose `required` is not a list of strings; a `tool_choice` that
+  is not `none`, `auto`, `required` or a function, or that names a function that
   is not declared; and in the conversation more than 64 calls in one message, a
-  result of more than 256 KiB, a call whose name is not printable ASCII without
-  `[ ] < > & ' "` or a backtick, and an id of no characters or of more than 128
-  bytes. While the tools are passed to the model (`tool_choice` is not `none`,
+  call with an id of no characters or of more than 128 bytes, a call whose name
+  is not printable ASCII without `[ ] < > & ' "` or a backtick, a call whose
+  `arguments` is not a string, a result of more than 256 KiB, and a tool message
+  that answers no call of an earlier assistant message. Other codes: 400
+  `unsupported_parameter` for a tool or a call of a type other than `function`,
+  a `tool_choice` of another type, and a `tool_choice` that forces a call when
+  no tools are declared; 400 `missing_required_parameter` for a tool with no
+  `function`, a `tool_choice` that names no function, and a tool message with no
+  `tool_call_id`. While the tools are passed to the model (`tool_choice` is not `none`,
   which passes none, so no argument is named and these do not apply): a function
   whose schema names no property and allows free-form keys (`additionalProperties`
   or `unevaluatedProperties` true or a schema, `patternProperties`) or whose

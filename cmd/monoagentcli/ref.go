@@ -2761,17 +2761,25 @@ OPENAI-COMPATIBLE API (/v1)
   and so is one nested more than 8 levels deep or holding more than 2000
   schemas, or functions whose schemas together take more than 100,000 steps to
   read (a step: a schema read, a reference followed, a property or a listed name
-  met, an enum entry compared); whatever the tool_choice, the declaration is
-  checked and these are 400 invalid_value naming the parameter, never what was
-  written: more than 128 functions, a name that is not 1 to 64 characters of
-  [A-Za-z0-9_-], one declared twice or an alias that is another function's name,
-  a description of more than 16 KiB, parameters of more than 64 KiB, that are not
-  a JSON schema object, whose root type is not object, whose properties is not an
-  object or holds a property that is not a schema or whose required is not a list
-  of strings, a tool_choice that names a function that is not declared, and in
-  the conversation more than 64 calls in one message, a result of more than 256
-  KiB, a call whose name is not printable ASCII without [ ] < > & ' " or a
-  backtick, and an id of no characters or of more than 128 bytes; monomind rejects
+  met, an enum entry compared); whatever the tool_choice, the declaration is checked and these are 400
+  invalid_value naming the parameter, never what was written: more than 128
+  functions; a tool that is not an object; a name that is not 1 to 64 characters
+  of [A-Za-z0-9_-], one declared twice, or an alias that is another function's
+  name (a name of 55 or more reaches the model as an alias of 54, and you always
+  see your own); a description of more than 16 KiB; parameters of more than 64
+  KiB, that are not a JSON schema object, whose root type is not object, whose
+  properties is not an object or holds a property that is not a schema, or whose
+  required is not a list of strings; a tool_choice that is not none, auto,
+  required or a function, or that names a function that is not declared; and in
+  the conversation more than 64 calls in one message, a call with an id of no
+  characters or of more than 128 bytes, a call whose name is not printable ASCII
+  without [ ] < > & ' " or a backtick, a call whose arguments is not a string, a
+  result of more than 256 KiB, and a tool message that answers no call of an
+  earlier assistant message. Other codes: 400 unsupported_parameter for a tool
+  or a call of a type other than function, a tool_choice of another type, and a
+  tool_choice that forces a call when no tools are declared; 400
+  missing_required_parameter for a tool with no function, a tool_choice that
+  names no function, and a tool message with no tool_call_id; monomind rejects
   a call whose top-level types, string enums or required names do not match what
   it was told, which never comes back: after its round cap of 10 the answer is
   200, the cap's text and finish_reason "length"; what it cannot see comes back
