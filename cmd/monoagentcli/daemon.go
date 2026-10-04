@@ -187,7 +187,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().BoolVar(&allowMutations, "allow-mutations", false, "Serve mutating HTTP API endpoints (the endpoint receiver is served either way)")
 	api.bind(c)
 	c.Flags().BoolVar(&bridgeOn, "bridge", true, "Hold the Chrome extension bridge open in this process (same bridge `extension serve` runs standalone)")
-	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd())
+	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd(), newDaemonRestartCmd(cfg))
 	return c
 }
 
