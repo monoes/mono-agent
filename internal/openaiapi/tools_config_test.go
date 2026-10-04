@@ -226,8 +226,9 @@ func TestParseToolRuntimesNoneSwitchesToolCallingOff(t *testing.T) {
 	}
 	e := off.toolsRefusal(claude)
 	if e == nil || e.Status != 400 || e.Code != "unsupported_parameter" || e.Param != "tools" ||
-		!strings.Contains(e.Message, "switched off") || !strings.Contains(e.Message, "MONOAGENT_API_TOOL_RUNTIMES") {
-		t.Errorf("the refusal must say that tool calling is switched off, and by what: %+v", e)
+		!strings.Contains(e.Message, "switched off") || !strings.Contains(e.Message, "MONOAGENT_API_TOOL_RUNTIMES") ||
+		!strings.Contains(e.Message, "api config") {
+		t.Errorf("the refusal must say that tool calling is switched off, and by what (the variable, or the saved setting): %+v", e)
 	}
 	if (Config{}).ToolsOff() || (Config{ToolRuntimes: []string{"codex"}}).ToolsOff() {
 		t.Error("tool calling is on unless the list was set to nothing")

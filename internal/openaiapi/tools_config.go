@@ -29,8 +29,9 @@ func (c Config) ToolRuntimeList() []string {
 // MONOAGENT_API_TOOL_RUNTIMES=none makes it.
 func (c Config) ToolsOff() bool { return len(c.ToolRuntimeList()) == 0 }
 
-// toolsOffBy says that tool calling was switched off, and by what.
-const toolsOffBy = "switched off on this server (the operator set MONOAGENT_API_TOOL_RUNTIMES to none)"
+// toolsOffBy says that tool calling was switched off, and by what: the list can be set to none
+// in the environment or in the saved settings (`monoagentcli api config`).
+const toolsOffBy = "switched off on this server (the operator set MONOAGENT_API_TOOL_RUNTIMES to none, in the environment or with `monoagentcli api config`)"
 
 // ParseToolRuntimes reads MONOAGENT_API_TOOL_RUNTIMES: runtime ids separated by
 // commas. Case and spaces do not matter, "agy" means antigravity and a repeat

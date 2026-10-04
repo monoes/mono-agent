@@ -268,8 +268,9 @@ func contextCapAllows(p Policy, c Class) bool {
 	return p.ForContextKey().Allows(c)
 }
 
-// imagesOffBy says that image generation was switched off, and by what.
-const imagesOffBy = "switched off on this server (the operator set MONOAGENT_API_IMAGE_RUNTIMES to none)"
+// imagesOffBy says that image generation was switched off, and by what: the list can be set to
+// none in the environment or in the saved settings (`monoagentcli api config`).
+const imagesOffBy = "switched off on this server (the operator set MONOAGENT_API_IMAGE_RUNTIMES to none, in the environment or with `monoagentcli api config`)"
 
 // errImagesOff is the 404 for a request that names no model, or auto, when image
 // generation is switched off.
