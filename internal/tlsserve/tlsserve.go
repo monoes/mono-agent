@@ -27,6 +27,11 @@ type Config struct {
 	// CertEnv and KeyEnv name the environment variables that hold the paths
 	// of an operator-supplied PEM certificate and key. Both or neither.
 	CertEnv, KeyEnv string
+	// CertFile and KeyFile are an explicit pair of PEM files (the saved
+	// settings of the OpenAI-compatible API), used when the environment names
+	// no pair: a pair in the environment wins, even if only one variable of it
+	// is set. Both or neither.
+	CertFile, KeyFile string
 	// CacheDir is the folder under ~/.monoagent where a generated
 	// self-signed certificate is cached, for example "webhook-tls".
 	CacheDir string
@@ -45,18 +50,27 @@ type Config struct {
 // Order:
 //  1. CertEnv and KeyEnv, when both are set: an operator-supplied pair. Setting
 //     only one of them is an error, never a silent fallback.
-//  2. A loopback bind: plain HTTP.
-//  3. Otherwise a disk-cached self-signed certificate that covers
+//  2. CertFile and KeyFile, when the environment names none: an explicit pair.
+//     Giving only one of them is an error too.
+//  3. A loopback bind: plain HTTP.
+//  4. Otherwise a disk-cached self-signed certificate that covers
 //     localhost, 127.0.0.1 and ::1 only. A remote client must skip
-//     verification, so real deployments set option 1 or terminate TLS in a
-//     proxy.
+//     verification, so real deployments set option 1 or 2 or terminate TLS in
+//     a proxy.
 //
 // A non-loopback bind never falls through to plain HTTP: if generating the
 // self-signed certificate fails, Resolve returns an error.
 func Resolve(c Config) (*tls.Config, error) {
 	certPath, keyPath := os.Getenv(c.CertEnv), os.Getenv(c.KeyEnv)
+	fromEnv := certPath != "" || keyPath != ""
+	if !fromEnv {
+		certPath, keyPath = c.CertFile, c.KeyFile
+	}
 	if certPath != "" || keyPath != "" {
 		if certPath == "" || keyPath == "" {
+			if !fromEnv {
+				return nil, fmt.Errorf("%s: a certificate file and a key file must both be given to use an explicit TLS certificate", c.Label)
+			}
 			return nil, fmt.Errorf("%s: %s and %s must both be set to use an explicit TLS certificate", c.Label, c.CertEnv, c.KeyEnv)
 		}
 		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
