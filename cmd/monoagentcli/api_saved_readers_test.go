@@ -91,6 +91,20 @@ func TestAPIModelsReadsTheSavedSettings(t *testing.T) {
 	}
 }
 
+// The text of `api models` says whose settings it evaluated, and the saved ones are among them.
+func TestAPIModelsTextSaysThatTheSavedSettingsCount(t *testing.T) {
+	db := newAPITestDB(t)
+	fakeAPIMonomind(t)
+	clearAPIEnv(t)
+	out, _, err := runAPI(t, db, "default", false, "models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "saved settings") {
+		t.Errorf("the note of api models must say that saved settings count:\n%s", out)
+	}
+}
+
 func TestAPIModelsRefusesInvalidSavedSettingsByName(t *testing.T) {
 	db := newAPITestDB(t)
 	fakeAPIMonomind(t)
