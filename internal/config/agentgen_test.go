@@ -212,3 +212,41 @@ func TestGenerateConfigFreebuffDiscovery(t *testing.T) {
 		})
 	}
 }
+
+func TestKiloConfigRuntimeDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, agents, want string
+	}{
+		{"only Kilo", `[{"id":"kilo","installed":true}]`, "kilo"},
+		{"existing preference", `[{"id":"kilo","installed":true},{"id":"codex","installed":true}]`, "codex"},
+		{"not installed", `[{"id":"kilo","installed":false}]`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := writeRecordingMonomind(t)
+			src, err := os.ReadFile(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := "if [ \"$1 $2\" = \"agent scan\" ]; then\n  echo '{\"v\":1,\"agents\":" + tc.agents + "}'\n  exit 0\nfi\n"
+			src = []byte(strings.Replace(string(src), "echo 'unsupported invocation'", scan+"echo 'unsupported invocation'", 1))
+			if err := os.WriteFile(bin, src, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(monomind.EnvOverride, bin)
+			t.Setenv(RuntimeEnvVar, "")
+			monomind.ResetCapabilityCache()
+			t.Cleanup(monomind.ResetCapabilityCache)
+			g := NewAgentGenerator(zerolog.Nop())
+			_, got, err := g.resolve(context.Background())
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "cache-only mode") {
+					t.Fatalf("uninstalled Kilo: %v", err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("runtime = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}

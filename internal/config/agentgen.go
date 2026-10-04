@@ -25,7 +25,7 @@ const RuntimeEnvVar = "MONOAGENT_AI_RUNTIME"
 // runtimePriority orders installed runtimes when no explicit choice is made.
 var runtimePriority = []string{
 	"claude", "codex", "kimicode", "qwen", "grok", "crush", "copilot",
-	"pi", "antigravity", "opencode", "qwen-rpc", "pi-rpc", "freebuff",
+	"pi", "antigravity", "opencode", "qwen-rpc", "pi-rpc", "kilo", "freebuff",
 }
 
 // maxHTMLChars caps the HTML sent in the prompt (DOM relevant to selectors

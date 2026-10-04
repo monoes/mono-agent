@@ -173,7 +173,7 @@ func (j *turnJournal) notice(code, message string, severity chatevents.NoticeSev
 var runtimeNames = map[string]string{
 	"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "antigravity": "Antigravity",
 	"kimicode": "Kimi Code", "grok": "Grok", "qwen": "Qwen Code", "copilot": "Copilot", "crush": "Crush", "pi": "Pi",
-	"cline": "Cline", "aider": "Aider", "dsh": "DeepSeek Harness", "freebuff": "Freebuff",
+	"cline": "Cline", "aider": "Aider", "dsh": "DeepSeek Harness", "kilo": "Kilo Code", "freebuff": "Freebuff",
 }
 
 // runtimeName is runtime's display name ("" = claude).

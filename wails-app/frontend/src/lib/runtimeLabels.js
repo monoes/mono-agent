@@ -2,6 +2,7 @@
 // own. Every other runtime shows its id (claude, codex, cline, …).
 const RUNTIME_LABELS = {
   dsh: 'DeepSeek Harness',
+  kilo: 'Kilo Code',
   freebuff: 'Freebuff',
 }
 

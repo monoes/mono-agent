@@ -1330,6 +1330,11 @@ login (and its bill) is what the turn uses.
   installing the interactive Freebuff CLI alone does not enable it. Its
   executable override is `FREEBUFF_CLI_BIN`. Runtime capabilities still come
   from monomind's scan.
+- **Kilo Code.** Compatibility preparation is documented in
+  [docs/kilo-runtime.md](docs/kilo-runtime.md). Execution requires monomind's
+  `kilo` runner ([monomind#601](https://github.com/monoes/monomind/issues/601)).
+  Its executable override is `KILO_CLI_BIN`; model and access capabilities
+  still come from monomind's scan.
 - **Pinned binaries (#301).** monomind, its node and every agent CLI it
   starts by name run from global installs a project can't redirect. A
   version-manager shim (mise, asdf, Volta, nodenv) is resolved once from
