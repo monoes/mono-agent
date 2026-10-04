@@ -2728,8 +2728,26 @@ OPENAI-COMPATIBLE API (/v1)
   unsupported_parameter: n above 1, logprobs true, an audio object, a
   non-empty tools or functions, a tool_choice or function_call other than
   "none", tool and function messages, content parts that are not text and a
-  response_format other than text or json_object. Not available yet: images,
-  tool calling and the "auto" model.
+  response_format other than text or json_object. Not available yet: images
+  and tool calling.
+
+  The "auto" model lets Jev pick, per request, among the models the listener
+  serves (a --context key: among those its own cap allows). It is opt-in per
+  profile: monoagentcli jev enable api_auto, with a Jev key (jev key set, or
+  TYPESAFE_API_KEY in the server's environment). What leaves the machine: the
+  first 4,000 characters of the last user message, and each candidate's name,
+  description and validated cost and latency. It picks among chat-only models
+  unless the operator raised --auto-confinement (MONOAGENT_API_AUTO_CONFINEMENT;
+  a prompt can steer the pick and its author need not hold the key), never above
+  --confinement or a --context key's cap; api models shows what it may pick. A Jev
+  failure, a timeout (8 s) or a
+  doubt falls back to a rule (of the validated models the most confined, then the
+  cheapest, then the fastest; with none validated, a runtime's default model),
+  never to a wider set; three questions in a row without an answer stop a
+  profile's questions for 30 s. The answer carries X-Monoagent-Model (the pick) and
+  X-Monoagent-Auto (jev or rule). "auto" is listed after the other models. While
+  the surface or the key is missing it is not listed and answers 404
+  model_not_found naming what is missing; api models and api status say it too.
 
   Auth is an API key, not the credential above. One profile each (its
   requests run as that profile and add only that profile's knowledge), shown
@@ -2756,7 +2774,8 @@ OPENAI-COMPATIBLE API (/v1)
   unlisted, GET /v1/models/{id} answers 404 for it and a completion naming it
   answers 403 policy_denied. --context-confinement
   (MONOAGENT_API_CONTEXT_CONFINEMENT, default chat-only) caps what a
-  --context key may use, never above that.
+  --context key may use, never above that. --auto-confinement
+  (MONOAGENT_API_AUTO_CONFINEMENT, default chat-only) caps what "auto" may pick.
 
   Exposure: /v1 is served on the main listener only while it is loopback.
   Beyond the machine use --v1-addr (MONOAGENT_API_V1_ADDR) on httpapi or

@@ -3,6 +3,7 @@
 Date: 2026-10-01
 Status: Approved by the user on 2026-10-01, including the dedicated off-loopback listener (D13, §6.3). Amended the same day after two independent reviews of the phase 1 code, and the user then decided the two open points: a context key is served only by `chat-only` models unless the operator raises `--context-confinement` (D2, §5, §6.3, §7.2), and each concurrency slot has a fixed working folder per profile instead of one folder per request (§4.2, §5). The other amendments: a sandbox that cannot be applied refuses the turn (§6.1), stopping the server ends the turns in flight (§6.4), and error messages stay generic (§7.4).
 Branch: `worktree-feat+openai-compatible-api`, cut from master `c612d46d`.
+Phase 3 (§9, the `auto` model) is implemented on `feat/openai-api-jev-auto`, stacked on the phase 1 branch; its plan is `docs/mastermind/plans/2026-10-02-openai-compatible-api-phase3-jev-auto.md`.
 
 ## 1. Goal
 
@@ -34,6 +35,7 @@ Let other programs use the agent runtimes installed on this machine (claude, cod
 | D14 | Existing legacy-token routes are unchanged. A key never opens them; the legacy token never opens `/v1`. | design |
 | D15 | `--context-confinement chat-only|sandboxed|any` (env `MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest class a key created with `--context` may use. It never goes above the listener's own `--confinement`. | user (2026-10-01, after review) |
 | D16 | Working folders are per profile and per concurrency slot: `~/.monoagent/workspaces/api/p-<hash of the profile id>/slot-N`. A profile id never reaches a path as such. | user (2026-10-01, after review) |
+| D17 | `--auto-confinement chat-only|sandboxed|any` (env `MONOAGENT_API_AUTO_CONFINEMENT`, default `chat-only`) is the strongest class the `auto` model may pick. It never goes above the listener's `--confinement` or a context key's cap, and a model the client names itself is not affected. A prompt can steer Jev's pick and its author need not hold the key, so more than chat-only is a permission the operator gives. | user (2026-10-02, after the phase 3 review) |
 
 ## 3. Verified facts (master `c612d46d`, monomind 2.22.0, checked 2026-10-01)
 
@@ -304,10 +306,13 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
 
 ## 9. Jev auto
 
+Implemented in phase 3, for text; the image options wait for P4.
+
 - **Surface.** New `api_auto`, opt-in per profile through `jev enable api_auto`. The egress list says that the first 4,000 characters of the last user message and the candidate model names, descriptions and any validation cost and latency leave the machine. The surface's threshold is the minimum top-option probability Jev's pick must reach; its default is 0 (always accept the top pick), and below a raised threshold the rule fallback is used.
 - **Availability.** `auto` is listed and accepted only when the profile has a Jev key and the surface is enabled for it. Otherwise 404 `model_not_found` with a hint. Listing is gated on the non-decrypting `jevconf.KeySource`; the key itself is resolved (`ResolveKey`, which decrypts the vault on every call) only when a pick actually runs.
 - **Choice.** One `choice` question through `dynorg.JevChooser`, using a client built for surface `api_auto` so `jev_usage` records it. Options are the models the policy allows (for images only runtimes in the image list) with label, description and validated stats. The prompt text goes in `untrusted_prompt`.
-- **Fallback.** On an error, timeout or empty answer: the cheapest and fastest validated candidate; otherwise the runtime default in the order claude, codex, antigravity, then the rest alphabetically. The header `X-Monoagent-Auto` records `jev` or `rule`.
+- **Fallback.** On an error, timeout or empty answer: the cheapest and fastest validated candidate; otherwise the runtime default in the order claude, codex, antigravity, then the rest alphabetically (as built, the most confined class comes first: see below). The header `X-Monoagent-Auto` records `jev` or `rule`.
+- **As built.** The question is asked with `jevconf.NewClient(…, api_auto)` and `Client.Ask`, one try (`Retries = 0`) inside an 8 second budget (`Config.AutoTimeout`), rather than through `dynorg.JevChooser`: the usage row lands under `api_auto` and a failure goes straight to the rule. The budget holds even where the key lookup (a keyring prompt) does not look at a context: the question runs in a goroutine the request stops waiting for. Candidates are what the key's effective policy allows, so a context key's own cap applies before Jev sees the list; with one candidate Jev is not asked (`X-Monoagent-Auto: rule`). A pick that is not one of the options, or whose probability is under the surface's threshold, falls back like an error. The rule ranks the validated models by class first (the most confined), then cost, then latency, so that an outage never moves a request to a less confined model for being cheaper; with none validated it takes a runtime's default model, class first as well. Three questions in a row that got no answer (an error or a timeout, not an answer the rule overrides, and not a caller that left) open a per-profile breaker for 30 seconds, during which the rule picks at once; then one question probes, and its answer closes the breaker. The slot is taken before Jev is asked, so a busy server answers 429 without spending a Jev call, and a client that leaves while Jev is asked ends as a 499 that names no chooser. `auto` is listed after the concrete models in `GET /v1/models` while it works (so that a client that takes the first model is not moved to it, and its prompts to TypeSafe, by an operator enabling the surface), and `api models` and `api status` say whether it works for the active profile, what is missing, and that a key from the environment is that shell's (`AutoStatus.KeySource`). The gateway blanks `TYPESAFE_API_KEY` in its agent turns' environment. Auto is held to chat-only unless the operator raises `--auto-confinement` (D17): candidates are the models the key's policy allows within `Policy.ForAuto`, `api models` shows `auto_allowed` per model and `auto.candidates`, `auto.held_back` and `auto.confinement`, and `api status` and the daemon heartbeat carry the setting per listener. The log line says `auto=jev|rule` and never the prompt. The GUI exposure of the surface belongs to P2's GUI section.
 
 ## 10. Tool calling (phase 5, spike first)
 
@@ -350,7 +355,7 @@ The Go side (`app_api.go`) calls `runMonoCLI` with `api … --json`. The binding
 |---|---|
 | P1 | `apikeys` + migration, gateway (models, chat, stream, context), confinement and limits, dedicated listener and TLS, CLI, docs and OpenAPI |
 | P2 | MCP tools, GUI section and bindings |
-| P3 | Jev `api_auto` (surface, chooser, fallback, CLI and GUI exposure) |
+| P3 | Jev `api_auto` (surface, chooser, fallback, CLI exposure): implemented; its GUI exposure goes with P2's GUI section |
 | P4 | Images |
 | P5 | Tool calling (spike, then build) |
 

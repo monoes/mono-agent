@@ -8,10 +8,10 @@ it on a headless Linux server. Paths and schemas:
 `internal/httpapi/openapi.yaml`. Threat model: `SECURITY.md`.
 
 Today it serves `GET /v1/models`, `GET /v1/models/{id}` and
-`POST /v1/chat/completions` (JSON and `"stream": true`). Images, tool
-calling and an `auto` model that picks for you are not available yet:
-having Jev set up on the profile changes nothing for now, and asking for
-`auto` is a 404 `model_not_found` that says it is not implemented. A `404 page
+`POST /v1/chat/completions` (JSON and `"stream": true`). Images and tool
+calling are not available yet. The model `auto` lets Jev pick the model of
+each request once you switch it on (see "Let Jev pick" below); until then
+asking for it is a 404 `model_not_found` that says what is missing. A `404 page
 not found` in plain text instead means the server running is older than this
 API and has no `/v1` at all (`monoagentcli daemon` and `httpapi` serve it only
 from a build that includes it).
@@ -159,8 +159,62 @@ What to expect:
 - `curl -i` shows `X-Monoagent-Model` (the model that answered),
   `X-Monoagent-Sandbox` (how monomind sandboxed that turn: `sandboxed`,
   `scoped`, `unsupported`, …; sent on a successful non-streaming response
-  only) and, for a `--context`
-  key, `X-Monoagent-Context` (how many knowledge excerpts were added).
+  only), for a `--context`
+  key, `X-Monoagent-Context` (how many knowledge excerpts were added) and, for
+  the model `auto`, `X-Monoagent-Auto` (who picked the model).
+
+### Let Jev pick: the `auto` model
+
+With `"model": "auto"`, [TypeSafe Jev](https://docs.typesafe.ai/api) chooses the
+model of each request among the ones this listener serves: a cheaper, faster
+one for a simple prompt, a stronger one for a hard or long one. It is off until
+you switch it on for the key's profile, and it needs that profile's Jev key:
+
+```bash
+printf '%s' "$TYPESAFE_KEY" | monoagentcli jev key set   # or TYPESAFE_API_KEY in the server's environment
+monoagentcli jev enable api_auto    # prints what is sent to TypeSafe, then asks (--yes in a script)
+monoagentcli api models             # its last line says whether auto works
+```
+
+On a headless server, where the vault needs the file keyring and its passphrase
+file, `TYPESAFE_API_KEY` in the server's environment is the simple way: the
+server's agent turns do not inherit it. `api models` and `api status` run in
+your shell, so for a key from the environment they report this shell's, not the
+server's.
+
+`jev enable` lists what leaves the machine: to TypeSafe, besides the prompt
+going to the runtime that answers, the first 4,000 characters of the last user
+message and the names, descriptions and validated cost and latency of the
+models Jev picks among. Then:
+
+```bash
+curl -si http://127.0.0.1:9322/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"What is 17 * 23?"}]}' \
+  | grep -iE '^(HTTP|x-monoagent-(model|auto))'
+```
+
+The response's `model` and `X-Monoagent-Model` name the pick, and
+`X-Monoagent-Auto` says who chose: `jev`, or `rule` when Jev could not (no
+answer within 8 seconds, an answer that is not one of the options, or one under
+the surface's threshold, which `jev enable api_auto --threshold 0.8` raises) or
+when only one model was left to pick. Of the models that passed
+`monoagentcli agent validate` (which records the cost and latency to compare),
+the rule takes the most confined, then the cheapest, then the fastest; with none
+validated, a runtime's default model, claude first. When Jev does not answer three
+questions in a row, the server stops asking for 30 seconds (the log says so) and
+`X-Monoagent-Auto` is `rule` until one question gets through again.
+
+Jev picks only among models the key may use, and by default only among the
+chat-only ones (claude): a prompt can steer the pick, and its author need not
+be the holder of the key (see `SECURITY.md`). To let `auto` pick sandboxed or
+unconfined runtimes too, start the server with `--auto-confinement sandboxed`
+(or `any`, or `MONOAGENT_API_AUTO_CONFINEMENT`); it never goes above
+`--confinement`, nor above the cap of a `--context` key, and a model you name
+yourself is not affected. `monoagentcli api models` shows which models `auto`
+may pick. `GET /v1/models` lists `auto` after the other models, so a client that
+takes the first one is not moved to it, and leaves it out while it does not work;
+`monoagentcli api status` says what is missing.
 
 ## 4. Serve it beyond this machine
 
@@ -238,7 +292,7 @@ monoagentcli daemon --v1-addr 0.0.0.0:9443
 | 400 | `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | The body is not JSON, or a parameter is missing, invalid or not supported (non-empty `tools`, `n > 1`, `json_schema` output, parts that are not text, …) |
 | 401 | `invalid_api_key` | Missing, unknown or revoked key. The legacy HTTP API token is not a key |
 | 403 | `policy_denied` | A completion names a model whose confinement class is above the listener's `--confinement`, or above `--context-confinement` for a key created with `--context`; or its sandbox could not be applied; or the runtime started with less confinement than the policy allows |
-| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403) |
+| 404 | `model_not_found` | Unknown model. `GET /v1/models/{id}` also answers 404 for a model the listener does not serve (a completion for it is a 403). `auto` is a 404 too while it is not set up for the key's profile: the message says what is missing (the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
 | 413 | `request_too_large` | Body over 2 MiB |
 | 429 | `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
 | 500 | `internal_error` | An internal failure. The message is generic; the detail is in the server log under the response's `X-Request-Id` |

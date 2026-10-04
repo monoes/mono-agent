@@ -344,3 +344,60 @@ func TestAPIStatusReadsTheDaemonHeartbeat(t *testing.T) {
 		t.Errorf("v1: %+v", l)
 	}
 }
+
+// What the auto model may pick on a listener is chat-only unless the operator
+// raised it, and never above what the listener serves: the daemon's value when it
+// reported one, this shell's environment otherwise.
+func TestAPIStatusSaysWhatAutoMayPickOnEachListener(t *testing.T) {
+	db := newAPITestDB(t)
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	t.Setenv("MONOAGENT_API_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_API_AUTO_CONFINEMENT", "")
+	t.Setenv("MONOAGENT_HTTPAPI_ADDR", apiServer(t, true))
+	t.Setenv("MONOAGENT_API_V1_ADDR", "")
+
+	status := func() apiStatusJSON {
+		t.Helper()
+		out, _, err := runAPI(t, db, "default", true, "status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decodeStatus(t, out)
+	}
+
+	// No daemon: this shell's environment, which defaults to chat-only.
+	if l := status().Listeners[0]; l.Confinement != "any" || l.AutoConfinement != "chat-only" {
+		t.Errorf("by default: %+v", l)
+	}
+	t.Setenv("MONOAGENT_API_AUTO_CONFINEMENT", "sandboxed")
+	if l := status().Listeners[0]; l.AutoConfinement != "sandboxed" {
+		t.Errorf("MONOAGENT_API_AUTO_CONFINEMENT=sandboxed in this shell: %+v", l)
+	}
+	t.Setenv("MONOAGENT_API_AUTO_CONFINEMENT", "")
+
+	// A running daemon: what it reports, capped by each listener.
+	addr := apiServer(t, true)
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: addr, V1Addr: "127.0.0.1:2", APIConfinement: "sandboxed", V1Confinement: "chat-only", ContextConfinement: "chat-only", AutoConfinement: "any"}); err != nil {
+		t.Fatal(err)
+	}
+	st := status()
+	if l := st.Listeners[0]; l.Confinement != "sandboxed" || l.AutoConfinement != "sandboxed" {
+		t.Errorf("main: the daemon lets auto pick up to any, but the listener serves sandboxed: %+v", l)
+	}
+	if l := st.Listeners[1]; l.Confinement != "chat-only" || l.AutoConfinement != "chat-only" {
+		t.Errorf("v1: %+v", l)
+	}
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: addr, APIConfinement: "any", ContextConfinement: "chat-only", AutoConfinement: "sandboxed"}); err != nil {
+		t.Fatal(err)
+	}
+	if l := status().Listeners[0]; l.AutoConfinement != "sandboxed" {
+		t.Errorf("the daemon's auto maximum on a listener that serves any: %+v", l)
+	}
+	// A daemon that predates the setting says nothing: auto is chat-only there.
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), APIAddr: addr, APIConfinement: "any", ContextConfinement: "chat-only"}); err != nil {
+		t.Fatal(err)
+	}
+	if l := status().Listeners[0]; l.AutoConfinement != "chat-only" {
+		t.Errorf("a heartbeat without the auto maximum: %+v", l)
+	}
+}

@@ -179,6 +179,9 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		return &monomind.TurnResult{ExitCode: 130, Err: &monomind.ProtocolError{Code: monomind.ErrCancelled, Message: "cancelled by caller", ExitCode: 130}}, nil
 	}
 
+	// Env blanks the Jev key of the server's environment (the headless way to give
+	// it one): it is for the server, no turn needs it, and one that runs commands
+	// could read it.
 	opts := monomind.ExecOptions{
 		Runtime:          t.Runtime,
 		Prompt:           t.Prompt,
@@ -186,7 +189,7 @@ func (g *Gateway) runTurn(ctx context.Context, t turn) (*monomind.TurnResult, er
 		Cwd:              dir,
 		Bin:              bin,
 		TempDir:          tmp,
-		Env:              map[string]string{"TMPDIR": turnTmp, "TMP": turnTmp, "TEMP": turnTmp},
+		Env:              map[string]string{"TMPDIR": turnTmp, "TMP": turnTmp, "TEMP": turnTmp, "TYPESAFE_API_KEY": ""},
 		Sandbox:          monomind.TurnSandboxMode,
 		RequireSandbox:   t.RequireSandbox,
 		WorkspacePurpose: scratchPurpose,

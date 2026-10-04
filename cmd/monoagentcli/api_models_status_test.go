@@ -152,7 +152,7 @@ func TestAPIModelsMarksWhatEachPolicyAllows(t *testing.T) {
 func TestAPIModelsRejectsBadValuesWithExit3(t *testing.T) {
 	db := newAPITestDB(t)
 	fakeAPIMonomind(t)
-	for _, args := range [][]string{{"models", "--for", "moon"}, {"models", "--confinement", "everything"}, {"models", "--context-confinement", "everything"}} {
+	for _, args := range [][]string{{"models", "--for", "moon"}, {"models", "--confinement", "everything"}, {"models", "--context-confinement", "everything"}, {"models", "--auto-confinement", "everything"}} {
 		if _, _, err := runAPI(t, db, "default", true, args...); exitCode(err) != 3 {
 			t.Errorf("%v: exit %d (%v), want 3", args, exitCode(err), err)
 		}
@@ -190,6 +190,26 @@ func TestEffectiveContextMaxPrecedence(t *testing.T) {
 		}
 	}
 	if _, err := effectiveContextMax("nope", env("")); exitCode(err) != 3 {
+		t.Errorf("a bad value must be invalid input, got exit %d", exitCode(err))
+	}
+}
+
+func TestEffectiveAutoMaxPrecedence(t *testing.T) {
+	env := func(v string) func(string) string { return func(string) string { return v } }
+	for _, c := range []struct {
+		flag, env string
+		want      openaiapi.Class
+	}{
+		{"", "", openaiapi.ChatOnly}, // nothing set: chat-only
+		{"", "sandboxed", openaiapi.Sandboxed},
+		{"any", "chat-only", openaiapi.Unconfined}, // the flag beats the environment
+	} {
+		got, err := effectiveAutoMax(c.flag, env(c.env))
+		if err != nil || got != c.want {
+			t.Errorf("effectiveAutoMax(%q, env=%q) = %v, %v; want %v", c.flag, c.env, got, err, c.want)
+		}
+	}
+	if _, err := effectiveAutoMax("nope", env("")); exitCode(err) != 3 {
 		t.Errorf("a bad value must be invalid input, got exit %d", exitCode(err))
 	}
 }

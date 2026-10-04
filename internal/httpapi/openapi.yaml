@@ -327,6 +327,13 @@ paths:
         or `codex/gpt-6-astra`; each runtime's own list decides), only those
         the listener's confinement policy allows. For a key created with `--context` only those at or below
         `--context-confinement` (chat-only unless the operator raised it).
+        While the key's profile has the `api_auto` Jev surface on (`monoagentcli
+        jev enable api_auto`) and a Jev key, the list ends with the model
+        `auto` (`owned_by` is `jev`), after the others so that a client that
+        takes the first model is not moved to it: a request for it has Jev pick
+        the model among the others. Its `confinement` is the strongest class it
+        picks within: the key's policy, capped by what the operator let auto
+        pick (`--auto-confinement`, chat-only unless raised).
       security:
         - apiKeyAuth: []
       responses:
@@ -347,7 +354,8 @@ paths:
         encoded. A bare runtime name (`codex`) means its default model, and
         `agy` is accepted for `antigravity`. A model the listener's
         confinement policy does not allow (for a key created with `--context`,
-        `--context-confinement` too) is a 404, as is an unknown one.
+        `--context-confinement` too) is a 404, as is an unknown one, and `auto`
+        while it is not set up for the key's profile.
       security:
         - apiKeyAuth: []
       parameters:
@@ -377,6 +385,22 @@ paths:
         A key created with `--context` also gets excerpts of its profile's
         knowledge added to the prompt, and is served only by models at or
         below `--context-confinement` (chat-only by default).
+
+        `model` may be `auto`: TypeSafe Jev then picks the model of this
+        request among the ones the key may use (the listener's policy, the
+        operator's `--auto-confinement`, chat-only unless raised, and for a key
+        created with `--context` its own cap, decide which). It is off
+        until the key's profile runs `monoagentcli jev enable api_auto` and has
+        a Jev key; the first 4,000 characters of the last user message and the
+        names, descriptions and validated cost and latency of the candidates
+        are what Jev is sent. A failure, a timeout (8 seconds), an answer that
+        is not a candidate or a probability under the surface's threshold falls
+        back to a rule: of the validated models the most confined, then the
+        cheapest, then the fastest, and with none validated a runtime's default
+        model. After three questions in a row that got no answer the profile's
+        questions stop for 30 seconds, and the rule picks at once. The
+        `X-Monoagent-Model` header and the response's `model` name the pick, and
+        `X-Monoagent-Auto` says who chose.
 
         Sampling parameters (`temperature`, `top_p`, `max_tokens`,
         `max_completion_tokens`, `stop`, `seed`, `presence_penalty`,
@@ -411,7 +435,7 @@ paths:
         | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter |
         | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
         | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
-        | 404 | `invalid_request_error` / `model_not_found` | Unknown model |
+        | 404 | `invalid_request_error` / `model_not_found` | Unknown model, or `auto` while it is not set up for the key's profile (the message says what is missing: the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
         | 429 | `rate_limit_error` / `rate_limit_exceeded`, `insufficient_quota` | The server is full (`Retry-After: 2`), or the runtime is rate limited or out of quota |
         | 502 | `api_error` / `runtime_error` | The runtime failed or ended the turn without finishing it (the message is generic: quote `X-Request-Id` to the operator) |
@@ -437,6 +461,9 @@ paths:
             X-Monoagent-Model:
               description: The `<runtime>/<model>` that answered.
               schema: { type: string }
+            X-Monoagent-Auto:
+              description: For a request for the model `auto`, who chose the model, `jev` or `rule` (also when only one model was left to pick).
+              schema: { type: string, enum: [jev, rule] }
             X-Monoagent-Sandbox:
               description: How monomind sandboxed the turn (`sandboxed`, `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`), not the confinement class. Sent on a successful non-streaming response only.
               schema: { type: string }
@@ -588,7 +615,7 @@ components:
         id: { type: string, example: "codex/gpt-6-astra" }
         object: { type: string, enum: [model] }
         created: { type: integer, description: Always 0. }
-        owned_by: { type: string, description: The runtime that serves the model., example: codex }
+        owned_by: { type: string, description: "The runtime that serves the model (`jev` for `auto`).", example: codex }
         monoagent:
           type: object
           description: Extra fields that plain OpenAI clients ignore.
@@ -637,7 +664,7 @@ components:
         described with `POST /v1/chat/completions`.
       additionalProperties: true
       properties:
-        model: { type: string, example: "claude/sonnet" }
+        model: { type: string, example: "claude/sonnet", description: "`<runtime>/<model>`, a bare runtime, or `auto` to have Jev pick." }
         messages:
           type: array
           minItems: 1
@@ -660,7 +687,7 @@ components:
         id: { type: string, example: "chatcmpl-k3j2h1g4f5d6s7a8" }
         object: { type: string, enum: [chat.completion] }
         created: { type: integer }
-        model: { type: string, description: The `<runtime>/<model>` that answered. }
+        model: { type: string, description: "The `<runtime>/<model>` that answered (for a request for `auto`, the one Jev or the rule picked)." }
         choices:
           type: array
           items:

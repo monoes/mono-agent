@@ -53,9 +53,14 @@ func TestRunTurnBuildsTheLockedDownExecOptions(t *testing.T) {
 		t.Errorf("a text turn must not carry access, tools, settings or bash prefixes: %+v", got)
 	}
 	for k := range got.Env {
-		if k != "TMPDIR" && k != "TMP" && k != "TEMP" {
+		if k != "TMPDIR" && k != "TMP" && k != "TEMP" && k != "TYPESAFE_API_KEY" {
 			t.Errorf("a text turn's environment is its temp folder and nothing else, got %s", k)
 		}
+	}
+	// The server's Jev key (the headless way to give it one) is for the server:
+	// no turn needs it, and a turn that runs commands could read it.
+	if v, ok := got.Env["TYPESAFE_API_KEY"]; !ok || v != "" {
+		t.Errorf("a turn must blank the server's Jev key in its environment, got %q (set: %v)", v, ok)
 	}
 	if got.Timeout != time.Minute {
 		t.Errorf("Timeout = %v, want the configured turn timeout", got.Timeout)

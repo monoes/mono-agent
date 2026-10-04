@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/apikeys"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/testdb"
 	"github.com/monoes/mono-agent/internal/tlsserve"
@@ -26,8 +28,17 @@ import (
 // logged-in agent CLIs, so they are skipped unless asked for:
 //
 //	MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run Live -v -count=1
+//
+// The one for the auto model also calls Jev, so it needs TYPESAFE_API_KEY.
 
 func liveGateway(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string, *harness) {
+	t.Helper()
+	g, secret, h, _ := liveGatewayDB(t, wrap)
+	return g, secret, h
+}
+
+// liveGatewayDB is liveGateway that also returns the database it runs on.
+func liveGatewayDB(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string, *harness, *sql.DB) {
 	t.Helper()
 	if os.Getenv("MONOAGENT_LIVE_API_TESTS") != "1" {
 		t.Skip("set MONOAGENT_LIVE_API_TESTS=1 to run the live checks (they call real models)")
@@ -47,7 +58,7 @@ func liveGateway(t *testing.T, wrap func(ExecFunc) ExecFunc) (*Gateway, string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return g, secret, &harness{g: g}
+	return g, secret, &harness{g: g}, db.DB
 }
 
 // usableOrSkip ends a canary early: skipped when claude cannot answer right now
@@ -177,6 +188,49 @@ func TestLiveOneChatPerInstalledRuntime(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With a Jev key and the surface on, a request for auto runs a model the list
+// offered, and Jev picks it (the rule only when there is nothing to choose
+// between: a TypeSafe that fails every call must fail this). A chat-only policy
+// keeps the choice to the chat-only models, so the turn is claude's.
+func TestLiveAutoPicksAModel(t *testing.T) {
+	_, secret, h, db := liveGatewayDB(t, nil)
+	if os.Getenv("TYPESAFE_API_KEY") == "" {
+		t.Skip("set TYPESAFE_API_KEY to run the live check of the auto model (it calls Jev)")
+	}
+	if err := jevconf.SetEnabled(db, "default", jevconf.APIAuto, true); err != nil {
+		t.Fatal(err)
+	}
+	policy := Policy{Max: ChatOnly}
+	list := decodeModelList(t, h.serve(policy, http.MethodGet, "/v1/models", secret, ""))
+	if len(list.Data) < 2 || list.Data[len(list.Data)-1].ID != autoModelID {
+		t.Fatalf("auto is not offered after the models: %+v", list.Data)
+	}
+	offered := map[string]bool{}
+	for _, m := range list.Data[:len(list.Data)-1] {
+		offered[m.ID] = true
+	}
+
+	rec := h.serve(policy, http.MethodPost, "/v1/chat/completions", secret,
+		`{"model":"auto","messages":[{"role":"user","content":"What is 17 times 23? Answer with the number only."}]}`)
+	usableOrSkip(t, rec.Code, rec.Body.String())
+	by, picked := rec.Header().Get("X-Monoagent-Auto"), rec.Header().Get("X-Monoagent-Model")
+	switch {
+	case by == "jev":
+	case by == "rule" && len(offered) < 2: // nothing to choose between: Jev is not asked
+	default:
+		t.Errorf("X-Monoagent-Auto = %q among %d models: Jev should have chosen (the server log says why it did not)", by, len(offered))
+	}
+	if !offered[picked] {
+		t.Errorf("auto picked %q, which the list did not offer: %v", picked, offered)
+	}
+	var got completion
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.Model != picked || len(got.Choices) == 0 || strings.TrimSpace(got.Choices[0].Message.Content) == "" {
+		t.Errorf("the answer does not match the pick %q: %s", picked, rec.Body)
+	}
+	t.Logf("auto picked %s by %s among %d models", picked, by, len(offered))
 }
 
 // A streamed chat through a real TLS listener, read the way an SDK would.

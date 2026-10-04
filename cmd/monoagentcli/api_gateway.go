@@ -33,6 +33,7 @@ type apiFlags struct {
 	v1Addr             string
 	confinement        string
 	contextConfinement string
+	autoConfinement    string
 	maxConcurrent      int
 	maxConcurrentSet   bool // --max-concurrent was given, so an explicit 0 is an error and not "the default"
 }
@@ -70,6 +71,9 @@ func (f *apiFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.contextConfinement, "context-confinement", "",
 		"Strongest runtime class a key created with --context may use: chat-only, sandboxed or any (default chat-only, never above --confinement). "+
 			"Its requests carry excerpts of the profile's knowledge, which includes captured web pages nobody vetted. Also MONOAGENT_API_CONTEXT_CONFINEMENT")
+	cmd.Flags().StringVar(&f.autoConfinement, "auto-confinement", "",
+		"Strongest runtime class the auto model may pick: chat-only, sandboxed or any (default chat-only, never above --confinement). "+
+			"A prompt can steer which model Jev picks, and its author need not hold the key. Also MONOAGENT_API_AUTO_CONFINEMENT")
 	cmd.Flags().Var(optInt{&f.maxConcurrent, &f.maxConcurrentSet}, "max-concurrent",
 		fmt.Sprintf("Maximum number of API turns running at once, 1 to %d (default 4). Also MONOAGENT_API_MAX_CONCURRENT", openaiapi.MaxConcurrentLimit))
 }
@@ -85,8 +89,10 @@ type apiRuntime struct {
 	override string // an explicit confinement; "" means each listener's default
 	// contextMax is the strongest class a key created with --context may use.
 	contextMax openaiapi.Class
-	v1Addr     string
-	logf       func(format string, args ...any)
+	// autoMax is the strongest class the auto model may pick.
+	autoMax openaiapi.Class
+	v1Addr  string
+	logf    func(format string, args ...any)
 
 	mu       sync.Mutex
 	gw       *openaiapi.Gateway // nil until built, and when it could not be
@@ -128,6 +134,10 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 	if err != nil {
 		return nil, err
 	}
+	autoMax, err := effectiveAutoMax(f.autoConfinement, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	v1 := f.v1Addr
 	if v1 == "" {
 		v1 = os.Getenv("MONOAGENT_API_V1_ADDR")
@@ -140,7 +150,7 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 
 	deps := openaiapi.DefaultDeps(db, getVersion())
 	deps.Logf = logf
-	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, v1Addr: v1, logf: logf}, nil
+	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1, logf: logf}, nil
 }
 
 // validListenAddr checks the shape of a listen address: host:port with a
@@ -198,19 +208,26 @@ func (a *apiRuntime) releaseUnused() {
 }
 
 // policy is the confinement policy of a listener bound to addr: what it
-// serves, and what a key created with --context may use of that.
+// serves, what a key created with --context may use of that, and what the auto
+// model may pick of it.
 func (a *apiRuntime) policy(addr string) openaiapi.Policy {
 	p := openaiapi.DefaultPolicy(addr)
 	if a.override != "" {
 		p, _ = openaiapi.ParsePolicy(a.override) // validated in newAPIRuntime
 	}
 	p.ContextMax = a.contextMax
+	p.AutoMax = a.autoMax
 	return p
 }
 
 // contextReport is the context maximum to record in the daemon's heartbeat.
 func (a *apiRuntime) contextReport() string {
 	return openaiapi.Policy{Max: a.contextMax}.String()
+}
+
+// autoReport is the auto maximum to record in the daemon's heartbeat.
+func (a *apiRuntime) autoReport() string {
+	return openaiapi.Policy{Max: a.autoMax}.String()
 }
 
 // mainMount returns the route registrar that serves /v1 on the main HTTP API
