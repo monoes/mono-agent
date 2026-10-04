@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/apiconfig"
 	"github.com/monoes/mono-agent/internal/httpapi"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/openaiapi"
@@ -92,7 +93,13 @@ type apiRuntime struct {
 	// autoMax is the strongest class the auto model may pick.
 	autoMax openaiapi.Class
 	v1Addr  string
-	logf    func(format string, args ...any)
+	// tlsCertFile and tlsKeyFile are the saved pair of the dedicated listener's certificate:
+	// tlsserve uses them when the environment names none.
+	tlsCertFile, tlsKeyFile string
+	// resolved is the effective value of each setting and where it came from, for the
+	// heartbeat.
+	resolved []apiconfig.Resolved
+	logf     func(format string, args ...any)
 
 	mu       sync.Mutex
 	gw       *openaiapi.Gateway // nil until built, and when it could not be
@@ -107,10 +114,20 @@ type apiRuntime struct {
 	published atomic.Pointer[openaiapi.Gateway]
 }
 
-// newAPIRuntime reads the flags, falling back to the environment. Bad values
-// are invalid input (exit 3).
+// newAPIRuntime reads the flags, falling back to the environment and then to the settings
+// saved with `api config` (an empty variable is an unset one). Bad values are invalid input
+// (exit 3), saved ones included: a server does not start on settings that fail their rules.
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
-	conf, err := openaiapi.ConfigFromEnv(os.Getenv)
+	saved, err := apiconfig.LoadValid(context.Background(), db)
+	if err != nil {
+		var invalid *apiconfig.ValidationError
+		if errors.As(err, &invalid) {
+			return nil, errInvalidInput("%v", err)
+		}
+		return nil, err
+	}
+	getenv := apiconfig.Overlay(saved, os.Getenv) // the environment, with the saved settings under it
+	conf, err := openaiapi.ConfigFromEnv(getenv)
 	if err != nil {
 		return nil, errInvalidInput("%v", err)
 	}
@@ -123,47 +140,41 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 
 	override := f.confinement
 	if override == "" {
-		override = os.Getenv("MONOAGENT_API_CONFINEMENT")
+		override = getenv("MONOAGENT_API_CONFINEMENT")
 	}
 	if override != "" {
 		if _, err := openaiapi.ParsePolicy(override); err != nil {
 			return nil, errInvalidInput("%v", err)
 		}
 	}
-	contextMax, err := effectiveContextMax(f.contextConfinement, os.Getenv)
+	contextMax, err := effectiveContextMax(f.contextConfinement, getenv)
 	if err != nil {
 		return nil, err
 	}
-	autoMax, err := effectiveAutoMax(f.autoConfinement, os.Getenv)
+	autoMax, err := effectiveAutoMax(f.autoConfinement, getenv)
 	if err != nil {
 		return nil, err
 	}
 	v1 := f.v1Addr
 	if v1 == "" {
-		v1 = os.Getenv("MONOAGENT_API_V1_ADDR")
+		v1 = getenv("MONOAGENT_API_V1_ADDR")
 	}
 	if v1 != "" {
-		if err := validListenAddr(v1); err != nil {
+		if err := apiconfig.ValidListenAddr(v1); err != nil {
 			return nil, errInvalidInput("--v1-addr (MONOAGENT_API_V1_ADDR) must be host:port, such as 127.0.0.1:9443 or :9443: %v", err)
 		}
 	}
 
 	deps := openaiapi.DefaultDeps(db, getVersion())
 	deps.Logf = logf
-	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1, logf: logf}, nil
-}
-
-// validListenAddr checks the shape of a listen address: host:port with a
-// numeric port. The host may be empty, as in :9443.
-func validListenAddr(addr string) error {
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return err
-	}
-	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return fmt.Errorf("%q is not a port number", port)
-	}
-	return nil
+	resolved := apiconfig.ResolveAll(apiconfig.Flags{
+		V1Addr: f.v1Addr, Confinement: f.confinement, ContextConfinement: f.contextConfinement,
+		AutoConfinement: f.autoConfinement, MaxConcurrent: f.maxConcurrent,
+	}, os.Getenv, saved)
+	return &apiRuntime{
+		deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1,
+		tlsCertFile: saved.TLSCertFile, tlsKeyFile: saved.TLSKeyFile, resolved: resolved, logf: logf,
+	}, nil
 }
 
 // gateway builds the gateway on first use. A process that cannot (another one
@@ -255,7 +266,7 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	tlsCfg, err := tlsserve.Resolve(tlsserve.Config{
-		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv,
+		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv, CertFile: a.tlsCertFile, KeyFile: a.tlsKeyFile,
 		CacheDir: "api-tls", CommonName: "monoagentcli API server (self-signed)", Label: "API server",
 		Warn: func(msg string) { a.logf("%s", msg) },
 	})

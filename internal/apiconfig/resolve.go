@@ -144,18 +144,28 @@ func Overlay(saved Settings, getenv func(string) string) func(string) string {
 	}
 }
 
-// EnvWithSaved loads the saved settings, checks them and returns Overlay over getenv. A server
-// does not start on a setting that fails its rule, so neither do the readers that stand for a
-// server started now: the error names each setting and says how to fix it. A saved document
-// that cannot be read is the error of Load.
-func EnvWithSaved(ctx context.Context, db *sql.DB, getenv func(string) string) (func(string) string, error) {
+// LoadValid is Load followed by Validate: the saved settings a server may start on. A server
+// does not start on a setting that fails its rule, so the error (a *ValidationError, wrapped)
+// names each setting and says how to fix it. A saved document that cannot be read is the error
+// of Load.
+func LoadValid(ctx context.Context, db *sql.DB) (Settings, error) {
 	saved, err := Load(ctx, db)
 	if err != nil {
-		return nil, err
+		return Settings{}, err
 	}
 	if problems := Validate(saved); len(problems) > 0 {
-		return nil, fmt.Errorf("saved API settings: %w; change them with `monoagentcli api config set`, or remove one with `monoagentcli api config unset <setting>`",
+		return Settings{}, fmt.Errorf("saved API settings: %w; change them with `monoagentcli api config set`, or remove one with `monoagentcli api config unset <setting>`",
 			&ValidationError{Problems: problems})
+	}
+	return saved, nil
+}
+
+// EnvWithSaved is LoadValid and Overlay over getenv: the environment that the readers which
+// stand for a server started now should read.
+func EnvWithSaved(ctx context.Context, db *sql.DB, getenv func(string) string) (func(string) string, error) {
+	saved, err := LoadValid(ctx, db)
+	if err != nil {
+		return nil, err
 	}
 	return Overlay(saved, getenv), nil
 }
