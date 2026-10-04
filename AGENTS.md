@@ -508,8 +508,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `api key list|show|update|revoke`, `api models` and `api status` complete
   the group (all take `--json`; exit 2 not found, 3 invalid input).
   `api key list --all-profiles` is the one command that spans profiles
-  (metadata only). `api models` evaluates this shell's flags and environment,
-  not a running server; `api status` reports what a running daemon applies.
+  (metadata only). `api models` evaluates this shell's flags, environment and
+  saved settings (see **Server settings**), not a running server; `api status`
+  reports what a running daemon applies.
   `monoagentcli mcp` serves the same key management and the model list as tools
   for its own profile, with no `--all-profiles`: `api_key_list` and
   `api_models_list`, and with `--allow-mutations` `api_key_create`,
@@ -855,6 +856,102 @@ a key. It lives in `internal/openaiapi/`; the spec is
   among others), and never a prompt, an answer, a tool name, argument or
   result, or a key. Stopping the server
   answers a turn in flight with a 503 the client can retry.
+- **Server settings.** The settings a server reads at start can be saved in the
+  database, so that a daemon the login service starts (which has no flags and
+  not this shell's environment) has them: `monoagentcli api config
+  show|set|unset`. There are ten, named by the keys of `api config show --json`:
+  `v1_addr`, `tls_cert_file`, `tls_key_file`, `confinement`,
+  `context_confinement`, `auto_confinement`, `max_concurrent`, `turn_timeout`,
+  `image_runtimes` and `tool_runtimes`. `set` takes the flags the server has
+  (`--v1-addr`, `--confinement`, `--context-confinement`, `--auto-confinement`,
+  `--max-concurrent`) and `--tls-cert-file`, `--tls-key-file`, `--turn-timeout`,
+  `--image-runtimes` and `--tool-runtimes`, which `httpapi` and `daemon` do not
+  have (the environment is the only way to give those at a start); it changes
+  only the settings it is given, and `unset` takes keys (or a flag's spelling,
+  `v1-addr`) or `--all`. A value has the syntax of its environment variable and
+  is refused where the flag or the variable would be (exit 3, naming the
+  setting; `internal/openaiapi` owns the rules, `internal/apiconfig` the
+  document), and an empty one is refused (use `unset`). What is accepted is
+  stored in a canonical spelling (`900s` as `15m`, `agy, Codex` as
+  `antigravity,codex`). Per setting the order is **flag, then environment
+  variable, then saved, then default**; the two TLS files are one setting (if
+  either variable is set, both come from the environment, and one without the
+  other is an error there, as before). `newAPIRuntime`, `api models` and
+  `api status` read all of it through `internal/apiconfig`, so what they say is
+  what a server started now would do. The saved settings are one JSON row
+  (`{"v":1, ...}`, key `api_gateway_config`) of the existing `settings` table,
+  machine-wide like the daemon and not per profile, so a `--db-path` other than
+  the default edits a database that the login service's daemon does not read.
+  Every change is one `BEGIN IMMEDIATE` read-modify-write, so two writers never
+  lose each other's change; a
+  field this binary does not know is kept when the row is written, and a row in
+  a higher format (`v`) is refused and never rewritten.
+- **Applying a change, and where a setting stands.** A server reads the saved
+  settings when it starts and never while it runs (the policy is bound to each
+  listener when it is mounted). `monoagentcli daemon restart` restarts the
+  daemon through the auto-start service it is registered as (`launchctl
+  kickstart -k`, `systemctl --user restart`, the Windows Scheduled Task's end and
+  run; see `daemon install`), and says first, on stderr, that this interrupts
+  what the daemon is running (workflows, org runs). A daemon that is not
+  registered cannot be restarted by it (exit 3: stop it and start it again, or
+  `daemon install`); one started by hand while the service is registered has to
+  be stopped first. `--json` prints `{"restarted":true,"via":"launchd"}` (`via`
+  is `launchd`, `systemd` or `schtasks`). The running daemon records the
+  effective value and the source (`flag`, `env`, `saved` or `default`) of every
+  setting in its heartbeat (`api_settings`), and `api config show` gives each
+  setting a `state` from it: `applied` (the daemon runs the saved value, or the
+  default where none is saved, and a start now would resolve that),
+  `pending_restart` (a start now would resolve something else), `overridden`
+  (the daemon was given a flag or a variable of its own, so a saved value has no
+  effect until that is removed, whether or not one is saved), `not_running` or
+  `unknown` (a daemon that predates the report). The state ignores this shell's
+  environment, which a login service does not read; `effective` and `source`
+  are what a server started from this shell would use. `restart_needed` is true
+  when a setting is `pending_restart`, and `daemon.autostart` says whether
+  `daemon restart` can restart the daemon.
+- **The exposure gate.** A change that makes the server reach further than it
+  did needs `--yes`: without it `set` and `unset` exit 3 with the reasons, on a
+  terminal too (there is no prompt), and `--dry-run` says what a change would do,
+  the reasons included, and saves nothing. With `--json` they print the
+  `show` document of the state after the change plus `applied`, `changed` (keys)
+  and `widening` (a list of `{key, reason}`). The gate compares the effective
+  policy of the two saved documents (`apiconfig.Widens`): a dedicated listener
+  beyond this machine where there was none or a loopback one; a higher class for
+  `confinement`, `context_confinement` or `auto_confinement`, on the loopback
+  kind of listener or on the kind beyond this machine (both are judged whether or
+  not a `v1_addr` is saved, because the daemon's own environment may supply one:
+  so raising `confinement` to `sandboxed` or `any` always needs `--yes`, and
+  `chat-only` never does); a runtime list that gains a runtime that is not in
+  the default list, or leaves `none`. Unsetting is judged the same way: removing
+  a `confinement` of `chat-only` or an `image_runtimes` of `none` gives the
+  server more reach. Narrowing, `max_concurrent`, `turn_timeout` and the TLS
+  files never need it, and a value that equals the default is not a change of
+  the policy. A move from one non-loopback address to another is not seen
+  (`192.168.1.10:9443` to `:9443`). A row that is not a JSON object, or whose
+  `v` is not a whole number, is an error for every `api config` command (exit 1;
+  there is no repair command, so remove the row by hand). A value that fails its
+  rule in a row somebody edited is listed under `problems` by `show`, stops the
+  server, `api models` and `api status` (exit 3, naming the setting), is not
+  looked at by a `set` that does not touch it, and is removed by `unset`.
+- **One surface each, as far as it goes today.** The aim of this phase is that
+  every setting and action of the API can be done in the CLI (a headless
+  server has nothing else), in MCP and in the desktop app, with the same
+  behaviour, the same checks and the same words (the documents are built in
+  `internal/apiconfig`, which the CLI only prints). Where each stands:
+
+  | | CLI | MCP | Desktop |
+  |---|---|---|---|
+  | keys: create, list, revoke, context on/off | `api key` | `api_key_*` | yes |
+  | key: rename | `api key update --name` | `api_key_update` | not yet |
+  | models, capabilities, what `auto` may pick | `api models` | `api_models_list` | yes (read-only) |
+  | status: listeners, base URLs, scheme, confinement | `api status` | not yet | yes (read-only) |
+  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | not yet | yes (Settings › Jev) |
+  | server settings: show | `api config show` | not yet (stage 2) | read-only fragments (stage 3: the block) |
+  | server settings: change and keep | `api config set`, `unset` | not yet (stage 2) | not yet (stage 3) |
+  | apply a change (restart the daemon) | `daemon restart` | not yet (stage 2) | not yet (stage 3) |
+
+  Until MCP has it, `api_models_list` reads the environment and not the saved
+  settings.
 - **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
   folded until opened, read again when Settings is shown again) runs the
   commands above through `wails-app/app_api.go`. It shows every listener that
@@ -1909,6 +2006,8 @@ regardless of where the binary runs from.
 | `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
 | `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
 | `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
+
+The ten `MONOAGENT_API_*` settings above (`V1_ADDR`, `TLS_CERT` and `TLS_KEY`, the three `*CONFINEMENT`, `IMAGE_RUNTIMES`, `TOOL_RUNTIMES`, `MAX_CONCURRENT`, `TURN_TIMEOUT`) can also be saved in the database with `monoagentcli api config set`: a variable that is set (not empty) still wins over a saved value, and a flag over both; the default is what is used when none of the three gives one. See **Server settings** under [OpenAI-compatible API](#openai-compatible-api-v1).
 
 ### UI style guide: form controls
 
