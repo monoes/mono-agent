@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -82,6 +81,12 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
+			// What a server started now would read: this shell's environment, with the settings
+			// saved with `api config` under it.
+			getenv, err := savedEnv(cmd.Context(), db.DB)
+			if err != nil {
+				return err
+			}
 			active, err := apikeys.NewStore(db.DB).CountActive(cmd.Context(), cfg.ProfileID)
 			if err != nil {
 				return err
@@ -92,7 +97,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			autoStatus := openaiapi.DefaultAuto(db.DB).Status(cmd.Context(), cfg.ProfileID)
 			st.Auto = apiAutoJSON{Available: autoStatus.Available, Missing: autoStatus.Missing, KeySource: autoStatus.KeySource}
 			hb, live := daemonhb.Read()
-			mainAddr, v1Addr := httpapi.ResolveAddr(""), os.Getenv("MONOAGENT_API_V1_ADDR")
+			mainAddr, v1Addr := httpapi.ResolveAddr(""), getenv("MONOAGENT_API_V1_ADDR")
 			mainFromDaemon, v1FromDaemon := false, false
 			if live {
 				st.Daemon.Running, st.Daemon.APIAddr, st.Daemon.V1Addr = true, hb.APIAddr, hb.V1Addr
@@ -114,9 +119,9 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 				}
 				st.Listeners = append(st.Listeners, l)
 			}
-			override := os.Getenv
+			override := getenv
 			// The context maximum is the daemon's when it reported one.
-			contextMax, err := effectiveContextMax("", os.Getenv)
+			contextMax, err := effectiveContextMax("", getenv)
 			if err != nil {
 				return err
 			}
@@ -127,7 +132,7 @@ func newAPIStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			// The auto maximum is the daemon's too. A daemon that predates the setting
 			// reports none, and auto is chat-only there.
-			autoMax, err := effectiveAutoMax("", os.Getenv)
+			autoMax, err := effectiveAutoMax("", getenv)
 			if err != nil {
 				return err
 			}

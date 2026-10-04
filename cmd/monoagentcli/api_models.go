@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"text/tabwriter"
 
@@ -69,30 +68,34 @@ func newAPIModelsCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			policy, err := effectivePolicy(addr, confinement, os.Getenv)
-			if err != nil {
-				return err
-			}
-			if policy.ContextMax, err = effectiveContextMax(contextConfinement, os.Getenv); err != nil {
-				return err
-			}
-			if policy.AutoMax, err = effectiveAutoMax(autoConfinement, os.Getenv); err != nil {
-				return err
-			}
-			imageRuntimes, err := openaiapi.EffectiveImageRuntimes(os.Getenv)
-			if err != nil {
-				return errInvalidInput("%v", err)
-			}
-			toolRuntimes, err := openaiapi.EffectiveToolRuntimes(os.Getenv)
-			if err != nil {
-				return errInvalidInput("%v", err)
-			}
-			forContext := policy.ForContextKey()
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
+			getenv, err := savedEnv(cmd.Context(), db.DB) // this shell's environment, with the saved settings under it
+			if err != nil {
+				return err
+			}
+			policy, err := effectivePolicy(addr, confinement, getenv)
+			if err != nil {
+				return err
+			}
+			if policy.ContextMax, err = effectiveContextMax(contextConfinement, getenv); err != nil {
+				return err
+			}
+			if policy.AutoMax, err = effectiveAutoMax(autoConfinement, getenv); err != nil {
+				return err
+			}
+			imageRuntimes, err := openaiapi.EffectiveImageRuntimes(getenv)
+			if err != nil {
+				return errInvalidInput("%v", err)
+			}
+			toolRuntimes, err := openaiapi.EffectiveToolRuntimes(getenv)
+			if err != nil {
+				return errInvalidInput("%v", err)
+			}
+			forContext := policy.ForContextKey()
 			models, err := openaiapi.LoadModels(cmd.Context(), db.DB)
 			if err != nil {
 				return err

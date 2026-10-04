@@ -118,12 +118,8 @@ type apiRuntime struct {
 // saved with `api config` (an empty variable is an unset one). Bad values are invalid input
 // (exit 3), saved ones included: a server does not start on settings that fail their rules.
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
-	saved, err := apiconfig.LoadValid(context.Background(), db)
+	saved, err := savedSettings(context.Background(), db)
 	if err != nil {
-		var invalid *apiconfig.ValidationError
-		if errors.As(err, &invalid) {
-			return nil, errInvalidInput("%v", err)
-		}
 		return nil, err
 	}
 	getenv := apiconfig.Overlay(saved, os.Getenv) // the environment, with the saved settings under it
@@ -175,6 +171,28 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 		deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1,
 		tlsCertFile: saved.TLSCertFile, tlsKeyFile: saved.TLSKeyFile, resolved: resolved, logf: logf,
 	}, nil
+}
+
+// savedSettings loads the settings saved with `api config` for whatever stands for a server
+// started now (the server, `api models`, `api status`). Settings that fail their rules are
+// invalid input (exit 3), as a bad flag is; a document that cannot be read is an error.
+func savedSettings(ctx context.Context, db *sql.DB) (apiconfig.Settings, error) {
+	saved, err := apiconfig.LoadValid(ctx, db)
+	var invalid *apiconfig.ValidationError
+	if errors.As(err, &invalid) {
+		return apiconfig.Settings{}, errInvalidInput("%v", err)
+	}
+	return saved, err
+}
+
+// savedEnv is the process environment with the saved settings under it: what a server started
+// now would read in its place.
+func savedEnv(ctx context.Context, db *sql.DB) (func(string) string, error) {
+	saved, err := savedSettings(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	return apiconfig.Overlay(saved, os.Getenv), nil
 }
 
 // gateway builds the gateway on first use. A process that cannot (another one
