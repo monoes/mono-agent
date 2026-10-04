@@ -553,6 +553,53 @@ before giving a key to anyone you would not give a shell.
   listener that faces the internet. There is no CORS: browser clients are out
   of scope.
 
+**Saved server settings.** The settings that decide the exposure above
+(`--v1-addr`, the TLS files, the three confinement classes and the two runtime
+lists) and the two limits can be saved with `monoagentcli api config set`, so
+that a daemon the login service starts, which has no flags, has them. They are
+one JSON row (`api_gateway_config`) of the `settings` table of
+`~/.monoagent/monoagent.db`: paths of TLS files, never their contents, and no
+secret. The order is flag, then environment variable, then saved, then default,
+so a saved value never loosens what a flag or a variable of the process says (a
+`MONOAGENT_API_CONFINEMENT=chat-only` in the service's own environment holds
+whatever is saved), and it fills what they leave out.
+
+- Whoever can write that database (the OS user the daemon runs as, and root)
+  can change what the daemon exposes the next time it starts, as whoever can
+  edit its LaunchAgent, systemd unit or Scheduled Task can. The row is not a new
+  boundary: run the server as a dedicated OS user, whose database it is.
+- A change takes effect when the server starts, never while it runs.
+  `monoagentcli daemon restart` starts it again through the service manager the
+  daemon is registered with, and **interrupts what the daemon is running**
+  (workflows, org runs); it says so first. A daemon that is not registered, or
+  that was started by hand, is not restarted by it. How the daemon ends is the
+  service manager's (launchd, systemd) and nothing here claims a graceful stop.
+  On Windows the Scheduled Task is ended with `schtasks /end`, and whether that
+  stops the process its `cmd` wrapper started was not verified on Windows; the
+  command waits for the daemon to release its lock before it starts it again.
+- A change that makes the server reach further needs `--yes` (`api config set`
+  and `unset`; without it exit 3 with the reasons, `--dry-run` shows them): a
+  dedicated listener beyond this machine, a higher confinement class (of a
+  listener, of a `--context` key or of `auto`) on a listener on this machine or
+  beyond it, a runtime outside the default list, or tool calling or image
+  generation switched on again. It guards against a script, an agent's shell
+  tool or a hurried edit widening the server without saying so. It is not an
+  access control: whoever can run the CLI as your OS user can pass `--yes`.
+  The check compares the effective policy, so it also catches an `unset` that
+  takes a value held below its default back up. Two limits: a move from one
+  address beyond the machine to another (one interface to all of them) is not
+  seen as a widening; and raising `confinement` always needs `--yes`, because
+  the daemon's own environment may name a listener beyond the machine that the
+  row does not.
+- A saved value that fails its rule (a hand edit) makes `httpapi` and `daemon`
+  exit at start (exit 3, naming the setting), and `api models` and `api status`
+  refuse, rather than guess; `api config unset <setting>` removes it. A row that
+  is not a JSON object cannot be changed by these commands and has to be removed
+  by hand, and one written by a newer `monoagentcli` is never rewritten.
+- The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
+  setting's effective value and where it came from (`flag`, `env`, `saved`,
+  `default`): addresses, classes and paths, no secret.
+
 **Context keys.** A key created with `--context` adds up to five excerpts
 (1,200 characters each, source base names only, never paths) from that
 profile's own documents and captures to the system prompt, framed as data
