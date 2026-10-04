@@ -12,8 +12,9 @@ func newAPICmd(cfg *globalConfig) *cobra.Command {
 		Long: "The OpenAI-compatible API serves the local agent runtimes (claude, codex, antigravity, …) through " +
 			"/v1/models and /v1/chat/completions. It runs inside `monoagentcli httpapi` and `monoagentcli daemon`; " +
 			"`--v1-addr` gives it a dedicated listener, which is how it is exposed beyond loopback (TLS required). " +
-			"These commands manage its API keys and show what it serves.",
+			"These commands manage its API keys, show what it serves, and show and save the settings of its server " +
+			"(`api config`).",
 	}
-	cmd.AddCommand(newAPIKeyCmd(cfg), newAPIModelsCmd(cfg), newAPIStatusCmd(cfg))
+	cmd.AddCommand(newAPIKeyCmd(cfg), newAPIModelsCmd(cfg), newAPIStatusCmd(cfg), newAPIConfigCmd(cfg))
 	return cmd
 }
