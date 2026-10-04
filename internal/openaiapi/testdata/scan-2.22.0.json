@@ -1,0 +1,99 @@
+{
+  "v": 1,
+  "agents": [
+    {
+      "id": "claude",
+      "installed": true,
+      "binary": "/usr/local/bin/claude",
+      "version": "1.0.0",
+      "streams_incrementally": true,
+      "full_access": true,
+      "tool_activity_fidelity": "full",
+      "resume": true,
+      "effort": true,
+      "max_turns": true,
+      "reports_cost": true,
+      "sandbox_modes": [
+        "read-only",
+        "workspace-write",
+        "full"
+      ],
+      "access_modes": [
+        "scoped",
+        "read",
+        "full"
+      ],
+      "native_sandbox": "monomind",
+      "caller_tools": true
+    },
+    {
+      "id": "codex",
+      "installed": true,
+      "binary": "/usr/local/bin/codex",
+      "version": null,
+      "streams_incrementally": false,
+      "full_access": true,
+      "tool_activity_fidelity": "full",
+      "resume": true,
+      "effort": true,
+      "max_turns": false,
+      "reports_cost": false,
+      "sandbox_modes": [
+        "read-only",
+        "workspace-write",
+        "full"
+      ],
+      "access_modes": [
+        "scoped",
+        "read",
+        "full"
+      ],
+      "native_sandbox": "full",
+      "caller_tools": true
+    },
+    {
+      "id": "antigravity",
+      "installed": true,
+      "binary": "/usr/local/bin/antigravity",
+      "version": "1.0.0",
+      "streams_incrementally": true,
+      "full_access": true,
+      "tool_activity_fidelity": "full",
+      "resume": true,
+      "effort": true,
+      "max_turns": false,
+      "reports_cost": false,
+      "sandbox_modes": [
+        "restricted",
+        "full"
+      ],
+      "access_modes": [
+        "scoped",
+        "full"
+      ],
+      "native_sandbox": "none",
+      "caller_tools": true
+    },
+    {
+      "id": "hermes",
+      "installed": true,
+      "binary": "/usr/local/bin/hermes",
+      "version": null,
+      "streams_incrementally": false,
+      "full_access": false,
+      "tool_activity_fidelity": "none",
+      "resume": false,
+      "effort": false,
+      "max_turns": false,
+      "reports_cost": false,
+      "sandbox_modes": [
+        "full"
+      ],
+      "access_modes": [
+        "scoped"
+      ],
+      "native_sandbox": "none",
+      "caller_tools": true
+    }
+  ]
+}

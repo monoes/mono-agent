@@ -71,6 +71,9 @@ type SandboxFields struct {
 	Sandbox            string `json:"sandbox,omitempty"`
 	SandboxUnsupported bool   `json:"sandbox_unsupported,omitempty"`
 	SandboxStatus      string `json:"sandbox_status,omitempty"`
+	// NativeSandbox is who confines the turn's native tools, as ScanEntry
+	// reports it per runtime: "monomind", a vendor sandbox mode or "none".
+	NativeSandbox string `json:"native_sandbox,omitempty"`
 }
 
 // SandboxArgs is the single place that decides how a turn on runtime gets

@@ -25,7 +25,16 @@ type Heartbeat struct {
 	TS         time.Time `json:"ts"`
 	APIAddr    string    `json:"api_addr,omitempty"`    // "" when the API is off
 	BridgeAddr string    `json:"bridge_addr,omitempty"` // "" when the extension bridge is off
-	Version    string    `json:"version,omitempty"`
+	V1Addr     string    `json:"v1_addr,omitempty"`     // "" without a dedicated OpenAI-compatible API listener
+	// APIConfinement and V1Confinement are the confinement policies the daemon
+	// really applies on the OpenAI-compatible API of its HTTP API listener and
+	// of its dedicated listener ("" where that listener does not serve it).
+	// ContextConfinement is the strongest class a key created with --context
+	// may use. `api status` cannot work any of them out from its own environment.
+	APIConfinement     string `json:"api_confinement,omitempty"`
+	V1Confinement      string `json:"v1_confinement,omitempty"`
+	ContextConfinement string `json:"context_confinement,omitempty"`
+	Version            string `json:"version,omitempty"`
 	// Schedules are the registered schedule triggers with the scheduler's
 	// own next fire time, refreshed on every write.
 	Schedules []Schedule `json:"schedules,omitempty"`

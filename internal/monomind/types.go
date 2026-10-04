@@ -408,6 +408,10 @@ type ScanEntry struct {
 	// (agent-exec-sandbox, monomind 2.19.0); nil from an older monomind.
 	// monomind refuses any other mode, so SandboxArgs checks this first.
 	SandboxModes []string `json:"sandbox_modes,omitempty"`
+	// NativeSandbox says who confines the runtime's own tools: "monomind"
+	// (its allow-list gate is the only tool gate, as for claude), a vendor
+	// sandbox mode, or "none"; "" from a monomind that predates the field.
+	NativeSandbox string `json:"native_sandbox,omitempty"`
 	// AccessModes are the --access modes the runtime accepts ("scoped",
 	// "read", "full"; agent-exec-access-read). CallerTools says stdio
 	// caller tools reach the model, CallerToolsWithFullAccess that they
