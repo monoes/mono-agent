@@ -460,6 +460,20 @@
         "nameInvalid": "Ese nombre no es válido. Usa de 1 a 64 caracteres: letras, dígitos, espacio, . _ -, empezando por una letra o un dígito, y que no tenga la forma de un id de clave (key_ y 12 caracteres).",
         "keyNotFound": "Esa clave ya no existe: puede que se haya revocado desde la terminal o desde otra ventana.",
         "unknown": "Error desconocido"
+      },
+      "config": {
+        "errors": {
+          "maxConcurrent": "El número de turnos a la vez debe ser un entero de {{min}} a {{max}}.",
+          "turnTimeout": "El tiempo límite de un turno debe ser una duración de al menos {{min}}, como {{example}}.",
+          "class": "Eso no es una clase. Usa chat-only, sandboxed o any.",
+          "addr": "La dirección debe ser host:puerto, como 127.0.0.1:9443 o :9443.",
+          "imageRuntimes": "Indica una lista de ids de entornos separados por comas, o none para desactivar la generación de imágenes.",
+          "toolRuntimes": "Indica una lista de ids de entornos separados por comas, o none para desactivar las llamadas a herramientas.",
+          "empty": "Hace falta un valor. Para volver al valor por defecto, usa «Usar el valor por defecto».",
+          "tlsPair": "El archivo del certificado y el de la clave se guardan juntos: indica los dos.",
+          "widenedMeanwhile": "No se guardó nada: los ajustes guardados cambiaron mientras tanto y este cambio ahora hace que el servidor llegue más lejos. Vuelve a intentarlo para revisarlo.",
+          "notRegistered": "El daemon no está registrado para arrancar solo, así que desde aquí nada puede reiniciarlo."
+        }
       }
     }
   },

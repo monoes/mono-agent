@@ -460,6 +460,20 @@
         "nameInvalid": "That name isn't allowed. Use 1 to 64 characters: letters, digits, space, . _ -, starting with a letter or digit, and not shaped like a key id (key_ and 12 characters).",
         "keyNotFound": "That key no longer exists: it may have been revoked from the terminal or another window.",
         "unknown": "Unknown error"
+      },
+      "config": {
+        "errors": {
+          "maxConcurrent": "The number of turns at once must be a whole number from {{min}} to {{max}}.",
+          "turnTimeout": "The turn timeout must be a duration of at least {{min}}, such as {{example}}.",
+          "class": "That isn't a class. Use chat-only, sandboxed or any.",
+          "addr": "The address must be host:port, such as 127.0.0.1:9443 or :9443.",
+          "imageRuntimes": "Give a comma-separated list of runtime ids, or none to switch image generation off.",
+          "toolRuntimes": "Give a comma-separated list of runtime ids, or none to switch tool calling off.",
+          "empty": "A value is needed here. To go back to the default, use “Use the default”.",
+          "tlsPair": "The certificate file and the key file are saved together: give both.",
+          "widenedMeanwhile": "Nothing was saved: the saved settings changed meanwhile, and this change now makes the server reach further. Try again to review it.",
+          "notRegistered": "The daemon isn't registered for auto-start, so nothing can restart it from here."
+        }
       }
     }
   },
