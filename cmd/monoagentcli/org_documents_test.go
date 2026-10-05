@@ -57,3 +57,26 @@ func TestOrgDocumentsPrintsReworkAndExhaustedCap(t *testing.T) {
 		t.Fatal("a bad org name must be refused")
 	}
 }
+
+func TestOrgScheduleAuditPrintsEntriesNewestFirst(t *testing.T) {
+	root := t.TempDir()
+	writeOrgFile(t, root, "sched/schedule-audit.jsonl",
+		`{"ts":1000,"event":"scheduled-start-refused","msg":"preflight refused"}`+"\n"+
+			`{"ts":2000,"event":"scheduled-tick-deferred","msg":"held"}`+"\n")
+	cmd := newOrgCmd(&globalConfig{})
+	cmd.SetArgs([]string{"--project", root, "schedule-audit", "sched"})
+	var runErr error
+	out := captureStdout(t, func() { runErr = cmd.Execute() })
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	var v struct {
+		Entries []struct{ Event, Kind, Msg string }
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &v); err != nil {
+		t.Fatalf("non-JSON %q: %v", out, err)
+	}
+	if len(v.Entries) != 2 || v.Entries[0].Kind != "coalesced" || v.Entries[1].Kind != "refused" || v.Entries[1].Msg != "preflight refused" {
+		t.Fatalf("got %+v", v)
+	}
+}

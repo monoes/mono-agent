@@ -24,6 +24,7 @@ everything else: it routed the messages, ran the real document store
 | `events.ndjson` | `org events sec --run <id>`: the whole bus of the completed run, 57 lines |
 | `doc-events.jsonl`, `doc-snapshot.json`, `doc-notices.jsonl` | the run's document store: `.monomind/orgs/sec/docs/<run>/` (hash-chained event log, state snapshot, delivery notices) |
 | `schedule-audit.jsonl`, `schedule-audit-bus.ndjson` | `.monomind/orgs/sched/schedule-audit.jsonl` and the same line on the run's bus, from `org serve` with `schedule: "1m"` and a run that outlasted its interval |
+| `schedule-audit-refused.jsonl` | `.monomind/orgs/sec/schedule-audit.jsonl` from `org serve` (`schedule: "25s"`, signed org) started with `bwrap` and `socat` off PATH: two `scheduled-start-refused` lines carrying the host-preflight (R6) message. `scheduled-tick-skipped` was not reproduced live; its shape is source-derived (`orgrt/scheduled-run.ts`). The same run also showed `scheduled-tick-deferred` x3 and four runs with four separate `docs/<run>/` stores. |
 | `org-sec.json` | the org definition |
 | `fake-codex.py` | the scripted stand-in runtime (not monomind output) |
 

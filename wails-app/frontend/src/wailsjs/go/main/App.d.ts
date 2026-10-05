@@ -229,6 +229,10 @@ export function GetOrgDecisions(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgDocuments(arg1:string,arg2:string):Promise<string>;
 
+export function GetOrgScheduleAudit(arg1:string):Promise<string>;
+
+export function SetOrgSchedule(arg1:string,arg2:string):Promise<string>;
+
 export function GetOrgDesign(arg1:string):Promise<string>;
 
 export function GetOrgFlow(arg1:string,arg2:string):Promise<string>;

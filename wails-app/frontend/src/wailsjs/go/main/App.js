@@ -446,6 +446,14 @@ export function GetOrgDecisions(arg1, arg2) {
   return window['go']['main']['App']['GetOrgDecisions'](arg1, arg2);
 }
 
+export function SetOrgSchedule(arg1, arg2) {
+  return window['go']['main']['App']['SetOrgSchedule'](arg1, arg2);
+}
+
+export function GetOrgScheduleAudit(arg1) {
+  return window['go']['main']['App']['GetOrgScheduleAudit'](arg1);
+}
+
 export function GetOrgDocuments(arg1, arg2) {
   return window['go']['main']['App']['GetOrgDocuments'](arg1, arg2);
 }
