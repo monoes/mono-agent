@@ -15,7 +15,8 @@ import (
 var readOnlyAPIConfigTools = []string{"api_status", "api_config_get"}
 
 var mutatingAPIConfigTools = map[string]map[string]bool{
-	"api_config_set": {"readOnlyHint": false},
+	"api_config_set":   {"readOnlyHint": false},
+	"api_config_apply": {"readOnlyHint": false, "destructiveHint": true},
 }
 
 func TestAPIConfigReadToolsAreListedWithoutTheFlagAndAnnotated(t *testing.T) {

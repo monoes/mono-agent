@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/monoes/mono-agent/internal/apiconfig"
+	"github.com/monoes/mono-agent/internal/autostart"
 	"github.com/monoes/mono-agent/internal/openaiapi"
 )
 
@@ -44,6 +46,21 @@ func apiConfigTools() []tool {
 			handler:     toolAPIConfigGet,
 		},
 		apiConfigSetTool(),
+		{
+			name: "api_config_apply",
+			description: "Restart the daemon so that it reads the settings saved with api_config_set: what `monoagentcli daemon restart` does, through the same function and the service manager the daemon is registered with " +
+				"(a LaunchAgent on macOS, a systemd --user unit on Linux, a Scheduled Task on Windows; `monoagentcli daemon install` registers it). " +
+				"The result is the document of `daemon restart --json`: {restarted, via}, via being launchd, systemd or schtasks. " +
+				"It interrupts whatever the daemon is running (workflows, org runs). How the daemon ends is the service manager's, and nothing here promises that it finishes what it is doing first. " +
+				"Use it when api_config_get says restart_needed (some setting is pending_restart) and the user is ready for that. It saves no setting and takes no argument. " +
+				"A daemon that is not registered for auto-start (daemon.autostart is false in api_config_get) is not restarted by anything: the call fails and says that the user can stop it and start `monoagentcli daemon` again, " +
+				"or run `monoagentcli daemon install` to have the system manage it. A daemon started by hand while the service is registered has to be stopped first. " +
+				"Afterwards api_config_get shows what the daemon started with.",
+			schema:      objSchema(nil),
+			annotations: map[string]bool{"readOnlyHint": false, "destructiveHint": true},
+			mutating:    true,
+			handler:     toolAPIConfigApply,
+		},
 	}
 }
 
@@ -80,6 +97,29 @@ func toolAPIConfigGet(ctx context.Context, s *Server, args json.RawMessage) (int
 		return nil, err
 	}
 	return apiconfig.Show(ctx, rt.db.DB, s.apiEnv())
+}
+
+// installer is the service manager: Options.APIEnv's, else this system's own.
+func (s *Server) installer() autostart.Installer {
+	if in := s.opts.APIEnv.Installer; in != nil {
+		return in
+	}
+	return autostart.New()
+}
+
+// toolAPIConfigApply restarts the daemon as `daemon restart` does, and answers with the words of
+// that command: its document, and its errors (a daemon that is not registered, a service manager that
+// fails). It takes no argument: what it applies is what is saved.
+func toolAPIConfigApply(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	res, err := autostart.RestartRegistered(ctx, s.installer())
+	if err != nil {
+		var notRegistered *autostart.NotRegisteredError
+		if errors.As(err, &notRegistered) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("restart: %w", err)
+	}
+	return res, nil
 }
 
 // errBadEnvironment is the answer to a value in this server's environment that fails its rule.
