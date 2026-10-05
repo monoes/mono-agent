@@ -114,9 +114,12 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 			orgs := newOrgServices(db, engine)
-			apiRT, err := newAPIRuntime(db.DB, api, func(format string, args ...any) { orgs.logf("api: "+format, args...) })
+			apiRT, err := daemonAPIRuntime(db.DB, api, func(format string, args ...any) { orgs.logf("api: "+format, args...) })
 			if err != nil {
 				return err
+			}
+			if apiRT.disabled != nil { // the settings saved with `api config` cannot be used: everything else runs
+				fmt.Fprintf(os.Stderr, "warning: OpenAI-compatible API not served: %v\n", apiRT.disabled)
 			}
 			forcedExitAPI.Store(apiRT)
 			defer apiRT.drain() // runs before the database closes: no agent CLI outlives the daemon

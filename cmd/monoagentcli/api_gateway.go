@@ -101,6 +101,9 @@ type apiRuntime struct {
 	// heartbeat.
 	resolved []apiconfig.Resolved
 	logf     func(format string, args ...any)
+	// disabled is why this runtime serves nothing (the daemon found the settings saved with
+	// `api config` unusable, see daemonAPIRuntime), nil for a runtime that does.
+	disabled error
 
 	mu       sync.Mutex
 	gw       *openaiapi.Gateway // nil until built, and when it could not be
@@ -121,7 +124,7 @@ type apiRuntime struct {
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
 	saved, err := savedSettings(context.Background(), db)
 	if err != nil {
-		return nil, err
+		return nil, &savedSettingsError{err}
 	}
 	getenv := apiconfig.Overlay(saved, os.Getenv) // the environment, with the saved settings under it
 	conf, err := openaiapi.ConfigFromEnv(getenv)
@@ -172,6 +175,33 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 		deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1,
 		tlsCertFile: saved.TLSCertFile, tlsKeyFile: saved.TLSKeyFile, resolved: resolved, logf: logf,
 	}, nil
+}
+
+// savedSettingsError is the error of newAPIRuntime that comes from the settings saved with
+// `api config` (a row that cannot be read, a value that fails its rule), as against a flag or a
+// variable of this start. It is that error to everything else (the exit code, the message), and
+// the daemon tells it apart: see daemonAPIRuntime.
+type savedSettingsError struct{ err error }
+
+func (e *savedSettingsError) Error() string { return e.err.Error() }
+func (e *savedSettingsError) Unwrap() error { return e.err }
+
+// daemonAPIRuntime is newAPIRuntime for the daemon, which does more than serve the API. When the
+// settings saved with `api config` cannot be used the daemon must not stop with them: a login
+// service would start it again and again, and nothing it runs (workflows, schedules, org runs)
+// would ever run. It serves no OpenAI-compatible API instead and says why where it logs; `api
+// config show` and the repair it names are how the person finds out and fixes it. A saved setting
+// is never ignored to make the API start: ignoring a row would serve, with the defaults, a server
+// that someone had limited. A bad flag or variable of this start is still the error it was.
+func daemonAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
+	rt, err := newAPIRuntime(db, f, logf)
+	var unusable *savedSettingsError
+	if !errors.As(err, &unusable) {
+		return rt, err
+	}
+	why := fmt.Errorf("the settings saved with `monoagentcli api config` cannot be used, so this daemon does not serve the OpenAI-compatible API: %w", unusable.err)
+	logf("%v", why)
+	return &apiRuntime{logf: logf, gwErr: errors.New("the saved settings cannot be used"), disabled: why}, nil
 }
 
 // savedSettings loads the settings saved with `api config` for whatever stands for a server
@@ -259,6 +289,9 @@ func (a *apiRuntime) autoReport() string {
 // settingsReport is the effective value of every setting and where it came from, for the
 // daemon's heartbeat.
 func (a *apiRuntime) settingsReport() map[string]daemonhb.APISetting {
+	if len(a.resolved) == 0 {
+		return nil // a runtime that serves nothing resolved nothing: say nothing, as a daemon that predates the report does
+	}
 	out := make(map[string]daemonhb.APISetting, len(a.resolved))
 	for _, r := range a.resolved {
 		out[r.Key] = daemonhb.APISetting{Value: r.Text, Source: r.Source}
