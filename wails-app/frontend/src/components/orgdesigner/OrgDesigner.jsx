@@ -462,6 +462,12 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     refreshFromServer(res)
   }, [orgName, refreshFromServer])
 
+  const handleSetSchedule = useCallback(async (schedule) => {
+    const res = await api.setOrgSchedule(orgName, schedule)
+    if (res && !res.error) refreshFromServer(res)
+    return res
+  }, [orgName, refreshFromServer])
+
   // Reports-to is NOT one of UpdateOrgRole's patchable fields (see the Go
   // side's `raw` struct in app_orgs_design.go) — it has its own dedicated
   // mutator (SetOrgRoleReportsTo) because moving a role in the tree needs
@@ -599,6 +605,9 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <DesignerToolbar
         orgName={orgName}
+        schedule={orgMeta?.schedule}
+        sectionsOrg={!!orgMeta?.sections}
+        onSetSchedule={handleSetSchedule}
         validation={validation}
         pendingUpdateCount={pendingUpdateCount}
         onApplyPending={endInteraction}
