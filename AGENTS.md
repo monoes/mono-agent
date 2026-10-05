@@ -307,7 +307,8 @@ monoagentcli library logout
 ```bash
 monoagentcli mcp                     # stdio JSON-RPC MCP server, read-only tools only
 monoagentcli mcp --allow-mutations   # also serve mutating tools
-monoagentcli mcp --allow-mutations --allow-api-exposure   # also let api_config_set widen what the API's server exposes
+monoagentcli mcp --allow-mutations --allow-api-exposure   # also let api_config_set widen what the API's server exposes, and api_auto_set switch the auto model on
+monoagentcli mcp --api-only --allow-mutations --allow-api-exposure   # the same, serving the OpenAI-compatible API's tools (api_*) and no other
 ```
 
 Register it with any MCP client (stdio transport). Prefer MCP when the
@@ -426,12 +427,14 @@ existing MCP client config that relies on them.
   fails with the command's message (`the saved settings are damaged ...`), and a
   row a newer version saved is an error for all of them.
   `--allow-api-exposure` adds nothing to `--allow-mutations`, which the tool
-  needs first, and grant mode refuses it. It guards that tool and nothing else:
+  needs first, and grant mode refuses it. It guards that tool and `api_auto_set`
+  (below) and nothing else:
   `--allow-mutations` also serves `workflow_node_add` (which accepts the node type
   `system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
   that has them can have a workflow of the profile run `monoagentcli api config set
   ... --yes` as the OS user; if a model must not be able to widen the server, do
-  not give it `--allow-mutations` (SECURITY.md). A value that holds an API key
+  not give it `--allow-mutations`, or start the server with `--api-only`
+  (SECURITY.md). A value that holds an API key
   (`sk-ma-`) is refused, because what is saved is shown to whoever reads
   `api_config_get`; a value over 4096 characters (an address over 260) is
   refused; and no error repeats an argument: the reasons of the gate print the
@@ -455,15 +458,37 @@ existing MCP client config that relies on them.
   off for the MCP server's profile, as `jev enable|disable api_auto` does, and
   answers that command's `--json` document plus `auto`, what `api_status` says of
   the auto model after the change (`available`, or what it is `missing`: the
-  surface, a Jev key). Switching on needs `acknowledge_egress: true`, because the
+  surface, a Jev key). Switching on needs two things, because the
   first 4,000 characters of the last user message of a request for `auto` (of an
   image request, its prompt) and the names, descriptions and validated cost and
-  latency of the models the API serves then go to TypeSafe; without it the error
-  shows that list and nothing changes, and the result of switching on carries it
-  as `egress`. It never creates, stores, uses or shows the Jev key (it only asks
+  latency of the models the API serves then go to TypeSafe: the operator must have
+  started the MCP server with `--allow-api-exposure` (what leaves the machine is
+  the operator's decision, made when the server starts, and no argument can make
+  it: the owner's decision of 2026-10-05, after the security review of phase 6
+  found `acknowledge_egress` to be a speed bump), and the caller sets
+  `acknowledge_egress: true`. Without the first the error shows what would be
+  sent, why no argument can allow it and what the user can do (`jev enable
+  api_auto`, the desktop app) and nothing changes; without the second it shows
+  that list and nothing changes, and the result of switching on carries it
+  as `egress`. Switching off needs neither. It never creates, stores, uses or shows the Jev key (it only asks
   where one is: `TYPESAFE_API_KEY`, or the vault entry the user stored with `jev
   key set`, whose value it does not decrypt), so with no key the surface is on
   and `auto` stays unavailable, which `auto` says.
+- **`--api-only`** (or `MONOAGENT_MCP_API_ONLY=1`) serves the OpenAI-compatible
+  API's tools (the ten `api_*` tools, `apiToolNames`) and no other: no workflow,
+  vault, secret, person, org or documentation tool, and a call by name of one
+  that exists is refused ("is not served ... `--api-only`"), an unknown name
+  still unknown. It is for a model that is to manage the API and nothing else,
+  because `--allow-mutations`, which the API's mutating tools need, also serves
+  the workflow tools that can run a command as the OS user (the owner asked for
+  it on 2026-10-05, after the security review of phase 6 found that). It takes
+  tools away and changes none that stay: the mutating ones still need
+  `--allow-mutations`, the gates of `api_config_set` and `api_auto_set` are still
+  `--allow-api-exposure`, and with it that flag guards what the model reaches
+  through this server. A host that has tools of its own, such as a shell tool, is
+  not stopped by it. Grant mode refuses it. A test keeps the family and the
+  filter in step: every tool called `api_*` is one of the API's and the other way
+  round.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -604,7 +629,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `api_key_update`, `api_key_revoke`, `api_config_set`, `api_config_apply` and
   `api_auto_set` (see [MCP server](#mcp-server): creating a key there puts it in
   the host's transcript, and a change of the settings that makes the server reach
-  further needs the operator's `--allow-api-exposure`).
+  further, or the auto model switched on, needs the operator's
+  `--allow-api-exposure`; `--api-only` serves a model these tools and no other).
   `org teardown-profile` revokes a profile's keys. A key never opens the
   legacy routes, and the legacy token never opens `/v1`. Revoking applies to
   the next request: a turn already running finishes, within its timeout.
@@ -1078,7 +1104,7 @@ a key. It lives in `internal/openaiapi/`; the spec is
   | key: rename | `api key update --name` | `api_key_update` | yes (Settings › the keys table) |
   | models, capabilities, what `auto` may pick | `api models` | `api_models_list` | yes (read-only) |
   | status: listeners, base URLs, scheme, confinement | `api status` | `api_status` | yes (read-only) |
-  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | `api_auto_set` (needs `acknowledge_egress`) | yes (Settings › Jev) |
+  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | `api_auto_set` (switching on needs the operator's `--allow-api-exposure` and `acknowledge_egress`) | yes (Settings › Jev) |
   | server settings: show | `api config show` | `api_config_get` | yes (Settings › Server settings) |
   | server settings: change and keep | `api config set`, `unset` | `api_config_set` (a change that reaches further needs the operator's `--allow-api-exposure`) | yes (Settings › Server settings) |
   | apply a change (restart the daemon) | `daemon restart` | `api_config_apply` | yes (Settings › Server settings) |
@@ -1090,11 +1116,12 @@ a key. It lives in `internal/openaiapi/`; the spec is
   refused change saves nothing. The repair of a row that cannot be read stands
   behind it too: `api_config_set` with `unset: "all"` is refused without the
   flag (the reason `saved_settings`) and removes the row with it. Of the
-  mutating tools only `api_config_set` has it; `api_config_apply` and
-  `api_auto_set` are held back by
-  `--allow-mutations` alone (the latter also by `acknowledge_egress`, which the
+  mutating tools `api_config_set` and, to switch the auto model on,
+  `api_auto_set` have it (what leaves the machine is the operator's decision
+  too); `api_config_apply` is held back by `--allow-mutations` alone, and
+  `api_auto_set` also needs `acknowledge_egress`, which the
   caller sets: it makes what leaves the machine visible, and is not an access
-  control). `api_models_list` reads the saved settings under the environment, as
+  control. `api_models_list` reads the saved settings under the environment, as
   `api models` does.
 - **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
   folded until opened, read again when Settings is shown again) runs the

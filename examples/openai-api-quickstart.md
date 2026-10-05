@@ -674,12 +674,25 @@ daemon (which interrupts what it is running). A change that makes the server
 reach further than it did is refused there unless you started the MCP server
 with `--allow-api-exposure`: a model cannot confirm it, and its refusal says
 which setting and why, and that you can run `api config set ... --yes` yourself.
-That flag guards the tool, not the machine: a host that also lets the model run
-shell commands as you lets it run `--yes` too, and `--allow-mutations` itself is
-such a host: it also serves `workflow_node_add` (which accepts the node type
-`system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
-that can use them can have a workflow run `--yes` as you. If a model must not be
-able to widen the server, do not give it `--allow-mutations`.
+`api_auto_set` is held by the same flag when it switches the `auto` model on,
+since prompts then go to TypeSafe: what leaves the machine is your decision too.
+That flag guards those two tools, not the machine: a host that also lets the
+model run shell commands as you lets it run `--yes` too, and `--allow-mutations`
+itself is such a host: it also serves `workflow_node_add` (which accepts the node
+type `system.execute_command`), `workflow_set_active` and `workflow_run`, so a
+model that can use them can have a workflow run `--yes` as you. To give a model
+the API's tools and nothing else, start the server with `--api-only`:
+
+```bash
+monoagentcli mcp --api-only --allow-mutations --allow-api-exposure
+```
+
+It serves the ten `api_*` tools and no workflow, vault, secret, person, org or
+documentation tool, so the model has nothing that runs a command as you, and the
+exposure flag is then a boundary for what it can reach through this server (not
+against a host that gives it tools of its own besides). Leave out
+`--allow-api-exposure` to keep it from widening the server or switching `auto`
+on, and `--allow-mutations` to leave it only the four read-only tools.
 
 ## 6. A headless Linux server
 
