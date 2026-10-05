@@ -118,7 +118,7 @@ func decodeTolerant(data []byte, dst any) (map[string]json.RawMessage, error) {
 	v := reflect.ValueOf(dst).Elem()
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
-		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		name, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		if name == "" || name == "-" {
 			continue
 		}
@@ -133,6 +133,9 @@ func decodeTolerant(data []byte, dst any) (map[string]json.RawMessage, error) {
 		if err := json.Unmarshal(rv, fresh.Interface()); err != nil {
 			continue // wrong type: stays in raw, so in Extra
 		}
+		if fresh.Elem().Kind() == reflect.String && fresh.Elem().Len() == 0 && strings.Contains(opts, "omitempty") {
+			continue // a written "" would be dropped by omitempty: keep it in Extra as written
+		}
 		v.Field(i).Set(fresh.Elem())
 		delete(raw, name)
 	}
@@ -141,7 +144,7 @@ func decodeTolerant(data []byte, dst any) (map[string]json.RawMessage, error) {
 
 // encodeWithExtra marshals v (a struct value that must not itself have a
 // MarshalJSON, i.e. an alias) in field order, then appends extra's keys,
-// sorted. A key present in both takes extra's value.
+// sorted. A key present in both takes the typed field's value.
 func encodeWithExtra(v any, extra map[string]json.RawMessage) ([]byte, error) {
 	base, err := json.Marshal(v)
 	if err != nil {
@@ -156,10 +159,10 @@ func encodeWithExtra(v any, extra map[string]json.RawMessage) ([]byte, error) {
 	}
 	var added []string
 	for k, ev := range extra {
-		if _, dup := vals[k]; !dup {
+		if _, dup := vals[k]; !dup { // a typed field that is set wins over a kept raw copy
 			added = append(added, k)
+			vals[k] = ev
 		}
-		vals[k] = ev
 	}
 	sort.Strings(added)
 	return joinObject(append(keys, added...), vals)

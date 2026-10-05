@@ -3,7 +3,9 @@ package orgdesign
 import (
 	"bytes"
 	"encoding/json"
+	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -127,12 +129,64 @@ func emitLike(buf *bytes.Buffer, orig, next json.RawMessage, depth int) error {
 	return nil
 }
 
+// sameJSON reports whether a and b are the same JSON value. Numbers are
+// compared exactly (1 equals 1.0, but 2^53 does not equal 2^53+1).
 func sameJSON(a, b []byte) bool {
-	var x, y any
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
-		return false
+	x, ok1 := decodeExact(a)
+	y, ok2 := decodeExact(b)
+	return ok1 && ok2 && equalExact(x, y)
+}
+
+func decodeExact(b []byte) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	return v, dec.Decode(&v) == nil
+}
+
+func equalExact(x, y any) bool {
+	switch xv := x.(type) {
+	case json.Number:
+		yv, ok := y.(json.Number)
+		return ok && equalNumbers(xv, yv)
+	case map[string]any:
+		yv, ok := y.(map[string]any)
+		if !ok || len(xv) != len(yv) {
+			return false
+		}
+		for k, e := range xv {
+			o, in := yv[k]
+			if !in || !equalExact(e, o) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		yv, ok := y.([]any)
+		if !ok || len(xv) != len(yv) {
+			return false
+		}
+		for i := range xv {
+			if !equalExact(xv[i], yv[i]) {
+				return false
+			}
+		}
+		return true
 	}
 	return reflect.DeepEqual(x, y)
+}
+
+func equalNumbers(a, b json.Number) bool {
+	if a == b {
+		return true
+	}
+	// Exact decimal comparison; a pathological exponent is just "different".
+	if len(a) > 64 || len(b) > 64 || bigExponent(string(a)) || bigExponent(string(b)) {
+		return false
+	}
+	ra, ok1 := new(big.Rat).SetString(string(a))
+	rb, ok2 := new(big.Rat).SetString(string(b))
+	return ok1 && ok2 && ra.Cmp(rb) == 0
 }
 
 func isObjectJSON(b []byte) bool { return len(b) > 0 && b[0] == '{' }
@@ -147,4 +201,15 @@ func encodeNoHTML(v any) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// bigExponent is true for a number whose exponent would make big.Rat build
+// an enormous value.
+func bigExponent(n string) bool {
+	i := strings.IndexAny(n, "eE")
+	if i < 0 {
+		return false
+	}
+	e, err := strconv.Atoi(strings.TrimPrefix(n[i+1:], "+"))
+	return err != nil || e > 400 || e < -400
 }

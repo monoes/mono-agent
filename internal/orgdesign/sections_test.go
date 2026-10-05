@@ -361,3 +361,76 @@ func firstDiff(want, got string) string {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestSaveKeepsBigNumberEdits(t *testing.T) {
+	body := strings.Replace(sectionsOrg, `"budget_usd": 3.5,`, `"budget_usd": 3.5,
+      "ticket": 9007199254740993,`, 1)
+	d, root, path := loadFixture(t, body)
+	if _, err := Save(root, d); err != nil || mustRead(t, path) != body {
+		t.Fatalf("unedited save changed the file: %v", err)
+	}
+	r := mustRole(t, d, "coder")
+	r.Extra["ticket"] = json.RawMessage("9007199254740992") // differs only past 2^53
+	if _, err := Save(root, d); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, path); !strings.Contains(got, `"ticket": 9007199254740992`) {
+		t.Fatalf("an edit past 2^53 was discarded:\n%s", got)
+	}
+}
+
+func TestSectionsWrittenEmptyStringsRoundTrip(t *testing.T) {
+	body := strings.Replace(sectionsOrg, `"members": ["dev-lead", "coder"],
+      "lead": "dev-lead",
+      "mode": "execution",`, `"members": ["dev-lead", "coder"],
+      "lead": "",
+      "mode": "",`, 1)
+	d, root, path := loadFixture(t, body)
+	if _, err := Save(root, d); err != nil || mustRead(t, path) != body {
+		t.Fatalf("written empty strings changed: %v\n%s", err, firstDiff(body, mustRead(t, path)))
+	}
+	// monomind asks for a lead only when the key is absent.
+	if err := Validate(d); err != nil {
+		t.Fatalf(`"lead": "" with two members must validate: %v`, err)
+	}
+	// Setting the lead replaces the kept copy.
+	d.Sections.Find("development").Lead = "dev-lead"
+	if _, err := Save(root, d); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, path); strings.Contains(got, `"lead": ""`) || !strings.Contains(got, `"lead": "dev-lead"`) {
+		t.Fatalf("lead not replaced:\n%s", got)
+	}
+	// An entry holding only "lead": "" is a declared section for monomind.
+	var e Doc
+	if err := json.Unmarshal([]byte(`{"sections":{"a":{"lead":""}},"roles":[]}`), &e); err != nil {
+		t.Fatal(err)
+	}
+	if !e.SectionsEnabled() {
+		t.Fatal(`an entry with only "lead": "" enables the surface in monomind`)
+	}
+}
+
+func TestSectionsRootFollowsMonomind(t *testing.T) {
+	d := fixtureDoc(t)
+	// First reports_to-null role is the root when no role is typed boss.
+	for i := range d.Roles {
+		if d.Roles[i].Type == "boss" {
+			d.Roles[i].Type = "specialist"
+		}
+	}
+	if d.sectionsRootID() != "boss" {
+		t.Fatalf("root = %q", d.sectionsRootID())
+	}
+	// A typed boss wins over an earlier null-parent role.
+	d2 := fixtureDoc(t)
+	d2.Roles = append([]Role{{ID: "first", Title: "F", Type: "specialist"}}, d2.Roles...)
+	if d2.sectionsRootID() != "boss" {
+		t.Fatalf("root = %q: first type=boss must win", d2.sectionsRootID())
+	}
+	// ...and a second null-parent role that is not the root is outside every section.
+	err := Validate(d2)
+	if err == nil || !strings.Contains(err.Error(), "roles.first: a role outside every section") {
+		t.Fatalf("got %v", err)
+	}
+}

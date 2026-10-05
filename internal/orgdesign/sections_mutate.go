@@ -31,6 +31,26 @@ func (d *Doc) SectionsEnabled() bool {
 	return false
 }
 
+// sectionsRootID is the root as monomind's sections checks see it
+// (documents/definition.ts): the first role of type "boss", else the first
+// role with no reports_to. Validate also requires "boss" to be the single
+// reports_to-null role, so on a valid org this is the same role everywhere.
+func (d *Doc) sectionsRootID() string {
+	for _, r := range d.Roles {
+		if r.Type == "boss" {
+			return r.ID
+		}
+	}
+	for _, r := range d.Roles {
+		if r.ReportsTo == nil {
+			return r.ID
+		}
+	}
+	return ""
+}
+
+func (d *Doc) isSectionsRoot(id string) bool { return id != "" && id == d.sectionsRootID() }
+
 // Roster is a section's members plus its lead when that is a dedicated lead
 // outside Members; each role once, members first.
 func (s *Section) Roster() []string {
@@ -165,11 +185,10 @@ func (d *Doc) AddSection(name string, s Section) error {
 // checkPlaceable reports why role id cannot join a section: unknown, the
 // root, or (unless move) already in another section than `into`.
 func (d *Doc) checkPlaceable(id, into string, move bool) error {
-	r, idx := d.FindRole(id)
-	if idx == -1 {
+	if _, idx := d.FindRole(id); idx == -1 {
 		return fmt.Errorf("role not found: %s", id)
 	}
-	if r.ReportsTo == nil {
+	if d.isSectionsRoot(id) {
 		return fmt.Errorf("role %q is the root: the root is in no section", id)
 	}
 	if cur := d.SectionOf(id); !move && cur != "" && cur != into {
@@ -309,7 +328,7 @@ func (d *Doc) sectionsForRemoval(id string, strategy RemoveStrategy) (func(), er
 		gone = append(d.descendantsOf(id), id)
 	}
 	if d.SectionsEnabled() {
-		if r, _ := d.FindRole(id); r != nil && r.ReportsTo == nil {
+		if r, _ := d.FindRole(id); r != nil && d.isSectionsRoot(id) {
 			return nil, fmt.Errorf("cannot remove root role %q of a sections org: its successor would be a section member, and the root is in no section — restructure the sections first", id)
 		}
 	}
@@ -325,7 +344,7 @@ func (d *Doc) checkReparentInSections(child *Role, newParentID string) error {
 	switch {
 	case newParentID == "" && in != "":
 		return fmt.Errorf("role %q is in section %q: the root is in no section — remove it from the section first", child.ID, in)
-	case newParentID != "" && child.ReportsTo == nil && in == "":
+	case newParentID != "" && (child.ReportsTo == nil || d.isSectionsRoot(child.ID)) && in == "":
 		return fmt.Errorf("role %q is the root: placing it under %q would leave it in no section — assign it to a section (AssignRole) first", child.ID, newParentID)
 	}
 	return nil

@@ -21,6 +21,7 @@ func validateSections(d *Doc) []string {
 		byID[d.Roles[i].ID] = &d.Roles[i]
 	}
 	home := map[string]string{}
+	rootID := d.sectionsRootID()
 	for _, ns := range d.Sections {
 		at := "sections." + ns.Name
 		if !sectionNameRe.MatchString(ns.Name) {
@@ -29,7 +30,9 @@ func validateSections(d *Doc) []string {
 		if len(ns.Members) == 0 {
 			errs = append(errs, at+".members: a section needs at least one member role — list its role ids")
 		}
-		if ns.Lead == "" && len(ns.Members) > 1 {
+		// monomind only asks for a lead when the key is absent: a written
+		// "lead": "" (kept in Extra) is accepted.
+		if _, written := ns.Extra["lead"]; !written && ns.Lead == "" && len(ns.Members) > 1 {
 			errs = append(errs, fmt.Sprintf("%s.lead: a section with %d members must name its lead — add \"lead\": one of %s", at, len(ns.Members), strings.Join(ns.Members, ", ")))
 		}
 		seen := map[string]bool{}
@@ -44,7 +47,7 @@ func validateSections(d *Doc) []string {
 			switch {
 			case r == nil:
 				errs = append(errs, fmt.Sprintf("%s: role %q does not exist", at, id))
-			case r.ReportsTo == nil:
+			case r.ID == rootID:
 				errs = append(errs, fmt.Sprintf("%s: role %q is the root (it reports to no one); the root is in no section — remove it from the section", at, id))
 			}
 			if other, dup := home[id]; dup && other != ns.Name {
@@ -55,7 +58,7 @@ func validateSections(d *Doc) []string {
 		}
 	}
 	for _, r := range d.Roles {
-		if r.ReportsTo != nil && r.Kind != "endpoint" && home[r.ID] == "" {
+		if r.ID != rootID && r.Kind != "endpoint" && home[r.ID] == "" {
 			errs = append(errs, fmt.Sprintf("roles.%s: a role outside every section can only be the root — add it to a section's members or make it a lead", r.ID))
 		}
 	}
