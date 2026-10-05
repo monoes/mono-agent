@@ -134,6 +134,17 @@ func TestMCPCommandHelpNamesEveryAPITool(t *testing.T) {
 	}
 }
 
+// finalWideningRules are the cases of a change that reaches further, in the words of SECURITY.md and of
+// the plan's Widening section. The three places that tell an operator what api_config_set refuses (the
+// help of `mcp`, the usage of --allow-api-exposure and `ref api`) say them the same way, so that none
+// is left saying less than the gate does.
+const finalWideningRules = "a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, " +
+	"or every interface where it was one host), a higher confinement class, a runtime outside the default list, " +
+	"none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings)"
+
+// oneLine is a text as one line: the help wraps its lines, and a phrase may be wrapped inside.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 func TestMCPCommandDocumentsTheExposureFlag(t *testing.T) {
 	cmd := newMCPCmd(&globalConfig{})
 	fl := cmd.Flags().Lookup("allow-api-exposure")
@@ -147,5 +158,21 @@ func TestMCPCommandDocumentsTheExposureFlag(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Long, "--allow-api-exposure") {
 		t.Error("the help of `mcp` does not explain --allow-api-exposure next to --allow-mutations")
+	}
+
+	// What the flag allows is what the gate refuses: each text says every case, in the same words.
+	ref := captureStdout(t, func() { c := refAPICmd(); c.Run(c, nil) })
+	fromMCP := strings.Index(ref, "From MCP (monoagentcli mcp)")
+	if fromMCP < 0 {
+		t.Fatal("`ref api` has no paragraph on the tools of `mcp`")
+	}
+	for name, text := range map[string]string{
+		"the usage of --allow-api-exposure":   fl.Usage,
+		"the help of `mcp`":                   cmd.Long,
+		"the paragraph of `ref api` on `mcp`": ref[fromMCP:],
+	} {
+		if !strings.Contains(oneLine(text), finalWideningRules) {
+			t.Errorf("%s does not say what api_config_set refuses in the words of the gate:\nwant %s", name, finalWideningRules)
+		}
 	}
 }

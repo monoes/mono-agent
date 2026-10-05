@@ -3020,11 +3020,16 @@ OPENAI-COMPATIBLE API (/v1)
   api_config_apply return the documents of api status --json, api config show
   --json, api config set|unset --json and daemon restart --json, with
   "environment":"mcp" where the command says "shell". api_config_set refuses a
-  change that reaches further, as listed above, and saves nothing, unless the
-  operator started mcp with --allow-api-exposure (or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1):
-  a switch of the host's own configuration that no argument of a tool can set,
-  since the model sets the arguments. It also refuses a value that holds an API
-  key, and no error of it repeats an argument. api_config_apply restarts the
+  change that reaches further, and saves nothing, unless the operator started
+  mcp with --allow-api-exposure (or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1): a
+  switch of the host's own configuration that no argument of a tool can set,
+  since the model sets the arguments. What reaches further is what needs --yes
+  above: a dedicated listener that reaches further than the saved one (beyond
+  this machine, another host beyond it, or every interface where it was one
+  host), a higher confinement class, a runtime outside the default list, none
+  left (tool calling or image generation switched on again), and removing a
+  saved row that cannot be read (saved_settings). It also refuses a value that
+  holds an API key, and no error of it repeats an argument. api_config_apply restarts the
   daemon as daemon restart does, and interrupts what it is running.
   api_auto_set switches the api_auto surface of the server's profile on (it
   needs acknowledge_egress: true, because prompts then go to TypeSafe) or off, as
