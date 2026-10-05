@@ -2940,7 +2940,10 @@ OPENAI-COMPATIBLE API (/v1)
   auto_confinement, max_concurrent, turn_timeout, image_runtimes, tool_runtimes
   (unset also takes a flag's dashes: v1-addr). A value has the syntax of its
   environment variable and is refused where the flag or the variable would be
-  (exit 3, naming the setting); an empty value is not one: use unset. They are
+  (exit 3, naming the setting); an empty value is not one: use unset. The saved
+  layer is stricter in two ways, since it outlives the process that wrote it: no
+  value may contain a control character, and a TLS file is an absolute path (a
+  service starts in another folder; nothing expands a ~). They are
   one row of the settings table (api_gateway_config), machine-wide like the
   daemon, not per profile, and set keeps the settings it is not given. Order,
   per setting: flag, then environment variable, then saved, then default (the
@@ -2960,7 +2963,10 @@ OPENAI-COMPATIBLE API (/v1)
   pending_restart (the daemon runs the saved value or the default and a start now
   would resolve another), overridden (the daemon was given a flag or a variable
   of its own: a saved value has no effect until that is removed, whether or not
-  one is saved), not_running or unknown (a daemon that predates the report). set
+  one is saved), not_serving (only v1_addr and the two TLS files: the daemon
+  took the value but the dedicated listener is not up, because it could not
+  bind the address or load the certificate: its log says which), not_running or
+  unknown (a daemon that predates the report). set
   and unset --json print that document for the state after the change, plus
   applied, changed (keys) and widening ([{key, reason}]).
 
@@ -2975,17 +2981,19 @@ OPENAI-COMPATIBLE API (/v1)
   machine or on one beyond it (both kinds are judged whether or not a listener
   is saved, since the daemon's own environment may name one: so raising
   confinement to sandboxed or any always needs --yes, and chat-only never does);
-  a runtime list that gains a runtime outside the default list or leaves none;
+  a runtime list that gains a runtime it did not have (one of the default list
+  that a saved list left out counts when it comes back) or leaves none;
   the removal of a saved row that cannot be read (key saved_settings, below).
   Narrowing never needs it, nor do max_concurrent, turn_timeout or the TLS
   files. Unsetting a value that was below its default (confinement chat-only, a
-  list none) is a widening like any other. --dry-run says what a change would do
-  and whether it needs --yes, and saves nothing.
+  list none or codex) is a widening like any other. --dry-run says what a change
+  would do and whether it needs --yes, and saves nothing.
 
   A saved row that cannot be read (not JSON, a version that is not a whole
-  number, a field of the wrong type) stops show, set, unset <setting>, the
-  server, api models and api status with exit 3 and one message that starts "the
-  saved settings are damaged" and names the repair: unset --all --yes removes the
+  number, a field of the wrong type) stops show, set, unset <setting>, httpapi,
+  api models and api status (the daemon starts without the API instead) with
+  exit 3 and one message that starts "the saved settings are damaged" and names
+  the repair: unset --all --yes removes the
   row and says so (removed_unreadable_row in --json, a note on stderr). It needs
   --yes because what the row limited cannot be told, so removing it may reach
   further (the reason, key saved_settings; without --yes, exit 3 and that
@@ -3000,7 +3008,11 @@ OPENAI-COMPATIBLE API (/v1)
   org runs), and with --json prints {"restarted":true,"via":"launchd"}. A daemon
   that is not registered is not restarted by it: exit 3, stop it and start it
   again. If a daemon was started by hand while the service is registered, stop it
-  first. --db-path on api config edits a database that the login service's daemon
+  first. It reads the saved settings first and restarts nothing when they cannot
+  be used (exit 3 and the message above; exit 1 for a row from a newer version):
+  a daemon that cannot use them starts without the OpenAI-compatible API, and
+  says why on stderr and in its log, while it runs everything else.
+  --db-path on api config edits a database that the login service's daemon
   does not read.
 
   Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.

@@ -582,22 +582,45 @@ whatever is saved), and it fills what they leave out.
   dedicated listener that reaches further than the saved one (beyond this
   machine, another host beyond it, or every interface where it was one host), a
   higher confinement class (of a listener, of a `--context` key or of `auto`) on
-  a listener on this machine or beyond it, a runtime outside the default list,
-  tool calling or image generation switched on again, or the removal of a saved
+  a listener on this machine or beyond it, a runtime list that gains a runtime
+  it did not have (one of the default list that a saved list left out counts
+  when it comes back, so undoing a `codex`-only list needs `--yes`), tool calling
+  or image generation switched on again, or the removal of a saved
   row that cannot be read (below). It guards against a
   script, an agent's shell tool or a hurried edit widening the server without
   saying so. It is not an access control: whoever can run the CLI as your OS
   user can pass `--yes`. The check compares the effective policy, so it also
-  catches an `unset` that takes a value held below its default back up. One
+  catches an `unset` that takes a value held below its default back up (a
+  class, or a runtime list). One
   cost: raising `confinement` always needs `--yes`, because the daemon's own
   environment may name a listener beyond the machine that the row does not.
-- A saved value that fails its rule (a hand edit) makes `httpapi` and `daemon`
-  exit at start (exit 3, naming the setting), and `api models` and `api status`
+- What the saved text may be. The saved layer outlives the process that wrote
+  it, is printed by `api config show` and handed to every model that reads the
+  settings, and can be written by a caller that is not the operator, so it is
+  held to two rules the flags and the environment are not: no value may contain
+  a control character (an escape sequence in a TLS path would drive the
+  terminal that shows it; `show` also writes any that is already in the row
+  out as `\x1b`), and a TLS file must be an absolute path (a service starts in
+  another folder and nothing expands a `~`). A certificate or key file is read
+  as a regular file of at most 1 MiB, whoever named it, so a path that names a
+  FIFO or a device such as `/dev/zero` is an error that the server reports and
+  not a start that hangs or runs out of memory. Printable text is still text:
+  a model that reads a saved path reads whatever words it holds, which is a
+  reason to give an agent host that can change settings no more than it needs.
+- A saved value that fails its rule (a hand edit) makes `httpapi` exit at
+  start (exit 3, naming the setting), and `api models` and `api status`
   refuse, rather than guess; `api config unset <setting>` removes it. A row that
   cannot be read at all (not a JSON object, a bad version, a field of the wrong
-  type) stops every `api config` command, the server, `api models` and
+  type) stops every `api config` command, `httpapi`, `api models` and
   `api status` too, with exit 3 and a message that starts `the saved settings
-  are damaged`; one command removes it: `api config unset --all --yes`. It asks
+  are damaged`; one command removes it: `api config unset --all --yes`. The
+  daemon does not stop with either: it does more than serve the API, and a
+  login service would start it again and again, so it starts without the
+  OpenAI-compatible API (no `/v1` anywhere, nothing in its heartbeat), says why
+  on stderr and in its log, and runs everything else; it never ignores a saved
+  setting to start the API, which would serve with the defaults a server that
+  someone had limited. `daemon restart` refuses, restarting nothing, when the
+  saved settings cannot be used. Removing a row that cannot be read asks
   for `--yes` because what the row limited cannot be told (a `confinement` of
   `chat-only` in it, say), so returning every setting to its default may reach
   further than anything: the same gate as any other widening, so a damaged row

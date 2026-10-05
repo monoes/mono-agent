@@ -585,7 +585,10 @@ monoagentcli api config set --max-concurrent 8 --turn-timeout 15m
 ```
 
 `set` changes only the settings it is given and checks each value as the flag
-or the variable would (a bad one is exit 3 and names the setting).
+or the variable would (a bad one is exit 3 and names the setting). A saved value
+is held to two more rules, because it outlives the command and is shown to people
+and to agents: no control character in it, and a TLS file is an absolute path (the
+daemon starts in another folder, and nothing expands a `~`).
 `unset max_concurrent` or `unset --all` removes saved values. For each setting a
 server uses the first of: its flag, its environment variable, the saved value,
 the default. A variable in the service's own environment therefore holds
@@ -614,7 +617,11 @@ tool_runtimes        -      claude,codex            claude,codex (default)      
 A server reads its settings only when it starts. `restart needed` is a saved
 value that the running daemon does not have yet; `overridden` is a setting the
 daemon was given as a flag or a variable of its own, so what is saved for it has
-no effect until that is removed. `--json` gives the same as a document
+no effect until that is removed; `listener not up` (`not_serving` in the JSON, only
+for `v1_addr` and the two TLS files) is a daemon that took the address and the
+certificate but could not bring the dedicated listener up (it could not bind the
+address, or load the certificate): its log says which, and restarting does not
+help until the setting is corrected. `--json` gives the same as a document
 (`restart_needed`, and per setting `saved`, `effective`, `source`, `running`,
 `running_source` and `state`).
 
@@ -628,12 +635,15 @@ reads them. **That interrupts whatever the daemon is running**, workflows and or
 runs included, and the command says so first. A daemon that is not registered is
 not restarted by it: it exits 3 and tells you to stop the daemon and start it
 again. If you started one by hand while the service is registered, stop that one
-first: the service's daemon would find the home taken and exit.
+first: the service's daemon would find the home taken and exit. It reads the saved
+settings first and restarts nothing if they cannot be used (exit 3 and the message
+`api config show` gives): a daemon that cannot use them would start without the
+API, and says why in its log, while it runs everything else.
 
 A change that makes the server reach further than it did needs `--yes`: a
 listener beyond this machine (or on another host, or on every interface where it
-was one host), a higher confinement class, a runtime outside the default list, or
-the removal of a saved row that cannot be read. Without it the command refuses
+was one host), a higher confinement class, a runtime list that gains a runtime it
+did not have, or the removal of a saved row that cannot be read. Without it the command refuses
 (exit 3) and says why; there is no prompt, so a script has to mean it. `--dry-run`
 shows the reasons and saves nothing:
 
@@ -647,10 +657,12 @@ This change makes the server reach further, so applying it needs --yes:
 Raising `confinement` to `sandboxed` or `any` always needs `--yes`, even with no
 listener beyond this machine saved, because the daemon's own environment may name
 one. Removing a value that held the server below its default (`unset confinement`
-of a `chat-only`, an `image_runtimes` of `none`) is the same kind of change. So is
+of a `chat-only`, an `image_runtimes` of `none` or of `codex`, which leaves
+antigravity out) is the same kind of change. So is
 removing a saved row that cannot be read (not JSON, a bad version, a field of the
-wrong type): every `api config` command, and the server, stop at it with exit 3 and
-a message that starts `the saved settings are damaged`, and `api config unset --all
+wrong type): every `api config` command, and `httpapi`, stop at it with exit 3 and
+a message that starts `the saved settings are damaged` (the daemon starts without
+the API instead, and says why), and `api config unset --all
 --yes` removes it, because what the row limited cannot be told.
 The settings are in the database of the user the daemon runs as
 (`~/.monoagent/monoagent.db`), so run `api config` as that user.
