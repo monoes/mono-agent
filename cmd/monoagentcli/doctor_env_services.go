@@ -164,9 +164,9 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 			if forced {
 				return fmt.Errorf("pid %d would not stop even after SIGKILL", pid)
 			}
-			if !lockHolderIs(pid) {
-				return fmt.Errorf("the daemon lock is held by another process than pid %d — not force-stopping it", pid)
-			}
+			// No second lockHolderIs check here: the daemon removes its heartbeat
+			// as soon as SIGTERM arrives, so it would always fail while a hung
+			// daemon drains. pid was verified before the signal went out.
 			progress(fmt.Sprintf("pid %d did not stop within %s — forcing it", pid, daemonStopGrace))
 			if err := killProcess(pid); err != nil {
 				return fmt.Errorf("force-stopping pid %d: %w", pid, err)
