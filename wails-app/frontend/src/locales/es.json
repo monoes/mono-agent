@@ -393,7 +393,11 @@
         "revokeTitle": "¿Revocar esta clave?",
         "revokeBody": "Los programas que usan \"{{name}}\" dejan de funcionar en su próxima petición. No se puede deshacer.",
         "revokeConfirm": "Revocar clave",
-        "loadError": "No se pudieron leer las claves: {{error}}"
+        "loadError": "No se pudieron leer las claves: {{error}}",
+        "renameLabel": "Renombrar {{name}}",
+        "renameInput": "Nuevo nombre de {{name}}",
+        "renameSaveLabel": "Guardar el nuevo nombre de {{name}}",
+        "renameCancelLabel": "Cancelar el cambio de nombre de {{name}}"
       },
       "create": {
         "title": "Crear una clave de API",

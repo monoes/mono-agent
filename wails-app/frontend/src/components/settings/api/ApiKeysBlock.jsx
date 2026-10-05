@@ -1,16 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Trash2 } from 'lucide-react'
-import { APIKeySetContext, APIKeyRevoke } from '../../../wailsjs/go/main/App'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { APIKeyRename, APIKeySetContext, APIKeyRevoke } from '../../../wailsjs/go/main/App'
 import { confirm } from '../../ConfirmDialog.jsx'
 import { Switch } from '../JevSection.jsx'
 import ApiKeyDialog from './ApiKeyDialog.jsx'
-import { apiError } from './apiError.js'
+import KeyNameEditor from './KeyNameEditor.jsx'
+import { apiError, classify, describeApiError } from './apiError.js'
 import { formatDate, relativeTime } from './apiModel.js'
 import { block, label, hint, errText, mono } from './ui.jsx'
 
-// The keys of the active profile: a table with a context switch and revoke, and
-// the create dialog. The CLI does the work (APIKeySetContext, APIKeyRevoke,
+// The keys of the active profile: a table with a context switch, rename and revoke, and
+// the create dialog. The CLI does the work (APIKeySetContext, APIKeyRename, APIKeyRevoke,
 // APIKeyCreate); this block only asks, and tells its parent to reload the list.
 
 const th = { fontSize: 9.5, padding: '6px 10px' }
@@ -31,6 +32,22 @@ export default function ApiKeysBlock({ keys, err, contextClasses = [], onChanged
   const [busy, setBusy] = useState('') // the id of the key a call is running for
   const [actionErr, setActionErr] = useState('')
   const [creating, setCreating] = useState(false)
+  const [renaming, setRenaming] = useState('') // the id of the key whose name is being edited
+  const [draft, setDraft] = useState('')
+  const [renameErr, setRenameErr] = useState(null) // what the store said of the new name: {text, verbatim}
+  const inputRef = useRef(null)
+  const renameBtns = useRef({}) // key id → its Rename button
+  const renameRunning = useRef(false) // a rename call is out: a second one cannot start, not even in the same tick
+  const focusAfter = useRef(null) // where the keyboard goes when a rename is over: 'input' or {rename: id}
+
+  // A control that was disabled while a call ran has lost the focus: it goes back to where the person was.
+  useEffect(() => {
+    if (busy || !focusAfter.current) return
+    const f = focusAfter.current
+    focusAfter.current = null
+    if (f === 'input') inputRef.current?.focus()
+    else renameBtns.current[f.rename]?.focus()
+  })
 
   // One call at a time, and the list is read again, whatever came of it (a failed call may have been done anyway, or
   // the key may be gone), before anything else can be asked of it: the list is stale until then, and a switch on it
@@ -56,6 +73,28 @@ export default function ApiKeysBlock({ keys, err, contextClasses = [], onChanged
       title: t('settings.api.keys.revokeTitle'), confirmLabel: t('settings.api.keys.revokeConfirm'), danger: true,
     })
     if (ok) await run(k.id, () => APIKeyRevoke(k.id))
+  }
+
+  // Renaming changes the name and nothing else: not the context switch, and the key is neither needed nor shown. One key
+  // is edited at a time. The store judges the name: its rule and a clash with another active key are said next to the
+  // field and the edit stays open, to correct; a key that is gone is said at the top, like the other key failures.
+  const startRename = (k) => { if (busy) return; setRenaming(k.id); setDraft(k.name); setRenameErr(null) }
+  const cancelRename = (k) => { setRenaming(''); setRenameErr(null); focusAfter.current = { rename: k.id } }
+  const saveRename = async (k) => {
+    const name = draft.trim()
+    if (busy || renameRunning.current || !name) return
+    if (name === k.name) { cancelRename(k); return } // nothing to change
+    renameRunning.current = true
+    setBusy(k.id); setRenameErr(null); setActionErr('')
+    let done = false
+    try {
+      await APIKeyRename(k.id, name)
+      done = true
+    } catch (e) {
+      if (classify(e).cls === 'not_found') { setActionErr(apiError(e, t)); done = true } else setRenameErr(describeApiError(e, t))
+    }
+    try { await onChanged?.() } finally { setBusy(''); renameRunning.current = false }
+    if (done) { setRenaming(''); focusAfter.current = { rename: k.id } } else focusAfter.current = 'input'
   }
 
   return (
@@ -96,8 +135,23 @@ export default function ApiKeysBlock({ keys, err, contextClasses = [], onChanged
               <tbody>
                 {keys.map(k => (
                   <tr key={k.id}>
-                    <td style={{ ...td, fontFamily: mono, color: 'var(--text)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }} title={k.name}>
-                      {k.name}
+                    <td style={{ ...td, fontFamily: mono, color: 'var(--text)', maxWidth: renaming === k.id ? undefined : 270 }}>
+                      {renaming === k.id ? (
+                        <KeyNameEditor
+                          name={k.name} value={draft} busy={!!busy} err={renameErr} inputRef={inputRef}
+                          onChange={setDraft} onSave={() => saveRename(k)} onCancel={() => cancelRename(k)}
+                        />
+                      ) : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+                          <span title={k.name} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>
+                          <button
+                            ref={el => { renameBtns.current[k.id] = el }} type="button" className="btn btn-ghost btn-sm" style={{ padding: '2px 5px', flexShrink: 0 }}
+                            disabled={!!busy} aria-label={t('settings.api.keys.renameLabel', { name: k.name })} onClick={() => startRename(k)}
+                          >
+                            <Pencil size={11} />
+                          </button>
+                        </span>
+                      )}
                     </td>
                     <td style={{ ...td, fontFamily: mono, color: 'var(--text-muted)' }}>{k.prefix}…</td>
                     <td style={td}>

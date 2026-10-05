@@ -393,7 +393,11 @@
         "revokeTitle": "Revoke this key?",
         "revokeBody": "Programs that use \"{{name}}\" stop working at their next request. This can't be undone.",
         "revokeConfirm": "Revoke key",
-        "loadError": "Couldn't read the keys: {{error}}"
+        "loadError": "Couldn't read the keys: {{error}}",
+        "renameLabel": "Rename {{name}}",
+        "renameInput": "New name for {{name}}",
+        "renameSaveLabel": "Save the new name of {{name}}",
+        "renameCancelLabel": "Cancel renaming {{name}}"
       },
       "create": {
         "title": "Create an API key",
