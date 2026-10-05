@@ -16,7 +16,7 @@ import (
 // the same code `monoagentcli api status` and `api config` run, so that each tool answers exactly
 // what its command answers (`--json`), and the pipe tests in cmd/monoagentcli compare the two.
 func apiConfigTools() []tool {
-	return []tool{
+	tools := []tool{
 		{
 			name: "api_status",
 			description: "Show where the OpenAI-compatible API (/v1) listens and whether it answers: the document of `monoagentcli api status --json`. " +
@@ -62,6 +62,7 @@ func apiConfigTools() []tool {
 			handler:     toolAPIConfigApply,
 		},
 	}
+	return append(tools, apiAutoTools()...)
 }
 
 // apiEnv is what the documents of the tools read of this process: Options.APIEnv, whose zero value
