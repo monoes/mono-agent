@@ -475,6 +475,8 @@
           "toolRuntimes": "Give a comma-separated list of runtime ids, or none to switch tool calling off.",
           "empty": "A value is needed here. To go back to the default, use “Use the default”.",
           "tlsPair": "The certificate file and the key file are saved together: give both.",
+          "tlsAbsolute": "A TLS file needs an absolute path: the daemon starts in another folder, and ~ is not expanded.",
+          "controlChars": "A value can't contain control characters, such as a line break or a tab.",
           "widenedMeanwhile": "Nothing was saved: the saved settings changed meanwhile, and this change now makes the server reach further. Try again to review it.",
           "notRegistered": "The daemon isn't registered for auto-start, so nothing can restart it from here."
         },
@@ -486,7 +488,7 @@
           },
           "tls": {
             "label": "TLS certificate and key",
-            "hint": "Paths of the PEM files for that listener, read when the server starts. Give both, or neither for a self-signed certificate.",
+            "hint": "Absolute paths of the PEM files for that listener, read when the server starts. Give both, or neither for a self-signed certificate.",
             "empty": "Self-signed certificate",
             "certLabel": "Certificate file",
             "keyLabel": "Key file"

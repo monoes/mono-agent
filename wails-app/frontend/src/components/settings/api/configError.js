@@ -25,6 +25,8 @@ const RULES = [
   [/^tool_runtimes must be a comma-separated list/, 'settings.api.config.errors.toolRuntimes'],
   [/^\w+ must not be empty/, 'settings.api.config.errors.empty'],
   [/^tls_cert_file and tls_key_file must be set together/, 'settings.api.config.errors.tlsPair'],
+  [/^(?:tls_cert_file|tls_key_file) must be an absolute path/, 'settings.api.config.errors.tlsAbsolute'],
+  [/^\w+ must not contain control characters/, 'settings.api.config.errors.controlChars'],
   [/^this change makes the server reach further/, 'settings.api.config.errors.widenedMeanwhile'],
   [NOT_REGISTERED, 'settings.api.config.errors.notRegistered'],
 ]

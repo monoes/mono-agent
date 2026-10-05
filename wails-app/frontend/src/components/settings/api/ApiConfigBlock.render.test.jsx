@@ -139,6 +139,11 @@ describe('ApiConfigBlock: the rows', () => {
     const input = screen.getByRole('spinbutton', { name: c.rows.max_concurrent.label })
     expect(input).toHaveAccessibleDescription(c.rows.max_concurrent.hint)
   })
+
+  it('says the TLS files are given as absolute paths: the daemon starts in another folder, and the CLI refuses the others', async () => {
+    await mountOpen()
+    expect(within(row('tls')).getByText(c.rows.tls.hint)).toHaveTextContent(/absolute/i)
+  })
 })
 
 describe('ApiConfigBlock: where each setting stands', () => {
@@ -344,6 +349,12 @@ describe('ApiConfigBlock: the language', () => {
     expect(screen.getByTestId('api-config-banner')).toHaveTextContent(sc.banner.restartTitle)
     expect(within(row('max_concurrent')).getByText(sc.overriddenFlag.replace('{{name}}', '--max-concurrent'))).toBeInTheDocument()
     expect(sc.state.pending).not.toBe(c.state.pending)
+  })
+
+  it('says in Spanish too that the TLS files are given as absolute paths', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    await mountOpen()
+    expect(within(row('tls')).getByText(sc.rows.tls.hint)).toHaveTextContent(/absolutas/i)
   })
 
   it('words a listener that is not up in the chosen language', async () => {

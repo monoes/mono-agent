@@ -475,6 +475,8 @@
           "toolRuntimes": "Indica una lista de ids de entornos separados por comas, o none para desactivar las llamadas a herramientas.",
           "empty": "Hace falta un valor. Para volver al valor por defecto, usa «Usar el valor por defecto».",
           "tlsPair": "El archivo del certificado y el de la clave se guardan juntos: indica los dos.",
+          "tlsAbsolute": "Un archivo TLS necesita una ruta absoluta: el daemon arranca en otra carpeta y ~ no se expande.",
+          "controlChars": "Un valor no puede contener caracteres de control, como un salto de línea o un tabulador.",
           "widenedMeanwhile": "No se guardó nada: los ajustes guardados cambiaron mientras tanto y este cambio ahora hace que el servidor llegue más lejos. Vuelve a intentarlo para revisarlo.",
           "notRegistered": "El daemon no está registrado para arrancar solo, así que desde aquí nada puede reiniciarlo."
         },
@@ -486,7 +488,7 @@
           },
           "tls": {
             "label": "Certificado y clave TLS",
-            "hint": "Rutas de los archivos PEM de ese punto de escucha, que se leen al arrancar el servidor. Indica los dos, o ninguno para usar un certificado autofirmado.",
+            "hint": "Rutas absolutas de los archivos PEM de ese punto de escucha, que se leen al arrancar el servidor. Indica los dos, o ninguno para usar un certificado autofirmado.",
             "empty": "Certificado autofirmado",
             "certLabel": "Archivo del certificado",
             "keyLabel": "Archivo de la clave"

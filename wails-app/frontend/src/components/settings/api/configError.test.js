@@ -49,8 +49,26 @@ describe('describeConfigError: the rules the CLI states, in the language of the 
     expect(describeConfigError(invalid(NOT_REGISTERED), t).text).toBe(e.notRegistered)
   })
 
+  it('words a TLS file that is not an absolute path and a value with a control character, which the CLI refuses', () => {
+    for (const key of ['tls_cert_file', 'tls_key_file']) {
+      expect(describeConfigError(invalid(`${key} must be an absolute path (the daemon starts in another folder, and ~ is not expanded)`), t), key)
+        .toEqual({ text: e.tlsAbsolute, verbatim: false })
+    }
+    for (const key of ['v1_addr', 'turn_timeout', 'tls_key_file']) {
+      expect(describeConfigError(invalid(`${key} must not contain control characters`), t), key).toEqual({ text: e.controlChars, verbatim: false })
+    }
+    // the same words for a setting that has no such rule, from another class, or from the middle of a message, are not words for this page
+    expect(describeConfigError(invalid('max_concurrent must be an absolute path'), t).verbatim).toBe(true)
+    expect(describeConfigError(new Error('tls_cert_file must be an absolute path (the daemon starts in another folder)'), t).verbatim).toBe(true)
+    expect(describeConfigError(invalid('a refusal: tls_cert_file must be an absolute path'), t).verbatim).toBe(true)
+  })
+
   it('speaks the chosen language, with the same numbers', async () => {
     await i18n.changeLanguage('es')
+    expect(describeConfigError(invalid('tls_cert_file must be an absolute path (the daemon starts in another folder, and ~ is not expanded)'), t).text).toBe(s.tlsAbsolute)
+    expect(describeConfigError(invalid('v1_addr must not contain control characters'), t).text).toBe(s.controlChars)
+    expect(s.tlsAbsolute).not.toBe(e.tlsAbsolute)
+    expect(s.controlChars).not.toBe(e.controlChars)
     expect(describeConfigError(invalid('max_concurrent must be an integer from 1 to 64'), t).text).toBe(s.maxConcurrent.replace('{{min}}', '1').replace('{{max}}', '64'))
     expect(describeConfigError(invalid('turn_timeout must be a duration of at least 10s, such as 15m'), t).text).toBe(s.turnTimeout.replace('{{min}}', '10s').replace('{{example}}', '15m'))
     expect(describeConfigError(invalid(WIDENING), t).text).toBe(s.widenedMeanwhile)
