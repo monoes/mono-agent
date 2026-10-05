@@ -1,24 +1,29 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronUp, KeyRound, Loader2, Plug } from 'lucide-react'
-import { APIStatus, APIKeyList, APIModels } from '../../wailsjs/go/main/App'
+import { APIStatus, APIKeyList, APIModels, APIConfigShow } from '../../wailsjs/go/main/App'
 import ApiStatusBlock, { STATE } from './api/ApiStatusBlock.jsx'
+import ApiConfigBlock from './api/ApiConfigBlock.jsx'
 import ApiKeysBlock from './api/ApiKeysBlock.jsx'
 import ApiModelsBlock from './api/ApiModelsBlock.jsx'
 import { apiError } from './api/apiError.js'
+import { describeConfigError } from './api/configError.js'
 import { listenerState, modelsArgs, pickListener, servingListeners } from './api/apiModel.js'
 import { Badge, hint, mono } from './api/ui.jsx'
 
 // Settings › OpenAI-compatible API (spec §8.4): where /v1 listens and whether it
-// runs, the active profile's API keys, and the models it serves. Everything goes
-// through `monoagentcli api …` (Go side: app_api.go), which is also what a
-// terminal user runs. Folded by default like the Jev section: the status, which
-// is cheap, is read when Settings opens; the keys and the models, which start
-// monomind to scan the runtimes, are read when the section is first opened.
+// runs, the server's settings (what is saved, what the daemon runs, and how to
+// apply a change), the active profile's API keys, and the models it serves.
+// Everything goes through `monoagentcli api …` (Go side: app_api.go and
+// app_api_config.go), which is also what a terminal user runs. Folded by default
+// like the Jev section: the status, which is cheap, is read when Settings opens;
+// the settings, the keys and the models, which start monomind to scan the
+// runtimes, are read when the section is first opened.
 // Settings stays mounted while another page is shown, so what was read is as
-// old as the visit: coming back to the page reads the status again, and the keys
-// and the models too once they had been read (the models only when the listener
-// they describe changed: a scan of the runtimes is not repeated for nothing).
+// old as the visit: coming back to the page reads the status again, and the
+// settings and the keys too once they had been read (the models only when the
+// listener they describe changed: a scan of the runtimes is not repeated for
+// nothing).
 
 const card = {
   background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)',
@@ -45,6 +50,8 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
   const [keysErr, setKeysErr] = useState('')
   const [models, setModels] = useState(null)
   const [modelsErr, setModelsErr] = useState('')
+  const [config, setConfig] = useState(null)
+  const [configErr, setConfigErr] = useState(null) // {text, verbatim}: why the settings could not be read; what was read stays
   const [refreshing, setRefreshing] = useState(false)
   const detailsAsked = useRef(false)
   // A failure is worded when it happens, in the language of the moment; the loaders keep one identity.
@@ -52,7 +59,7 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
   tRef.current = t
   // Each loader applies the answer of the call that started last: a slower one started before it (a refresh while a
   // re-read runs, a retry) is dropped, so an older state never overwrites a newer one.
-  const seq = useRef({ status: 0, keys: 0, models: 0 })
+  const seq = useRef({ status: 0, keys: 0, models: 0, config: 0 })
   const modelsFor = useRef(null) // the arguments of the models on show (null: none, or the last read of them failed)
 
   // Each part is read on its own: one that fails is shown as failed, and the others stay.
@@ -90,6 +97,27 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
     }
   }, [])
 
+  const loadConfig = useCallback(async () => {
+    const mine = ++seq.current.config
+    try {
+      const doc = await APIConfigShow()
+      if (mine !== seq.current.config) return SUPERSEDED
+      setConfig(doc); setConfigErr(null); return doc
+    } catch (e) {
+      if (mine !== seq.current.config) return SUPERSEDED
+      setConfigErr(describeConfigError(e, tRef.current)); return null
+    }
+  }, [])
+  // The document of a change that was made is an answer too, and newer than any read that began before it was
+  // returned: it takes the place of theirs, which are dropped when they arrive (a read that began earlier may have
+  // looked at the settings before the change was saved).
+  const adoptConfig = useCallback((doc) => { seq.current.config++; setConfig(doc); setConfigErr(null) }, [])
+  // What the restart's re-reads go through: the document, or null when the read failed or a newer one took its place.
+  const reloadConfig = useCallback(async () => {
+    const doc = await loadConfig()
+    return doc && doc !== SUPERSEDED ? doc : null
+  }, [loadConfig])
+
   useEffect(() => { loadStatus() }, [loadStatus])
 
   const statusSettled = status !== null || statusErr !== ''
@@ -97,10 +125,11 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
     if (!expanded || !statusSettled || detailsAsked.current) return
     detailsAsked.current = true
     loadKeys()
+    loadConfig()
     loadModels(status)
     // status is read once here, when it settles: a later one goes through refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, statusSettled, loadKeys, loadModels])
+  }, [expanded, statusSettled, loadKeys, loadConfig, loadModels])
 
   // Coming back to the page (not the first time, which is the mount): what was read is as old as the visit.
   const wasActive = useRef(isActive)
@@ -112,20 +141,29 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
       const st = await loadStatus()
       if (st === SUPERSEDED || !detailsAsked.current) return
       loadKeys()
+      loadConfig()
       if (JSON.stringify(modelsArgs(pickListener(st))) !== modelsFor.current) loadModels(st)
     })()
-  }, [isActive, loadStatus, loadKeys, loadModels])
+  }, [isActive, loadStatus, loadKeys, loadConfig, loadModels])
 
   const refresh = async () => {
     detailsAsked.current = true
     setRefreshing(true)
     try {
       const st = await loadStatus()
-      if (st !== SUPERSEDED) await Promise.all([loadKeys(), loadModels(st)])
+      if (st !== SUPERSEDED) await Promise.all([loadKeys(), loadConfig(), loadModels(st)])
     } finally {
       setRefreshing(false)
     }
   }
+
+  // The daemon came back from a restart, perhaps with other listeners: the status is read again, and the models
+  // when the policy they were read for is not the one of the listener the status now describes.
+  const afterRestart = useCallback(async () => {
+    const st = await loadStatus()
+    if (st === SUPERSEDED) return
+    if (JSON.stringify(modelsArgs(pickListener(st))) !== modelsFor.current) loadModels(st)
+  }, [loadStatus, loadModels])
 
   const listener = pickListener(status)
   const state = STATE[listenerState(listener, !!status?.daemon?.running)]
@@ -186,6 +224,7 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
         <div id={bodyId} style={card}>
           <div style={hint}>{t('settings.api.intro')}</div>
           <ApiStatusBlock status={status} err={statusErr} refreshing={refreshing} onRefresh={refresh} onRetry={refresh} />
+          <ApiConfigBlock config={config} err={configErr} onRetry={loadConfig} onAdopt={adoptConfig} onReload={reloadConfig} onApplied={afterRestart} />
           <ApiKeysBlock
             keys={keys} err={keysErr} contextClasses={contextClasses}
             onChanged={loadKeys} onRetry={loadKeys}
