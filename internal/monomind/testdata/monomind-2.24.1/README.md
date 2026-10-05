@@ -32,10 +32,11 @@ everything else: it routed the messages, ran the real document store
 | File | What it is |
 |---|---|
 | `events-unknown-kind.ndjson` | `events.ndjson` with two unknown event kinds (`section_status`, `hologram-from-the-future`) and a known event carrying unknown fields spliced in. 2.24.1 emits none of these; it exists so unknown kinds and fields stay non-fatal. |
+| `synthetic-org-budget.json`, `synthetic-events-budget.ndjson` | A sections org with budgets (`sections.<n>.budget.usd`, role `budget_usd`, `run_config.budget_usd`) and a run's bus: `usage` events carrying `cost_usd`, and the `section-budget-warning` / `section-budget-closed` audit events with the `data` fields (`scope`, `spentUsd`, `allocationUsd`, `closed`, `held`) written from monomind's source (`orgrt/documents/section-budget-run.ts`). **Not a recording**: no budgeted run was recorded in #344, and the runtime was not run to produce it. It pins `SectionBudgets` (`org_budget_test.go`); replace it with a recording when one exists. |
 
 ## Not captured
 
-`org status --format json` in 2.24.1 has no per-section state, and there is no
+`org status --format json` in 2.24.1 has no per-section state and no cost (and `org costs` / `org report --format json` have no section breakdown; the section table is text-only), and there is no
 `sections` capability in the handshake: section and document state is read
 from the document store files and the `org-docs` messages on the bus.
 `org status` mid-run was recorded with `idle_stop_*` fields; a run that is

@@ -158,6 +158,15 @@ func (a *App) GetOrgCosts(name, run string) string {
 	return a.runOrgCLI("costs", name)
 }
 
+// GetOrgBudget is the per-section spend, allocation, role caps and soft
+// closure of a run (`monoagentcli org budget`); run empty = current run.
+func (a *App) GetOrgBudget(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("budget", name, "--run", run)
+	}
+	return a.runOrgCLI("budget", name)
+}
+
 func (a *App) GetOrgFlow(name, run string) string {
 	if run != "" {
 		return a.runOrgCLI("flow", name, "--run", run)

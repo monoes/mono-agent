@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { sectionOfRole } from './sectionsGraph.js'
+import { budgetLine, budgetBadge, budgetTitle, usd } from './budgetModel.js'
 
 const field = { display: 'flex', flexDirection: 'column', gap: 3, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }
 const input = { fontFamily: 'var(--font-mono)', fontSize: 11, padding: '4px 6px', background: 'var(--elevated)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text)' }
@@ -31,7 +32,7 @@ function Committed({ label, value, onCommit, type = 'text', placeholder, testId 
 
 const num = (s) => (s === '' ? null : Number(s))
 
-export function SectionInspector({ section, nodes, sections, edges, onUpdate, onPatchRole, onRemoveEdge, onDelete }) {
+export function SectionInspector({ section, budget, nodes, sections, edges, onUpdate, onPatchRole, onRemoveEdge, onDelete }) {
   const [moveTo, setMoveTo] = useState('')
   const others = sections.filter(s => s.name !== section.name)
   useEffect(() => setMoveTo(others[0]?.name || ''), [section.name]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -48,6 +49,12 @@ export function SectionInspector({ section, nodes, sections, edges, onUpdate, on
           {section.roster.map(id => <option key={id} value={id}>{id}</option>)}
         </select>
       </label>
+      {budget && (
+        <div data-testid="section-live-budget" title={budgetTitle(budget)} style={{ ...field, color: budgetBadge(budget)?.color || 'var(--text-secondary)' }}>
+          Spend this run: {budgetLine(budget)}{budgetBadge(budget) ? ` — ${budgetBadge(budget).label}` : ''}
+          {budget.roles?.filter(r => r.cap_usd != null).map(r => <span key={r.id}>{r.id} {usd(r.spent_usd)} of {usd(r.cap_usd)}</span>)}
+        </div>
+      )}
       <Committed testId="section-budget" label="Budget (USD)" type="number" placeholder="no section budget" value={section.budgetUsd ?? ''} onCommit={v => onUpdate({ budget_usd: num(v) })} />
       <Committed testId="section-rework" label="Max rework rounds" type="number" placeholder="runtime default" value={section.maxReworkRounds ?? ''} onCommit={v => onUpdate({ max_rework_rounds: num(v) })} />
       <Committed testId="section-writes" label="Writes (paths, comma separated)" placeholder="src/**, docs/**" value={section.writes.join(', ')}

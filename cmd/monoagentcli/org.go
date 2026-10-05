@@ -43,6 +43,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgLogsCmd(root),
 		newOrgReportCmd(root),
 		newOrgCostsCmd(root),
+		newOrgBudgetCmd(root),
 		newOrgFlowCmd(root),
 		newOrgQuestionsCmd(root),
 		newOrgApprovalsCmd(root),
@@ -196,6 +197,32 @@ func newOrgCostsCmd(root func() string) *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: most recent run)")
+	return c
+}
+
+func newOrgBudgetCmd(root func() string) *cobra.Command {
+	var run string
+	c := &cobra.Command{
+		Use:   "budget <name>",
+		Short: "Show per-section spend against allocation, role caps and soft closure",
+		Long: "monomind 2.24 reports no per-section spend, so this derives it in one place " +
+			"(internal/monomind.SectionBudgets) from the org definition and the run's usage and " +
+			"section-budget audit events. The org total equals the sum of the usage events' cost_usd, " +
+			"the figure `org report` prints.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rep, err := monomind.OrgBudget(cmd.Context(), root(), args[0], run)
+			if err != nil {
+				return err
+			}
+			out, err := json.Marshal(rep)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(out)
+		},
+	}
+	c.Flags().StringVar(&run, "run", "", "Specific run id (default: current run)")
 	return c
 }
 

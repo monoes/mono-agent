@@ -190,6 +190,7 @@ export default function OrgCanvas({
   onAddDocEdge,
   onRemoveDocEdge,
   sectionIssues = [],
+  sectionBudgets = {}, // section name -> org budget report entry (live view only)
 }) {
   const wrapperRef = useRef(null)
   const [measured, setMeasured] = useState({ width: 0, height: 0 })
@@ -521,7 +522,7 @@ export default function OrgCanvas({
             }}>
               {sections.length > 0 && (
                 <SectionBoxes
-                  rects={rects} sections={sections} selectedName={selectedSection} readOnly={readOnly}
+                  rects={rects} sections={sections} selectedName={selectedSection} readOnly={readOnly} budgets={sectionBudgets}
                   hoverEdgeTarget={secDrag.pending?.target}
                   onSelect={onSelectSection} onStartMove={secDrag.startMove} onStartEdge={secDrag.startEdge}
                 />

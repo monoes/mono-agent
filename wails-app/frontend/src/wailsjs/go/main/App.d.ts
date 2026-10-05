@@ -235,6 +235,8 @@ export function GetOrgApprovals(arg1:string):Promise<string>;
 
 export function GetOrgAutonomy(arg1:string):Promise<string>;
 
+export function GetOrgBudget(arg1:string,arg2:string):Promise<string>;
+
 export function GetOrgChatHistory(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;

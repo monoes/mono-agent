@@ -10,12 +10,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link2 } from 'lucide-react'
 import { sectionEdgePath, SECTION_HEADER } from './sectionsGraph.js'
+import { budgetLine, budgetBadge, budgetTitle } from './budgetModel.js'
 
-export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget }) {
+export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget, budgets = {} }) {
   return rects.map(r => {
     const s = sections.find(x => x.name === r.name)
     const selected = selectedName === r.name
     const target = hoverEdgeTarget === r.name
+    const live = budgets[r.name]
+    const badge = budgetBadge(live)
     return (
       <div
         key={r.name}
@@ -38,7 +41,14 @@ export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect
         >
           <strong style={{ letterSpacing: 0.4 }}>{r.name}</strong>
           {s && <span style={{ color: 'var(--text-muted)' }}>lead: {s.leadId || '—'}</span>}
-          {s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
+          {live
+            ? (
+              <span data-testid={`section-budget-${r.name}`} title={budgetTitle(live)} style={{ color: badge?.color || 'var(--text-muted)' }}>
+                {budgetLine(live)}
+                {badge && <strong data-testid={`section-budget-badge-${r.name}`}> · {badge.label}</strong>}
+              </span>
+            )
+            : s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
           <span style={{ flex: 1 }} />
           {!readOnly && (
             <button

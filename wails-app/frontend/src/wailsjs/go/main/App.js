@@ -462,6 +462,10 @@ export function GetOrgAutonomy(arg1) {
   return window['go']['main']['App']['GetOrgAutonomy'](arg1);
 }
 
+export function GetOrgBudget(arg1, arg2) {
+  return window['go']['main']['App']['GetOrgBudget'](arg1, arg2);
+}
+
 export function GetOrgChatHistory(arg1, arg2) {
   return window['go']['main']['App']['GetOrgChatHistory'](arg1, arg2);
 }
