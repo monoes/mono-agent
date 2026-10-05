@@ -142,6 +142,7 @@ func LoadPath(path string) (*Doc, error) {
 	}
 	sum := sha256.Sum256(b)
 	d.loadedSHA = hex.EncodeToString(sum[:])
+	d.loadedRaw = b
 	return &d, nil
 }
 
@@ -176,7 +177,11 @@ func Save(profileRoot string, d *Doc) (sha string, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("creating orgs directory: %w", err)
 	}
-	data, err := json.MarshalIndent(d, "", "  ")
+	next, err := encodeNoHTML(d)
+	if err != nil {
+		return "", fmt.Errorf("encoding org config: %w", err)
+	}
+	data, err := reflowLike(d.loadedRaw, next)
 	if err != nil {
 		return "", fmt.Errorf("encoding org config: %w", err)
 	}
@@ -193,6 +198,7 @@ func Save(profileRoot string, d *Doc) (sha string, err error) {
 
 	sum := sha256.Sum256(data)
 	d.loadedSHA = hex.EncodeToString(sum[:])
+	d.loadedRaw = data
 	return d.loadedSHA, nil
 }
 
