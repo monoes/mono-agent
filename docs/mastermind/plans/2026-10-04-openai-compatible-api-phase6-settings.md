@@ -66,7 +66,7 @@ Modified: `internal/openaiapi/config.go` (two parsers and the defaults exported)
 - [x] **15.** `autostart` `Restart` on the interface and the three backends (a fake runner on macOS and Linux as for `Status`; Windows gets a runner variable and a wait for the daemon's lock to be released between `/end` and `/run`, both replaceable, and its test is compiled with `GOOS=windows go vet` since it cannot run here). The existing `fakeAutostart` of the doctor tests gets a `Restart`.
 - [x] **16.** `autostart.RestartRegistered` and `daemon restart` (the CLI takes its installer from a package variable that every test replaces).
 - [x] **17.** Documents: `ref api`, AGENTS.md, SECURITY.md, CHANGELOG, the quickstart, the spec (section 11 and D36 to D43), this plan ticked.
-- [ ] **18.** Verification, the smoke run of the built CLI under a temp `HOME`, the report.
+- [x] **18.** Verification, the smoke run of the built CLI under a temp `HOME`, the report.
 
 ---
 
