@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -73,7 +74,7 @@ func Resolve(c Config) (*tls.Config, error) {
 			}
 			return nil, fmt.Errorf("%s: %s and %s must both be set to use an explicit TLS certificate", c.Label, c.CertEnv, c.KeyEnv)
 		}
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		cert, err := loadKeyPair(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("%s: loading TLS cert/key from %s/%s: %w", c.Label, certPath, keyPath, err)
 		}
@@ -92,6 +93,52 @@ func Resolve(c Config) (*tls.Config, error) {
 		c.Warn(fmt.Sprintf("%s bound to a non-loopback address with no explicit TLS cert configured — using an auto-generated self-signed certificate; set %s/%s for a real certificate", c.Label, c.CertEnv, c.KeyEnv))
 	}
 	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, nil
+}
+
+// maxPEMFile bounds what is read from a certificate or a key file. A certificate chain and its key
+// are a few kilobytes, so a file past a mebibyte is not one, and a device such as /dev/zero would
+// never end.
+const maxPEMFile = 1 << 20
+
+// loadKeyPair is tls.LoadX509KeyPair over readPEMFile: the same pair, read with the limits below.
+func loadKeyPair(certPath, keyPath string) (tls.Certificate, error) {
+	certPEM, err := readPEMFile(certPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM, err := readPEMFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+// readPEMFile reads a certificate or key file, a regular one (through a link, as a certificate
+// manager keeps them) and of at most maxPEMFile bytes. The path can come from the saved settings,
+// which a caller other than the operator may change, so a FIFO (opening it waits for a writer for
+// ever), a device or a huge file is an error that the server reports and not a start that hangs or
+// runs out of memory. The type is checked before the file is opened for that reason.
+func readPEMFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPEMFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPEMFile {
+		return nil, fmt.Errorf("%s is larger than %d bytes, so it is not a certificate or a key", path, maxPEMFile)
+	}
+	return data, nil
 }
 
 // IsLoopbackAddr reports whether addr (a "host:port" bind address) resolves
