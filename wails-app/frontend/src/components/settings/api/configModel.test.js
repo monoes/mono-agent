@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ROWS, bannerOf, byKey, canSave, dirtyKeys, hasSaved, otherProblems, overriddenInfo, restartSettled, rowProblems, runningInfo,
+  ROWS, bannerOf, byKey, canSave, dirtyKeys, hasSaved, otherProblems, overriddenInfo, restartSettled, rowProblems, rowState, runningInfo,
   savePayload, stateInfo, summary, textOf, wideningHeading,
 } from './configModel.js'
 import { KEYS, configDoc } from './__fixtures__/configFixtures.js'
@@ -65,6 +65,27 @@ describe('the state of a setting', () => {
     expect(overriddenInfo({ state: 'overridden', server_flag: '--max-concurrent', env: 'X', running_source: 'flag' })).toEqual({ kind: 'flag', name: '--max-concurrent' })
     expect(overriddenInfo(by.max_concurrent)).toBeNull()
     expect(overriddenInfo({ state: 'overridden', env: 'X' })).toEqual({ kind: '', name: '' }) // overridden by something it cannot name
+  })
+})
+
+describe('the state of a row', () => {
+  const state = (row_, running, saved = {}) => stateInfo(rowState(row(row_), byKey(configDoc({ saved, running })))).id
+
+  it('is the state of its setting, and for the TLS pair the one of its two files that needs most attention', () => {
+    expect(state('max_concurrent', {}, { max_concurrent: '8' })).toBe('applied')
+    expect(state('max_concurrent', { max_concurrent: ['4', 'default'] }, { max_concurrent: '8' })).toBe('pending')
+    const pair = { tls_cert_file: '/a.pem', tls_key_file: '/a.key' }
+    expect(state('tls', {}, pair)).toBe('applied')
+    expect(state('tls', { tls_cert_file: ['', 'default'] }, pair)).toBe('pending')
+    expect(state('tls', { tls_cert_file: ['', 'default'], tls_key_file: ['/b.key', 'env'] }, pair)).toBe('overridden') // overridden says more than pending
+    expect(state('tls', { tls_key_file: ['/b.key', 'env'] }, pair)).toBe('overridden')
+    expect(state('tls', null, pair)).toBe('notRunning')
+    expect(state('tls', 'old', pair)).toBe('unknown')
+  })
+
+  it('is unknown for a setting the CLI did not list: nothing is claimed', () => {
+    expect(stateInfo(rowState(row('turn_timeout'), {})).id).toBe('unknown')
+    expect(stateInfo(rowState(row('tls'), { tls_cert_file: { state: 'applied' } })).id).toBe('applied') // the one it has
   })
 })
 

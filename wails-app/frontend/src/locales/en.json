@@ -540,6 +540,35 @@
             "image_runtimes": "More runtimes make images",
             "tool_runtimes": "More runtimes serve tool calling"
           }
+        },
+        "title": "Server settings",
+        "hint": "What the server reads when it starts. A daemon reads the saved settings the next time it starts, unless a flag or an environment variable of its own sets them.",
+        "loading": "Reading the server settings…",
+        "loadError": "Couldn't read the server settings:",
+        "chipError": "Error reading settings",
+        "chipRestart": "Restart needed",
+        "chipProblems_one": "{{count}} problem",
+        "chipProblems_other": "{{count}} problems",
+        "chipSaved_one": "{{count}} saved",
+        "chipSaved_other": "{{count}} saved",
+        "placeholderDefault": "Default: {{value}}",
+        "runningLine": "Running: {{value}} ({{source}})",
+        "valueNotSet": "not set",
+        "source": {
+          "flag": "flag {{name}}",
+          "env": "variable {{name}}",
+          "saved": "saved",
+          "default": "default"
+        },
+        "overriddenFlag": "The daemon was started with {{name}}, so a saved value has no effect until that flag is removed.",
+        "overriddenEnv": "The daemon's environment sets {{name}}, so a saved value has no effect until that variable is removed.",
+        "problemHint": "Remove the saved value with “Use the default”, or save a valid one.",
+        "problemDocHint": "To start over, remove every saved setting: monoagentcli api config unset --all",
+        "banner": {
+          "restartTitle": "Restart needed",
+          "restartBody": "The running daemon started before these were saved, so it still runs the old values: {{keys}}. It reads the saved settings when it restarts.",
+          "olderBody": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure it reads the saved settings.",
+          "idleBody": "No daemon is running: the server reads these settings when it starts."
         }
       }
     }

@@ -53,6 +53,15 @@ export function stateInfo(setting) {
   return typeof s === 'string' && hasOwn(STATES, s) ? STATES[s] : STATES.unknown
 }
 
+// The states, most in need of attention first: a row of two settings (the TLS files) shows the first of theirs.
+const ATTENTION = ['overridden', 'pending_restart', 'unknown', 'not_running', 'applied']
+
+/** The setting of a row whose state the badge shows: the only one, or of the TLS pair the one that needs most attention. undefined when the CLI listed none. */
+export function rowState(row, settings) {
+  const rank = (s) => { const i = ATTENTION.indexOf(s.state); return i < 0 ? ATTENTION.indexOf('unknown') : i }
+  return row.keys.map(k => settings?.[k]).filter(Boolean).sort((a, b) => rank(a) - rank(b))[0]
+}
+
 /**
  * What the running daemon says it started with, and where that came from: null when no live daemon reports the
  * setting. `value` may be '' (it runs the setting with none). `name` is the flag or the variable it came from,

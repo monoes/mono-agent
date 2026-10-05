@@ -31,6 +31,15 @@ export function Badge({ tone = 'muted', title, style, children, ...rest }) {
   )
 }
 
+// Said is a text a failed call or a document gave: the page's own words (`verbatim` false), or the CLI's, which are
+// English whatever the language of the page. On a page in another language it says so with lang="en", for the
+// readers (a screen reader's voice, a translator) that go by it.
+export function Said({ said, ...rest }) {
+  const { i18n } = useTranslation()
+  const lng = i18n.resolvedLanguage || i18n.language || 'en'
+  return <span lang={said.verbatim && !lng.startsWith('en') ? 'en' : undefined} {...rest}>{said.text}</span>
+}
+
 // A runtime's class is chat-only, sandboxed or unconfined; a policy's strongest
 // class is chat-only, sandboxed or any. The words are the ones of the flags and
 // of `api models`, so they are not translated; the title says what they mean.

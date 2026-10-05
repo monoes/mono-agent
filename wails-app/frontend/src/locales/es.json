@@ -540,6 +540,35 @@
             "image_runtimes": "Más entornos generan imágenes",
             "tool_runtimes": "Más entornos sirven llamadas a herramientas"
           }
+        },
+        "title": "Ajustes del servidor",
+        "hint": "Lo que lee el servidor al arrancar. Un daemon lee los ajustes guardados la próxima vez que arranca, salvo que una opción o una variable de entorno propia los defina.",
+        "loading": "Leyendo los ajustes del servidor…",
+        "loadError": "No se pudieron leer los ajustes del servidor:",
+        "chipError": "Error al leer los ajustes",
+        "chipRestart": "Hay que reiniciar",
+        "chipProblems_one": "{{count}} problema",
+        "chipProblems_other": "{{count}} problemas",
+        "chipSaved_one": "{{count}} guardado",
+        "chipSaved_other": "{{count}} guardados",
+        "placeholderDefault": "Por defecto: {{value}}",
+        "runningLine": "En ejecución: {{value}} ({{source}})",
+        "valueNotSet": "sin definir",
+        "source": {
+          "flag": "opción {{name}}",
+          "env": "variable {{name}}",
+          "saved": "guardado",
+          "default": "por defecto"
+        },
+        "overriddenFlag": "El daemon se inició con {{name}}, así que un valor guardado no tiene efecto hasta que se quite esa opción.",
+        "overriddenEnv": "El entorno del daemon define {{name}}, así que un valor guardado no tiene efecto hasta que se quite esa variable.",
+        "problemHint": "Quita el valor guardado con «Usar el valor por defecto», o guarda uno válido.",
+        "problemDocHint": "Para empezar de cero, quita todos los ajustes guardados: monoagentcli api config unset --all",
+        "banner": {
+          "restartTitle": "Hay que reiniciar",
+          "restartBody": "El daemon en marcha arrancó antes de que se guardaran estos ajustes, así que aún usa los valores antiguos: {{keys}}. Lee los ajustes guardados cuando se reinicia.",
+          "olderBody": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro de que lee los ajustes guardados.",
+          "idleBody": "No hay ningún daemon en marcha: el servidor lee estos ajustes cuando arranca."
         }
       }
     }
