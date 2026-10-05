@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,13 +42,18 @@ const accountKEKID = "monoes..account"
 //     create=true returns the key that exists (in the OS keychain or the file
 //     keyring) or an error.
 //
-// A key store that cannot be opened is an error, not found=false.
+// A key store that cannot be opened is an error, not found=false. The key is a
+// copy the caller may wipe.
 func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 	if interactive || !fileKeyringEnabled() {
 		// Without the file keyring nothing can prompt, so one path serves both.
-		return accountKEKVault(create)
+		kek, found, err = accountKEKVault(create)
+	} else {
+		kek, found, err = accountKEKQuiet(create)
 	}
-	return accountKEKQuiet(create)
+	// getOrCreateKEK returns the vault's memoized slice. The caller gets a copy of
+	// its own, so wiping its key cannot change the key every later call gets.
+	return bytes.Clone(kek), found, err
 }
 
 // accountKEKVault reads or creates the key through the vault's own functions.
@@ -85,7 +91,7 @@ func accountKEKQuiet(create bool) ([]byte, bool, error) {
 		return kek, found, ferr
 	}
 	if create {
-		return nil, false, fmt.Errorf("secrets: creating the file-keyring key needs its passphrase prompt, which this call must not show; %s", filePassphraseHint)
+		return nil, false, errors.New("secrets: creating the file-keyring key needs its passphrase prompt, which this call must not show; the interactive sign-in creates it (monoagentcli account login)")
 	}
 	return nil, false, nil
 }

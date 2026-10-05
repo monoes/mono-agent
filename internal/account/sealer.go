@@ -27,6 +27,7 @@ type Sealer interface {
 const (
 	sealedVersion = 1
 	nonceSize     = 12
+	keySize       = 32
 )
 
 // keyringSealer seals under the account key of internal/secrets. kek is
@@ -87,7 +88,20 @@ func NewMemorySealer() Sealer {
 func (m memorySealer) Seal(plain []byte) ([]byte, error)  { return seal(m.key, plain) }
 func (m memorySealer) Open(sealed []byte) ([]byte, error) { return open(m.key, sealed) }
 
+// checkKey refuses a key that is not 32 bytes, naming the length and never the
+// key. secrets.Encrypt would also take 16 and 24 bytes and seal under AES-128 or
+// AES-192, while the sealed format promises AES-256-GCM.
+func checkKey(key []byte) error {
+	if len(key) != keySize {
+		return fmt.Errorf("%w: the key is %d bytes, want %d", ErrKeyringUnavailable, len(key), keySize)
+	}
+	return nil
+}
+
 func seal(key, plain []byte) ([]byte, error) {
+	if err := checkKey(key); err != nil {
+		return nil, err
+	}
 	ciphertext, nonce, err := secrets.Encrypt(key, plain)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrKeyringUnavailable, err)
@@ -98,9 +112,13 @@ func seal(key, plain []byte) ([]byte, error) {
 	return append(out, ciphertext...), nil
 }
 
-// open fails with ErrKeyringUnavailable for a damaged blob and for a blob the
-// key does not open: either way the refresh token cannot be read.
+// open fails with ErrKeyringUnavailable for a key that is not 32 bytes, a damaged
+// blob and a blob the key does not open: every way the refresh token cannot be
+// read.
 func open(key, sealed []byte) ([]byte, error) {
+	if err := checkKey(key); err != nil {
+		return nil, err
+	}
 	if len(sealed) < 1+nonceSize || sealed[0] != sealedVersion {
 		return nil, fmt.Errorf("%w: the sealed refresh token is damaged or from a newer version", ErrKeyringUnavailable)
 	}

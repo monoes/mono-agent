@@ -45,6 +45,57 @@ func failOnPassphrasePrompt(t *testing.T) {
 	}
 }
 
+// Where an installed account's key lives is a persisted format: renaming the id
+// would orphan every installed key and sign everyone out. The literal names are
+// pinned, not the constant, in both key stores.
+func TestAccountKEKIsStoredUnderItsPersistedNames(t *testing.T) {
+	if got := kekAccount(accountKEKID); got != "kek-monoes..account" {
+		t.Errorf("OS keychain account = %q, want kek-monoes..account", got)
+	}
+	if got := filepath.Base(fileKeyringPath(accountKEKID)); got != ".file-keyring-monoes..account" {
+		t.Errorf("file keyring file = %q, want .file-keyring-monoes..account", got)
+	}
+}
+
+// getOrCreateKEK hands out the vault's memoized key slice. A caller that wipes
+// the key it was given, as one that zeroes key material after use would, must not
+// change the key every later call gets, so AccountKEK returns a copy of its own.
+func TestAccountKEKHandsOutACopyOfTheKey(t *testing.T) {
+	accountKEKTestHome(t, false)
+	key, found, err := AccountKEK(true, true) // the first create: the vault memoizes this slice
+	if err != nil || !found || len(key) != 32 {
+		t.Fatalf("create: len=%d found=%v err=%v", len(key), found, err)
+	}
+	want := bytes.Clone(key)
+	for _, c := range []struct{ create, interactive bool }{{true, true}, {false, true}, {true, false}, {false, false}} {
+		clear(key) // the caller is done with its key and wipes it
+		next, found, err := AccountKEK(c.create, c.interactive)
+		if err != nil || !found || !bytes.Equal(next, want) {
+			t.Fatalf("create=%v interactive=%v after the caller wiped its key: found=%v err=%v, want the real key", c.create, c.interactive, found, err)
+		}
+		key = next
+	}
+
+	// A seal and an open still agree: seal with the key of a create call, open
+	// with the key of a read call, after the create call's caller wiped its copy.
+	sealKey, _, err := AccountKEK(true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, nonce, err := Encrypt(sealKey, []byte("refresh-value-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(sealKey)
+	openKey, _, err := AccountKEK(false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Decrypt(openKey, ciphertext, nonce); err != nil || string(got) != "refresh-value-1" {
+		t.Fatalf("the key of a read call does not open what the key of a create call sealed (err %v)", err)
+	}
+}
+
 // With the file keyring on and no key anywhere, a read finds nothing and writes
 // nothing, and a create that must not prompt fails instead of reporting "no key".
 func TestAccountKEKFileKeyringWithNothingStored(t *testing.T) {

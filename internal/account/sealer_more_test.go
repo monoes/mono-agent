@@ -3,8 +3,9 @@ package account
 import (
 	"bytes"
 	"context"
-	"crypto/aes"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,8 +93,32 @@ func TestSealedBlobsOfEveryLengthAndVersionAreRefused(t *testing.T) {
 	}
 }
 
-// Every failure wraps ErrKeyringUnavailable and keeps its cause in the chain,
-// at each place it can arise: the key store, the cipher on Seal and on Open.
+// chainHasMessage reports whether err wraps, through single or multiple %w, an
+// error whose text is exactly msg.
+func chainHasMessage(err error, msg string) bool {
+	if err == nil {
+		return false
+	}
+	if err.Error() == msg {
+		return true
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, c := range e.Unwrap() {
+			if chainHasMessage(c, msg) {
+				return true
+			}
+		}
+	case interface{ Unwrap() error }:
+		return chainHasMessage(e.Unwrap(), msg)
+	}
+	return false
+}
+
+// Every failure wraps ErrKeyringUnavailable and keeps its cause in the chain, at
+// each place it can arise: the key store, and the cipher refusing a key that is
+// not the one that sealed the token. (A key of the wrong length never reaches the
+// cipher; see TestSealAndOpenRefuseAKeyThatIsNotThirtyTwoBytes.)
 func TestSealerErrorsKeepTheirCause(t *testing.T) {
 	plain := []byte("refresh-value-1")
 	broken := errors.New("keychain locked")
@@ -106,13 +131,46 @@ func TestSealerErrorsKeepTheirCause(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shortKey := fixedKeySealer([]byte("short"))
-	var size aes.KeySizeError
-	if _, err := shortKey.Seal(plain); !errors.Is(err, ErrKeyringUnavailable) || !errors.As(err, &size) {
-		t.Errorf("Seal with a key of bad length: err = %v, want ErrKeyringUnavailable wrapping the cipher's error", err)
+	otherKey := bytes.Repeat([]byte{9}, 32)
+	_, err = fixedKeySealer(otherKey).Open(sealed)
+	_, cause := secrets.Decrypt(otherKey, sealed[13:], sealed[1:13]) // what the primitive says about the same failure
+	if !errors.Is(err, ErrKeyringUnavailable) || cause == nil || !chainHasMessage(err, cause.Error()) {
+		t.Errorf("Open with another key: err = %v, want ErrKeyringUnavailable wrapping the cipher's error %v", err, cause)
 	}
-	if _, err := shortKey.Open(sealed); !errors.Is(err, ErrKeyringUnavailable) || !errors.As(err, &size) {
-		t.Errorf("Open with a key of bad length: err = %v, want ErrKeyringUnavailable wrapping the cipher's error", err)
+}
+
+// The sealed format promises AES-256-GCM, but secrets.Encrypt would also take a
+// 16 or a 24 byte key and seal under AES-128 or AES-192. A key store entry of
+// any length other than 32 bytes is therefore refused, on Seal and on Open,
+// before it reaches the cipher, and the error names the length, never the key.
+func TestSealAndOpenRefuseAKeyThatIsNotThirtyTwoBytes(t *testing.T) {
+	plain := []byte("refresh-value-1")
+	good := fixedKeySealer(bytes.Repeat([]byte{7}, 32))
+	sealed, err := good.Seal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := good.Open(sealed); err != nil || !bytes.Equal(got, plain) {
+		t.Fatalf("a 32-byte key does not round-trip (match=%v, err=%v)", bytes.Equal(got, plain), err)
+	}
+	for _, n := range []int{0, 16, 24, 31, 33} {
+		key := bytes.Repeat([]byte{7}, n)
+		s := fixedKeySealer(key)
+		want := fmt.Sprintf("the key is %d bytes", n)
+		for op, run := range map[string]func() error{
+			"Seal": func() error { _, err := s.Seal(plain); return err },
+			"Open": func() error { _, err := s.Open(sealed); return err },
+		} {
+			err := run()
+			switch {
+			case err == nil:
+				t.Errorf("%s with a %d-byte key succeeded", op, n)
+			case !errors.Is(err, ErrKeyringUnavailable) || !strings.Contains(err.Error(), want):
+				t.Errorf("%s with a %d-byte key: err = %v, want ErrKeyringUnavailable saying %q", op, n, err, want)
+			case n > 0 && (strings.Contains(err.Error(), string(key)) || strings.Contains(err.Error(), hex.EncodeToString(key))):
+				t.Errorf("%s with a %d-byte key: the error text contains the key", op, n)
+			}
+		}
 	}
 }
 
@@ -124,8 +182,9 @@ const sealerFreshProcessEnv = "ACCOUNT_SEALER_FRESH_PROCESS"
 // installs. The checks that create a key therefore run in a child process of
 // their own (the idiom daemonhb's lock test uses) and leave nothing behind for
 // TestKeyringSealersOverTheMockKeyring or any other test of this package. What
-// they pin: the quiet sealer never makes a key, the interactive one may, and an
-// Open never makes one. A child that matches no test would pass without running
+// they pin: the quiet sealer never makes a key, the interactive one may, an Open
+// never makes one, and a caller that wipes the key it was handed cannot change
+// the next Seal. A child that matches no test would pass without running
 // anything, so the parent also requires the child's own PASS line.
 func TestKeyringSealersInAFreshProcess(t *testing.T) {
 	if os.Getenv(sealerFreshProcessEnv) == "1" {
@@ -207,6 +266,23 @@ func sealerFreshProcessChecks(t *testing.T) {
 		// needs no prompt once the file keyring is there.
 		if _, err := NewKeyringSealer().Seal(plain); err != nil {
 			t.Errorf("a quiet Seal with the file keyring in place failed: %v", err)
+		}
+
+		// The key a sealer is handed is the caller's own copy: a caller that wipes it
+		// must not change the key the next Seal uses (the vault memoizes the slice).
+		key, _, err := NewInteractiveKeyringSealer().(keyringSealer).kek(true)
+		if err != nil || len(key) != 32 {
+			t.Fatalf("the interactive sealer's key: len=%d err=%v", len(key), err)
+		}
+		clear(key)
+		resealed, err := NewInteractiveKeyringSealer().Seal(plain)
+		if err != nil {
+			t.Fatalf("Seal after a caller wiped its key: %v", err)
+		}
+		for name, s := range map[string]Sealer{"quiet": NewKeyringSealer(), "interactive": NewInteractiveKeyringSealer()} {
+			if got, err := s.Open(resealed); err != nil || !bytes.Equal(got, plain) {
+				t.Errorf("%s: Open after a caller wiped its key failed (match=%v, err=%v)", name, bytes.Equal(got, plain), err)
+			}
 		}
 	})
 }
