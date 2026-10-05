@@ -4,7 +4,10 @@ package main
 // environment are held to. One table of values is run against all three: the flag
 // (parsed by cobra and handed to newAPIRuntime), the environment variable (read by
 // newAPIRuntime) and the saved layer (apiconfig.Validate). A value that one of them takes
-// and another refuses would let a server start from one source and not from another.
+// and another refuses would let a server start from one source and not from another. The saved
+// layer is stricter than the other two in two ways, both for text that outlives the process that
+// wrote it (a control character in any value, a TLS file that is not an absolute path: see
+// saved_text_test.go in internal/apiconfig), so what it takes the others take too.
 
 import (
 	"strings"

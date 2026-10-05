@@ -13,9 +13,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/monoes/mono-agent/internal/openaiapi"
 )
@@ -228,8 +231,18 @@ func Validate(s Settings) []Problem {
 // rule). The rules are the ones of the flags and the environment: a padded duration or a
 // padded class is refused here as it is there, and what is accepted is stored without the
 // sign of a number, with a runtime list in lower case, `agy` spelled out and repeats
-// dropped, and with a duration as short as it can be written.
+// dropped, and with a duration as short as it can be written. Two rules are the saved
+// layer's own, because it outlives the process that wrote it and is shown to people and to
+// models: no control character in any value (it would drive the terminal that prints it),
+// and a TLS file is an absolute path (a service starts in another folder, and nothing
+// expands a ~).
 func Canonical(key, text string) (string, error) {
+	if !slices.Contains(Keys(), key) {
+		return "", errUnknownKey()
+	}
+	if strings.IndexFunc(text, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%s must not contain control characters", key)
+	}
 	switch key {
 	case KeyV1Addr:
 		if err := ValidListenAddr(text); err != nil {
@@ -237,6 +250,9 @@ func Canonical(key, text string) (string, error) {
 		}
 		return text, nil
 	case KeyTLSCertFile, KeyTLSKeyFile:
+		if !filepath.IsAbs(text) {
+			return "", fmt.Errorf("%s must be an absolute path (the daemon starts in another folder, and ~ is not expanded)", key)
+		}
 		return text, nil
 	case KeyConfinement, KeyContextConfinement, KeyAutoConfinement:
 		if _, err := openaiapi.ParsePolicy(text); err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -196,6 +197,25 @@ func dashIfEmpty(s string) string {
 	return s
 }
 
+// printable is a value with each control character written out (\x1b, \x9b), for the table that
+// goes to a terminal: a saved value that holds one (a row planted by hand, or by a version that did
+// not refuse it) must not drive the terminal that shows it, or start a line of its own in the
+// table. Letters of any script and spaces stay as they are.
+func printable(s string) string {
+	if strings.IndexFunc(s, unicode.IsControl) < 0 {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			fmt.Fprintf(&b, `\x%02x`, r) // the controls are all below U+00A0
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // stateWords is a state as the table says it.
 func stateWords(state string) string {
 	switch state {
@@ -212,15 +232,15 @@ func printConfig(w io.Writer, r apiconfig.ConfigReport) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SETTING\tSAVED\tEFFECTIVE (this shell)\tRUNNING (daemon)\tSTATE")
 	for _, s := range r.Settings {
-		effective := dashIfEmpty(s.Effective)
+		effective := dashIfEmpty(printable(s.Effective))
 		if s.Source != apiconfig.SourceDefault {
 			effective += " (" + s.Source + ")"
 		}
 		running := "-"
 		if s.Running != nil {
-			running = dashIfEmpty(*s.Running) + " (" + s.RunningSource + ")"
+			running = dashIfEmpty(printable(*s.Running)) + " (" + s.RunningSource + ")"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Key, dashIfEmpty(s.Saved), effective, running, stateWords(s.State))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Key, dashIfEmpty(printable(s.Saved)), effective, running, stateWords(s.State))
 	}
 	_ = tw.Flush()
 	fmt.Fprintln(w)
