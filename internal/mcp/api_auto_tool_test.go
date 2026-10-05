@@ -50,7 +50,7 @@ func fieldNames(doc map[string]json.RawMessage) []string {
 }
 
 func TestAPIAutoSetSwitchesTheSurfaceOnForTheServersProfileAndSaysWhatLeavesTheMachine(t *testing.T) {
-	f := newConfigFixture(t, configSetup{work: true})
+	f := newConfigFixture(t, configSetup{work: true, allowExposure: true})
 	t.Setenv("TYPESAFE_API_KEY", jevKeyInTheEnvironment)
 
 	text := f.mustCall("api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true})
@@ -97,7 +97,7 @@ func TestAPIAutoSetSwitchesTheSurfaceOnForTheServersProfileAndSaysWhatLeavesTheM
 // Turning it on without saying so shows what would leave the machine and changes nothing; the
 // acknowledgement is of one call, and the tool keeps no memory of an earlier one.
 func TestAPIAutoSetNeedsTheAcknowledgementToSwitchOnAndShowsTheEgressWithout(t *testing.T) {
-	f := newConfigFixture(t, configSetup{})
+	f := newConfigFixture(t, configSetup{allowExposure: true})
 	for _, args := range []map[string]any{
 		{"enabled": true},
 		{"enabled": true, "acknowledge_egress": false},
@@ -123,7 +123,7 @@ func TestAPIAutoSetNeedsTheAcknowledgementToSwitchOnAndShowsTheEgressWithout(t *
 }
 
 func TestAPIAutoSetSwitchesTheSurfaceOffWithoutAnAcknowledgement(t *testing.T) {
-	f := newConfigFixture(t, configSetup{})
+	f := newConfigFixture(t, configSetup{allowExposure: true})
 	t.Setenv("TYPESAFE_API_KEY", jevKeyInTheEnvironment)
 	f.mustCall("api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true})
 	// Other profiles' switches are not touched.
@@ -159,7 +159,7 @@ func TestAPIAutoSetSwitchesTheSurfaceOffWithoutAnAcknowledgement(t *testing.T) {
 
 // The threshold is the profile's, and the tool neither sets nor loses it.
 func TestAPIAutoSetReportsTheProfilesThresholdAndKeepsIt(t *testing.T) {
-	f := newConfigFixture(t, configSetup{})
+	f := newConfigFixture(t, configSetup{allowExposure: true})
 	if err := jevconf.SetThreshold(f.Side.DB, "default", jevconf.APIAuto, 0.5); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestAPIAutoSetReportsTheProfilesThresholdAndKeepsIt(t *testing.T) {
 // Without a Jev key the surface can be switched on (the command does, with a note), and auto stays
 // unavailable: the result says so. The tool does not make a key or store one, and never shows one.
 func TestAPIAutoSetWithoutAJevKeySwitchesOnAndSaysAutoIsUnavailable(t *testing.T) {
-	f := newConfigFixture(t, configSetup{})
+	f := newConfigFixture(t, configSetup{allowExposure: true})
 	text := f.mustCall("api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true})
 
 	var doc struct {
@@ -269,9 +269,65 @@ func TestAPIAutoSetDescriptionSaysWhatItDoesAndDoesNot(t *testing.T) {
 			d = tl.description
 		}
 	}
-	for _, want := range []string{"jev enable|disable api_auto", "acknowledge_egress", "TypeSafe", "4,000 characters", "never creates", "Jev key", "not an access control", "auto_confinement", "api_status"} {
+	for _, want := range []string{"jev enable|disable api_auto", "acknowledge_egress", "--allow-api-exposure", "TypeSafe", "4,000 characters", "never creates", "Jev key", "not an access control", "auto_confinement", "api_status"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("the description does not mention %q: %s", want, d)
 		}
+	}
+}
+
+// Switching the auto model on sends the first 4,000 characters of every request for it to TypeSafe, a third
+// party: a decision about what leaves the machine that the operator makes when the MCP server starts, as the
+// exposure of the API's server is, and not one a model can make by setting an argument (the owner's decision of
+// 2026-10-05, after the security review of phase 6 pointed out that acknowledge_egress alone is a speed bump).
+// Without --allow-api-exposure the call is refused with what would be sent, whatever arguments it carries, and
+// nothing changes.
+func TestAPIAutoSetSwitchesOnOnlyWhenTheOperatorAllowedIt(t *testing.T) {
+	f := newConfigFixture(t, configSetup{}) // --allow-mutations, and no --allow-api-exposure
+	for name, args := range map[string]map[string]any{
+		"with the acknowledgement": {"enabled": true, "acknowledge_egress": true},
+		"without it":               {"enabled": true},
+		"with arguments that look like the operator's": {"enabled": true, "acknowledge_egress": true, "allow_api_exposure": true, "confirm": true, "yes": true, "operator": true},
+	} {
+		_, err := f.call("api_auto_set", args)
+		if err == nil || !strings.Contains(err.Error(), "--allow-api-exposure") || !strings.Contains(err.Error(), "MONOAGENT_MCP_ALLOW_API_EXPOSURE=1") {
+			t.Fatalf("%s: %v, want a refusal that names the operator's flag", name, err)
+		}
+		for _, want := range append([]string{"monoagentcli jev enable api_auto", "desktop app", "Nothing was changed"}, jevconf.Egress[jevconf.APIAuto]...) {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not say %q: %v", name, want, err)
+			}
+		}
+		if jevconf.Enabled(f.Side.DB, "default", jevconf.APIAuto) {
+			t.Fatalf("%s: the surface was switched on although the operator did not allow it", name)
+		}
+	}
+	var rows int
+	if err := f.Side.DB.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'jev.%'`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("%d Jev settings written (%v) by refused calls", rows, err)
+	}
+}
+
+// Switching it off sends nothing anywhere, so it needs neither the flag nor the acknowledgement: --allow-mutations,
+// which every mutating tool needs, is all.
+func TestAPIAutoSetSwitchesOffWithoutTheOperatorsFlag(t *testing.T) {
+	f := newConfigFixture(t, configSetup{})
+	if err := jevconf.SetEnabled(f.Side.DB, "default", jevconf.APIAuto, true); err != nil {
+		t.Fatal(err)
+	}
+	doc := autoDoc(t, f.mustCall("api_auto_set", map[string]any{"enabled": false}))
+	if field[bool](t, doc, "enabled") || jevconf.Enabled(f.Side.DB, "default", jevconf.APIAuto) {
+		t.Error("the surface is still on")
+	}
+}
+
+// The flag is the operator's: it adds nothing to --allow-mutations, which the tool needs first.
+func TestAPIAutoSetNeedsAllowMutationsEvenWithTheOperatorsFlag(t *testing.T) {
+	f := newConfigFixture(t, configSetup{readOnly: true, allowExposure: true})
+	if _, err := f.call("api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true}); err == nil || !strings.Contains(err.Error(), "--allow-mutations") {
+		t.Errorf("the refusal: %v, want one that names --allow-mutations", err)
+	}
+	if jevconf.Enabled(f.Side.DB, "default", jevconf.APIAuto) {
+		t.Error("the surface was switched on")
 	}
 }

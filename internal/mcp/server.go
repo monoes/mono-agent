@@ -60,8 +60,10 @@ type Options struct {
 	// apiconfig.Widens). It is the operator's decision, made when the server
 	// starts: no argument of any tool can set or lift it, because the model
 	// sets the arguments. Without it such a change is refused and nothing is
-	// saved. It adds nothing to AllowMutations, which api_config_set needs
-	// first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
+	// saved. It is also what lets api_auto_set switch the auto model on, since
+	// that sends prompts to TypeSafe: what leaves the machine is the
+	// operator's decision too. It adds nothing to AllowMutations, which both
+	// tools need first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
 	AllowAPIExposure bool
 	// APIEnv is what the API tools (api_status, api_config_get/set/apply) read
 	// of this process: its environment, the daemon's heartbeat, the service
