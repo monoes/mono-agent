@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/apiconfig"
@@ -247,7 +246,7 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	// What a server started now would read: this server's environment, with the settings saved
 	// with api_config_set under it. A saved setting that fails its rule stops such a server, so it
 	// stops this call too, naming the setting and not repeating its value.
-	getenv, err := apiconfig.EnvWithSaved(ctx, rt.db.DB, os.Getenv)
+	getenv, err := apiconfig.EnvWithSaved(ctx, rt.db.DB, s.getenv())
 	if err != nil {
 		return nil, err
 	}
