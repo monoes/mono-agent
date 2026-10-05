@@ -539,7 +539,14 @@
             "auto_confinement": "auto podrá elegir más",
             "image_runtimes": "Más entornos generan imágenes",
             "tool_runtimes": "Más entornos sirven llamadas a herramientas"
-          }
+          },
+          "title": "Este cambio hace que el servidor llegue más lejos",
+          "introSave": "Al guardarlo, el servidor llegará más lejos que ahora:",
+          "introUnset": "Al volver al valor por defecto, el servidor llegará más lejos que ahora:",
+          "note": "Se aplica la próxima vez que arranque el daemon.",
+          "cancel": "Cancelar",
+          "confirmSave": "Guardar y permitirlo",
+          "confirmUnset": "Usar el valor por defecto y permitirlo"
         },
         "title": "Ajustes del servidor",
         "hint": "Lo que lee el servidor al arrancar. Un daemon lee los ajustes guardados la próxima vez que arranca, salvo que una opción o una variable de entorno propia los defina.",

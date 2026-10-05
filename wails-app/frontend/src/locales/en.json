@@ -539,7 +539,14 @@
             "auto_confinement": "auto may pick more",
             "image_runtimes": "More runtimes make images",
             "tool_runtimes": "More runtimes serve tool calling"
-          }
+          },
+          "title": "This change makes the server reach further",
+          "introSave": "Saving it lets the server reach further than it does now:",
+          "introUnset": "Going back to the default lets the server reach further than it does now:",
+          "note": "It applies the next time the daemon starts.",
+          "cancel": "Cancel",
+          "confirmSave": "Save and allow this",
+          "confirmUnset": "Use the default and allow this"
         },
         "title": "Server settings",
         "hint": "What the server reads when it starts. A daemon reads the saved settings the next time it starts, unless a flag or an environment variable of its own sets them.",
