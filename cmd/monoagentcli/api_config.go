@@ -33,7 +33,8 @@ func newAPIConfigCmd(cfg *globalConfig) *cobra.Command {
 			"and what the running daemon started with, `set` and `unset` change what is saved, and `monoagentcli daemon " +
 			"restart` makes a running daemon read it. A change that makes the server reach further than it did (a listener " +
 			"beyond this machine, or on another host or on every interface where it was one host; a higher confinement " +
-			"class; more runtimes) needs --yes.",
+			"class; more runtimes) needs --yes. These commands edit the database they open, which --db-path can name; a daemon " +
+			"started by the login service reads its own, the default one.",
 	}
 	cmd.AddCommand(newAPIConfigShowCmd(cfg), newAPIConfigSetCmd(cfg), newAPIConfigUnsetCmd(cfg))
 	return cmd
