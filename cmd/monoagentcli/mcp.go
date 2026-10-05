@@ -14,7 +14,7 @@ import (
 // reference docs as tools for AI agents. stdout is the protocol channel;
 // logs go to stderr only.
 func newMCPCmd(cfg *globalConfig) *cobra.Command {
-	var allowMutations bool
+	var allowMutations, allowAPIExposure bool
 	var grant string
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -44,6 +44,14 @@ of the host's transcript. monoagentcli api key create writes the key to its
 stdout: run in your own terminal, and not through an agent's shell tool, it
 stays out of that transcript.
 
+api_config_set saves settings of the OpenAI-compatible API's server and refuses a
+change that makes the server reach further than it did (a dedicated listener beyond
+this machine, a higher confinement class, a runtime outside the default list, tool
+calling or image generation switched on again) unless this server was started with
+--allow-api-exposure or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1. That is the operator's
+decision, made here: the arguments of a tool are set by the model, so none of them
+can lift the refusal. It adds nothing without --allow-mutations.
+
 Honors the global --profile flag (or the MONOAGENT_PROFILE environment
 variable) and --db-path, exactly like every other command.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,12 +64,16 @@ variable) and --db-path, exactly like every other command.`,
 			if grant != "" && allowMutations {
 				return fmt.Errorf("--grant serves only the granted automations; --allow-mutations does not apply")
 			}
-			return mcp.Run(mcp.Options{
-				DBPath:         cfg.DBPath,
-				Profile:        cfg.ProfileID,
-				Version:        version,
-				AllowMutations: allowMutations,
-				Grant:          grant,
+			if grant != "" && allowAPIExposure {
+				return fmt.Errorf("--grant serves only the granted automations; --allow-api-exposure does not apply")
+			}
+			return runMCP(mcp.Options{
+				DBPath:           cfg.DBPath,
+				Profile:          cfg.ProfileID,
+				Version:          version,
+				AllowMutations:   allowMutations,
+				AllowAPIExposure: allowAPIExposure,
+				Grant:            grant,
 			})
 		},
 	}
@@ -69,5 +81,11 @@ variable) and --db-path, exactly like every other command.`,
 		"Grant mode: serve only the automations granted to one org role (monomind spawns this for role tool providers)")
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
 		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
+	cmd.Flags().BoolVar(&allowAPIExposure, "allow-api-exposure", false,
+		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further (a listener beyond this machine, a higher confinement class, more runtimes), which it otherwise refuses; needs --allow-mutations; also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
 	return cmd
 }
+
+// runMCP serves the MCP server on stdin and stdout. A test replaces it to see what the command
+// would have started the server with.
+var runMCP = mcp.Run

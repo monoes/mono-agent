@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/apiconfig"
 	"github.com/monoes/mono-agent/internal/secrets"
 )
 
@@ -47,12 +48,28 @@ type Options struct {
 	Version string
 	// AllowMutations enables mutating tools (workflow_run, hil_approve/
 	// reject, every create/update/delete-class monoagent tool, and
-	// api_key_create/update/revoke). When false (default), mutating tools
-	// are omitted from tools/list and refuse with an explanatory error if
-	// called by name. Also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=="1".
-	// Mirrors internal/httpapi's identically-named/shaped AllowMutations
-	// gate.
+	// api_key_create/update/revoke, api_config_set/apply and api_auto_set).
+	// When false (default), mutating tools are omitted from tools/list and
+	// refuse with an explanatory error if called by name. Also settable via
+	// MONOAGENT_MCP_ALLOW_MUTATIONS=="1". Mirrors internal/httpapi's
+	// identically-named/shaped AllowMutations gate.
 	AllowMutations bool
+	// AllowAPIExposure lets api_config_set save a change that makes the
+	// OpenAI-compatible API's server reach further than it did (a listener
+	// beyond this machine, a higher confinement class, more runtimes: see
+	// apiconfig.Widens). It is the operator's decision, made when the server
+	// starts: no argument of any tool can set or lift it, because the model
+	// sets the arguments. Without it such a change is refused and nothing is
+	// saved. It adds nothing to AllowMutations, which api_config_set needs
+	// first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
+	AllowAPIExposure bool
+	// APIEnv is what the documents of the API tools (api_status,
+	// api_config_get/set) read of this process: its environment, the daemon's
+	// heartbeat, the service manager and the HTTP probes. The zero value is the
+	// process's own, which is what the command uses; tests give fakes, so that
+	// none of them runs a service manager or depends on the machine. Its
+	// Environment is ignored: the documents of this server always say "mcp".
+	APIEnv apiconfig.Env
 	// Grant, when set, serves grant mode: only the automations of that
 	// grant's (org, role) bundle, for monomind's role tool provider. See
 	// grant.go.
@@ -103,6 +120,9 @@ type Server struct {
 func NewServer(opts Options) *Server {
 	if !opts.AllowMutations {
 		opts.AllowMutations = os.Getenv("MONOAGENT_MCP_ALLOW_MUTATIONS") == "1"
+	}
+	if !opts.AllowAPIExposure {
+		opts.AllowAPIExposure = os.Getenv("MONOAGENT_MCP_ALLOW_API_EXPOSURE") == "1"
 	}
 	return &Server{opts: opts}
 }

@@ -29,6 +29,7 @@ func newAPIKeyServer(t *testing.T, allowMutations bool) (*Server, string) {
 func serverOver(t *testing.T, dbPath, profile string, allowMutations bool) *Server {
 	t.Helper()
 	t.Setenv("MONOAGENT_MCP_ALLOW_MUTATIONS", "")
+	t.Setenv("MONOAGENT_MCP_ALLOW_API_EXPOSURE", "") // a developer's shell must not open the gate of a test
 	s := NewServer(Options{
 		DBPath:         dbPath,
 		Profile:        profile,
