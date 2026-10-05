@@ -356,7 +356,12 @@ dangerous calls.
   or `unknown`). Both are built by `internal/apiconfig`, the code the commands
   run, with this MCP server's own environment (`api_config_get` says
   `"environment":"mcp"` where the command says `"shell"`), the server's profile
-  and the daemon's heartbeat.
+  and the daemon's heartbeat. A saved row that cannot be read stops both, and
+  `api_models_list`, with the command's message passed on as it is (it starts
+  `the saved settings are damaged` and names `api config unset --all --yes`): a
+  model tells the user, who runs that command, or the operator allows
+  `api_config_set` with `unset: "all"` to remove the row (the gate below). A row
+  a newer version saved is an error that nothing here removes.
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -401,22 +406,32 @@ existing MCP client config that relies on them.
   that makes the server reach further than it did is refused, and nothing is
   saved, unless the operator started this MCP server with `--allow-api-exposure`
   (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`)**: a dedicated listener beyond this
-  machine, a higher confinement class, a runtime outside the default list, a
-  runtime list that leaves `none`; removing a `confinement` of `chat-only` or an
-  `image_runtimes` of `none` counts (`apiconfig.Widens` decides, in the
-  transaction that replaces the row). That is the operator's switch, read once
-  when the server starts: no argument of the tool is one, since a model sets the
-  arguments and an argument would protect nothing, and the schema offers none.
-  The refusal says which setting and why, that the user can make the change with
-  `api config set ... --yes` (or `unset`) or in the desktop app, and what the
-  operator can do; with the flag, the reasons are in the result's `widening`.
+  machine, moved to another host beyond it or to every interface, a higher
+  confinement class, a runtime outside the default list, a runtime list that
+  leaves `none`; removing a `confinement` of `chat-only` or an `image_runtimes`
+  of `none` counts, and so does removing a saved row that cannot be read (`unset`
+  of `all`: the widening `saved_settings`, since what the row limited cannot be
+  told; with the flag the result says `removed_unreadable_row`)
+  (`apiconfig.Widens` and `Apply` decide, in the transaction that replaces the
+  row). That is the operator's switch, read once when the server starts: no
+  argument of the tool is one, since a model sets the arguments and an argument
+  would protect nothing, and the schema offers none. The refusal says which
+  setting and why, that the user can make the change with
+  `api config set ... --yes` (or `unset`) or in the desktop app (for a row that
+  cannot be read it names `api config unset --all --yes` alone), and what the
+  operator can do; with the flag, the reasons are in the result's `widening`,
+  as the command prints them. While the row cannot be read every other change
+  fails with the command's message (`the saved settings are damaged ...`), and a
+  row a newer version saved is an error for all of them.
   `--allow-api-exposure` adds nothing to `--allow-mutations`, which the tool
   needs first, and grant mode refuses it. A value that holds an API key
   (`sk-ma-`) is refused, because what is saved is shown to whoever reads
   `api_config_get`; a value over 4096 characters (an address over 260) is
-  refused; and no error repeats an argument (the reasons of the gate name an
-  address or a runtime, and are given without them). A saved setting takes
-  effect when the server starts: the tool restarts nothing.
+  refused; and no error repeats an argument: the reasons of the gate print the
+  address of the call and, for a move between two binds, the one saved before
+  it, and the refusal names no address and no host, in any spelling, and no
+  runtime outside the default list. A saved setting takes effect when the
+  server starts: the tool restarts nothing.
 - `api_config_apply` — restarts the daemon through the auto-start service it is
   registered as (`daemon restart`, through the same `autostart.RestartRegistered`
   over `autostart.Installer`), so that it reads the saved settings; the result
@@ -1062,8 +1077,11 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), read when the
   server starts and never from an argument of the call: where the CLI has
   `--yes`, MCP has a switch that the operator sets and the model cannot, and a
-  refused change saves nothing. Of the mutating tools only
-  `api_config_set` has it; `api_config_apply` and `api_auto_set` are held back by
+  refused change saves nothing. The repair of a row that cannot be read stands
+  behind it too: `api_config_set` with `unset: "all"` is refused without the
+  flag (the reason `saved_settings`) and removes the row with it. Of the
+  mutating tools only `api_config_set` has it; `api_config_apply` and
+  `api_auto_set` are held back by
   `--allow-mutations` alone (the latter also by `acknowledge_egress`, which the
   caller sets: it makes what leaves the machine visible, and is not an access
   control). `api_models_list` reads the saved settings under the environment, as

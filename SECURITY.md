@@ -644,7 +644,15 @@ whatever is saved), and it fills what they leave out.
   prompt-injected page included, and would protect nothing. No argument can open
   it (the schema offers none, and the tests send the obvious spellings of one), and
   the refusal names the setting and the reason, the operator's switch, and the
-  user's own way: `api config set ... --yes`, or the desktop app. **What it does
+  user's own way: `api config set ... --yes`, or the desktop app (for a row that
+  cannot be read it names `api config unset --all --yes` alone). Removing such a
+  row (`unset` of `all`) is one of the changes the flag allows, since what the
+  row limited cannot be told: without it the call is refused with the reason
+  `saved_settings`, and with it the row is removed and the result says
+  `removed_unreadable_row`. While the row cannot be read the other changes and
+  the read tools fail with the command's message (`the saved settings are
+  damaged ...`), which a model passes on to the user, and a row a newer version
+  saved is an error that nothing here removes. **What it does
   not do:** it does not stop a host that also gives the model a shell tool, or
   any tool that runs commands as your OS user, from running `monoagentcli api
   config set ... --yes` itself; the flag guards the tool as `--yes` guards the
@@ -655,9 +663,11 @@ whatever is saved), and it fills what they leave out.
   value that holds an API key (`sk-ma-`) and a value of unreasonable length, so
   that a key pasted by mistake is not saved in clear where the read-only
   `api_config_get` shows it to whoever calls it; no error of the tool repeats an
-  argument (the reasons of the gate name an address or a runtime, and are given
-  without them); and the result of a change that was allowed shows what was
-  saved, paths and addresses included, never a secret.
+  argument (the reasons of the gate print the address of the call and, for a move
+  between two binds, the one saved before it, or a runtime; the refusal names no
+  address and no host, in any spelling, and no runtime outside the default list);
+  and the result of an allowed change shows what was saved, paths and addresses
+  included, and the command's reasons, never a secret.
 - `api_config_apply` (`--allow-mutations`) restarts the daemon through the
   service manager it is registered with, as `daemon restart` does, **and
   interrupts what the daemon is running** (workflows, org runs), with whatever
