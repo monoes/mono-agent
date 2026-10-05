@@ -70,7 +70,7 @@ describe('a change that widens', () => {
       w.kind.context_confinement + WIDENING.contextLoopback.reason,
       w.kind.auto_confinement + WIDENING.autoNetwork.reason,
     ])
-    expect(within(dialog()).getByRole('button', { name: w.cancel })).toHaveFocus()
+    await waitFor(() => expect(within(dialog()).getByRole('button', { name: w.cancel })).toHaveFocus()) // the dialog moves the focus in an effect
     expect(App.APIConfigSet.mock.calls).toEqual([[{ context_confinement: 'sandboxed' }, false, true]]) // the dry run, alone
     expect(m.onAdopt).not.toHaveBeenCalled()
     expect(within(row('context_confinement')).queryByText(c.note.saved)).not.toBeInTheDocument()
@@ -214,7 +214,7 @@ describe('a change that widens', () => {
     fireEvent.change(screen.getByRole('combobox', { name: s.rows.context_confinement.label }), { target: { value: 'sandboxed' } })
     fireEvent.click(screen.getByRole('button', { name: s.saveLabel.replace('{{setting}}', s.rows.context_confinement.label) }))
     const d = await screen.findByRole('alertdialog', { name: s.widening.title })
-    expect(within(d).getByRole('button', { name: s.widening.cancel })).toHaveFocus()
+    await waitFor(() => expect(within(d).getByRole('button', { name: s.widening.cancel })).toHaveFocus()) // the dialog moves the focus in an effect
     expect(within(d).getByText(WIDENING.contextLoopback.reason)).toHaveAttribute('lang', 'en')
   })
 })

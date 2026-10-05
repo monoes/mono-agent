@@ -128,7 +128,7 @@ describe('asking before a restart', () => {
     expect(d).toHaveTextContent(/workflows/)
     expect(d).toHaveTextContent(/org runs/)
     expect(d).not.toHaveTextContent(/graceful/i) // the service manager ends the process its own way: nothing here claims otherwise
-    expect(within(d).getByRole('button', { name: r.cancel })).toHaveFocus()
+    await waitFor(() => expect(within(d).getByRole('button', { name: r.cancel })).toHaveFocus()) // the dialog moves the focus in an effect
     expect(within(d).getAllByRole('button').map(b => b.textContent)).toEqual([r.cancel, r.confirm])
     expect(App.DaemonRestart).not.toHaveBeenCalled()
   })
@@ -426,7 +426,7 @@ describe('in Spanish', () => {
     const d = await screen.findByRole('alertdialog', { name: s.restart.title })
     expect(d).toHaveTextContent(s.restart.body)
     expect(d).toHaveTextContent(s.restart.byHand)
-    expect(within(d).getByRole('button', { name: s.restart.cancel })).toHaveFocus()
+    await waitFor(() => expect(within(d).getByRole('button', { name: s.restart.cancel })).toHaveFocus()) // the dialog moves the focus in an effect
     fireEvent.click(within(d).getByRole('button', { name: s.restart.confirm }))
     await tick(0)
     expect(within(banner()).getByText(s.restart.checking)).toBeInTheDocument()
