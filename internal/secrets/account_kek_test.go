@@ -74,6 +74,7 @@ func createAccountFileKEK(t *testing.T, passphrase string) (kek []byte, home str
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(fileKeyringEnv, "1")
+	t.Setenv(filePassphraseFileEnv, "") // an exported passphrase file is a source these tests must not have
 	captureFileKeyringWarns(t)
 	forceKeyringFirstUseWriteFails(t)
 	stubFilePassphrase(t, passphrase)
