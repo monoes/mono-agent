@@ -84,6 +84,7 @@ type configSetup struct {
 	readOnly      bool // without --allow-mutations
 	allowExposure bool // with --allow-api-exposure
 	registered    bool // the daemon is registered for auto-start
+	apiOnly       bool // with --api-only
 }
 
 // configFixture is a server of the API tools over a database of its own.
@@ -133,6 +134,7 @@ func newConfigFixture(t *testing.T, cs configSetup) *configFixture {
 		Version:          "test",
 		AllowMutations:   !cs.readOnly,
 		AllowAPIExposure: cs.allowExposure,
+		APIOnly:          cs.apiOnly,
 		APIEnv:           apiconfig.Env{Installer: f.Installer, Heartbeat: f.heartbeat, Probe: f.probe},
 	})
 	t.Cleanup(f.Server.closeRuntime)
