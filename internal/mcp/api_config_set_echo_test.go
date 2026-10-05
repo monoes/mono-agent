@@ -140,38 +140,69 @@ func TestAPIConfigSetSaysWhatAnAddressMustBeWithoutRepeatingIt(t *testing.T) {
 
 // The reasons of the gate name the address or the runtimes of the change, which is what makes them
 // useful to a person and what makes them an echo of the arguments: the refusal of a tool says which
-// setting and why without them.
+// setting and why without them. A move from one bind to another names the old address too, and the
+// refusal names no address and no host at all, in any spelling (the port alone is harmless).
 func TestTheRefusalOfAWideningChangeDoesNotRepeatTheValuesOfTheCall(t *testing.T) {
+	const old = "192.168.1.10:9443"
 	for _, c := range []struct {
 		name    string
+		saved   []string // saved before the call
 		args    map[string]any
-		secret  string // what the call holds and the refusal must not
-		mention string // what it must still say: the setting, and why
+		secret  string   // what the call holds and the refusal must not
+		also    []string // what else must not be in it: the saved address and its host, other spellings
+		mention string   // what it must still say: the setting, and why
 	}{
-		{"an address", set(map[string]any{"v1_addr": "203.0.113.7:9443"}), "203.0.113.7", "beyond this machine"},
-		{"a long host name", set(map[string]any{"v1_addr": strings.Repeat("Q", 200) + ":9443"}), strings.Repeat("q", 16), "beyond this machine"},
-		{"a bind to every interface", set(map[string]any{"v1_addr": ":9443"}), ":9443", "beyond this machine"},
-		{"a runtime", set(map[string]any{"tool_runtimes": "claude,codex,zzz-extra-runtime"}), "zzz-extra-runtime", "default list"},
-		{"a runtime in capitals", set(map[string]any{"image_runtimes": "CODEX," + strings.Repeat("Q", 32)}), strings.Repeat("q", 16), "default list"},
-		{"two runtimes", set(map[string]any{"tool_runtimes": "alpha-one,beta-two"}), "alpha-one", "default list"},
+		{name: "an address", args: set(map[string]any{"v1_addr": "203.0.113.7:9443"}), secret: "203.0.113.7", mention: "beyond this machine"},
+		{name: "a long host name", args: set(map[string]any{"v1_addr": strings.Repeat("Q", 200) + ":9443"}), secret: strings.Repeat("q", 16), mention: "beyond this machine"},
+		{name: "a bind to every interface", args: set(map[string]any{"v1_addr": ":9443"}), secret: ":9443", mention: "beyond this machine"},
+		{name: "a runtime", args: set(map[string]any{"tool_runtimes": "claude,codex,zzz-extra-runtime"}), secret: "zzz-extra-runtime", mention: "default list"},
+		{name: "a runtime in capitals", args: set(map[string]any{"image_runtimes": "CODEX," + strings.Repeat("Q", 32)}), secret: strings.Repeat("q", 16), mention: "default list"},
+		{name: "two runtimes", args: set(map[string]any{"tool_runtimes": "alpha-one,beta-two"}), secret: "alpha-one", mention: "default list"},
+
+		// A move between two binds.
+		{name: "a move to another address", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "10.0.0.5:9443"}),
+			secret: "10.0.0.5", also: []string{old, "192.168.1.10"}, mention: "another address beyond this machine"},
+		{name: "a move to every interface, by an empty host", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": ":9443"}),
+			secret: ":9443", also: []string{old, "192.168.1.10"}, mention: "every interface"},
+		{name: "a move to 0.0.0.0", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "0.0.0.0:9443"}),
+			secret: "0.0.0.0", also: []string{old, "192.168.1.10"}, mention: "every interface"},
+		{name: "a move to [::]", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "[::]:9443"}),
+			secret: "[::]", also: []string{"::", old, "192.168.1.10"}, mention: "every interface"},
+		{name: "a move to a host name", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "host.example:9443"}),
+			secret: "host.example", also: []string{old, "192.168.1.10"}, mention: "another address beyond this machine"},
+		{name: "a move between IPv6 hosts", saved: []string{"v1_addr=[2001:db8::1]:9443"}, args: set(map[string]any{"v1_addr": "[2001:db8::2]:9443"}),
+			secret: "2001:db8::2", also: []string{"2001:db8::1"}, mention: "another address beyond this machine"},
+		{name: "a move between link-local hosts, with a zone", saved: []string{"v1_addr=[fe80::1%eth0]:9443"}, args: set(map[string]any{"v1_addr": "[fe80::2%eth0]:9443"}),
+			secret: "fe80::2", also: []string{"fe80::1", "eth0"}, mention: "another address beyond this machine"},
+		{name: "a move between host names, in capitals", saved: []string{"v1_addr=Old.Example:9443"}, args: set(map[string]any{"v1_addr": "New.Example:9443"}),
+			secret: "new.example", also: []string{"old.example"}, mention: "another address beyond this machine"},
+		{name: "a move with a class that rises too", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "10.0.0.5:9443", "confinement": "any"}),
+			secret: "10.0.0.5", also: []string{old, "192.168.1.10"}, mention: "another address beyond this machine"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newConfigFixture(t, configSetup{})
+			f.save(c.saved...)
 			_, err := f.call("api_config_set", c.args)
 			if err == nil {
 				t.Fatal("the change was not refused")
 			}
-			if echoes(err.Error(), c.secret) {
-				t.Errorf("the refusal repeats %q: %s", c.secret, err)
+			for _, repeated := range append([]string{c.secret}, c.also...) {
+				if echoes(err.Error(), repeated) {
+					t.Errorf("the refusal repeats %q: %s", repeated, err)
+				}
 			}
 			if !strings.Contains(err.Error(), c.mention) {
 				t.Errorf("the refusal must still say why (%q): %s", c.mention, err)
 			}
-			// What the caller asked is not lost: when the operator allows it, the document shows it.
+			// What the caller asked is not lost: when the operator allows it, the document shows it, and
+			// its reasons are the command's, which name the old address too.
 			open := newConfigFixture(t, configSetup{allowExposure: true})
-			text := open.mustCall("api_config_set", c.args)
-			if !strings.Contains(strings.ToLower(text), strings.ToLower(c.secret)) {
-				t.Errorf("the document of an allowed change must show what was saved (%q)", c.secret)
+			open.save(c.saved...)
+			text := strings.ToLower(open.mustCall("api_config_set", c.args))
+			for _, shown := range append([]string{c.secret}, c.also...) {
+				if !strings.Contains(text, strings.ToLower(shown)) {
+					t.Errorf("the document of an allowed change must show what was saved (%q)", shown)
+				}
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"slices"
 	"sort"
@@ -274,23 +275,109 @@ func refusalOf(ws []apiconfig.Widening, ch apiconfig.Change) error {
 	return errors.New(b.String())
 }
 
-// scrubReason is a reason of the gate without what the call asked for in it: the reasons name the
-// address of a listener and the runtimes outside the default list, which is what makes them useful to
-// a person, and an echo of the arguments in an error.
+// scrubReason is a reason of the gate without what the call asked for in it, and without any address:
+// the reasons name the addresses of a listener (the new one and, for a move, the one saved before) and
+// the runtimes outside the default list, which is what makes them useful to a person, and an echo of
+// the arguments in an error.
 func scrubReason(reason string, ch apiconfig.Change) string {
+	var addrs []string
 	for name, text := range ch.Set {
 		switch key, _ := apiconfig.LookupKey(name); key {
 		case apiconfig.KeyV1Addr:
-			if text != "" { // the reason prints the address as it was saved, which is as it was given
-				reason = strings.ReplaceAll(reason, text, "<the address>")
-			}
+			addrs = append(addrs, text)
 		case apiconfig.KeyImageRuntimes:
 			reason = scrubRuntimes(reason, text, openaiapi.ParseImageRuntimes)
 		case apiconfig.KeyToolRuntimes:
 			reason = scrubRuntimes(reason, text, openaiapi.ParseToolRuntimes)
 		}
 	}
-	return reason
+	return scrubAddresses(reason, addrs)
+}
+
+// addressPlaceholder is what a reason says where it named an address, or a host.
+const addressPlaceholder = "<the address>"
+
+// reasonWord is a word of a reason as far as an address goes: an address, and a host in any spelling, is
+// never broken by a space, a parenthesis, a comma or a semicolon.
+var reasonWord = regexp.MustCompile(`[^\s(),;]+`)
+
+// scrubAddresses takes out of a reason every address and every host in it. What apiconfig.Widens prints
+// is the address as it was saved, the old one next to the new one when a listener moves, and a reason
+// that names a host alone (in another spelling of it, with or without brackets or a zone) must not bring
+// it back, so the scrub is of what the reason holds: an address wherever a word is one, and a host
+// wherever a word is the host of an address of the call or of the reason, whatever its spelling. The
+// port alone is harmless and stays. A full stop after a word stays, since it may end the sentence.
+func scrubAddresses(reason string, submitted []string) string {
+	hosts := map[string]bool{}
+	address := func(word string) bool {
+		if apiconfig.ValidListenAddr(word) != nil {
+			return false
+		}
+		host, _, _ := net.SplitHostPort(word)
+		if key := hostKey(host); key != "" {
+			hosts[key] = true
+		}
+		return true
+	}
+	for _, text := range submitted {
+		// The call may hold what splits a sentence into words (the checker takes any host), so what it
+		// named is taken out as it was written too.
+		reason = replaceStandalone(reason, text, addressPlaceholder)
+		address(text)
+	}
+	for _, word := range reasonWord.FindAllString(reason, -1) {
+		address(strings.TrimRight(word, "."))
+	}
+	return reasonWord.ReplaceAllStringFunc(reason, func(word string) string {
+		bare := strings.TrimRight(word, ".")
+		if apiconfig.ValidListenAddr(bare) == nil || hosts[hostKey(bare)] {
+			return addressPlaceholder + word[len(bare):]
+		}
+		return word
+	})
+}
+
+// hostKey is a host in the one spelling that all of its spellings share, "" for none: in lower case,
+// without brackets, a zone or the dot of a full name, and an IP address in its canonical form (which is
+// also the IPv4 address that an IPv4-mapped IPv6 one is).
+func hostKey(host string) string {
+	h := strings.ToLower(host)
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if i := strings.IndexByte(h, '%'); i >= 0 {
+		h = h[:i]
+	}
+	h = strings.TrimSuffix(h, ".")
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.String()
+	}
+	return h
+}
+
+// replaceStandalone replaces the occurrences of text that stand between the separators of a sentence
+// (the start or end of it, a space, a parenthesis, a comma, a semicolon, and a full stop after it), so
+// that :9443 is not taken out of 192.168.1.10:9443.
+func replaceStandalone(s, text, with string) string {
+	if text == "" {
+		return s
+	}
+	var out strings.Builder
+	copied := 0
+	for from := 0; from < len(s); {
+		i := strings.Index(s[from:], text)
+		if i < 0 {
+			break
+		}
+		i += from
+		end := i + len(text)
+		if (i == 0 || strings.IndexByte(" \t\r\n(),;", s[i-1]) >= 0) && (end == len(s) || strings.IndexByte(" \t\r\n(),;.", s[end]) >= 0) {
+			out.WriteString(s[copied:i])
+			out.WriteString(with)
+			copied = end
+		}
+		from = end
+	}
+	out.WriteString(s[copied:])
+	return out.String()
 }
 
 // scrubRuntimes replaces the runtimes of a list that are not in the default list, wherever the

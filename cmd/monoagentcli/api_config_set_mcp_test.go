@@ -126,6 +126,9 @@ func TestAPIConfigSetToolIsTheDocumentOfAPIConfigSetAndUnsetJSON(t *testing.T) {
 		{name: "unset", saved: []string{"max_concurrent=8", "turn_timeout=20m", "context_confinement=sandboxed"}, unset: []string{"turn_timeout", "max-concurrent", "v1_addr"}},
 		{name: "unset of what is not saved", unset: []string{"max_concurrent"}},
 		{name: "a widening change, allowed", set: map[string]string{"v1_addr": "0.0.0.0:9443"}, widening: []string{"v1_addr"}},
+		// The reasons of an allowed change are the command's, which name both addresses of a move.
+		{name: "a move to another address, allowed", saved: []string{"v1_addr=192.168.1.10:9443"}, set: map[string]string{"v1_addr": "10.0.0.5:9443"}, widening: []string{"v1_addr"}},
+		{name: "a move to every interface, allowed", saved: []string{"v1_addr=192.168.1.10:9443"}, set: map[string]string{"v1_addr": ":9443"}, widening: []string{"v1_addr"}},
 		{name: "several ways to reach further, allowed", set: map[string]string{"confinement": "any", "tool_runtimes": "claude,codex,gemini"}, widening: []string{"confinement.network", "tool_runtimes"}},
 		{name: "an unset that reaches further, allowed", saved: []string{"image_runtimes=none"}, unset: []string{"image_runtimes"}, widening: []string{"image_runtimes"}},
 		{name: "unset all, allowed", saved: []string{"max_concurrent=8", "confinement=chat-only"}, all: true, widening: []string{"confinement.loopback"}},
@@ -170,18 +173,48 @@ func TestAPIConfigSetToolIsTheDocumentOfAPIConfigSetAndUnsetJSON(t *testing.T) {
 	}
 }
 
+// theAddress is what the tool says in the place of an address, in any shape and wherever a reason
+// names one.
+const theAddress = "<the address>"
+
+// addressesOf says that the reasons of a case name these addresses, in full.
+func addressesOf(addrs ...string) map[string]string {
+	m := map[string]string{}
+	for _, a := range addrs {
+		m[a] = theAddress
+	}
+	return m
+}
+
+// refusalCase is a change that reaches further, and what its reasons name that the tool does not say.
+type refusalCase struct {
+	configCase
+	scrub map[string]string // what a reason names of the call, and what the tool says in its place
+}
+
 // Both refuse a change that reaches further when it was not confirmed, and save nothing. The words of
 // the refusal are the command's reasons, which --dry-run gives as a document: the tool says them too,
-// without the address or the runtime the call named, which are the one thing a tool never repeats.
+// without the addresses or the runtimes the reasons name (the one of the call, and the one saved
+// before it for a move between two binds), which are the one thing a tool never repeats.
 func TestAPIConfigSetToolRefusesWhatTheCommandRefusesWithoutYes(t *testing.T) {
-	cases := []struct {
-		configCase
-		scrub map[string]string // what a reason names of the call, and what the tool says in its place
-	}{
-		{configCase{name: "a listener beyond this machine", set: map[string]string{"v1_addr": "203.0.113.7:9443"}}, map[string]string{"203.0.113.7:9443": "<the address>"}},
+	const old = "192.168.1.10:9443"
+	move := func(name, to string) refusalCase {
+		return refusalCase{configCase{name: name, saved: []string{"v1_addr=" + old}, set: map[string]string{"v1_addr": to}}, addressesOf(old, to)}
+	}
+	cases := []refusalCase{
+		{configCase{name: "a listener beyond this machine", set: map[string]string{"v1_addr": "203.0.113.7:9443"}}, addressesOf("203.0.113.7:9443")},
 		{configCase{name: "a higher confinement class", set: map[string]string{"confinement": "sandboxed"}}, nil},
 		{configCase{name: "a runtime outside the default list", set: map[string]string{"tool_runtimes": "claude,codex,gemini"}}, map[string]string{"gemini": "<runtime>"}},
 		{configCase{name: "an unset that reaches further", saved: []string{"confinement=chat-only"}, unset: []string{"confinement"}}, nil},
+
+		// A move between two binds names both addresses, in each of the three shapes of the reason.
+		move("a move to another address", "10.0.0.5:9443"),
+		move("a move to every interface, by an empty host", ":9443"),
+		move("a move to 0.0.0.0", "0.0.0.0:9443"),
+		move("a move to [::]", "[::]:9443"),
+		move("a move to a host name", "host.example:9443"),
+		{configCase{name: "a move between link-local hosts, with a zone", saved: []string{"v1_addr=[fe80::1%eth0]:9443"}, set: map[string]string{"v1_addr": "[fe80::2%eth0]:9443"}},
+			addressesOf("[fe80::1%eth0]:9443", "[fe80::2%eth0]:9443")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -205,14 +238,25 @@ func TestAPIConfigSetToolRefusesWhatTheCommandRefusesWithoutYes(t *testing.T) {
 			if !isErr {
 				t.Fatalf("the tool saved a change that reaches further without --allow-api-exposure: %s", text)
 			}
+			// The longest name first: an address that ends in the port of another (:9443 in
+			// 192.168.1.10:9443) is not that other one.
+			named := make([]string, 0, len(c.scrub))
+			for n := range c.scrub {
+				named = append(named, n)
+			}
+			sort.Slice(named, func(i, j int) bool { return len(named[i]) > len(named[j]) })
 			for _, w := range reasons {
 				reason := w.Reason
-				for named, instead := range c.scrub {
-					reason = strings.ReplaceAll(reason, named, instead)
-					reason = strings.ReplaceAll(reason, strings.SplitN(named, ":", 2)[0], instead)
+				for _, n := range named {
+					reason = strings.ReplaceAll(reason, n, c.scrub[n])
 				}
 				if !strings.Contains(text, w.Key+": "+reason) {
 					t.Errorf("the refusal of the tool lacks the command's reason for %s:\n%s\nin\n%s", w.Key, reason, text)
+				}
+			}
+			for _, n := range named {
+				if c.scrub[n] == theAddress && strings.Contains(strings.ToLower(text), strings.ToLower(n)) {
+					t.Errorf("the refusal of the tool names the address %s:\n%s", n, text)
 				}
 			}
 			if !reflect.DeepEqual(savedAt(t, dbCLI), before) || !reflect.DeepEqual(savedAt(t, dbTool), before) {
