@@ -264,6 +264,27 @@ func (a *App) APIKeySetContext(id string, on bool) (APIKey, error) {
 	return key, nil
 }
 
+// APIKeyRename renames an active key (`api key update <id> --name=<name>`). It
+// changes the name and nothing else: the context switch is not touched, and the
+// key itself is neither needed nor shown (the CLI answers with the key's
+// metadata, which is all this decodes). The name rule and the clash with another
+// active key are the store's: the CLI refuses with exit 3 and the page words it.
+func (a *App) APIKeyRename(id, name string) (APIKey, error) {
+	id, err := apiKeyID(id)
+	if err != nil {
+		return APIKey{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return APIKey{}, errors.New("enter a name for the key")
+	}
+	var key APIKey
+	if err := a.runAPICLI(&key, "api", "key", "update", id, "--name="+name); err != nil {
+		return APIKey{}, err
+	}
+	return key, nil
+}
+
 // APIKeyRevoke revokes a key. The GUI asks before calling this, which stands
 // in for the CLI's own prompt (--yes).
 func (a *App) APIKeyRevoke(id string) (APIKey, error) {

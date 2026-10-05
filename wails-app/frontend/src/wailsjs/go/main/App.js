@@ -10,6 +10,10 @@ export function APIKeyList() {
   return window['go']['main']['App']['APIKeyList']();
 }
 
+export function APIKeyRename(arg1, arg2) {
+  return window['go']['main']['App']['APIKeyRename'](arg1, arg2);
+}
+
 export function APIKeyRevoke(arg1) {
   return window['go']['main']['App']['APIKeyRevoke'](arg1);
 }

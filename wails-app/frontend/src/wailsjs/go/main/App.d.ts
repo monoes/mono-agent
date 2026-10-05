@@ -9,6 +9,8 @@ export function APIKeyCreate(arg1:string,arg2:boolean):Promise<main.APIKeyCreate
 
 export function APIKeyList():Promise<Array<main.APIKey>>;
 
+export function APIKeyRename(arg1:string,arg2:string):Promise<main.APIKey>;
+
 export function APIKeyRevoke(arg1:string):Promise<main.APIKey>;
 
 export function APIKeySetContext(arg1:string,arg2:boolean):Promise<main.APIKey>;
