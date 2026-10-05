@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Receipt is what a verified access token proves.
@@ -22,7 +23,9 @@ type Receipt struct {
 // VerifyError is the typed reason a token was refused: ReasonInvalid
 // (structure, signature or claims), ReasonKeyUnknown (the kid is not pinned) or
 // ReasonClockSkew (iat is more than ClockSkew ahead of now). Its message names
-// the failing check and never carries any part of the token.
+// the failing check. The only token content it can carry is the kid of a
+// ReasonKeyUnknown error, quoted and cut to 64 bytes; it never carries the
+// payload, the signature or the token itself.
 type VerifyError struct {
 	Reason Reason
 	why    string
@@ -45,6 +48,23 @@ func invalid(why string) *VerifyError { return &VerifyError{Reason: ReasonInvali
 
 // maxTokenBytes bounds the work a hostile session.json can cause.
 const maxTokenBytes = 8 << 10
+
+// maxKIDInMessage bounds how much of a kid an error message quotes: whoever
+// made the token chose the kid, and it can be most of the token's 8 KiB.
+const maxKIDInMessage = 64
+
+// clipKID cuts kid to at most maxKIDInMessage bytes, at a character boundary,
+// and marks the cut with "...".
+func clipKID(kid string) string {
+	if len(kid) <= maxKIDInMessage {
+		return kid
+	}
+	cut := maxKIDInMessage
+	for cut > 0 && !utf8.RuneStart(kid[cut]) {
+		cut--
+	}
+	return kid[:cut] + "..."
+}
 
 // Verify checks a compact JWS access token and returns its receipt. It accepts
 // one algorithm (EdDSA), only keys pinned in this build, and never reads the
@@ -101,7 +121,7 @@ func verifyToken(token string) (*Receipt, *VerifyError) {
 	}
 	key, ok := lookupKey(kid)
 	if !ok {
-		return nil, &VerifyError{Reason: ReasonKeyUnknown, why: kid}
+		return nil, &VerifyError{Reason: ReasonKeyUnknown, why: clipKID(kid)}
 	}
 	if len(key.Public) != ed25519.PublicKeySize {
 		return nil, invalid("pinned key is malformed")
