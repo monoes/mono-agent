@@ -29,7 +29,8 @@
 - In this repo's worktree sessions the Bash tool refuses compound git commands: run `git add <files>` and `git commit -m "<subject>" -m "<trailer>"` as two separate calls. Write files with the Write and Edit tools, not heredocs.
 - A project hook blocks Bash commands whose text contains destructive SQL or `rm -r`. Test code may contain SQL; do not put it in a Bash command.
 - Go commands use the real Go caches; do not override `HOME` for them. Tests isolate themselves (`testdb`, `t.Setenv("HOME", ...)`). Never run a built `monoagentcli` against the real `HOME`: every CLI run may install skills into `~/.claude/skills`.
-- The machine is shared and often busy: run the named packages only, not `go test ./...`. Do not use `-run` patterns that match `Doc` or `Doctor` in `cmd/monoagentcli` (one doctor test hangs under a narrow `-run`).
+- The machine is shared and often busy: while you work on a task run the named packages only; Task 13 runs the full suite once. Never select the doctor tests of `cmd/monoagentcli` with a loose `-run` such as `Doc` (one of them hangs when selected that way and passes in a full package run).
+- The code in this plan was written without a compiler. A compile slip (an unused variable, a shadowed name, a missing import) is fixed in place and the task goes on. A failing assertion is different: read the spec section the test comes from before changing the test or the code, and say which of the two was wrong.
 
 ## Review Focus
 
@@ -4744,6 +4745,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/monoes/mono-agent/internal/orgsign"
 )
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }
@@ -4771,6 +4774,21 @@ func TestOperatorCommandsRefuseAnAgentContext(t *testing.T) {
 				if doc["code"] != "operator_only" {
 					t.Errorf("task %s: %v, want code operator_only", strings.Join(c, " "), doc)
 				}
+			}
+		})
+	}
+}
+
+// Every marker the org-signing guard knows must trip the operator guard, not
+// just CLAUDECODE: an agent that is not Claude Code is an agent all the same.
+func TestEveryAgentContextMarkerRefusesOperatorCommands(t *testing.T) {
+	for _, marker := range orgsign.AgentContextMarkers() {
+		t.Run(marker, func(t *testing.T) {
+			db := newTaskTestDB(t)
+			t.Setenv(marker, "1")
+			doc := failedTaskJSON(t, db, "default", 3, "approve", "1")
+			if doc["code"] != "operator_only" || !strings.Contains(doc["error"].(string), marker) {
+				t.Errorf("%s: %v, want operator_only naming the marker", marker, doc)
 			}
 		})
 	}
@@ -5709,7 +5727,7 @@ git commit -m "feat(tasks): the agent's commands: next, claim, comment, finish, 
 
 **Files:**
 - Create: `cmd/monoagentcli/ref_tasks.go`
-- Modify: `cmd/monoagentcli/ref.go` (three one-line additions), `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`
+- Modify: `cmd/monoagentcli/ref.go` (three one-line additions), `internal/i18n/locales/en.json` and `es.json` (one sentence in the root help), `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`
 - Test: `cmd/monoagentcli/ref_tasks_test.go`
 
 **Interfaces:**
@@ -5752,6 +5770,12 @@ func TestRefTasksIsAListedTopic(t *testing.T) {
 	}
 	if !strings.Contains(newRefCmd().Long, "tasks ") {
 		t.Error("`ref` does not list the tasks topic in its help")
+	}
+}
+
+func TestRootHelpPointsAgentsAtTheBoard(t *testing.T) {
+	if !strings.Contains(newRootCmd().Long, "ref tasks") {
+		t.Error("the root help does not mention the task board")
 	}
 }
 
@@ -5992,12 +6016,24 @@ Three one-line additions (these are the only edits to this shared file):
 			refTasksCmd(),
 ```
 
-- [ ] **Step 5: Run the tests to see them pass**
+- [ ] **Step 5: Mention the board in the root help**
 
-Run: `gofmt -l cmd/monoagentcli` then `go vet ./cmd/monoagentcli/` then `go test ./cmd/monoagentcli/ -run 'TestEveryTaskCommand|TestRefTasks' -count=1` and `go run ./cmd/monoagentcli ref tasks | head -20` is NOT to be run (a built CLI may install skills into the real home): rely on the test.
-Expected: `gofmt` prints nothing (if it lists `ref_tasks.go`, run `gofmt -w` on it: the aligned struct literals are the usual cause), vet clean, PASS.
+`monoagentcli --help` prints `root.long` from the locale files, and an agent reads it first, so it should learn that the board exists. Use the Edit tool on the exact tail of the `"root.long"` value in each file (`\n` is the two characters backslash and n inside the JSON string, as in the rest of the value).
 
-- [ ] **Step 6: Document it in `AGENTS.md`, `SECURITY.md` and `CHANGELOG.md`**
+In `internal/i18n/locales/en.json` the value ends `...prefer it over guessing from --help output alone.",`; make it end:
+
+    ...prefer it over guessing from --help output alone.\n\nThe user's own task board (what to work on next, and how to report back): 'monoagentcli ref tasks'.",
+
+In `internal/i18n/locales/es.json` the value ends `...antes que adivinar solo a partir de la salida de --help.",`; make it end:
+
+    ...antes que adivinar solo a partir de la salida de --help.\n\nEl tablero de tareas del usuario (qué hacer a continuación y cómo informar): 'monoagentcli ref tasks'.",
+
+- [ ] **Step 6: Run the tests to see them pass**
+
+Run: `gofmt -l cmd/monoagentcli` then `go vet ./cmd/monoagentcli/` then `go test ./cmd/monoagentcli/ -run 'TestEveryTaskCommand|TestRefTasks|TestRootHelpPoints' -count=1` then `go test ./internal/i18n/ -count=1`
+Expected: `gofmt` prints nothing (if it lists `ref_tasks.go`, run `gofmt -w` on it: the aligned struct literals are the usual cause), vet clean, PASS. Do not run the built CLI to read `ref tasks` (a built CLI may install skills into the real home): the tests cover the text.
+
+- [ ] **Step 7: Document it in `AGENTS.md`, `SECURITY.md` and `CHANGELOG.md`**
 
 `AGENTS.md`: insert this section immediately before the heading `## Assistant chat & tools` (use the Edit tool with that heading and the line after it as the anchor; do not touch anything else):
 
@@ -6051,10 +6087,10 @@ A claim is a lease (30 minutes, at most 24 hours), renewed by comments and never
 - **Task board, phase 1.** `monoagentcli task` keeps a task board for each profile: `add`, `list`, `board`, `show`, `edit`, `move`, `approve`, `archive` and `unarchive` for people, and `next`, `claim`, `comment`, `finish`, `release` and `digest` for AI agents. Five columns (inbox, ready, in progress, review, done). Everything captured or added by an agent lands in Inbox, only you move a task to Ready, and an agent claims a ready task for a lease (30 minutes, renewed by its comments) in one atomic step, so two sessions never take the same task. A task always sits in one profile (new tables `tasks`, `task_events` and `task_board_rev`, migration 062; a profile's board is deleted with it). The operator commands refuse when an AI agent is running them. Reference: `monoagentcli ref tasks`; design: `docs/mastermind/specs/2026-10-05-task-board-design.md`. The desktop board, the MCP tools, the Chrome extension and the macOS menu follow in later releases.
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```
-git add cmd/monoagentcli/ref_tasks.go cmd/monoagentcli/ref_tasks_test.go cmd/monoagentcli/ref.go AGENTS.md SECURITY.md CHANGELOG.md
+git add cmd/monoagentcli/ref_tasks.go cmd/monoagentcli/ref_tasks_test.go cmd/monoagentcli/ref.go internal/i18n/locales/en.json internal/i18n/locales/es.json AGENTS.md SECURITY.md CHANGELOG.md
 ```
 then
 ```
@@ -6089,14 +6125,17 @@ GOOS=windows go vet ./internal/tasks/ ./cmd/monoagentcli/
 ```
 Expected: `gofmt` prints nothing and every other command ends without output (do not use a bare `go build ./cmd/monoagentcli`: it overwrites the repository's untracked `monoagentcli` binary).
 
-- [ ] **Step 3: Run the tests**
+- [ ] **Step 3: Run the tests, the whole suite included**
+
+A new root command, a locale sentence and a migration can break tests that walk the command tree, the locale files or the database, and CI runs `go test ./...` with `-race` on Linux. So run, one per call:
 
 ```
 go test ./internal/tasks/ -race -count=1 -timeout 15m
-go test ./internal/storage/ ./internal/testdb/ -count=1
-go test ./cmd/monoagentcli/ -count=1 -timeout 15m -run '^(TestTask|TestAnAgent|TestFinishAndRelease|TestAgentCommands|TestTheOperator|TestNextTells|TestDigest|TestOperatorCommands|TestEveryTaskCommand|TestRefTasks)'
+go test ./cmd/monoagentcli/ -count=1 -timeout 20m
+go test ./... -count=1 -timeout 30m
 ```
-Expected: all PASS. The `-run` pattern above avoids the doctor tests on purpose. If a test fails because the environment is an agent's (a marker you did not clear), the test is wrong: `newTaskTestDB` must clear it.
+
+(No `-run` on the second: one doctor test of that package hangs when selected by a narrow pattern and passes in a full package run.) Expected: the first two PASS. The third may fail on tests that already fail on a pristine macOS tree, as of 2026-10-05: in `cmd/monoagentcli` `TestCaptureTaskFilesOnTheBoard`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks` and `TestCoderConversationFolders`; in `internal/capturetask` `TestCreateAttachesEveryArtifact` and `TestCreateRecordsTheRealPathNotASymlink`; in `internal/config` `TestGenerateConfigFailsFastWhenMonomindMissing`; in `internal/monomind` `TestFindAll_ListsShadowedCopies`; plus load flakes that pass when rerun alone (`internal/connections` `TestMigrateConnectionsToVault_SkipsRowLockedByAnotherProcess`, `internal/mcp` `TestGrantWaitTimeoutNote` and `TestManyUpdateCallsAtOnceAllLand`, `internal/dynorg` `TestIsolatedWritersRunInParallelInTheirOwnWorktrees`, `cmd/monoagentcli` `TestAgentTestGoDeadline`, and now and then a `wails-app` test). Any other failure, above all one in `internal/tasks`, `internal/i18n`, `internal/storage`, `data` or a test of this phase, is yours: fix it in the task that owns the code. If in doubt, run the failing test on an export of `origin/master` (`git archive origin/master | tar -x -C <a fresh directory under the scratchpad>`) to see whether it fails there too. If a test of this phase fails because the environment is an agent's (a marker you did not clear), the test is wrong: `newTaskTestDB` must clear it.
 
 - [ ] **Step 4: Mutation checks**
 
@@ -6121,29 +6160,29 @@ Never run a built `monoagentcli` against the real `HOME` (every run may install 
 
 ```bash
 #!/bin/bash
-# Builds the CLI and drives the task board under a throwaway HOME. Build first (real Go caches), then move HOME.
+# Builds the CLI (with the real Go caches) and drives the task board under a throwaway HOME and an empty environment.
 set -e
 SCRATCH="$(cd "$(dirname "$0")" && pwd)"
 TMP="$SCRATCH/smoke-$$"
 mkdir -p "$TMP/home"
 go build -o "$TMP/monoagentcli" ./cmd/monoagentcli
-export HOME="$TMP/home"
-export CLAUDECODE= CLAUDE_CODE_ENTRYPOINT= MONOAGENT_ACTOR=
-M="$TMP/monoagentcli --db-path $TMP/smoke.db"
+# A clean environment: no agent-context marker of any kind (the shell that runs this may be an agent's).
+E=(env -i "HOME=$TMP/home" "PATH=$PATH")
+M=("${E[@]}" "$TMP/monoagentcli" --db-path "$TMP/smoke.db")
 echo "--- add, approve, board"
-$M task add "smoke test the board" --notes "from the smoke script"
-$M task approve 1
-$M task board
+"${M[@]}" task add "smoke test the board" --notes "from the smoke script"
+"${M[@]}" task approve 1
+"${M[@]}" task board
 echo "--- agent: next, claim, comment, finish"
-$M task next --as smoke-1
-$M task next --claim --as smoke-1
-$M task comment 1 "working on it" --as smoke-1
-$M task finish 1 --as smoke-1 --result "done in the smoke script"
+"${M[@]}" task next --as smoke-1
+"${M[@]}" task next --claim --as smoke-1
+"${M[@]}" task comment 1 "working on it" --as smoke-1
+"${M[@]}" task finish 1 --as smoke-1 --result "done in the smoke script"
 echo "--- an agent context cannot approve (exit 3 expected)"
-$M task add "second" >/dev/null
-CLAUDECODE=1 $M --json task approve 2 || echo "refused, exit $?"
+"${M[@]}" task add "second" >/dev/null
+"${E[@]}" CLAUDECODE=1 "$TMP/monoagentcli" --db-path "$TMP/smoke.db" --json task approve 2 || echo "refused, exit $?"
 echo "--- digest is silent with nothing ready"
-$M task digest
+"${M[@]}" task digest
 echo "--- leftovers are in $TMP"
 rm -f "$TMP/monoagentcli"
 ```
@@ -6157,7 +6196,7 @@ Do not push, open a PR or merge: the lead does that after the independent review
 
 ## Self-review (done by the plan's author)
 
-- **Spec coverage.** §4 model: Tasks 1 to 4 (schema, statuses, task JSON, events, limits, cleaning, order). §4.5 the profile: Tasks 1 (foreign key), 3 (`Add` refuses an unknown profile), 4 (every read is scoped), 8 and 9 (`--profile` by id and by name, unknown profile exit 3). §5.1 who may do what: Tasks 3, 5, 6 (store) and 8, 10, 11 (CLI). §5.2 claims and leases: Task 6, proven under contention in Task 7. §5.3 idempotent capture: Tasks 3 and 7. §5.4 revision: Tasks 3, 4 and 7 (`Watch`). §6 the package: Tasks 2 to 7. §7 the CLI: Tasks 8 to 11 and 12 (`ref`). §13 security: the gate and the guard (Tasks 5, 8, 10, 11), limits (Task 3), cleaning (Task 2), documented in Task 12. Not in this phase, by design: MCP (P2), the app (P3), the extension (P4), the macOS menu (P5), `summary --section tasks` (P2), the skill (P2).
+- **Spec coverage.** §4 model: Tasks 1 to 4 (schema, statuses, task JSON, events, limits, cleaning, order). §4.5 the profile: Tasks 1 (foreign key), 3 (`Add` refuses an unknown profile), 4 (every read is scoped), 8 and 9 (`--profile` by id and by name, unknown profile exit 3). §5.1 who may do what: Tasks 3, 5, 6 (store) and 8, 10, 11 (CLI). §5.2 claims and leases: Task 6, proven under contention in Task 7. §5.3 idempotent capture: Tasks 3 and 7. §5.4 revision: Tasks 3, 4 and 7 (`Watch`). §6 the package: Tasks 2 to 7. §7 the CLI: Tasks 8 to 11 and 12 (`ref`). §13 security: the gate and the guard (Tasks 5, 8, 10, 11), limits (Task 3), cleaning (Task 2), documented in Task 12 (which also adds the sentence about the board to the root help in both locales, §9.2). The operator guard is tested under every marker of `orgsign.AgentContextMarkers()` (Task 10), as §14 says. Not in this phase, by design: MCP (P2), the app (P3), the extension (P4), the macOS menu (P5), `summary --section tasks` (P2), the skill (P2).
 - **Spec deviations recorded here.** `task next` and `claim` use `--lease` as a Go duration (`30m`); the spec says "30 minutes". `Store.Board` takes `doneLimit` and the CLI default is 50, as the spec says. `Unarchive` restores the archived-from column (spec §7 only says `unarchive`). A released task goes to the bottom of Ready (the spec leaves the place open). Amend the spec when the build differs, as the earlier specs were.
 - **Placeholders.** None: every code step holds its code. The only value left to the executor is the number of tests in a `PASS` line.
 - **Type consistency.** The names used across tasks: `Store`, `Actor{Kind, Name}` with `Human`, `Agent`, `Capture`; `AddInput`, `Filter`, `Edit`, `Placement`, `Outcome`; `Add`, `Get`, `List`, `Board`, `Rev`, `Counts`, `Edit`, `Move`, `Approve`, `Archive`, `ArchiveStatus`, `Unarchive`, `Next`, `Claim`, `Comment`, `Finish`, `Release`, `Watch`; the CLI helpers `callerFor`, `taskErr`, `withTasks`, `flagAs`, `parseTaskID`, `parseTaskIDs`, `columnLabel`, `taskCut`, `heldNote`, `writeOneTask`, `writeTasks`; the test helpers `bg`, `human`, `bot`, `newTestStore`, `addProfile`, `mustAdd`, `countWhere`, `seedTasks`, `seedRow`, `insertRow`, `rowTime`, `column`, `sameIDs`, `newTaskTestDB`, `runTask`, `mustTaskJSON`, `failedTaskJSON`, `id`.
