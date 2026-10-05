@@ -84,7 +84,8 @@ func OrgPause(ctx context.Context, projectRoot, name string) (string, error) {
 
 // OrgResume resumes a paused org.
 func OrgResume(ctx context.Context, projectRoot, name string) (string, error) {
-	return runOrgText(ctx, projectRoot, "resume", name)
+	out, err := runOrgText(ctx, projectRoot, "resume", name)
+	return out, startRefusal(name, out, err)
 }
 
 // OrgDelete deletes an org and all its data; force deletes even when it
