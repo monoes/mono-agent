@@ -1,0 +1,312 @@
+# Mandatory monoes.me Account — Design Spec
+
+Date: 2026-10-05
+Status: Draft for the owner's review. The design (§4 to §11) was presented in sections and approved in conversation on 2026-10-05: the open list, the cancel-versus-finish rule, the rollout, the headless and developer paths and the license workstream included. The decisions marked "lead" in §2 are details this document adds and need a read.
+Branch: `feat/monoes-account-gate`, cut from master `f4441a2a` (v0.106.1). The work spans two repositories: this one (the client) and `monoes/monoes-landing` (monoes.me, the server, §5).
+Plan: not written yet; it follows this review.
+
+## 1. Goal
+
+Nobody uses mono-agent without a monoes.me account that is signed in on the machine. The official builds (the CLI, the daemon, the desktop app, the HTTP and `/v1` APIs, the MCP server and the extension bridge) refuse to do anything until a valid, server-signed session exists, and stop when monoes.me disables the account or has been unreachable for 24 hours.
+
+Why (the owner picked all four): know who uses it; cut off abusive accounts; leave room for paid plans; control the official app.
+
+Boundary: this gates the official builds. It is a client-side check in a public MIT repository, so a build from source or a patched binary can remove it, and releases before the enforcement release stay ungated. The license will change and the source may be closed soon (§10); that raises the cost of removal and, depending on the terms chosen, makes it a license violation, but does not make it impossible. No product value moves to monoes.me beyond what the library already serves (web automations, orgs, workflows).
+
+Acceptance (§11 turns each into tests):
+
+1. After the enforcement date, with no valid session, every gated command exits 4 with `login_required` and does nothing else (no first-run writes, no database open), and every door of §6.3 refuses.
+2. Signed in, then blocked on monoes.me: locked within one refresh interval (about an hour), and work in flight is cancelled.
+3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes.
+4. Before the enforcement date nothing locks, and once a date is set every surface warns.
+5. A release binary built with the `devaccount` tag cannot ship.
+
+## 2. Decisions register
+
+| # | Decision | From |
+|---|---|---|
+| D1 | The reasons for the gate are all four: know who uses it, cut off abusive accounts, leave room for paid plans, control the official app. | user |
+| D2 | Strictness: official builds only. No value moves to monoes.me beyond web automations, orgs and workflows. The license changes; closing the source is possible soon and nothing here waits for it. | user |
+| D3 | The offline grace is 24 hours from the last successful contact with monoes.me. | user |
+| D4 | One machine-wide session, signed by monoes.me and verified on the machine against keys pinned in the binary. No network call per command; the daemon, the APIs and MCP check again while they run. | user |
+| D5 | monoes.me answering *no* (blocked, revoked) ends access at once. monoes.me *unreachable* is tolerated until 24 hours after the newest token was issued. | user |
+| D6 | Default-deny, one gate before any command runs. Open: `version`, `help`, `completion`, `ref`, `update`, `doctor` (with `doctor fix`), `setup` and the `account` commands. Everything else is gated, purely local commands included. | user |
+| D7 | Three layers: the CLI gate; checks in `handleExecution`, `monomind.Exec` and `ActionExecutor.executeDef`; the doors (HTTP API, `/v1`, webhook server, extension bridge, MCP). | user |
+| D8 | A locked daemon stays up, starts nothing new, stops the org services it manages, reports the state and resumes by itself. In-flight work is cancelled when monoes.me refused, and left to finish when it was only unreachable at the 24 hours. | user |
+| D9 | Server first. Then one client release with the enforcement date built in, about three weeks after it ships: warnings before, enforcement after, no second release. Older versions stay ungated. | user |
+| D10 | No credential through an environment variable and no unattended machine tokens in v1. Headless sign-in is `account login --email`, kept in the data directory. | user |
+| D11 | Developers and CI run the real binary built with `-tags devaccount`. Releases never carry the tag. | user |
+| D12 | License and distribution are their own workstream (§10). The gate ships first and works under any license. | user |
+| D13 | The proof is an EdDSA-signed JWT access token verified with the standard library: no new dependency, one accepted algorithm, nothing negotiated from the token's header. | lead |
+| D14 | Checked claims: `iss`, `aud`, `azp`, `sub`, `iat`, `exp`, and the `kid` against the pinned set. A token whose lifetime exceeds 24 hours, or whose `iat` is more than 5 minutes ahead, is refused. `plan` is read and not enforced. | lead |
+| D15 | The grace runs from the signed `iat` of the newest token. A clock guard refuses a clock that went back; a freshly signed token resets it. | lead |
+| D16 | The session lives outside the profile vaults, in `~/.monoagent/account/`: `session.json` (the signed access token and state, readable without the keychain) and `refresh.enc` (the refresh token, sealed under the keyring key, touched only when a refresh is due), behind a lock file. | lead |
+| D17 | One `account.Guard` per process. Long-running processes also refresh at half the token lifetime and cancel their work when the session is refused. | lead |
+| D18 | Keys are pinned in the binary as a set (current and next) with a rotation procedure. How the server signs with a pinnable key is spike S1; the fallback is a JWKS cached over TLS. | lead |
+| D19 | Server changes are limited to audience-bound JWTs, a constant `plan` claim, blocking that revokes tokens, a pinnable signing key and a deploy workflow that only deploys `main` (§5). | lead |
+| D20 | The CLI gate runs in `main()` before cobra executes, from a per-command annotation, not from the root `PersistentPreRun`. A test pins the command tree and the open list. | lead |
+| D21 | `account login`, `logout` and `status`; `library login`, `logout` and `status` become aliases of the same session. | lead |
+| D22 | The enforcement date is a constant in `internal/account`, judged against the guarded clock. Before it nothing locks. Until the release that sets it the constant is the zero time, which means dormant (nothing locks, nothing warns), so earlier phases can ship safely. | lead |
+| D23 | A library login that already exists is adopted only if its refresh token can be exchanged for an audience-bound JWT (spike S2); otherwise the user signs in once more. | lead |
+| D24 | `devaccount` adds a development signing key and lets the gate honor `MONOES_BASE_URL`. The release workflow fails if a binary carries the tag. With no guard installed `Require` fails closed, except inside a test binary (`testing.Testing()`), and unit tests swap keys through a hook that panics outside one. | lead |
+| D25 | The `doctor` row is `core.monoes_account`; the existing `accounts` group is about third-party platform logins. | lead |
+| D26 | Documentation is part of the work (§10 step 5): every claim of local-first, no telemetry, no phone-home or offline use is rewritten to what is true. | lead |
+
+## 3. Verified facts
+
+Checked 2026-10-05: the client at master `f4441a2a` (v0.106.1), by a read-only survey of the code (no binary run), and the server (`monoes-landing`, `main`) through its source on GitHub. Function names are stable; line numbers drift. Not examined: monomind's internals, and the token lifetimes of the deployed server (the docs page shows `expires_in: 3600`; the deployed server may differ from `main`).
+
+**The existing monoes.me login.**
+- `internal/library` (`auth.go`, `store.go`, `types.go`) is an OAuth 2.1 authorization-code and PKCE client: public client id `monoagent`, loopback redirect `127.0.0.1:<random>/callback`, scopes `openid profile email offline_access library:read library:write`. The headless alternative is an emailed code (`POST /api/auth/agent/claim` and `/claim/verify`). The host is `https://monoes.me`, overridable by `MONOES_BASE_URL` (plain http only for a loopback host).
+- The token (access, refresh, expiry, user) is stored per profile and per host in the profile's vault: entry `monoes-library`. Refresh is lazy (within a minute of expiry, and once after a 401); nothing refreshes in the background. When a refresh fails the stored token is still returned ("let the server decide").
+- Only `library *` reads it. `requireLogin` refuses locally with exit 4 and `login_required: true` under `--json`, and the desktop's library dialog already shows a login gate (`components/library/LogInToMonoesButton.jsx`, `services/library.js`). Since v0.88.0 (PR #211) monoes.me refuses anonymous library reads: there the server is the enforcement.
+- Exit codes are 0 to 4 (`cmd/monoagentcli/exitcodes.go`: `cliError`, `errAuthConnection`, and `loginRequiredError` with `JSONErrorFields`). `reportCommandError` adds `{"error": …}` on stdout only for `org` and `status` under `--json`; other commands wrap their own errors.
+
+**CLI structure.**
+- `main()` runs `newRootCmd().ExecuteContext`. The only global hook is the root `PersistentPreRun` (`runClaudeFirstRunCheck`, `nodemgr.Activate`, `bootAutomationsFor`). It returns no error; `setup` and `doctor` replace it instead of chaining; `library` and `org` set only `PersistentPostRun`; `EnableTraverseRunHooks` is not used. The first-run check runs on every command, `version` included.
+- There are 41 top-level commands. `login` and `logout` capture social-platform sessions and have nothing to do with monoes.me. There is no `account` command.
+- The database is opened per command by `initDB` (migrations on every call), after the pre-run. A gate that reads a profile vault would have to open the database first.
+
+**Choke points.**
+- Every workflow execution (schedule, webhook, manual through `TriggerWorkflow`, `workflow run`, MCP `workflow_run` or `POST /workflows/{id}/run`, org bridge, HIL resume, retry) ends in `WorkflowEngine.handleExecution` (`internal/workflow/engine.go`), the queue's handler. A refused execution is recorded with `persistExecutionFinished(…, "FAILED", msg)`; `CancelExecution(id)` exists.
+- Every agent turn started by this repo goes through `monomind.Exec` (`internal/monomind/exec.go`): chat, coder, the dynamic org, `agent`, the `/v1` gateway, `agent.ask`, summaries, matching and validators.
+- Paths that skip both: `node run`, `login`, `crawl`, `capture page`, `connect oauth`, `application apply` and `send`, `automation test`. Their browser actions reach `ActionExecutor.executeDef` (`internal/action/executor.go`). Purely local commands (people, secret, image, profile, config) touch neither.
+- Org runs execute in an external `monomind org serve` process and reach mono-agent only through `mcp --grant`, which runs workflows in the daemon (so through `handleExecution`).
+
+**Doors.**
+- The daemon is single-instance, with one engine for all profiles and a heartbeat file written every 10 seconds (`internal/daemonhb.Heartbeat`). It starts the HTTP API, the extension bridge and the org services. Autostart is a launchd KeepAlive agent, a systemd user unit or a Windows task; the Docker `ENTRYPOINT` is `daemon`.
+- The HTTP API (127.0.0.1:9322) enforces a bearer in `Server.auth`; `GET /health` is open. `/v1` and the org receiver are mounted as extra routes with their own auth, and the dedicated `/v1` listener is optional.
+- The webhook server (default 127.0.0.1:9321) is started by every engine start, with an HMAC per trigger.
+- The extension bridge (9222, falling back to 9323) is a loopback WebSocket with a shared secret in `~/.monoagent/extension.token`; the first frame authenticates (`authenticate`, close code 4401).
+- MCP is stdio, in modes read-only, `--allow-mutations`, `--api-only` and `--grant <id>` (spawned by monomind per org role).
+- The desktop app (`wails-app`) does not embed the engine: about 298 bound methods, every execution a `monoagentcli` subprocess found by `findMonoAgentCLI`, a few direct database reads, and a `backgroundUpdateCheck` at startup and every 24 hours. Its shell has no login or onboarding gate today.
+
+**Updates and distribution.** `update`, `update --app`, `doctor`'s `core.update`, `install.sh` and the desktop's update check read `https://api.github.com/repos/monoes/mono-agent/releases/latest` and download release assets plus `SHA256SUMS.txt`; a private repository breaks all of them. Every push to master auto-releases (`release.yml`); CI uses no secrets. Docker images are built from source only.
+
+**Documentation claims.** README, AGENTS.md, SECURITY.md, SUPPORT.md, `docs/COMPARISON.md` and the locale strings say local-first, no telemetry, no phone-home checks, works offline. The desktop's 24-hour update check already contradicts the phone-home claim.
+
+**Tests and CI.** `cmd/monoagentcli` tests use `testhome.Main` (a throwaway HOME) and 12 of them build `newRootCmd()`. `internal/library/libraryfake` fakes monoes.me (PKCE, refresh rotation, the email code). `scripts/doctor-smoke.sh` asserts that a plain `doctor` on a fresh HOME writes nothing. Go is 1.26 (`testing.Testing()` exists); `go.mod` has no JWT library.
+
+**The server** (public repository, Next.js on Cloudflare Workers).
+- Better-Auth with the `jwt()` and `oauthProvider` plugins (v1.7.1), Google and email-and-password sign-in. `OAUTH_SCOPES` include `library:*` and `community:*`. `oauthProvider` is configured without `accessTokenExpiresIn`, `customAccessTokenClaims` or an audience list.
+- Per the provider's source, an audience-bound JWT access token is minted when the client sends a `resource` indicator; with none, the access token is opaque. The client sends none today, so today's access tokens are opaque (S6 confirms).
+- Blocking (`PATCH /api/community/admin/users/[id]/block`) sets `user.blockedAt` and `blockedBy` only. Enforcement is per route (`middleware.ts`, the community routes) plus a `session.create.before` hook that stops new sessions. Nothing revokes OAuth tokens on a block, and whether the refresh grant refuses a blocked user is untested (S3).
+- `.github/workflows/deploy.yml` runs `wrangler deploy` on a push to `main` and also on `pull_request`, with no condition on the deploy step.
+
+## 4. The session
+
+### 4.1 The proof
+
+The access token is a JWS in compact form, `alg` EdDSA (Ed25519), with a `kid`. Required claims:
+
+| Claim | Value |
+|---|---|
+| `iss` | `https://monoes.me` (a constant of the binary) |
+| `aud` | contains the mono-agent audience, `https://monoes.me/api/monoagent` (an identifier, not an endpoint) |
+| `azp` | `monoagent` |
+| `sub` | the user id |
+| `iat`, `exp` | issue and expiry; `exp - iat` is at most 24 hours |
+| `plan` | optional string, `free` when absent; read, not enforced in v1 |
+
+`azp` is checked because the server allows dynamic, unauthenticated client registration: a token minted for some other client must not pass. The refresh token is opaque (`offline_access`).
+
+### 4.2 Verification
+
+`account.Verify(token, now)` returns a receipt (`sub`, `plan`, `issued_at`, `expires_at`) or a typed reason: `invalid` (structure, signature or claims), `key_unknown` (`kid` not in the pinned set), `clock_skew` (`iat` more than 5 minutes ahead). It accepts one algorithm and only pinned keys, ignores `jku`, `jwk` and `x5u` headers, and uses `crypto/ed25519` with a small strict JWS parser (no new dependency: D13).
+
+### 4.3 States
+
+| State | When |
+|---|---|
+| `ok` | a receipt verified and `now < exp` |
+| `grace` | a receipt verified, `now >= exp`, `now < iat + 24h`, and no refresh has been refused |
+| `locked` | anything else, with a reason: `not_logged_in`, `expired` (past `iat + 24h`), `refused` (monoes.me answered no), `clock_rollback`, `clock_skew`, `key_unknown`, `invalid` |
+
+Before the enforcement date (D22) `Require` returns nil whatever the state, and the state is still computed and reported.
+
+### 4.4 Refresh
+
+- **When.** A CLI process refreshes when the token has under 5 minutes left, or has expired and the last attempt was more than a minute ago (`last_attempt` and `last_result` in `session.json` are the negative cache), with a 2-second connect timeout, so an offline CLI call pays at most that once a minute. Long-running processes refresh at half the token lifetime and, while unreachable, retry with backoff (30 seconds doubling to 5 minutes).
+- **What counts as a refusal.** An OAuth error body (`invalid_grant`, `invalid_client`, `invalid_target`) with HTTP 400, 401 or 403. Everything else (no network, timeout, 5xx, 429) is "unreachable". On a refusal the process deletes `refresh.enc`, writes `state: refused` into `session.json` (keeping the user for the message) and the state becomes `locked(refused)` until a new sign-in.
+- **A keyring that cannot be opened** (unavailable, or access denied) counts as unreachable for the state, so the grace applies; `account status` and `doctor` report it as `keyring_unavailable` so it is not mistaken for a network problem.
+- **The request** carries `resource=<audience>`.
+- **Concurrency.** An exclusive lock on `account/session.lock` surrounds read, refresh and write. After taking it the process re-reads the session and skips the network call if another process already refreshed (a newer `iat`). The rotated refresh token is written before the lock is released. A crash between the server's rotation and that write loses the refresh token and the user signs in again (accepted).
+
+### 4.5 Clock guard
+
+`session.json` keeps `hw`, the highest time the gate has seen (written at most once a minute). `now < hw - 5 minutes` is `locked(clock_rollback)`. A newly verified token resets `hw` to its `iat`: server time is authoritative, and this is also the way out after a legitimately wrong clock. The enforcement date is judged against `max(now, hw)`.
+
+### 4.6 Storage
+
+```
+~/.monoagent/account/
+  session.json   0600  {"v":1,"host","access_token","user":{"id","email","username"},"plan",
+                        "hw","last_attempt","last_result","state","reason"}
+  refresh.enc    0600  the refresh token, AES-256-GCM under a KEK from the OS keyring
+                       (or the file-keyring fallback), as the vault does it
+  session.lock   0600  lock file
+```
+
+Outside the vault because the gate runs before the database is opened, the daemon serves every profile, the vault is per profile and keyring-bound, and a keychain call per command would bring back issue #54 (macOS keychain prompts in background runs). `session.json` is readable with no keychain call and holds a token that expires within the hour. There is one session per OS user, shared by all of that user's profiles, and the path is `~/.monoagent` whatever `--db-path` says.
+
+### 4.7 Pinned keys and rotation
+
+`internal/account/keys.go` embeds a set of `{kid, Ed25519 public key}`: the current key and the next. Rotation: (1) a client release ships the next key; (2) after a fixed waiting period (eight weeks suggested, the owner's call: the server cannot see which versions are installed, since nothing reports them) the server starts signing with it; (3) a later release drops the old key. A client that missed step 1 locks with `key_unknown` and says to run `update` (open). A compromised key follows the same path, faster. How Better-Auth's `jwt()` plugin (which keeps and rotates its own keys in the database) signs with a key we can pin is spike S1; the fallback is a JWKS fetched over TLS from `https://monoes.me/api/auth/jwks`, cached on disk for 24 hours, with the `kid` checked against it. That is weaker, since a CA the user trusts could substitute it.
+
+### 4.8 What this does not stop (accepted)
+
+Patched or source builds; a session file copied to another machine (v1 counts accounts, not devices); a clock set back before the first check (the guard only helps after one); a blocked user who stays online keeps access for up to the token lifetime, about an hour, unless the refresh refuses sooner; a user who blackholes monoes.me gets up to 24 hours; a monoes.me outage longer than a day locks every install.
+
+## 5. Server changes (`monoes-landing`)
+
+The server half has its own repository and pipeline. The plan splits into Part A (server, ships first) and Part B (client), so a session in that repository can carry Part A. Every change below is backward compatible: today's client sends no `resource`, so it keeps getting what it gets now.
+
+1. **Audience-bound JWTs.** `oauthProvider` accepts the resource `https://monoes.me/api/monoagent` for the `monoagent` client and `accessTokenExpiresIn` is set to 3600 explicitly. Acceptance: authorize, token and refresh requests with `resource` return a JWT that verifies against the signing key; without `resource` the response is unchanged. The option's real name and shape come from the provider's types (S6).
+2. **The `plan` claim**, through `customAccessTokenClaims`, constant `free` for everyone. No database column until plans exist.
+3. **Blocking that holds.** After a block, a refresh with that user's refresh token fails with `invalid_grant`; the block route deletes the user's OAuth tokens; unblocking lets the user sign in again. An access token already issued verifies until its `exp` (at most an hour). S3 first checks what the refresh grant does today.
+4. **A pinnable signing key** (S1).
+5. **Deploy hardening.** `deploy.yml` deploys only on a push to `main` and on manual dispatch; pull requests build and test but never deploy; `main` is protected against force-push with required checks. The signing key and this pipeline become the root of trust of every mono-agent install.
+6. **Docs.** The public `docs/authentication` page documents the audience and the claims.
+7. **Tests** in the server's suite (`tests/oauth.spec.ts` style plus unit tests): claims and audience, a refused audience, a blocked user's refresh refused, the unchanged opaque path.
+
+## 6. Where the gate sits
+
+### 6.1 Layer 1: the CLI gate
+
+`internal/account` exposes a `Gate`. `main()` builds the root command, resolves the target with `root.Find(os.Args[1:])` before executing, and asks the gate.
+
+- **Classification.** `cmd.Annotations["monoagent.account"]` is `open` or `gated`. A command inherits its nearest annotated ancestor (the root excluded); an unannotated command is gated (default-deny at run time). The root with no subcommand is open: it only prints help or the unknown-command error. `-h`, `--help`, `help` and `completion` are open.
+- **Open list.** `version`, `help`, `completion`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), and `library login`, `logout` and `status` (aliases of `account`).
+- **Locked, a gated command.** It fails before cobra runs anything: no first-run check, no database open. Exit 4; stderr `Log in to monoes.me first: monoagentcli account login` (with a reason-specific line for `expired`, `refused`, `clock_rollback`, `clock_skew` and `key_unknown`). When `--json` appears anywhere in the arguments the gate also prints on stdout `{"error": …, "code": "auth_or_connection", "login_required": true, "account": {"state": "locked", "reason": …}}`; it emits this itself because it runs before the commands' own JSON wrappers. `loginRequiredError` moves from `library.go` to a shared file and gains the `account` field.
+- **Grace.** The command runs; one line on stderr per process, never on stdout: `monoes.me is unreachable; this login works offline until <time>`.
+- **Warn period** (§8). The same style: `A monoes.me login will be required from <date>: monoagentcli account login`.
+- **Inventory test.** `TestEveryCommandIsClassified` walks the tree, resolves every command's classification and compares the set of open commands with a list pinned in the test, so adding or opening a command needs a deliberate edit (the idiom of `TestEveryRegisteredNodeTypeIsClassified`). How `Find` behaves with global flags before the subcommand, aliases, hidden commands, `--` and `help <cmd>` is spike S5.
+
+### 6.2 Layer 2: inside the engine and the runners
+
+`account.Require(ctx)` reads the process guard's in-memory verdict (no I/O). Without an installed guard it fails closed, except inside a test binary (D24).
+
+- `handleExecution`, after the cancelled-before-dispatch check and before the workflow is loaded. A refusal is recorded with `persistExecutionFinished(…, "FAILED", "login_required: …")` and is not retried. `TriggerWorkflow` and `TriggerWorkflowPersistOnly` check first so a caller gets the typed error; a schedule or webhook trigger that fires while locked is dropped with one log line a minute.
+- `monomind.Exec`, as its first statement, returning the typed error, so chat, coder, `/v1`, `agent.ask` and every other turn fail the same way.
+- `ActionExecutor.executeDef`, which covers the direct browser and action paths.
+
+Why again behind layer 1: the daemon, MCP and the API processes outlive the CLI check and can lock while they run, and some paths reach the engine with no command at all (webhooks, schedules, org grants).
+
+### 6.3 Layer 3: the doors
+
+| Door | When locked |
+|---|---|
+| HTTP API (`Server.auth`), `/v1`, the org receiver | 401 with the existing error body plus `login_required: true` and `account`. `GET /health` stays open and reports `account: {state, reason, valid_until}`. |
+| Webhook server | 503 `{"error":"login_required"}` with `Retry-After: 60`; no execution is created. |
+| Extension bridge | Every request but `ping` gets an error frame with code `account_locked`; `ping` reports the state so the side panel can say "Sign in to MonoAgent". |
+| MCP (stdio) | Starts, answers `initialize` and `tools/list`; every `tools/call` returns a tool error (`isError`) with the login-required text, `--grant` children included. |
+| Daemon heartbeat | A new `account` field `{state, reason, valid_until}` in `daemonhb.Heartbeat`, read by the desktop and by `doctor`. |
+
+### 6.4 When locked
+
+- `account.Guard` is installed by `main()` for every command. The long-running commands (`daemon`, `httpapi`, `mcp`, `extension serve`, `org serve`) start its refresher at once; any other process starts it after five minutes of running, so a long `workflow run` or `chat` is covered too. The guard re-reads `session.json` when the file changes (a poll every 5 seconds), and offers `Require`, `State` and `OnRefused`.
+- The daemon never exits because of the lock (launchd's KeepAlive would respawn it in a loop). Locked, it starts no execution, stops the org services it starts, reports `account: locked`, and resumes by itself when a valid session appears (a sign-in from the CLI or the app writes `session.json`).
+- `refused`: `OnRefused` cancels what is in flight. The daemon calls `CancelExecution` on its running executions; other processes cancel their root context. `expired` (24 hours unreachable): nothing in flight is cancelled, nothing new starts, and the daemon keeps retrying.
+- External `monomind` processes that already run (an org's agents) are not killed by mono-agent in v1 beyond what the daemon manages; their calls back into mono-agent fail.
+
+### 6.5 The desktop app
+
+- New bindings `AccountStatus`, `AccountLogin`, `AccountLoginCancel`, `AccountLoginEmailSend`, `AccountLoginEmailVerify` and `AccountLogout`, shelling out to `account … --json`; the `Library*` login bindings become thin aliases.
+- `App.jsx` renders an `AccountGate` instead of the shell while the state is `locked`, reusing the library gate's browser sign-in and email-code form. It re-checks on window focus and on every `login_required` answer from any binding. In `grace` a dismissible banner shows the time left; in the warn period a banner shows the date.
+- `backgroundUpdateCheck` and the update dialog stay available when locked (`update` is open).
+- The Go side installs a read-only guard (it re-reads `session.json`), so any layer-2 call it makes is judged. Its watchers keep running and run no workflows; every action it takes goes through a gated CLI call.
+
+## 7. Sign-in experience
+
+- `account login [--email <addr>]` opens the browser flow, or with `--email` sends a code (`--send` and `--code` split the steps, as `library login` does). `account logout` revokes the refresh token at monoes.me (best effort) and deletes `refresh.enc` and the token. `account status [--offline] [--json]` refreshes first if due, unless `--offline`.
+- `account status --json`:
+
+```json
+{"v":1,"state":"ok","reason":"","user":{"id":"…","email":"…","username":"…"},"plan":"free",
+ "issued_at":"…","valid_until":"…","grace_until":"…","enforce_from":"…","enforced":true}
+```
+
+  `valid_until` is the access token's `exp`, `grace_until` is `iat + 24h`. Exit 0 for `ok` and `grace`, 4 for `locked`.
+- New users sign up on monoes.me's existing sign-in page (Google or email); `account login` opens it. No new server UI.
+- `doctor` gets the row `core.monoes_account`: ok, warn (grace or the warn period) or fail (locked), with the fix `account login`.
+- `library` commands use the machine session; the per-profile `monoes-library` vault entry is no longer written.
+
+## 8. Rollout
+
+Order, because every push to master releases and the server is the dependency:
+
+0. Spikes S1 to S6 (§12) against a local server.
+1. The server release (§5). Backward compatible: current clients are unaffected.
+2. One client release R: the gate, the `account` commands, the background refresher, the desktop gate, the `doctor` row, and `account.EnforceFrom` set to three weeks after the release (chosen when R is cut). Before the date the gated commands run without a session and warn (a stderr line, the desktop banner, a `doctor` warn, the heartbeat); from the date it enforces. No second release is needed; a later commit may delete the warn path.
+3. Adoption. On the first run of R a library login on any profile is exchanged for a machine session when S2 allows; otherwise `account status` says to sign in. Either way nothing locks before the date.
+4. Limits. Versions before R are never gated: users who stay on them keep working, and only the library (server-gated) stops for them. Raising their cost is a server decision (a minimum client version on library reads) and out of scope. The warn period reaches unattended installs only through the heartbeat and `doctor`; a user who opens neither sees it when enforcement starts (accepted).
+
+The date is judged on `max(now, hw)`, so setting the clock back does not postpone it. The constant is the zero time until the release that sets it, and zero means dormant: nothing locks and nothing warns. That lets the earlier build phases merge, and therefore release, with no user-visible effect.
+
+**Build order for the plan.** One spec and a phased plan (the API work used the same shape), with the server as its own part:
+
+- **Part A, the server** (§5), after spikes S1, S3 and S6. It ships alone and first.
+- **B1, `internal/account`:** verify, states, store, refresh, guard, keys, the fake server's signing, the `account` commands and the `library` aliases (after S1 and S2).
+- **B2, the CLI gate:** the annotations, the `main()` gate, the inventory test, the `login_required` JSON and the `doctor` row (after S5).
+- **B3, layers 2 and 3 and the daemon's locked mode:** the three runner checks, the doors and the heartbeat field (after S4).
+- **B4, the desktop gate** and the extension side panel's message.
+- **B5, the rollout:** the enforcement date and the warnings, the release guard and CI changes, and the documentation rewrite. This is the release R above.
+
+The license workstream (§10) runs beside these and blocks none of them.
+
+## 9. Headless, Docker, developers and CI
+
+- **Headless.** `account login --email` once, and the session persists in the data directory. In Docker that means a volume plus the file keyring, which the vault already needs without an OS keyring; `account login` fails closed without a keyring, with the message the vault gives. A locked daemon logs the exact command to run. There is no environment-variable credential and no machine token in v1 (D10): both would need a monoes.me page to issue them, which is the extra server work D2 rules out.
+- **Developers and CI** build the real binary with `-tags devaccount` (`internal/account/devkeys_devaccount.go`): it also trusts a development signing key and lets the gate honor `MONOES_BASE_URL`. `release.yml` never sets the tag, and `scripts/check-release-tags.sh` fails the release if `go version -m <binary>` lists it.
+- **Unit tests** need no tag: `account.SetTrustedKeysForTest(t, keys, clock)` swaps the keys and the clock and panics unless `testing.Testing()`. No environment variable relaxes the gate in a default build; `MONOES_BASE_URL` still redirects the library, and the gate still verifies against the pinned keys.
+- **CI jobs that run the real binary** (`doctor-smoke`: `doctor` is open; `monomind-smoke`, `mcp-pin-guard` and others) are audited in the plan (S4). Any that run a gated command build with `devaccount` and sign in against `libraryfake`'s key.
+
+## 10. License and distribution (its own workstream)
+
+The owner chooses the license terms; this document does not. The engineering steps, in order:
+
+1. **Copyright audit.** `git shortlog -sne` and the CONTRIBUTING terms. Code from other contributors cannot be relicensed without their agreement: replace it or ask.
+2. **Dependency audit.** Go modules and the desktop's npm packages against the new terms (copyleft is the risk), and a NOTICE file with the third-party attributions, which MIT, BSD and Apache require in closed distribution too.
+3. **Swap `LICENSE`** and every license mention: README, SPDX headers if any, package metadata, `wails.json`, the About screen, the docs.
+4. **If the repository goes private**, release assets move to a public releases-only repository. `update`, `update --app`, `install.sh`, the desktop check, `doctor`'s `core.update` and the attestation instructions repoint; `release.yml` gains a secret to publish there (it uses none today); the Docker path (source builds only) and the CONTRIBUTING and issue links are reviewed. Public forks and clones remain, and every MIT release already published stays MIT.
+5. **Rewrite the claims** in README, AGENTS.md, SECURITY.md, SUPPORT.md, COMPARISON.md and the locale strings to say what is true: data stays on the machine; a monoes.me sign-in is required; the app contacts monoes.me to sign in and refresh (the OAuth exchange and the IP address it comes from; no device id, no usage data) and to check for updates. Remove "works fully offline" and "no phone-home".
+
+Sequencing: the gate ships first and works under any license. The relicense lands with or just before R's enforcement date, so "from this version on" is one story. Closing the source is a later, separate step with its own plan: it cannot be undone for copies already out, and it is what makes step 4 matter.
+
+## 11. Verification
+
+- **Fake server.** `libraryfake` gains a signing key, `resource` handling, and switches for refusal, outage and clock skew.
+- **Tables.** `Verify` (each claim wrong in turn), the state machine (`iat`, `exp`, `now`, `hw` matrix; refused versus unreachable), the clock guard, the refresh lock (N processes refreshing with rotation).
+- **Inventory.** `TestEveryCommandIsClassified` with the open list pinned.
+- **One test per door** (§6.3), logged out and in grace, plus the CLI gate's exit code and JSON.
+- **Mutation checks.** Removing the call at any gate site (the CLI gate, `handleExecution`, `monomind.Exec`, `executeDef`, `Server.auth`, `/v1`, the webhook server, the bridge, MCP) must fail a named test.
+- **Real-binary smoke** (built with `devaccount`) against the fake: locked, sign in, ok, block on the fake, locked after one refresh with in-flight work cancelled; unreachable, grace, locked at 24 hours (the clock injected through the test hook).
+- **Release guard.** `check-release-tags.sh` against a binary built with and without the tag.
+- **Desktop.** Vitest for the `AccountGate` states (locked, grace banner, warn banner, sign in to shell, `login_required` back to the gate), in English and Spanish.
+- **Usual gates.** `gofmt`, `go vet`, `go test ./...` in both builds (default and `-tags nosocial`), `-race` on `internal/account` and the CLI tests (CI's Linux jobs run it), and the server's own suite for Part A.
+
+## 12. Risks, spikes and out of scope
+
+**Risks (accepted unless noted).**
+
+- A monoes.me outage longer than 24 hours locks every install. `update` stays open; the deploy hardening of §5 and monitoring reduce the odds.
+- Strictness against local-first: scheduled workflows stop after 24 hours offline and air-gapped use ends. The positioning changes (§10 step 5).
+- Cancelling on a refusal can stop an outbound run midway (a half-sent batch). Accepted for the abuse case; the run records `login_required`.
+- Older versions, source builds and patched binaries stay open; the license change and closing the source raise the cost only.
+- A lost or compromised signing key needs a client release; clients on old releases lock with `key_unknown` until they `update`.
+- A crash between a refresh-token rotation and its write means signing in again.
+- Support: sign-in problems become support requests; `account status --json` and the `doctor` row carry the reason.
+- Privacy: monoes.me sees each sign-in and refresh (account id, time, IP address). No device id, no usage data. Said in the docs (§10 step 5).
+- The server's signing key and deploy pipeline are the root of trust of every install (§5 item 5).
+- External monomind processes (orgs) already running continue until stopped.
+
+**Spikes** (each before the work that depends on it):
+
+- S1. Can the `jwt()` plugin sign with a configured static Ed25519 key, or can its key be exported and pinned? Otherwise the JWKS fallback of §4.7.
+- S2. Can an existing library refresh token be exchanged, with `resource`, for an audience-bound JWT? Otherwise one new sign-in (D23).
+- S3. Does the refresh grant refuse a blocked user today, and does the provider rotate refresh tokens?
+- S4. Which CI scripts and tests run the real binary, which gated commands do they use, and which processes call layer-2 functions without a guard (the desktop's Go side)?
+- S5. Does `root.Find` resolve the target for every invocation form: global flags first, aliases, hidden commands, `--`, `help <cmd>`?
+- S6. The audience option's real name and behavior in the provider, and whether tokens are JWTs exactly when a `resource` is sent.
+
+**Out of scope.** Device binding; machine tokens and environment-variable credentials; paid-plan logic or any plan enforcement; moving more value to monoes.me; killing external monomind processes; an offline mode; a minimum client version on library reads; closing the source itself.
