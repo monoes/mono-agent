@@ -59,7 +59,7 @@ func TestManyAPIConfigSetCallsAtOnceAllLand(t *testing.T) {
 	pairs := [][2]call{
 		{{"max_concurrent", "2", "8"}, {"turn_timeout", "11m", "20m"}},
 		{{"confinement", "any", "chat-only"}, {"context_confinement", "sandboxed", "chat-only"}},
-		{{"auto_confinement", "sandboxed", "chat-only"}, {"image_runtimes", "claude", "codex"}},
+		{{"auto_confinement", "sandboxed", "chat-only"}, {"image_runtimes", "codex,antigravity", "codex"}}, // a narrowing: swapping for a runtime that was not there is a widening (P18)
 		{{"tool_runtimes", "claude,codex", "claude"}, {"v1_addr", "127.0.0.1:9000", "127.0.0.1:9443"}},
 	}
 	for round := 0; round < 5; round++ {
