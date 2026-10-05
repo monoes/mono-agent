@@ -1133,7 +1133,12 @@ a key. It lives in `internal/openaiapi/`; the spec is
   makes the second call with `--yes`. The app judges nothing itself: a value,
   what widens and each state are the CLI's to say, shown in the page's language
   for the rules the page knows and as the CLI said it, marked English,
-  otherwise. It only trims the spaces around what is typed. A banner says when
+  otherwise. It only trims the spaces around what is typed. A saved row the
+  CLI cannot read (exit 3, "the saved settings are damaged") is shown as the
+  CLI worded it with a "Reset the saved settings" button, a change that widens
+  like the others (`unset --all --dry-run`, the dialog, then `--yes`), after
+  which the status and the models are read again; a row in a newer format
+  (exit 1) gets its message and no reset. A banner says when
   a restart is needed. When the daemon is registered for auto-start (`daemon.autostart`
   of the document) a button restarts it after a dialog (`daemon restart`: it
   interrupts workflows and org runs; nothing here claims a graceful stop), and
