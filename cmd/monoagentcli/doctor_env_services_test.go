@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -21,69 +22,111 @@ import (
 // TestStopDaemonHelperProcess is the entry point the parent runs it through. Unix-only:
 // terminateProcess and killProcess are stubs on Windows (coder_signal_windows.go), so
 // stopDaemon cannot reach this path there.
+//
+//	"lock"     the daemon: takes the single-instance lock, writes its heartbeat, and on SIGTERM
+//	           removes the heartbeat (the real daemon's heartbeat goroutine does that as soon as
+//	           its context ends) and exits;
+//	"nolock"   a daemon built before the lock existed: a heartbeat and no lock, and a shutdown
+//	           that takes a moment;
+//	"stubborn" the daemon again, but it ignores SIGTERM, so only SIGKILL stops it.
 const stopDaemonHelperEnv = "MONOAGENTCLI_STOPDAEMON_HELPER"
 
-// runStopDaemonHelper plays the daemon of the "lock" mode: it takes the single-instance lock,
-// writes its heartbeat, and on SIGTERM removes the heartbeat (the real daemon's heartbeat
-// goroutine does that as soon as its context ends) and exits. It listens for SIGTERM before it
-// takes the lock: a signal sent the moment the lock becomes visible must find a handler.
-func runStopDaemonHelper() {
+// runStopDaemonHelper plays mode. It asks for SIGTERM before it takes the lock: a signal sent
+// the moment the lock becomes visible must find a handler.
+func runStopDaemonHelper(mode string) {
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM)
-	release, err := daemonhb.Lock()
-	if err != nil {
-		os.Exit(1)
+	if mode == "stubborn" {
+		signal.Ignore(syscall.SIGTERM)
+	} else {
+		signal.Notify(sig, syscall.SIGTERM)
 	}
-	defer release()
+	if mode != "nolock" {
+		release, err := daemonhb.Lock()
+		if err != nil {
+			os.Exit(1)
+		}
+		defer release()
+	}
 	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid()}); err != nil {
 		os.Exit(1)
 	}
+	if mode == "stubborn" {
+		select {} // only SIGKILL ends it
+	}
 	<-sig
 	_ = os.Remove(daemonhb.Path())
+	if mode == "nolock" {
+		time.Sleep(300 * time.Millisecond)
+	}
 }
 
 // TestStopDaemonHelperProcess is not a test: it is the entry point of the stand-in daemon.
 // It returns (and does not os.Exit) so that TestMain removes the temporary home it made.
 func TestStopDaemonHelperProcess(t *testing.T) {
-	if os.Getenv(stopDaemonHelperEnv) == "" {
+	mode := os.Getenv(stopDaemonHelperEnv)
+	if mode == "" {
 		t.Skip("entry point of the stand-in daemon, run by the stopDaemon tests")
 	}
-	runStopDaemonHelper()
+	runStopDaemonHelper(mode)
 }
 
-// startStopDaemonHelper starts the stand-in daemon and returns once this machine's heartbeat
-// names it, which it writes only after it holds the lock (the parent never probes the lock
-// meanwhile: a probe takes it for an instant and could make the helper's own attempt fail).
-// It reaps the helper in the background, as a service manager would: a child nobody waits for
-// stays a zombie that `kill -0` still finds.
-func startStopDaemonHelper(t *testing.T) (pid int, exited <-chan error) {
+// startStopDaemonHelper starts the stand-in daemon in mode and returns once this machine's
+// heartbeat names it, which it writes only after it holds the lock (the parent never probes the
+// lock meanwhile: a probe takes it for an instant and could make the helper's own attempt
+// fail). It reaps the helper in the background, as a service manager would: a child nobody
+// waits for stays a zombie that `kill -0` still finds.
+func startStopDaemonHelper(t *testing.T, mode string) (pid int, exited <-chan error) {
+	t.Helper()
+	cmd := startHelper(t, mode)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	return cmd.Process.Pid, done
+}
+
+// startUnreapedStopDaemonHelper is the same helper with nobody waiting for it: once it has
+// exited it stays a zombie until the test ends, as a daemon this process started is to this
+// process until it waits for it. Such a process still answers `kill -0`, and its lock is free.
+func startUnreapedStopDaemonHelper(t *testing.T, mode string) (pid int) {
+	t.Helper()
+	cmd := startHelper(t, mode)
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd.Process.Pid
+}
+
+func startHelper(t *testing.T, mode string) *exec.Cmd {
 	t.Helper()
 	hbPath := filepath.Join(t.TempDir(), "hb.json")
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", hbPath)
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStopDaemonHelperProcess$")
-	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"=lock", "MONOAGENT_DAEMON_HEARTBEAT="+hbPath)
+	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"="+mode, "MONOAGENT_DAEMON_HEARTBEAT="+hbPath)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() }) // in case the test fails before stopDaemon stops it
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if hb, ok := daemonhb.Read(); ok && hb.PID == cmd.Process.Pid {
-			return cmd.Process.Pid, done
+			return cmd
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the helper never became the daemon")
+			t.Fatalf("the %s helper never became the daemon", mode)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
+// shortGrace shortens how long stopDaemon waits for a SIGTERM'd daemon for the rest of the test.
+func shortGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := daemonStopGrace
+	daemonStopGrace = d
+	t.Cleanup(func() { daemonStopGrace = old })
+}
+
 func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
-	pid, exited := startStopDaemonHelper(t)
+	pid, exited := startStopDaemonHelper(t, "lock")
 
 	var progressLines []string
 	err := stopDaemon(context.Background(), pid, func(line string) { progressLines = append(progressLines, line) })
@@ -104,6 +147,25 @@ func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
 	}
 }
 
+// A daemon that this process started and has not waited for stays a zombie once it has exited:
+// it still answers kill -0, and what tells that it has stopped is that its lock is free. A wait
+// for the process to disappear would run out the grace, and a SIGKILL cannot end a zombie.
+func TestStopDaemonDoesNotWaitForAZombieToDisappear(t *testing.T) {
+	pid := startUnreapedStopDaemonHelper(t, "lock")
+	shortGrace(t, time.Second)
+
+	start := time.Now()
+	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil {
+		t.Fatalf("stopDaemon: %v", err)
+	}
+	if daemonhb.Locked() {
+		t.Error("the lock is still held")
+	}
+	if waited := time.Since(start); waited > 700*time.Millisecond {
+		t.Errorf("stopDaemon took %v: it waited for the zombie to disappear", waited)
+	}
+}
+
 func TestStopDaemonNoopWhenAlreadyStopped(t *testing.T) {
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
 	called := false
@@ -113,5 +175,114 @@ func TestStopDaemonNoopWhenAlreadyStopped(t *testing.T) {
 	}
 	if called {
 		t.Error("no progress expected when there was nothing to stop")
+	}
+}
+
+// A daemon built before the single-instance lock holds none: a lock that reads free says
+// nothing about whether it runs, so it is stopped like any other and its exit is waited for.
+func TestStopDaemonStopsADaemonThatHoldsNoLock(t *testing.T) {
+	pid, _ := startStopDaemonHelper(t, "nolock")
+
+	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil {
+		t.Fatalf("stopDaemon: %v", err)
+	}
+	if daemonhb.ProcessAlive(pid) {
+		t.Fatal("stopDaemon returned while the daemon was still running")
+	}
+}
+
+// A service manager that keeps the daemon alive (launchd's KeepAlive) starts a new one the
+// instant the old one exits, and that one holds the lock before a poll could see it free:
+// what stopDaemon waits for is the old process, and it must not mistake the new daemon's lock
+// for the old daemon not having stopped.
+func TestStopDaemonDoesNotWaitForTheLockOfARespawnedDaemon(t *testing.T) {
+	pid, _ := startStopDaemonHelper(t, "lock")
+	shortGrace(t, time.Second)
+
+	stop := make(chan struct{})
+	respawned := make(chan func(), 1)
+	go func() { // the service manager: takes the lock the moment the old daemon lets it go
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if release, err := daemonhb.Lock(); err == nil {
+				respawned <- release
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		select {
+		case release := <-respawned:
+			release()
+		default:
+		}
+	})
+
+	start := time.Now()
+	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil {
+		t.Fatalf("stopDaemon: %v", err)
+	}
+	if waited := time.Since(start); waited > 700*time.Millisecond {
+		t.Errorf("stopDaemon took %v: it waited for the lock of the new daemon", waited)
+	}
+}
+
+func TestStopDaemonForcesADaemonThatIgnoresSIGTERM(t *testing.T) {
+	pid, _ := startStopDaemonHelper(t, "stubborn")
+	shortGrace(t, 300*time.Millisecond)
+
+	var lines []string
+	if err := stopDaemon(context.Background(), pid, func(l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("stopDaemon: %v", err)
+	}
+	if daemonhb.ProcessAlive(pid) {
+		t.Fatal("the daemon is still running after SIGKILL")
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "forcing") {
+		t.Errorf("the forced stop was not announced: %q", lines)
+	}
+}
+
+func TestStopDaemonStopsWaitingWhenTheContextEnds(t *testing.T) {
+	pid, _ := startStopDaemonHelper(t, "stubborn")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := stopDaemon(ctx, pid, func(string) {})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stopDaemon = %v, want the context's error", err)
+	}
+	if waited := time.Since(start); waited > 3*time.Second {
+		t.Errorf("stopDaemon kept waiting for %v after its context ended", waited)
+	}
+}
+
+// Only the daemon the heartbeat names is signaled: the pid of any other live process, this
+// test's own included, is refused and nothing is sent to it.
+func TestStopDaemonRefusesAPidThatIsNotTheDaemon(t *testing.T) {
+	pid, _ := startStopDaemonHelper(t, "lock")
+
+	if err := stopDaemon(context.Background(), os.Getpid(), func(string) {}); err == nil {
+		t.Fatal("stopDaemon accepted the pid of a process that is not the daemon")
+	}
+	if !daemonhb.ProcessAlive(pid) {
+		t.Fatal("the real daemon was stopped by a call for another pid")
+	}
+}
+
+// kill(0), kill(-1) and kill(1) are a process group, every process and init: never sent.
+func TestStopDaemonRefusesPidsThatAreNeverADaemon(t *testing.T) {
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	for _, pid := range []int{-1, 0, 1} {
+		if err := stopDaemon(context.Background(), pid, func(string) {}); err == nil {
+			t.Errorf("stopDaemon(%d) did not refuse", pid)
+		}
 	}
 }

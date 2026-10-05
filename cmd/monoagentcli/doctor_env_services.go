@@ -132,34 +132,50 @@ func startDaemon(ctx context.Context, args []string, as autostart.Installer, pro
 	return cmd.Process.Release()
 }
 
-// daemonStopPollInterval is how often stopDaemon re-checks the daemon's
-// single-instance lock while waiting for it to clear.
+// daemonStopPollInterval is how often stopDaemon re-checks whether the daemon
+// has stopped.
 const daemonStopPollInterval = 300 * time.Millisecond
 
 // daemonStopGrace is how long stopDaemon waits for a SIGTERM'd daemon to
 // finish its own graceful shutdown (draining in-flight workflow executions,
-// see daemon.go) before it escalates to a forced kill.
-const daemonStopGrace = 15 * time.Second
+// see daemon.go) before it escalates to a forced kill. A variable so that a
+// test can shorten it.
+var daemonStopGrace = 15 * time.Second
 
 // stopDaemon stops the daemon at pid so a caller can start a fresh one on
-// the current binary without racing its own shutdown: SIGTERM, then poll
-// daemonhb.Locked() — the OS releases that lock on exit even after a crash,
-// so it is the one race-free signal that nothing still holds the bridge
-// port or the schedule lock — escalating to SIGKILL if it hasn't cleared
-// within daemonStopGrace.
+// the current binary without racing its own shutdown: SIGTERM, then wait for
+// it to exit, escalating to SIGKILL if it has not gone within daemonStopGrace.
+//
+// It waits for the process and not for the daemon lock alone. A service
+// manager that keeps the daemon alive (launchd's KeepAlive) starts a new one
+// the instant the old one exits, and that one may hold the lock before the
+// next poll sees it free, so a wait for the lock could outlast the old daemon
+// and then fail to kill a process that is gone. A process that has exited but
+// that its parent has not reaped (a daemon this process started) still answers
+// kill -0, and its lock is free: when the lock was held at the start, a free
+// lock counts as stopped too. A daemon built before the lock existed holds
+// none, and only its exit tells.
 func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
-	if !daemonhb.Locked() {
+	if pid <= 1 {
+		// kill(0), kill(-1) and kill(1) are a process group, every process and init.
+		return fmt.Errorf("refusing to signal pid %d", pid)
+	}
+	if !daemonhb.ProcessAlive(pid) {
 		return nil // already stopped
 	}
 	if !lockHolderIs(pid) {
-		return fmt.Errorf("pid %d is not the process holding the daemon lock — not signaling it", pid)
+		return fmt.Errorf("pid %d is not the daemon this machine's heartbeat names — not signaling it", pid)
 	}
-	if err := terminateProcess(pid); err != nil && daemonhb.Locked() {
+	holdsLock := daemonhb.Locked()
+	stopped := func() bool {
+		return !daemonhb.ProcessAlive(pid) || (holdsLock && !daemonhb.Locked())
+	}
+	if err := terminateProcess(pid); err != nil && !stopped() {
 		return fmt.Errorf("signaling pid %d: %w", pid, err)
 	}
 	deadline := time.Now().Add(daemonStopGrace)
 	forced := false
-	for daemonhb.Locked() {
+	for !stopped() {
 		if time.Now().After(deadline) {
 			if forced {
 				return fmt.Errorf("pid %d would not stop even after SIGKILL", pid)
@@ -168,7 +184,7 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 			// as soon as SIGTERM arrives, so it would always fail while a hung
 			// daemon drains. pid was verified before the signal went out.
 			progress(fmt.Sprintf("pid %d did not stop within %s — forcing it", pid, daemonStopGrace))
-			if err := killProcess(pid); err != nil {
+			if err := killProcess(pid); err != nil && !stopped() {
 				return fmt.Errorf("force-stopping pid %d: %w", pid, err)
 			}
 			forced = true
