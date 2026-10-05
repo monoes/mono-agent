@@ -66,8 +66,8 @@ func TestAccountKEKFileKeyringWithNothingStored(t *testing.T) {
 	}
 }
 
-// A key in the OS keychain is used whatever the file keyring setting is, so a
-// quiet create succeeds through the OS keychain without any passphrase.
+// A key in the OS keychain is used whatever the file keyring setting is, so even
+// a quiet create returns it, with no passphrase involved.
 func TestAccountKEKOSKeyringEntryWinsUnderTheFileKeyring(t *testing.T) {
 	accountKEKTestHome(t, true)
 	failOnPassphrasePrompt(t)

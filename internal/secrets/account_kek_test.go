@@ -20,6 +20,8 @@ func TestAccountKEKIDIsNotAProfileID(t *testing.T) {
 
 func TestAccountKEKReadCreatesNothing(t *testing.T) {
 	resetKEKState(t)
+	t.Setenv(fileKeyringEnv, "") // an exported MONOAGENT_ALLOW_FILE_KEYRING must not send this test to the file keyring
+	t.Setenv("HOME", t.TempDir())
 	keyring.MockInit()
 	for _, interactive := range []bool{true, false} {
 		kek, found, err := AccountKEK(false, interactive)
@@ -34,6 +36,8 @@ func TestAccountKEKReadCreatesNothing(t *testing.T) {
 
 func TestAccountKEKOSKeyringRoundTrip(t *testing.T) {
 	resetKEKState(t)
+	t.Setenv(fileKeyringEnv, "") // an exported MONOAGENT_ALLOW_FILE_KEYRING must not send this test to the file keyring
+	t.Setenv("HOME", t.TempDir())
 	keyring.MockInit()
 	created, found, err := AccountKEK(true, true)
 	if err != nil || !found || len(created) != 32 {

@@ -23,15 +23,23 @@ const accountKEKID = "monoes..account"
 //   - create=false only reads: found=false means there is no key yet, and
 //     nothing is written to the keychain or to disk.
 //   - create=true generates the key when it is missing (the first sign-in).
+//     Without the file keyring the key is made in the OS keychain. With the
+//     file keyring opted in (MONOAGENT_ALLOW_FILE_KEYRING=1) it is made in the
+//     file keyring, which needs its passphrase, so only an interactive call
+//     can make it.
 //   - interactive=true may ask for the file keyring's passphrase, exactly as
 //     the vault does. Only an explicit command that owns the terminal (the
 //     sign-in) should pass it.
 //   - interactive=false never prompts, so a gate that runs before a command
 //     has claimed stdin cannot swallow the command's piped input as a
-//     passphrase. With the file keyring it reads the key only when the
-//     passphrase is already known (remembered in this process, or in
-//     MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE or the configured passphrase
-//     file) and it creates a key only through the OS keychain.
+//     passphrase. Without the file keyring nothing can prompt, so it behaves
+//     as interactive=true. With the file keyring opted in it reads the key
+//     only when the passphrase is already known (remembered in this process,
+//     or in MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE or the configured
+//     passphrase file) and it never creates a key: creating the file keyring
+//     needs the passphrase prompt that the interactive sign-in owns, so
+//     create=true returns the key that exists (in the OS keychain or the file
+//     keyring) or an error.
 //
 // A key store that cannot be opened is an error, not found=false.
 func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
