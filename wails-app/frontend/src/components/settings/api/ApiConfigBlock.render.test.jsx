@@ -102,6 +102,17 @@ describe('ApiConfigBlock: the rows', () => {
     expect(screen.getByRole('group', { name: c.rows.tls.label })).toBeInTheDocument()
   })
 
+  it('keeps a field as wide as what it holds: a count is not as wide as a path, whatever the window', async () => {
+    await mountOpen()
+    const widths = {
+      count: screen.getByRole('spinbutton', { name: c.rows.max_concurrent.label }),
+      class: screen.getByRole('combobox', { name: c.rows.confinement.label }),
+      text: screen.getByRole('textbox', { name: c.rows.turn_timeout.label }),
+      path: within(row('tls')).getByRole('textbox', { name: c.rows.tls.certLabel }),
+    }
+    expect(Object.fromEntries(Object.entries(widths).map(([k, el]) => [k, el.style.maxWidth]))).toEqual({ count: '140px', class: '380px', text: '460px', path: '640px' })
+  })
+
   it('says what the field holds while nothing is saved: the default, or what having none means', async () => {
     await mountOpen()
     expect(screen.getByRole('textbox', { name: c.rows.v1_addr.label })).toHaveAttribute('placeholder', c.rows.v1_addr.empty)

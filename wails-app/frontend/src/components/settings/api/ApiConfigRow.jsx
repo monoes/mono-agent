@@ -12,6 +12,8 @@ import { Badge, Said, errText, hint, mono, okText } from './ui.jsx'
 // for the page; nothing here decides what a value means.
 
 const field = { padding: '6px 10px', fontFamily: mono, fontSize: 12, minWidth: 0 }
+// A field is as wide as what it holds, up to the width of the row: a count does not need the width of a path.
+const fieldWidth = { number: 140, class: 380, text: 460, pair: 640 }
 const title = { fontFamily: mono, fontSize: 12, fontWeight: 600, color: 'var(--text)' }
 
 // What a call did, in the words of the page.
@@ -63,13 +65,14 @@ function Control({ row, keyName, setting, settings, drafts, onChange, onEnter, d
   const saved = setting?.saved ?? ''
   const common = { id, disabled, 'aria-describedby': describedBy, value, className: 'form-input', 'data-focus-row': focusMark ? row.id : undefined }
   const placeholder = row.empty ? t(row.empty) : setting?.default ? t('settings.api.config.placeholderDefault', { value: setting.default }) : ''
+  const style = { ...field, maxWidth: fieldWidth[row.kind] }
 
   if (row.kind === 'class') {
     // An empty choice only while nothing is saved (going back to the default is "Use the default"), and a saved class
     // the select does not know (an edit by hand) stays in it as stored.
     const options = [...(saved === '' ? [['', placeholder]] : []), ...CLASSES.map(c => [c, c]), ...(saved !== '' && !CLASSES.includes(saved) ? [[saved, saved]] : [])]
     return (
-      <select {...common} className="form-select" style={field} onChange={e => onChange(keyName, e.target.value)}>
+      <select {...common} className="form-select" style={style} onChange={e => onChange(keyName, e.target.value)}>
         {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
       </select>
     )
@@ -77,7 +80,7 @@ function Control({ row, keyName, setting, settings, drafts, onChange, onEnter, d
   return (
     <input
       {...common} type={row.kind === 'number' ? 'number' : 'text'} inputMode={row.kind === 'number' ? 'numeric' : undefined}
-      placeholder={placeholder} autoComplete="off" spellCheck={false} style={field} onChange={e => onChange(keyName, e.target.value)}
+      placeholder={placeholder} autoComplete="off" spellCheck={false} style={style} onChange={e => onChange(keyName, e.target.value)}
       onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing) { e.preventDefault(); onEnter() } }}
     />
   )
