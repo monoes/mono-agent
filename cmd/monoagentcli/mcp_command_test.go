@@ -64,6 +64,58 @@ func TestMCPCommandRefusesGrantModeWithTheExposureFlag(t *testing.T) {
 	}
 }
 
+// --api-only is the operator's third switch: it takes every tool but the API's away from the server (the
+// owner's decision of 2026-10-05). The command hands it over and, as the other two, refuses it in grant mode.
+func TestMCPCommandHandsAPIOnlyToTheServer(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"--api-only"}, true},
+		{[]string{"--api-only", "--allow-mutations", "--allow-api-exposure"}, true},
+		{[]string{"--allow-mutations"}, false},
+	} {
+		got, err := runMCPCommand(t, c.args...)
+		if err != nil || got == nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		if got.APIOnly != c.want {
+			t.Errorf("%v: APIOnly %v, want %v", c.args, got.APIOnly, c.want)
+		}
+	}
+}
+
+func TestMCPCommandRefusesGrantModeWithAPIOnly(t *testing.T) {
+	got, err := runMCPCommand(t, "--grant", "grt_x", "--api-only")
+	if err == nil || got != nil || !strings.Contains(err.Error(), "--api-only does not apply") {
+		t.Errorf("--grant with --api-only: options %v, error %v", got, err)
+	}
+}
+
+func TestMCPCommandDocumentsAPIOnly(t *testing.T) {
+	cmd := newMCPCmd(&globalConfig{})
+	fl := cmd.Flags().Lookup("api-only")
+	if fl == nil {
+		t.Fatal("`mcp` has no --api-only")
+	}
+	for _, want := range []string{"MONOAGENT_MCP_API_ONLY", "api_*", "workflow"} {
+		if !strings.Contains(fl.Usage, want) {
+			t.Errorf("the usage of --api-only must mention %s: %q", want, fl.Usage)
+		}
+	}
+	long := oneLine(cmd.Long)
+	for _, want := range []string{"--api-only", "MONOAGENT_MCP_API_ONLY", "no workflow, vault, secret, person, org or documentation tool"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("the help of `mcp` does not say %q", want)
+		}
+	}
+	ref := captureStdout(t, func() { c := refAPICmd(); c.Run(c, nil) })
+	if from := strings.Index(ref, "From MCP (monoagentcli mcp)"); from < 0 || !strings.Contains(ref[from:], "--api-only") {
+		t.Error("the paragraph of `ref api` on `mcp` does not mention --api-only")
+	}
+}
+
 // slashList matches the shorthand the help uses for a family of tools: api_key_create/update/revoke.
 var slashList = regexp.MustCompile(`([a-z_]*_)([a-z]+)((?:/[a-z_]+)+)`)
 

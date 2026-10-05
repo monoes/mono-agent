@@ -667,9 +667,10 @@ whatever is saved), and it fills what they leave out.
   and `workflow_run`, and a model that can use them can have a workflow of the
   profile run `monoagentcli api config set ... --yes` as the OS user (the
   security review of phase 6 did it, against a workflow that had a trigger). The
-  flag therefore stops `api_config_set` and nothing else that `--allow-mutations`
-  allows. If the model must not be able to widen the server, do not give it
-  `--allow-mutations`, or run it in a sandbox.
+  flag therefore stops `api_config_set` and `api_auto_set` and nothing else that
+  `--allow-mutations` allows. If the model must not be able to widen the server,
+  do not give it `--allow-mutations`, start the MCP server with `--api-only`
+  (below), or run it in a sandbox.
   `--allow-api-exposure` without `--allow-mutations` does nothing, since the
   tool is then not served, and `mcp --grant` refuses it. The tool also refuses a
   value that holds an API key (`sk-ma-`) and a value of unreasonable length, so
@@ -691,12 +692,27 @@ whatever is saved), and it fills what they leave out.
 - `api_auto_set` (`--allow-mutations`) switches `auto` on or off for the MCP
   server's profile, as `jev enable api_auto` does. Switching it on makes the
   server send the first 4,000 characters of each `auto` request's prompt, and
-  the models' descriptions, to TypeSafe (see **The `auto` model**): the tool
-  needs `acknowledge_egress: true` and shows that list, as `jev enable` needs
-  `--yes`. The acknowledgement is an argument, so like `--yes` it makes the data
-  visible before it moves and is not an access control: the operator's decision
-  is `--allow-mutations`. The tool never creates, stores, uses or shows the Jev
-  key; it only asks where one is.
+  the models' descriptions, to TypeSafe (see **The `auto` model**), so it needs
+  the operator's `--allow-api-exposure` too (the owner's decision of 2026-10-05:
+  what leaves the machine is the operator's to allow, made when the server
+  starts, as the exposure of the API's server is, and no argument of the tool
+  can make it) and `acknowledge_egress: true`, which shows that list, as `jev
+  enable` needs `--yes`. The acknowledgement is an argument, so like `--yes` it
+  makes the data visible before it moves and is not an access control; the flag
+  is. Switching off sends nothing and needs neither. Only where a Jev key
+  already exists does switching on send anything. The tool never creates,
+  stores, uses or shows the Jev key; it only asks where one is.
+- `--api-only` (or `MONOAGENT_MCP_API_ONLY=1`) gives a model the API's tools and
+  no other: the ten `api_*` tools, with no workflow, vault, secret, person, org
+  or documentation tool, so with `--allow-mutations` it has nothing that runs a
+  command as the OS user, which `--allow-mutations` alone does (above). It
+  takes tools away and changes none that stay: the mutating ones still need
+  `--allow-mutations`, and `--allow-api-exposure` is still what lets `api_config_set`
+  widen the server and `api_auto_set` switch `auto` on, so the flag is a boundary
+  for what that model can reach through this server. It is not one against a host
+  that gives the model tools of its own besides this server, such as a shell
+  tool. A call by name of a tool the server does not serve is refused and says
+  why; `mcp --grant` refuses the flag.
 
 **Context keys.** A key created with `--context` adds up to five excerpts
 (1,200 characters each, source base names only, never paths) from that

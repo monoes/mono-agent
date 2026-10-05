@@ -3030,18 +3030,25 @@ OPENAI-COMPATIBLE API (/v1)
   not have, none left (tool calling or image generation switched on again), and
   removing a saved row that cannot be read (saved_settings). It also refuses a
   value that holds an API key, and no error of it repeats an argument. The flag
-  guards that tool only: --allow-mutations also serves workflow_node_add (which
-  accepts the node type system.execute_command), workflow_set_active and
-  workflow_run, so a model that has them can have a workflow of the profile run
-  api config set ... --yes as the OS user; if a model must not be able to widen
-  the server, do not give it --allow-mutations. api_config_apply restarts the
+  guards that tool and api_auto_set only: --allow-mutations also serves
+  workflow_node_add (which accepts the node type system.execute_command),
+  workflow_set_active and workflow_run, so a model that has them can have a
+  workflow of the profile run api config set ... --yes as the OS user; if a model
+  must not be able to widen the server, do not give it --allow-mutations, or
+  start mcp with --api-only (or MONOAGENT_MCP_API_ONLY=1), which serves the API's
+  tools (api_*) and no other: no workflow, vault, secret, person, org or
+  documentation tool. The mutating API tools still need --allow-mutations then,
+  and --allow-api-exposure is still what lets a model widen the server or switch
+  the auto model on. api_config_apply restarts the
   daemon as daemon restart does (it reads the saved settings first and restarts
   nothing when they cannot be used), and interrupts what it is running.
-  api_auto_set switches the api_auto surface of the server's profile on (it
-  needs acknowledge_egress: true, because prompts then go to TypeSafe) or off, as
-  jev enable|disable api_auto does, and adds auto, what api_status says of the
-  auto model; it never creates or reads the Jev key. api_models_list reads the
-  saved settings under its server's environment, as api models does.
+  api_auto_set switches the api_auto surface of the server's profile on (it needs
+  --allow-api-exposure on the server, since what leaves the machine is the
+  operator's decision, and acknowledge_egress: true, because prompts then go to
+  TypeSafe) or off (it needs neither), as jev enable|disable api_auto does, and
+  adds auto, what api_status says of the auto model; it never creates or reads
+  the Jev key. api_models_list reads the saved settings under its server's
+  environment, as api models does.
 
   Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.
 

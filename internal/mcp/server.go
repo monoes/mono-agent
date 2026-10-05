@@ -60,9 +60,20 @@ type Options struct {
 	// apiconfig.Widens). It is the operator's decision, made when the server
 	// starts: no argument of any tool can set or lift it, because the model
 	// sets the arguments. Without it such a change is refused and nothing is
-	// saved. It adds nothing to AllowMutations, which api_config_set needs
-	// first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
+	// saved. It is also what lets api_auto_set switch the auto model on, since
+	// that sends prompts to TypeSafe: what leaves the machine is the
+	// operator's decision too. It adds nothing to AllowMutations, which both
+	// tools need first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
 	AllowAPIExposure bool
+	// APIOnly serves the OpenAI-compatible API's tools (api_*) and no other: no
+	// workflow, vault, secret, person, org or documentation tool, so that a
+	// model that is to manage the API through this server has nothing to run a
+	// command with, which AllowMutations alone does not give (it also serves
+	// workflow tools that can). It takes tools away and changes none of those
+	// that stay: the mutating ones still need AllowMutations, and the gates of
+	// api_config_set and api_auto_set are still AllowAPIExposure. Also
+	// settable via MONOAGENT_MCP_API_ONLY=="1". Grant mode ignores it.
+	APIOnly bool
 	// APIEnv is what the API tools (api_status, api_config_get/set/apply) read
 	// of this process: its environment, the daemon's heartbeat, the service
 	// manager (api_config_apply restarts the daemon through it) and the HTTP
@@ -124,6 +135,9 @@ func NewServer(opts Options) *Server {
 	}
 	if !opts.AllowAPIExposure {
 		opts.AllowAPIExposure = os.Getenv("MONOAGENT_MCP_ALLOW_API_EXPOSURE") == "1"
+	}
+	if !opts.APIOnly {
+		opts.APIOnly = os.Getenv("MONOAGENT_MCP_API_ONLY") == "1"
 	}
 	return &Server{opts: opts}
 }
@@ -343,7 +357,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 		if s.opts.Grant != "" {
 			return s.result(req.ID, map[string]interface{}{"tools": s.grantToolDefinitions(ctx)})
 		}
-		return s.result(req.ID, map[string]interface{}{"tools": toolDefinitions(s.opts.AllowMutations)})
+		return s.result(req.ID, map[string]interface{}{"tools": definitionsOf(s.servedTools(), s.opts.AllowMutations)})
 
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
@@ -402,6 +416,9 @@ func (s *Server) closeRuntime() {
 func (s *Server) instructions() string {
 	if s.opts.Grant != "" {
 		return "Tools here run automations your org granted you. Each call starts a workflow run; outputs are redacted and bounded."
+	}
+	if s.opts.APIOnly {
+		return "Tools here manage the OpenAI-compatible API: its keys, its models, its status and its settings. Start with api_status or api_config_get."
 	}
 	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals."
 }

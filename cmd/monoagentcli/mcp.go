@@ -14,7 +14,7 @@ import (
 // reference docs as tools for AI agents. stdout is the protocol channel;
 // logs go to stderr only.
 func newMCPCmd(cfg *globalConfig) *cobra.Command {
-	var allowMutations, allowAPIExposure bool
+	var allowMutations, allowAPIExposure, apiOnly bool
 	var grant string
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -57,16 +57,27 @@ not have, none left (tool calling or image generation switched on again), and
 removing a saved row that cannot be read (saved_settings). That is the operator's
 decision, made here: the arguments of a tool are set by the model, so none of them
 can lift the refusal. It adds nothing without --allow-mutations, and it guards that
-one tool only: --allow-mutations also serves workflow_node_add (which accepts the
-node type system.execute_command), workflow_set_active and workflow_run, with which
-a model can have a workflow of the profile run "monoagentcli api config set ... --yes"
-as you. If a model must not be able to widen the server, do not give it
---allow-mutations.
+one tool and api_auto_set only: --allow-mutations also serves workflow_node_add
+(which accepts the node type system.execute_command), workflow_set_active and
+workflow_run, with which a model can have a workflow of the profile run
+"monoagentcli api config set ... --yes" as you. If a model must not be able to
+widen the server, do not give it --allow-mutations, or start the server with
+--api-only.
+
+--api-only (or MONOAGENT_MCP_API_ONLY=1) serves the API's tools (api_*) and no
+other: no workflow, vault, secret, person, org or documentation tool. It is for a
+model that is to manage the API and nothing else: --allow-mutations, which the
+API's mutating tools need, also serves the workflow tools above, and with
+--api-only it does not. It takes tools away and changes none that stay: the
+mutating ones still need --allow-mutations, and --allow-api-exposure is still
+what lets api_config_set widen the server and api_auto_set switch the auto model
+on. A host that has tools of its own, such as a shell tool, is not stopped by it.
 
 api_config_apply restarts the daemon, as daemon restart does, and interrupts what
-it is running (workflows, org runs). api_auto_set needs acknowledge_egress: true to
-switch the auto model on, because prompts then go to TypeSafe; it never creates or
-reads the Jev key.
+it is running (workflows, org runs). api_auto_set switches the auto model on only
+on a server started with --allow-api-exposure too (what leaves the machine is the
+operator's decision: prompts then go to TypeSafe) and with acknowledge_egress:
+true; switching it off needs neither. It never creates or reads the Jev key.
 
 Honors the global --profile flag (or the MONOAGENT_PROFILE environment
 variable) and --db-path, exactly like every other command.`,
@@ -83,12 +94,16 @@ variable) and --db-path, exactly like every other command.`,
 			if grant != "" && allowAPIExposure {
 				return fmt.Errorf("--grant serves only the granted automations; --allow-api-exposure does not apply")
 			}
+			if grant != "" && apiOnly {
+				return fmt.Errorf("--grant serves only the granted automations; --api-only does not apply")
+			}
 			return runMCP(mcp.Options{
 				DBPath:           cfg.DBPath,
 				Profile:          cfg.ProfileID,
 				Version:          version,
 				AllowMutations:   allowMutations,
 				AllowAPIExposure: allowAPIExposure,
+				APIOnly:          apiOnly,
 				Grant:            grant,
 			})
 		},
@@ -99,6 +114,8 @@ variable) and --db-path, exactly like every other command.`,
 		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools, and api_config_set, api_config_apply and api_auto_set); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
 	cmd.Flags().BoolVar(&allowAPIExposure, "allow-api-exposure", false,
 		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further, which it otherwise refuses: a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, or every interface where it was one host), a higher confinement class, a runtime list that gains a runtime it did not have, none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings); needs --allow-mutations; it guards that tool only (--allow-mutations also serves workflow tools that can run a command as you); also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
+	cmd.Flags().BoolVar(&apiOnly, "api-only", false,
+		"Serve only the OpenAI-compatible API's tools (api_*) and no other: no workflow, vault, secret, person, org or documentation tool. For a model that is to manage the API and nothing else: --allow-mutations, which the API's mutating tools need, also serves workflow tools that can run a command as you; with --api-only it does not. The mutating API tools still need --allow-mutations, and --allow-api-exposure is still what lets api_config_set widen the server and api_auto_set switch the auto model on; also settable via MONOAGENT_MCP_API_ONLY=1")
 	return cmd
 }
 

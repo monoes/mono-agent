@@ -79,7 +79,7 @@ func TestAPIAutoSetIsTheDocumentOfJevEnableAndDisable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tool, isErr := mcpOnce(t, mcpOptions(t, toolDB, "default", false), "api_auto_set", map[string]any{"enabled": c.on, "acknowledge_egress": c.on})
+			tool, isErr := mcpOnce(t, mcpOptions(t, toolDB, "default", true), "api_auto_set", map[string]any{"enabled": c.on, "acknowledge_egress": c.on})
 			if isErr {
 				t.Fatalf("api_auto_set failed: %s", tool)
 			}
@@ -133,13 +133,23 @@ func TestAPIAutoSetRefusesWhatJevEnableRefusesWithoutYes(t *testing.T) {
 	if cliErr == nil || !strings.Contains(cliErr.Error(), "--yes") {
 		t.Fatalf("the command without --yes: %v", cliErr)
 	}
-	text, isErr := mcpOnce(t, mcpOptions(t, toolDB, "default", false), "api_auto_set", map[string]any{"enabled": true})
+	text, isErr := mcpOnce(t, mcpOptions(t, toolDB, "default", true), "api_auto_set", map[string]any{"enabled": true})
 	if !isErr || !strings.Contains(text, "acknowledge_egress") {
 		t.Fatalf("the tool without acknowledge_egress: %q (error %v)", text, isErr)
 	}
 	for _, e := range jevconf.Egress[jevconf.APIAuto] {
 		if !strings.Contains(stderr, "  - "+e) || !strings.Contains(text, e) {
 			t.Errorf("%q is not in both: the command's note %q, the tool's refusal %q", e, stderr, text)
+		}
+	}
+	// On a server whose operator did not allow it the tool shows the same list, and says whose decision it is.
+	notAllowed, isErr := mcpOnce(t, mcpOptions(t, toolDB, "default", false), "api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true})
+	if !isErr || !strings.Contains(notAllowed, "--allow-api-exposure") {
+		t.Fatalf("the tool on a server whose operator did not allow it: %q (error %v)", notAllowed, isErr)
+	}
+	for _, e := range jevconf.Egress[jevconf.APIAuto] {
+		if !strings.Contains(notAllowed, e) {
+			t.Errorf("%q is not in the refusal of a server whose operator did not allow it: %q", e, notAllowed)
 		}
 	}
 	if jevconf.Enabled(openJevDB(t, cfg), "default", jevconf.APIAuto) || jevconf.Enabled(openSideDB(t, toolDB), "default", jevconf.APIAuto) {
