@@ -53,17 +53,23 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
   const button = useRef(null)
   const was = useRef(restart.phase)
   const banner = bannerOf(config)
-  const { phase, err, fallback } = restart
+  const { phase } = restart
+  // What the last attempt came to is about the document the page had then: a newer one (the daemon was registered since,
+  // something else was saved, Refresh found the daemon back) is not what it was about.
+  const outcome = restart.outcome && restart.outcome.doc === config ? restart.outcome : null
+  const err = outcome?.err
+  const late = !!outcome?.late
+  const fallback = !!outcome?.fallback
 
   // The button that opened the dialog, or started a restart that did not happen, gets the keyboard back.
   useEffect(() => {
-    if ((phase === 'idle' || phase === 'late') && was.current !== 'idle' && was.current !== 'late') button.current?.focus()
+    if (phase === 'idle' && was.current !== 'idle') button.current?.focus()
     was.current = phase
   })
 
   // The daemon is back and runs what is saved: said while the document says so too (a setting saved since needs a restart again).
   const back = phase === 'back' && banner.kind === 'none'
-  if (banner.kind === 'none' && !back && phase === 'idle' && !err) return null
+  if (banner.kind === 'none' && !back && phase === 'idle') return null
   const canRestart = config?.daemon?.autostart && !fallback
   const needs = banner.kind === 'restart' || banner.kind === 'older'
   const names = [...new Set(banner.keys.map(k => ROWS.find(r => r.keys.includes(k))).filter(Boolean))].map(r => t(r.label)).join(', ')
@@ -82,7 +88,7 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
       {!back && banner.kind === 'restart' && <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>{t('settings.api.config.banner.restartTitle')}</div>}
       {text && <div style={hint}>{text}</div>}
 
-      {(needs || phase === 'late') && !back && canRestart && !working && phase !== 'checking' && (
+      {(needs || late) && !back && canRestart && !working && phase !== 'checking' && (
         <div>
           <button ref={button} type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={restart.ask}>
             <RotateCw size={12} /> {t('settings.api.config.restart.button')}
@@ -97,7 +103,7 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
         </div>
       )}
       {phase === 'checking' && <div role="status" style={hint}>{t('settings.api.config.restart.checking')}</div>}
-      {phase === 'late' && <div role="status" style={hint}>{t('settings.api.config.restart.late')}</div>}
+      {late && <div role="status" style={hint}>{t('settings.api.config.restart.late')}</div>}
 
       {needs && !canRestart && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

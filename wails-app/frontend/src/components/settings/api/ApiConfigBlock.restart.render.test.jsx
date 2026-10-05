@@ -215,6 +215,18 @@ describe('restarting', () => {
     expect(restartBtn()).toBeEnabled() // and it can be tried again
   })
 
+  it('says the daemon has not reported back when every read found it still stopped, with the document the last read found', async () => {
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    const m = await mountOpen({ reloads: [down(), down(), down(), down(), down()] }) // each read finds a new document: the daemon is not there
+    await confirmRestart()
+    await tick(0)
+    await tick(30000)
+    expect(m.onReload).toHaveBeenCalledTimes(5)
+    expect(within(banner()).getByText(r.late)).toBeInTheDocument()
+    expect(within(banner()).getByText(c.banner.idleBody)).toBeInTheDocument() // what the last read said: no daemon runs
+    expect(restartBtn()).toBeEnabled()
+  })
+
   it('stops reading when the block goes away, and keeps working under React strict mode', async () => {
     App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
     const m = await mountOpen({}, true)
@@ -270,6 +282,67 @@ describe('when a restart cannot be made', () => {
     expect(await within(banner()).findByRole('alert')).toHaveTextContent(r.notDone)
     await tick(30000)
     expect(m.onReload).not.toHaveBeenCalled() // there is no daemon coming back to wait for
+  })
+})
+
+describe('what an attempt came to belongs to the document it came to', () => {
+  const notRegistered = new Error('invalid_input: the daemon is not registered for auto-start, so nothing can restart it: stop it and start `monoagentcli daemon` again, or run `monoagentcli daemon install` to have the system manage it')
+
+  it('gives the button back when a newer document says the daemon is registered: it was registered after the refusal', async () => {
+    App.DaemonRestart.mockRejectedValue(notRegistered)
+    const m = await mountOpen()
+    await confirmRestart()
+    expect(await within(banner()).findByText('monoagentcli daemon install')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: r.button })).not.toBeInTheDocument()
+    m.push(pending(true)) // `daemon install` was run, and Refresh found it
+    expect(restartBtn()).toBeEnabled()
+    expect(within(banner()).queryByText('monoagentcli daemon install')).not.toBeInTheDocument()
+    expect(within(banner()).queryByRole('alert')).not.toBeInTheDocument() // the refusal was about the document before
+  })
+
+  it('keeps the commands while a read that failed leaves the document as it was, and drops what was said when a newer one is read', async () => {
+    App.DaemonRestart.mockRejectedValue(notRegistered)
+    const m = await mountOpen()
+    await confirmRestart()
+    expect(await within(banner()).findByRole('alert')).toHaveTextContent(c.errors.notRegistered)
+    await tick(0)
+    expect(within(banner()).getByText('monoagentcli daemon')).toBeInTheDocument() // the read after it failed: nothing newer
+    m.push(pending(false)) // a read that found it still not registered
+    expect(within(banner()).getByText('monoagentcli daemon')).toBeInTheDocument() // the document says it, as the refusal did
+    expect(within(banner()).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('stops saying the daemon has not reported back when a newer read finds it back, and when something is saved after', async () => {
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    const m = await mountOpen()
+    await confirmRestart()
+    await tick(0)
+    await tick(30000)
+    expect(within(banner()).getByText(r.late)).toBeInTheDocument()
+    m.push(settled()) // Refresh: the daemon runs what is saved
+    expect(screen.queryByTestId('api-config-banner')).not.toBeInTheDocument()
+
+    m.push(pending()) // and later something is saved
+    expect(within(banner()).getByText(c.banner.restartTitle)).toBeInTheDocument()
+    expect(within(banner()).queryByText(r.late)).not.toBeInTheDocument()
+    expect(restartBtn()).toBeEnabled()
+  })
+
+  it('stops saying a restart failed when a newer document is read', async () => {
+    App.DaemonRestart.mockRejectedValue(new Error('restart: launchctl kickstart -k gui/501/com.monoagent.daemon: exit status 113'))
+    const m = await mountOpen()
+    await confirmRestart()
+    expect(await within(banner()).findByRole('alert')).toHaveTextContent('exit status 113')
+    m.push(pending())
+    expect(within(banner()).queryByRole('alert')).not.toBeInTheDocument()
+    expect(restartBtn()).toBeEnabled()
+  })
+
+  it('shows what came of the attempt with the document the read after the failure found', async () => {
+    App.DaemonRestart.mockRejectedValue(new Error('restart: launchctl kickstart -k gui/501/com.monoagent.daemon: exit status 113'))
+    await mountOpen({ reloads: [pending()] }) // the read after the failure finds a newer document
+    await confirmRestart()
+    expect(await within(banner()).findByRole('alert')).toHaveTextContent('exit status 113') // and it is still about that one
   })
 })
 

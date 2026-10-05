@@ -11,26 +11,32 @@ import { restartSettled } from './configModel.js'
 // does (it runs, it reports its settings, and none is pending) or the last read has gone by. Reading at once would
 // only find the daemon that was stopped. The reads are the caller's (they go through the section's guard, so an
 // older answer never overwrites a newer one), and they stop when the component goes away.
+//
+// What an attempt came to (it did not happen, the CLI refused, the daemon did not report back in time) is kept with the
+// document the page had when it came to it, and says nothing about a newer one: the person may have registered the
+// daemon since, or saved something else, or pressed Refresh and found it back.
 
 export const RESTART_REREAD_MS = [1000, 2000, 3000, 5000, 5000]
 
 /**
+ * @param {object|null} config The document the page shows now.
  * @param {() => Promise<object|null>} onReload Reads the settings again: the document, or null when the read failed or a
  *   newer one took its place.
  * @param {() => void} [onApplied] Called when the daemon is back and runs what is saved.
- * @returns {{phase: 'idle'|'confirming'|'restarting'|'checking'|'back'|'late', err: null|{text: string, verbatim: boolean},
- *   fallback: boolean, ask: () => void, cancel: () => void, confirm: () => Promise<void>}} `fallback`: the CLI said the
- *   daemon is not registered, so the commands to run are what is left.
+ * @returns {{phase: 'idle'|'confirming'|'restarting'|'checking'|'back',
+ *   outcome: null|{late?: boolean, err?: {text: string, verbatim: boolean}, fallback?: boolean, doc: object|null},
+ *   ask: () => void, cancel: () => void, confirm: () => Promise<void>}} `outcome.fallback`: the CLI said the daemon is not
+ *   registered, so the commands to run are what is left; `outcome.late`: the last read had gone by and the daemon had not
+ *   reported back; `outcome.doc` is the document it belongs to.
  */
-export default function useRestart({ onReload, onApplied }) {
+export default function useRestart({ config, onReload, onApplied }) {
   const { t } = useTranslation()
   const tRef = useRef(t)
   tRef.current = t
-  const latest = useRef({ onReload, onApplied })
-  latest.current = { onReload, onApplied }
+  const latest = useRef({ config, onReload, onApplied })
+  latest.current = { config, onReload, onApplied }
   const [phase, setPhase] = useState('idle')
-  const [err, setErr] = useState(null)
-  const [fallback, setFallback] = useState(false)
+  const [outcome, setOutcome] = useState(null)
   const alive = useRef(true)
   const timer = useRef(null)
   const running = useRef(false)
@@ -41,44 +47,51 @@ export default function useRestart({ onReload, onApplied }) {
     return () => { alive.current = false; clearTimeout(timer.current) }
   }, [])
 
-  const ask = useCallback(() => { setErr(null); setPhase('confirming') }, [])
+  const ask = useCallback(() => { setOutcome(null); setPhase('confirming') }, [])
   const cancel = useCallback(() => setPhase('idle'), [])
 
   const confirm = useCallback(async () => {
     if (running.current) return
     running.current = true
-    setPhase('restarting'); setErr(null); setFallback(false)
+    setPhase('restarting'); setOutcome(null)
     try {
       const res = await DaemonRestart()
       if (!alive.current) return
       if (!res?.restarted) {
-        setErr({ text: tRef.current('settings.api.config.restart.notDone'), verbatim: false })
+        setOutcome({ err: { text: tRef.current('settings.api.config.restart.notDone'), verbatim: false }, doc: latest.current.config })
         setPhase('idle')
         return
       }
       setPhase('checking')
+      let seen = latest.current.config // the last document that was read, or the one the page had
       for (const ms of RESTART_REREAD_MS) {
         await new Promise(resolve => { timer.current = setTimeout(resolve, ms) })
         if (!alive.current) return
         const doc = await latest.current.onReload()
         if (!alive.current) return
+        if (doc) seen = doc
         if (restartSettled(doc)) {
           setPhase('back')
           latest.current.onApplied?.()
           return
         }
       }
-      setPhase('late')
+      setOutcome({ late: true, doc: seen })
+      setPhase('idle')
     } catch (e) {
       if (!alive.current) return
-      setErr(describeConfigError(e, tRef.current))
-      setFallback(classify(e).cls === 'invalid_input') // the CLI refused: nothing is registered to restart
+      // What the page last read may be out of date, and the failed call may have been done in part: read again, and
+      // then say what came of it (the document it belongs to is the one that read gave, if it gave one).
+      const err = describeConfigError(e, tRef.current)
+      const fallback = classify(e).cls === 'invalid_input' // the CLI refused: nothing is registered to restart
+      const doc = await latest.current.onReload()
+      if (!alive.current) return
+      setOutcome({ err, fallback, doc: doc || latest.current.config })
       setPhase('idle')
-      latest.current.onReload() // what the page last read may be out of date: the registration may be gone
     } finally {
       running.current = false
     }
   }, [])
 
-  return { phase, err, fallback, ask, cancel, confirm }
+  return { phase, outcome, ask, cancel, confirm }
 }

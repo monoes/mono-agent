@@ -48,7 +48,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
   const [pending, setPending] = useState(null) // a change that widens, waiting for the dialog's answer
   const running = useRef(false) // a call is running: a second one cannot start, not even in the same tick
   const focusAfter = useRef('') // the row whose control gets the keyboard back when a call is over
-  const restart = useRestart({ onReload, onApplied })
+  const restart = useRestart({ config, onReload, onApplied })
   const settings = byKey(config)
   const sum = summary(config)
   const problems = otherProblems(config)
