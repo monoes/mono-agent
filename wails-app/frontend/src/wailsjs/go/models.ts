@@ -183,6 +183,7 @@ export namespace main {
 	    applied: boolean;
 	    changed: string[];
 	    widening: APIWidening[];
+	    removed_unreadable_row?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new APIConfigChange(source);
@@ -199,6 +200,7 @@ export namespace main {
 	        this.applied = source["applied"];
 	        this.changed = source["changed"];
 	        this.widening = this.convertValues(source["widening"], APIWidening);
+	        this.removed_unreadable_row = source["removed_unreadable_row"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -137,3 +137,36 @@ func TestAPIConfigEmptyListsAreNotNull(t *testing.T) {
 		}
 	}
 }
+
+// `removed_unreadable_row` is sent by the CLI only when it is true: the page reads it as "the row that could not be read", so
+// a false that was never said must not appear as one, and a true that was said must arrive.
+func TestAPIConfigRemovedUnreadableRowIsPresentOnlyWhenTrue(t *testing.T) {
+	dir, _ := fakeConfigCLI(t)
+	answer(t, dir, "unset", configDoc(`,"applied":true,"changed":["max_concurrent"],"widening":[]`), "", 0)
+	answer(t, dir, "unset-dry", configDoc(`,"applied":false,"changed":[],"widening":[{"key":"saved_settings","reason":"It cannot be read."}],"removed_unreadable_row":true`), "", 0)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+
+	healthy, err := a.APIConfigReset(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent(t, "a reset that found a row that could be read", wire(t, healthy), "removed_unreadable_row")
+	unreadable, err := a.APIConfigReset(false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := wire(t, unreadable)
+	if v, has := page["removed_unreadable_row"]; !has || v != true {
+		t.Errorf("removed_unreadable_row true must reach the page as true, got %v (present %v)", v, has)
+	}
+	if w := page["widening"].([]any); len(w) != 1 || w[0].(map[string]any)["key"] != "saved_settings" {
+		t.Errorf("widening = %v", page["widening"])
+	}
+	// no other change carries it
+	set, err := a.APIConfigUnset([]string{"max_concurrent"}, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent(t, "a change of one setting", wire(t, set), "removed_unreadable_row")
+}

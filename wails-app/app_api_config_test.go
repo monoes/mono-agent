@@ -213,6 +213,38 @@ func TestAPIConfigUnsetShellsOut(t *testing.T) {
 	}
 }
 
+// Resetting is `api config unset --all`: it removes every saved setting, and a row that cannot be read with them. The page
+// asks what it would do first (--dry-run: the CLI says it is a widening of unknown size, with its reason, and whether the row
+// is unreadable) and confirms with --yes only after its dialog.
+func TestAPIConfigResetShellsOut(t *testing.T) {
+	const reason = "The saved settings cannot be read, so what they limited cannot be told: removing them returns every setting to its default, which may reach further."
+	widening := `,"widening":[{"key":"saved_settings","reason":"` + reason + `"}],"removed_unreadable_row":true`
+	dir, argsLog := fakeConfigCLI(t)
+	answer(t, dir, "unset-dry", configDoc(`,"applied":false,"changed":[]`+widening), "", 0)
+	answer(t, dir, "unset", configDoc(`,"applied":true,"changed":[]`+widening), "", 0)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	a.setActiveProfileID("work")
+
+	dry, err := a.APIConfigReset(false, true)
+	if err != nil || dry.Applied || !dry.RemovedUnreadableRow || len(dry.Widening) != 1 || dry.Widening[0].Key != "saved_settings" || dry.Widening[0].Reason != reason || len(dry.Changed) != 0 {
+		t.Fatalf("dry run = %+v, %v", dry, err)
+	}
+	done, err := a.APIConfigReset(true, false)
+	if err != nil || !done.Applied || !done.RemovedUnreadableRow || len(done.Settings) != 10 {
+		t.Fatalf("applied = %+v, %v", done, err)
+	}
+	if _, err := a.APIConfigReset(false, false); err != nil { // the CLI refuses a widening change without --yes: the page never asks it
+		t.Fatal(err)
+	}
+	pre := []string{"--profile", "work", "--json", "api", "config", "unset", "--all"}
+	call := func(args ...string) string { return argv(append(append([]string{}, pre...), args...)...) }
+	want := []string{call("--dry-run"), call("--yes"), call()}
+	if got := loggedArgs(t, argsLog); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // A key the page cannot ask for is refused before the CLI runs: a positional that starts with a dash
 // would be a flag of `unset`, and a setting's key is never anything but one of the ten.
 func TestAPIConfigRefusesBadInputBeforeCLI(t *testing.T) {
@@ -258,6 +290,8 @@ func TestAPIConfigRefusesBadInputBeforeCLI(t *testing.T) {
 // CLI, which says what is wrong with it.
 func TestAPIConfigErrorsKeepTheirClass(t *testing.T) {
 	const widening = "this change makes the server reach further: The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and serve runtimes up to chat-only; it did not listen beyond this machine before. Pass --yes to make the change anyway."
+	const damaged = "the saved settings are damaged (settings table, key api_gateway_config: not a JSON object); `monoagentcli api config unset --all --yes` removes them"
+	const newer = "saved API settings are in a newer format: the row api_gateway_config is in format 2 and this monoagentcli reads format 1; use the monoagentcli that wrote it, or remove the row by hand (the database this command opened); nothing was changed"
 	for _, c := range []struct {
 		name, stderr string
 		code         int
@@ -265,7 +299,11 @@ func TestAPIConfigErrorsKeepTheirClass(t *testing.T) {
 	}{
 		{"a value that fails its rule", "max_concurrent must be an integer from 1 to 64\n", 3, "invalid_input: max_concurrent must be an integer from 1 to 64"},
 		{"a widening change that was not confirmed", widening + "\n", 3, "invalid_input: " + widening},
-		{"the line it printed last", "2026/10/05 12:00:00 applied migration 062\nthe saved API settings (settings table, key api_gateway_config) are not a JSON object\n", 1, "the saved API settings (settings table, key api_gateway_config) are not a JSON object"},
+		// A saved row the CLI cannot read is invalid input (exit 3), so the page can tell it from every other failure by the
+		// class and the start of the message; one in a newer format is exit 1 with a message of its own, and is never offered a reset.
+		{"a damaged saved row", damaged + "\n", 3, "invalid_input: " + damaged},
+		{"a saved row in a newer format", newer + "\n", 1, newer},
+		{"the line it printed last", "2026/10/05 12:00:00 applied migration 062\n" + newer + "\n", 1, newer},
 		{"a CLI that predates the command", "unknown command \"config\" for \"monoagentcli api\"\n", 1, "unknown command \"config\" for \"monoagentcli api\""},
 		{"no message", "", 4, "exit status 4"},
 	} {
@@ -289,6 +327,8 @@ func TestAPIConfigErrorsKeepTheirClass(t *testing.T) {
 				"APIConfigSet (blank)":     set(false, "  "),
 				"APIConfigUnset":           unset(false),
 				"APIConfigUnset (dry run)": unset(true),
+				"APIConfigReset":           func() error { _, err := a.APIConfigReset(true, false); return err },
+				"APIConfigReset (dry run)": func() error { _, err := a.APIConfigReset(false, true); return err },
 				"DaemonRestart":            func() error { _, err := a.DaemonRestart(); return err },
 			} {
 				if err := call(); err == nil || err.Error() != c.want {

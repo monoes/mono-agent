@@ -50,7 +50,8 @@ type APIConfigDaemon struct {
 }
 
 // APIConfigProblem is something wrong with the saved settings: a value that fails its rule, one
-// TLS file without the other. Key is "" for a problem of the document as a whole.
+// TLS file without the other. Key is "" for a problem of the document as a whole (the CLI sends none
+// today: a saved row that cannot be read is an error, not a problem).
 type APIConfigProblem struct {
 	Key     string `json:"key"`
 	Message string `json:"message"`
@@ -81,6 +82,9 @@ type APIConfigChange struct {
 	Applied  bool          `json:"applied"`
 	Changed  []string      `json:"changed"`
 	Widening []APIWidening `json:"widening"`
+	// RemovedUnreadableRow is sent by the CLI only when true: `unset --all` found a saved row it cannot
+	// read and removed it (a dry run: would remove it). Absent for every other change.
+	RemovedUnreadableRow bool `json:"removed_unreadable_row,omitempty"`
 }
 
 // DaemonRestartResult mirrors `daemon restart --json`.
@@ -178,6 +182,16 @@ func (a *App) APIConfigUnset(keys []string, confirm, dryRun bool) (APIConfigChan
 		}
 	}
 	return a.runConfigChange(append(args, confirmFlags(confirm, dryRun)...))
+}
+
+// APIConfigReset removes every saved setting (`api config unset --all`), and a saved row that cannot
+// be read with them. A row that cannot be read is an error of every other call (exit 3, a message that
+// starts "the saved settings are damaged", which reaches the page as `invalid_input: …`; one in a newer
+// format is exit 1 and is never removed), and removing it is a widening of unknown size: the CLI refuses
+// it without confirm, and a dry run says so, with the reason, and whether the row is unreadable
+// (`removed_unreadable_row`). See APIConfigSet for confirm and dryRun.
+func (a *App) APIConfigReset(confirm, dryRun bool) (APIConfigChange, error) {
+	return a.runConfigChange(append([]string{"api", "config", "unset", "--all"}, confirmFlags(confirm, dryRun)...))
 }
 
 func (a *App) runConfigChange(args []string) (APIConfigChange, error) {

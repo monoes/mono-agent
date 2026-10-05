@@ -5,6 +5,8 @@ import {main} from '../models';
 import {connections} from '../models';
 import {workflow} from '../models';
 
+export function APIConfigReset(arg1:boolean,arg2:boolean):Promise<main.APIConfigChange>;
+
 export function APIConfigSet(arg1:Record<string, string>,arg2:boolean,arg3:boolean):Promise<main.APIConfigChange>;
 
 export function APIConfigShow():Promise<main.APIConfigInfo>;
