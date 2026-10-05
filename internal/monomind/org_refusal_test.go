@@ -109,3 +109,76 @@ func TestOrgRunStartReportsEarlyRefusal(t *testing.T) {
 		t.Fatalf("a running org: %v", err)
 	}
 }
+
+func setWatch(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := startWatch
+	startWatch = d
+	t.Cleanup(func() { startWatch = old })
+}
+
+// A start that dies at once for any other reason is an error carrying the
+// output, never nil; a signature refusal keeps its own type.
+func TestOrgRunStartEarlyNonRefusalExitIsAnError(t *testing.T) {
+	setWatch(t, 2*time.Second)
+	root := fakeOrgMonomind(t, sh("boom: the config is broken")+"exit 3")
+	err := OrgRunStart(context.Background(), root, "sec", "")
+	if err == nil || !strings.Contains(err.Error(), "boom: the config is broken") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := AsStartRefusal(err); ok {
+		t.Error("not a start refusal")
+	}
+
+	root = fakeOrgMonomind(t, sh("org sec: the definition has no operator signature — run `monomind org sign sec`")+"exit 1")
+	err = OrgRunStart(context.Background(), root, "sec", "")
+	if se, ok := AsOrgSignatureError(err); !ok || se.Org != "sec" || !strings.Contains(err.Error(), "no operator signature") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestOrgRunStartCancelStopsTheStart(t *testing.T) {
+	setWatch(t, 10*time.Second)
+	root := fakeOrgMonomind(t, "sleep 30")
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(150 * time.Millisecond); cancel() }()
+	begin := time.Now()
+	err := OrgRunStart(ctx, root, "sec", "")
+	if err != context.Canceled || time.Since(begin) > 5*time.Second {
+		t.Fatalf("err = %v after %v", err, time.Since(begin))
+	}
+}
+
+// No capture file is left behind: not after a refusal, not while a
+// started org keeps writing, and what it writes does not pile up.
+func TestOrgRunStartLeavesNoTempFiles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	left := func() []string {
+		var l []string
+		_ = filepath.WalkDir(tmp, func(p string, d os.DirEntry, err error) error {
+			if err == nil && p != tmp {
+				l = append(l, p)
+			}
+			return nil
+		})
+		return l
+	}
+	setWatch(t, 2*time.Second)
+	root := fakeOrgMonomind(t, sh(r6Refusal)+"exit 1")
+	if err := OrgRunStart(context.Background(), root, "sec", ""); err == nil {
+		t.Fatal("want refusal")
+	}
+	if l := left(); len(l) != 0 {
+		t.Fatalf("left after refusal: %v", l)
+	}
+
+	setWatch(t, 200*time.Millisecond)
+	root = fakeOrgMonomind(t, "i=0; while [ $i -lt 20 ]; do echo chatter; i=$((i+1)); sleep 0.1; done")
+	if err := OrgRunStart(context.Background(), root, "sec", ""); err != nil {
+		t.Fatal(err)
+	}
+	if l := left(); len(l) != 0 {
+		t.Fatalf("left while running: %v", l)
+	}
+}

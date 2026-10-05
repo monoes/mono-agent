@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -309,19 +308,19 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	cmd := Command(bin, args...)
 	inRoot(cmd, projectRoot)
 	// A start monomind refuses (R6/R1) exits at once and says why on its
-	// output; keep that to report it, instead of a start nobody can see fail.
-	out, err := os.CreateTemp("", "monomind-org-run-*.log")
+	// output; keep that (boundedly) to report it instead of a start nobody
+	// sees fail.
+	capture, err := newStartCapture()
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	defer os.Remove(out.Name())
-	defer out.Close()
-	cmd.Stdout, cmd.Stderr = out, out
+	cmd.Stdout, cmd.Stderr = capture.f, capture.f
 	cmd, err = startDetached(cmd)
 	if err != nil {
+		capture.close()
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	return watchStart(cmd, name, out, 0)
+	return watchStart(ctx, cmd, name, capture)
 }
 
 // OrgStatus returns one org's status, or every org's status when name=="".
