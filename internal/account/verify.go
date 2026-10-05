@@ -23,9 +23,10 @@ type Receipt struct {
 // VerifyError is the typed reason a token was refused: ReasonInvalid
 // (structure, signature or claims), ReasonKeyUnknown (the kid is not pinned) or
 // ReasonClockSkew (iat is more than ClockSkew ahead of now). Its message names
-// the failing check. The only token content it can carry is the kid of a
-// ReasonKeyUnknown error, quoted and cut to 64 bytes; it never carries the
-// payload, the signature or the token itself.
+// the failing check. The only text it copies from the token is the kid of a
+// ReasonKeyUnknown error, quoted and cut to 64 bytes; a ReasonClockSkew message
+// also says how far ahead iat is, as a duration. It never carries the payload,
+// the signature or the token itself.
 type VerifyError struct {
 	Reason Reason
 	why    string
