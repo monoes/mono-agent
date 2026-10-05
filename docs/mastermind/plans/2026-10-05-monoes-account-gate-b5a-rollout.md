@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, cobra, bash, GitHub Actions, `go version -m`.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Global Constraints
 

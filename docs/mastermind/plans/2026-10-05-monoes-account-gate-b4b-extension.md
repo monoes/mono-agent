@@ -10,7 +10,7 @@
 
 **Depends on:** B3b only: the bridge's `account_locked` reply and the account object in `ping`. It needs neither `internal/account` (B1a, B1b), nor the CLI gate (B2), nor the desktop gate (B4, a separate plan).
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (D7, the extension bridge door of §6.3, with amendments A3 and A4); plan index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 7).
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (D7, the extension bridge door of §6.3, with amendments A3 and A4); plan index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 7). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 **Proof.** Every code block below was run in a scratch export of `f4441a2a`: `node --check` on every extension script, and `node --test` on the 45 non-browser extension test files (661 tests, none failing). The red outputs quoted in the steps were captured by hiding the implementation. The bridge's frames were checked against the Go source that sends them (`internal/extension/request.go`, `Reply`) and against the B3b plan, not against a running bridge, which does not exist before B3b merges: Task 3 step 4 does that.
 

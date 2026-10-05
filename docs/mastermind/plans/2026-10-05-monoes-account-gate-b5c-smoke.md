@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, `internal/library/libraryfake`, gorilla/websocket and modernc sqlite (both already in `go.mod`), GitHub Actions.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1 acceptance 1 to 4, §9, §11, D22, D24, D27; §13 A1, A4, A8, A9, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1 merge order, §2, §3.4, §3.6, §4). Depends on B1a to B4b. It is test-only, merges before release R and **must pass before R** (R is B5a and `b5b-docs` merged together as one push).
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1 acceptance 1 to 4, §9, §11, D22, D24, D27; §13 A1, A4, A8, A9, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1 merge order, §2, §3.4, §3.6, §4). Depends on B1a to B4b. It is test-only, merges before release R and **must pass before R** (R is B5a and `b5b-docs` merged together as one push). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Global Constraints
 

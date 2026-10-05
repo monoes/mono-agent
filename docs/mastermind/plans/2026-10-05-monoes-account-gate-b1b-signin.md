@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 standard library (`net/http`, `net/http/httptest`), cobra, the profile vault (SQLite) for adoption, and B1a's `internal/account` core (`Verify`, `Evaluate`, `Store`, `Guard`).
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§4.4, §7, §8 step 3; D10, D21, D22, D23, D24, D27). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§2, §3.1 to §3.4). Depends on B1a being merged; `account login --email` also needs plan A's Task 7.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§4.4, §7, §8 step 3; D10, D21, D22, D23, D24, D27). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§2, §3.1 to §3.4). Depends on B1a being merged; `account login --email` also needs plan A's Task 7. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 Plan B1a is merged exactly as index §3 describes. Run every command from the repository root. Tasks run in order: Tasks 1 to 7 touch `internal/account`, `internal/library` and its fake; Tasks 8 to 12 build the library side and the command line on them.
 
@@ -25,7 +25,7 @@ Plan B1a is merged exactly as index §3 describes. Run every command from the re
 - A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
 - Open commands (D6): `version`, `help`, `completion`, cobra's hidden `__complete` and `__completeNoDesc`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), `library login`, `library logout`, `library status`. Everything else is gated, except the serving commands:
 - Serving commands (spec §6.4) start even when locked, because launchd's `KeepAlive` and Docker's `restart: unless-stopped` would respawn a refused daemon in a loop and MCP hosts must see a clear error. The CLI gate's third class `serve` is `daemon`, `httpapi`, `mcp` (with `--grant`) and `extension serve` (also `bridge serve`); layers 2 and 3 do the refusing. `org serve` (a launcher) and `daemon install`, `restart` and `uninstall` stay gated.
-- `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build; `MONOES_BASE_URL` still redirects the library only.
+- `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build, and a default build honors `MONOES_BASE_URL` nowhere: the library talks only to monoes.me, `library login` against another host refuses and names `-tags devaccount`, and the session token is sent only to the host that issued it. A local monoes.me dev server needs a `-tags devaccount` build.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
 - Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.

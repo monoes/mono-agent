@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 16 on Cloudflare Workers (OpenNext), Better-Auth 1.7.1 with `@better-auth/oauth-provider` 1.7.1, Drizzle on D1, `jose`, TypeScript; tests are `node:test` unit tests (`npm test`) and browserless Playwright specs; GitHub Actions.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§5 entirely, D18, D19, D27, §4.1 and §4.7 server halves, spikes S1, S2, S3, S6). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 10).
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§5 entirely, D18, D19, D27, §4.1 and §4.7 server halves, spikes S1, S2, S3, S6). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 10). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Owner-run steps
 
@@ -27,8 +27,8 @@ No agent runs these: each changes GitHub or Cloudflare, so the owner does. The t
 Copied from the index (§2, §3.2, §3.4, §4), verbatim where marked, adapted to this repository where it says so; the lines that bind this plan.
 
 - States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace.
-- Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14).
-- Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard polls `session.json`'s mtime every 5 seconds. The refresh request carries `resource=<Audience>`.
+- Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
+- Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard re-checks `session.json`'s mtime lazily inside `Status`, at most once per 5 seconds (no goroutine for a non-refresher guard; spec A8). The refresh request carries `resource=<Audience>`.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
 - Frozen values this plan must produce (index §3.2): `Issuer = "https://monoes.me/api/auth"`, `Audience = "https://monoes.me/api/monoagent"`, `ClientID = "monoagent"`.

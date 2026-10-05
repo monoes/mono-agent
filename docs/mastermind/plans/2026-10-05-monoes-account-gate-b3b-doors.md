@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 (`net/http` and `gorilla/websocket`, both already used), `internal/account` and `internal/account/accounttest` (B1a), OpenAPI 3.0.3 linted with `@redocly/cli@2.49.0` (CI job `openapi-lint`).
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§6.3, §6.4, D7, D22, D27). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§2, §3.1 to §3.4 items 5 to 8).
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§6.3, §6.4, D7, D22, D27). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§2, §3.1 to §3.4 items 5 to 8). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Global Constraints
 
@@ -16,14 +16,14 @@ Copied from the index §2; the ones that bind these doors.
 
 - Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
 - States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace.
-- Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me.
+- Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
 - Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `EnsureFresh`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear only on a login or a refresh. The high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
 - Process globals (`enforceFrom`, the trusted keys, the installed guard, the strict flag) are guarded by a `sync.RWMutex` and read only through accessors. The `*ForTest` hooks and `accounttest.Install` are for tests that do not call `t.Parallel()`; CI's Linux jobs run `-race`.
 - A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
-- `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build; `MONOES_BASE_URL` still redirects the library only.
+- `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build, and a default build honors `MONOES_BASE_URL` nowhere: the library talks only to monoes.me, `library login` against another host refuses and names `-tags devaccount`, and the session token is sent only to the host that issued it. A local monoes.me dev server needs a `-tags devaccount` build.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
-- Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CHANGELOG.md` and locale strings, so parallel phases do not conflict. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
+- Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
 
 ## Review Focus
 

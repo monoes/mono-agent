@@ -10,7 +10,7 @@
 
 **Depends on:** B1b (the `account` commands and the machine session) and B2 (the CLI gate, whose exit 4 and `login_required` answer the gate reads). The Chrome extension's side panel is B4b, which depends on B3b only.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§6.5 with amendments A4 and A5, D21, D22, the fail-closed gate); plan index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md`.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§6.5 with amendments A4 and A5, D21, D22, the fail-closed gate); plan index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md`. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 **Proof.** Every code block below was compiled and run in a scratch export of `f4441a2a`, against a stub of the index §3.2 and §3.3 surface that B4 consumes (the real `internal/account` lands with B1a and B1b; the stub's signatures were compared with the code of the B1a plan on disk: `Sealer`, `OpenStore`, `Store`, `Session`, `User`, `NewGuard`, `Install`, `InstallForTest`, `SetEnforceFromForTest`, `accounttest.New`): `go vet`, `gofmt -l` and `go test ./...` in `wails-app`; `npx vitest run` over the whole frontend (149 files, 1594 tests). The red outputs quoted in the steps were captured by hiding the implementation. The layout was looked at in a browser (vite dev server, `window.go` mocked): the gate, the grace banner, the warn banner with its dialog, the stale-CLI gate.
 
