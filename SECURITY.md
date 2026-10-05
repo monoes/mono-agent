@@ -579,18 +579,17 @@ whatever is saved), and it fills what they leave out.
   command waits for the daemon to release its lock before it starts it again.
 - A change that makes the server reach further needs `--yes` (`api config set`
   and `unset`; without it exit 3 with the reasons, `--dry-run` shows them): a
-  dedicated listener beyond this machine, a higher confinement class (of a
-  listener, of a `--context` key or of `auto`) on a listener on this machine or
-  beyond it, a runtime outside the default list, or tool calling or image
-  generation switched on again. It guards against a script, an agent's shell
-  tool or a hurried edit widening the server without saying so. It is not an
-  access control: whoever can run the CLI as your OS user can pass `--yes`.
-  The check compares the effective policy, so it also catches an `unset` that
-  takes a value held below its default back up. Two limits: a move from one
-  address beyond the machine to another (one interface to all of them) is not
-  seen as a widening; and raising `confinement` always needs `--yes`, because
-  the daemon's own environment may name a listener beyond the machine that the
-  row does not.
+  dedicated listener that reaches further than the saved one (beyond this
+  machine, another host beyond it, or every interface where it was one host), a
+  higher confinement class (of a listener, of a `--context` key or of `auto`) on
+  a listener on this machine or beyond it, a runtime outside the default list,
+  or tool calling or image generation switched on again. It guards against a
+  script, an agent's shell tool or a hurried edit widening the server without
+  saying so. It is not an access control: whoever can run the CLI as your OS
+  user can pass `--yes`. The check compares the effective policy, so it also
+  catches an `unset` that takes a value held below its default back up. One
+  cost: raising `confinement` always needs `--yes`, because the daemon's own
+  environment may name a listener beyond the machine that the row does not.
 - A saved value that fails its rule (a hand edit) makes `httpapi` and `daemon`
   exit at start (exit 3, naming the setting), and `api models` and `api status`
   refuse, rather than guess; `api config unset <setting>` removes it. A row that

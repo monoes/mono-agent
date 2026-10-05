@@ -916,7 +916,12 @@ a key. It lives in `internal/openaiapi/`; the spec is
   `show` document of the state after the change plus `applied`, `changed` (keys)
   and `widening` (a list of `{key, reason}`). The gate compares the effective
   policy of the two saved documents (`apiconfig.Widens`): a dedicated listener
-  beyond this machine where there was none or a loopback one; a higher class for
+  (`v1_addr`) whose bind reaches further than the saved one (the order is no
+  listener or loopback, then one host beyond this machine, then every interface:
+  so beyond this machine from none or loopback, another host, or every interface
+  from one host; an empty host, `0.0.0.0` and `[::]` are every interface, and any
+  host name other than `localhost` is a host, a name and its address being two;
+  the port alone changes nothing); a higher class for
   `confinement`, `context_confinement` or `auto_confinement`, on the loopback
   kind of listener or on the kind beyond this machine (both are judged whether or
   not a `v1_addr` is saved, because the daemon's own environment may supply one:
@@ -926,8 +931,7 @@ a key. It lives in `internal/openaiapi/`; the spec is
   a `confinement` of `chat-only` or an `image_runtimes` of `none` gives the
   server more reach. Narrowing, `max_concurrent`, `turn_timeout` and the TLS
   files never need it, and a value that equals the default is not a change of
-  the policy. A move from one non-loopback address to another is not seen
-  (`192.168.1.10:9443` to `:9443`). A row that is not a JSON object, or whose
+  the policy. A row that is not a JSON object, or whose
   `v` is not a whole number, is an error for every `api config` command (exit 1;
   there is no repair command, so remove the row by hand). A value that fails its
   rule in a row somebody edited is listed under `problems` by `show`, stops the

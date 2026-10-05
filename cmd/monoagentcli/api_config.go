@@ -32,7 +32,8 @@ func newAPIConfigCmd(cfg *globalConfig) *cobra.Command {
 			"is flag, then environment variable, then saved, then default. `show` says what is saved, what is in effect " +
 			"and what the running daemon started with, `set` and `unset` change what is saved, and `monoagentcli daemon " +
 			"restart` makes a running daemon read it. A change that makes the server reach further than it did (a listener " +
-			"beyond this machine, a higher confinement class, more runtimes) needs --yes.",
+			"beyond this machine, or on another host or on every interface where it was one host; a higher confinement " +
+			"class; more runtimes) needs --yes.",
 	}
 	cmd.AddCommand(newAPIConfigShowCmd(cfg), newAPIConfigSetCmd(cfg), newAPIConfigUnsetCmd(cfg))
 	return cmd

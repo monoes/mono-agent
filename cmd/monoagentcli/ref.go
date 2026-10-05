@@ -2966,16 +2966,19 @@ OPENAI-COMPATIBLE API (/v1)
 
   A change that makes the server reach further needs --yes: without it, exit 3
   and the reasons, on a terminal too (there is no prompt). That is: a dedicated
-  listener beyond this machine where there was none or a loopback one (v1_addr);
-  a higher class of confinement, context_confinement or auto_confinement, on a
-  listener on this machine or on one beyond it (both kinds are judged whether or
-  not a listener is saved, since the daemon's own environment may name one: so
-  raising confinement to sandboxed or any always needs --yes, and chat-only never
-  does); a runtime list that gains a runtime outside the default list or leaves
-  none. Narrowing never needs it, nor do max_concurrent, turn_timeout or the TLS
+  listener (v1_addr) that reaches further than the saved one, which is beyond
+  this machine where there was none or a loopback one, another host beyond it,
+  or every interface where it was one host (an empty host, 0.0.0.0 and [::] are
+  every interface; any host name other than localhost is a host, and a name and
+  its address are two; the port alone changes nothing); a higher class of
+  confinement, context_confinement or auto_confinement, on a listener on this
+  machine or on one beyond it (both kinds are judged whether or not a listener
+  is saved, since the daemon's own environment may name one: so raising
+  confinement to sandboxed or any always needs --yes, and chat-only never does);
+  a runtime list that gains a runtime outside the default list or leaves none.
+  Narrowing never needs it, nor do max_concurrent, turn_timeout or the TLS
   files. Unsetting a value that was below its default (confinement chat-only, a
-  list none) is a widening like any other. A move from one listener beyond the
-  machine to another is not seen as one. --dry-run says what a change would do
+  list none) is a widening like any other. --dry-run says what a change would do
   and whether it needs --yes, and saves nothing.
 
   daemon restart restarts the daemon through the service it is registered as
