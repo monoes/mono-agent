@@ -10,6 +10,11 @@ import { classify, describeApiError } from './apiError.js'
 // about it ("missing port in address"): the field holds what was typed. Anything else is the CLI's own words, and
 // `verbatim` says so, so that the page can tell a reader of another language that they are English.
 
+// What `daemon restart` says when nothing is registered to restart (exit 3, autostart.NotRegisteredError). The restart is exit 3
+// for another reason too: the saved settings cannot be used (a damaged row, a value that fails its rule), which is a matter of
+// those settings and not of the daemon's registration. The words are what tell the two apart.
+const NOT_REGISTERED = /^the daemon is not registered for auto-start/
+
 // [what the CLI says, the string that words it, what the string takes from the CLI's words]
 const RULES = [
   [/^max_concurrent must be an integer from (\d+) to (\d+)/, 'settings.api.config.errors.maxConcurrent', m => ({ min: m[1], max: m[2] })],
@@ -21,7 +26,7 @@ const RULES = [
   [/^\w+ must not be empty/, 'settings.api.config.errors.empty'],
   [/^tls_cert_file and tls_key_file must be set together/, 'settings.api.config.errors.tlsPair'],
   [/^this change makes the server reach further/, 'settings.api.config.errors.widenedMeanwhile'],
-  [/^the daemon is not registered for auto-start/, 'settings.api.config.errors.notRegistered'],
+  [NOT_REGISTERED, 'settings.api.config.errors.notRegistered'],
 ]
 
 // A saved row the CLI cannot read (not JSON, a version that is not a whole number, a known field of the wrong type) is an
@@ -35,6 +40,12 @@ const DAMAGED = /^the saved settings are damaged/
 export function isDamagedRow(e) {
   const { cls, msg } = classify(e)
   return cls === 'invalid_input' && DAMAGED.test(msg)
+}
+
+/** Whether a failed restart says that no daemon is registered for auto-start (exit 3 and the CLI's words), which no other refusal of it does. */
+export function isNotRegistered(e) {
+  const { cls, msg } = classify(e)
+  return cls === 'invalid_input' && NOT_REGISTERED.test(msg)
 }
 
 /**

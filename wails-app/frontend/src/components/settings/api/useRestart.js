@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DaemonRestart } from '../../../wailsjs/go/main/App'
-import { classify } from './apiError.js'
-import { describeConfigError } from './configError.js'
+import { describeConfigError, isNotRegistered } from './configError.js'
 import { notServingKeys, restartSettled } from './configModel.js'
 
 // Restarting the daemon so that it reads the saved settings (`daemon restart`, through the service manager it is
@@ -89,7 +88,10 @@ export default function useRestart({ config, onReload, onApplied }) {
       // What the page last read may be out of date, and the failed call may have been done in part: read again, and
       // then say what came of it (the document it belongs to is the one that read gave, if it gave one).
       const err = describeConfigError(e, tRef.current)
-      const fallback = classify(e).cls === 'invalid_input' // the CLI refused: nothing is registered to restart
+      // Only the refusal that says nothing is registered leaves the commands to run. The restart is exit 3 for the saved settings
+      // too (a damaged row, a value that fails its rule): that is shown as the CLI said it, with no commands, and the read below
+      // is what brings the way out of a damaged row.
+      const fallback = isNotRegistered(e)
       const doc = await latest.current.onReload()
       if (!alive.current) return
       setOutcome({ err, fallback, doc: doc || latest.current.config })

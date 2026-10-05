@@ -9,7 +9,7 @@ import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testi
 import i18n from '../../../i18n.js'
 import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
-import { configDoc } from './__fixtures__/configFixtures.js'
+import { DAMAGED, INVALID_SAVED, configDoc } from './__fixtures__/configFixtures.js'
 
 const App = {}
 let offsetParent
@@ -302,6 +302,24 @@ describe('when a restart cannot be made', () => {
     expect(within(banner()).getByText('monoagentcli daemon')).toBeInTheDocument()
     expect(within(banner()).getByText('monoagentcli daemon install')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: r.button })).not.toBeInTheDocument()
+  })
+
+  it('shows a refusal for the saved settings as the CLI said it, not as a daemon that is not registered: no commands, and the settings are read again', async () => {
+    // The restart is exit 3 for a saved row that cannot be read and for a saved value that fails its rule, as it is for a daemon
+    // that is not registered: only that one leaves the commands to run, and telling the person to run `daemon install` for a
+    // problem of the saved settings would send them the wrong way.
+    for (const said of [DAMAGED, INVALID_SAVED]) {
+      App.DaemonRestart.mockRejectedValue(new Error(`invalid_input: ${said}`))
+      const m = await mountOpen()
+      await confirmRestart()
+      expect(await within(banner()).findByRole('alert')).toHaveTextContent(said)
+      expect(within(banner()).getByRole('alert')).not.toHaveTextContent(c.errors.notRegistered)
+      expect(within(banner()).queryByText('monoagentcli daemon')).not.toBeInTheDocument()
+      expect(within(banner()).queryByText('monoagentcli daemon install')).not.toBeInTheDocument()
+      expect(m.onReload).toHaveBeenCalledTimes(1) // the settings are read again: that is what brings the way out of a damaged row
+      expect(restartBtn()).toBeEnabled() // the daemon is registered, as far as the page knows
+      cleanup()
+    }
   })
 
   it('says what the CLI said when it fails otherwise, and offers to try again', async () => {

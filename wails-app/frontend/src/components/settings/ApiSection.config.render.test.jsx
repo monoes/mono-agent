@@ -421,6 +421,21 @@ describe('ApiSection: after a restart', () => {
     await waitFor(() => expect(App.APIStatus).toHaveBeenCalledTimes(2)) // the daemon came back: what the status says may have changed
   })
 
+  it('brings the way out when the restart is refused because the saved row is damaged: the CLI\'s words, no commands for a daemon that is not registered, and the reset', async () => {
+    App.APIConfigShow.mockResolvedValueOnce(pending()).mockRejectedValueOnce(new Error(`invalid_input: ${DAMAGED}`)) // fine, and damaged since
+    App.DaemonRestart.mockRejectedValue(new Error(`invalid_input: ${DAMAGED}`))
+    await mountExpanded()
+    openBlock()
+    await restart()
+    const block = within(screen.getByTestId('api-config-block'))
+    expect(await block.findByRole('button', { name: c.reset.button })).toBeInTheDocument() // the read after the refusal found the row damaged
+    expect(screen.getByTestId('api-config-load-error')).toHaveTextContent(DAMAGED)
+    const banner = within(screen.getByTestId('api-config-banner'))
+    expect(banner.getByRole('alert')).toHaveTextContent(DAMAGED)
+    expect(banner.queryByText('monoagentcli daemon install')).not.toBeInTheDocument()
+    expect(App.APIConfigShow).toHaveBeenCalledTimes(2)
+  })
+
   it('does not scan the runtimes again when the daemon came back with the same listener', async () => {
     App.APIStatus.mockResolvedValue(statusOf([mainListener()], { daemon: { running: true } }))
     App.APIConfigShow.mockResolvedValueOnce(pending())

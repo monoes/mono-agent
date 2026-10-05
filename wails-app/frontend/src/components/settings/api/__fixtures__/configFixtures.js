@@ -77,3 +77,6 @@ export const WIDENING = {
 /** What the CLI says (a rejection of the app's binding: its exit class, then its words) of a saved row that cannot be read (exit 3), and of one in a newer format (exit 1, no class). */
 export const DAMAGED = 'the saved settings are damaged (settings table, key api_gateway_config: not a JSON object); `monoagentcli api config unset --all --yes` removes them'
 export const NEWER = 'saved API settings are in a newer format: the row api_gateway_config is in format 2 and this monoagentcli reads format 1; use the monoagentcli that wrote it, or remove the row by hand; nothing was changed'
+
+/** What the CLI says (exit 3, so "invalid_input: …" at the page) when a saved value fails its rule: a server does not start on it and `daemon restart` does not restart onto it (apiconfig.LoadValid). */
+export const INVALID_SAVED = 'saved API settings: max_concurrent must be an integer from 1 to 64; change them with `monoagentcli api config set`, or remove one with `monoagentcli api config unset <setting>`'

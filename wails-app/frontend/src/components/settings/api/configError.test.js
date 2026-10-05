@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import i18n from '../../../i18n.js'
 import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
-import { describeConfigError, isDamagedRow } from './configError.js'
-import { DAMAGED, NEWER } from './__fixtures__/configFixtures.js'
+import { describeConfigError, isDamagedRow, isNotRegistered } from './configError.js'
+import { DAMAGED, INVALID_SAVED, NEWER } from './__fixtures__/configFixtures.js'
 
 // What the page receives when a call of the server settings fails: the CLI's last stderr line, led by the class of its
 // exit code (app_api.go): "invalid_input: " for exit 3, nothing for the others. These are the CLI's own words
@@ -75,6 +75,10 @@ describe('describeConfigError: what it does not know', () => {
     expect(describeConfigError('database is locked', t)).toEqual({ text: 'database is locked', verbatim: true })
   })
 
+  it('gives the CLI\'s own words for a saved value that fails its rule, which is the restart\'s refusal too: not the words of the rule it names', () => {
+    expect(describeConfigError(invalid(INVALID_SAVED), t)).toEqual({ text: INVALID_SAVED, verbatim: true })
+  })
+
   it('still words the cases of the keys, which share the CLI\'s classes', () => {
     expect(describeConfigError(invalid('an active key with that name already exists in this profile'), t))
       .toEqual({ text: en.settings.api.errors.nameTaken, verbatim: false })
@@ -120,5 +124,28 @@ describe('isDamagedRow: a saved row the CLI cannot read, as the page tells it fr
   it('keeps the CLI\'s words as the CLI said them in Spanish too: the page words what is around them', async () => {
     await i18n.changeLanguage('es')
     expect(describeConfigError(invalid(DAMAGED), t)).toEqual({ text: DAMAGED, verbatim: true, damaged: true })
+  })
+})
+
+describe('isNotRegistered: the one refusal of the restart that says nothing is registered to restart', () => {
+  it('is the exit class of an invalid input and the start of the CLI\'s message', () => {
+    expect(isNotRegistered(invalid(NOT_REGISTERED))).toBe(true)
+    expect(isNotRegistered({ message: `invalid_input: ${NOT_REGISTERED}` })).toBe(true)
+    expect(isNotRegistered(`invalid_input: ${NOT_REGISTERED}`)).toBe(true)
+  })
+
+  it('is not any other refusal of that command, which are about the saved settings: a damaged row, a value that fails its rule', () => {
+    expect(isNotRegistered(invalid(DAMAGED))).toBe(false)
+    expect(isNotRegistered(invalid(INVALID_SAVED))).toBe(false)
+    expect(isNotRegistered(invalid(WIDENING))).toBe(false)
+    expect(isNotRegistered(invalid('max_concurrent must be an integer from 1 to 64'))).toBe(false)
+    expect(isNotRegistered(new Error(NEWER))).toBe(false) // exit 1, no class
+  })
+
+  it('is not the same words from another class or from the middle of another message, nor nothing at all', () => {
+    expect(isNotRegistered(new Error(NOT_REGISTERED))).toBe(false) // no class: not exit 3
+    expect(isNotRegistered(new Error(`not_found: ${NOT_REGISTERED}`))).toBe(false)
+    expect(isNotRegistered(invalid(`restart refused: ${NOT_REGISTERED}`))).toBe(false) // the start of the message
+    for (const other of [undefined, null, '', '   ', {}, { message: '' }, 42]) expect(isNotRegistered(other), JSON.stringify(other)).toBe(false)
   })
 })
