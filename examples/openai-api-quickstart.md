@@ -667,6 +667,16 @@ the API instead, and says why), and `api config unset --all
 The settings are in the database of the user the daemon runs as
 (`~/.monoagent/monoagent.db`), so run `api config` as that user.
 
+An agent host can do the same through `monoagentcli mcp --allow-mutations`:
+`api_config_get` shows what `api config show` shows, `api_config_set` saves and
+removes settings with the same checks, and `api_config_apply` restarts the
+daemon (which interrupts what it is running). A change that makes the server
+reach further than it did is refused there unless you started the MCP server
+with `--allow-api-exposure`: a model cannot confirm it, and its refusal says
+which setting and why, and that you can run `api config set ... --yes` yourself.
+That flag guards the tool, not the machine: a host that also lets the model run
+shell commands as you lets it run `--yes` too.
+
 ## 6. A headless Linux server
 
 1. Install monomind and the agent CLIs you want to serve, and sign them in as
