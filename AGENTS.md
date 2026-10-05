@@ -232,7 +232,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
   - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
   - `org stop|pause|resume <org>` are the bubble's controls.
-- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
+- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|update <id> --name=N|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`), and `api config show|set|unset` (with `--dry-run` and `--yes`) and `daemon restart` for its Server settings (`wails-app/app_api_config.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. The settings calls pass the keys of the ten settings, a text for each attached to its flag, and the paths of the two TLS files, never their contents. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
 
 ## monoes.me library
 
@@ -1075,13 +1075,13 @@ a key. It lives in `internal/openaiapi/`; the spec is
   | | CLI | MCP | Desktop |
   |---|---|---|---|
   | keys: create, list, revoke, context on/off | `api key` | `api_key_*` | yes |
-  | key: rename | `api key update --name` | `api_key_update` | not yet |
+  | key: rename | `api key update --name` | `api_key_update` | yes (Settings › the keys table) |
   | models, capabilities, what `auto` may pick | `api models` | `api_models_list` | yes (read-only) |
   | status: listeners, base URLs, scheme, confinement | `api status` | `api_status` | yes (read-only) |
   | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | `api_auto_set` (needs `acknowledge_egress`) | yes (Settings › Jev) |
-  | server settings: show | `api config show` | `api_config_get` | read-only fragments (stage 3: the block) |
-  | server settings: change and keep | `api config set`, `unset` | `api_config_set` (a change that reaches further needs the operator's `--allow-api-exposure`) | not yet (stage 3) |
-  | apply a change (restart the daemon) | `daemon restart` | `api_config_apply` | not yet (stage 3) |
+  | server settings: show | `api config show` | `api_config_get` | yes (Settings › Server settings) |
+  | server settings: change and keep | `api config set`, `unset` | `api_config_set` (a change that reaches further needs the operator's `--allow-api-exposure`) | yes (Settings › Server settings) |
+  | apply a change (restart the daemon) | `daemon restart` | `api_config_apply` | yes (Settings › Server settings) |
 - **The exposure gate from MCP.** `api_config_set` calls the same
   `apiconfig.Apply`, with `Change.Confirm` set to the MCP server's
   `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), read when the
@@ -1116,7 +1116,31 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (with one model the rule uses it and Jev is not asked) and how many served
   models `--auto-confinement` holds back, or what it is missing, with a link to
   the Jev settings when that is where it is switched on (the `api_auto` surface,
-  a Jev key).
+  a Jev key). A key is renamed in the keys table (`api key update --name`: the
+  name and nothing else, never the context switch; Enter saves, Escape
+  cancels).
+  The folded "Server settings" block below the status (`wails-app/app_api_config.go`
+  and `api/ApiConfigBlock.jsx`) has nine rows for the ten settings of `api config`
+  (the two TLS files are one row, saved and removed together), each with its
+  saved value (editable), what the running daemon
+  started with and its source, and its state from `api config show` (applied,
+  restart needed, overridden by the daemon's own flag or variable, daemon not
+  running, unknown). Save and "Use the default" are `api config set` and
+  `unset`, each in two calls: a dry run (`--dry-run`) that says what the change
+  would do and whether it makes the server reach further, then the change
+  itself, unconfirmed. When the CLI says it widens, a dialog lists its reasons as
+  it worded them (Cancel is where the focus starts) and only its confirmation
+  makes the second call with `--yes`. The app judges nothing itself: a value,
+  what widens and each state are the CLI's to say, shown in the page's language
+  for the rules the page knows and as the CLI said it, marked English,
+  otherwise. It only trims the spaces around what is typed. A banner says when
+  a restart is needed. When the daemon is registered for auto-start (`daemon.autostart`
+  of the document) a button restarts it after a dialog (`daemon restart`: it
+  interrupts workflows and org runs; nothing here claims a graceful stop), and
+  the settings are read again after a moment, a few times, until the daemon
+  runs what is saved; otherwise the banner shows the commands to run
+  (`monoagentcli daemon` after stopping it, and `monoagentcli daemon install`)
+  with a copy button.
 
 Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 `examples/openai-api-quickstart.md`; paths and schemas:

@@ -607,6 +607,11 @@ whatever is saved), and it fills what they leave out.
   not a start that hangs or runs out of memory. Printable text is still text:
   a model that reads a saved path reads whatever words it holds, which is a
   reason to give an agent host that can change settings no more than it needs.
+- The desktop app (Settings › OpenAI-compatible API › Server settings) can
+  change these settings through the same commands, and before a change that makes
+  the server reach further it lists the reasons the CLI gives in a dialog whose
+  default is Cancel (it passes `--yes` only after that confirmation), as it asks
+  before it restarts the daemon.
 - A saved value that fails its rule (a hand edit) makes `httpapi` exit at
   start (exit 3, naming the setting), and `api models` and `api status`
   refuse, rather than guess; `api config unset <setting>` removes it. A row that
