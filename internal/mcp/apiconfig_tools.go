@@ -29,6 +29,20 @@ func apiConfigTools() []tool {
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIStatus,
 		},
+		{
+			name: "api_config_get",
+			description: "Show the settings of the OpenAI-compatible API's server and where each stands: the document of `monoagentcli api config show --json`. " +
+				"There are ten: v1_addr (the dedicated /v1 listener), tls_cert_file and tls_key_file (paths, never contents), confinement, context_confinement and auto_confinement " +
+				"(the strongest runtime class the server serves, a key created with context may use and the auto model may pick), max_concurrent, turn_timeout, image_runtimes and tool_runtimes. " +
+				"For each: what is saved (api_config_set saves it), what a server started from this MCP server's environment would use and where that comes from (env, saved or default: flag, then environment variable, then saved, then default), " +
+				"and, when a daemon is running and reports it, the value the daemon started with and where that came from (flag, env, saved or default), with a state: " +
+				"applied; pending_restart (saved since the daemon started: api_config_apply restarts it); overridden (the daemon was given a flag or a variable of its own, so a saved value has no effect until that is removed); " +
+				"not_running; or unknown (a daemon that predates the report). Also daemon.autostart (whether api_config_apply can restart the daemon), restart_needed, " +
+				"and problems (a saved value that fails its rule, which api_config_set can replace or remove). It changes nothing.",
+			schema:      objSchema(nil),
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
+			handler:     toolAPIConfigGet,
+		},
 	}
 }
 
@@ -57,6 +71,14 @@ func toolAPIStatus(ctx context.Context, s *Server, args json.RawMessage) (interf
 		return nil, err
 	}
 	return st, nil
+}
+
+func toolAPIConfigGet(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	rt, err := s.runtime()
+	if err != nil {
+		return nil, err
+	}
+	return apiconfig.Show(ctx, rt.db.DB, s.apiEnv())
 }
 
 // errBadEnvironment is the answer to a value in this server's environment that fails its rule.

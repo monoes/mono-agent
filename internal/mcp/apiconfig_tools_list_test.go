@@ -12,7 +12,7 @@ import (
 
 // readOnlyAPIConfigTools are the tools that change nothing; mutatingAPIConfigTools the ones that do,
 // with the annotations each must carry.
-var readOnlyAPIConfigTools = []string{"api_status"}
+var readOnlyAPIConfigTools = []string{"api_status", "api_config_get"}
 
 var mutatingAPIConfigTools = map[string]map[string]bool{}
 
@@ -44,7 +44,8 @@ func TestAPIConfigToolDescriptionsSayWhatTheyDoNot(t *testing.T) {
 		descriptions[tl.name] = tl.description
 	}
 	for name, wants := range map[string][]string{
-		"api_status": {"api status --json", "changes nothing", "key"},
+		"api_status":     {"api status --json", "changes nothing", "key"},
+		"api_config_get": {"api config show --json", "changes nothing", "pending_restart", "api_config_apply restarts it", "overridden", "api_config_set"},
 	} {
 		d, ok := descriptions[name]
 		if !ok {
