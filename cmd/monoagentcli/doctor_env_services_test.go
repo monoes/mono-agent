@@ -34,6 +34,14 @@ const stopDaemonHelperEnv = "MONOAGENTCLI_STOPDAEMON_HELPER"
 // runStopDaemonHelper plays mode. It asks for SIGTERM before it takes the lock: a signal sent
 // the moment the lock becomes visible must find a handler.
 func runStopDaemonHelper(mode string) {
+	// Never outlive the test run that started it: a `go test -timeout` panic or a killed parent
+	// would leave a daemon that ignores SIGTERM (mode "stubborn") running for good.
+	time.AfterFunc(time.Minute, func() { os.Exit(3) })
+	// TestMain gave this process a temporary home that its own cleanup removes at the end, which
+	// SIGKILL and the timeout above skip: remove it now. Only what testhome made, by its name.
+	if home := os.Getenv("HOME"); strings.HasPrefix(filepath.Base(home), "monoagent-testhome-") {
+		_ = os.RemoveAll(home)
+	}
 	sig := make(chan os.Signal, 1)
 	if mode == "stubborn" {
 		signal.Ignore(syscall.SIGTERM)
@@ -77,10 +85,18 @@ func TestStopDaemonHelperProcess(t *testing.T) {
 // waits for stays a zombie that `kill -0` still finds.
 func startStopDaemonHelper(t *testing.T, mode string) (pid int, exited <-chan error) {
 	t.Helper()
-	cmd := startHelper(t, mode)
+	pid, exited, _ = startStopDaemonHelperIn(t, mode)
+	return pid, exited
+}
+
+// startStopDaemonHelperIn is startStopDaemonHelper that also returns the private temporary
+// directory the helper was given, where it makes its own temporary home.
+func startStopDaemonHelperIn(t *testing.T, mode string) (pid int, exited <-chan error, tmp string) {
+	t.Helper()
+	cmd, tmp := startHelper(t, mode)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	return cmd.Process.Pid, done
+	return cmd.Process.Pid, done, tmp
 }
 
 // startUnreapedStopDaemonHelper is the same helper with nobody waiting for it: once it has
@@ -88,18 +104,23 @@ func startStopDaemonHelper(t *testing.T, mode string) (pid int, exited <-chan er
 // process until it waits for it. Such a process still answers `kill -0`, and its lock is free.
 func startUnreapedStopDaemonHelper(t *testing.T, mode string) (pid int) {
 	t.Helper()
-	cmd := startHelper(t, mode)
+	cmd, _ := startHelper(t, mode)
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 	return cmd.Process.Pid
 }
 
-func startHelper(t *testing.T, mode string) *exec.Cmd {
+func startHelper(t *testing.T, mode string) (cmd *exec.Cmd, tmp string) {
 	t.Helper()
 	hbPath := filepath.Join(t.TempDir(), "hb.json")
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", hbPath)
+	tmp = t.TempDir()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestStopDaemonHelperProcess$")
-	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"="+mode, "MONOAGENT_DAEMON_HEARTBEAT="+hbPath)
+	cmd = exec.Command(os.Args[0], "-test.run=^TestStopDaemonHelperProcess$")
+	// atexit_sleep_ms=0: the race runtime otherwise sleeps a second before the process exits, and
+	// the old pid would outlive its lock by that second, which no daemon does.
+	race := strings.TrimSpace(os.Getenv("GORACE") + " atexit_sleep_ms=0")
+	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"="+mode, "MONOAGENT_DAEMON_HEARTBEAT="+hbPath,
+		"TMPDIR="+tmp, "GORACE="+race)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +129,7 @@ func startHelper(t *testing.T, mode string) *exec.Cmd {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if hb, ok := daemonhb.Read(); ok && hb.PID == cmd.Process.Pid {
-			return cmd
+			return cmd, tmp
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the %s helper never became the daemon", mode)
@@ -255,6 +276,26 @@ func TestStopDaemonForcesADaemonThatIgnoresSIGTERM(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(lines, "\n"), "forcing") {
 		t.Errorf("the forced stop was not announced: %q", lines)
+	}
+}
+
+// A helper that is killed skips TestMain's cleanup, so it removes its temporary home itself,
+// early: a run of these tests must not leave a monoagent-testhome-* directory behind per helper.
+func TestStopDaemonHelpersLeaveNoTemporaryHomesBehind(t *testing.T) {
+	pid, _, tmp := startStopDaemonHelperIn(t, "stubborn")
+	shortGrace(t, 300*time.Millisecond)
+
+	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil { // ends it with SIGKILL
+		t.Fatalf("stopDaemon: %v", err)
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "monoagent-testhome-") {
+			t.Errorf("a killed helper left its temporary home %s behind", e.Name())
+		}
 	}
 }
 

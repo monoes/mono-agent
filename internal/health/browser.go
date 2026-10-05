@@ -118,7 +118,14 @@ func checkBridge(ctx context.Context, env *Env) Result {
 			res.FixID = ""
 			res.FixCommand = "restart the daemon yourself — doctor can't stop it on Windows"
 		} else if isDaemonOwned(ctx, env, b) {
-			res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
+			if blocked := startBlocker(ctx, env); blocked != nil {
+				// A restart that is certain to be refused is not offered: "Fix issues"
+				// would fail every time. The user gets what to do instead.
+				res.FixID = ""
+				res.FixCommand = fmt.Sprintf("stop the daemon (pid %d) and start it again yourself, doctor can't: %v", b.PID, blocked)
+			} else {
+				res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
+			}
 		} else {
 			owner := b.Owner
 			if owner == "" {
@@ -129,6 +136,15 @@ func checkBridge(ctx context.Context, env *Env) Result {
 		return res
 	}
 	return Result{Status: StatusOK, Summary: summary}
+}
+
+// startBlocker says why a new daemon could not be started once the running
+// one is stopped: nil when it could, or when nothing says that it could not.
+func startBlocker(ctx context.Context, env *Env) error {
+	if env.CanStartDaemon == nil {
+		return nil
+	}
+	return env.CanStartDaemon(ctx)
 }
 
 // isDaemonOwned reports whether b is the bridge this machine's own daemon
@@ -173,12 +189,12 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 	// Stopping the daemon is the point of no return: when a new one could not be
 	// started (the login service refuses a start with another database or
 	// profile), refuse first, with the old daemon still running.
-	if env.CanStartDaemon != nil {
-		if err := env.CanStartDaemon(ctx); err != nil {
-			return fmt.Errorf("not restarting the daemon, which is left running: %w", err)
-		}
+	if err := startBlocker(ctx, env); err != nil {
+		// The reason ends with "start it yourself": with the daemon still running that
+		// only meets its lock, so it is said to be stopped first.
+		return fmt.Errorf("not restarting the daemon, which is left running: %w (it holds the daemon lock: stop it, pid %d, before you do)", err, b.PID)
 	}
-	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge v%s)", b.PID, b.Version))
+	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge %s)", b.PID, b.Version))
 	if err := env.StopDaemon(ctx, b.PID, progress); err != nil {
 		return fmt.Errorf("stopping the old daemon: %w", err)
 	}

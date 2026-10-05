@@ -170,11 +170,16 @@ func TestFixBridgeRestartStopsAndRestartsADaemonOwnedBridge(t *testing.T) {
 			return nil
 		},
 	}
-	if err := fixBridgeRestart(context.Background(), env, noop); err != nil {
+	var lines []string
+	if err := fixBridgeRestart(context.Background(), env, func(l string) { lines = append(lines, l) }); err != nil {
 		t.Fatalf("fixBridgeRestart: %v", err)
 	}
 	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "start" {
 		t.Errorf("calls = %v, want [stop start]", calls)
+	}
+	// The version already starts with a "v": no second one.
+	if said := strings.Join(lines, "\n"); !strings.Contains(said, "bridge v1.0.0") || strings.Contains(said, "vv1.0.0") {
+		t.Errorf("progress says %q, want the bridge's version once", said)
 	}
 }
 
@@ -220,8 +225,35 @@ func TestFixBridgeRestartLeavesTheDaemonRunningWhenItCouldNotBeStartedAgain(t *t
 	if err == nil || !strings.Contains(err.Error(), "default database only") || !strings.Contains(err.Error(), "left running") {
 		t.Fatalf("want the reason and that the daemon was left running, got: %v", err)
 	}
+	// The reason ends with "start it yourself": with the daemon still running that only meets its lock.
+	if !strings.Contains(err.Error(), "stop it, pid 42") {
+		t.Errorf("the error does not say that the running daemon (pid 42) is to be stopped first: %v", err)
+	}
 	if stopped || started {
 		t.Error("the daemon was touched although a new one could not be started")
+	}
+}
+
+// The check does not offer a fix that is certain to refuse: with the login service registered
+// and doctor running with another database or profile (the desktop app passes its profile),
+// "Fix issues" would fail every time, and the user gets what to do instead.
+func TestCheckBridgeOffersNoFixWhenTheDaemonCouldNotBeStartedAgain(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
+	ctx := context.Background()
+	canStart := errors.New("the login service runs the default database only")
+	env := &Env{
+		Version:        "v2.0.0",
+		Bridge:         func(context.Context) (BridgeInfo, bool) { return BridgeInfo{PID: 42, Version: "v1.0.0"}, true },
+		Daemon:         func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 42} },
+		CanStartDaemon: func(context.Context) error { return canStart },
+	}
+	res := checkBridge(ctx, env)
+	if res.Status != StatusWarn || res.FixID != "" || !strings.Contains(res.FixCommand, "default database only") {
+		t.Fatalf("a restart that would be refused must not be offered, and must say why: %+v", res)
+	}
+	canStart = nil
+	if res := checkBridge(ctx, env); res.FixID != FixBridgeRestart || !strings.Contains(res.FixCommand, "doctor fix "+FixBridgeRestart) {
+		t.Errorf("a restart that would not be refused must be offered: %+v", res)
 	}
 }
 
