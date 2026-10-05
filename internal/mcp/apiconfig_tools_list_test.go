@@ -87,6 +87,21 @@ func TestAPIKeyCreateDescriptionPointsAtTheSettingsThatDecideWhatAContextKeyMayU
 	}
 }
 
+// The list of models reads the saved settings too, so it stops at a row that cannot be read.
+func TestAPIModelsListDescriptionSaysWhatADamagedRowMeans(t *testing.T) {
+	var d string
+	for _, tl := range apiTools() {
+		if tl.name == "api_models_list" {
+			d = tl.description
+		}
+	}
+	for _, want := range []string{"the saved settings are damaged", "monoagentcli api config unset --all --yes", "--allow-api-exposure", "newer version"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description of api_models_list does not mention %q: %s", want, d)
+		}
+	}
+}
+
 // A description is all a model has of a tool: each of these says what the tool does and what it
 // does not.
 func TestAPIConfigToolDescriptionsSayWhatTheyDoNot(t *testing.T) {
@@ -94,13 +109,17 @@ func TestAPIConfigToolDescriptionsSayWhatTheyDoNot(t *testing.T) {
 	for _, tl := range apiConfigTools() {
 		descriptions[tl.name] = tl.description
 	}
+	// What a model tells the user when the saved settings cannot be read, in every tool that reads them.
+	damaged := []string{"the saved settings are damaged", "monoagentcli api config unset --all --yes", "--allow-api-exposure", "newer version"}
 	for name, wants := range map[string][]string{
-		"api_status":     {"api status --json", "changes nothing", "key"},
-		"api_config_get": {"api config show --json", "changes nothing", "pending_restart", "api_config_apply restarts it", "overridden", "api_config_set"},
-		"api_config_set": {
+		"api_status":     append([]string{"api status --json", "changes nothing", "key"}, damaged...),
+		"api_config_get": append([]string{"api config show --json", "changes nothing", "pending_restart", "api_config_apply restarts it", "overridden", "api_config_set"}, damaged...),
+		"api_config_set": append([]string{
 			"api config set|unset --json", "--allow-api-exposure", "No argument can allow it", "restarts nothing", "api_config_apply",
 			"desktop app", "monoagentcli api config set ... --yes", "sk-ma-", "reach further", "Two calls at once both land",
-		},
+			// What reaches further: a move to another host or to every interface, and removing what cannot be read.
+			"another host", "every interface", "removing saved settings that cannot be read", "removed_unreadable_row",
+		}, damaged...),
 	} {
 		d, ok := descriptions[name]
 		if !ok {

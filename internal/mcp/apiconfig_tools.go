@@ -26,7 +26,7 @@ func apiConfigTools() []tool {
 				"and environment when it is worked out from this MCP server's environment, the settings saved with api_config_set and the defaults, which a running server started with flags of its own may not share), " +
 				"the scheme that answered (http or https), whether GET /health answers and whether /v1 does. " +
 				"It probes each listener over HTTP, which takes a few seconds when nothing answers. It changes nothing and returns no key: " +
-				"api_config_get says, setting by setting, what is saved and what the running daemon started with.",
+				"api_config_get says, setting by setting, what is saved and what the running daemon started with. " + damagedRowNote,
 			schema:      objSchema(nil),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIStatus,
@@ -40,7 +40,7 @@ func apiConfigTools() []tool {
 				"and, when a daemon is running and reports it, the value the daemon started with and where that came from (flag, env, saved or default), with a state: " +
 				"applied; pending_restart (saved since the daemon started: api_config_apply restarts it); overridden (the daemon was given a flag or a variable of its own, so a saved value has no effect until that is removed); " +
 				"not_running; or unknown (a daemon that predates the report). Also daemon.autostart (whether api_config_apply can restart the daemon), restart_needed, " +
-				"and problems (a saved value that fails its rule, which api_config_set can replace or remove). It changes nothing.",
+				"and problems (a saved value that fails its rule, which api_config_set can replace or remove). It changes nothing. " + damagedRowNote,
 			schema:      objSchema(nil),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIConfigGet,
@@ -64,6 +64,14 @@ func apiConfigTools() []tool {
 	}
 	return append(tools, apiAutoTools()...)
 }
+
+// damagedRowNote is what the description of every tool that reads the saved settings tells a model of a
+// row that cannot be read: the message starts the same way for every kind of damage, the user has a
+// command for it, and the operator can allow api_config_set to do it. A row that a newer version saved
+// is not damaged, and nothing removes it.
+const damagedRowNote = "If the saved settings are damaged (a row that cannot be read) it fails with a message that starts `the saved settings are damaged`: " +
+	"tell the user, who can run `monoagentcli api config unset --all --yes`, or the operator can allow api_config_set to remove the row (unset all, with --allow-api-exposure); " +
+	"a row that a newer version saved fails too, and nothing here removes it."
 
 // apiEnv is what the documents of the tools read of this process: Options.APIEnv, whose zero value
 // is the process's own. Whose environment they describe is always this MCP server's.

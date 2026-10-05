@@ -64,7 +64,7 @@ func apiConfigSetSchema() map[string]interface{} {
 			"additionalProperties": false,
 		},
 		"unset": map[string]interface{}{
-			"description": "Settings whose saved value is removed, so that the environment or the default applies: a list of keys (the spelling of a flag, v1-addr, also works), or the single word all for every setting.",
+			"description": "Settings whose saved value is removed, so that the environment or the default applies: a list of keys (the spelling of a flag, v1-addr, also works), or the single word all for every setting, which also removes saved settings that cannot be read (that needs the operator's --allow-api-exposure).",
 			"anyOf": []interface{}{
 				map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				map[string]interface{}{"type": "string", "enum": []string{"all"}},
@@ -84,11 +84,16 @@ func apiConfigSetTool() tool {
 			"A saved setting takes effect when the server starts, never while it runs: this tool restarts nothing (api_config_apply does, which interrupts what the daemon is running), " +
 			"and a flag or variable the daemon was given overrides a saved value (api_config_get says which). " +
 			"A change that makes the server reach further than it did is refused, and nothing is saved, unless the operator started this MCP server with --allow-api-exposure: " +
-			"a dedicated listener beyond this machine, a higher confinement class (of a listener, of a key created with context or of the auto model), " +
-			"a runtime outside the default list, tool calling or image generation switched on again, which includes removing a confinement of chat-only or an image_runtimes of none. " +
-			"No argument can allow it, because the model sets the arguments and only the operator sets that flag. When it refuses it says which setting and why, " +
+			"a dedicated listener beyond this machine, or moved to another host beyond it or to every interface (an empty host, 0.0.0.0 or [::]), " +
+			"a higher confinement class (of a listener, of a key created with context or of the auto model), " +
+			"a runtime outside the default list, tool calling or image generation switched on again, which includes removing a confinement of chat-only or an image_runtimes of none, " +
+			"and removing saved settings that cannot be read (unset all), since what they limited cannot be told. " +
+			"No argument can allow it, because the model sets the arguments and only the operator sets that flag. When it refuses it says which setting and why, without any address (api_config_get shows what is saved), " +
 			"and that the user can make the change with `monoagentcli api config set ... --yes` (or unset) or in the desktop app. " +
-			"When the operator allowed it, the reasons are in widening. Narrowing, max_concurrent, turn_timeout and the TLS files never need it. Two calls at once both land.",
+			"When the operator allowed it, the reasons are in widening. Narrowing, max_concurrent, turn_timeout and the TLS files never need it. " +
+			"While the saved settings are damaged (a row that cannot be read) every other change fails with a message that starts `the saved settings are damaged`: tell the user, " +
+			"who can run `monoagentcli api config unset --all --yes`, or allow this call to remove the row (unset all, with --allow-api-exposure), and the result then says removed_unreadable_row; " +
+			"a row that a newer version saved fails too, and nothing here removes it. Two calls at once both land.",
 		schema:      apiConfigSetSchema(),
 		annotations: map[string]bool{"readOnlyHint": false},
 		mutating:    true,
@@ -260,18 +265,28 @@ func apiConfigSetError(err error, ch apiconfig.Change) error {
 func refusalOf(ws []apiconfig.Widening, ch apiconfig.Change) error {
 	var b strings.Builder
 	b.WriteString("This change makes the server reach further than it did, and this MCP server was not started with --allow-api-exposure, so nothing was saved:")
+	repair := false // removing a row that cannot be read: the CLI is what the user has for it
 	for _, w := range ws {
 		fmt.Fprintf(&b, "\n- %s: %s", w.Key, scrubReason(w.Reason, ch))
+		repair = repair || w.Key == apiconfig.WideningKeySavedSettings
 	}
 	var cmds []string
 	if len(ch.Set) > 0 {
 		cmds = append(cmds, "`monoagentcli api config set ... --yes`")
 	}
-	if len(ch.Unset) > 0 || ch.All {
+	if len(ch.Unset) > 0 {
 		cmds = append(cmds, "`monoagentcli api config unset ... --yes`")
 	}
+	if ch.All {
+		cmds = append(cmds, "`monoagentcli api config unset --all --yes`")
+	}
 	b.WriteString("\nNo argument of this tool can allow it: only the operator can, by starting `monoagentcli mcp` with --allow-api-exposure (or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1). ")
-	b.WriteString("The user can make the change themselves with " + strings.Join(cmds, " and ") + ", or in the desktop app (Settings › OpenAI-compatible API).")
+	b.WriteString("The user can make the change themselves with " + strings.Join(cmds, " and "))
+	if repair {
+		b.WriteString(".")
+	} else {
+		b.WriteString(", or in the desktop app (Settings › OpenAI-compatible API).")
+	}
 	return errors.New(b.String())
 }
 

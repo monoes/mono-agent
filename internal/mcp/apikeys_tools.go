@@ -41,7 +41,7 @@ func apiTools() []tool {
 				"and the runtimes that serve tool calling from MONOAGENT_API_TOOL_RUNTIMES, else the saved tool_runtimes, else claude and codex (none switches either off). " +
 				"That is what a server started now would apply, so it can differ from what a running one applies, which is what it read when it started: api_status and api_config_get say what it runs. " +
 				"Loading the models asks every installed agent runtime for its list, which takes a few seconds: calls at once share one load, the list is reused for a minute, " +
-				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does.",
+				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does. " + damagedRowNote,
 			schema: objSchema(map[string]interface{}{
 				"for":                 strParam("loopback (default) or network: the kind of listener to evaluate"),
 				"confinement":         strParam("Strongest class the listener serves: chat-only, sandboxed or any (default: the environment, else the saved confinement, else any on loopback and chat-only on a network listener)"),
