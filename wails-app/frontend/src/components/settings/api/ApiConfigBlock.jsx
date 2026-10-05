@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Loader2, Settings2 } from 'lucide-react'
 import { APIConfigSet, APIConfigUnset } from '../../../wailsjs/go/main/App'
 import { describeConfigError } from './configError.js'
-import { ROWS, bannerOf, byKey, otherProblems, savePayload, summary } from './configModel.js'
+import { ROWS, byKey, otherProblems, savePayload, summary } from './configModel.js'
+import ApiConfigRestart from './ApiConfigRestart.jsx'
 import ApiConfigRow from './ApiConfigRow.jsx'
 import ApiWideningDialog from './ApiWideningDialog.jsx'
-import { Badge, Said, block, errText, hint, label, mono } from './ui.jsx'
+import useRestart from './useRestart.js'
+import { Badge, Said, block, errText, hint, label } from './ui.jsx'
 
 // The server's settings (internal/apiconfig): each setting with what is saved, what the running daemon started with,
 // where that came from and where it stands. Folded, like the section's other parts: it is for the one who runs the
@@ -21,27 +23,6 @@ import { Badge, Said, block, errText, hint, label, mono } from './ui.jsx'
 
 const rowsBox = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }
 
-// Banner of what applying the settings takes, from the document alone, as the CLI's own text says it.
-function Banner({ config }) {
-  const { t } = useTranslation()
-  const banner = bannerOf(config)
-  if (banner.kind === 'none') return null
-  const names = [...new Set(banner.keys.map(k => ROWS.find(r => r.keys.includes(k))).filter(Boolean))].map(r => t(r.label)).join(', ')
-  const text = banner.kind === 'restart' ? t('settings.api.config.banner.restartBody', { keys: names || banner.keys.join(', ') })
-    : banner.kind === 'older' ? t('settings.api.config.banner.olderBody')
-      : t('settings.api.config.banner.idleBody')
-  const warn = banner.kind !== 'idle'
-  return (
-    <div data-testid="api-config-banner" style={{
-      display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 'var(--radius)',
-      background: warn ? 'rgba(234,179,8,.05)' : 'rgba(255,255,255,.03)', border: `1px solid ${warn ? 'rgba(234,179,8,.22)' : 'var(--border-dim)'}`,
-    }}>
-      {banner.kind === 'restart' && <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>{t('settings.api.config.banner.restartTitle')}</div>}
-      <div style={hint}>{text}</div>
-    </div>
-  )
-}
-
 const call = (kind, payload, confirm, dryRun) => (kind === 'set' ? APIConfigSet(payload, confirm, dryRun) : APIConfigUnset(payload, confirm, dryRun))
 
 /**
@@ -49,8 +30,11 @@ const call = (kind, payload, confirm, dryRun) => (kind === 'set' ? APIConfigSet(
  * @param {{text: string, verbatim: boolean}|null} err Why the settings could not be read. What was on screen stays.
  * @param {() => void} onRetry
  * @param {(doc: object) => void} onAdopt Takes the document of a change that was made, and only that.
+ * @param {() => Promise<object|null>} onReload Reads the settings again: the document, or null when the read failed or a
+ *   newer one took its place. It is what the re-reads after a restart go through.
+ * @param {() => void} [onApplied] The daemon came back from a restart: what else the section shows may have changed.
  */
-export default function ApiConfigBlock({ config, err, onRetry, onAdopt }) {
+export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload, onApplied }) {
   const { t } = useTranslation()
   const tRef = useRef(t) // a failure is worded when it happens, in the language of the moment
   tRef.current = t
@@ -64,9 +48,12 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt }) {
   const [pending, setPending] = useState(null) // a change that widens, waiting for the dialog's answer
   const running = useRef(false) // a call is running: a second one cannot start, not even in the same tick
   const focusAfter = useRef('') // the row whose control gets the keyboard back when a call is over
+  const restart = useRestart({ onReload, onApplied })
   const settings = byKey(config)
   const sum = summary(config)
   const problems = otherProblems(config)
+  // Nothing can be edited or started while a call runs: one for a setting, or the daemon's restart.
+  const working = busy || (restart.phase === 'restarting' ? { id: '', kind: 'restart' } : null)
 
   // A control that was disabled while a call ran has lost the focus: it goes back to the row that was being used.
   useEffect(() => {
@@ -169,7 +156,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt }) {
 
           {config && (
             <>
-              <Banner config={config} />
+              <ApiConfigRestart config={config} restart={restart} disabled={!!busy} />
               {problems.length > 0 && (
                 <div data-testid="api-config-problems" style={{ ...errText, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {problems.map((p, i) => <div key={i}><Said said={describeConfigError(`invalid_input: ${p.message}`, t)} /></div>)}
@@ -179,7 +166,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt }) {
               <ul aria-label={t('settings.api.config.title')} style={rowsBox}>
                 {ROWS.map(row => (
                   <ApiConfigRow
-                    key={row.id} row={row} doc={config} settings={settings} drafts={drafts} busy={busy}
+                    key={row.id} row={row} doc={config} settings={settings} drafts={drafts} busy={working}
                     err={errs[row.id]} note={notes[row.id]}
                     onChange={(key, text) => edit(row, key, text)} onSave={() => start(row, 'set')} onUseDefault={() => start(row, 'unset')}
                   />

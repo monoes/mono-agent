@@ -587,6 +587,22 @@
           "removed": "Vuelve al valor por defecto.",
           "unchanged": "Nada cambió: ya estaba guardado así.",
           "also": "Esto también hace que el servidor llegue más lejos, de formas que el diálogo no listaba:"
+        },
+        "restart": {
+          "button": "Reiniciar el daemon",
+          "working": "Reiniciando…",
+          "title": "¿Reiniciar el daemon?",
+          "body": "Al reiniciar, el daemon se detiene y vuelve a arrancar. Interrumpe lo que esté ejecutando: flujos de trabajo y ejecuciones de organizaciones.",
+          "after": "Después, esta página comprueba que el daemon ha vuelto y ejecuta lo guardado.",
+          "cancel": "Cancelar",
+          "confirm": "Reiniciar el daemon",
+          "checking": "Esperando a que el daemon informe…",
+          "back": "El daemon ha vuelto y ejecuta los ajustes guardados.",
+          "late": "El daemon aún no ha informado. Pulsa Actualizar para comprobarlo de nuevo.",
+          "notDone": "El gestor de servicios no reinició el daemon.",
+          "noAutostart": "El daemon no está registrado para arrancar solo, así que esta página no puede reiniciarlo. Detenlo y vuelve a arrancarlo:",
+          "install": "Para que esta página pueda reiniciarlo la próxima vez, regístralo antes:",
+          "copyLabel": "Copiar el comando {{command}}"
         }
       }
     }

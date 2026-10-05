@@ -587,6 +587,22 @@
           "removed": "Back to the default.",
           "unchanged": "Nothing changed: it is already saved like this.",
           "also": "This also makes the server reach further, in ways the dialog did not list:"
+        },
+        "restart": {
+          "button": "Restart the daemon",
+          "working": "Restarting…",
+          "title": "Restart the daemon?",
+          "body": "Restarting stops the daemon and starts it again. It interrupts whatever the daemon is running: workflows and org runs.",
+          "after": "Then this page checks that the daemon is back and runs what is saved.",
+          "cancel": "Cancel",
+          "confirm": "Restart the daemon",
+          "checking": "Waiting for the daemon to report back…",
+          "back": "The daemon is back and runs the saved settings.",
+          "late": "The daemon hasn't reported back yet. Refresh to check again.",
+          "notDone": "The service manager did not restart the daemon.",
+          "noAutostart": "The daemon isn't registered for auto-start, so this page can't restart it. Stop it, then start it again:",
+          "install": "To let this page restart it next time, register it first:",
+          "copyLabel": "Copy the command {{command}}"
         }
       }
     }
