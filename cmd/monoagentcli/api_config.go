@@ -223,6 +223,8 @@ func stateWords(state string) string {
 		return "restart needed"
 	case apiconfig.StateNotRunning:
 		return "daemon not running"
+	case apiconfig.StateNotServing:
+		return "listener not up"
 	}
 	return state
 }
@@ -279,6 +281,9 @@ func configKeysWhere(r apiconfig.ConfigReport, keep func(apiconfig.SettingReport
 func printConfigNotes(w io.Writer, r apiconfig.ConfigReport) {
 	if pending := configKeysWhere(r, func(s apiconfig.SettingReport) bool { return s.State == apiconfig.StatePendingRestart }); len(pending) > 0 {
 		fmt.Fprintf(w, "Restart needed for: %s.\n", strings.Join(pending, ", "))
+	}
+	if down := configKeysWhere(r, func(s apiconfig.SettingReport) bool { return s.State == apiconfig.StateNotServing }); len(down) > 0 {
+		fmt.Fprintf(w, "The daemon runs, but its dedicated /v1 listener is not up (%s): its log says why, for example a certificate file that cannot be read or an address that is in use. Correct the setting, then restart the daemon.\n", strings.Join(down, ", "))
 	}
 	if overridden := configKeysWhere(r, func(s apiconfig.SettingReport) bool { return s.State == apiconfig.StateOverridden }); len(overridden) > 0 {
 		fmt.Fprintf(w, "Overridden by the daemon's own flags or environment (a saved value has no effect until that is removed): %s.\n", strings.Join(overridden, ", "))

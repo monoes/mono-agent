@@ -18,6 +18,11 @@ const (
 	// StateUnknown: a daemon is live but its heartbeat says nothing of this setting (an older
 	// daemon).
 	StateUnknown = "unknown"
+	// StateNotServing: the daemon took the value, and it is what a restart would resolve, but
+	// the dedicated listener that v1_addr and the TLS files describe is not up (it could not
+	// bind the address, or load the certificate: its log says which). Only those three settings
+	// have it.
+	StateNotServing = "not_serving"
 )
 
 // State says where one setting stands. hb is the live daemon's heartbeat, nil when no daemon is
@@ -27,7 +32,10 @@ const (
 // environment, and where the daemon took a flag or a variable the saved layer is not asked.
 // One conservative case: confinement has no default value, so a saved value that spells the
 // default of a loopback listener is pending until the daemon restarts, though the policy is
-// the same.
+// the same. And a value that the daemon took, and that is what a restart would resolve, is
+// applied unless it belongs to the dedicated listener and that listener did not come up (the
+// daemon was told to serve one and its heartbeat has no address for it): then it is
+// not_serving, which a restart does not cure until the setting is corrected.
 func State(saved Settings, key string, hb *daemonhb.Heartbeat) string {
 	if hb == nil {
 		return StateNotRunning
@@ -39,10 +47,25 @@ func State(saved Settings, key string, hb *daemonhb.Heartbeat) string {
 	if run.Source == SourceFlag || run.Source == SourceEnv {
 		return StateOverridden
 	}
-	if run.Value == resolvedWithoutOverrides(saved, key) {
-		return StateApplied
+	if run.Value != resolvedWithoutOverrides(saved, key) {
+		return StatePendingRestart
 	}
-	return StatePendingRestart
+	if isListenerSetting(key) && listenerIsDown(hb) {
+		return StateNotServing
+	}
+	return StateApplied
+}
+
+// isListenerSetting says whether a setting is one of those that describe the dedicated listener.
+func isListenerSetting(key string) bool {
+	return key == KeyV1Addr || key == KeyTLSCertFile || key == KeyTLSKeyFile
+}
+
+// listenerIsDown: the daemon was asked for a dedicated listener (it took an address for it) and
+// has none up (its heartbeat carries no address of a listener that serves).
+func listenerIsDown(hb *daemonhb.Heartbeat) bool {
+	asked, ok := hb.APISettings[KeyV1Addr]
+	return ok && asked.Value != "" && hb.V1Addr == ""
 }
 
 // resolvedWithoutOverrides is what a daemon started now, with no flag and no variable, would

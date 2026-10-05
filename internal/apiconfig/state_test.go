@@ -95,8 +95,55 @@ func TestStateComparesCanonicalSpellings(t *testing.T) {
 			_ = saved.Set(c.key, c.saved)
 		}
 		hb := heartbeatOf(map[string]daemonhb.APISetting{c.key: {Value: c.running, Source: c.source}})
+		if c.key == "v1_addr" {
+			hb.V1Addr = c.running // the listener it names is up
+		}
 		if got := State(saved, c.key, hb); got != c.want {
 			t.Errorf("%s saved %q, running %q from %s: %s, want %s", c.key, c.saved, c.running, c.source, got, c.want)
+		}
+	}
+}
+
+// The settings of the dedicated listener say applied only when the listener is up (C1 of the correctness review
+// of phase 6): a daemon that took the address and then could not bind it or load the certificate logs it and
+// reports no address, and `show` used to say applied for all three while the app said "the daemon is back".
+func TestStateOfTheDedicatedListenersSettingsWhenItIsNotUp(t *testing.T) {
+	settings := func(v1 daemonhb.APISetting) map[string]daemonhb.APISetting {
+		return map[string]daemonhb.APISetting{
+			"v1_addr": v1, "tls_cert_file": {Value: "/c.pem", Source: "saved"}, "tls_key_file": {Value: "/k.pem", Source: "saved"},
+			"max_concurrent": {Value: "4", Source: "default"},
+		}
+	}
+	saved := doc(t, "v1_addr=0.0.0.0:9443", "tls_cert_file=/c.pem", "tls_key_file=/k.pem")
+	configured := settings(daemonhb.APISetting{Value: "0.0.0.0:9443", Source: "saved"})
+	down := &daemonhb.Heartbeat{PID: 1, APISettings: configured} // it took the settings and no listener came up
+	up := &daemonhb.Heartbeat{PID: 1, APISettings: configured, V1Addr: "[::]:9443"}
+	for _, key := range []string{"v1_addr", "tls_cert_file", "tls_key_file"} {
+		if got := State(saved, key, down); got != StateNotServing {
+			t.Errorf("%s with the listener down: %s, want %s", key, got, StateNotServing)
+		}
+		if got := State(saved, key, up); got != StateApplied {
+			t.Errorf("%s with the listener up: %s, want %s", key, got, StateApplied)
+		}
+	}
+	// Only the listener's settings are about the listener.
+	if got := State(saved, "max_concurrent", down); got != StateApplied {
+		t.Errorf("max_concurrent with the listener down: %s, want %s", got, StateApplied)
+	}
+	// A restart that would change the setting is what the person needs first.
+	if got := State(doc(t, "v1_addr=0.0.0.0:9444", "tls_cert_file=/c.pem", "tls_key_file=/k.pem"), "v1_addr", down); got != StatePendingRestart {
+		t.Errorf("a saved address that differs from the running one: %s, want %s", got, StatePendingRestart)
+	}
+	// The daemon's own flag or variable is still what the person has to deal with.
+	flagged := &daemonhb.Heartbeat{PID: 1, APISettings: settings(daemonhb.APISetting{Value: "0.0.0.0:9443", Source: "flag"})}
+	if got := State(saved, "v1_addr", flagged); got != StateOverridden {
+		t.Errorf("an address from the daemon's flag: %s, want %s", got, StateOverridden)
+	}
+	// No dedicated listener was asked for: none is down, and the files saved for it do nothing.
+	none := &daemonhb.Heartbeat{PID: 1, APISettings: settings(daemonhb.APISetting{Value: "", Source: "default"})}
+	for _, key := range []string{"v1_addr", "tls_cert_file", "tls_key_file"} {
+		if got := State(doc(t, "tls_cert_file=/c.pem", "tls_key_file=/k.pem"), key, none); got != StateApplied {
+			t.Errorf("%s with no dedicated listener: %s, want %s", key, got, StateApplied)
 		}
 	}
 }
