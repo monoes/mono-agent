@@ -2,13 +2,17 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import i18n from '../../../i18n.js'
 import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
-import { describeConfigError } from './configError.js'
+import { describeConfigError, isDamagedRow } from './configError.js'
 
 // What the page receives when a call of the server settings fails: the CLI's last stderr line, led by the class of its
 // exit code (app_api.go): "invalid_input: " for exit 3, nothing for the others. These are the CLI's own words
 // (cmd/monoagentcli/api_config.go, internal/apiconfig, internal/openaiapi, internal/autostart).
 const invalid = (msg) => new Error(`invalid_input: ${msg}`)
 const WIDENING = 'this change makes the server reach further: The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and serve runtimes up to chat-only; it did not listen beyond this machine before. Pass --yes to make the change anyway.'
+// A saved row the CLI cannot read is exit 3, and its message always starts the same way (apiconfig.DamagedMessage); one in a
+// newer format is exit 1, with a message of its own (internal/apiconfig/store.go).
+const DAMAGED = 'the saved settings are damaged (settings table, key api_gateway_config: not a JSON object); `monoagentcli api config unset --all --yes` removes them'
+const NEWER = 'saved API settings are in a newer format: the row api_gateway_config is in format 2 and this monoagentcli reads format 1; use the monoagentcli that wrote it, or remove the row by hand; nothing was changed'
 const NOT_REGISTERED = 'the daemon is not registered for auto-start, so nothing can restart it: stop it and start `monoagentcli daemon` again, or run `monoagentcli daemon install` to have the system manage it'
 
 const t = (k, o) => i18n.t(k, o)
@@ -81,5 +85,41 @@ describe('describeConfigError: what it does not know', () => {
     for (const bad of [undefined, null, '', '   ', {}, { message: '' }, 42]) {
       expect(describeConfigError(bad, t), JSON.stringify(bad)).toEqual({ text: en.settings.api.errors.unknown, verbatim: false })
     }
+  })
+})
+
+describe('isDamagedRow: a saved row the CLI cannot read, as the page tells it from the rest', () => {
+  it('is the exit class of an invalid input and the start of the CLI\'s message, whatever is wrong with the row', () => {
+    expect(isDamagedRow(invalid(DAMAGED))).toBe(true)
+    expect(isDamagedRow(invalid('the saved settings are damaged (settings table, key api_gateway_config: max_concurrent must be a number or a string); `monoagentcli api config unset --all --yes` removes them'))).toBe(true)
+    expect(isDamagedRow({ message: `invalid_input: ${DAMAGED}` })).toBe(true)
+    expect(isDamagedRow(`invalid_input: ${DAMAGED}`)).toBe(true)
+  })
+
+  it('is not a row in a newer format (exit 1, which is never offered a reset), nor the same words from another class or place', () => {
+    expect(isDamagedRow(new Error(NEWER))).toBe(false)
+    expect(isDamagedRow(new Error(DAMAGED))).toBe(false) // no class: not exit 3
+    expect(isDamagedRow(new Error(`not_found: ${DAMAGED}`))).toBe(false)
+    expect(isDamagedRow(invalid(`a change refused: ${DAMAGED}`))).toBe(false) // the start of the message
+    expect(isDamagedRow(invalid('The saved settings are damaged'))).toBe(false) // the CLI's words, not a lookalike
+    expect(isDamagedRow(invalid(NEWER))).toBe(false)
+  })
+
+  it('is not any other failure, or nothing at all', () => {
+    for (const other of [invalid('max_concurrent must be an integer from 1 to 64'), new Error('database is locked'), invalid(WIDENING), undefined, null, '', {}, 42]) {
+      expect(isDamagedRow(other), JSON.stringify(other)).toBe(false)
+    }
+  })
+
+  it('is said by describeConfigError, with the CLI\'s words as they are and no more than that, and only for damage', () => {
+    expect(describeConfigError(invalid(DAMAGED), t)).toEqual({ text: DAMAGED, verbatim: true, damaged: true })
+    for (const other of [new Error(NEWER), invalid('max_concurrent must be an integer from 1 to 64'), new Error('database is locked'), invalid(NOT_REGISTERED)]) {
+      expect(describeConfigError(other, t)).not.toHaveProperty('damaged')
+    }
+  })
+
+  it('keeps the CLI\'s words as the CLI said them in Spanish too: the page words what is around them', async () => {
+    await i18n.changeLanguage('es')
+    expect(describeConfigError(invalid(DAMAGED), t)).toEqual({ text: DAMAGED, verbatim: true, damaged: true })
   })
 })

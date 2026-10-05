@@ -24,8 +24,22 @@ const RULES = [
   [/^the daemon is not registered for auto-start/, 'settings.api.config.errors.notRegistered'],
 ]
 
+// A saved row the CLI cannot read (not JSON, a version that is not a whole number, a known field of the wrong type) is an
+// error of every command that reads it, and the CLI maps it to exit 3 with a message that always starts the same way
+// (apiconfig.DamagedMessage), whatever is wrong with the row, so that a caller that has only the exit class and the text
+// can tell it from any other failure and offer the one repair: remove the saved settings (`unset --all`, with --yes). A row
+// in a newer format is not this (exit 1, a message of its own, never removed), and neither is a failing database.
+const DAMAGED = /^the saved settings are damaged/
+
+/** Whether a failed call of the server settings says the saved row cannot be read (exit 3 and the CLI's words). */
+export function isDamagedRow(e) {
+  const { cls, msg } = classify(e)
+  return cls === 'invalid_input' && DAMAGED.test(msg)
+}
+
 /**
- * @returns {{text: string, verbatim: boolean}}
+ * `damaged` is present, and true, only for a saved row that cannot be read; its text is the CLI's own words.
+ * @returns {{text: string, verbatim: boolean, damaged?: true}}
  */
 export function describeConfigError(e, t) {
   const { cls, msg } = classify(e)
@@ -35,5 +49,6 @@ export function describeConfigError(e, t) {
       if (m) return { text: t(key, params ? params(m) : undefined), verbatim: false }
     }
   }
-  return describeApiError(e, t)
+  const said = describeApiError(e, t)
+  return isDamagedRow(e) ? { ...said, damaged: true } : said
 }
