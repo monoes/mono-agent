@@ -1145,7 +1145,17 @@ a key. It lives in `internal/openaiapi/`; the spec is
   the settings are read again after a moment, a few times, until the daemon
   runs what is saved; otherwise the banner shows the commands to run
   (`monoagentcli daemon` after stopping it, and `monoagentcli daemon install`)
-  with a copy button.
+  with a copy button. A setting whose dedicated listener the daemon could not
+  bring up (`not_serving`, for `v1_addr` and the two TLS files only: the daemon
+  took the saved value and its log says why) says "Listener not up" in its row
+  and in the banner, which names the settings and says to correct them and
+  restart (with the same button, or the same commands, as the restart banner),
+  and a restart that ends with the daemon back and such a listener not up says so
+  instead of that it runs the saved settings. A restart the CLI refuses for the
+  saved settings (exit 3: a damaged row, a value that fails its rule) is shown
+  as the CLI said it, and the settings are read again, which brings the reset for
+  a damaged row; only the refusal that starts "the daemon is not registered for
+  auto-start" shows the commands.
 
 Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 `examples/openai-api-quickstart.md`; paths and schemas:
