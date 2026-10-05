@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,41 @@ func (m *mcpSession) call(name string, args any) (string, bool) {
 		m.t.Fatalf("%s: a protocol error or no content: %s", name, line)
 	}
 	return resp.Result.Content[0].Text, resp.Result.IsError
+}
+
+// toolNames asks the server for its tool list, as a host does, and returns the names.
+func (m *mcpSession) toolNames() []string {
+	m.t.Helper()
+	id := m.next
+	m.next++
+	if _, err := m.in.Write([]byte(`{"jsonrpc":"2.0","id":` + strconv.Itoa(id) + `,"method":"tools/list"}` + "\n")); err != nil {
+		m.t.Fatal(err)
+	}
+	var line []byte
+	select {
+	case l, ok := <-m.lines:
+		if !ok {
+			m.t.Fatal("the MCP server closed its output before it listed its tools")
+		}
+		line = l
+	case <-time.After(30 * time.Second):
+		m.t.Fatal("the MCP server did not list its tools within 30 s")
+	}
+	var resp struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		m.t.Fatalf("not a JSON-RPC answer: %v\n%s", err, line)
+	}
+	names := make([]string, len(resp.Result.Tools))
+	for i, tl := range resp.Result.Tools {
+		names[i] = tl.Name
+	}
+	return names
 }
 
 // mustCall is call for a tool that must succeed.

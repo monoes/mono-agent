@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -60,6 +61,76 @@ func TestMCPCommandRefusesGrantModeWithTheExposureFlag(t *testing.T) {
 	}
 	if got, err := runMCPCommand(t, "--grant", "grt_x"); err != nil || got == nil || got.Grant != "grt_x" {
 		t.Errorf("--grant alone: %v, %v", got, err)
+	}
+}
+
+// slashList matches the shorthand the help uses for a family of tools: api_key_create/update/revoke.
+var slashList = regexp.MustCompile(`([a-z_]*_)([a-z]+)((?:/[a-z_]+)+)`)
+
+// expandToolLists spells the shorthand out: api_key_create/update/revoke is api_key_create,
+// api_key_update and api_key_revoke.
+func expandToolLists(help string) string {
+	return slashList.ReplaceAllStringFunc(help, func(m string) string {
+		parts := slashList.FindStringSubmatch(m)
+		names := []string{parts[1] + parts[2]}
+		for _, rest := range strings.Split(strings.TrimPrefix(parts[3], "/"), "/") {
+			names = append(names, parts[1]+rest)
+		}
+		return strings.Join(names, " ")
+	})
+}
+
+// apiToolNames are the tools of the OpenAI-compatible API a server lists, with mutations allowed or
+// not.
+func apiToolNames(t *testing.T, db string, allowMutations bool) []string {
+	t.Helper()
+	o := mcpOptions(t, db, "default", false)
+	o.AllowMutations = allowMutations
+	var names []string
+	for _, name := range newMCPSession(t, o).toolNames() {
+		if strings.HasPrefix(name, "api_") {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// The help of the command lists the tools. Every tool of the OpenAI-compatible API that the server
+// really serves is named in it, those that need --allow-mutations in the paragraph that says which
+// do and the others before it, so that a tool added later cannot be left out of what an operator
+// reads before they register the server, or filed under the wrong switch.
+func TestMCPCommandHelpNamesEveryAPITool(t *testing.T) {
+	db := newAPITestDB(t)
+	served := apiToolNames(t, db, true)
+	if len(served) < 10 {
+		t.Fatalf("the server lists %d API tools: %v", len(served), served)
+	}
+	readOnly := map[string]bool{}
+	for _, name := range apiToolNames(t, db, false) {
+		readOnly[name] = true
+	}
+	long := newMCPCmd(&globalConfig{}).Long
+	named := expandToolLists(long)
+	start := strings.Index(named, "Mutating tools (")
+	end := start + strings.Index(named[max(start, 0):], ") are only") // the help wraps its lines after "only"
+	if start < 0 || end < start {
+		t.Fatalf("the help has no paragraph that lists the mutating tools:\n%s", long)
+	}
+	for _, name := range served {
+		switch {
+		case !strings.Contains(named, name):
+			t.Errorf("the help of `mcp` does not name %s", name)
+		case readOnly[name] && !strings.Contains(named[:start], name):
+			t.Errorf("%s needs no --allow-mutations, and the help does not list it with the tools that are always exposed", name)
+		case !readOnly[name] && !strings.Contains(named[start:end], name):
+			t.Errorf("%s needs --allow-mutations, and the help does not list it with the mutating tools", name)
+		}
+	}
+	// What the tool does with a change that reaches further is said next to the flag that allows it.
+	for _, want := range []string{"api_config_apply", "interrupts", "acknowledge_egress"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("the help of `mcp` does not say %q", want)
+		}
 	}
 }
 

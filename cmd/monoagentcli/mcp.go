@@ -27,13 +27,16 @@ tools are always exposed: workflow_list, workflow_get, workflow_validate,
 workflow_status, node_list, node_schema, hil_list, vault_item_list,
 vault_item_get_path, profile_document_search, secret_list, person_list,
 person_get, message_list, message_get, social_list_list, template_list,
-org_list, org_get, org_validate, api_key_list, api_models_list, docs.
+org_list, org_get, org_validate, api_key_list, api_models_list, api_status,
+api_config_get, docs.
 
 Mutating tools (workflow_run, workflow_create/delete/set_active/node_add,
 hil_approve, hil_reject, secret_add/update/delete, person_upsert/delete,
-org_create and every org_role_*/org_reload tool, and api_key_create/update/
-revoke, which manage the OpenAI-compatible API's keys) are only exposed with
---allow-mutations or MONOAGENT_MCP_ALLOW_MUTATIONS=1 — without it they are
+org_create and every org_role_*/org_reload tool, api_key_create/update/revoke,
+which manage the OpenAI-compatible API's keys, api_config_set and
+api_config_apply, which save its server's settings and restart the daemon that
+reads them, and api_auto_set, which switches its auto model on or off) are only
+exposed with --allow-mutations or MONOAGENT_MCP_ALLOW_MUTATIONS=1 — without it they are
 omitted from tools/list and refuse with an explanatory error if called by
 name. This includes workflow_run/hil_approve/hil_reject, which were exposed
 unconditionally before this flag existed — add --allow-mutations to an
@@ -51,6 +54,11 @@ calling or image generation switched on again) unless this server was started wi
 --allow-api-exposure or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1. That is the operator's
 decision, made here: the arguments of a tool are set by the model, so none of them
 can lift the refusal. It adds nothing without --allow-mutations.
+
+api_config_apply restarts the daemon, as daemon restart does, and interrupts what
+it is running (workflows, org runs). api_auto_set needs acknowledge_egress: true to
+switch the auto model on, because prompts then go to TypeSafe; it never creates or
+reads the Jev key.
 
 Honors the global --profile flag (or the MONOAGENT_PROFILE environment
 variable) and --db-path, exactly like every other command.`,
@@ -80,7 +88,7 @@ variable) and --db-path, exactly like every other command.`,
 	cmd.Flags().StringVar(&grant, "grant", "",
 		"Grant mode: serve only the automations granted to one org role (monomind spawns this for role tool providers)")
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
-		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
+		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools, and api_config_set, api_config_apply and api_auto_set); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
 	cmd.Flags().BoolVar(&allowAPIExposure, "allow-api-exposure", false,
 		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further (a listener beyond this machine, a higher confinement class, more runtimes), which it otherwise refuses; needs --allow-mutations; also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
 	return cmd
