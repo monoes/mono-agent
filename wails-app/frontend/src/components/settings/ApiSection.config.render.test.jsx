@@ -289,7 +289,7 @@ describe('ApiSection: a saved row that cannot be read', () => {
     expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(null)
     expect(screen.queryByTestId('api-config-load-error')).not.toBeInTheDocument()
     expect(screen.queryByTestId('api-config-chip-damaged')).not.toBeInTheDocument()
-    expect(screen.getByTestId('api-config-reset-done')).toHaveFocus()
+    await waitFor(() => expect(screen.getByTestId('api-config-reset-done')).toHaveFocus())
     expect(await screen.findByTestId('api-base-url')).toBeInTheDocument()
     expect(await screen.findByRole('table', { name: 'Models' })).toBeInTheDocument()
     expect(App.APIStatus).toHaveBeenCalledTimes(2)
@@ -328,6 +328,21 @@ describe('ApiSection: a saved row that cannot be read', () => {
     expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(9)
     expect(screen.queryByRole('button', { name: c.reset.button })).not.toBeInTheDocument()
     expect(App.APIConfigReset).not.toHaveBeenCalled() // nothing was removed: nobody asked
+  })
+
+  it('brings the way out when a change finds the row damaged: the settings are read again, and what was typed stays', async () => {
+    await mountExpanded()
+    openBlock()
+    expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(6) // read fine
+    App.APIConfigSet.mockRejectedValue(damagedErr()) // and damaged since
+    App.APIConfigShow.mockRejectedValue(damagedErr())
+    fireEvent.change(maxInput(), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: c.saveLabel.replace('{{setting}}', c.rows.max_concurrent.label) }))
+    expect(await screen.findByTestId('api-config-load-error')).toHaveTextContent(DAMAGED)
+    expect(block().getByRole('button', { name: c.reset.button })).toBeInTheDocument()
+    expect(screen.getByTestId('api-config-chip-damaged')).toBeInTheDocument()
+    expect(maxInput()).toHaveValue(8)
+    expect(App.APIConfigShow).toHaveBeenCalledTimes(2)
   })
 
   it('does not remove what was fixed meanwhile: asked to reset a row that can be read, it reads again and asks nothing', async () => {

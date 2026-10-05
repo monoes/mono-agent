@@ -81,6 +81,13 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
 
   const say = (id, said) => setErrs(e => ({ ...e, [id]: said }))
   const remark = (id, n) => setNotes(x => ({ ...x, [id]: n }))
+  // A change that failed says why next to its setting. When it found the saved row damaged (it was read fine, and was
+  // damaged since), the settings are read again too, which is what brings the way out of the damage.
+  const failed = (id, e) => {
+    const said = describeConfigError(e, tRef.current)
+    say(id, said)
+    if (said.damaged) onRetry()
+  }
   const edit = (row, key, text) => { setDrafts(d => ({ ...d, [key]: text })); say(row.id, null); remark(row.id, null) }
 
   // The change itself: the state it gave is adopted, what was typed for the row is dropped (the row shows what is saved,
@@ -104,7 +111,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
       if (preview.widening?.length) { waiting = true; setPending({ row, kind, payload, widening: preview.widening }); return }
       await apply(row, kind, payload, false, [])
     } catch (e) {
-      say(row.id, describeConfigError(e, tRef.current))
+      failed(row.id, e)
     } finally {
       running.current = false
       setBusy(null)
@@ -120,7 +127,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
     try {
       await apply(p.row, p.kind, p.payload, true, p.widening)
     } catch (e) {
-      say(p.row.id, describeConfigError(e, tRef.current))
+      failed(p.row.id, e)
     } finally {
       running.current = false
       setBusy(null)
@@ -159,6 +166,10 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
 
   async function confirmReset() {
     if (!resetAsk || running.current) return
+    // The settings were read while the dialog was open and the row is not damaged now (it was fixed, or the read failed some
+    // other way): the yes was for a row that cannot be read, and --yes would remove what can be. The CLI has no form of the
+    // call that removes the row only if it still cannot be read, so a row fixed after this point is removed with the rest.
+    if (!errNow.current?.damaged) { setResetAsk(null); return }
     running.current = true
     setResetAsk(null); setBusy({ id: '', kind: 'reset' })
     try {

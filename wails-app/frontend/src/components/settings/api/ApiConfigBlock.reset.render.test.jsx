@@ -78,6 +78,8 @@ const confirmButton = () => within(dialog()).getByRole('button', { name: w.confi
 const cancelButton = () => within(dialog()).getByRole('button', { name: w.cancel })
 const block = () => screen.getByTestId('api-config-block')
 const settle = () => act(async () => { await new Promise(r => setTimeout(r, 20)) })
+// The keyboard is moved by effects, which run a moment after what they follow is on screen (a little later when the machine is busy).
+const focused = (element) => waitFor(() => expect(element()).toHaveFocus())
 const maxInput = () => screen.getByRole('spinbutton', { name: c.rows.max_concurrent.label })
 
 describe('a saved row that cannot be read: what the block says', () => {
@@ -139,7 +141,7 @@ describe('a saved row that cannot be read: resetting the saved settings', () => 
     expect(App.APIConfigReset.mock.calls).toEqual([[false, true]]) // a dry run, alone: nothing confirmed, nothing removed
     expect(within(dialog()).getAllByRole('listitem').map(li => li.textContent)).toEqual([w.kind.saved_settings + WIDENING.savedSettings.reason])
     expect(within(dialog()).getAllByRole('button').map(b => b.textContent)).toEqual([w.cancel, w.confirmReset])
-    expect(cancelButton()).toHaveFocus()
+    await focused(cancelButton)
     expect(dialog()).toHaveTextContent(w.introReset)
     expect(m.onAdopt).not.toHaveBeenCalled() // a dry run describes a state that does not exist
     expect(m.onApplied).not.toHaveBeenCalled()
@@ -154,13 +156,13 @@ describe('a saved row that cannot be read: resetting the saved settings', () => 
     fireEvent.click(cancelButton())
     await settle()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(resetButton()).toHaveFocus()
+    await focused(resetButton)
     fireEvent.click(resetButton()) // asks again, and is asked again
     await screen.findByRole('alertdialog')
     fireEvent.keyDown(dialog(), { key: 'Escape' })
     await settle()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(resetButton()).toHaveFocus()
+    await focused(resetButton)
     expect(App.APIConfigReset.mock.calls).toEqual([[false, true], [false, true]]) // nothing was ever confirmed
     expect(m.onAdopt).not.toHaveBeenCalled()
     expect(m.onApplied).not.toHaveBeenCalled()
@@ -202,7 +204,7 @@ describe('a saved row that cannot be read: resetting the saved settings', () => 
     const note = await screen.findByTestId('api-config-reset-done')
     expect(note).toHaveTextContent(c.reset.done)
     expect(note).toHaveAttribute('role', 'status')
-    expect(note).toHaveFocus()
+    await focused(() => note)
   })
 
   it('takes what the rows said, and what was typed, away with the settings they were about', async () => {
@@ -261,6 +263,32 @@ describe('a saved row that cannot be read: resetting the saved settings', () => 
     expect(resetButton()).toBeEnabled() // not left working
   })
 
+  it('removes nothing when the settings were read while the dialog was open and the row can be read now: its yes was for a row that cannot', async () => {
+    resetCall()
+    const m = await mountOpen()
+    fireEvent.click(resetButton())
+    await screen.findByRole('alertdialog')
+    await m.read(null) // a read that found the row fixed meanwhile
+    fireEvent.click(confirmButton())
+    await settle()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(App.APIConfigReset.mock.calls).toEqual([[false, true]]) // never confirmed
+    expect(m.onAdopt).not.toHaveBeenCalled()
+    expect(m.onApplied).not.toHaveBeenCalled()
+    cleanup()
+
+    // nor when that read failed some other way: what is saved is not known to be damaged
+    const other = await mountOpen()
+    fireEvent.click(resetButton())
+    await screen.findByRole('alertdialog')
+    await other.read(said(new Error('database is locked')))
+    fireEvent.click(confirmButton())
+    await settle()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(App.APIConfigReset.mock.calls).toEqual([[false, true], [false, true]])
+    expect(other.onAdopt).not.toHaveBeenCalled()
+  })
+
   it('asks even when the CLI lists no reason: removing the saved settings is not something to do on one click', async () => {
     resetCall({ dry: { ...dryDoc(), widening: [] } })
     await mountOpen()
@@ -282,7 +310,7 @@ describe('a saved row that cannot be read: when resetting fails', () => {
     expect(m.onAdopt).not.toHaveBeenCalled()
     expect(resetButton()).toBeEnabled()
     expect(retryButton()).toBeEnabled()
-    expect(resetButton()).toHaveFocus()
+    await focused(resetButton)
     expect(screen.getByTestId('api-config-load-error')).toHaveTextContent(DAMAGED) // still as it was
 
     // tried again, it starts clean: what the last try said is not left on screen behind the dialog
@@ -308,7 +336,7 @@ describe('a saved row that cannot be read: when resetting fails', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('api-config-load-error')).toHaveTextContent(DAMAGED)
     expect(resetButton()).toBeEnabled()
-    expect(resetButton()).toHaveFocus()
+    await focused(resetButton)
     expect(App.APIConfigReset.mock.calls).toEqual([[false, true], [true, false]])
   })
 
@@ -333,6 +361,50 @@ describe('a saved row that cannot be read: when resetting fails', () => {
     await m.read(null) // the row can be read now
     await m.read(damaged()) // and is damaged again, later
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('a saved row that cannot be read: found while a setting is being changed', () => {
+  const saveButton = (label) => screen.getByRole('button', { name: c.saveLabel.replace('{{setting}}', label) })
+  const row = (id) => screen.getByTestId(`api-config-row-${id}`)
+
+  it('reads the settings again, so that the way out comes with the read, and does so for no other failure: a save', async () => {
+    App.APIConfigSet.mockRejectedValue(new Error(`invalid_input: ${DAMAGED}`))
+    const m = await mountOpen({ config: configDoc({ running: {} }), err: null })
+    fireEvent.change(maxInput(), { target: { value: '8' } })
+    fireEvent.click(saveButton(c.rows.max_concurrent.label))
+    expect(await within(row('max_concurrent')).findByRole('alert')).toHaveTextContent(DAMAGED) // the CLI's words, next to the setting
+    expect(m.onRetry).toHaveBeenCalledTimes(1)
+
+    App.APIConfigSet.mockRejectedValue(new Error('database is locked')) // any other failure is only said
+    fireEvent.click(saveButton(c.rows.max_concurrent.label))
+    expect(await within(row('max_concurrent')).findByText('database is locked')).toBeInTheDocument()
+    App.APIConfigSet.mockRejectedValue(new Error('invalid_input: max_concurrent must be an integer from 1 to 64'))
+    fireEvent.click(saveButton(c.rows.max_concurrent.label))
+    expect(await within(row('max_concurrent')).findByText(c.errors.maxConcurrent.replace('{{min}}', '1').replace('{{max}}', '64'))).toBeInTheDocument()
+    expect(m.onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the settings again when going back to the default finds it damaged', async () => {
+    App.APIConfigUnset.mockRejectedValue(new Error(`invalid_input: ${DAMAGED}`))
+    const m = await mountOpen({ config: configDoc({ saved: { max_concurrent: '8' }, running: {} }), err: null })
+    fireEvent.click(screen.getByRole('button', { name: c.useDefaultLabel.replace('{{setting}}', c.rows.max_concurrent.label) }))
+    expect(await within(row('max_concurrent')).findByRole('alert')).toHaveTextContent(DAMAGED)
+    expect(m.onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the settings again when the change that was confirmed finds it damaged', async () => {
+    App.APIConfigSet.mockImplementation(async (values, confirm, dryRun) => {
+      if (dryRun) return { ...changeDoc(configDoc({ running: {} }), { applied: false, changed: ['context_confinement'], widening: [WIDENING.contextLoopback] }) }
+      throw new Error(`invalid_input: ${DAMAGED}`) // damaged between the dry run and the yes
+    })
+    const m = await mountOpen({ config: configDoc({ running: {} }), err: null })
+    fireEvent.change(screen.getByRole('combobox', { name: c.rows.context_confinement.label }), { target: { value: 'sandboxed' } })
+    fireEvent.click(saveButton(c.rows.context_confinement.label))
+    await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog()).getByRole('button', { name: w.confirmSave }))
+    expect(await within(row('context_confinement')).findByRole('alert')).toHaveTextContent(DAMAGED)
+    expect(m.onRetry).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -378,7 +450,7 @@ describe('a saved row that cannot be read: in Spanish', () => {
     const m = await mountOpen()
     fireEvent.click(screen.getByRole('button', { name: sc.reset.button }))
     const d = await screen.findByRole('alertdialog', { name: sc.widening.title })
-    expect(within(d).getByRole('button', { name: sc.widening.cancel })).toHaveFocus()
+    await focused(() => within(d).getByRole('button', { name: sc.widening.cancel }))
     expect(within(d).getByText(sc.widening.kind.saved_settings)).toBeInTheDocument()
     expect(within(d).getByText(WIDENING.savedSettings.reason)).toHaveAttribute('lang', 'en')
     fireEvent.click(within(d).getByRole('button', { name: sc.widening.confirmReset }))
