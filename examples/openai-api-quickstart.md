@@ -631,10 +631,11 @@ again. If you started one by hand while the service is registered, stop that one
 first: the service's daemon would find the home taken and exit.
 
 A change that makes the server reach further than it did needs `--yes`: a
-listener beyond this machine, a higher confinement class, a runtime outside the
-default list. Without it the command refuses (exit 3) and says why; there is no
-prompt, so a script has to mean it. `--dry-run` shows the reasons and saves
-nothing:
+listener beyond this machine (or on another host, or on every interface where it
+was one host), a higher confinement class, a runtime outside the default list, or
+the removal of a saved row that cannot be read. Without it the command refuses
+(exit 3) and says why; there is no prompt, so a script has to mean it. `--dry-run`
+shows the reasons and saves nothing:
 
 ```
 $ monoagentcli api config set --v1-addr 0.0.0.0:9443 --tls-cert-file /etc/monoagent/fullchain.pem --tls-key-file /etc/monoagent/privkey.pem --confinement chat-only --dry-run
@@ -646,7 +647,11 @@ This change makes the server reach further, so applying it needs --yes:
 Raising `confinement` to `sandboxed` or `any` always needs `--yes`, even with no
 listener beyond this machine saved, because the daemon's own environment may name
 one. Removing a value that held the server below its default (`unset confinement`
-of a `chat-only`, an `image_runtimes` of `none`) is the same kind of change.
+of a `chat-only`, an `image_runtimes` of `none`) is the same kind of change. So is
+removing a saved row that cannot be read (not JSON, a bad version, a field of the
+wrong type): every `api config` command, and the server, stop at it with exit 3 and
+a message that starts `the saved settings are damaged`, and `api config unset --all
+--yes` removes it, because what the row limited cannot be told.
 The settings are in the database of the user the daemon runs as
 (`~/.monoagent/monoagent.db`), so run `api config` as that user.
 

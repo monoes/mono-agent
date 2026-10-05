@@ -583,7 +583,8 @@ whatever is saved), and it fills what they leave out.
   machine, another host beyond it, or every interface where it was one host), a
   higher confinement class (of a listener, of a `--context` key or of `auto`) on
   a listener on this machine or beyond it, a runtime outside the default list,
-  or tool calling or image generation switched on again. It guards against a
+  tool calling or image generation switched on again, or the removal of a saved
+  row that cannot be read (below). It guards against a
   script, an agent's shell tool or a hurried edit widening the server without
   saying so. It is not an access control: whoever can run the CLI as your OS
   user can pass `--yes`. The check compares the effective policy, so it also
@@ -594,12 +595,17 @@ whatever is saved), and it fills what they leave out.
   exit at start (exit 3, naming the setting), and `api models` and `api status`
   refuse, rather than guess; `api config unset <setting>` removes it. A row that
   cannot be read at all (not a JSON object, a bad version, a field of the wrong
-  type) stops every `api config` command but one: `api config unset --all`
-  removes it, says so and is never refused for the damage; what the row held is
+  type) stops every `api config` command, the server, `api models` and
+  `api status` too, with exit 3 and a message that starts `the saved settings
+  are damaged`; one command removes it: `api config unset --all --yes`. It asks
+  for `--yes` because what the row limited cannot be told (a `confinement` of
+  `chat-only` in it, say), so returning every setting to its default may reach
+  further than anything: the same gate as any other widening, so a damaged row
+  is not a way to drop a restriction without confirming. What the row held is
   gone, and the server then starts on its flags, its environment and the
-  defaults. A row written by a newer `monoagentcli` is the exception: it is never
-  rewritten and never removed by these commands, since that would lose what that
-  version saved.
+  defaults. A row written by a newer `monoagentcli` is the exception: it is exit
+  1, never rewritten and never removed by these commands, since that would lose
+  what that version saved.
 - The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
   setting's effective value and where it came from (`flag`, `env`, `saved`,
   `default`): addresses, classes and paths, no secret.

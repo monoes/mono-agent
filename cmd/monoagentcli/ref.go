@@ -2975,7 +2975,8 @@ OPENAI-COMPATIBLE API (/v1)
   machine or on one beyond it (both kinds are judged whether or not a listener
   is saved, since the daemon's own environment may name one: so raising
   confinement to sandboxed or any always needs --yes, and chat-only never does);
-  a runtime list that gains a runtime outside the default list or leaves none.
+  a runtime list that gains a runtime outside the default list or leaves none;
+  the removal of a saved row that cannot be read (key saved_settings, below).
   Narrowing never needs it, nor do max_concurrent, turn_timeout or the TLS
   files. Unsetting a value that was below its default (confinement chat-only, a
   list none) is a widening like any other. --dry-run says what a change would do
@@ -2983,10 +2984,13 @@ OPENAI-COMPATIBLE API (/v1)
 
   A saved row that cannot be read (not JSON, a version that is not a whole
   number, a field of the wrong type) stops show, set, unset <setting>, the
-  server, api models and api status (exit 1) and names the fix: unset --all
-  removes the row, says so (removed_unreadable_row in --json, a note on stderr)
-  and is never refused for it. A row written by a newer version is never removed,
-  by unset --all either: use that version, or remove the row by hand, with
+  server, api models and api status with exit 3 and one message that starts "the
+  saved settings are damaged" and names the repair: unset --all --yes removes the
+  row and says so (removed_unreadable_row in --json, a note on stderr). It needs
+  --yes because what the row limited cannot be told, so removing it may reach
+  further (the reason, key saved_settings; without --yes, exit 3 and that
+  reason). A row written by a newer version is exit 1 and is never removed, by
+  unset --all --yes either: use that version, or remove the row by hand, with
   sqlite3 ~/.monoagent/monoagent.db "delete from settings where key =
   'api_gateway_config'" (the database --db-path names, if you gave one).
 
