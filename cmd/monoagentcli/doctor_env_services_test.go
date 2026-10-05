@@ -125,6 +125,15 @@ func shortGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { daemonStopGrace = old })
 }
 
+// A stand-in daemon takes about 0.1 s to exit after SIGTERM, and about 1.2 s under the race
+// detector, which CI uses. The tests that must not wait out the grace give it much more than
+// that and then check that stopDaemon came back well before it ran out: a regression that waits
+// for the wrong thing shows as an error or as a wait of the whole grace, whatever the machine.
+const (
+	roomyGrace = 10 * time.Second
+	wellBefore = 5 * time.Second
+)
+
 func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
 	pid, exited := startStopDaemonHelper(t, "lock")
 
@@ -152,7 +161,7 @@ func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
 // for the process to disappear would run out the grace, and a SIGKILL cannot end a zombie.
 func TestStopDaemonDoesNotWaitForAZombieToDisappear(t *testing.T) {
 	pid := startUnreapedStopDaemonHelper(t, "lock")
-	shortGrace(t, time.Second)
+	shortGrace(t, roomyGrace)
 
 	start := time.Now()
 	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil {
@@ -161,7 +170,7 @@ func TestStopDaemonDoesNotWaitForAZombieToDisappear(t *testing.T) {
 	if daemonhb.Locked() {
 		t.Error("the lock is still held")
 	}
-	if waited := time.Since(start); waited > 700*time.Millisecond {
+	if waited := time.Since(start); waited > wellBefore {
 		t.Errorf("stopDaemon took %v: it waited for the zombie to disappear", waited)
 	}
 }
@@ -197,7 +206,7 @@ func TestStopDaemonStopsADaemonThatHoldsNoLock(t *testing.T) {
 // for the old daemon not having stopped.
 func TestStopDaemonDoesNotWaitForTheLockOfARespawnedDaemon(t *testing.T) {
 	pid, _ := startStopDaemonHelper(t, "lock")
-	shortGrace(t, time.Second)
+	shortGrace(t, roomyGrace)
 
 	stop := make(chan struct{})
 	respawned := make(chan func(), 1)
@@ -228,7 +237,7 @@ func TestStopDaemonDoesNotWaitForTheLockOfARespawnedDaemon(t *testing.T) {
 	if err := stopDaemon(context.Background(), pid, func(string) {}); err != nil {
 		t.Fatalf("stopDaemon: %v", err)
 	}
-	if waited := time.Since(start); waited > 700*time.Millisecond {
+	if waited := time.Since(start); waited > wellBefore {
 		t.Errorf("stopDaemon took %v: it waited for the lock of the new daemon", waited)
 	}
 }
