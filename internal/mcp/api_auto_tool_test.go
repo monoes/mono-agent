@@ -229,7 +229,12 @@ func TestNoErrorOfAPIAutoSetRepeatsAnArgument(t *testing.T) {
 	}
 	f := newConfigFixture(t, configSetup{})
 	for _, v := range []string{pasted, strings.ToUpper(pasted), pasted[:30], strings.Repeat("Q", 1<<20)} {
-		for _, args := range []map[string]any{{"enabled": v}, {"enabled": true, "acknowledge_egress": v}, {"enabled": v, "acknowledge_egress": v}} {
+		// The key where a boolean goes, and in an argument the tool does not have, which reaches the
+		// refusal of a call without enabled.
+		for _, args := range []map[string]any{
+			{"enabled": v}, {"enabled": true, "acknowledge_egress": v}, {"enabled": v, "acknowledge_egress": v},
+			{"note": v}, {"enabled": nil, "note": v}, {"acknowledge_egress": true, "note": v},
+		} {
 			_, err := f.call("api_auto_set", args)
 			if err == nil {
 				t.Fatalf("%.30s... was accepted", v)

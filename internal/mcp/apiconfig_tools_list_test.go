@@ -71,6 +71,22 @@ func TestAPIConfigMutatingToolsAreGatedAndAnnotated(t *testing.T) {
 	}
 }
 
+// What decides whether a key created with context may be served tool calling, or models that are
+// not chat-only, is a setting now, and a model that creates the key is told which, and where to see it.
+func TestAPIKeyCreateDescriptionPointsAtTheSettingsThatDecideWhatAContextKeyMayUse(t *testing.T) {
+	var d string
+	for _, tl := range apiTools() {
+		if tl.name == "api_key_create" {
+			d = tl.description
+		}
+	}
+	for _, want := range []string{"context_confinement", "confinement", "api_config_get", "api_config_set", "tool calling", "--context-confinement"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description of api_key_create does not mention %q: %s", want, d)
+		}
+	}
+}
+
 // A description is all a model has of a tool: each of these says what the tool does and what it
 // does not.
 func TestAPIConfigToolDescriptionsSayWhatTheyDoNot(t *testing.T) {

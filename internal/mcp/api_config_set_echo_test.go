@@ -48,6 +48,7 @@ func TestNoErrorOfAPIConfigSetRepeatsAnArgument(t *testing.T) {
 		{"a key named as a setting and an entry that is not", func(v string) map[string]any {
 			return map[string]any{"set": map[string]any{"max_concurrent": "8"}, "unset": []string{v}}
 		}},
+		{"an argument the tool does not have", func(v string) map[string]any { return map[string]any{"note": v} }},
 	}
 	for _, key := range apiconfig.Keys() {
 		key := key
