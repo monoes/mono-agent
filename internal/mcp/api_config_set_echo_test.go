@@ -178,6 +178,9 @@ func TestTheRefusalOfAWideningChangeDoesNotRepeatTheValuesOfTheCall(t *testing.T
 			secret: "new.example", also: []string{"old.example"}, mention: "another address beyond this machine"},
 		{name: "a move with a class that rises too", saved: []string{"v1_addr=" + old}, args: set(map[string]any{"v1_addr": "10.0.0.5:9443", "confinement": "any"}),
 			secret: "10.0.0.5", also: []string{old, "192.168.1.10"}, mention: "another address beyond this machine"},
+		// The checker takes any text before the last colon, so a saved address may hold a space.
+		{name: "a move from a host that holds a space", saved: []string{"v1_addr=zz secret-host:9443"}, args: set(map[string]any{"v1_addr": "10.0.0.5:9443"}),
+			secret: "10.0.0.5", also: []string{"zz", "secret-host"}, mention: "another address beyond this machine"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newConfigFixture(t, configSetup{})

@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,9 +123,27 @@ func toolAPIConfigSet(ctx context.Context, s *Server, args json.RawMessage) (int
 	}
 	res, err := apiconfig.Apply(ctx, rt.db.DB, s.apiEnv(), ch)
 	if err != nil {
-		return nil, apiConfigSetError(err, ch)
+		return nil, apiConfigSetError(err, ch, savedAddrOfARefusal(ctx, rt.db.DB, err))
 	}
 	return res, nil
+}
+
+// savedAddrOfARefusal is the address that was saved before a change that was refused for reaching
+// further. The reason of a move from one bind to another prints it, and the call did not send it, so
+// the scrub has to be told: a saved address is any text before the last colon, and one that holds a
+// space or a comma cannot be found in the reason as a word. It is read after the refusal, which wrote
+// nothing, so that a writer that changed the row in between is the one case it can miss. "" for any
+// other error, and for a row that cannot be read (which holds no address to print).
+func savedAddrOfARefusal(ctx context.Context, db *sql.DB, err error) string {
+	var widening *apiconfig.WideningError
+	if !errors.As(err, &widening) {
+		return ""
+	}
+	saved, loadErr := apiconfig.Load(ctx, db)
+	if loadErr != nil {
+		return ""
+	}
+	return saved.V1Addr
 }
 
 // changeFrom is the change a call asks for. A value is looked at only after its length and for a
@@ -239,11 +258,12 @@ const errBadAddr = "v1_addr must be host:port, such as 127.0.0.1:9443 or :9443"
 
 // apiConfigSetError is what a model is told of an error of Apply: a change that fails its rules in
 // the command's words, and a change that reaches further as a refusal that names the operator's
-// switch. Neither repeats an argument.
-func apiConfigSetError(err error, ch apiconfig.Change) error {
+// switch. Neither repeats an argument. saved is the address that was saved before the call, which a
+// refusal must not print either.
+func apiConfigSetError(err error, ch apiconfig.Change, saved string) error {
 	var widening *apiconfig.WideningError
 	if errors.As(err, &widening) {
-		return refusalOf(widening.Widening, ch)
+		return refusalOf(widening.Widening, ch, saved)
 	}
 	var invalid *apiconfig.ValidationError
 	if errors.As(err, &invalid) {
@@ -262,12 +282,12 @@ func apiConfigSetError(err error, ch apiconfig.Change) error {
 // refusalOf is the refusal of a change that reaches further when the operator did not allow it: which
 // setting and why (the reasons of apiconfig.Widens, without the values of the call), who decides, and
 // what the user can do.
-func refusalOf(ws []apiconfig.Widening, ch apiconfig.Change) error {
+func refusalOf(ws []apiconfig.Widening, ch apiconfig.Change, saved string) error {
 	var b strings.Builder
 	b.WriteString("This change makes the server reach further than it did, and this MCP server was not started with --allow-api-exposure, so nothing was saved:")
 	repair := false // removing a row that cannot be read: the CLI is what the user has for it
 	for _, w := range ws {
-		fmt.Fprintf(&b, "\n- %s: %s", w.Key, scrubReason(w.Reason, ch))
+		fmt.Fprintf(&b, "\n- %s: %s", w.Key, scrubReason(w.Reason, ch, saved))
 		repair = repair || w.Key == apiconfig.WideningKeySavedSettings
 	}
 	var cmds []string
@@ -293,8 +313,8 @@ func refusalOf(ws []apiconfig.Widening, ch apiconfig.Change) error {
 // scrubReason is a reason of the gate without what the call asked for in it, and without any address:
 // the reasons name the addresses of a listener (the new one and, for a move, the one saved before) and
 // the runtimes outside the default list, which is what makes them useful to a person, and an echo of
-// the arguments in an error.
-func scrubReason(reason string, ch apiconfig.Change) string {
+// the arguments in an error. saved is the address saved before the call ("" when there is none).
+func scrubReason(reason string, ch apiconfig.Change, saved string) string {
 	var addrs []string
 	for name, text := range ch.Set {
 		switch key, _ := apiconfig.LookupKey(name); key {
@@ -306,7 +326,7 @@ func scrubReason(reason string, ch apiconfig.Change) string {
 			reason = scrubRuntimes(reason, text, openaiapi.ParseToolRuntimes)
 		}
 	}
-	return scrubAddresses(reason, addrs)
+	return scrubAddresses(reason, append(addrs, saved))
 }
 
 // addressPlaceholder is what a reason says where it named an address, or a host.
@@ -320,23 +340,24 @@ var reasonWord = regexp.MustCompile(`[^\s(),;]+`)
 // is the address as it was saved, the old one next to the new one when a listener moves, and a reason
 // that names a host alone (in another spelling of it, with or without brackets or a zone) must not bring
 // it back, so the scrub is of what the reason holds: an address wherever a word is one, and a host
-// wherever a word is the host of an address of the call or of the reason, whatever its spelling. The
-// port alone is harmless and stays. A full stop after a word stays, since it may end the sentence.
-func scrubAddresses(reason string, submitted []string) string {
+// wherever a word is the host of an address of the call or of the reason, whatever its spelling, and an
+// IP address is a host whoever named it. The port alone is harmless and stays. A full stop after a word
+// stays, since it may end the sentence. known are the addresses the call and the saved settings hold
+// as they are written, which are taken out first, whole: a host may hold what splits a sentence into
+// words (the checker takes any text before the last colon).
+func scrubAddresses(reason string, known []string) string {
 	hosts := map[string]bool{}
 	address := func(word string) bool {
 		if apiconfig.ValidListenAddr(word) != nil {
 			return false
 		}
 		host, _, _ := net.SplitHostPort(word)
-		if key := hostKey(host); key != "" {
+		if key, _ := hostKey(host); key != "" {
 			hosts[key] = true
 		}
 		return true
 	}
-	for _, text := range submitted {
-		// The call may hold what splits a sentence into words (the checker takes any host), so what it
-		// named is taken out as it was written too.
+	for _, text := range known {
 		reason = replaceStandalone(reason, text, addressPlaceholder)
 		address(text)
 	}
@@ -345,7 +366,8 @@ func scrubAddresses(reason string, submitted []string) string {
 	}
 	return reasonWord.ReplaceAllStringFunc(reason, func(word string) string {
 		bare := strings.TrimRight(word, ".")
-		if apiconfig.ValidListenAddr(bare) == nil || hosts[hostKey(bare)] {
+		key, isIP := hostKey(bare)
+		if apiconfig.ValidListenAddr(bare) == nil || isIP || hosts[key] {
 			return addressPlaceholder + word[len(bare):]
 		}
 		return word
@@ -354,8 +376,8 @@ func scrubAddresses(reason string, submitted []string) string {
 
 // hostKey is a host in the one spelling that all of its spellings share, "" for none: in lower case,
 // without brackets, a zone or the dot of a full name, and an IP address in its canonical form (which is
-// also the IPv4 address that an IPv4-mapped IPv6 one is).
-func hostKey(host string) string {
+// also the IPv4 address that an IPv4-mapped IPv6 one is), for which isIP says so.
+func hostKey(host string) (key string, isIP bool) {
 	h := strings.ToLower(host)
 	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
 	if i := strings.IndexByte(h, '%'); i >= 0 {
@@ -363,9 +385,9 @@ func hostKey(host string) string {
 	}
 	h = strings.TrimSuffix(h, ".")
 	if ip := net.ParseIP(h); ip != nil {
-		return ip.String()
+		return ip.String(), true
 	}
-	return h
+	return h, false
 }
 
 // replaceStandalone replaces the occurrences of text that stand between the separators of a sentence

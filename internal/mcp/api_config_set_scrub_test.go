@@ -47,7 +47,7 @@ func TestScrubReasonTakesOutEveryFormOfTheAddressOfTheCall(t *testing.T) {
 					{"It would move to %s; the rest stays.", "It would move to " + here + "; the rest stays."},
 				} {
 					reason := strings.Replace(around.reason, "%s", form, 1)
-					if got := scrubReason(reason, addrChange(c.addr)); got != around.want {
+					if got := scrubReason(reason, addrChange(c.addr), ""); got != around.want {
 						t.Errorf("%q\n got %q\nwant %q", reason, got, around.want)
 					}
 				}
@@ -87,10 +87,38 @@ func TestScrubReasonTakesOutTheAddressesTheCallDoesNotName(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := scrubReason(c.reason, addrChange("10.0.0.5:9443")); got != c.want {
+			if got := scrubReason(c.reason, addrChange("10.0.0.5:9443"), ""); got != c.want {
 				t.Errorf("\n got %q\nwant %q", got, c.want)
 			}
 		})
+	}
+}
+
+// An IP address that is not the call's and not saved is a host all the same, and goes too: a reason is
+// shown without any host, whatever it is made of.
+func TestScrubReasonTakesOutAnIPAddressWhoseHostNobodyNamed(t *testing.T) {
+	for _, c := range []struct{ reason, want string }{
+		{"It would listen on 172.16.0.9., beyond this machine.", "It would listen on " + here + "., beyond this machine."},
+		{"It would listen on 10.0.0.50 and [2001:db8::7] as well.", "It would listen on " + here + " and " + here + " as well."},
+		{"It would listen on fe80::9%eth1 and ::ffff:172.16.0.9.", "It would listen on " + here + " and " + here + "."},
+		{"Version 2.22.0 of the 10 runtimes stays.", "Version 2.22.0 of the 10 runtimes stays."},
+	} {
+		if got := scrubReason(c.reason, addrChange("10.0.0.5:9443"), ""); got != c.want {
+			t.Errorf("%q\n got %q\nwant %q", c.reason, got, c.want)
+		}
+	}
+}
+
+// The address saved before the call may be printed too, by a reason of a move, and the call did not send
+// it: it is given to the scrub as it was saved, so that a host that holds a space or a comma (the checker
+// takes any text before the last colon) does not come back in pieces.
+func TestScrubReasonTakesOutTheSavedAddressWhoseHostHoldsSeparators(t *testing.T) {
+	for _, saved := range []string{"zz secret-host:9443", "a,b;c (d):9443", "x y:1"} {
+		reason := "It would move from " + saved + " to 10.0.0.5:9443, another address beyond this machine, and from " + saved + "."
+		want := "It would move from " + here + " to " + here + ", another address beyond this machine, and from " + here + "."
+		if got := scrubReason(reason, addrChange("10.0.0.5:9443"), saved); got != want {
+			t.Errorf("%q\n got %q\nwant %q", saved, got, want)
+		}
 	}
 }
 
@@ -106,7 +134,7 @@ func TestScrubReasonKeepsTheFullStopAfterAHost(t *testing.T) {
 		if strings.Contains(c.reason, "10.0.0.5") {
 			addr = "10.0.0.5:9443"
 		}
-		if got := scrubReason(c.reason, addrChange(addr)); got != c.want {
+		if got := scrubReason(c.reason, addrChange(addr), ""); got != c.want {
 			t.Errorf("%q\n got %q\nwant %q", c.reason, got, c.want)
 		}
 	}
@@ -123,10 +151,10 @@ func TestScrubReasonLeavesWhatIsNotAnAddress(t *testing.T) {
 			"A /v1 listener beyond this machine (a dedicated listener from v1_addr, --v1-addr or MONOAGENT_API_V1_ADDR) would serve runtimes up to any, where it served up to chat-only; port 9443.",
 		},
 		{
-			"a host that holds the same digits as another",
+			"a word that holds the digits of a host",
 			"10.0.0.5:9443",
-			"It would listen on 110.0.0.55 and on 10.0.0.50.",
-			"It would listen on 110.0.0.55 and on 10.0.0.50.",
+			"It would listen on v10.0.0.5 and on 10.0.0.5x, which are not hosts.",
+			"It would listen on v10.0.0.5 and on 10.0.0.5x, which are not hosts.",
 		},
 		{
 			"a word with a colon and no port number",
@@ -148,7 +176,7 @@ func TestScrubReasonLeavesWhatIsNotAnAddress(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := scrubReason(c.reason, addrChange(c.addr)); got != c.want {
+			if got := scrubReason(c.reason, addrChange(c.addr), ""); got != c.want {
 				t.Errorf("\n got %q\nwant %q", got, c.want)
 			}
 		})
@@ -161,7 +189,7 @@ func TestScrubReasonTakesOutAnAddressWhoseHostHoldsSeparators(t *testing.T) {
 	for _, addr := range []string{"my secret thing:9443", "a,b;c (d):9443", "x y:1"} {
 		reason := "It would listen on " + addr + ", beyond this machine, and on " + addr + "."
 		want := "It would listen on " + here + ", beyond this machine, and on " + here + "."
-		if got := scrubReason(reason, addrChange(addr)); got != want {
+		if got := scrubReason(reason, addrChange(addr), ""); got != want {
 			t.Errorf("%q\n got %q\nwant %q", addr, got, want)
 		}
 	}
