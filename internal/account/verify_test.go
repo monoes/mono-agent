@@ -271,6 +271,12 @@ func TestVerifyTruncatedAndGarbageInput(t *testing.T) {
 	enc := base64.RawURLEncoding
 	object := enc.EncodeToString([]byte(`{"alg":"EdDSA","kid":"` + f.Key.KID + `"}`))
 	sig := enc.EncodeToString(make([]byte, ed25519.SignatureSize))
+	// signedPayload has a real signature, so Verify gets past the signature
+	// check and it is the payload parser that refuses the payload p.
+	signedPayload := func(p string) string {
+		signed := object + "." + enc.EncodeToString([]byte(p))
+		return signed + "." + enc.EncodeToString(ed25519.Sign(f.Private, []byte(signed)))
+	}
 	inputs := map[string]string{
 		"empty":                    "",
 		"one dot":                  "a.b",
@@ -284,9 +290,9 @@ func TestVerifyTruncatedAndGarbageInput(t *testing.T) {
 		"a bad character":          good[:20] + "!" + good[21:],
 		"standard base64 alphabet": good + "+/",
 		"header not JSON":          enc.EncodeToString([]byte("not json")) + "." + object + "." + sig,
-		"payload not JSON":         object + "." + enc.EncodeToString([]byte("not json")) + "." + sig,
-		"payload a JSON array":     object + "." + enc.EncodeToString([]byte(`[1,2]`)) + "." + sig,
-		"payload JSON null":        object + "." + enc.EncodeToString([]byte(`null`)) + "." + sig,
+		"payload not JSON":         signedPayload("not json"),
+		"payload a JSON array":     signedPayload(`[1,2]`),
+		"payload JSON null":        signedPayload(`null`),
 		"short signature":          object + "." + object + "." + enc.EncodeToString([]byte("short")),
 		"far too large":            strings.Repeat("a", 9<<10),
 	}
