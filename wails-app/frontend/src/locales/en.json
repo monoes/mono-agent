@@ -393,7 +393,11 @@
         "revokeTitle": "Revoke this key?",
         "revokeBody": "Programs that use \"{{name}}\" stop working at their next request. This can't be undone.",
         "revokeConfirm": "Revoke key",
-        "loadError": "Couldn't read the keys: {{error}}"
+        "loadError": "Couldn't read the keys: {{error}}",
+        "renameLabel": "Rename {{name}}",
+        "renameInput": "New name for {{name}}",
+        "renameSaveLabel": "Save the new name of {{name}}",
+        "renameCancelLabel": "Cancel renaming {{name}}"
       },
       "create": {
         "title": "Create an API key",
@@ -460,6 +464,166 @@
         "nameInvalid": "That name isn't allowed. Use 1 to 64 characters: letters, digits, space, . _ -, starting with a letter or digit, and not shaped like a key id (key_ and 12 characters).",
         "keyNotFound": "That key no longer exists: it may have been revoked from the terminal or another window.",
         "unknown": "Unknown error"
+      },
+      "config": {
+        "errors": {
+          "maxConcurrent": "The number of turns at once must be a whole number from {{min}} to {{max}}.",
+          "turnTimeout": "The turn timeout must be a duration of at least {{min}}, such as {{example}}.",
+          "class": "That isn't a class. Use chat-only, sandboxed or any.",
+          "addr": "The address must be host:port, such as 127.0.0.1:9443 or :9443.",
+          "imageRuntimes": "Give a comma-separated list of runtime ids, or none to switch image generation off.",
+          "toolRuntimes": "Give a comma-separated list of runtime ids, or none to switch tool calling off.",
+          "empty": "A value is needed here. To go back to the default, use “Use the default”.",
+          "tlsPair": "The certificate file and the key file are saved together: give both.",
+          "tlsAbsolute": "A TLS file needs an absolute path: the daemon starts in another folder, and ~ is not expanded.",
+          "controlChars": "A value can't contain control characters, such as a line break or a tab.",
+          "widenedMeanwhile": "Nothing was saved: the saved settings changed meanwhile, and this change now makes the server reach further. Try again to review it.",
+          "notRegistered": "The daemon isn't registered for auto-start, so nothing can restart it from here."
+        },
+        "rows": {
+          "v1_addr": {
+            "label": "Dedicated /v1 listener",
+            "hint": "Where /v1 listens besides the main HTTP API, as host:port, such as 0.0.0.0:9443. Beyond this computer it speaks TLS only.",
+            "empty": "No dedicated listener"
+          },
+          "tls": {
+            "label": "TLS certificate and key",
+            "hint": "Absolute paths of the PEM files for that listener, read when the server starts. Give both, or neither for a self-signed certificate.",
+            "empty": "Self-signed certificate",
+            "certLabel": "Certificate file",
+            "keyLabel": "Key file"
+          },
+          "confinement": {
+            "label": "Strongest class served",
+            "hint": "chat-only, sandboxed or any: the strongest class of agent runtime the server serves.",
+            "empty": "Default: any on loopback, chat-only beyond"
+          },
+          "context_confinement": {
+            "label": "Strongest class for keys with context",
+            "hint": "A key created with context is served by runtimes up to this class, and never above the strongest class served."
+          },
+          "auto_confinement": {
+            "label": "Strongest class auto may pick",
+            "hint": "The auto model picks among runtimes up to this class, and never above the strongest class served."
+          },
+          "max_concurrent": {
+            "label": "Turns at once",
+            "hint": "How many requests run at the same time. Beyond that the server answers 429."
+          },
+          "turn_timeout": {
+            "label": "Turn timeout",
+            "hint": "The longest one turn may run, such as 15m."
+          },
+          "image_runtimes": {
+            "label": "Runtimes that make images",
+            "hint": "Comma-separated runtime ids whose models serve image generation, or none to switch it off."
+          },
+          "tool_runtimes": {
+            "label": "Runtimes that serve tool calling",
+            "hint": "Comma-separated runtime ids whose models serve tool calling, or none to switch it off."
+          }
+        },
+        "state": {
+          "applied": "Applied",
+          "pending": "Restart needed",
+          "overridden": "Overridden",
+          "notRunning": "Daemon not running",
+          "unknown": "Unknown",
+          "notServing": "Listener not up"
+        },
+        "stateHint": {
+          "applied": "The running daemon uses the saved value, or the default where none is saved.",
+          "pending": "Saved after the running daemon started: it uses it once it restarts.",
+          "overridden": "The daemon was started with its own flag or environment variable for this setting, so a saved value has no effect until that is removed.",
+          "notRunning": "No daemon is running. The server reads the saved value when it starts.",
+          "unknown": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure.",
+          "notServing": "The daemon took this value, but the dedicated /v1 listener it describes is not up. The daemon's log says why, for example a certificate file that cannot be read or a port already in use. Correct the setting, or the file or port it names, then restart the daemon."
+        },
+        "widening": {
+          "kind": {
+            "v1_addr": "A listener beyond this computer",
+            "confinement": "A stronger class of runtime is served",
+            "context_confinement": "Keys with context may use more",
+            "auto_confinement": "auto may pick more",
+            "image_runtimes": "More runtimes make images",
+            "tool_runtimes": "More runtimes serve tool calling",
+            "saved_settings": "What the saved settings limited is unknown"
+          },
+          "title": "This change makes the server reach further",
+          "introSave": "Saving it lets the server reach further than it does now:",
+          "introUnset": "Going back to the default lets the server reach further than it does now:",
+          "note": "It applies the next time the daemon starts.",
+          "cancel": "Cancel",
+          "confirmSave": "Save and allow this",
+          "confirmUnset": "Use the default and allow this",
+          "introReset": "Resetting removes the saved settings, which can't be read. Every setting goes back to its environment variable or its default, which may let the server reach further than it does now:",
+          "confirmReset": "Reset and allow this"
+        },
+        "title": "Server settings",
+        "hint": "What the server reads when it starts. A daemon reads the saved settings the next time it starts, unless a flag or an environment variable of its own sets them.",
+        "loading": "Reading the server settings…",
+        "loadError": "Couldn't read the server settings:",
+        "chipError": "Error reading settings",
+        "chipRestart": "Restart needed",
+        "chipProblems_one": "{{count}} problem",
+        "chipProblems_other": "{{count}} problems",
+        "chipSaved_one": "{{count}} saved",
+        "chipSaved_other": "{{count}} saved",
+        "placeholderDefault": "Default: {{value}}",
+        "runningLine": "Running: {{value}} ({{source}})",
+        "valueNotSet": "not set",
+        "source": {
+          "flag": "flag {{name}}",
+          "env": "variable {{name}}",
+          "saved": "saved",
+          "default": "default"
+        },
+        "overriddenFlag": "The daemon was started with {{name}}, so a saved value has no effect until that flag is removed.",
+        "overriddenEnv": "The daemon's environment sets {{name}}, so a saved value has no effect until that variable is removed.",
+        "problemHint": "Remove the saved value with “Use the default”, or save a valid one.",
+        "banner": {
+          "restartTitle": "Restart needed",
+          "restartBody": "The running daemon started before these were saved, so it still runs the old values: {{keys}}. It reads the saved settings when it restarts.",
+          "olderBody": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure it reads the saved settings.",
+          "idleBody": "No daemon is running: the server reads these settings when it starts.",
+          "notServingTitle": "Listener not up",
+          "notServingBody": "The daemon runs, but its dedicated listener is not up: {{keys}}. Its log says why, for example a certificate file that cannot be read or a port already in use. Correct the setting, or the file or port it names, then restart the daemon."
+        },
+        "save": "Save",
+        "saveLabel": "Save {{setting}}",
+        "saving": "Saving…",
+        "useDefault": "Use the default",
+        "useDefaultLabel": "Use the default for {{setting}}",
+        "note": {
+          "saved": "Saved.",
+          "removed": "Back to the default.",
+          "unchanged": "Nothing changed: it is already saved like this.",
+          "also": "This also makes the server reach further, in ways the dialog did not list:"
+        },
+        "restart": {
+          "button": "Restart the daemon",
+          "working": "Restarting…",
+          "title": "Restart the daemon?",
+          "body": "Restarting stops the daemon and starts it again. It interrupts whatever the daemon is running: workflows and org runs.",
+          "after": "Then this page checks that the daemon is back and runs what is saved.",
+          "cancel": "Cancel",
+          "confirm": "Restart the daemon",
+          "checking": "Waiting for the daemon to report back…",
+          "back": "The daemon is back and runs the saved settings.",
+          "backListenerDown": "The daemon is back, but its dedicated listener is not up. Its log says why.",
+          "late": "The daemon hasn't reported back yet. Refresh to check again.",
+          "notDone": "The service manager did not restart the daemon.",
+          "noAutostart": "The daemon isn't registered for auto-start, so this page can't restart it. Stop it, then start it again:",
+          "install": "To let this page restart it next time, register it first:",
+          "copyLabel": "Copy the command {{command}}",
+          "byHand": "If a daemon was also started by hand, stop it first: the service's daemon would find that one running and exit."
+        },
+        "chipDamaged": "Saved settings damaged",
+        "reset": {
+          "button": "Reset the saved settings",
+          "working": "Resetting…",
+          "done": "The saved settings were reset. Every setting is back to its environment variable or its default."
+        }
       }
     }
   },

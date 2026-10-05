@@ -59,6 +59,168 @@ export namespace main {
 	        this.held_back = source["held_back"];
 	    }
 	}
+	export class APIConfigDaemon {
+	    running: boolean;
+	    reports_settings: boolean;
+	    autostart: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfigDaemon(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.reports_settings = source["reports_settings"];
+	        this.autostart = source["autostart"];
+	    }
+	}
+	export class APIConfigProblem {
+	    key: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfigProblem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.message = source["message"];
+	    }
+	}
+	export class APIConfigSetting {
+	    key: string;
+	    server_flag: string;
+	    env: string;
+	    saved?: string;
+	    default: string;
+	    effective: string;
+	    source: string;
+	    running?: string;
+	    running_source?: string;
+	    state: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfigSetting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.server_flag = source["server_flag"];
+	        this.env = source["env"];
+	        this.saved = source["saved"];
+	        this.default = source["default"];
+	        this.effective = source["effective"];
+	        this.source = source["source"];
+	        this.running = source["running"];
+	        this.running_source = source["running_source"];
+	        this.state = source["state"];
+	    }
+	}
+	export class APIConfigInfo {
+	    v: number;
+	    environment: string;
+	    settings: APIConfigSetting[];
+	    daemon: APIConfigDaemon;
+	    restart_needed: boolean;
+	    problems: APIConfigProblem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfigInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.v = source["v"];
+	        this.environment = source["environment"];
+	        this.settings = this.convertValues(source["settings"], APIConfigSetting);
+	        this.daemon = this.convertValues(source["daemon"], APIConfigDaemon);
+	        this.restart_needed = source["restart_needed"];
+	        this.problems = this.convertValues(source["problems"], APIConfigProblem);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class APIWidening {
+	    key: string;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIWidening(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.reason = source["reason"];
+	    }
+	}
+	export class APIConfigChange {
+	    v: number;
+	    environment: string;
+	    settings: APIConfigSetting[];
+	    daemon: APIConfigDaemon;
+	    restart_needed: boolean;
+	    problems: APIConfigProblem[];
+	    applied: boolean;
+	    changed: string[];
+	    widening: APIWidening[];
+	    removed_unreadable_row?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfigChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.v = source["v"];
+	        this.environment = source["environment"];
+	        this.settings = this.convertValues(source["settings"], APIConfigSetting);
+	        this.daemon = this.convertValues(source["daemon"], APIConfigDaemon);
+	        this.restart_needed = source["restart_needed"];
+	        this.problems = this.convertValues(source["problems"], APIConfigProblem);
+	        this.applied = source["applied"];
+	        this.changed = source["changed"];
+	        this.widening = this.convertValues(source["widening"], APIWidening);
+	        this.removed_unreadable_row = source["removed_unreadable_row"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class APIKey {
 	    id: string;
 	    profile_id: string;
@@ -575,6 +737,20 @@ export namespace main {
 	        this.username = source["username"];
 	        this.expiry = source["expiry"];
 	        this.active = source["active"];
+	    }
+	}
+	export class DaemonRestartResult {
+	    restarted: boolean;
+	    via: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DaemonRestartResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.restarted = source["restarted"];
+	        this.via = source["via"];
 	    }
 	}
 	export class DashboardStats {

@@ -5,9 +5,19 @@ import {main} from '../models';
 import {connections} from '../models';
 import {workflow} from '../models';
 
+export function APIConfigReset(arg1:boolean,arg2:boolean):Promise<main.APIConfigChange>;
+
+export function APIConfigSet(arg1:Record<string, string>,arg2:boolean,arg3:boolean):Promise<main.APIConfigChange>;
+
+export function APIConfigShow():Promise<main.APIConfigInfo>;
+
+export function APIConfigUnset(arg1:Array<string>,arg2:boolean,arg3:boolean):Promise<main.APIConfigChange>;
+
 export function APIKeyCreate(arg1:string,arg2:boolean):Promise<main.APIKeyCreated>;
 
 export function APIKeyList():Promise<Array<main.APIKey>>;
+
+export function APIKeyRename(arg1:string,arg2:string):Promise<main.APIKey>;
 
 export function APIKeyRevoke(arg1:string):Promise<main.APIKey>;
 
@@ -114,6 +124,8 @@ export function CreateProfile(arg1:string,arg2:string,arg3:string):Promise<main.
 export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
 
 export function CreateWorkflowFromTemplate(arg1:string):Promise<main.WorkflowSummary>;
+
+export function DaemonRestart():Promise<main.DaemonRestartResult>;
 
 export function DeleteChatConversation(arg1:string):Promise<string>;
 

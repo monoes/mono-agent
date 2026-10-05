@@ -192,6 +192,40 @@ func TestAPIModelsPassesOnlyWhatWasGiven(t *testing.T) {
 	}
 }
 
+// Renaming a key is `api key update <id> --name=<name>` and nothing else: it never
+// touches the context switch, a name stays one argument attached to its flag
+// whatever it looks like, and what the CLI answers is the key's metadata (the fake
+// answers with a key, as it does for the create, so that a method that let one
+// through would show).
+func TestAPIKeyRenameShellsOutToCLI(t *testing.T) {
+	argsLog := fakeAPICLI(t)
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	a.setActiveProfileID("work")
+
+	renamed, err := a.APIKeyRename("key_abcdefghijkl", "  my renamed app  ")
+	if err != nil || renamed.ID != "key_abcdefghijkl" || renamed.Prefix != "sk-ma-AbCdEf" {
+		t.Fatalf("APIKeyRename = %+v, %v", renamed, err)
+	}
+	if raw, _ := json.Marshal(renamed); strings.Contains(string(raw), fakeAPIKey) {
+		t.Fatal("a key came out of APIKeyRename")
+	}
+	if _, err := a.APIKeyRename("key_abcdefghijkl", "--context"); err != nil { // a name, not a flag
+		t.Fatal(err)
+	}
+	want := []string{
+		argv("--profile", "work", "--json", "api", "key", "update", "key_abcdefghijkl", "--name=my renamed app"),
+		argv("--profile", "work", "--json", "api", "key", "update", "key_abcdefghijkl", "--name=--context"),
+	}
+	got := loggedArgs(t, argsLog)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if raw, _ := os.ReadFile(argsLog); strings.Contains(string(raw), fakeAPIKey) || strings.Contains(string(raw), "[--context]") || strings.Contains(string(raw), "[--no-context]") {
+		t.Fatal("a rename passed a key or touched the context switch")
+	}
+}
+
 func TestAPIRefusesBadInputBeforeCLI(t *testing.T) {
 	argsLog := fakeAPICLI(t)
 	a := newTestApp(t)
@@ -199,12 +233,18 @@ func TestAPIRefusesBadInputBeforeCLI(t *testing.T) {
 	if _, err := a.APIKeyCreate("   ", false); err == nil {
 		t.Fatal("an empty name must be refused")
 	}
+	if _, err := a.APIKeyRename("key_abcdefghijkl", "   "); err == nil {
+		t.Fatal("an empty new name must be refused")
+	}
 	for _, id := range []string{"", "  ", "--yes", "-x", " --profile"} {
 		if _, err := a.APIKeySetContext(id, true); err == nil {
 			t.Errorf("APIKeySetContext(%q) must be refused", id)
 		}
 		if _, err := a.APIKeyRevoke(id); err == nil {
 			t.Errorf("APIKeyRevoke(%q) must be refused", id)
+		}
+		if _, err := a.APIKeyRename(id, "new name"); err == nil {
+			t.Errorf("APIKeyRename(%q) must be refused", id)
 		}
 	}
 	if _, err := os.Stat(argsLog); !os.IsNotExist(err) {
@@ -283,6 +323,7 @@ func TestAPICLIErrorsKeepTheirClass(t *testing.T) {
 			a.ctx = context.Background()
 			for name, call := range map[string]func() error{
 				"APIKeyRevoke": func() error { _, err := a.APIKeyRevoke("key_abcdefghijkl"); return err },
+				"APIKeyRename": func() error { _, err := a.APIKeyRename("key_abcdefghijkl", "renamed"); return err },
 				"APIStatus":    func() error { _, err := a.APIStatus(); return err },
 			} {
 				if err := call(); err == nil || err.Error() != c.want {

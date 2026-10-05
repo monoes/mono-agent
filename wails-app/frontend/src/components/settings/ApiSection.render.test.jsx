@@ -6,6 +6,7 @@ import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testi
 import i18n from '../../i18n.js'
 import es from '../../locales/es.json'
 import { mainListener, dedicatedListener, statusOf, modelsDoc, keyList, MISSING_SURFACE } from './api/__fixtures__/apiFixtures.js'
+import { configDoc } from './api/__fixtures__/configFixtures.js'
 
 const mockConfirm = vi.fn()
 vi.mock('../ConfirmDialog.jsx', () => ({ confirm: (...a) => mockConfirm(...a) }))
@@ -17,10 +18,11 @@ const App = {}
 beforeEach(async () => {
   vi.clearAllMocks()
   await i18n.changeLanguage('en')
-  for (const k of ['APIStatus', 'APIKeyList', 'APIModels', 'APIKeyCreate', 'APIKeySetContext', 'APIKeyRevoke']) App[k] = vi.fn()
+  for (const k of ['APIStatus', 'APIKeyList', 'APIModels', 'APIKeyCreate', 'APIKeySetContext', 'APIKeyRename', 'APIKeyRevoke', 'APIConfigShow', 'APIConfigSet', 'APIConfigUnset', 'DaemonRestart']) App[k] = vi.fn()
   App.APIStatus.mockResolvedValue(statusOf([mainListener()]))
   App.APIKeyList.mockResolvedValue(keyList())
   App.APIModels.mockResolvedValue(modelsDoc())
+  App.APIConfigShow.mockResolvedValue(configDoc())
   window.go = { main: { App } }
   window.runtime = { ClipboardSetText: vi.fn().mockResolvedValue(true) }
 })
