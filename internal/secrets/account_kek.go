@@ -31,12 +31,17 @@ const accountKEKID = "monoes..account"
 //   - interactive=true may ask for the file keyring's passphrase, exactly as
 //     the vault does. Only an explicit command that owns the terminal (the
 //     sign-in) should pass it.
-//   - interactive=false never prompts, so a gate that runs before a command
-//     has claimed stdin cannot swallow the command's piped input as a
-//     passphrase. Without the file keyring nothing can prompt, so it behaves
-//     as interactive=true. With the file keyring opted in it reads the key
-//     only when the passphrase is already known (remembered in this process,
-//     or in MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE or the configured
+//   - interactive=false never asks for the file keyring's passphrase (no
+//     prompt, no read of stdin or of /dev/tty), so a gate that runs before a
+//     command has claimed stdin cannot swallow the command's piped input as a
+//     passphrase. That is all it promises: like any vault call it can still
+//     wait inside the OS keychain backend (a locked macOS keychain, a Secret
+//     Service unlock dialog, the first-use write), which is why callers touch
+//     the key only when a refresh is due (spec D16 and §4.6, issue #54).
+//     Without the file keyring there is no passphrase to ask for, so it
+//     behaves as interactive=true. With the file keyring opted in it reads the
+//     key only when the passphrase is already known (remembered in this
+//     process, or in MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE or the configured
 //     passphrase file) and it never creates a key: creating the file keyring
 //     needs the passphrase prompt that the interactive sign-in owns, so
 //     create=true returns the key that exists (in the OS keychain or the file
@@ -46,7 +51,9 @@ const accountKEKID = "monoes..account"
 // copy the caller may wipe.
 func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 	if interactive || !fileKeyringEnabled() {
-		// Without the file keyring nothing can prompt, so one path serves both.
+		// Without the file keyring there is no passphrase to ask for, so one path
+		// serves both. (The OS keychain backend may still wait on a dialog of its
+		// own, in either mode.)
 		kek, found, err = accountKEKVault(create)
 	} else {
 		kek, found, err = accountKEKQuiet(create)
