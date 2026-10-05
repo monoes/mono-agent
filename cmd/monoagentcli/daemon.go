@@ -114,9 +114,12 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 			orgs := newOrgServices(db, engine)
-			apiRT, err := newAPIRuntime(db.DB, api, func(format string, args ...any) { orgs.logf("api: "+format, args...) })
+			apiRT, err := daemonAPIRuntime(db.DB, api, func(format string, args ...any) { orgs.logf("api: "+format, args...) })
 			if err != nil {
 				return err
+			}
+			if apiRT.disabled != nil { // the settings saved with `api config` cannot be used: everything else runs
+				fmt.Fprintf(os.Stderr, "warning: OpenAI-compatible API not served: %v\n", apiRT.disabled)
 			}
 			forcedExitAPI.Store(apiRT)
 			defer apiRT.drain() // runs before the database closes: no agent CLI outlives the daemon
@@ -156,11 +159,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
-			go daemonhb.RunWith(ctx, daemonhb.Heartbeat{
-				APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, V1Addr: v1ServingAddr, Version: getVersion(),
-				APIConfinement: apiRT.confinementReport(servingAddr, false), V1Confinement: apiRT.confinementReport(v1ServingAddr, true),
-				ContextConfinement: apiRT.contextReport(), AutoConfinement: apiRT.autoReport(),
-			},
+			go daemonhb.RunWith(ctx, apiRT.heartbeat(servingAddr, bridgeServingAddr, v1ServingAddr),
 				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
 			orgs.start(ctx, engine)
 			// Automatic roster re-validation (#230): off unless the user
@@ -191,7 +190,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().BoolVar(&allowMutations, "allow-mutations", false, "Serve mutating HTTP API endpoints (the endpoint receiver is served either way)")
 	api.bind(c)
 	c.Flags().BoolVar(&bridgeOn, "bridge", true, "Hold the Chrome extension bridge open in this process (same bridge `extension serve` runs standalone)")
-	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd())
+	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd(), newDaemonRestartCmd(cfg))
 	return c
 }
 

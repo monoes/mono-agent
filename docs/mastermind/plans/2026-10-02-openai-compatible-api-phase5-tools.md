@@ -12,7 +12,7 @@
 - Files under 500 lines; conventional commits with the trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; never a bare `go build ./cmd/monoagentcli` in the repo root; plain separate git commands.
 - No real model call in default tests. Tests that run the real monomind against the fake `codex` (`CODEX_CLI_BIN`) are gated by `MONOMIND_SMOKE=1`; the fake lives in `internal/openaiapi/testdata`.
 - No tool name, argument or result in a log line or in an error message. Chat without tools stays as it is.
-- Known failing tests on macOS (8) are not regressions (see the spec, section 11).
+- Known failing tests on macOS (8) are not regressions (see the spec, section 12).
 
 ## Evidence this plan rests on
 

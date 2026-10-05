@@ -553,6 +553,86 @@ before giving a key to anyone you would not give a shell.
   listener that faces the internet. There is no CORS: browser clients are out
   of scope.
 
+**Saved server settings.** The settings that decide the exposure above
+(`--v1-addr`, the TLS files, the three confinement classes and the two runtime
+lists) and the two limits can be saved with `monoagentcli api config set`, so
+that a daemon the login service starts, which has no flags, has them. They are
+one JSON row (`api_gateway_config`) of the `settings` table of
+`~/.monoagent/monoagent.db`: paths of TLS files, never their contents, and no
+secret. The order is flag, then environment variable, then saved, then default,
+so a saved value never loosens what a flag or a variable of the process says (a
+`MONOAGENT_API_CONFINEMENT=chat-only` in the service's own environment holds
+whatever is saved), and it fills what they leave out.
+
+- Whoever can write that database (the OS user the daemon runs as, and root)
+  can change what the daemon exposes the next time it starts, as whoever can
+  edit its LaunchAgent, systemd unit or Scheduled Task can. The row is not a new
+  boundary: run the server as a dedicated OS user, whose database it is.
+- A change takes effect when the server starts, never while it runs.
+  `monoagentcli daemon restart` starts it again through the service manager the
+  daemon is registered with, and **interrupts what the daemon is running**
+  (workflows, org runs); it says so first. A daemon that is not registered, or
+  that was started by hand, is not restarted by it. How the daemon ends is the
+  service manager's (launchd, systemd) and nothing here claims a graceful stop.
+  On Windows the Scheduled Task is ended with `schtasks /end`, and whether that
+  stops the process its `cmd` wrapper started was not verified on Windows; the
+  command waits for the daemon to release its lock before it starts it again.
+- A change that makes the server reach further needs `--yes` (`api config set`
+  and `unset`; without it exit 3 with the reasons, `--dry-run` shows them): a
+  dedicated listener that reaches further than the saved one (beyond this
+  machine, another host beyond it, or every interface where it was one host), a
+  higher confinement class (of a listener, of a `--context` key or of `auto`) on
+  a listener on this machine or beyond it, a runtime list that gains a runtime
+  it did not have (one of the default list that a saved list left out counts
+  when it comes back, so undoing a `codex`-only list needs `--yes`), tool calling
+  or image generation switched on again, or the removal of a saved
+  row that cannot be read (below). It guards against a
+  script, an agent's shell tool or a hurried edit widening the server without
+  saying so. It is not an access control: whoever can run the CLI as your OS
+  user can pass `--yes`. The check compares the effective policy, so it also
+  catches an `unset` that takes a value held below its default back up (a
+  class, or a runtime list). One
+  cost: raising `confinement` always needs `--yes`, because the daemon's own
+  environment may name a listener beyond the machine that the row does not.
+- What the saved text may be. The saved layer outlives the process that wrote
+  it, is printed by `api config show` and handed to every model that reads the
+  settings, and can be written by a caller that is not the operator, so it is
+  held to two rules the flags and the environment are not: no value may contain
+  a control character (an escape sequence in a TLS path would drive the
+  terminal that shows it; `show` also writes any that is already in the row
+  out as `\x1b`), and a TLS file must be an absolute path (a service starts in
+  another folder and nothing expands a `~`). A certificate or key file is read
+  as a regular file of at most 1 MiB, whoever named it, so a path that names a
+  FIFO or a device such as `/dev/zero` is an error that the server reports and
+  not a start that hangs or runs out of memory. Printable text is still text:
+  a model that reads a saved path reads whatever words it holds, which is a
+  reason to give an agent host that can change settings no more than it needs.
+- A saved value that fails its rule (a hand edit) makes `httpapi` exit at
+  start (exit 3, naming the setting), and `api models` and `api status`
+  refuse, rather than guess; `api config unset <setting>` removes it. A row that
+  cannot be read at all (not a JSON object, a bad version, a field of the wrong
+  type) stops every `api config` command, `httpapi`, `api models` and
+  `api status` too, with exit 3 and a message that starts `the saved settings
+  are damaged`; one command removes it: `api config unset --all --yes`. The
+  daemon does not stop with either: it does more than serve the API, and a
+  login service would start it again and again, so it starts without the
+  OpenAI-compatible API (no `/v1` anywhere, nothing in its heartbeat), says why
+  on stderr and in its log, and runs everything else; it never ignores a saved
+  setting to start the API, which would serve with the defaults a server that
+  someone had limited. `daemon restart` refuses, restarting nothing, when the
+  saved settings cannot be used. Removing a row that cannot be read asks
+  for `--yes` because what the row limited cannot be told (a `confinement` of
+  `chat-only` in it, say), so returning every setting to its default may reach
+  further than anything: the same gate as any other widening, so a damaged row
+  is not a way to drop a restriction without confirming. What the row held is
+  gone, and the server then starts on its flags, its environment and the
+  defaults. A row written by a newer `monoagentcli` is the exception: it is exit
+  1, never rewritten and never removed by these commands, since that would lose
+  what that version saved.
+- The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
+  setting's effective value and where it came from (`flag`, `env`, `saved`,
+  `default`): addresses, classes and paths, no secret.
+
 **Context keys.** A key created with `--context` adds up to five excerpts
 (1,200 characters each, source base names only, never paths) from that
 profile's own documents and captures to the system prompt, framed as data

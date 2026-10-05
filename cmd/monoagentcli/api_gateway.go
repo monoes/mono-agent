@@ -15,6 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/apiconfig"
+	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/httpapi"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/openaiapi"
@@ -92,7 +94,16 @@ type apiRuntime struct {
 	// autoMax is the strongest class the auto model may pick.
 	autoMax openaiapi.Class
 	v1Addr  string
-	logf    func(format string, args ...any)
+	// tlsCertFile and tlsKeyFile are the saved pair of the dedicated listener's certificate:
+	// tlsserve uses them when the environment names none.
+	tlsCertFile, tlsKeyFile string
+	// resolved is the effective value of each setting and where it came from, for the
+	// heartbeat.
+	resolved []apiconfig.Resolved
+	logf     func(format string, args ...any)
+	// disabled is why this runtime serves nothing (the daemon found the settings saved with
+	// `api config` unusable, see daemonAPIRuntime), nil for a runtime that does.
+	disabled error
 
 	mu       sync.Mutex
 	gw       *openaiapi.Gateway // nil until built, and when it could not be
@@ -107,10 +118,16 @@ type apiRuntime struct {
 	published atomic.Pointer[openaiapi.Gateway]
 }
 
-// newAPIRuntime reads the flags, falling back to the environment. Bad values
-// are invalid input (exit 3).
+// newAPIRuntime reads the flags, falling back to the environment and then to the settings
+// saved with `api config` (an empty variable is an unset one). Bad values are invalid input
+// (exit 3), saved ones included: a server does not start on settings that fail their rules.
 func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
-	conf, err := openaiapi.ConfigFromEnv(os.Getenv)
+	saved, err := savedSettings(context.Background(), db)
+	if err != nil {
+		return nil, &savedSettingsError{err}
+	}
+	getenv := apiconfig.Overlay(saved, os.Getenv) // the environment, with the saved settings under it
+	conf, err := openaiapi.ConfigFromEnv(getenv)
 	if err != nil {
 		return nil, errInvalidInput("%v", err)
 	}
@@ -123,47 +140,86 @@ func newAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)
 
 	override := f.confinement
 	if override == "" {
-		override = os.Getenv("MONOAGENT_API_CONFINEMENT")
+		override = getenv("MONOAGENT_API_CONFINEMENT")
 	}
 	if override != "" {
 		if _, err := openaiapi.ParsePolicy(override); err != nil {
 			return nil, errInvalidInput("%v", err)
 		}
 	}
-	contextMax, err := effectiveContextMax(f.contextConfinement, os.Getenv)
+	contextMax, err := effectiveContextMax(f.contextConfinement, getenv)
 	if err != nil {
 		return nil, err
 	}
-	autoMax, err := effectiveAutoMax(f.autoConfinement, os.Getenv)
+	autoMax, err := effectiveAutoMax(f.autoConfinement, getenv)
 	if err != nil {
 		return nil, err
 	}
 	v1 := f.v1Addr
 	if v1 == "" {
-		v1 = os.Getenv("MONOAGENT_API_V1_ADDR")
+		v1 = getenv("MONOAGENT_API_V1_ADDR")
 	}
 	if v1 != "" {
-		if err := validListenAddr(v1); err != nil {
+		if err := apiconfig.ValidListenAddr(v1); err != nil {
 			return nil, errInvalidInput("--v1-addr (MONOAGENT_API_V1_ADDR) must be host:port, such as 127.0.0.1:9443 or :9443: %v", err)
 		}
 	}
 
 	deps := openaiapi.DefaultDeps(db, getVersion())
 	deps.Logf = logf
-	return &apiRuntime{deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1, logf: logf}, nil
+	resolved := apiconfig.ResolveAll(apiconfig.Flags{
+		V1Addr: f.v1Addr, Confinement: f.confinement, ContextConfinement: f.contextConfinement,
+		AutoConfinement: f.autoConfinement, MaxConcurrent: f.maxConcurrent,
+	}, os.Getenv, saved)
+	return &apiRuntime{
+		deps: deps, conf: conf, override: override, contextMax: contextMax, autoMax: autoMax, v1Addr: v1,
+		tlsCertFile: saved.TLSCertFile, tlsKeyFile: saved.TLSKeyFile, resolved: resolved, logf: logf,
+	}, nil
 }
 
-// validListenAddr checks the shape of a listen address: host:port with a
-// numeric port. The host may be empty, as in :9443.
-func validListenAddr(addr string) error {
-	_, port, err := net.SplitHostPort(addr)
+// savedSettingsError is the error of newAPIRuntime that comes from the settings saved with
+// `api config` (a row that cannot be read, a value that fails its rule), as against a flag or a
+// variable of this start. It is that error to everything else (the exit code, the message), and
+// the daemon tells it apart: see daemonAPIRuntime.
+type savedSettingsError struct{ err error }
+
+func (e *savedSettingsError) Error() string { return e.err.Error() }
+func (e *savedSettingsError) Unwrap() error { return e.err }
+
+// daemonAPIRuntime is newAPIRuntime for the daemon, which does more than serve the API. When the
+// settings saved with `api config` cannot be used the daemon must not stop with them: a login
+// service would start it again and again, and nothing it runs (workflows, schedules, org runs)
+// would ever run. It serves no OpenAI-compatible API instead and says why where it logs; `api
+// config show` and the repair it names are how the person finds out and fixes it. A saved setting
+// is never ignored to make the API start: ignoring a row would serve, with the defaults, a server
+// that someone had limited. A bad flag or variable of this start is still the error it was.
+func daemonAPIRuntime(db *sql.DB, f apiFlags, logf func(format string, args ...any)) (*apiRuntime, error) {
+	rt, err := newAPIRuntime(db, f, logf)
+	var unusable *savedSettingsError
+	if !errors.As(err, &unusable) {
+		return rt, err
+	}
+	why := fmt.Errorf("the settings saved with `monoagentcli api config` cannot be used, so this daemon does not serve the OpenAI-compatible API: %w", unusable.err)
+	logf("%v", why)
+	return &apiRuntime{logf: logf, gwErr: errors.New("the saved settings cannot be used"), disabled: why}, nil
+}
+
+// savedSettings loads the settings saved with `api config` for whatever stands for a server
+// started now (the server, `api models`, `api status`). Settings that fail their rules are
+// invalid input (exit 3), as a bad flag is; a document that cannot be read is an error.
+func savedSettings(ctx context.Context, db *sql.DB) (apiconfig.Settings, error) {
+	saved, err := apiconfig.LoadValid(ctx, db)
+	return saved, asCLIError(err)
+}
+
+// savedEnv is the process environment with the saved settings under it: what a server started
+// now would read in its place.
+func savedEnv(ctx context.Context, db *sql.DB) (func(string) string, error) {
+	saved, err := savedSettings(ctx, db)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return fmt.Errorf("%q is not a port number", port)
-	}
-	return nil
+	return apiconfig.Overlay(saved, os.Getenv), nil
 }
 
 // gateway builds the gateway on first use. A process that cannot (another one
@@ -230,6 +286,31 @@ func (a *apiRuntime) autoReport() string {
 	return openaiapi.Policy{Max: a.autoMax}.String()
 }
 
+// settingsReport is the effective value of every setting and where it came from, for the
+// daemon's heartbeat.
+func (a *apiRuntime) settingsReport() map[string]daemonhb.APISetting {
+	if len(a.resolved) == 0 {
+		return nil // a runtime that serves nothing resolved nothing: say nothing, as a daemon that predates the report does
+	}
+	out := make(map[string]daemonhb.APISetting, len(a.resolved))
+	for _, r := range a.resolved {
+		out[r.Key] = daemonhb.APISetting{Value: r.Text, Source: r.Source}
+	}
+	return out
+}
+
+// heartbeat is the daemon's heartbeat before its schedules: what it serves, the policies it
+// applies and the setting each of them came from. apiAddr, bridgeAddr and v1Addr are the
+// addresses it is serving, "" for what it does not.
+func (a *apiRuntime) heartbeat(apiAddr, bridgeAddr, v1Addr string) daemonhb.Heartbeat {
+	return daemonhb.Heartbeat{
+		APIAddr: apiAddr, BridgeAddr: bridgeAddr, V1Addr: v1Addr, Version: getVersion(),
+		APIConfinement: a.confinementReport(apiAddr, false), V1Confinement: a.confinementReport(v1Addr, true),
+		ContextConfinement: a.contextReport(), AutoConfinement: a.autoReport(),
+		APISettings: a.settingsReport(),
+	}
+}
+
 // mainMount returns the route registrar that serves /v1 on the main HTTP API
 // listener, or nil when that listener is not loopback: /v1 is never served
 // in plaintext off-loopback. Expose it with --v1-addr instead.
@@ -255,7 +336,7 @@ func (a *apiRuntime) startV1(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	tlsCfg, err := tlsserve.Resolve(tlsserve.Config{
-		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv,
+		Addr: a.v1Addr, CertEnv: apiTLSCertEnv, KeyEnv: apiTLSKeyEnv, CertFile: a.tlsCertFile, KeyFile: a.tlsKeyFile,
 		CacheDir: "api-tls", CommonName: "monoagentcli API server (self-signed)", Label: "API server",
 		Warn: func(msg string) { a.logf("%s", msg) },
 	})

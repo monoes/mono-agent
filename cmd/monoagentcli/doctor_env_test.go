@@ -84,8 +84,10 @@ func TestDaemonArgsCarryDoctorsFlags(t *testing.T) {
 }
 
 type fakeAutostart struct {
-	installed bool
-	started   int
+	installed  bool
+	started    int
+	restarted  int
+	restartErr error
 }
 
 func (f *fakeAutostart) Install(context.Context) (autostart.Result, error) {
@@ -96,6 +98,10 @@ func (f *fakeAutostart) Status(context.Context) (bool, string) {
 	return f.installed, "/x/monoagent-daemon.service"
 }
 func (f *fakeAutostart) Start(context.Context) error { f.started++; return nil }
+func (f *fakeAutostart) Restart(context.Context) error {
+	f.restarted++
+	return f.restartErr
+}
 
 // The login service runs the daemon with the defaults: it is started only
 // when doctor runs with them too.

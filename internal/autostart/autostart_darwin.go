@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"text/template"
 )
 
@@ -140,6 +141,16 @@ func (darwinInstaller) Status(ctx context.Context) (bool, string) {
 			path, target, err)
 	}
 	return true, path
+}
+
+// Restart is launchd's own: kickstart -k kills the running instance of the job and starts it
+// again (and starts a job that was not running).
+func (darwinInstaller) Restart(ctx context.Context) error {
+	target := launchdDomain() + "/" + Label
+	if out, err := launchctl(ctx, "kickstart", "-k", target); err != nil {
+		return fmt.Errorf("launchctl kickstart -k %s: %w: %s", target, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (darwinInstaller) Start(ctx context.Context) error {

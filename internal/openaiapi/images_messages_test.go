@@ -31,8 +31,8 @@ func TestImagesSwitchedOffSaysSo(t *testing.T) {
 		if rec.Code != c.status || e["code"] != c.code || e["param"] != "model" {
 			t.Errorf("%s: %d %v, want %d %s about model", name, rec.Code, e, c.status, c.code)
 		}
-		if !strings.Contains(msg, "switched off") || !strings.Contains(msg, "MONOAGENT_API_IMAGE_RUNTIMES") {
-			t.Errorf("%s: %q must say that image generation is switched off, and by what", name, msg)
+		if !strings.Contains(msg, "switched off") || !strings.Contains(msg, "MONOAGENT_API_IMAGE_RUNTIMES") || !strings.Contains(msg, "api config") {
+			t.Errorf("%s: %q must say that image generation is switched off, and by what (the variable, or the saved setting)", name, msg)
 		}
 		for _, wrong := range []string{"is installed", "(none)", "Models of", "image runtimes ("} {
 			if strings.Contains(msg, wrong) {

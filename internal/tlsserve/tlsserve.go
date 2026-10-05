@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -27,6 +28,11 @@ type Config struct {
 	// CertEnv and KeyEnv name the environment variables that hold the paths
 	// of an operator-supplied PEM certificate and key. Both or neither.
 	CertEnv, KeyEnv string
+	// CertFile and KeyFile are an explicit pair of PEM files (the saved
+	// settings of the OpenAI-compatible API), used when the environment names
+	// no pair: a pair in the environment wins, even if only one variable of it
+	// is set. Both or neither.
+	CertFile, KeyFile string
 	// CacheDir is the folder under ~/.monoagent where a generated
 	// self-signed certificate is cached, for example "webhook-tls".
 	CacheDir string
@@ -45,21 +51,30 @@ type Config struct {
 // Order:
 //  1. CertEnv and KeyEnv, when both are set: an operator-supplied pair. Setting
 //     only one of them is an error, never a silent fallback.
-//  2. A loopback bind: plain HTTP.
-//  3. Otherwise a disk-cached self-signed certificate that covers
+//  2. CertFile and KeyFile, when the environment names none: an explicit pair.
+//     Giving only one of them is an error too.
+//  3. A loopback bind: plain HTTP.
+//  4. Otherwise a disk-cached self-signed certificate that covers
 //     localhost, 127.0.0.1 and ::1 only. A remote client must skip
-//     verification, so real deployments set option 1 or terminate TLS in a
-//     proxy.
+//     verification, so real deployments set option 1 or 2 or terminate TLS in
+//     a proxy.
 //
 // A non-loopback bind never falls through to plain HTTP: if generating the
 // self-signed certificate fails, Resolve returns an error.
 func Resolve(c Config) (*tls.Config, error) {
 	certPath, keyPath := os.Getenv(c.CertEnv), os.Getenv(c.KeyEnv)
+	fromEnv := certPath != "" || keyPath != ""
+	if !fromEnv {
+		certPath, keyPath = c.CertFile, c.KeyFile
+	}
 	if certPath != "" || keyPath != "" {
 		if certPath == "" || keyPath == "" {
+			if !fromEnv {
+				return nil, fmt.Errorf("%s: a certificate file and a key file must both be given to use an explicit TLS certificate", c.Label)
+			}
 			return nil, fmt.Errorf("%s: %s and %s must both be set to use an explicit TLS certificate", c.Label, c.CertEnv, c.KeyEnv)
 		}
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		cert, err := loadKeyPair(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("%s: loading TLS cert/key from %s/%s: %w", c.Label, certPath, keyPath, err)
 		}
@@ -78,6 +93,52 @@ func Resolve(c Config) (*tls.Config, error) {
 		c.Warn(fmt.Sprintf("%s bound to a non-loopback address with no explicit TLS cert configured — using an auto-generated self-signed certificate; set %s/%s for a real certificate", c.Label, c.CertEnv, c.KeyEnv))
 	}
 	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, nil
+}
+
+// maxPEMFile bounds what is read from a certificate or a key file. A certificate chain and its key
+// are a few kilobytes, so a file past a mebibyte is not one, and a device such as /dev/zero would
+// never end.
+const maxPEMFile = 1 << 20
+
+// loadKeyPair is tls.LoadX509KeyPair over readPEMFile: the same pair, read with the limits below.
+func loadKeyPair(certPath, keyPath string) (tls.Certificate, error) {
+	certPEM, err := readPEMFile(certPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM, err := readPEMFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+// readPEMFile reads a certificate or key file, a regular one (through a link, as a certificate
+// manager keeps them) and of at most maxPEMFile bytes. The path can come from the saved settings,
+// which a caller other than the operator may change, so a FIFO (opening it waits for a writer for
+// ever), a device or a huge file is an error that the server reports and not a start that hangs or
+// runs out of memory. The type is checked before the file is opened for that reason.
+func readPEMFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPEMFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPEMFile {
+		return nil, fmt.Errorf("%s is larger than %d bytes, so it is not a certificate or a key", path, maxPEMFile)
+	}
+	return data, nil
 }
 
 // IsLoopbackAddr reports whether addr (a "host:port" bind address) resolves

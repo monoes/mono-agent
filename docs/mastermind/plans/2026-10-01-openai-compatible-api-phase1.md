@@ -10893,7 +10893,7 @@ pass on the first run (everything they check is already implemented); if one fai
 - The live canaries run the same gateway against the runtimes really installed on this machine (a claude turn must expose no native tool;
   one real chat per installed runtime; a streamed chat through a real TLS listener). They call real models, so they are **skipped unless
   `MONOAGENT_LIVE_API_TESTS=1`**. Do not run them in the default flow. Until `TestLiveClaudeIsChatOnly` has been run and passed on a real
-  machine, the docs call claude's confinement "by design", not a guarantee (spec section 14).
+  machine, the docs call claude's confinement "by design", not a guarantee (spec section 15).
 
 **Files:**
 - Test: `internal/openaiapi/e2e_test.go`
@@ -11288,7 +11288,7 @@ git commit -m "test(openaiapi): add an end-to-end test through the real Exec and
 
 ### Task 20: Documentation for phase 1
 
-Spec section 16 (the phase 1 share). Everything an operator or an agent needs to use and to expose the API safely:
+Spec section 17 (the phase 1 share). Everything an operator or an agent needs to use and to expose the API safely:
 
 - **AGENTS.md:** a subsection under "HTTP API", the six new environment variables, the `ref api` index row, and a fix to the stale
   sandbox paragraph (it still described claude as `scoped` and listed codex and grok "on 2.19.0"; on monomind 2.22.0 claude and codex list
