@@ -19,6 +19,9 @@ func EnforceDate() time.Time {
 // max(now, hw) has reached it. Judging against the high-water mark hw as well
 // means that setting the clock back does not postpone the date.
 func Enforced(now, hw time.Time) bool {
+	// Compare wall-clock time only (see judge): with a monotonic reading on both,
+	// hw.After(now) would not see a clock set back, and the date would be postponed.
+	now, hw = now.Round(0), hw.Round(0)
 	date := EnforceDate()
 	if date.IsZero() {
 		return false

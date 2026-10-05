@@ -61,6 +61,11 @@ func Evaluate(sess *Session, now time.Time) Status {
 // no session, refused, no token, a token that does not verify, a clock that
 // went back, a token from the future, then ok, grace and expired.
 func judge(sess *Session, rcpt *Receipt, verr *VerifyError, now time.Time) Status {
+	// Compare wall-clock time only. A time from time.Now carries a monotonic
+	// reading, and when both operands do, Before, After and Sub compare those
+	// alone; the monotonic clock does not follow a system clock that is set back,
+	// so a wall-clock rollback would go unseen. Round(0) strips the reading.
+	now = now.Round(0)
 	st := Status{V: 1, EnforceFrom: EnforceDate()}
 	var hw time.Time
 	if sess != nil {
