@@ -78,7 +78,6 @@ func judge(sess *Session, rcpt *Receipt, verr *VerifyError, now time.Time) Statu
 		u := *sess.User
 		st.User = &u
 	}
-	st.Plan = sess.Plan
 	switch {
 	case sess.State == stateRefused:
 		return locked(ReasonRefused)
@@ -90,7 +89,7 @@ func judge(sess *Session, rcpt *Receipt, verr *VerifyError, now time.Time) Statu
 		return locked(ReasonInvalid) // a caller that forgot to verify must not crash the gate
 	}
 	st.IssuedAt, st.ValidUntil, st.GraceUntil = rcpt.IssuedAt, rcpt.ExpiresAt, rcpt.IssuedAt.Add(GraceWindow)
-	st.Plan = rcpt.Plan
+	st.Plan = rcpt.Plan // only a verified token says what the plan is: the stored one is unverified, user-writable JSON
 	if st.User == nil {
 		st.User = &User{ID: rcpt.Sub}
 	}

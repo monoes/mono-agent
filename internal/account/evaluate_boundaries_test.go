@@ -161,7 +161,8 @@ func TestTheClockNotTheHighWaterMarkDecidesOKGraceAndExpiry(t *testing.T) {
 }
 
 // Status keeps the whole stored user, a copy of it, even when the token names
-// another sub; the plan is the token's: it is signed, the stored one is a copy.
+// another sub. The plan is the token's, in every state that has a receipt: the
+// token is signed, the stored plan is not.
 func TestEvaluateKeepsTheStoredUserAndReportsThePlanOfTheToken(t *testing.T) {
 	f := accounttest.New(t)
 	now := f.Clock.Now()
@@ -171,21 +172,27 @@ func TestEvaluateKeepsTheStoredUserAndReportsThePlanOfTheToken(t *testing.T) {
 		name string
 		iat  time.Duration
 		hw   time.Duration
+		last string
+		want string
 	}{
-		{"ok", -10 * time.Minute, 0},
-		{"grace", -2 * hour, 0},
-		{"expired", -30 * hour, 0},
-		{"clock rolled back", -10 * time.Minute, 2 * hour},
-		{"token from the future", 20 * time.Minute, 0},
+		{"ok", -10 * time.Minute, 0, "", "ok/"},
+		{"grace", -2 * hour, 0, "", "grace/unreachable"},
+		{"expired", -30 * hour, 0, "", "locked/expired"},
+		{"key_unknown after the grace", -30 * hour, 0, "key_unknown", "locked/key_unknown"},
+		{"clock rolled back", -10 * time.Minute, 2 * hour, "", "locked/clock_rollback"},
+		{"token from the future", 20 * time.Minute, 0, "", "locked/clock_skew"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			user := stored
 			sess := &account.Session{
-				V: 1, User: &user, Plan: "stale", HW: now.Add(c.hw),
+				V: 1, User: &user, Plan: "stale", HW: now.Add(c.hw), LastResult: c.last,
 				AccessToken: f.Token(accounttest.TokenOptions{IssuedAt: now.Add(c.iat), Sub: "token-sub", Plan: "pro"}),
 			}
 			st := account.Evaluate(sess, now)
+			if got := verdict(st); got != c.want {
+				t.Fatalf("Evaluate = %s, want %s", got, c.want)
+			}
 			if st.User == nil || *st.User != stored || st.User == sess.User {
 				t.Fatalf("user = %+v, want a copy of the stored %+v, not one rebuilt from the token's sub", st.User, stored)
 			}
@@ -193,6 +200,46 @@ func TestEvaluateKeepsTheStoredUserAndReportsThePlanOfTheToken(t *testing.T) {
 				t.Fatalf("plan = %q, want the token's pro, not the stored stale one", st.Plan)
 			}
 		})
+	}
+}
+
+// Only a verified token says what the plan is. The stored plan is unverified,
+// user-writable JSON, so a session without a verified token reports none, even
+// while the gate is dormant: a locked status is then still Allowed(), and a
+// consumer that read the plan from it would be trusting that file.
+func TestEvaluateReportsNoPlanWithoutAVerifiedToken(t *testing.T) {
+	f := accounttest.New(t)
+	now := f.Clock.Now()
+	valid := f.Token(accounttest.TokenOptions{Plan: "pro"})
+	unpinned := f.Token(accounttest.TokenOptions{KID: "gone", Plan: "pro"})
+	cases := []struct {
+		name string
+		sess account.Session
+		want string
+	}{
+		{"refused, token kept", account.Session{AccessToken: valid, State: "refused"}, "locked/refused"},
+		{"refused, token cleared", account.Session{State: "refused"}, "locked/refused"},
+		{"no token", account.Session{}, "locked/not_logged_in"},
+		{"garbage", account.Session{AccessToken: "not-a-jwt"}, "locked/invalid"},
+		{"a key that is not pinned", account.Session{AccessToken: unpinned}, "locked/key_unknown"},
+	}
+	for _, c := range cases {
+		for _, dormant := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, dormant %v", c.name, dormant), func(t *testing.T) {
+				if dormant {
+					account.SetEnforceFromForTest(t, time.Time{})
+				}
+				sess := c.sess
+				sess.V, sess.HW, sess.Plan = 1, now, "pro"
+				st := account.Evaluate(&sess, now)
+				if got := verdict(st); got != c.want || st.Allowed() != dormant {
+					t.Fatalf("Evaluate = %s, allowed %v, want %s, allowed %v", got, st.Allowed(), c.want, dormant)
+				}
+				if st.Plan != "" {
+					t.Fatalf("plan = %q, want none: the stored plan is not verified", st.Plan)
+				}
+			})
+		}
 	}
 }
 

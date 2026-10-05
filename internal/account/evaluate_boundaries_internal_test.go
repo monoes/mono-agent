@@ -36,3 +36,14 @@ func TestJudgeKeepsItsOrderForInputsEvaluateNeverBuilds(t *testing.T) {
 		})
 	}
 }
+
+// Status.Plan comes only from a verified token. A caller that hands judge no
+// receipt (it forgot to verify) gets locked(invalid) and no plan, whatever plan
+// the session stores.
+func TestJudgeReportsNoPlanWithoutAReceipt(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	st := judge(&Session{V: 1, AccessToken: "x", Plan: "pro"}, nil, nil, now)
+	if st.State != StateLocked || st.Reason != ReasonInvalid || st.Plan != "" {
+		t.Fatalf("judge = %s/%s plan %q, want locked/invalid and no plan", st.State, st.Reason, st.Plan)
+	}
+}
