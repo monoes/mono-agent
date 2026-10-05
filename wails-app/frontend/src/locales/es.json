@@ -577,7 +577,6 @@
         "overriddenFlag": "El daemon se inició con {{name}}, así que un valor guardado no tiene efecto hasta que se quite esa opción.",
         "overriddenEnv": "El entorno del daemon define {{name}}, así que un valor guardado no tiene efecto hasta que se quite esa variable.",
         "problemHint": "Quita el valor guardado con «Usar el valor por defecto», o guarda uno válido.",
-        "problemDocHint": "Para empezar de cero, quita todos los ajustes guardados: monoagentcli api config unset --all",
         "banner": {
           "restartTitle": "Hay que reiniciar",
           "restartBody": "El daemon en marcha arrancó antes de que se guardaran estos ajustes, así que aún usa los valores antiguos: {{keys}}. Lee los ajustes guardados cuando se reinicia.",
@@ -610,6 +609,12 @@
           "noAutostart": "El daemon no está registrado para arrancar solo, así que esta página no puede reiniciarlo. Detenlo y vuelve a arrancarlo:",
           "install": "Para que esta página pueda reiniciarlo la próxima vez, regístralo antes:",
           "copyLabel": "Copiar el comando {{command}}"
+        },
+        "chipDamaged": "Ajustes guardados dañados",
+        "reset": {
+          "button": "Restablecer los ajustes guardados",
+          "working": "Restableciendo…",
+          "done": "Se restablecieron los ajustes guardados. Cada ajuste vuelve a su variable de entorno o a su valor por defecto."
         }
       }
     }

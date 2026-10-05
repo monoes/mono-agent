@@ -577,7 +577,6 @@
         "overriddenFlag": "The daemon was started with {{name}}, so a saved value has no effect until that flag is removed.",
         "overriddenEnv": "The daemon's environment sets {{name}}, so a saved value has no effect until that variable is removed.",
         "problemHint": "Remove the saved value with “Use the default”, or save a valid one.",
-        "problemDocHint": "To start over, remove every saved setting: monoagentcli api config unset --all",
         "banner": {
           "restartTitle": "Restart needed",
           "restartBody": "The running daemon started before these were saved, so it still runs the old values: {{keys}}. It reads the saved settings when it restarts.",
@@ -610,6 +609,12 @@
           "noAutostart": "The daemon isn't registered for auto-start, so this page can't restart it. Stop it, then start it again:",
           "install": "To let this page restart it next time, register it first:",
           "copyLabel": "Copy the command {{command}}"
+        },
+        "chipDamaged": "Saved settings damaged",
+        "reset": {
+          "button": "Reset the saved settings",
+          "working": "Resetting…",
+          "done": "The saved settings were reset. Every setting is back to its environment variable or its default."
         }
       }
     }

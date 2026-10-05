@@ -9,13 +9,13 @@ import i18n from '../../i18n.js'
 import en from '../../locales/en.json'
 import es from '../../locales/es.json'
 import { mainListener, dedicatedListener, statusOf, modelsDoc, keyList } from './api/__fixtures__/apiFixtures.js'
-import { changeDoc, configDoc } from './api/__fixtures__/configFixtures.js'
+import { DAMAGED, NEWER, WIDENING, changeDoc, configDoc } from './api/__fixtures__/configFixtures.js'
 
 const App = {}
 beforeEach(async () => {
   vi.clearAllMocks()
   await i18n.changeLanguage('en')
-  for (const k of ['APIStatus', 'APIKeyList', 'APIModels', 'APIKeyCreate', 'APIKeySetContext', 'APIKeyRename', 'APIKeyRevoke', 'APIConfigShow', 'APIConfigSet', 'APIConfigUnset', 'DaemonRestart']) App[k] = vi.fn()
+  for (const k of ['APIStatus', 'APIKeyList', 'APIModels', 'APIKeyCreate', 'APIKeySetContext', 'APIKeyRename', 'APIKeyRevoke', 'APIConfigShow', 'APIConfigSet', 'APIConfigUnset', 'APIConfigReset', 'DaemonRestart']) App[k] = vi.fn()
   App.APIStatus.mockResolvedValue(statusOf([mainListener()]))
   App.APIKeyList.mockResolvedValue(keyList())
   App.APIModels.mockResolvedValue(modelsDoc())
@@ -233,6 +233,126 @@ describe('ApiSection: an older answer never overwrites a newer one', () => {
     expect(maxInput()).toHaveValue(8) // what was typed; nothing was saved, and what is saved is still 6
     fireEvent.change(maxInput(), { target: { value: '6' } })
     expect(screen.getByRole('button', { name: c.saveLabel.replace('{{setting}}', c.rows.max_concurrent.label) })).toBeDisabled() // 6 is what is saved
+  })
+})
+
+describe('ApiSection: a saved row that cannot be read', () => {
+  // What the binding rejects with (app_api.go): exit 3 reaches the page as "invalid_input: " and the CLI's last line; exit 1 as that line.
+  const damagedErr = () => new Error(`invalid_input: ${DAMAGED}`)
+  const dry = () => ({ ...changeDoc(configDoc(), { applied: false, widening: [WIDENING.savedSettings] }), removed_unreadable_row: true })
+  const done = () => ({ ...changeDoc(configDoc({ running: {}, autostart: true }), { widening: [WIDENING.savedSettings] }), removed_unreadable_row: true })
+  const resetCall = () => App.APIConfigReset.mockImplementation(async (confirm, dryRun) => {
+    if (dryRun) return dry()
+    if (!confirm) throw new Error(`invalid_input: this change makes the server reach further: ${WIDENING.savedSettings.reason} Pass --yes to make the change anyway.`)
+    return done()
+  })
+  const block = () => within(screen.getByTestId('api-config-block'))
+  async function reset(label = c.reset.button, confirm = c.widening.confirmReset) {
+    fireEvent.click(await block().findByRole('button', { name: label }))
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: confirm }))
+  }
+
+  it('says it in the CLI\'s words, with the way out, when the settings cannot be read because of it, and only then', async () => {
+    App.APIConfigShow.mockRejectedValue(`invalid_input: ${DAMAGED}`) // a binding's rejection may be the bare text
+    await mountExpanded()
+    openBlock()
+    expect(await screen.findByTestId('api-config-load-error')).toHaveTextContent(`${c.loadError} ${DAMAGED}`)
+    expect(screen.getByTestId('api-config-chip-damaged')).toHaveTextContent(c.chipDamaged)
+    expect(block().getByRole('button', { name: c.reset.button })).toBeInTheDocument()
+    cleanup()
+
+    // a row in a newer format is exit 1: its message and nothing else, never a reset
+    App.APIConfigShow.mockRejectedValue(new Error(NEWER))
+    await mountExpanded()
+    openBlock()
+    expect(await screen.findByTestId('api-config-load-error')).toHaveTextContent(`${c.loadError} ${NEWER}`)
+    expect(screen.getByTestId('api-config-chip-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('api-config-chip-damaged')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: c.reset.button })).not.toBeInTheDocument()
+  })
+
+  it('removes the saved settings when asked, shows what is saved now, and reads again what failed for the same row', async () => {
+    App.APIStatus.mockRejectedValueOnce(damagedErr()) // the status and the models read the same row
+    App.APIConfigShow.mockRejectedValue(damagedErr())
+    App.APIModels.mockRejectedValue(damagedErr())
+    resetCall()
+    await mountExpanded()
+    openBlock()
+    expect(await screen.findByTestId('api-config-load-error')).toHaveTextContent(DAMAGED)
+    expect(screen.queryByTestId('api-base-url')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Models' })).not.toBeInTheDocument()
+    expect(App.APIStatus).toHaveBeenCalledTimes(1)
+
+    App.APIStatus.mockResolvedValue(statusOf([mainListener()])) // the CLI answers again, once the row is gone
+    App.APIModels.mockResolvedValue(modelsDoc())
+    await reset()
+    expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(null)
+    expect(screen.queryByTestId('api-config-load-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('api-config-chip-damaged')).not.toBeInTheDocument()
+    expect(screen.getByTestId('api-config-reset-done')).toHaveFocus()
+    expect(await screen.findByTestId('api-base-url')).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'Models' })).toBeInTheDocument()
+    expect(App.APIStatus).toHaveBeenCalledTimes(2)
+    expect(App.APIConfigShow).toHaveBeenCalledTimes(1) // what the reset gave is the document on show: nothing reads it again
+    expect(App.APIConfigReset.mock.calls).toEqual([[false, true], [true, false]])
+  })
+
+  it('does not let a read that began before the reset overwrite what it gave', async () => {
+    let fail
+    App.APIConfigShow.mockRejectedValueOnce(damagedErr())
+    resetCall()
+    await mountExpanded()
+    openBlock()
+    await screen.findByTestId('api-config-load-error')
+    App.APIConfigShow.mockReturnValueOnce(new Promise((_, reject) => { fail = reject })) // a read that is out, and slow
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(App.APIConfigShow).toHaveBeenCalledTimes(2))
+
+    await reset()
+    expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toBeInTheDocument()
+    await act(async () => { fail(damagedErr()) }) // the read that began before the reset comes back: it found the row damaged
+    await settle()
+    expect(screen.queryByTestId('api-config-load-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('api-config-chip-damaged')).not.toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: c.rows.max_concurrent.label })).toBeInTheDocument()
+  })
+
+  it('takes the way out away when the row can be read again, without having removed anything', async () => {
+    App.APIConfigShow.mockRejectedValueOnce(damagedErr())
+    await mountExpanded()
+    openBlock()
+    await screen.findByTestId('api-config-load-error')
+    expect(block().getByRole('button', { name: c.reset.button })).toBeInTheDocument()
+    App.APIConfigShow.mockResolvedValue(configDoc({ saved: { max_concurrent: '9' }, running: {}, autostart: true })) // fixed by hand meanwhile
+    fireEvent.click(block().getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(9)
+    expect(screen.queryByRole('button', { name: c.reset.button })).not.toBeInTheDocument()
+    expect(App.APIConfigReset).not.toHaveBeenCalled() // nothing was removed: nobody asked
+  })
+
+  it('does not remove what was fixed meanwhile: asked to reset a row that can be read, it reads again and asks nothing', async () => {
+    App.APIConfigShow.mockRejectedValueOnce(damagedErr())
+    App.APIConfigReset.mockResolvedValue(changeDoc(configDoc({ saved: { max_concurrent: '9' } }), { applied: false })) // a dry run that does not find a row that cannot be read
+    await mountExpanded()
+    openBlock()
+    fireEvent.click(await block().findByRole('button', { name: c.reset.button }))
+    App.APIConfigShow.mockResolvedValue(configDoc({ saved: { max_concurrent: '9' }, running: {}, autostart: true }))
+    expect(await screen.findByRole('spinbutton', { name: c.rows.max_concurrent.label })).toHaveValue(9)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(App.APIConfigReset.mock.calls).toEqual([[false, true]]) // the dry run, and nothing after it
+  })
+
+  it('speaks the chosen language, and the CLI\'s words stay English', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    App.APIConfigShow.mockRejectedValue(damagedErr())
+    resetCall()
+    await mountExpanded()
+    openBlock()
+    const message = await screen.findByTestId('api-config-load-error')
+    expect(message).toHaveTextContent(`${es.settings.api.config.loadError} ${DAMAGED}`)
+    expect(within(message).getByText(DAMAGED)).toHaveAttribute('lang', 'en')
+    await reset(es.settings.api.config.reset.button, es.settings.api.config.widening.confirmReset)
+    expect(await screen.findByTestId('api-config-reset-done')).toHaveTextContent(es.settings.api.config.reset.done)
   })
 })
 

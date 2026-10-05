@@ -1,14 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Loader2, Settings2 } from 'lucide-react'
-import { APIConfigSet, APIConfigUnset } from '../../../wailsjs/go/main/App'
+import { APIConfigReset, APIConfigSet, APIConfigUnset } from '../../../wailsjs/go/main/App'
 import { describeConfigError } from './configError.js'
 import { ROWS, byKey, otherProblems, savePayload, summary } from './configModel.js'
 import ApiConfigRestart from './ApiConfigRestart.jsx'
 import ApiConfigRow from './ApiConfigRow.jsx'
 import ApiWideningDialog from './ApiWideningDialog.jsx'
 import useRestart from './useRestart.js'
-import { Badge, Said, block, errText, hint, label } from './ui.jsx'
+import { Badge, Said, block, errText, hint, label, okText } from './ui.jsx'
 
 // The server's settings (internal/apiconfig): each setting with what is saved, what the running daemon started with,
 // where that came from and where it stands. Folded, like the section's other parts: it is for the one who runs the
@@ -20,6 +20,12 @@ import { Badge, Said, block, errText, hint, label } from './ui.jsx'
 // unconfirmed, so that a change that began to widen meanwhile is refused and not slipped through. If it does, the
 // dialog lists the reasons, and only its confirmation makes the second call, confirmed. What the section is handed
 // (onAdopt) is the document of a change that was made, never of a dry run, which describes a state that does not exist.
+//
+// A saved row the CLI cannot read is an error of every read (exit 3, a message that starts "the saved settings are damaged":
+// configError.js), and there is nothing to show or change until it is removed. The block then says what the CLI said and
+// offers the one way out the CLI names, "Reset the saved settings" (`api config unset --all`), as a change that widens: a
+// dry run first (it says whether there is such a row, and why removing it needs a yes), the dialog, and only then the
+// call with --yes. A row in a newer format is not damage and is never offered a reset.
 
 const rowsBox = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }
 
@@ -27,18 +33,21 @@ const call = (kind, payload, confirm, dryRun) => (kind === 'set' ? APIConfigSet(
 
 /**
  * @param {object|null} config `api config show --json` (or the document of the last change), null while it loads.
- * @param {{text: string, verbatim: boolean}|null} err Why the settings could not be read. What was on screen stays.
- * @param {() => void} onRetry
+ * @param {{text: string, verbatim: boolean, damaged?: boolean}|null} err Why the settings could not be read (`damaged`: the
+ *   saved row cannot be read). What was on screen stays.
+ * @param {() => void} onRetry Reads the settings again.
  * @param {(doc: object) => void} onAdopt Takes the document of a change that was made, and only that.
  * @param {() => Promise<object|null>} onReload Reads the settings again: the document, or null when the read failed or a
  *   newer one took its place. It is what the re-reads after a restart go through.
- * @param {() => void} [onApplied] The daemon came back from a restart: what else the section shows may have changed.
+ * @param {() => void} [onApplied] The daemon came back from a restart, or the saved settings were reset: what else the section
+ *   shows may have changed (the status and the models failed to be read for the same row).
  */
 export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload, onApplied }) {
   const { t } = useTranslation()
   const tRef = useRef(t) // a failure is worded when it happens, in the language of the moment
   tRef.current = t
   const bodyId = useId()
+  const errId = `${bodyId}-error`
   const box = useRef(null)
   const [open, setOpen] = useState(false)
   const [drafts, setDrafts] = useState({}) // key → what was typed
@@ -46,12 +55,19 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
   const [errs, setErrs] = useState({}) // row id → what the last call for it said when it failed
   const [notes, setNotes] = useState({}) // row id → what the last call for it did
   const [pending, setPending] = useState(null) // a change that widens, waiting for the dialog's answer
+  const [resetAsk, setResetAsk] = useState(null) // a reset of the saved settings, waiting for the dialog's answer: {widening}
+  const [resetFail, setResetFail] = useState(null) // what the last reset said when it failed, and the failure of reading it came after: {for, said}
+  const [resetDone, setResetDone] = useState(null) // the document a reset gave: {for}
   const running = useRef(false) // a call is running: a second one cannot start, not even in the same tick
-  const focusAfter = useRef('') // the row whose control gets the keyboard back when a call is over
+  const focusAfter = useRef('') // the row (or 'reset', 'reset-done') whose control gets the keyboard back when a call is over
+  const errNow = useRef(err) // the failure of reading that is on show, for a call that ends after another read
+  errNow.current = err
   const restart = useRestart({ config, onReload, onApplied })
   const settings = byKey(config)
   const sum = summary(config)
   const problems = otherProblems(config)
+  // What a reset said when it failed belongs to the failure of reading it was made against: a read since replaces that.
+  const resetErr = resetFail && resetFail.for === err ? resetFail.said : null
   // Nothing can be edited or started while a call runs: one for a setting, or the daemon's restart.
   const working = busy || (restart.phase === 'restarting' ? { id: '', kind: 'restart' } : null)
 
@@ -117,6 +133,55 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
     setPending(null)
   }
 
+  // Resetting the saved settings is two calls, like a change that widens. The dry run says whether a row that cannot be
+  // read would be removed: when it does not, someone fixed the row meanwhile, and removing the saved settings would take
+  // what was fixed with it, so nothing is asked and the settings are read again. Otherwise the dialog lists the CLI's
+  // reason, and only its yes makes the call with --yes. What that gave is the document on show (the section drops a read
+  // that began before it), what was typed is dropped with the settings, and the status and the models are read again.
+  async function startReset() {
+    if (running.current) return
+    running.current = true
+    setBusy({ id: '', kind: 'reset' }); setResetFail(null)
+    let waiting = false
+    try {
+      const preview = await APIConfigReset(false, true)
+      if (!preview.removed_unreadable_row) { onRetry(); return }
+      waiting = true
+      setResetAsk({ widening: preview.widening })
+    } catch (e) {
+      setResetFail({ for: errNow.current, said: describeConfigError(e, tRef.current) })
+    } finally {
+      running.current = false
+      setBusy(null)
+      if (!waiting) focusAfter.current = 'reset'
+    }
+  }
+
+  async function confirmReset() {
+    if (!resetAsk || running.current) return
+    running.current = true
+    setResetAsk(null); setBusy({ id: '', kind: 'reset' })
+    try {
+      const doc = await APIConfigReset(true, false)
+      onAdopt?.(doc)
+      setDrafts({}); setErrs({}); setNotes({})
+      setResetDone({ for: doc })
+      focusAfter.current = 'reset-done' // the button it was pressed on is gone
+      onApplied?.()
+    } catch (e) {
+      setResetFail({ for: errNow.current, said: describeConfigError(e, tRef.current) })
+      focusAfter.current = 'reset'
+    } finally {
+      running.current = false
+      setBusy(null)
+    }
+  }
+
+  function cancelReset() {
+    focusAfter.current = 'reset'
+    setResetAsk(null)
+  }
+
   return (
     <div data-testid="api-config-block" style={block}>
       <button
@@ -132,7 +197,9 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
             <span style={label}>{t('settings.api.config.title')}</span>
           </span>
           {!config && !err && <Badge data-testid="api-config-chip-loading" tone="info"><Loader2 size={11} className="spin" /> {t('settings.api.loading')}</Badge>}
-          {err && <Badge data-testid="api-config-chip-error" tone="bad">{t('settings.api.config.chipError')}</Badge>}
+          {err && (err.damaged
+            ? <Badge data-testid="api-config-chip-damaged" tone="bad">{t('settings.api.config.chipDamaged')}</Badge>
+            : <Badge data-testid="api-config-chip-error" tone="bad">{t('settings.api.config.chipError')}</Badge>)}
           {config && sum.restart && <Badge data-testid="api-config-chip-restart" tone="warn">{t('settings.api.config.chipRestart')}</Badge>}
           {config && sum.problems > 0 && <Badge data-testid="api-config-chip-problems" tone="bad">{t('settings.api.config.chipProblems', { count: sum.problems })}</Badge>}
           {config && sum.saved > 0 && <Badge data-testid="api-config-chip-saved" tone="muted">{t('settings.api.config.chipSaved', { count: sum.saved })}</Badge>}
@@ -145,22 +212,37 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
           <div style={hint}>{t('settings.api.config.hint')}</div>
 
           {err && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div data-testid="api-config-load-error" style={{ ...errText, flex: 1 }}>
-                {t('settings.api.config.loadError')} <Said said={err} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div id={errId} data-testid="api-config-load-error" style={{ ...errText, flex: '1 1 260px' }}>
+                  {t('settings.api.config.loadError')} <Said said={err} />
+                </div>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={!!working} onClick={onRetry}>{t('settings.api.retry')}</button>
+                {err.damaged && (
+                  <button
+                    type="button" className="btn btn-primary btn-sm" disabled={!!working} aria-describedby={errId}
+                    data-focus-row="reset" onClick={startReset}
+                  >
+                    {busy?.kind === 'reset' ? t('settings.api.config.reset.working') : t('settings.api.config.reset.button')}
+                  </button>
+                )}
               </div>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>{t('settings.api.retry')}</button>
+              {resetErr && <div role="alert" style={errText}><Said said={resetErr} /></div>}
             </div>
           )}
           {!config && !err && <div style={hint}>{t('settings.api.config.loading')}</div>}
 
           {config && (
             <>
+              {resetDone?.for === config && (
+                <div data-testid="api-config-reset-done" data-focus-row="reset-done" tabIndex={-1} role="status" style={okText}>
+                  {t('settings.api.config.reset.done')}
+                </div>
+              )}
               <ApiConfigRestart config={config} restart={restart} disabled={!!busy} />
               {problems.length > 0 && (
                 <div data-testid="api-config-problems" style={{ ...errText, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {problems.map((p, i) => <div key={i}><Said said={describeConfigError(`invalid_input: ${p.message}`, t)} /></div>)}
-                  <div style={hint}>{t('settings.api.config.problemDocHint')}</div>
                 </div>
               )}
               <ul aria-label={t('settings.api.config.title')} style={rowsBox}>
@@ -178,6 +260,7 @@ export default function ApiConfigBlock({ config, err, onRetry, onAdopt, onReload
       )}
 
       {pending && <ApiWideningDialog widening={pending.widening} kind={pending.kind} onCancel={cancelPending} onConfirm={confirmPending} />}
+      {resetAsk && <ApiWideningDialog widening={resetAsk.widening} kind="reset" onCancel={cancelReset} onConfirm={confirmReset} />}
     </div>
   )
 }

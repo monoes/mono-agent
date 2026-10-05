@@ -8,7 +8,7 @@ import { render, screen, fireEvent, cleanup, within, act } from '@testing-librar
 import i18n from '../../../i18n.js'
 import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
-import { configDoc } from './__fixtures__/configFixtures.js'
+import { DAMAGED, configDoc } from './__fixtures__/configFixtures.js'
 
 const App = {}
 beforeEach(async () => {
@@ -219,7 +219,8 @@ describe('ApiConfigBlock: problems of the saved settings', () => {
   const problems = [
     { key: 'max_concurrent', message: 'max_concurrent must be an integer from 1 to 64' },
     { key: 'confinement', message: 'a rule this page has no words for' },
-    { key: '', message: 'the saved settings are damaged' },
+    // the contract allows a problem of the document as a whole (key ""); the CLI sends none today: a row that cannot be read is an error
+    { key: '', message: 'a problem of the saved settings as a whole' },
   ]
   const doc = configDoc({ saved: { max_concurrent: 'abc', confinement: 'full' }, problems })
 
@@ -233,12 +234,21 @@ describe('ApiConfigBlock: problems of the saved settings', () => {
     expect(within(row('turn_timeout')).queryByText(c.problemHint)).not.toBeInTheDocument()
   })
 
-  it('shows a problem of the document itself above the rows, with the command that starts over', async () => {
+  it('shows a problem that belongs to no row above the rows, as the CLI said it, with no recovery of the page\'s own', async () => {
     await mountOpen({ config: doc })
     const box = screen.getByTestId('api-config-problems')
-    expect(within(box).getByText('the saved settings are damaged')).toBeInTheDocument()
-    expect(within(box).getByText(c.problemDocHint)).toBeInTheDocument()
+    expect(within(box).getByText('a problem of the saved settings as a whole')).toBeInTheDocument()
+    expect(box.textContent).toBe('a problem of the saved settings as a whole') // the CLI names no way out of it, and neither does the page
     expect(within(box).queryByText(/must be an integer/)).not.toBeInTheDocument() // the others are in their rows
+  })
+
+  it('does not take a problem for a row that cannot be read: that is an error of reading, and the only reset is for it', async () => {
+    // not what the CLI sends (a row that cannot be read is exit 3 and no document), so it is only a problem, shown as said
+    await mountOpen({ config: configDoc({ problems: [{ key: '', message: DAMAGED }] }) })
+    expect(within(screen.getByTestId('api-config-problems')).getByText(DAMAGED)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: c.reset.button })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('api-config-chip-damaged')).not.toBeInTheDocument()
+    expect(screen.getByTestId('api-config-chip-problems')).toHaveTextContent('1 problem')
   })
 
   it('has no box for problems when there are none of the document\'s own', async () => {

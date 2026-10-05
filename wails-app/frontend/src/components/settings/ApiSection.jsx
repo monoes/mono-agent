@@ -51,7 +51,7 @@ export default function ApiSection({ onNavigate, isActive = true } = {}) {
   const [models, setModels] = useState(null)
   const [modelsErr, setModelsErr] = useState('')
   const [config, setConfig] = useState(null)
-  const [configErr, setConfigErr] = useState(null) // {text, verbatim}: why the settings could not be read; what was read stays
+  const [configErr, setConfigErr] = useState(null) // {text, verbatim, damaged?}: why the settings could not be read (damaged: the saved row cannot be); what was read stays
   const [refreshing, setRefreshing] = useState(false)
   const detailsAsked = useRef(false)
   // A failure is worded when it happens, in the language of the moment; the loaders keep one identity.
