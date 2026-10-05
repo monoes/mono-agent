@@ -94,8 +94,15 @@ var wideningRows = []wideningRow{
 	{"none to none", []string{"image_runtimes=none"}, []string{"image_runtimes=none"}, ""},
 	{"gaining a runtime beside one already saved", []string{"image_runtimes=opencode"}, []string{"image_runtimes=opencode,pi"}, "image_runtimes"},
 	{"the same custom list", []string{"image_runtimes=opencode"}, []string{"image_runtimes=opencode"}, ""},
-	{"a custom list back to the default", []string{"image_runtimes=opencode"}, nil, ""},
+	{"a custom list back to the default gains the runtimes of the default (S2)", []string{"image_runtimes=opencode"}, nil, "image_runtimes"},
+	{"a custom list that lost a runtime narrows", []string{"image_runtimes=opencode,pi"}, []string{"image_runtimes=opencode"}, ""},
+	{"re-adding a runtime of the default list that the saved list left out (S2)", []string{"image_runtimes=codex"}, []string{"image_runtimes=codex,antigravity"}, "image_runtimes"},
+	{"unsetting a saved list that left a runtime of the default out (S2)", []string{"image_runtimes=codex"}, nil, "image_runtimes"},
+	{"swapping one runtime of the default for the other (S2)", []string{"image_runtimes=codex"}, []string{"image_runtimes=antigravity"}, "image_runtimes"},
+	{"a runtime of the default and one beyond it, together (S2)", []string{"image_runtimes=codex"}, []string{"image_runtimes=codex,antigravity,claude"}, "image_runtimes"},
 	{"tools: a subset of the default list", nil, []string{"tool_runtimes=codex"}, ""},
+	{"tools: re-adding a runtime of the default list that the saved list left out (S2)", []string{"tool_runtimes=claude"}, []string{"tool_runtimes=claude,codex"}, "tool_runtimes"},
+	{"tools: unsetting a saved list that left a runtime of the default out (S2)", []string{"tool_runtimes=claude"}, nil, "tool_runtimes"},
 	{"tools: a runtime that is not in the default list", nil, []string{"tool_runtimes=claude,codex,antigravity"}, "tool_runtimes"},
 	{"tools: leaving none by unsetting", []string{"tool_runtimes=none"}, nil, "tool_runtimes"},
 	{"tools: leaving none for a list", []string{"tool_runtimes=none"}, []string{"tool_runtimes=claude"}, "tool_runtimes"},
@@ -112,7 +119,7 @@ var wideningRows = []wideningRow{
 	{"everything at once", nil, []string{"v1_addr=0.0.0.0:9443", "confinement=any", "context_confinement=any", "image_runtimes=codex,claude"},
 		"v1_addr,confinement.network,context_confinement.loopback,context_confinement.network,image_runtimes"},
 	{"unsetting all of it, which was below the defaults", []string{"confinement=chat-only", "image_runtimes=none", "tool_runtimes=none"}, nil, "confinement.loopback,image_runtimes,tool_runtimes"},
-	{"unsetting all of what was above them", []string{"v1_addr=0.0.0.0:9443", "confinement=any", "context_confinement=any", "auto_confinement=any", "image_runtimes=codex,claude"}, nil, ""},
+	{"unsetting all of what was above them", []string{"v1_addr=0.0.0.0:9443", "confinement=any", "context_confinement=any", "auto_confinement=any", "image_runtimes=codex,antigravity,claude"}, nil, ""},
 }
 
 func TestWidens(t *testing.T) {
@@ -189,6 +196,15 @@ func TestWideningReasonsSayWhatChanges(t *testing.T) {
 	has(w, "context_confinement.network", "up to sandboxed on a /v1 listener beyond this machine")
 	w = Widens(Settings{}, doc(t, "image_runtimes=codex,claude"))
 	has(w, "image_runtimes", "claude", "default")
+	// A runtime of the default list that the saved list left out says it was not served before; one beyond the
+	// list says it is beyond (S2). Both, in one sentence.
+	w = Widens(doc(t, "image_runtimes=codex"), doc(t, "image_runtimes=codex,antigravity"))
+	has(w, "image_runtimes", "Image generation would be served by antigravity, which it was not before.")
+	if strings.Contains(w[0].Reason, "beyond the default list") {
+		t.Errorf("antigravity is in the default list: %q", w[0].Reason)
+	}
+	w = Widens(doc(t, "tool_runtimes=claude"), doc(t, "tool_runtimes=claude,codex,gemini"))
+	has(w, "tool_runtimes", "Tool calling would be served by codex, which it was not before, and by gemini, beyond the default list (claude, codex).")
 	w = Widens(doc(t, "tool_runtimes=none"), Settings{})
 	has(w, "tool_runtimes", "switched off", "claude")
 	// The address: three ways to reach further, three sentences (P9).

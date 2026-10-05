@@ -47,8 +47,9 @@ func unreadableRowWidening() Widening {
 //     kind of listener or on the network kind. Both kinds are judged in every document, named
 //     dedicated listener or not, because the daemon's own environment may supply the address
 //     of one; context and auto are judged after the cap that confinement puts on them;
-//   - image_runtimes, tool_runtimes: the list gains a runtime that is not in the built-in
-//     default list (and was not in the old list), or leaves none.
+//   - image_runtimes, tool_runtimes: the list gains a runtime that the old effective list did
+//     not have (S2: a runtime of the default list that a saved list left out counts when it
+//     comes back, as a class that rises back to its default does), or leaves none.
 //
 // max_concurrent, turn_timeout and the TLS files are not exposure. The result is in the order
 // of the settings. A document that does not pass Validate is read with its invalid values
@@ -241,9 +242,11 @@ var classDimensions = []struct {
 
 func capitalise(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
 
-// runtimesWidening is rule (c) for one list: a list that leaves none, or gains a runtime that
-// is neither in the built-in default list nor in the old list. An unset list is the default
-// list, none is the empty one, and text that is not a list is the default.
+// runtimesWidening is rule (c) for one list: a list that leaves none, or gains a runtime that the
+// old effective list did not have. An unset list is the default list, none is the empty one, and
+// text that is not a list is the default. A gained runtime of the default list ("which it was not
+// before") and one beyond it ("beyond the default list") are told apart in the sentence, since the
+// second is what an operator did not expect to be there at all.
 func runtimesWidening(what string, parse func(string) ([]string, error), before, after string) (string, bool) {
 	defaults, _ := parse("")
 	effective := func(text string) []string {
@@ -257,14 +260,25 @@ func runtimesWidening(what string, parse func(string) ([]string, error), before,
 	if len(b) == 0 && len(a) > 0 {
 		return fmt.Sprintf("%s, which is switched off, would be served by %s.", what, strings.Join(a, ", ")), true
 	}
-	var gained []string
+	var back, beyond []string // gained: of the default list, and outside it
 	for _, r := range a {
-		if !slices.Contains(b, r) && !slices.Contains(defaults, r) {
-			gained = append(gained, r)
+		switch {
+		case slices.Contains(b, r):
+		case slices.Contains(defaults, r):
+			back = append(back, r)
+		default:
+			beyond = append(beyond, r)
 		}
 	}
-	if len(gained) == 0 {
+	var parts []string
+	if len(back) > 0 {
+		parts = append(parts, strings.Join(back, ", ")+", which it was not before")
+	}
+	if len(beyond) > 0 {
+		parts = append(parts, fmt.Sprintf("%s, beyond the default list (%s)", strings.Join(beyond, ", "), strings.Join(defaults, ", ")))
+	}
+	if len(parts) == 0 {
 		return "", false
 	}
-	return fmt.Sprintf("%s would be served by %s, beyond the default list (%s).", what, strings.Join(gained, ", "), strings.Join(defaults, ", ")), true
+	return fmt.Sprintf("%s would be served by %s.", what, strings.Join(parts, ", and by ")), true
 }
