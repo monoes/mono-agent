@@ -16,8 +16,6 @@ import (
 )
 
 func TestTheAPIToolsPutNoSecretOnTheWire(t *testing.T) {
-	pinAPIEnv(t)
-	fakeAPIMonomind(t)
 	f := newConfigFixture(t, configSetup{registered: true})
 	t.Setenv("TYPESAFE_API_KEY", jevKeyInTheEnvironment) // after the fixture, which clears it
 	w := newWireSession(t, f.Server)
@@ -52,7 +50,6 @@ func TestTheAPIToolsPutNoSecretOnTheWire(t *testing.T) {
 		{"api_auto_set", map[string]any{"enabled": secret}}, // the key where a boolean goes
 		{"api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": huge}},
 		{"api_status", nil},
-		{"api_models_list", nil},
 		{"api_auto_set", map[string]any{"enabled": false}},
 	} {
 		w.call(c.name, c.args)
@@ -86,6 +83,38 @@ func TestTheAPIToolsPutNoSecretOnTheWire(t *testing.T) {
 	}
 	if left := f.saved(); left.V1Addr != "" || left.TLSCertFile != "" {
 		t.Errorf("a refused call saved something: %+v", left)
+	}
+}
+
+// api_models_list reads the saved settings now: with some saved, and a key pasted into each of its
+// arguments, nothing but the document comes back, and no key. (The models come from a fake monomind,
+// a shell script, so this does not run on Windows.)
+func TestAPIModelsListPutsNoSecretOnTheWireWithSettingsSaved(t *testing.T) {
+	pinAPIEnv(t)
+	fakeAPIMonomind(t)
+	f := newConfigFixture(t, configSetup{})
+	t.Setenv("TYPESAFE_API_KEY", jevKeyInTheEnvironment)
+	f.save("confinement=sandboxed", "image_runtimes=none")
+	secret, err := apikeys.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newWireSession(t, f.Server)
+	for _, args := range []map[string]any{
+		nil,
+		{"for": "network"},
+		{"for": secret}, {"confinement": secret}, {"context_confinement": secret}, {"auto_confinement": secret},
+	} {
+		w.call("api_models_list", args)
+	}
+	out := w.finish()
+	for _, leaked := range []string{secret, jevKeyInTheEnvironment, apikeys.HashKey(secret)} {
+		if strings.Contains(out, leaked) {
+			t.Error("a secret is on the wire")
+		}
+	}
+	if !strings.Contains(out, `\"confinement\": \"sandboxed\"`) {
+		t.Errorf("the saved confinement is not in the document: %s", scrubbed(out))
 	}
 }
 
