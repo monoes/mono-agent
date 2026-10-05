@@ -33,11 +33,18 @@ var ErrDamaged = errors.New("saved API settings are damaged")
 // not remove because it would lose what the newer version saved.
 const RemoveRowSQL = "delete from settings where key = '" + Row + "'"
 
-// damagedError is the error of a row that cannot be decoded. Its message names the way out.
+// DamagedMessage is how the message of every error of a damaged row starts, whatever is wrong
+// with the row. A surface that has only the exit code and the last line of stderr (the desktop
+// app) tells damage from any other failure by it, and offers the repair. The rest of the message
+// says what is wrong and names the repair with its gate.
+const DamagedMessage = "the saved settings are damaged"
+
+// damagedError is the error of a row that cannot be decoded: DamagedMessage, what is wrong with
+// the row (never what it held), and the repair with its gate. The CLI maps it to exit 3.
 type damagedError struct{ what string }
 
 func (e *damagedError) Error() string {
-	return e.what + "; `monoagentcli api config unset --all` removes the row"
+	return DamagedMessage + " (" + e.what + "); `monoagentcli api config unset --all --yes` removes them"
 }
 func (e *damagedError) Unwrap() error { return ErrDamaged }
 
@@ -65,7 +72,7 @@ func Load(ctx context.Context, db *sql.DB) (Settings, error) {
 // document Load would refuse, rolls everything back. Nothing is written when fn changed
 // nothing, and a document left with no setting and no field of a newer binary's is deleted.
 func Update(ctx context.Context, db *sql.DB, fn func(*Settings) error) error {
-	_, err := update(ctx, db, updateOpts{}, fn)
+	_, err := update(ctx, db, updateOpts{}, func(s *Settings, _ bool) error { return fn(s) })
 	return err
 }
 
@@ -74,9 +81,11 @@ func Update(ctx context.Context, db *sql.DB, fn func(*Settings) error) error {
 // leaves of an empty document, which is how Apply's unset all removes it.
 type updateOpts struct{ dry, repair bool }
 
-// update is Update with its options. It reports whether it found a row it had to repair: with
-// dry set, whether it would.
-func update(ctx context.Context, db *sql.DB, opts updateOpts, fn func(*Settings) error) (repaired bool, err error) {
+// update is Update with its options. fn is told whether it is repairing: the stored row cannot
+// be decoded, and the settings it is handed are an empty document in its place. update reports
+// whether it found a row it had to repair (with dry set, whether it would), and fn runs before
+// anything is written, so it can refuse the repair.
+func update(ctx context.Context, db *sql.DB, opts updateOpts, fn func(s *Settings, repairing bool) error) (repaired bool, err error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, fmt.Errorf("saved API settings: %w", err)
@@ -115,7 +124,7 @@ func update(ctx context.Context, db *sql.DB, opts updateOpts, fn func(*Settings)
 		}
 	}
 	before := s
-	if err := fn(&s); err != nil {
+	if err := fn(&s, repaired); err != nil {
 		return false, err
 	}
 	if opts.dry {
@@ -152,12 +161,12 @@ func sameValues(a, b Settings) bool {
 func decode(doc string) (Settings, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(doc), &fields); err != nil || fields == nil {
-		return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s) are not a JSON object", Row)}
+		return Settings{}, &damagedError{fmt.Sprintf("settings table, key %s: not a JSON object", Row)}
 	}
 	if raw, ok := fields["v"]; ok {
 		v, ok := wholeNumber(raw)
 		if !ok || v < 1 {
-			return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s) have a version that is not a whole number from 1", Row)}
+			return Settings{}, &damagedError{fmt.Sprintf("settings table, key %s: its version is not a whole number from 1", Row)}
 		}
 		if v > FormatVersion {
 			return Settings{}, fmt.Errorf("%w: the row %s is in format %d and this monoagentcli reads format %d; use the monoagentcli that wrote it, "+
@@ -175,7 +184,7 @@ func decode(doc string) (Settings, error) {
 		delete(fields, key)
 		text, err := textOf(key, raw)
 		if err != nil {
-			return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s): %v", Row, err)}
+			return Settings{}, &damagedError{fmt.Sprintf("settings table, key %s: %v", Row, err)}
 		}
 		_ = s.Set(key, text)
 	}

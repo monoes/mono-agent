@@ -33,7 +33,8 @@ func newAPIConfigCmd(cfg *globalConfig) *cobra.Command {
 			"and what the running daemon started with, `set` and `unset` change what is saved, and `monoagentcli daemon " +
 			"restart` makes a running daemon read it. A change that makes the server reach further than it did (a listener " +
 			"beyond this machine, or on another host or on every interface where it was one host; a higher confinement " +
-			"class; more runtimes) needs --yes. These commands edit the database they open, which --db-path can name; a daemon " +
+			"class; more runtimes; removing a saved row that cannot be read) needs --yes. These commands edit the database they " +
+			"open, which --db-path can name; a daemon " +
 			"started by the login service reads its own, the default one.",
 	}
 	cmd.AddCommand(newAPIConfigShowCmd(cfg), newAPIConfigSetCmd(cfg), newAPIConfigUnsetCmd(cfg))
@@ -129,8 +130,9 @@ func newAPIConfigUnsetCmd(cfg *globalConfig) *cobra.Command {
 			"max-concurrent), or of every setting with --all; the server then uses the environment or the default. One that is " +
 			"not saved is left alone. Removing a value that was below its default (a confinement of chat-only, image_runtimes none) " +
 			"gives the server more reach, and needs --yes like any change that does. A saved row that cannot be read (not JSON, a " +
-			"version that is not a whole number, a field of the wrong type) stops every other command, and --all removes it and says " +
-			"so. A row written by a newer version is never removed by it: use that version, or remove the row by hand.",
+			"version that is not a whole number, a field of the wrong type) stops every other command with exit 3, and --all --yes " +
+			"removes it and says so; it needs --yes because what the row limited cannot be told, so the removal may reach further. " +
+			"A row written by a newer version is exit 1 and is never removed by it: use that version, or remove the row by hand.",
 		Example: "  monoagentcli api config unset max_concurrent turn_timeout\n  monoagentcli api config unset --all --dry-run",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

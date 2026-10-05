@@ -18,10 +18,13 @@ type Change struct {
 	Unset []string
 	// All removes every saved setting. It cannot be combined with Set or Unset. It is also the
 	// repair: a saved row that cannot be decoded (ErrDamaged) is removed, and the result says so
-	// (RemovedUnreadableRow). A row in a newer format (ErrTooNew) is not: that is an error.
+	// (RemovedUnreadableRow), but only with Confirm, since what the row limited cannot be told
+	// (the Widening with the key WideningKeySavedSettings). A row in a newer format (ErrTooNew)
+	// is never removed: that is an error, confirmed or not.
 	All bool
 	// Confirm opens the widening gate: the CLI's --yes, the MCP server's --allow-api-exposure. A
-	// change that makes the server reach further is refused without it.
+	// change that makes the server reach further is refused without it, and so is the removal of
+	// a row that cannot be read.
 	Confirm bool
 	// DryRun computes the document the change would give, writes nothing, and never refuses a
 	// widening: its Widening says what the change would do.
@@ -41,9 +44,10 @@ type ChangeResult struct {
 	// Widening says how the change makes the server reach further; [] when it does not.
 	Widening []Widening `json:"widening"`
 	// RemovedUnreadableRow: the saved row could not be read (not a JSON object, a version that
-	// is not a whole number from 1, a known field of the wrong type) and unset all removed it;
-	// for a dry run, would remove it. Omitted when it did not. Only unset all does this, and
-	// never to a row in a newer format, which is an ErrTooNew.
+	// is not a whole number from 1, a known field of the wrong type) and unset all, confirmed,
+	// removed it; for a dry run, would remove it. Widening then holds the one for a row that
+	// cannot be read. Omitted when it did not. Only unset all does this, and never to a row in
+	// a newer format, which is an ErrTooNew.
 	RemovedUnreadableRow bool `json:"removed_unreadable_row,omitempty"`
 }
 
@@ -72,8 +76,11 @@ func (e *WideningError) Error() string {
 // change that does not touch it, and Unset removes it.
 //
 // A row that cannot be decoded is an ErrDamaged for every change but one: All removes it (and
-// says so in RemovedUnreadableRow), since nothing else could. A row in a newer format is an
-// ErrTooNew for every change, All included: it holds what a newer version saved.
+// says so in RemovedUnreadableRow), since nothing else could, but what the row limited cannot be
+// told, so that is a widening of unknown size: without Confirm and without DryRun it is a
+// *WideningError with the one Widening of the key WideningKeySavedSettings, a dry run reports
+// it, and nothing is written. A row in a newer format is an ErrTooNew for every change, All
+// and Confirm included: it holds what a newer version saved.
 func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, error) {
 	req, err := parseChange(ch)
 	if err != nil {
@@ -82,7 +89,7 @@ func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, e
 	var after Settings
 	var changed []string
 	var widening []Widening
-	repaired, err := update(ctx, db, updateOpts{dry: ch.DryRun, repair: ch.All}, func(s *Settings) error {
+	repaired, err := update(ctx, db, updateOpts{dry: ch.DryRun, repair: ch.All}, func(s *Settings, repairing bool) error {
 		before := *s
 		next := before
 		for _, key := range req.unset {
@@ -105,7 +112,13 @@ func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, e
 				changed = append(changed, key)
 			}
 		}
-		if widening = Widens(before, next); len(widening) > 0 && !ch.Confirm && !ch.DryRun {
+		widening = Widens(before, next)
+		if repairing {
+			// What the row limited cannot be told: Widens judged two empty documents, and removing
+			// a row that cannot be read may reach further than anything, so it needs confirmation.
+			widening = append([]Widening{unreadableRowWidening()}, widening...)
+		}
+		if len(widening) > 0 && !ch.Confirm && !ch.DryRun {
 			return &WideningError{Widening: widening}
 		}
 		*s, after = next, next

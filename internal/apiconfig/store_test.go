@@ -209,6 +209,7 @@ var damagedDocuments = map[string]string{
 	"an object":       `{"v":1,"confinement":{"a":1}}`,
 	"a string number": `{"v":1,"turn_timeout":15}`,
 	"a bool":          `{"v":1,"max_concurrent":true}`,
+	"a broken text":   `{"v":1,"v1_addr":"supersecret.example:9443",`, // what the row held is never in a message
 }
 
 func TestADamagedDocumentIsAnErrorThatNamesTheRow(t *testing.T) {
@@ -243,8 +244,18 @@ func TestDamageHasItsOwnErrorAndNamesTheWayOut(t *testing.T) {
 			if !errors.Is(err, ErrDamaged) || errors.Is(err, ErrTooNew) {
 				t.Fatalf("Load: %v, want ErrDamaged and not ErrTooNew", err)
 			}
-			if !strings.Contains(err.Error(), "monoagentcli api config unset --all") {
-				t.Errorf("the message must name the recovery: %q", err)
+			// The same start whatever is wrong, so that a surface that has only the text can tell damage
+			// from any other failure; then the way out and its gate.
+			if !strings.HasPrefix(err.Error(), "the saved settings are damaged") || !strings.HasPrefix(err.Error(), DamagedMessage) {
+				t.Errorf("the message must start with %q: %q", DamagedMessage, err)
+			}
+			for _, want := range []string{Row, "`monoagentcli api config unset --all --yes` removes them"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the message %q must say %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "supersecret") {
+				t.Errorf("the message repeats what the row held: %q", err)
 			}
 		})
 	}
@@ -260,8 +271,8 @@ func TestDamageHasItsOwnErrorAndNamesTheWayOut(t *testing.T) {
 			t.Errorf("the message %q must say %q", err, want)
 		}
 	}
-	if strings.Contains(err.Error(), "unset --all") {
-		t.Errorf("unset --all does not remove a newer row, and the message must not offer it: %q", err)
+	if strings.Contains(err.Error(), "unset --all") || strings.HasPrefix(err.Error(), DamagedMessage) {
+		t.Errorf("unset --all does not remove a newer row, which is not damaged either: %q", err)
 	}
 	if RemoveRowSQL != "delete from settings where key = 'api_gateway_config'" {
 		t.Errorf("RemoveRowSQL = %q", RemoveRowSQL)
@@ -385,7 +396,7 @@ func TestADryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	putRow(t, db, `{"v":1,"v1_addr":":9443"}`)
 	var seen string
-	if _, err := update(ctx, db, updateOpts{dry: true}, func(s *Settings) error {
+	if _, err := update(ctx, db, updateOpts{dry: true}, func(s *Settings, _ bool) error {
 		seen = s.V1Addr
 		return s.Set("confinement", "any")
 	}); err != nil {

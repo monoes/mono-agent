@@ -17,6 +17,24 @@ type Widening struct {
 	Reason string `json:"reason"`
 }
 
+// WideningKeySavedSettings is the key of the Widening that removing a saved row that cannot be
+// read (an ErrDamaged) is: what the row limited cannot be told, so returning every setting to
+// its default may reach further than anything. Widens never returns it, since it judges two
+// documents and an unreadable row is none; Apply adds it to the change that removes such a
+// row (unset all), so that every surface asks for confirmation, and its result and its
+// WideningError carry it like any other.
+const WideningKeySavedSettings = "saved_settings"
+
+// unreadableRowWidening is the one Widening of removing a row that cannot be read: a sentence
+// that says nothing of what the row held.
+func unreadableRowWidening() Widening {
+	return Widening{
+		Key: WideningKeySavedSettings,
+		Reason: "The saved settings cannot be read, so what they limited cannot be told: " +
+			"removing them returns every setting to its default, which may reach further.",
+	}
+}
+
 // Widens says how the change from before to after makes the server reach further. It
 // compares the effective policy the two saved documents give, not the words in them, so
 // that an unset which takes a value back to a higher default counts, and saving a value

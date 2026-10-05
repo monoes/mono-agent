@@ -184,13 +184,17 @@ func effectivePolicy(addr, explicit string, getenv func(string) string) (openaia
 	return p, asCLIError(err)
 }
 
-// asCLIError gives the errors of internal/apiconfig the exit codes of the CLI: a value of a
-// flag, a variable or a saved setting that fails its rule is invalid input (exit 3), with the
-// message it has. Any other error is left as it is.
+// asCLIError gives the errors of internal/apiconfig the exit codes of the CLI, in one place: a
+// value of a flag, a variable or a saved setting that fails its rule is invalid input (exit 3),
+// and so is a saved row that cannot be read (apiconfig.ErrDamaged): invalid saved data the user
+// can fix, whose message starts with apiconfig.DamagedMessage and names the repair, so that a
+// caller that has only the exit code and the last line of stderr can offer it. Each keeps the
+// message it has. Any other error is left as it is, a row in a newer format (ErrTooNew) and a
+// failing database included: neither is damage.
 func asCLIError(err error) error {
 	var input *apiconfig.InputError
 	var invalid *apiconfig.ValidationError
-	if errors.As(err, &input) || errors.As(err, &invalid) {
+	if errors.As(err, &input) || errors.As(err, &invalid) || errors.Is(err, apiconfig.ErrDamaged) {
 		return errInvalidInput("%v", err)
 	}
 	return err
