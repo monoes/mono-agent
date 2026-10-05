@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -112,7 +113,11 @@ func checkBridge(ctx context.Context, env *Env) Result {
 		res := Result{Status: StatusWarn, Summary: summary,
 			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version),
 			FixID:  FixBridgeRestart}
-		if isDaemonOwned(ctx, env, b) {
+		if runtime.GOOS == "windows" {
+			// Windows has no way to signal the daemon, so doctor can't restart it.
+			res.FixID = ""
+			res.FixCommand = "restart the daemon yourself — doctor can't stop it on Windows"
+		} else if isDaemonOwned(ctx, env, b) {
 			res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
 		} else {
 			owner := b.Owner
@@ -151,6 +156,9 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 	if !ok {
 		return fmt.Errorf("no bridge is running to restart")
 	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("doctor can't stop the daemon on Windows — restart it yourself")
+	}
 	if !isDaemonOwned(ctx, env, b) {
 		owner := b.Owner
 		if owner == "" {
@@ -162,9 +170,8 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 	if env.StopDaemon == nil || env.StartDaemon == nil || env.Daemon == nil {
 		return fmt.Errorf("restarting the daemon is not available here")
 	}
-	d := env.Daemon(ctx)
-	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge v%s)", d.PID, b.Version))
-	if err := env.StopDaemon(ctx, d.PID, progress); err != nil {
+	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge v%s)", b.PID, b.Version))
+	if err := env.StopDaemon(ctx, b.PID, progress); err != nil {
 		return fmt.Errorf("stopping the old daemon: %w", err)
 	}
 	return fixDaemonStart(ctx, env, progress)

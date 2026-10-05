@@ -151,6 +151,9 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 	if !daemonhb.Locked() {
 		return nil // already stopped
 	}
+	if !lockHolderIs(pid) {
+		return fmt.Errorf("pid %d is not the process holding the daemon lock — not signaling it", pid)
+	}
 	if err := terminateProcess(pid); err != nil && daemonhb.Locked() {
 		return fmt.Errorf("signaling pid %d: %w", pid, err)
 	}
@@ -160,6 +163,9 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 		if time.Now().After(deadline) {
 			if forced {
 				return fmt.Errorf("pid %d would not stop even after SIGKILL", pid)
+			}
+			if !lockHolderIs(pid) {
+				return fmt.Errorf("the daemon lock is held by another process than pid %d — not force-stopping it", pid)
 			}
 			progress(fmt.Sprintf("pid %d did not stop within %s — forcing it", pid, daemonStopGrace))
 			if err := killProcess(pid); err != nil {
@@ -177,6 +183,15 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 	}
 	progress(fmt.Sprintf("stopped pid %d", pid))
 	return nil
+}
+
+// lockHolderIs reports whether the daemon heartbeat — written by whichever
+// process holds the single-instance lock — still names pid. It stops
+// stopDaemon from signaling a pid the OS reused for an unrelated process
+// while another daemon holds the lock.
+func lockHolderIs(pid int) bool {
+	hb, ok := daemonhb.Read()
+	return ok && hb.PID == pid
 }
 
 // daemonArgs is `daemon` plus the --db-path and --profile doctor runs
