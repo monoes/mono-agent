@@ -40,6 +40,7 @@ func apiConfigTools() []tool {
 				"For each: what is saved (api_config_set saves it), what a server started from this MCP server's environment would use and where that comes from (env, saved or default: flag, then environment variable, then saved, then default), " +
 				"and, when a daemon is running and reports it, the value the daemon started with and where that came from (flag, env, saved or default), with a state: " +
 				"applied; pending_restart (saved since the daemon started: api_config_apply restarts it); overridden (the daemon was given a flag or a variable of its own, so a saved value has no effect until that is removed); " +
+				"not_serving (only v1_addr and the TLS files: the daemon took the value, but its dedicated listener is not up, because it could not bind the address or load the certificate: its log says which, and a restart does not cure it until the setting is corrected); " +
 				"not_running; or unknown (a daemon that predates the report). Also daemon.autostart (whether api_config_apply can restart the daemon), restart_needed, " +
 				"and problems (a saved value that fails its rule, which api_config_set can replace or remove). It changes nothing. " + damagedRowNote,
 			schema:      objSchema(nil),

@@ -352,8 +352,9 @@ dangerous calls.
   nothing answers) and `api_config_get` (the document of `api config show
   --json`: the ten saved server settings, what a server started from this MCP
   server's environment would use, what the running daemon started with and where
-  each setting stands, `applied`, `pending_restart`, `overridden`, `not_running`
-  or `unknown`). Both are built by `internal/apiconfig`, the code the commands
+  each setting stands, `applied`, `pending_restart`, `overridden`, `not_serving`
+  (the dedicated listener is not up), `not_running` or `unknown`). Both are built
+  by `internal/apiconfig`, the code the commands
   run, with this MCP server's own environment (`api_config_get` says
   `"environment":"mcp"` where the command says `"shell"`), the server's profile
   and the daemon's heartbeat. A saved row that cannot be read stops both, and
@@ -407,9 +408,10 @@ existing MCP client config that relies on them.
   saved, unless the operator started this MCP server with `--allow-api-exposure`
   (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`)**: a dedicated listener beyond this
   machine, moved to another host beyond it or to every interface, a higher
-  confinement class, a runtime outside the default list, a runtime list that
-  leaves `none`; removing a `confinement` of `chat-only` or an `image_runtimes`
-  of `none` counts, and so does removing a saved row that cannot be read (`unset`
+  confinement class, a runtime list that gains a runtime it did not have (one of
+  the default list that a saved list left out counts when it comes back), a
+  runtime list that leaves `none`; removing a `confinement` of `chat-only` or an
+  `image_runtimes` of `none` or of `codex` counts, and so does removing a saved row that cannot be read (`unset`
   of `all`: the widening `saved_settings`, since what the row limited cannot be
   told; with the flag the result says `removed_unreadable_row`)
   (`apiconfig.Widens` and `Apply` decide, in the transaction that replaces the
@@ -424,7 +426,12 @@ existing MCP client config that relies on them.
   fails with the command's message (`the saved settings are damaged ...`), and a
   row a newer version saved is an error for all of them.
   `--allow-api-exposure` adds nothing to `--allow-mutations`, which the tool
-  needs first, and grant mode refuses it. A value that holds an API key
+  needs first, and grant mode refuses it. It guards that tool and nothing else:
+  `--allow-mutations` also serves `workflow_node_add` (which accepts the node type
+  `system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
+  that has them can have a workflow of the profile run `monoagentcli api config set
+  ... --yes` as the OS user; if a model must not be able to widen the server, do
+  not give it `--allow-mutations` (SECURITY.md). A value that holds an API key
   (`sk-ma-`) is refused, because what is saved is shown to whoever reads
   `api_config_get`; a value over 4096 characters (an address over 260) is
   refused; and no error repeats an argument: the reasons of the gate print the
@@ -438,9 +445,12 @@ existing MCP client config that relies on them.
   is the command's `{"restarted":true,"via":"launchd"}` (`via` is `launchd`,
   `systemd` or `schtasks`). Annotated destructive: **it interrupts what the
   daemon is running** (workflows, org runs), and nothing here promises that the
-  daemon finishes first, since how it ends is the service manager's. A daemon
-  that is not registered for auto-start is an error with the command's words:
-  stop it and start `monoagentcli daemon` again, or `daemon install`.
+  daemon finishes first, since how it ends is the service manager's. It reads the
+  saved settings first, as the command does, and restarts nothing when they
+  cannot be used (the message of every tool that reads them, byte for byte the
+  command's), since a daemon that cannot use them starts without the API. A
+  daemon that is not registered for auto-start is an error with the command's
+  words: stop it and start `monoagentcli daemon` again, or `daemon install`.
 - `api_auto_set` — switches the Jev surface `api_auto` (the `auto` model) on or
   off for the MCP server's profile, as `jev enable|disable api_auto` does, and
   answers that command's `--json` document plus `auto`, what `api_status` says of

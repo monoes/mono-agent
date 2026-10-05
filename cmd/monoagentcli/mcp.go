@@ -52,11 +52,16 @@ change that makes the server reach further than it did, and saves nothing, unles
 this server was started with --allow-api-exposure or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1.
 What reaches further is: a dedicated listener that reaches further than the saved
 one (beyond this machine, another host beyond it, or every interface where it was
-one host), a higher confinement class, a runtime outside the default list, none
-left (tool calling or image generation switched on again), and removing a saved
-row that cannot be read (saved_settings). That is the operator's decision, made
-here: the arguments of a tool are set by the model, so none of them can lift the
-refusal. It adds nothing without --allow-mutations.
+one host), a higher confinement class, a runtime list that gains a runtime it did
+not have, none left (tool calling or image generation switched on again), and
+removing a saved row that cannot be read (saved_settings). That is the operator's
+decision, made here: the arguments of a tool are set by the model, so none of them
+can lift the refusal. It adds nothing without --allow-mutations, and it guards that
+one tool only: --allow-mutations also serves workflow_node_add (which accepts the
+node type system.execute_command), workflow_set_active and workflow_run, with which
+a model can have a workflow of the profile run "monoagentcli api config set ... --yes"
+as you. If a model must not be able to widen the server, do not give it
+--allow-mutations.
 
 api_config_apply restarts the daemon, as daemon restart does, and interrupts what
 it is running (workflows, org runs). api_auto_set needs acknowledge_egress: true to
@@ -93,7 +98,7 @@ variable) and --db-path, exactly like every other command.`,
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
 		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools, and api_config_set, api_config_apply and api_auto_set); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
 	cmd.Flags().BoolVar(&allowAPIExposure, "allow-api-exposure", false,
-		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further, which it otherwise refuses: a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, or every interface where it was one host), a higher confinement class, a runtime outside the default list, none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings); needs --allow-mutations; also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
+		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further, which it otherwise refuses: a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, or every interface where it was one host), a higher confinement class, a runtime list that gains a runtime it did not have, none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings); needs --allow-mutations; it guards that tool only (--allow-mutations also serves workflow tools that can run a command as you); also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
 	return cmd
 }
 

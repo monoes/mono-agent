@@ -139,7 +139,7 @@ func TestMCPCommandHelpNamesEveryAPITool(t *testing.T) {
 // help of `mcp`, the usage of --allow-api-exposure and `ref api`) say them the same way, so that none
 // is left saying less than the gate does.
 const finalWideningRules = "a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, " +
-	"or every interface where it was one host), a higher confinement class, a runtime outside the default list, " +
+	"or every interface where it was one host), a higher confinement class, a runtime list that gains a runtime it did not have, " +
 	"none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings)"
 
 // oneLine is a text as one line: the help wraps its lines, and a phrase may be wrapped inside.

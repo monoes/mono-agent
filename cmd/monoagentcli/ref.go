@@ -3026,11 +3026,17 @@ OPENAI-COMPATIBLE API (/v1)
   since the model sets the arguments. What reaches further is what needs --yes
   above: a dedicated listener that reaches further than the saved one (beyond
   this machine, another host beyond it, or every interface where it was one
-  host), a higher confinement class, a runtime outside the default list, none
-  left (tool calling or image generation switched on again), and removing a
-  saved row that cannot be read (saved_settings). It also refuses a value that
-  holds an API key, and no error of it repeats an argument. api_config_apply restarts the
-  daemon as daemon restart does, and interrupts what it is running.
+  host), a higher confinement class, a runtime list that gains a runtime it did
+  not have, none left (tool calling or image generation switched on again), and
+  removing a saved row that cannot be read (saved_settings). It also refuses a
+  value that holds an API key, and no error of it repeats an argument. The flag
+  guards that tool only: --allow-mutations also serves workflow_node_add (which
+  accepts the node type system.execute_command), workflow_set_active and
+  workflow_run, so a model that has them can have a workflow of the profile run
+  api config set ... --yes as the OS user; if a model must not be able to widen
+  the server, do not give it --allow-mutations. api_config_apply restarts the
+  daemon as daemon restart does (it reads the saved settings first and restarts
+  nothing when they cannot be used), and interrupts what it is running.
   api_auto_set switches the api_auto surface of the server's profile on (it
   needs acknowledge_egress: true, because prompts then go to TypeSafe) or off, as
   jev enable|disable api_auto does, and adds auto, what api_status says of the

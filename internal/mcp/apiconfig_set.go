@@ -81,13 +81,13 @@ func apiConfigSetTool() tool {
 			"plus applied, changed (the keys whose saved value is different now) and widening ([{key, reason}]). " +
 			"Give set, an object of setting keys to values in the syntax of the setting's environment variable (the keys and what each accepts are in the schema), and/or unset, a list of keys or the single word all. " +
 			"Only what is given changes. The checks are the command's, the same code: a value that fails its rule is refused naming the setting and the rule, an empty value is refused (use unset), " +
-			"tls_cert_file and tls_key_file must end up together, and nothing is saved from a call that is refused in any part. A value that holds an API key (sk-ma-) is refused: nothing here takes one, and api_config_get shows what is saved. " +
+			"tls_cert_file and tls_key_file must end up together and be absolute paths (the daemon starts in another folder), no value may contain a control character, and nothing is saved from a call that is refused in any part. A value that holds an API key (sk-ma-) is refused: nothing here takes one, and api_config_get shows what is saved. " +
 			"A saved setting takes effect when the server starts, never while it runs: this tool restarts nothing (api_config_apply does, which interrupts what the daemon is running), " +
 			"and a flag or variable the daemon was given overrides a saved value (api_config_get says which). " +
 			"A change that makes the server reach further than it did is refused, and nothing is saved, unless the operator started this MCP server with --allow-api-exposure: " +
 			"a dedicated listener beyond this machine, or moved to another host beyond it or to every interface (an empty host, 0.0.0.0 or [::]), " +
 			"a higher confinement class (of a listener, of a key created with context or of the auto model), " +
-			"a runtime outside the default list, tool calling or image generation switched on again, which includes removing a confinement of chat-only or an image_runtimes of none, " +
+			"a runtime list that gains a runtime it did not have (one of the default list that a saved list left out counts when it comes back), tool calling or image generation switched on again, which includes removing a confinement of chat-only or an image_runtimes of none or of codex, " +
 			"and removing saved settings that cannot be read (unset all), since what they limited cannot be told. " +
 			"No argument can allow it, because the model sets the arguments and only the operator sets that flag. When it refuses it says which setting and why, without any address (api_config_get shows what is saved), " +
 			"and that the user can make the change with `monoagentcli api config set ... --yes` (or unset) or in the desktop app. " +

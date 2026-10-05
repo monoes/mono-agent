@@ -675,7 +675,11 @@ reach further than it did is refused there unless you started the MCP server
 with `--allow-api-exposure`: a model cannot confirm it, and its refusal says
 which setting and why, and that you can run `api config set ... --yes` yourself.
 That flag guards the tool, not the machine: a host that also lets the model run
-shell commands as you lets it run `--yes` too.
+shell commands as you lets it run `--yes` too, and `--allow-mutations` itself is
+such a host: it also serves `workflow_node_add` (which accepts the node type
+`system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
+that can use them can have a workflow run `--yes` as you. If a model must not be
+able to widen the server, do not give it `--allow-mutations`.
 
 ## 6. A headless Linux server
 

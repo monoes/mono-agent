@@ -656,8 +656,15 @@ whatever is saved), and it fills what they leave out.
   not do:** it does not stop a host that also gives the model a shell tool, or
   any tool that runs commands as your OS user, from running `monoagentcli api
   config set ... --yes` itself; the flag guards the tool as `--yes` guards the
-  command, and neither is an access control. If the model must not be able to
-  widen the server, do not give it such a tool, or run it in a sandbox.
+  command, and neither is an access control. **`--allow-mutations`, which the
+  tool needs first, is itself such a tool:** it also serves `workflow_node_add`
+  (which accepts the node type `system.execute_command`), `workflow_set_active`
+  and `workflow_run`, and a model that can use them can have a workflow of the
+  profile run `monoagentcli api config set ... --yes` as the OS user (the
+  security review of phase 6 did it, against a workflow that had a trigger). The
+  flag therefore stops `api_config_set` and nothing else that `--allow-mutations`
+  allows. If the model must not be able to widen the server, do not give it
+  `--allow-mutations`, or run it in a sandbox.
   `--allow-api-exposure` without `--allow-mutations` does nothing, since the
   tool is then not served, and `mcp --grant` refuses it. The tool also refuses a
   value that holds an API key (`sk-ma-`) and a value of unreasonable length, so
