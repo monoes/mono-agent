@@ -32,7 +32,7 @@ func TestVerifyKeyUnknownMessageQuotesAtMost64BytesOfTheKid(t *testing.T) {
 		{"5000 bytes are cut", strings.Repeat("k", 5000), strings.Repeat("k", 64) + "..."},
 		{"a character that ends at byte 64 stays", strings.Repeat("a", 62) + "é" + "tail", strings.Repeat("a", 62) + "é..."},
 		{"a character that straddles byte 64 is dropped whole", strings.Repeat("a", 63) + "é" + "tail", strings.Repeat("a", 63) + "..."},
-		{"control characters are escaped, not echoed", "ab\x1b[31m‮" + strings.Repeat("z", 100), "ab\x1b[31m‮" + strings.Repeat("z", 54) + "..."},
+		{"control characters are escaped, not echoed", "ab\x1b[31m\u202e" + strings.Repeat("z", 100), "ab\x1b[31m\u202e" + strings.Repeat("z", 54) + "..."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

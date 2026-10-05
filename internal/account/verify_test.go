@@ -272,7 +272,8 @@ func TestVerifyTruncatedAndGarbageInput(t *testing.T) {
 	object := enc.EncodeToString([]byte(`{"alg":"EdDSA","kid":"` + f.Key.KID + `"}`))
 	sig := enc.EncodeToString(make([]byte, ed25519.SignatureSize))
 	// signedPayload has a real signature, so Verify gets past the signature
-	// check and it is the payload parser that refuses the payload p.
+	// check: the payload p is refused by what comes after it (the payload
+	// parser or, for null, the claim checks), never by the signature.
 	signedPayload := func(p string) string {
 		signed := object + "." + enc.EncodeToString([]byte(p))
 		return signed + "." + enc.EncodeToString(ed25519.Sign(f.Private, []byte(signed)))
