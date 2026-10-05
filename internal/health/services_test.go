@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -69,6 +70,35 @@ func TestCheckExtensionTrustsLiveConnectionOverProfileScan(t *testing.T) {
 	}
 }
 
+// Doctor cannot signal the daemon on Windows, so it offers no bridge restart there: the tests
+// of that restart run everywhere else, and TestNoBridgeRestartOnWindows is the one that runs there.
+func skipWhereDoctorCannotStopTheDaemon(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("doctor offers no bridge restart on Windows")
+	}
+}
+
+func TestNoBridgeRestartOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the Windows branch: see skipWhereDoctorCannotStopTheDaemon")
+	}
+	stopped := false
+	env := &Env{
+		Version:     "v2.0.0",
+		Bridge:      func(context.Context) (BridgeInfo, bool) { return BridgeInfo{PID: 42, Version: "v1.0.0"}, true },
+		Daemon:      func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 42} },
+		StopDaemon:  func(context.Context, int, func(string)) error { stopped = true; return nil },
+		StartDaemon: func(context.Context, func(string)) error { return nil },
+	}
+	if res := checkBridge(context.Background(), env); res.Status != StatusWarn || res.FixID != "" {
+		t.Errorf("a skewed bridge must warn without a fix on Windows: %+v", res)
+	}
+	if err := fixBridgeRestart(context.Background(), env, noop); err == nil || stopped {
+		t.Errorf("the restart must refuse and leave the daemon alone on Windows: %v (stopped %v)", err, stopped)
+	}
+}
+
 // TestCheckBridgeSkewOffersRestartOnlyWhenDaemonOwned covers the two shapes
 // checkBridge's skew warning takes: a daemon-owned stale bridge gets a
 // FixCommand doctor can run itself, while a bridge owned by anything else
@@ -76,6 +106,7 @@ func TestCheckExtensionTrustsLiveConnectionOverProfileScan(t *testing.T) {
 // points the user at fixing it themselves — see fixBridgeRestart, which
 // makes exactly that same distinction before touching anything.
 func TestCheckBridgeSkewOffersRestartOnlyWhenDaemonOwned(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
 	ctx := context.Background()
 	bridge := BridgeInfo{Addr: "127.0.0.1:9222", PID: 42, Version: "v1.0.0", Owner: "`monoagentcli extension serve` (pid 42)"}
 
@@ -96,6 +127,7 @@ func TestCheckBridgeSkewOffersRestartOnlyWhenDaemonOwned(t *testing.T) {
 }
 
 func TestFixBridgeRestartRefusesANonDaemonBridge(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
 	stopped, started := false, false
 	env := &Env{
 		Bridge: func(context.Context) (BridgeInfo, bool) {
@@ -115,6 +147,7 @@ func TestFixBridgeRestartRefusesANonDaemonBridge(t *testing.T) {
 }
 
 func TestFixBridgeRestartStopsAndRestartsADaemonOwnedBridge(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
 	running := true
 	var calls []string
 	env := &Env{
@@ -142,6 +175,70 @@ func TestFixBridgeRestartStopsAndRestartsADaemonOwnedBridge(t *testing.T) {
 	}
 	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "start" {
 		t.Errorf("calls = %v, want [stop start]", calls)
+	}
+}
+
+// The bridge must be the running daemon's own: a daemon running under another pid than the
+// bridge's is not stopped, and the check offers no doctor command for it.
+func TestFixBridgeRestartNeedsTheBridgeToBeTheRunningDaemons(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
+	stopped := false
+	env := &Env{
+		Version: "v2.0.0",
+		Bridge: func(context.Context) (BridgeInfo, bool) {
+			return BridgeInfo{PID: 42, Version: "v1.0.0", Owner: "`monoagentcli extension serve` (pid 42)"}, true
+		},
+		Daemon:      func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 41} },
+		StopDaemon:  func(context.Context, int, func(string)) error { stopped = true; return nil },
+		StartDaemon: func(context.Context, func(string)) error { return nil },
+	}
+	if err := fixBridgeRestart(context.Background(), env, noop); err == nil {
+		t.Error("a daemon with another pid than the bridge's was restarted")
+	}
+	if stopped {
+		t.Error("a daemon that does not serve the bridge was stopped")
+	}
+	if res := checkBridge(context.Background(), env); strings.Contains(res.FixCommand, "doctor fix") {
+		t.Errorf("the check offers doctor's own fix for a bridge the daemon does not serve: %q", res.FixCommand)
+	}
+}
+
+// A daemon that could not be started again is not stopped: the login service runs the daemon
+// with the defaults and refuses a start with another database or profile, so stopping first
+// would leave the user with no daemon at all.
+func TestFixBridgeRestartLeavesTheDaemonRunningWhenItCouldNotBeStartedAgain(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
+	stopped, started := false, false
+	env := &Env{
+		Bridge:         func(context.Context) (BridgeInfo, bool) { return BridgeInfo{PID: 42, Version: "v1.0.0"}, true },
+		Daemon:         func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 42} },
+		CanStartDaemon: func(context.Context) error { return errors.New("the login service runs the default database only") },
+		StopDaemon:     func(context.Context, int, func(string)) error { stopped = true; return nil },
+		StartDaemon:    func(context.Context, func(string)) error { started = true; return nil },
+	}
+	err := fixBridgeRestart(context.Background(), env, noop)
+	if err == nil || !strings.Contains(err.Error(), "default database only") || !strings.Contains(err.Error(), "left running") {
+		t.Fatalf("want the reason and that the daemon was left running, got: %v", err)
+	}
+	if stopped || started {
+		t.Error("the daemon was touched although a new one could not be started")
+	}
+}
+
+// When the new daemon does not come up after the old one was stopped, the error says that
+// there is no daemon now, and why.
+func TestFixBridgeRestartSaysWhenTheOldDaemonIsGoneAndTheNewOneDidNotStart(t *testing.T) {
+	skipWhereDoctorCannotStopTheDaemon(t)
+	running := true
+	env := &Env{
+		Bridge:      func(context.Context) (BridgeInfo, bool) { return BridgeInfo{PID: 42, Version: "v1.0.0"}, true },
+		Daemon:      func(context.Context) DaemonInfo { return DaemonInfo{Running: running, PID: 42} },
+		StopDaemon:  func(context.Context, int, func(string)) error { running = false; return nil },
+		StartDaemon: func(context.Context, func(string)) error { return errors.New("launchctl failed") },
+	}
+	err := fixBridgeRestart(context.Background(), env, noop)
+	if err == nil || !strings.Contains(err.Error(), "stopped") || !strings.Contains(err.Error(), "launchctl failed") {
+		t.Fatalf("want that the old daemon is stopped and why the new one did not start, got: %v", err)
 	}
 }
 

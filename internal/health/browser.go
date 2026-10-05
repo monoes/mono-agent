@@ -49,7 +49,7 @@ func browserFixes() []Fix {
 			Command: "monoagentcli extension pair"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixExtensionPermission, Label: "Grant Full Disk Access", Safety: SafetyManual,
 			Command: "System Settings → Privacy & Security → Full Disk Access → enable your terminal app, then re-run doctor"}, Apply: manual},
-		{FixInfo: FixInfo{ID: FixBridgeRestart, Label: "Restart the extension bridge", Safety: SafetyConfirm,
+		{FixInfo: FixInfo{ID: FixBridgeRestart, Label: "Restart the daemon (it runs the extension bridge)", Safety: SafetyConfirm,
 			Command: "monoagentcli doctor fix " + FixBridgeRestart}, Apply: fixBridgeRestart},
 	}
 }
@@ -170,11 +170,22 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 	if env.StopDaemon == nil || env.StartDaemon == nil || env.Daemon == nil {
 		return fmt.Errorf("restarting the daemon is not available here")
 	}
+	// Stopping the daemon is the point of no return: when a new one could not be
+	// started (the login service refuses a start with another database or
+	// profile), refuse first, with the old daemon still running.
+	if env.CanStartDaemon != nil {
+		if err := env.CanStartDaemon(ctx); err != nil {
+			return fmt.Errorf("not restarting the daemon, which is left running: %w", err)
+		}
+	}
 	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge v%s)", b.PID, b.Version))
 	if err := env.StopDaemon(ctx, b.PID, progress); err != nil {
 		return fmt.Errorf("stopping the old daemon: %w", err)
 	}
-	return fixDaemonStart(ctx, env, progress)
+	if err := fixDaemonStart(ctx, env, progress); err != nil {
+		return fmt.Errorf("the old daemon is stopped, but a new one did not start: %w", err)
+	}
+	return nil
 }
 
 // bridgeDown reports a bridge that isn't running. Starting the daemon
