@@ -1,5 +1,45 @@
-import { describe, it, expect } from 'vitest'
-import { isMonomindNotFound, installRecipe, recipeCommand } from './agentRuntimes.js'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const scanAgentRuntimes = vi.fn()
+vi.mock('../services/api.js', () => ({ api: { scanAgentRuntimes: (...args) => scanAgentRuntimes(...args) } }))
+
+import { cachedAgentScan, invalidateAgentScan, isMonomindNotFound, installRecipe, recipeCommand } from './agentRuntimes.js'
+
+const worked = { agents: [{ id: 'claude', installed: true }] }
+const failed = { error: 'handshake with /opt/homebrew/bin/monomind failed: signal: killed' }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  invalidateAgentScan()
+})
+
+describe('cachedAgentScan', () => {
+  it('keeps a scan that worked, so every consumer shares one scan per window', async () => {
+    scanAgentRuntimes.mockResolvedValue(worked)
+    expect(await cachedAgentScan()).toBe(worked)
+    expect(await cachedAgentScan()).toBe(worked)
+    expect(scanAgentRuntimes).toHaveBeenCalledTimes(1)
+  })
+
+  // A scan that failed (monomind killed by a timeout while the machine was overloaded, say) is
+  // not worth keeping for five minutes: it would be shown again and again after the cause is gone.
+  it('does not keep a scan that failed: the next call scans again', async () => {
+    scanAgentRuntimes.mockResolvedValueOnce(failed).mockResolvedValueOnce(worked)
+    expect(await cachedAgentScan()).toBe(failed)
+    expect(await cachedAgentScan()).toBe(worked)
+    expect(scanAgentRuntimes).toHaveBeenCalledTimes(2)
+    // and the one that worked is kept from then on
+    expect(await cachedAgentScan()).toBe(worked)
+    expect(scanAgentRuntimes).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not keep an empty answer either', async () => {
+    scanAgentRuntimes.mockResolvedValueOnce(null).mockResolvedValueOnce(worked)
+    expect(await cachedAgentScan()).toBeNull()
+    expect(await cachedAgentScan()).toBe(worked)
+    expect(scanAgentRuntimes).toHaveBeenCalledTimes(2)
+  })
+})
 
 describe('isMonomindNotFound', () => {
   it('matches only the backend "binary not found" error', () => {
