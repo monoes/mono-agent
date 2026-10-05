@@ -12,8 +12,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/apiconfig"
 	"github.com/monoes/mono-agent/internal/autostart"
+	"github.com/monoes/mono-agent/internal/storage"
 )
+
+// restartConfig is a configuration with a database of the test's own (the command reads the saved
+// settings before it restarts anything), under a home of the test's own.
+func restartConfig(t *testing.T, jsonOut bool) *globalConfig {
+	t.Helper()
+	return &globalConfig{DBPath: configTest(t), JSONOutput: jsonOut}
+}
 
 func execDaemonRestart(t *testing.T, cfg *globalConfig) (stdout, stderr string, err error) {
 	t.Helper()
@@ -30,7 +39,7 @@ func execDaemonRestart(t *testing.T, cfg *globalConfig) (stdout, stderr string, 
 func TestDaemonRestartJSON(t *testing.T) {
 	fake := &fakeAutostart{installed: true}
 	useInstaller(t, fake)
-	out, stderr, err := execDaemonRestart(t, &globalConfig{JSONOutput: true})
+	out, stderr, err := execDaemonRestart(t, restartConfig(t, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +61,7 @@ func TestDaemonRestartJSON(t *testing.T) {
 
 func TestDaemonRestartText(t *testing.T) {
 	useInstaller(t, &fakeAutostart{installed: true})
-	out, _, err := execDaemonRestart(t, &globalConfig{})
+	out, _, err := execDaemonRestart(t, restartConfig(t, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +74,7 @@ func TestDaemonRestartWithNothingRegisteredIsInvalidInput(t *testing.T) {
 	fake := &fakeAutostart{installed: false}
 	useInstaller(t, fake)
 	for _, jsonOut := range []bool{true, false} {
-		out, _, err := execDaemonRestart(t, &globalConfig{JSONOutput: jsonOut})
+		out, _, err := execDaemonRestart(t, restartConfig(t, jsonOut))
 		if exitCodeFor(err) != 3 || err == nil {
 			t.Fatalf("json=%v: exit %d, %v", jsonOut, exitCodeFor(err), err)
 		}
@@ -85,7 +94,7 @@ func TestDaemonRestartWithNothingRegisteredIsInvalidInput(t *testing.T) {
 
 func TestDaemonRestartThatFailsIsAGeneralError(t *testing.T) {
 	useInstaller(t, &fakeAutostart{installed: true, restartErr: errors.New("launchctl kickstart -k gui/501/com.monoagent.daemon: exit status 113: Could not find service")})
-	out, _, err := execDaemonRestart(t, &globalConfig{JSONOutput: true})
+	out, _, err := execDaemonRestart(t, restartConfig(t, true))
 	if exitCodeFor(err) != 1 || err == nil || !strings.Contains(err.Error(), "Could not find service") {
 		t.Errorf("exit %d, %v", exitCodeFor(err), err)
 	}
@@ -94,16 +103,74 @@ func TestDaemonRestartThatFailsIsAGeneralError(t *testing.T) {
 	}
 }
 
-// It restarts a service, and has nothing to do with the database.
-func TestDaemonRestartOpensNoDatabase(t *testing.T) {
-	useInstaller(t, &fakeAutostart{installed: true})
+// The daemon reads the settings saved with `api config` when it starts, and one that cannot use them starts
+// without the OpenAI-compatible API (S4 of the security review of phase 6). A restart would replace a daemon
+// that serves it with one that does not, which is not what anybody who runs this asks for (C2 of the
+// correctness review): it reads the saved settings first, and refuses with the words every other command has
+// for them, and with nothing restarted.
+func TestDaemonRestartRefusesWhenTheSavedSettingsCannotBeUsed(t *testing.T) {
+	for name, c := range map[string]struct {
+		row      string
+		exit     int
+		contains string
+	}{
+		"a row that is not JSON":            {`not json`, 3, "the saved settings are damaged"},
+		"a saved value that fails its rule": {`{"v":1,"max_concurrent":99}`, 3, "max_concurrent must be"},
+		"a row in a newer format":           {`{"v":2}`, 1, apiconfig.Row},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeAutostart{installed: true}
+			useInstaller(t, fake)
+			cfg := restartConfig(t, true)
+			st, err := storage.NewDatabase(cfg.DBPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.ApplyMigrations(); err != nil {
+				t.Fatal(err)
+			}
+			plantRow(t, st.DB, c.row)
+			st.Close()
+
+			out, stderr, err := execDaemonRestart(t, cfg)
+			if err == nil || exitCodeFor(err) != c.exit || !strings.Contains(err.Error(), c.contains) {
+				t.Fatalf("exit %d, %v; want exit %d and %q", exitCodeFor(err), err, c.exit, c.contains)
+			}
+			if fake.restarted != 0 {
+				t.Error("the daemon was restarted although it could not use its settings")
+			}
+			if out != "" {
+				t.Errorf("stdout %q: a refused command prints no document", out)
+			}
+			if !strings.Contains(stderr, "not restarted") || strings.Contains(stderr, "Restarting the daemon interrupts") {
+				t.Errorf("stderr should say that nothing was restarted, and not that a restart interrupts: %q", stderr)
+			}
+		})
+	}
+}
+
+// What it does for settings that can be used, and for nothing saved, is what it did.
+func TestDaemonRestartWithUsableSavedSettingsRestarts(t *testing.T) {
+	fake := &fakeAutostart{installed: true}
+	useInstaller(t, fake)
+	cfg := restartConfig(t, true)
+	saveAt(t, cfg.DBPath, "max_concurrent=8", "confinement=sandboxed")
+	if _, _, err := execDaemonRestart(t, cfg); err != nil || fake.restarted != 1 {
+		t.Errorf("restarted %d times, %v", fake.restarted, err)
+	}
+}
+
+// A database that cannot be opened is not a daemon that can start: the restart is refused too, and nothing is run.
+func TestDaemonRestartRefusesWhenTheDatabaseCannotBeOpened(t *testing.T) {
+	fake := &fakeAutostart{installed: true}
+	useInstaller(t, fake)
 	file := filepath.Join(t.TempDir(), "not-a-folder")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A database path whose parent is a file cannot be opened.
-	if _, _, err := execDaemonRestart(t, &globalConfig{DBPath: filepath.Join(file, "x.db")}); err != nil {
-		t.Errorf("daemon restart needed the database: %v", err)
+	if _, _, err := execDaemonRestart(t, &globalConfig{DBPath: filepath.Join(file, "x.db")}); err == nil || fake.restarted != 0 {
+		t.Errorf("restarted %d times, %v", fake.restarted, err)
 	}
 }
 
