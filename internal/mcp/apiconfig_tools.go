@@ -43,6 +43,7 @@ func apiConfigTools() []tool {
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIConfigGet,
 		},
+		apiConfigSetTool(),
 	}
 }
 

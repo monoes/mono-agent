@@ -186,6 +186,20 @@ func (f *configFixture) mustCall(name string, args map[string]any) string {
 // save saves settings the way `api config set` does, without checking them.
 func (f *configFixture) save(words ...string) { f.t.Helper(); saveSettings(f.t, f.Side, words...) }
 
+// clear removes everything that is saved, as a person would with the command (the tool would
+// have to be allowed to widen to do it).
+func (f *configFixture) clear() {
+	f.t.Helper()
+	if err := apiconfig.Update(context.Background(), f.Side.DB, func(s *apiconfig.Settings) error {
+		for _, k := range apiconfig.Keys() {
+			s.Unset(k)
+		}
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // saved is what is saved now.
 func (f *configFixture) saved() apiconfig.Settings {
 	f.t.Helper()
