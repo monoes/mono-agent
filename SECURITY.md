@@ -632,6 +632,49 @@ whatever is saved), and it fills what they leave out.
 - The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
   setting's effective value and where it came from (`flag`, `env`, `saved`,
   `default`): addresses, classes and paths, no secret.
+- **From MCP.** With `mcp --allow-mutations`, `api_config_set` saves and removes
+  the same settings, with the same checks and the same gate, and the
+  confirmation moves to where a model cannot reach it. A change that makes the
+  server reach further (the cases above, `unset` included) is refused, and
+  nothing is saved, unless the operator started the MCP server with
+  `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), a switch read
+  once when the server starts. It is a flag of the host's configuration and not
+  an argument of the tool because a model sets the arguments of a call: an
+  argument that confirmed would be set by whatever the model was told, a
+  prompt-injected page included, and would protect nothing. No argument can open
+  it (the schema offers none, and the tests send the obvious spellings of one), and
+  the refusal names the setting and the reason, the operator's switch, and the
+  user's own way: `api config set ... --yes`, or the desktop app. **What it does
+  not do:** it does not stop a host that also gives the model a shell tool, or
+  any tool that runs commands as your OS user, from running `monoagentcli api
+  config set ... --yes` itself; the flag guards the tool as `--yes` guards the
+  command, and neither is an access control. If the model must not be able to
+  widen the server, do not give it such a tool, or run it in a sandbox.
+  `--allow-api-exposure` without `--allow-mutations` does nothing, since the
+  tool is then not served, and `mcp --grant` refuses it. The tool also refuses a
+  value that holds an API key (`sk-ma-`) and a value of unreasonable length, so
+  that a key pasted by mistake is not saved in clear where the read-only
+  `api_config_get` shows it to whoever calls it; no error of the tool repeats an
+  argument (the reasons of the gate name an address or a runtime, and are given
+  without them); and the result of a change that was allowed shows what was
+  saved, paths and addresses included, never a secret.
+- `api_config_apply` (`--allow-mutations`) restarts the daemon through the
+  service manager it is registered with, as `daemon restart` does, **and
+  interrupts what the daemon is running** (workflows, org runs), with whatever
+  is saved at that moment, which includes a change that reaches further that the
+  user saved with `--yes` and did not mean to apply yet. The tool is annotated
+  destructive so that a host can ask first, and its description says so. It
+  restarts only a daemon registered for auto-start (anything else is an error
+  that says what the user can do), and nothing here claims a graceful stop.
+- `api_auto_set` (`--allow-mutations`) switches `auto` on or off for the MCP
+  server's profile, as `jev enable api_auto` does. Switching it on makes the
+  server send the first 4,000 characters of each `auto` request's prompt, and
+  the models' descriptions, to TypeSafe (see **The `auto` model**): the tool
+  needs `acknowledge_egress: true` and shows that list, as `jev enable` needs
+  `--yes`. The acknowledgement is an argument, so like `--yes` it makes the data
+  visible before it moves and is not an access control: the operator's decision
+  is `--allow-mutations`. The tool never creates, stores, uses or shows the Jev
+  key; it only asks where one is.
 
 **Context keys.** A key created with `--context` adds up to five excerpts
 (1,200 characters each, source base names only, never paths) from that
