@@ -36,7 +36,7 @@ Each is a choice the lead can overrule; none changes a field of the contract exc
 - **P7. The two TLS files are one setting in two keys.** `set` and `unset` refuse a result that has one without the other (exit 3), and `Validate` reports it in a document edited by hand. The environment pair wins as a pair: if either variable is set, both come from the environment (as `tlsserve` already treats a half pair), else the saved pair, else the self-signed certificate. `set` does not read the files: a deployment may place them after saving.
 - **P8. Flags.** `api config set` has the ten flags of the brief; `httpapi` and `daemon` get none: `--turn-timeout`, `--image-runtimes`, `--tool-runtimes` and the TLS files stay environment-only there, as D37 says. All ten flags of `set` are string flags, so every value is checked in one place (exit 3, naming the setting).
 - **P9. The reach of the dedicated bind is ordered (the lead's decision of 2026-10-05, which closed a gap this plan first left as D39 words it).** A `v1_addr` change widens when the new bind is beyond this machine and the old one did not already reach that far. The order, least first: no listener or a loopback one; one host beyond this machine; every interface (an empty host, `0.0.0.0`, `[::]` and the other spellings of the unspecified address are one thing). Widening: from no listener or loopback to a host beyond the machine or to every interface; from one host to a different host (a new place to be reached); from one host to every interface. Not widening: the port alone, the same host, every interface to one host or to loopback (narrowing), loopback to loopback, unsetting, no change. How a host is read: loopback is the server's own test, `tlsserve.IsLoopbackAddr` (the name `localhost`, an IP address of 127.0.0.0/8 or `::1`; an empty host is not loopback); any other host that is not an IP address is a specific host beyond the machine, and two names are one host only when they are the same name (read in lower case and without a trailing dot), because the gate cannot know what a name resolves to, so a name and its address are two hosts; an IP address is one host with every other spelling of it (IPv6 written another way, an IPv4 address as IPv4-mapped IPv6); an address with a zone (`fe80::1%eth0`) is read as a name, as `net.ParseIP` does not take it. Text that is not an address is read as not saved. The key stays `v1_addr`; the reason says which of the three it is.
-- **P10. Damaged documents.** A document that is not a JSON object, or whose `v` is not a whole number of at least 1 (a missing `v` is read as 1), is an error for every command (exit 1, naming the row `api_gateway_config`); one with a higher `v` than this binary knows is never rewritten. An invalid value in a document that parses (a hand edit) is reported by `show` (`problems`), refuses the server start (exit 3, naming the setting and `api config unset`), and does not stop `unset` from removing it; `set` looks only at the settings it sets and at the TLS pair. There is no repair command for a document that is not JSON.
+- **P10. Damaged documents, and the way out (the way out added on 2026-10-05 at the lead's request).** A row that cannot be decoded is an `ErrDamaged`: its value is not a JSON object (an empty value included), its `v` is not a whole number of at least 1 (a missing `v` is read as 1), or a field this binary knows has the wrong type. It is an error (exit 1, naming the row `api_gateway_config`) for `show`, `set`, `unset <key>`, the server's start, `api models` and `api status`, and each message names the fix: `monoagentcli api config unset --all`. That command (`apiconfig.Apply` with `All`, which MCP and the app call) removes such a row inside the same `BEGIN IMMEDIATE` transaction, is never refused for the damage, and says so: `removed_unreadable_row: true` in the result document (additive, present only when true; with `--dry-run` it says that it would), and in the text output `Removed: the saved settings row, which could not be read.` on stdout and a note on stderr. A row with a higher `v` than this binary knows is an `ErrTooNew` and the exception: nothing removes it, `unset --all` included, because that would lose what a newer version saved; the error is exit 1 and says to use the version that wrote it, or to remove the row by hand with `sqlite3 <database> "delete from settings where key = 'api_gateway_config'"` (`apiconfig.RemoveRowSQL`; the database is the one the command opened, `~/.monoagent/monoagent.db` unless `--db-path` names another). A failing database is neither, and never a reason to remove anything. An invalid value in a row that parses (a hand edit) is reported by `show` (`problems`), refuses the server start (exit 3, naming the setting and `api config unset`), and does not stop `unset` from removing it; `set` looks only at the settings it sets and at the TLS pair. `show` of a row that cannot be decoded stays an error (exit 1), as the contract says: `problems[]` holds what a row that parses has wrong in it.
 - **P11. `api status --json` keeps its document.** Its `confinement_source: "environment"` now means this process's environment, then the saved settings, then the defaults; the human note says so. The builder moves to `internal/apiconfig` (`BuildStatus`), with the probes, so the MCP tool `api_status` is the same code.
 - **P12. D40's "after the daemon's own graceful stop" is not claimed.** The service managers end the process their own way (`launchctl kickstart -k` kills the running instance), and whether `schtasks /end` stops the process the task's `cmd` wrapper started was not verified on Windows. The command says that it interrupts what the daemon is running, and no document of this stage says a graceful stop happens. Accepted by the lead on 2026-10-05.
 - **P13. Two small changes outside the file list, found when the documents were checked against the running CLI** (each with its test): the messages that say image generation or tool calling is switched off named only the environment variable, which sent the operator to the wrong place when the saved list is `none`, so they now also name `monoagentcli api config`; and the note of `api models` says it evaluates the saved settings too. Accepted by the lead on 2026-10-05.
@@ -195,13 +195,13 @@ Per setting, from the saved layer and the live daemon's heartbeat (`apiconfig.St
 | `restart_needed` | boolean | some setting is `pending_restart` |
 | `problems` | array | always, `[]` when fine; `{"key": string, "message": string}`, `key` is `""` for a problem of the document; a saved value that fails the rule of its setting, a TLS file without the other |
 
-Exit codes: 0; 1 when the database or the saved document cannot be read (not JSON, a higher format version than this binary knows). Stdout is one document; notes go to stderr.
+Exit codes: 0; 1 when the database or the saved document cannot be read (not JSON, a higher format version than this binary knows); the error of a row that cannot be decoded names `monoagentcli api config unset --all`, and that of a row in a newer format names the version to use and the SQL that removes it by hand (P10). Stdout is one document; notes go to stderr.
 
 Text: a table (`SETTING`, `SAVED`, `EFFECTIVE (this shell)`, `RUNNING (daemon)`, `STATE`, where `effective` and `running` carry their source in brackets unless it is the default, and the state reads `restart needed` for `pending_restart` and `daemon not running` for `not_running`) followed by sentences: whether a daemon runs, whether `daemon restart` can restart it, which settings need a restart, which are overridden and by what, which the shell's environment overrides, and the problems. The text is for people: a consumer reads `--json`.
 
 ## Document: `api config set|unset --json` (and `Apply`)
 
-The `show` document of the state **after** the change (the same fields and order), plus three:
+The `show` document of the state **after** the change (the same fields and order), plus three, and a fourth that is there only when it is true:
 
 ```json
 {
@@ -219,6 +219,7 @@ The `show` document of the state **after** the change (the same fields and order
 | `applied` | boolean | the saved settings are now as asked (also when nothing needed changing); `false` for `--dry-run` |
 | `changed` | array of keys | the settings whose saved value is different after the change (newly saved, changed, removed), in table order; `[]` when nothing changed |
 | `widening` | array | `{"key", "reason"}` for each way the change makes the server reach further (see below); `[]` when none. Without confirmation a real run refuses (exit 3) and prints nothing here, so a caller that needs the reasons first uses `--dry-run` |
+| `removed_unreadable_row` | boolean, present only when `true` (added 2026-10-05, P10) | `unset --all` found a saved row that cannot be decoded and removed it; with `--dry-run`, would remove it. `changed` is `[]` then, since nothing in such a row could be read. Never set for a row in a newer format, which is an error |
 
 With `--dry-run` the document is the state the change would give, nothing is written, and `widening` lists the reasons whether or not `--yes` was given. `settings[].state` and `restart_needed` are computed against the running daemon, so a change shows `pending_restart` there until the daemon restarts, and `restart_needed` is false when no daemon runs.
 
@@ -263,7 +264,7 @@ Changes only the settings given. At least one is needed. Exit 3 for: no setting 
 api config unset <key>... [--all] [--yes] [--dry-run]
 ```
 
-Removes the saved value of each key (a key with none saved is fine), or of every setting with `--all`. Exit 3 for: neither keys nor `--all`, or both; an unknown key; a result with one TLS file and not the other; a widening change without `--yes`. The prompt-free `--yes` and `--dry-run` are as for `set`.
+Removes the saved value of each key (a key with none saved is fine), or of every setting with `--all`. Exit 3 for: neither keys nor `--all`, or both; an unknown key; a result with one TLS file and not the other; a widening change without `--yes`. The prompt-free `--yes` and `--dry-run` are as for `set`. With `--all` it also removes a saved row that cannot be decoded, says so, and is never refused for the damage (P10); a row in a newer format is exit 1 and is not removed.
 
 ### `monoagentcli daemon restart`
 
@@ -364,7 +365,7 @@ func State(saved Settings, key string, hb *daemonhb.Heartbeat) string
 func BuildStatus(ctx context.Context, db *sql.DB, env Env, profileID string) (StatusReport, error)
 ```
 
-`ConfigReport`, `SettingReport`, `DaemonReport` have the fields and JSON names of the tables above (`SettingReport.Running` is a `*string`). A load failure of the saved document is an ordinary error (`errors.Is(err, apiconfig.ErrTooNew)` for a higher format version; any other is damage), not a `ValidationError`.
+`ConfigReport`, `SettingReport`, `DaemonReport` have the fields and JSON names of the tables above (`SettingReport.Running` is a `*string`). A load failure of the saved document is an ordinary error, not a `ValidationError`: `errors.Is(err, apiconfig.ErrTooNew)` for a higher format version, `errors.Is(err, apiconfig.ErrDamaged)` for a row that cannot be decoded (P10), and anything else is the database's.
 
 `internal/autostart`:
 
@@ -382,13 +383,16 @@ type NotRegisteredError struct{ Detail string }                      // errors.A
 
 ### As built, in addition to the lists above
 
-Additions only: nothing above changed a name, a key, a field or a code. What the stages after this one may also use:
+Additions only: nothing above changed a name, a key, a field or a code. (The two changes of 2026-10-05 are P9, which makes more `v1_addr` changes a widening, and P10, which adds the field `removed_unreadable_row`, `ErrDamaged` and `RemoveRowSQL`.) What the stages after this one may also use:
 
 ```go
 // internal/apiconfig
 const FormatVersion = 1                  // the highest "v" this binary reads
 const Row = "api_gateway_config"         // the settings-table key
-var ErrTooNew error                      // a row with a higher "v": errors.Is; such a row is never rewritten
+var ErrTooNew error                      // a row with a higher "v": errors.Is; such a row is never rewritten, and never removed
+var ErrDamaged error                     // a row that cannot be decoded (P10): errors.Is; `unset --all` (Apply with All) removes it
+const RemoveRowSQL = "delete from settings where key = 'api_gateway_config'" // by hand, for a row in a newer format
+// ChangeResult gained RemovedUnreadableRow bool `json:"removed_unreadable_row,omitempty"` (P10), after Widening
 const KeyV1Addr, KeyTLSCertFile, KeyTLSKeyFile, KeyConfinement, KeyContextConfinement, KeyAutoConfinement,
 	KeyMaxConcurrent, KeyTurnTimeout, KeyImageRuntimes, KeyToolRuntimes = "v1_addr", ... // the ten keys
 const SourceFlag, SourceEnv, SourceSaved, SourceDefault = "flag", "env", "saved", "default"

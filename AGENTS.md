@@ -931,9 +931,15 @@ a key. It lives in `internal/openaiapi/`; the spec is
   a `confinement` of `chat-only` or an `image_runtimes` of `none` gives the
   server more reach. Narrowing, `max_concurrent`, `turn_timeout` and the TLS
   files never need it, and a value that equals the default is not a change of
-  the policy. A row that is not a JSON object, or whose
-  `v` is not a whole number, is an error for every `api config` command (exit 1;
-  there is no repair command, so remove the row by hand). A value that fails its
+  the policy. A row that cannot be read (not a JSON object, a `v` that is not a
+  whole number, a field of the wrong type) stops `show`, `set`, `unset
+  <setting>`, the server, `api models` and `api status` (exit 1) and names the
+  fix: `api config unset --all` removes it, says so (`removed_unreadable_row` in
+  `--json`, a note on stderr) and is never refused for it, in the CLI and through
+  `apiconfig.Apply`. A row a newer `monoagentcli` wrote is never removed, by
+  `unset --all` either, because that would lose what it saved: use that version,
+  or remove the row by hand (`apiconfig.RemoveRowSQL`, in the database the
+  command opened). A value that fails its
   rule in a row somebody edited is listed under `problems` by `show`, stops the
   server, `api models` and `api status` (exit 3, naming the setting), is not
   looked at by a `set` that does not touch it, and is removed by `unset`.

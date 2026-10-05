@@ -2981,6 +2981,15 @@ OPENAI-COMPATIBLE API (/v1)
   list none) is a widening like any other. --dry-run says what a change would do
   and whether it needs --yes, and saves nothing.
 
+  A saved row that cannot be read (not JSON, a version that is not a whole
+  number, a field of the wrong type) stops show, set, unset <setting>, the
+  server, api models and api status (exit 1) and names the fix: unset --all
+  removes the row, says so (removed_unreadable_row in --json, a note on stderr)
+  and is never refused for it. A row written by a newer version is never removed,
+  by unset --all either: use that version, or remove the row by hand, with
+  sqlite3 ~/.monoagent/monoagent.db "delete from settings where key =
+  'api_gateway_config'" (the database --db-path names, if you gave one).
+
   daemon restart restarts the daemon through the service it is registered as
   (launchd, systemd --user, the Windows Scheduled Task; see daemon install), says
   first, on stderr, that this interrupts what the daemon is running (workflows,

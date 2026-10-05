@@ -593,8 +593,13 @@ whatever is saved), and it fills what they leave out.
 - A saved value that fails its rule (a hand edit) makes `httpapi` and `daemon`
   exit at start (exit 3, naming the setting), and `api models` and `api status`
   refuse, rather than guess; `api config unset <setting>` removes it. A row that
-  is not a JSON object cannot be changed by these commands and has to be removed
-  by hand, and one written by a newer `monoagentcli` is never rewritten.
+  cannot be read at all (not a JSON object, a bad version, a field of the wrong
+  type) stops every `api config` command but one: `api config unset --all`
+  removes it, says so and is never refused for the damage; what the row held is
+  gone, and the server then starts on its flags, its environment and the
+  defaults. A row written by a newer `monoagentcli` is the exception: it is never
+  rewritten and never removed by these commands, since that would lose what that
+  version saved.
 - The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
   setting's effective value and where it came from (`flag`, `env`, `saved`,
   `default`): addresses, classes and paths, no secret.
