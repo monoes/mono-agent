@@ -227,6 +227,8 @@ export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgDecisions(arg1:string,arg2:string):Promise<string>;
 
+export function GetOrgDocuments(arg1:string,arg2:string):Promise<string>;
+
 export function GetOrgDesign(arg1:string):Promise<string>;
 
 export function GetOrgFlow(arg1:string,arg2:string):Promise<string>;

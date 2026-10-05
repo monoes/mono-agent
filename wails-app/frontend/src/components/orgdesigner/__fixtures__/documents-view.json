@@ -1,0 +1,319 @@
+{
+  "v": 1,
+  "org": "rework",
+  "run": "run-syn",
+  "runs": [
+    "run-syn"
+  ],
+  "seq": 21,
+  "ignored": 0,
+  "caps": {
+    "review": 2
+  },
+  "sections": [
+    {
+      "section": "drafting",
+      "types": [
+        {
+          "type": "note",
+          "docs": [
+            "note-1",
+            "note-2",
+            "note-3",
+            "note-4"
+          ],
+          "deliverables": [
+            "out/note.json"
+          ]
+        }
+      ],
+      "counts": {
+        "accepted": 2,
+        "pending": 1,
+        "rejected": 1
+      }
+    },
+    {
+      "section": "review",
+      "cap": 2,
+      "types": [],
+      "counts": {}
+    }
+  ],
+  "docs": [
+    {
+      "id": "note-1",
+      "type": "note",
+      "section": "drafting",
+      "producer": "writer",
+      "consumers": [
+        "review"
+      ],
+      "status": "accepted",
+      "head": 2,
+      "round": 1,
+      "cap": 2,
+      "cap_hit": false,
+      "frozen": false,
+      "threads": [
+        {
+          "consumer": "review",
+          "rounds": 1,
+          "cap": 2,
+          "exhausted": false,
+          "frozen": false
+        }
+      ],
+      "versions": [
+        {
+          "version": 1,
+          "status": "rejected",
+          "by": "writer",
+          "at": "2026-10-05T19:00:07.000Z",
+          "bytes": 201,
+          "superseded_by": 2,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "reject",
+              "by": "checker",
+              "at": "2026-10-05T19:00:21.000Z",
+              "reason": "The count in answers[2] disagrees with the evidence.",
+              "relayed_at": "2026-10-05T19:00:20.000Z"
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        },
+        {
+          "version": 2,
+          "status": "accepted",
+          "by": "writer",
+          "at": "2026-10-05T19:00:28.000Z",
+          "bytes": 202,
+          "supersedes": 1,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "accept",
+              "by": "checker",
+              "at": "2026-10-05T19:00:42.000Z"
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        }
+      ],
+      "deliverables": [
+        "out/note.json"
+      ],
+      "updated_at": "2026-10-05T19:00:42.000Z"
+    },
+    {
+      "id": "note-2",
+      "type": "note",
+      "section": "drafting",
+      "producer": "writer",
+      "consumers": [
+        "review"
+      ],
+      "status": "rejected",
+      "head": 2,
+      "round": 2,
+      "cap": 2,
+      "cap_hit": true,
+      "frozen": true,
+      "threads": [
+        {
+          "consumer": "review",
+          "rounds": 2,
+          "cap": 2,
+          "exhausted": true,
+          "frozen": true
+        }
+      ],
+      "versions": [
+        {
+          "version": 1,
+          "status": "rejected",
+          "by": "writer",
+          "at": "2026-10-05T19:00:49.000Z",
+          "bytes": 201,
+          "superseded_by": 2,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "reject",
+              "by": "checker",
+              "at": "2026-10-05T19:01:03.000Z",
+              "reason": "Missing the module field.",
+              "relayed_at": "2026-10-05T19:00:50.000Z"
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        },
+        {
+          "version": 2,
+          "status": "rejected",
+          "by": "writer",
+          "at": "2026-10-05T19:01:10.000Z",
+          "bytes": 202,
+          "supersedes": 1,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "reject",
+              "by": "checker",
+              "at": "2026-10-05T19:01:24.000Z",
+              "reason": "Still missing the module field.",
+              "relayed_at": "2026-10-05T19:01:20.000Z"
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        }
+      ],
+      "deliverables": [
+        "out/note.json"
+      ],
+      "updated_at": "2026-10-05T19:01:24.000Z"
+    },
+    {
+      "id": "note-3",
+      "type": "note",
+      "section": "drafting",
+      "producer": "writer",
+      "consumers": [
+        "review"
+      ],
+      "status": "accepted",
+      "head": 2,
+      "round": 1,
+      "cap": 2,
+      "cap_hit": false,
+      "frozen": false,
+      "threads": [
+        {
+          "consumer": "review",
+          "rounds": 1,
+          "cap": 2,
+          "exhausted": false,
+          "frozen": false
+        }
+      ],
+      "versions": [
+        {
+          "version": 1,
+          "status": "rejected",
+          "by": "writer",
+          "at": "2026-10-05T19:01:31.000Z",
+          "bytes": 201,
+          "superseded_by": 2,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "reject",
+              "by": "checker",
+              "at": "2026-10-05T19:01:45.000Z",
+              "reason": "Wrong unit."
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        },
+        {
+          "version": 2,
+          "status": "accepted",
+          "by": "writer",
+          "at": "2026-10-05T19:01:52.000Z",
+          "bytes": 202,
+          "supersedes": 1,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [],
+          "decisions": {
+            "review": {
+              "decision": "accept",
+              "by": "lead",
+              "at": "2026-10-05T19:02:13.000Z",
+              "override": true
+            }
+          },
+          "reads": {
+            "checker": 1
+          }
+        }
+      ],
+      "deliverables": [
+        "out/note.json"
+      ],
+      "updated_at": "2026-10-05T19:02:13.000Z"
+    },
+    {
+      "id": "note-4",
+      "type": "note",
+      "section": "drafting",
+      "producer": "writer",
+      "consumers": [
+        "review"
+      ],
+      "status": "pending",
+      "head": 1,
+      "round": 0,
+      "cap_hit": false,
+      "frozen": false,
+      "threads": [],
+      "versions": [
+        {
+          "version": 1,
+          "status": "pending",
+          "by": "writer",
+          "at": "2026-10-05T19:02:27.000Z",
+          "bytes": 201,
+          "consumers": [
+            "review"
+          ],
+          "waiting_on": [
+            "review"
+          ],
+          "decisions": {},
+          "reads": {}
+        }
+      ],
+      "deliverables": [
+        "out/note.json"
+      ],
+      "updated_at": "2026-10-05T19:02:27.000Z"
+    }
+  ],
+  "summary": {
+    "documents": 4,
+    "pending": 1,
+    "accepted": 2,
+    "rejected": 1,
+    "reworking": 0,
+    "cap_hit": 1
+  }
+}

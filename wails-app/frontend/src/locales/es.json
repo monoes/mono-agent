@@ -652,6 +652,7 @@
       "needs": "Te necesita",
       "queued": "En cola",
       "decisions": "Decisiones",
+      "documents": "Documentos",
       "logs": "Registros",
       "costs": "Costos",
       "flow": "Flujo",
