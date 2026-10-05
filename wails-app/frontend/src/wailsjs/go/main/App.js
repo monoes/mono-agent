@@ -58,8 +58,20 @@ export function AddOrgAutomation(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddOrgAutomation'](arg1, arg2, arg3);
 }
 
+export function AddOrgDocumentEdge(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['AddOrgDocumentEdge'](arg1, arg2, arg3, arg4);
+}
+
 export function AddOrgRole(arg1, arg2) {
   return window['go']['main']['App']['AddOrgRole'](arg1, arg2);
+}
+
+export function AddOrgRoleToSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddOrgRoleToSection'](arg1, arg2, arg3);
+}
+
+export function AddOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddOrgSection'](arg1, arg2, arg3);
 }
 
 export function AddPersonMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
@@ -106,6 +118,10 @@ export function AnalyzeRecording(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2, arg3);
 }
 
+export function AnswerAgentQuestion(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AnswerAgentQuestion'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function AnswerOrgChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerOrgChat'](arg1, arg2, arg3);
 }
@@ -132,6 +148,10 @@ export function ApproveOrgAction(arg1, arg2, arg3) {
 
 export function ApprovePendingPerson(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePendingPerson'](arg1, arg2, arg3);
+}
+
+export function AssignOrgRole(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AssignOrgRole'](arg1, arg2, arg3);
 }
 
 export function BindBrowser(arg1, arg2) {
@@ -252,6 +272,14 @@ export function DeleteChatConversation(arg1) {
 
 export function DeleteOrgDesign(arg1) {
   return window['go']['main']['App']['DeleteOrgDesign'](arg1);
+}
+
+export function DeleteOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteOrgSection'](arg1, arg2, arg3);
+}
+
+export function DeletePeople(arg1) {
+  return window['go']['main']['App']['DeletePeople'](arg1);
 }
 
 export function DeleteProfileDocument(arg1) {
@@ -488,10 +516,6 @@ export function GetPendingPeopleApprovals() {
 
 export function GetPeople(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetPeople'](arg1, arg2, arg3, arg4);
-}
-
-export function DeletePeople(arg1) {
-  return window['go']['main']['App']['DeletePeople'](arg1);
 }
 
 export function GetPeopleCount(arg1, arg2) {
@@ -934,6 +958,10 @@ export function RemoveOrgAutomation(arg1, arg2) {
   return window['go']['main']['App']['RemoveOrgAutomation'](arg1, arg2);
 }
 
+export function RemoveOrgDocumentEdge(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RemoveOrgDocumentEdge'](arg1, arg2, arg3, arg4);
+}
+
 export function RemoveOrgGrant(arg1, arg2, arg3) {
   return window['go']['main']['App']['RemoveOrgGrant'](arg1, arg2, arg3);
 }
@@ -1058,6 +1086,10 @@ export function SetAutomationTrust(arg1, arg2) {
   return window['go']['main']['App']['SetAutomationTrust'](arg1, arg2);
 }
 
+export function SetChatOrgMode(arg1, arg2) {
+  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
+}
+
 export function SetOAuthCredentials(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOAuthCredentials'](arg1, arg2, arg3);
 }
@@ -1154,6 +1186,10 @@ export function UpdateOrgRole(arg1, arg2, arg3) {
   return window['go']['main']['App']['UpdateOrgRole'](arg1, arg2, arg3);
 }
 
+export function UpdateOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateOrgSection'](arg1, arg2, arg3);
+}
+
 export function UpdateSecret(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['UpdateSecret'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -1184,12 +1220,4 @@ export function ValidateOrgReport(arg1) {
 
 export function VerifyDraft(arg1, arg2, arg3) {
   return window['go']['main']['App']['VerifyDraft'](arg1, arg2, arg3);
-}
-
-export function SetChatOrgMode(arg1, arg2) {
-  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
-}
-
-export function AnswerAgentQuestion(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['AnswerAgentQuestion'](arg1, arg2, arg3, arg4, arg5);
 }

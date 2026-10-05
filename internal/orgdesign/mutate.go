@@ -213,6 +213,9 @@ func (d *Doc) addRole(r Role, section string, restrict bool) (*Role, error) {
 	}
 	d.Roles = append(d.Roles, r)
 	d.joinSection(home, r.ID)
+	if home != "" {
+		d.raiseAgentCap()
+	}
 	added, _ := d.FindRole(r.ID)
 	return added, nil
 }

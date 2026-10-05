@@ -112,6 +112,9 @@ func (d *Doc) sectionForNewRole(r *Role, explicit string) (string, error) {
 		if r.ReportsTo == nil {
 			return "", fmt.Errorf("role %q is a root: the root is in no section", r.ID)
 		}
+		if ps := d.SectionOf(*r.ReportsTo); ps != "" && ps != explicit {
+			return "", fmt.Errorf("role %q would join section %q but report into section %q: sections cannot message each other directly", r.ID, explicit, ps)
+		}
 		return explicit, nil
 	}
 	if !d.SectionsEnabled() || r.ReportsTo == nil || r.Kind == "endpoint" {
@@ -229,7 +232,24 @@ func (d *Doc) AssignRole(id, section string) error {
 	}
 	fix()
 	d.joinSection(section, id)
+	d.reportToLead(id, section)
 	return nil
+}
+
+// reportToLead points a role that just moved into section at that section's
+// lead, as monomind advises, so it keeps no link into the section it left.
+// Left alone when it already reports inside the section or it would loop.
+func (d *Doc) reportToLead(id, section string) {
+	s := d.Sections.Find(section)
+	r, _ := d.FindRole(id)
+	lead := s.LeadOf()
+	if r == nil || lead == "" || lead == id || (r.ReportsTo != nil && d.SectionOf(*r.ReportsTo) == section) {
+		return
+	}
+	if WouldCycle(d.Roles, id, lead) {
+		return
+	}
+	r.ReportsTo = &lead
 }
 
 // SetSectionLead makes id the section's lead. id must be a member, or a
@@ -320,6 +340,11 @@ func (d *Doc) sectionsForRemoval(id string, strategy RemoveStrategy) (func(), er
 func (d *Doc) checkReparentInSections(child *Role, newParentID string) error {
 	if !d.SectionsEnabled() || child.Kind == "endpoint" {
 		return nil
+	}
+	if newParentID != "" {
+		if err := d.crossSectionRefusal(child.ID, newParentID); err != nil {
+			return err
+		}
 	}
 	in := d.SectionOf(child.ID)
 	switch {
