@@ -16,49 +16,74 @@ import (
 	"github.com/monoes/mono-agent/internal/daemonhb"
 )
 
-// stopDaemonHelperEnv re-execs this test binary as a stand-in daemon: takes
-// the lock, writes a heartbeat, and blocks until SIGTERM releases it —
-// mirroring daemon.go's own signal-triggered graceful shutdown closely
-// enough for stopDaemon to have something real to stop. See
-// TestLockAcrossProcesses in internal/daemonhb for the same re-exec idiom.
-// Unix-only: terminateProcess/killProcess are stubbed out on Windows (see
-// coder_signal_windows.go), so stopDaemon can't reach this path there.
+// The stand-in daemon is this test binary run again (see TestLockAcrossProcesses in
+// internal/daemonhb for the same idiom): stopDaemonHelperEnv names what it plays, and
+// TestStopDaemonHelperProcess is the entry point the parent runs it through. Unix-only:
+// terminateProcess and killProcess are stubs on Windows (coder_signal_windows.go), so
+// stopDaemon cannot reach this path there.
 const stopDaemonHelperEnv = "MONOAGENTCLI_STOPDAEMON_HELPER"
 
-func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
-	if os.Getenv(stopDaemonHelperEnv) == "1" {
-		release, err := daemonhb.Lock()
-		if err != nil {
-			os.Exit(1)
-		}
-		if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid()}); err != nil {
-			os.Exit(1)
-		}
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGTERM)
-		<-sig
-		release()
-		os.Exit(0)
+// runStopDaemonHelper plays the daemon of the "lock" mode: it takes the single-instance lock,
+// writes its heartbeat, and on SIGTERM removes the heartbeat (the real daemon's heartbeat
+// goroutine does that as soon as its context ends) and exits. It listens for SIGTERM before it
+// takes the lock: a signal sent the moment the lock becomes visible must find a handler.
+func runStopDaemonHelper() {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	release, err := daemonhb.Lock()
+	if err != nil {
+		os.Exit(1)
 	}
+	defer release()
+	if err := daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid()}); err != nil {
+		os.Exit(1)
+	}
+	<-sig
+	_ = os.Remove(daemonhb.Path())
+}
 
+// TestStopDaemonHelperProcess is not a test: it is the entry point of the stand-in daemon.
+// It returns (and does not os.Exit) so that TestMain removes the temporary home it made.
+func TestStopDaemonHelperProcess(t *testing.T) {
+	if os.Getenv(stopDaemonHelperEnv) == "" {
+		t.Skip("entry point of the stand-in daemon, run by the stopDaemon tests")
+	}
+	runStopDaemonHelper()
+}
+
+// startStopDaemonHelper starts the stand-in daemon and returns once this machine's heartbeat
+// names it, which it writes only after it holds the lock (the parent never probes the lock
+// meanwhile: a probe takes it for an instant and could make the helper's own attempt fail).
+// It reaps the helper in the background, as a service manager would: a child nobody waits for
+// stays a zombie that `kill -0` still finds.
+func startStopDaemonHelper(t *testing.T) (pid int, exited <-chan error) {
+	t.Helper()
 	hbPath := filepath.Join(t.TempDir(), "hb.json")
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", hbPath)
 
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestStopDaemonSignalsAndWaitsForTheLockToClear$")
-	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"=1", "MONOAGENT_DAEMON_HEARTBEAT="+hbPath)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStopDaemonHelperProcess$")
+	cmd.Env = append(os.Environ(), stopDaemonHelperEnv+"=lock", "MONOAGENT_DAEMON_HEARTBEAT="+hbPath)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	pid := cmd.Process.Pid
-	t.Cleanup(func() { _ = cmd.Process.Kill() }) // in case the test fails before stopDaemon reaps it
+	t.Cleanup(func() { _ = cmd.Process.Kill() }) // in case the test fails before stopDaemon stops it
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for !daemonhb.Locked() {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if hb, ok := daemonhb.Read(); ok && hb.PID == cmd.Process.Pid {
+			return cmd.Process.Pid, done
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("helper never took the lock")
+			t.Fatal("the helper never became the daemon")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
+	pid, exited := startStopDaemonHelper(t)
 
 	var progressLines []string
 	err := stopDaemon(context.Background(), pid, func(line string) { progressLines = append(progressLines, line) })
@@ -72,7 +97,7 @@ func TestStopDaemonSignalsAndWaitsForTheLockToClear(t *testing.T) {
 		t.Error("expected at least one progress line")
 	}
 
-	waitErr := cmd.Wait()
+	waitErr := <-exited
 	var exitErr *exec.ExitError
 	if waitErr != nil && (!errors.As(waitErr, &exitErr) || exitErr.ExitCode() != 0) {
 		t.Errorf("helper process exit: %v", waitErr)
