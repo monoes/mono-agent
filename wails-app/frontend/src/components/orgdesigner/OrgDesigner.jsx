@@ -33,6 +33,7 @@
 // Design / Live / Grants switches the centre between the editable canvas,
 // the same canvas recoloured from the org's bus (U15), and the grants matrix.
 
+import { sectionsOrgEnabled } from './sectionsRuntimes.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, Search, SlidersHorizontal, ChevronLeft, ChevronRight, Workflow } from 'lucide-react'
 import { api, onOrgDesignUpdated, notify } from '../../services/api.js'
@@ -741,6 +742,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
                 fullAccess={selectedId ? fullAccessByRole[selectedId] || null : null}
                 orgRuntime={orgMeta?.runtime || ''}
+                sectionsOrg={sectionsOrgEnabled(orgMeta)}
                 onAccessChanged={() => { rolesAccess.refresh(); cliValidation.refresh() }}
               />
             </div>

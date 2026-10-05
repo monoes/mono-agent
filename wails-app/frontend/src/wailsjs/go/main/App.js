@@ -874,6 +874,10 @@ export function OrgGroupStatus(arg1) {
   return window['go']['main']['App']['OrgGroupStatus'](arg1);
 }
 
+export function OrgSectionsRuntimes() {
+  return window['go']['main']['App']['OrgSectionsRuntimes']();
+}
+
 export function OrgRoleSetAccess(arg1, arg2, arg3) {
   return window['go']['main']['App']['OrgRoleSetAccess'](arg1, arg2, arg3);
 }
