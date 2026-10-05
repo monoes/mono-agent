@@ -122,6 +122,7 @@ describe('asking before a restart', () => {
     const d = await screen.findByRole('alertdialog', { name: r.title })
     expect(d).toHaveTextContent(r.body)
     expect(d).toHaveTextContent(r.after)
+    expect(d).toHaveTextContent(r.byHand) // a daemon started by hand next to the service is to be stopped first, as the CLI's help says
     expect(d).toHaveTextContent(/workflows/)
     expect(d).toHaveTextContent(/org runs/)
     expect(d).not.toHaveTextContent(/graceful/i) // the service manager ends the process its own way: nothing here claims otherwise
@@ -367,6 +368,7 @@ describe('in Spanish', () => {
     fireEvent.click(screen.getByRole('button', { name: s.restart.button }))
     const d = await screen.findByRole('alertdialog', { name: s.restart.title })
     expect(d).toHaveTextContent(s.restart.body)
+    expect(d).toHaveTextContent(s.restart.byHand)
     expect(within(d).getByRole('button', { name: s.restart.cancel })).toHaveFocus()
     fireEvent.click(within(d).getByRole('button', { name: s.restart.confirm }))
     await tick(0)
@@ -374,6 +376,7 @@ describe('in Spanish', () => {
     await tick(1100)
     expect(within(banner()).getByText(s.restart.back)).toBeInTheDocument()
     expect(s.restart.body).not.toBe(r.body)
+    expect(s.restart.byHand).not.toBe(r.byHand)
   })
 
   it('words the commands to run', async () => {

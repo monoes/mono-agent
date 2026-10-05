@@ -122,6 +122,7 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
         >
           <div style={{ ...hint, fontSize: 12 }}>{t('settings.api.config.restart.body')}</div>
           <div style={hint}>{t('settings.api.config.restart.after')}</div>
+          <div style={hint}>{t('settings.api.config.restart.byHand')}</div>
         </ApiConfirmDialog>
       )}
     </div>

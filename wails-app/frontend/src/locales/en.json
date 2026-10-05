@@ -608,7 +608,8 @@
           "notDone": "The service manager did not restart the daemon.",
           "noAutostart": "The daemon isn't registered for auto-start, so this page can't restart it. Stop it, then start it again:",
           "install": "To let this page restart it next time, register it first:",
-          "copyLabel": "Copy the command {{command}}"
+          "copyLabel": "Copy the command {{command}}",
+          "byHand": "If a daemon was also started by hand, stop it first: the service's daemon would find that one running and exit."
         },
         "chipDamaged": "Saved settings damaged",
         "reset": {

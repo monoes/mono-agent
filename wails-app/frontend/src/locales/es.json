@@ -608,7 +608,8 @@
           "notDone": "El gestor de servicios no reinició el daemon.",
           "noAutostart": "El daemon no está registrado para arrancar solo, así que esta página no puede reiniciarlo. Detenlo y vuelve a arrancarlo:",
           "install": "Para que esta página pueda reiniciarlo la próxima vez, regístralo antes:",
-          "copyLabel": "Copiar el comando {{command}}"
+          "copyLabel": "Copiar el comando {{command}}",
+          "byHand": "Si además se arrancó un daemon a mano, deténlo antes: el daemon del servicio encontraría ese en marcha y saldría."
         },
         "chipDamaged": "Ajustes guardados dañados",
         "reset": {
