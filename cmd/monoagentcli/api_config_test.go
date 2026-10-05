@@ -382,7 +382,15 @@ func TestAPIConfigSetTheWideningGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if r := decodeChange(t, out); !r.Applied || len(r.Widening) != 0 {
-		t.Errorf("a move between two network addresses is not seen (P9): %+v", r.Widening)
+		t.Errorf("every interface to one host narrows the bind, which needs no confirmation (P9): %+v", r.Widening)
+	}
+	// One host to another reaches somewhere new: it needs --yes too (P9), and says where from.
+	_, _, err = runAPI(t, db, "default", true, "config", "set", "--v1-addr", "192.168.1.10:9443")
+	if exitCodeFor(err) != 3 || err == nil || !strings.Contains(err.Error(), "move from 10.0.0.5:9443 to 192.168.1.10:9443") || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("exit %d, %v: want 3, with the move and the way out", exitCodeFor(err), err)
+	}
+	if savedAt(t, db).V1Addr != "10.0.0.5:9443" {
+		t.Error("a refused move wrote")
 	}
 }
 

@@ -46,7 +46,10 @@ var wideningRows = []wideningRow{
 	{"ipv6 loopback", nil, []string{"v1_addr=[::1]:9443"}, ""},
 	{"the rest of 127.0.0.0/8", nil, []string{"v1_addr=127.5.5.5:9443"}, ""},
 	{"loopback to a network address", []string{"v1_addr=127.0.0.1:9443"}, []string{"v1_addr=0.0.0.0:9443"}, "v1_addr"},
-	{"a network address to another (P9: one interface to all of them is not seen)", []string{"v1_addr=10.0.0.5:9443"}, []string{"v1_addr=0.0.0.0:9443"}, ""},
+	{"one network address to every interface (P9)", []string{"v1_addr=10.0.0.5:9443"}, []string{"v1_addr=0.0.0.0:9443"}, "v1_addr"},
+	{"one network address to another (P9)", []string{"v1_addr=10.0.0.5:9443"}, []string{"v1_addr=192.168.1.10:9443"}, "v1_addr"},
+	{"the port alone (P9)", []string{"v1_addr=10.0.0.5:9443"}, []string{"v1_addr=10.0.0.5:9444"}, ""},
+	{"every interface to one (P9: narrowing)", []string{"v1_addr=0.0.0.0:9443"}, []string{"v1_addr=10.0.0.5:9443"}, ""},
 	{"a network address to the same", []string{"v1_addr=0.0.0.0:9443"}, []string{"v1_addr=0.0.0.0:9443"}, ""},
 	{"a network address to loopback", []string{"v1_addr=0.0.0.0:9443"}, []string{"v1_addr=127.0.0.1:9443"}, ""},
 	{"unsetting the address", []string{"v1_addr=0.0.0.0:9443"}, nil, ""},
@@ -188,6 +191,115 @@ func TestWideningReasonsSayWhatChanges(t *testing.T) {
 	has(w, "image_runtimes", "claude", "default")
 	w = Widens(doc(t, "tool_runtimes=none"), Settings{})
 	has(w, "tool_runtimes", "switched off", "claude")
+	// The address: three ways to reach further, three sentences (P9).
+	w = Widens(doc(t, "v1_addr=192.168.1.10:9443"), doc(t, "v1_addr=10.0.0.5:9443"))
+	has(w, "v1_addr", "move from 192.168.1.10:9443 to 10.0.0.5:9443", "another address beyond this machine", "serve runtimes up to chat-only")
+	w = Widens(doc(t, "v1_addr=192.168.1.10:9443"), doc(t, "v1_addr=0.0.0.0:9443"))
+	has(w, "v1_addr", "every interface (0.0.0.0:9443)", "listened only on 192.168.1.10:9443 before", "serve runtimes up to chat-only")
+	w = Widens(doc(t, "v1_addr=127.0.0.1:9443"), doc(t, "v1_addr=192.168.1.10:9443"))
+	has(w, "v1_addr", "listen on 192.168.1.10:9443, beyond this machine", "did not listen beyond this machine before")
+}
+
+// The reach of the dedicated listener's bind (P9, closed). From least to most: nothing beyond
+// this machine (no listener, or a loopback one), one host beyond it, every interface. A change
+// widens when it ends beyond the machine and the old bind did not already reach that far: from
+// nothing or loopback; from one host to another (a new place to be reached); from one host to
+// every interface. The port alone, the same host spelled another way, narrowing and unsetting
+// never do.
+func TestWidensTheReachOfTheDedicatedBind(t *testing.T) {
+	const p = ":9443"
+	binds := []struct{ name, addr string }{
+		{"none", ""},
+		{"127.0.0.1", "127.0.0.1" + p},
+		{"localhost", "localhost" + p},
+		{"[::1]", "[::1]" + p},
+		{"192.168.1.10", "192.168.1.10" + p},
+		{"10.0.0.5", "10.0.0.5" + p},
+		{"host.example", "host.example" + p},
+		{"no host", p},
+		{"0.0.0.0", "0.0.0.0" + p},
+		{"[::]", "[::]" + p},
+	}
+	// Written out, one row for each old bind and one column for each new one, in the order above:
+	// W where the change widens, - where it does not.
+	want := []string{
+		/* none         */ "- - - - W W W W W W",
+		/* 127.0.0.1    */ "- - - - W W W W W W",
+		/* localhost    */ "- - - - W W W W W W",
+		/* [::1]        */ "- - - - W W W W W W",
+		/* 192.168.1.10 */ "- - - - - W W W W W",
+		/* 10.0.0.5     */ "- - - - W - W W W W",
+		/* host.example */ "- - - - W W - W W W",
+		/* no host      */ "- - - - - - - - - -",
+		/* 0.0.0.0      */ "- - - - - - - - - -",
+		/* [::]         */ "- - - - - - - - - -",
+	}
+	widening := 0
+	for i, from := range binds {
+		verdicts := strings.Fields(want[i])
+		if len(verdicts) != len(binds) {
+			t.Fatalf("row %d of the table has %d verdicts", i, len(verdicts))
+		}
+		for j, to := range binds {
+			t.Run(from.name+" to "+to.name, func(t *testing.T) {
+				var before, after Settings
+				if from.addr != "" {
+					before = doc(t, "v1_addr="+from.addr)
+				}
+				if to.addr != "" {
+					after = doc(t, "v1_addr="+to.addr)
+				}
+				got := Widens(before, after)
+				if keys := keysOf(got); keys != "" && keys != "v1_addr" {
+					t.Fatalf("the address alone moved more than the address: %s", keys)
+				}
+				if widens := len(got) == 1; widens != (verdicts[j] == "W") {
+					t.Errorf("Widens = [%s], want %q", keysOf(got), verdicts[j])
+				}
+			})
+			if verdicts[j] == "W" {
+				widening++
+			}
+		}
+	}
+	if widening != 39 {
+		t.Errorf("the table says %d of 100 changes widen; it was written to say 39", widening)
+	}
+}
+
+// What the table above leaves out: the port, spellings of one host, names, and text that is
+// not an address (read as not saved).
+func TestWidensTheBindBySpellingAndPort(t *testing.T) {
+	for _, c := range []struct {
+		name, from, to string
+		widens         bool
+	}{
+		{"the port alone", "192.168.1.10:9443", "192.168.1.10:9444", false},
+		{"the port alone of a name", "host.example:1", "host.example:2", false},
+		{"the port alone of every interface", ":9443", ":9444", false},
+		{"the port alone of loopback", "127.0.0.1:9443", "127.0.0.1:9444", false},
+		{"a name in another case", "host.example:9443", "HOST.example:9443", false},
+		{"a name with its root dot", "host.example.:9443", "host.example:9443", false},
+		{"ipv6 written another way", "[2001:db8::1]:9443", "[2001:0db8:0:0:0:0:0:1]:9443", false},
+		{"ipv4 as ipv6-mapped", "[::ffff:192.168.1.10]:9443", "192.168.1.10:9443", false},
+		{"every interface written another way", "[::]:9443", "[0:0:0:0:0:0:0:0]:9443", false},
+		{"every interface: ipv4 and ipv6", "0.0.0.0:9443", "[::]:9444", false},
+		{"two names", "a.example:9443", "b.example:9443", true},
+		{"a name and its address are two places", "host.example:9443", "192.168.1.10:9443", true},
+		{"a link-local address is a host beyond the machine", "[fe80::1%eth0]:9443", "[fe80::1%eth1]:9443", true},
+		{"loopback to a name", "localhost:9443", "host.example:9443", true},
+		{"one host to every interface on another port", "192.168.1.10:9443", ":9444", true},
+		{"every interface to one host on another port", ":9443", "192.168.1.10:9444", false},
+		{"text that is not an address is not saved", "nonsense", "host.example:9443", true},
+		{"a name to text that is not an address", "host.example:9443", "nonsense", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := Widens(doc(t, "v1_addr="+c.from), doc(t, "v1_addr="+c.to))
+			if widens := len(got) == 1 && got[0].Key == "v1_addr"; widens != c.widens {
+				t.Errorf("%s to %s: Widens = [%s], want widening %v", c.from, c.to, keysOf(got), c.widens)
+			}
+		})
+	}
 }
 
 // Invalid text (a document edited by hand) is read as not saved: the gate is not the place

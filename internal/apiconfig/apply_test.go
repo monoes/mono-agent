@@ -289,6 +289,58 @@ func TestApplyTheWideningGate(t *testing.T) {
 	}
 }
 
+// The gate sees a bind that reaches further than the saved one (P9): another host beyond this
+// machine, or every interface where it was one host. Not the port alone, a narrower bind or
+// the removal of the address.
+func TestApplyTheGateSeesABindThatReachesFurther(t *testing.T) {
+	ctx := context.Background()
+	env := shellEnv(nil, nil, &fakeInstaller{})
+	db := openDB(t)
+	const start = `{"v":1,"v1_addr":"192.168.1.10:9443"}`
+	putRow(t, db, start)
+
+	for _, c := range []struct{ to, say string }{
+		{"10.0.0.5:9443", "move from 192.168.1.10:9443 to 10.0.0.5:9443"},
+		{"0.0.0.0:9443", "every interface (0.0.0.0:9443)"},
+		{":9443", "every interface (:9443)"},
+	} {
+		set := map[string]string{"v1_addr": c.to}
+		_, err := Apply(ctx, db, env, Change{Set: set})
+		var we *WideningError
+		if !errors.As(err, &we) || len(we.Widening) != 1 || we.Widening[0].Key != "v1_addr" || !strings.Contains(we.Widening[0].Reason, c.say) {
+			t.Fatalf("%s: %v, want a refusal that says %q", c.to, err, c.say)
+		}
+		if v, _ := row(t, db); v != start {
+			t.Errorf("a refused change wrote: %s", v)
+		}
+		r, err := Apply(ctx, db, env, Change{Set: set, DryRun: true})
+		if err != nil || r.Applied || len(r.Widening) != 1 || strings.Join(r.Changed, ",") != "v1_addr" {
+			t.Errorf("%s dry run: applied %v, widening %+v, changed %v, %v", c.to, r.Applied, r.Widening, r.Changed, err)
+		}
+	}
+
+	// The port alone is no widening.
+	r, err := Apply(ctx, db, env, Change{Set: map[string]string{"v1_addr": "192.168.1.10:9444"}})
+	if err != nil || len(r.Widening) != 0 || strings.Join(r.Changed, ",") != "v1_addr" {
+		t.Fatalf("the port alone: widening %+v, changed %v, %v", r.Widening, r.Changed, err)
+	}
+	// Confirmed, every interface is saved and the reason is in the result.
+	r, err = Apply(ctx, db, env, Change{Set: map[string]string{"v1_addr": "0.0.0.0:9444"}, Confirm: true})
+	if err != nil || !r.Applied || len(r.Widening) != 1 || !strings.Contains(r.Widening[0].Reason, "listened only on 192.168.1.10:9444 before") {
+		t.Fatalf("confirmed: %+v, %v", r, err)
+	}
+	// From every interface to one host is narrowing, and removing the address never widens.
+	if r, err = Apply(ctx, db, env, Change{Set: map[string]string{"v1_addr": "10.0.0.5:9444"}}); err != nil || len(r.Widening) != 0 {
+		t.Errorf("every interface to one host: %+v, %v", r.Widening, err)
+	}
+	if r, err = Apply(ctx, db, env, Change{Unset: []string{"v1_addr"}}); err != nil || len(r.Widening) != 0 || len(r.Changed) != 1 {
+		t.Errorf("unsetting the address: %+v, %v", r.Widening, err)
+	}
+	if _, ok := row(t, db); ok {
+		t.Error("nothing is saved any more, and the row is still there")
+	}
+}
+
 // The gate judges the row it replaces, not the one the caller last saw: when a change was
 // widening against what is saved, it is refused even if the same words were harmless a moment
 // ago. Two writers race: one removes the confinement while the other sets it to the value it

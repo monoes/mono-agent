@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 
@@ -21,8 +22,9 @@ type Widening struct {
 // that an unset which takes a value back to a higher default counts, and saving a value
 // that spells the default does not:
 //
-//   - v1_addr: the dedicated listener binds beyond this machine where it did not (none, or
-//     loopback);
+//   - v1_addr: the dedicated listener's bind reaches further (P9): beyond this machine where it
+//     did not (none, or loopback), another host beyond it, or every interface where it was one
+//     host (bindOf says how the hosts are read);
 //   - confinement, context_confinement, auto_confinement: the class rises, on the loopback
 //     kind of listener or on the network kind. Both kinds are judged in every document, named
 //     dedicated listener or not, because the daemon's own environment may supply the address
@@ -62,22 +64,79 @@ func Widens(before, after Settings) []Widening {
 	return out
 }
 
-// addressWidening is rule (a): the new address is not loopback, and there was none or a
-// loopback one. (A move between two addresses beyond the machine is not seen: P9 of the plan.)
+// addressWidening is rule (a): the dedicated listener's bind reaches further than it did (P9).
 func addressWidening(before, after Settings) (Widening, bool) {
-	b, a := listenAddr(before), listenAddr(after)
-	if a == "" || tlsserve.IsLoopbackAddr(a) {
+	b, a := bindOf(before), bindOf(after)
+	if !b.widenedBy(a) {
 		return Widening{}, false
 	}
-	if b != "" && !tlsserve.IsLoopbackAddr(b) {
-		return Widening{}, false
+	return Widening{Key: KeyV1Addr, Reason: bindReason(b, a, className(classesOf(after, true).confinement))}, true
+}
+
+// bindKind is how far a dedicated listener's bind reaches, the least first.
+type bindKind int
+
+const (
+	bindThisMachine    bindKind = iota // no dedicated listener, or one on loopback
+	bindOneHost                        // one host beyond this machine
+	bindEveryInterface                 // every interface: an empty host, 0.0.0.0, [::]
+)
+
+// bind is where a dedicated listener is bound, as far as the gate sees.
+type bind struct {
+	kind bindKind
+	host string // bindOneHost: the host in the one spelling that two spellings of it share
+	addr string // the address as saved, for the reasons
+}
+
+// bindOf reads the bind of a document. Loopback is the server's own test
+// (tlsserve.IsLoopbackAddr: `localhost` and the IP addresses of loopback). A host that is not an
+// IP address is another host beyond the machine, and two names are one host only when they are
+// the same name (a name is read in lower case and without a trailing dot), since the gate cannot
+// know what a name resolves to: a name and its address are two hosts. An IP address is one host
+// with every other spelling of it (IPv6 written another way, an IPv4 address as IPv4-mapped
+// IPv6); the zone of a link-local address is part of the host, and an address with a zone is
+// read as a name, as net.ParseIP does not take it.
+func bindOf(s Settings) bind {
+	addr := listenAddr(s)
+	if addr == "" || tlsserve.IsLoopbackAddr(addr) {
+		return bind{kind: bindThisMachine, addr: addr}
 	}
-	class := className(classesOf(after, true).confinement)
-	return Widening{
-		Key: KeyV1Addr,
-		Reason: fmt.Sprintf("The dedicated /v1 listener would listen on %s, beyond this machine, and serve runtimes up to %s; it did not listen beyond this machine before.",
-			a, class),
-	}, true
+	host, _, _ := net.SplitHostPort(addr) // listenAddr has checked the shape
+	if host == "" {
+		return bind{kind: bindEveryInterface, addr: addr}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsUnspecified() {
+			return bind{kind: bindEveryInterface, addr: addr}
+		}
+		return bind{kind: bindOneHost, host: ip.String(), addr: addr}
+	}
+	return bind{kind: bindOneHost, host: strings.TrimSuffix(strings.ToLower(host), "."), addr: addr}
+}
+
+// widenedBy says that the new bind reaches somewhere the old one did not: beyond this machine
+// from nothing or loopback, another host beyond it, or every interface from one host. The port
+// alone, the same host, and any move to a bind that reaches less or the same never do.
+func (b bind) widenedBy(a bind) bool {
+	switch a.kind {
+	case bindEveryInterface:
+		return b.kind != bindEveryInterface
+	case bindOneHost:
+		return b.kind == bindThisMachine || (b.kind == bindOneHost && b.host != a.host)
+	}
+	return false
+}
+
+// bindReason is the sentence for a bind that reaches further, as the old one was.
+func bindReason(b, a bind, class string) string {
+	switch {
+	case b.kind == bindOneHost && a.kind == bindEveryInterface:
+		return fmt.Sprintf("The dedicated /v1 listener would listen on every interface (%s), where it listened only on %s before, and serve runtimes up to %s.", a.addr, b.addr, class)
+	case b.kind == bindOneHost:
+		return fmt.Sprintf("The dedicated /v1 listener would move from %s to %s, another address beyond this machine, and serve runtimes up to %s.", b.addr, a.addr, class)
+	}
+	return fmt.Sprintf("The dedicated /v1 listener would listen on %s, beyond this machine, and serve runtimes up to %s; it did not listen beyond this machine before.", a.addr, class)
 }
 
 // listenAddr is the dedicated listener's address, "" when there is none or the text is not
