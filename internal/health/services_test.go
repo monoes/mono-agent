@@ -91,8 +91,8 @@ func TestNoBridgeRestartOnWindows(t *testing.T) {
 		StopDaemon:  func(context.Context, int, func(string)) error { stopped = true; return nil },
 		StartDaemon: func(context.Context, func(string)) error { return nil },
 	}
-	if res := checkBridge(context.Background(), env); res.Status != StatusWarn || res.FixID != "" {
-		t.Errorf("a skewed bridge must warn without a fix on Windows: %+v", res)
+	if res := checkBridge(context.Background(), env); res.Status != StatusWarn || res.FixID != "" || !strings.Contains(res.Detail, "Windows") {
+		t.Errorf("a skewed bridge must warn without a fix on Windows, and say why: %+v", res)
 	}
 	if err := fixBridgeRestart(context.Background(), env, noop); err == nil || stopped {
 		t.Errorf("the restart must refuse and leave the daemon alone on Windows: %v (stopped %v)", err, stopped)
@@ -248,8 +248,13 @@ func TestCheckBridgeOffersNoFixWhenTheDaemonCouldNotBeStartedAgain(t *testing.T)
 		CanStartDaemon: func(context.Context) error { return canStart },
 	}
 	res := checkBridge(ctx, env)
-	if res.Status != StatusWarn || res.FixID != "" || !strings.Contains(res.FixCommand, "default database only") {
-		t.Fatalf("a restart that would be refused must not be offered, and must say why: %+v", res)
+	// What to do is in the detail: a FixCommand without a fix is not in the report.
+	if res.Status != StatusWarn || res.FixID != "" || !strings.Contains(res.Detail, "default database only") || !strings.Contains(res.Detail, "pid 42") {
+		t.Fatalf("a restart that would be refused must not be offered, and must say why and what to do: %+v", res)
+	}
+	// And it is still there once the runner has finished the result, which is what the report holds.
+	if final := Default().finish(Check{}, res, 0); final.Fix != nil || !strings.Contains(final.Detail, "pid 42") {
+		t.Errorf("the report lost what to do: %+v", final)
 	}
 	canStart = nil
 	if res := checkBridge(ctx, env); res.FixID != FixBridgeRestart || !strings.Contains(res.FixCommand, "doctor fix "+FixBridgeRestart) {

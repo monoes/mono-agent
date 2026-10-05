@@ -113,16 +113,18 @@ func checkBridge(ctx context.Context, env *Env) Result {
 		res := Result{Status: StatusWarn, Summary: summary,
 			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version),
 			FixID:  FixBridgeRestart}
+		// Where no fix is offered, what to do goes in the detail: a result's FixCommand is
+		// shown only with a fix, and is not in the report without one.
 		if runtime.GOOS == "windows" {
 			// Windows has no way to signal the daemon, so doctor can't restart it.
 			res.FixID = ""
-			res.FixCommand = "restart the daemon yourself — doctor can't stop it on Windows"
+			res.Detail += "; doctor can't stop the daemon on Windows, so restart it yourself"
 		} else if isDaemonOwned(ctx, env, b) {
 			if blocked := startBlocker(ctx, env); blocked != nil {
 				// A restart that is certain to be refused is not offered: "Fix issues"
 				// would fail every time. The user gets what to do instead.
 				res.FixID = ""
-				res.FixCommand = fmt.Sprintf("stop the daemon (pid %d) and start it again yourself, doctor can't: %v", b.PID, blocked)
+				res.Detail += fmt.Sprintf("; doctor can't restart it: %v (stop the daemon, pid %d, first: it holds the daemon lock)", blocked, b.PID)
 			} else {
 				res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
 			}
