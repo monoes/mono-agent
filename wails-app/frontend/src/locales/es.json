@@ -526,14 +526,16 @@
           "pending": "Hay que reiniciar",
           "overridden": "Anulado",
           "notRunning": "Daemon parado",
-          "unknown": "Desconocido"
+          "unknown": "Desconocido",
+          "notServing": "Punto de escucha inactivo"
         },
         "stateHint": {
           "applied": "El daemon en marcha usa el valor guardado, o el valor por defecto si no hay ninguno.",
           "pending": "Guardado después de que arrancara el daemon en marcha: lo usará cuando se reinicie.",
           "overridden": "El daemon se inició con su propia opción o variable de entorno para este ajuste, así que un valor guardado no tiene efecto hasta que se quite.",
           "notRunning": "No hay ningún daemon en marcha. El servidor lee el valor guardado cuando arranca.",
-          "unknown": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro."
+          "unknown": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro.",
+          "notServing": "El daemon tomó este valor, pero el punto de escucha propio de /v1 que describe no está activo. El registro del daemon dice por qué, por ejemplo un archivo de certificado que no se puede leer o un puerto que ya está en uso. Corrige el ajuste, o el archivo o el puerto que nombra, y reinicia el daemon."
         },
         "widening": {
           "kind": {
@@ -581,7 +583,9 @@
           "restartTitle": "Hay que reiniciar",
           "restartBody": "El daemon en marcha arrancó antes de que se guardaran estos ajustes, así que aún usa los valores antiguos: {{keys}}. Lee los ajustes guardados cuando se reinicia.",
           "olderBody": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro de que lee los ajustes guardados.",
-          "idleBody": "No hay ningún daemon en marcha: el servidor lee estos ajustes cuando arranca."
+          "idleBody": "No hay ningún daemon en marcha: el servidor lee estos ajustes cuando arranca.",
+          "notServingTitle": "Punto de escucha inactivo",
+          "notServingBody": "El daemon está en marcha, pero su punto de escucha propio no está activo: {{keys}}. Su registro dice por qué, por ejemplo un archivo de certificado que no se puede leer o un puerto que ya está en uso. Corrige el ajuste, o el archivo o el puerto que nombra, y reinicia el daemon."
         },
         "save": "Guardar",
         "saveLabel": "Guardar {{setting}}",
@@ -604,6 +608,7 @@
           "confirm": "Reiniciar el daemon",
           "checking": "Esperando a que el daemon informe…",
           "back": "El daemon ha vuelto y ejecuta los ajustes guardados.",
+          "backListenerDown": "El daemon ha vuelto, pero su punto de escucha propio no está activo. Su registro dice por qué.",
           "late": "El daemon aún no ha informado. Pulsa Actualizar para comprobarlo de nuevo.",
           "notDone": "El gestor de servicios no reinició el daemon.",
           "noAutostart": "El daemon no está registrado para arrancar solo, así que esta página no puede reiniciarlo. Detenlo y vuelve a arrancarlo:",

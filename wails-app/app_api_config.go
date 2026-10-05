@@ -39,7 +39,7 @@ type APIConfigSetting struct {
 	Source        string  `json:"source"`          // env | saved | default
 	Running       *string `json:"running,omitempty"`
 	RunningSource string  `json:"running_source,omitempty"` // flag | env | saved | default, present exactly when Running is
-	State         string  `json:"state"`                    // applied | pending_restart | overridden | not_running | unknown
+	State         string  `json:"state"`                    // applied | pending_restart | overridden | not_running | unknown | not_serving (v1_addr and the TLS files: the daemon took the value, its listener is not up)
 }
 
 // APIConfigDaemon is the daemon, as far as the settings go.

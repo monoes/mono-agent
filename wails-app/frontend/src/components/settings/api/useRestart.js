@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { DaemonRestart } from '../../../wailsjs/go/main/App'
 import { classify } from './apiError.js'
 import { describeConfigError } from './configError.js'
-import { restartSettled } from './configModel.js'
+import { notServingKeys, restartSettled } from './configModel.js'
 
 // Restarting the daemon so that it reads the saved settings (`daemon restart`, through the service manager it is
 // registered with). When the call returns the service manager has accepted the restart, but the daemon takes a moment
@@ -12,9 +12,10 @@ import { restartSettled } from './configModel.js'
 // only find the daemon that was stopped. The reads are the caller's (they go through the section's guard, so an
 // older answer never overwrites a newer one), and they stop when the component goes away.
 //
-// What an attempt came to (it did not happen, the CLI refused, the daemon did not report back in time) is kept with the
-// document the page had when it came to it, and says nothing about a newer one: the person may have registered the
-// daemon since, or saved something else, or pressed Refresh and found it back.
+// What an attempt came to (it did not happen, the CLI refused, the daemon did not report back in time, it is back but a
+// dedicated listener it was given is not up) is kept with the document the page had when it came to it, and says nothing
+// about a newer one: the person may have registered the daemon since, or saved something else, or pressed Refresh and
+// found it back.
 
 export const RESTART_REREAD_MS = [1000, 2000, 3000, 5000, 5000]
 
@@ -22,12 +23,13 @@ export const RESTART_REREAD_MS = [1000, 2000, 3000, 5000, 5000]
  * @param {object|null} config The document the page shows now.
  * @param {() => Promise<object|null>} onReload Reads the settings again: the document, or null when the read failed or a
  *   newer one took its place.
- * @param {() => void} [onApplied] Called when the daemon is back and runs what is saved.
+ * @param {() => void} [onApplied] Called when the daemon is back and took what is saved, whether or not a dedicated listener is up.
  * @returns {{phase: 'idle'|'confirming'|'restarting'|'checking'|'back',
- *   outcome: null|{late?: boolean, err?: {text: string, verbatim: boolean}, fallback?: boolean, doc: object|null},
+ *   outcome: null|{late?: boolean, err?: {text: string, verbatim: boolean}, fallback?: boolean, listenerDown?: string[], doc: object|null},
  *   ask: () => void, cancel: () => void, confirm: () => Promise<void>}} `outcome.fallback`: the CLI said the daemon is not
  *   registered, so the commands to run are what is left; `outcome.late`: the last read had gone by and the daemon had not
- *   reported back; `outcome.doc` is the document it belongs to.
+ *   reported back; `outcome.listenerDown`: the keys of the settings whose dedicated listener is not up, when the daemon came
+ *   back in phase 'back' (a restart that came to a success has no outcome); `outcome.doc` is the document it belongs to.
  */
 export default function useRestart({ config, onReload, onApplied }) {
   const { t } = useTranslation()
@@ -71,6 +73,10 @@ export default function useRestart({ config, onReload, onApplied }) {
         if (!alive.current) return
         if (doc) seen = doc
         if (restartSettled(doc)) {
+          // The daemon took what is saved, and the polling is done. A dedicated listener it was given that is not up (its log
+          // says why) is not the success that "back" says: the outcome carries the settings, with the document that said so.
+          const listenerDown = notServingKeys(doc)
+          if (listenerDown.length) setOutcome({ listenerDown, doc })
           setPhase('back')
           latest.current.onApplied?.()
           return

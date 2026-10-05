@@ -36,6 +36,8 @@ const r = c.restart
 const pending = (autostart = true) => configDoc({ saved: { max_concurrent: '8' }, running: { max_concurrent: ['4', 'default'] }, autostart })
 const settled = () => configDoc({ saved: { max_concurrent: '8' }, running: {}, autostart: true })
 const down = () => configDoc({ saved: { max_concurrent: '8' }, autostart: true }) // the daemon is not back yet
+// The daemon is back and took what is saved, but the dedicated listener it was given is not up (its log says why).
+const listenerDown = () => configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, running: {}, autostart: true, notServing: ['v1_addr'] })
 
 // The block as the section holds it: a document that a re-read replaces. `reloads` are the documents the next reads
 // find, in order (a read after the last one fails: null), and `onReload` counts them.
@@ -185,6 +187,43 @@ describe('restarting', () => {
     expect(m.onApplied).toHaveBeenCalledTimes(1) // what else the section shows (the listeners, the models) may have changed
     await tick(30000)
     expect(m.onReload).toHaveBeenCalledTimes(3) // and it stops
+  })
+
+  it('does not say the daemon runs what is saved when it is back with its dedicated listener not up, and says what is wrong in words of its own', async () => {
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    const m = await mountOpen({ reloads: [listenerDown()] })
+    await confirmRestart()
+    await tick(0)
+    await tick(1100)
+    expect(m.onReload).toHaveBeenCalledTimes(1) // it stops reading: the daemon is back and nothing is pending
+    expect(within(banner()).getByText(r.backListenerDown)).toBeInTheDocument()
+    expect(within(banner()).queryByText(r.back)).not.toBeInTheDocument() // not the success it would otherwise claim
+    expect(within(banner()).queryByText(r.checking)).not.toBeInTheDocument()
+    expect(within(banner()).getByText(c.banner.notServingBody.replace('{{keys}}', c.rows.v1_addr.label))).toBeInTheDocument() // and which setting it is about
+    expect(m.onApplied).toHaveBeenCalledTimes(1) // the daemon is back all the same: the status may have changed
+    expect(restartBtn()).toBeEnabled() // and it can be restarted again once what its log names is corrected
+    await tick(30000)
+    expect(m.onReload).toHaveBeenCalledTimes(1)
+  })
+
+  it('says nothing of a listener that is not up when the daemon is back and nothing is wrong', async () => {
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    await mountOpen({ reloads: [settled()] })
+    await confirmRestart()
+    await tick(1100)
+    expect(within(banner()).getByText(r.back)).toBeInTheDocument()
+    expect(within(banner()).queryByText(r.backListenerDown)).not.toBeInTheDocument()
+  })
+
+  it('stops saying the listener is not up when a newer read finds the daemon running what is saved with nothing wrong', async () => {
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    const m = await mountOpen({ reloads: [listenerDown()] })
+    await confirmRestart()
+    await tick(1100)
+    expect(within(banner()).getByText(r.backListenerDown)).toBeInTheDocument()
+    m.push(settled()) // Refresh: the listener is up now (it was started some other way, or the file was fixed)
+    expect(within(banner()).queryByText(r.backListenerDown)).not.toBeInTheDocument() // what the restart came to was about the document before
+    expect(within(banner()).getByText(r.back)).toBeInTheDocument() // the document says it runs what is saved, and nothing is wrong
   })
 
   it('asks for a restart again when something is saved after the daemon came back', async () => {
@@ -385,5 +424,19 @@ describe('in Spanish', () => {
     await mountOpen({ config: pending(false) })
     expect(within(banner()).getByText(s.restart.noAutostart)).toBeInTheDocument()
     expect(within(banner()).getByRole('button', { name: s.restart.copyLabel.replace('{{command}}', 'monoagentcli daemon') })).toBeInTheDocument()
+  })
+
+  it('words a restart that ends with the dedicated listener not up', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    const s = es.settings.api.config
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    await mountOpen({ reloads: [listenerDown()] })
+    fireEvent.click(screen.getByRole('button', { name: s.restart.button }))
+    fireEvent.click(within(await screen.findByRole('alertdialog', { name: s.restart.title })).getByRole('button', { name: s.restart.confirm }))
+    await tick(0)
+    await tick(1100)
+    expect(within(banner()).getByText(s.restart.backListenerDown)).toBeInTheDocument()
+    expect(within(banner()).queryByText(s.restart.back)).not.toBeInTheDocument()
+    expect(s.restart.backListenerDown).not.toBe(r.backListenerDown)
   })
 })

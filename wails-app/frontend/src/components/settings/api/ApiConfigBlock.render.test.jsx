@@ -213,6 +213,34 @@ describe('ApiConfigBlock: where each setting stands', () => {
     expect(screen.getByTestId('api-config-running-tls_cert_file')).toHaveTextContent('Running: not set (default)')
     expect(screen.getByTestId('api-config-running-tls_key_file')).toHaveTextContent('Running: /etc/api.key (saved)')
   })
+
+  it('says a dedicated listener is not up, in its row and in the banner, and offers the restart', async () => {
+    const down = configDoc({
+      saved: { v1_addr: '0.0.0.0:9443', tls_cert_file: '/etc/api.pem', tls_key_file: '/etc/api.key', max_concurrent: '8' },
+      running: {}, autostart: true, notServing: ['v1_addr', 'tls_cert_file', 'tls_key_file'],
+    })
+    await mountOpen({ config: down })
+    for (const id of ['v1_addr', 'tls']) {
+      expect(screen.getByTestId(`api-config-state-${id}`)).toHaveTextContent(c.state.notServing)
+      expect(screen.getByTestId(`api-config-state-${id}`)).toHaveAttribute('title', c.stateHint.notServing) // why, and what to do
+    }
+    expect(screen.getByTestId('api-config-state-max_concurrent')).toHaveTextContent('Applied') // the others are as they were
+    const banner = within(screen.getByTestId('api-config-banner'))
+    expect(banner.getByText(c.banner.notServingTitle)).toBeInTheDocument()
+    expect(banner.getByText(c.banner.notServingBody.replace('{{keys}}', `${c.rows.v1_addr.label}, ${c.rows.tls.label}`))).toBeInTheDocument()
+    expect(banner.queryByText(c.banner.restartTitle)).not.toBeInTheDocument() // nothing is waiting for a restart as such
+    expect(banner.getByRole('button', { name: c.restart.button })).toBeEnabled() // a restart brings the listener up, once what the log names is corrected
+  })
+
+  it('shows a state it does not know as unknown, and breaks nothing: no claim is made for it', async () => {
+    const doc = configDoc({ saved: { max_concurrent: '8' }, running: {}, autostart: true })
+    doc.settings = doc.settings.map(s => (s.key === 'max_concurrent' ? { ...s, state: 'a_state_of_the_future' } : s))
+    await mountOpen({ config: doc })
+    expect(screen.getByTestId('api-config-state-max_concurrent')).toHaveTextContent('Unknown')
+    expect(screen.getByTestId('api-config-state-max_concurrent')).toHaveAttribute('title', c.stateHint.unknown)
+    expect(screen.queryByTestId('api-config-banner')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId(/^api-config-row-/)).toHaveLength(9)
+  })
 })
 
 describe('ApiConfigBlock: problems of the saved settings', () => {
@@ -316,6 +344,18 @@ describe('ApiConfigBlock: the language', () => {
     expect(screen.getByTestId('api-config-banner')).toHaveTextContent(sc.banner.restartTitle)
     expect(within(row('max_concurrent')).getByText(sc.overriddenFlag.replace('{{name}}', '--max-concurrent'))).toBeInTheDocument()
     expect(sc.state.pending).not.toBe(c.state.pending)
+  })
+
+  it('words a listener that is not up in the chosen language', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    await mountOpen({ config: configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, running: {}, autostart: true, notServing: ['v1_addr'] }) })
+    expect(screen.getByTestId('api-config-state-v1_addr')).toHaveTextContent(sc.state.notServing)
+    expect(screen.getByTestId('api-config-state-v1_addr')).toHaveAttribute('title', sc.stateHint.notServing)
+    const banner = within(screen.getByTestId('api-config-banner'))
+    expect(banner.getByText(sc.banner.notServingTitle)).toBeInTheDocument()
+    expect(banner.getByText(sc.banner.notServingBody.replace('{{keys}}', sc.rows.v1_addr.label))).toBeInTheDocument()
+    expect(sc.state.notServing).not.toBe(c.state.notServing)
+    expect(sc.banner.notServingBody).not.toBe(c.banner.notServingBody)
   })
 
   it('says a failure to read in the language of the page, and the CLI\'s words as English', async () => {

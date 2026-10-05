@@ -405,6 +405,22 @@ describe('ApiSection: after a restart', () => {
     expect(App.APIConfigShow).toHaveBeenCalledTimes(2) // and it stopped
   })
 
+  it('says the dedicated listener is not up when the daemon is back without it, not that it runs the saved settings, and reads the status again all the same', async () => {
+    App.APIStatus.mockResolvedValue(statusOf([mainListener()], { daemon: { running: true } }))
+    App.APIConfigShow.mockResolvedValueOnce(pending())
+    App.DaemonRestart.mockResolvedValue({ restarted: true, via: 'launchd' })
+    await mountExpanded()
+    openBlock()
+    await restart()
+    // the daemon is back with what is saved, and the dedicated listener it was given is not up
+    App.APIConfigShow.mockResolvedValue(configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, running: {}, autostart: true, notServing: ['v1_addr'] }))
+    await tick(1100)
+    expect(await screen.findByText(c.restart.backListenerDown)).toBeInTheDocument()
+    expect(screen.queryByText(c.restart.back)).not.toBeInTheDocument()
+    expect(screen.getByTestId('api-config-state-v1_addr')).toHaveTextContent(c.state.notServing)
+    await waitFor(() => expect(App.APIStatus).toHaveBeenCalledTimes(2)) // the daemon came back: what the status says may have changed
+  })
+
   it('does not scan the runtimes again when the daemon came back with the same listener', async () => {
     App.APIStatus.mockResolvedValue(statusOf([mainListener()], { daemon: { running: true } }))
     App.APIConfigShow.mockResolvedValueOnce(pending())

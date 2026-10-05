@@ -7,10 +7,12 @@ import ApiConfirmDialog from './ApiConfirmDialog.jsx'
 import { Said, errText, hint, mono, okText } from './ui.jsx'
 
 // What applying the saved settings takes (D38: a server reads them when it starts, there is no hot reload), from the
-// document alone as the CLI's own text says it: a restart is needed (which settings), a daemon that predates the
-// report may not run what is saved, or no daemon runs and the server reads them when it starts. When the daemon is
-// registered for auto-start the page can restart it, after a dialog (it interrupts whatever the daemon is running);
-// when it is not, nothing can, and what is left is the commands to run, with a copy button.
+// document alone as the CLI's own text says it: a restart is needed (which settings), a dedicated listener that the daemon
+// was given is not up (which settings: its log says why, and once the setting is corrected it takes a restart too), a
+// daemon that predates the report may not run what is saved, or no daemon runs and the server reads them when it starts.
+// When the daemon is registered for auto-start the page can restart it, after a dialog (it interrupts whatever the daemon
+// is running); when it is not, nothing can, and what is left is the commands to run, with a copy button. A restart that
+// ends with the daemon back but a listener not up says so, and does not say the daemon runs the saved settings.
 
 const STOP_START = 'monoagentcli daemon'
 const INSTALL = 'monoagentcli daemon install'
@@ -60,6 +62,7 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
   const err = outcome?.err
   const late = !!outcome?.late
   const fallback = !!outcome?.fallback
+  const listenerDown = !!outcome?.listenerDown?.length // the daemon is back, but a dedicated listener it was given is not up
 
   // The button that opened the dialog, or started a restart that did not happen, gets the keyboard back.
   useEffect(() => {
@@ -71,12 +74,14 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
   const back = phase === 'back' && banner.kind === 'none'
   if (banner.kind === 'none' && !back && phase === 'idle') return null
   const canRestart = config?.daemon?.autostart && !fallback
-  const needs = banner.kind === 'restart' || banner.kind === 'older'
+  // A listener that is not up is brought up by a restart too, once what the log names (the setting, a file, a port) is corrected.
+  const needs = banner.kind === 'restart' || banner.kind === 'older' || banner.kind === 'notServing'
   const names = [...new Set(banner.keys.map(k => ROWS.find(r => r.keys.includes(k))).filter(Boolean))].map(r => t(r.label)).join(', ')
   const text = back ? t('settings.api.config.restart.back')
     : banner.kind === 'restart' ? t('settings.api.config.banner.restartBody', { keys: names || banner.keys.join(', ') })
-      : banner.kind === 'older' ? t('settings.api.config.banner.olderBody')
-        : banner.kind === 'idle' ? t('settings.api.config.banner.idleBody') : ''
+      : banner.kind === 'notServing' ? t('settings.api.config.banner.notServingBody', { keys: names || banner.keys.join(', ') })
+        : banner.kind === 'older' ? t('settings.api.config.banner.olderBody')
+          : banner.kind === 'idle' ? t('settings.api.config.banner.idleBody') : ''
   const warn = !back && banner.kind !== 'idle'
   const working = phase === 'restarting'
 
@@ -85,7 +90,11 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
       display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius)',
       background: warn ? 'rgba(234,179,8,.05)' : 'rgba(255,255,255,.03)', border: `1px solid ${warn ? 'rgba(234,179,8,.22)' : 'var(--border-dim)'}`,
     }}>
-      {!back && banner.kind === 'restart' && <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>{t('settings.api.config.banner.restartTitle')}</div>}
+      {!back && (banner.kind === 'restart' || banner.kind === 'notServing') && (
+        <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>
+          {banner.kind === 'restart' ? t('settings.api.config.banner.restartTitle') : t('settings.api.config.banner.notServingTitle')}
+        </div>
+      )}
       {text && <div style={hint}>{text}</div>}
 
       {(needs || late) && !back && canRestart && !working && phase !== 'checking' && (
@@ -104,6 +113,7 @@ export default function ApiConfigRestart({ config, restart, disabled }) {
       )}
       {phase === 'checking' && <div role="status" style={hint}>{t('settings.api.config.restart.checking')}</div>}
       {late && <div role="status" style={hint}>{t('settings.api.config.restart.late')}</div>}
+      {listenerDown && <div role="status" style={hint}>{t('settings.api.config.restart.backListenerDown')}</div>}
 
       {needs && !canRestart && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

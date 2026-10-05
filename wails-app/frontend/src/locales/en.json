@@ -526,14 +526,16 @@
           "pending": "Restart needed",
           "overridden": "Overridden",
           "notRunning": "Daemon not running",
-          "unknown": "Unknown"
+          "unknown": "Unknown",
+          "notServing": "Listener not up"
         },
         "stateHint": {
           "applied": "The running daemon uses the saved value, or the default where none is saved.",
           "pending": "Saved after the running daemon started: it uses it once it restarts.",
           "overridden": "The daemon was started with its own flag or environment variable for this setting, so a saved value has no effect until that is removed.",
           "notRunning": "No daemon is running. The server reads the saved value when it starts.",
-          "unknown": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure."
+          "unknown": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure.",
+          "notServing": "The daemon took this value, but the dedicated /v1 listener it describes is not up. The daemon's log says why, for example a certificate file that cannot be read or a port already in use. Correct the setting, or the file or port it names, then restart the daemon."
         },
         "widening": {
           "kind": {
@@ -581,7 +583,9 @@
           "restartTitle": "Restart needed",
           "restartBody": "The running daemon started before these were saved, so it still runs the old values: {{keys}}. It reads the saved settings when it restarts.",
           "olderBody": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure it reads the saved settings.",
-          "idleBody": "No daemon is running: the server reads these settings when it starts."
+          "idleBody": "No daemon is running: the server reads these settings when it starts.",
+          "notServingTitle": "Listener not up",
+          "notServingBody": "The daemon runs, but its dedicated listener is not up: {{keys}}. Its log says why, for example a certificate file that cannot be read or a port already in use. Correct the setting, or the file or port it names, then restart the daemon."
         },
         "save": "Save",
         "saveLabel": "Save {{setting}}",
@@ -604,6 +608,7 @@
           "confirm": "Restart the daemon",
           "checking": "Waiting for the daemon to report back…",
           "back": "The daemon is back and runs the saved settings.",
+          "backListenerDown": "The daemon is back, but its dedicated listener is not up. Its log says why.",
           "late": "The daemon hasn't reported back yet. Refresh to check again.",
           "notDone": "The service manager did not restart the daemon.",
           "noAutostart": "The daemon isn't registered for auto-start, so this page can't restart it. Stop it, then start it again:",

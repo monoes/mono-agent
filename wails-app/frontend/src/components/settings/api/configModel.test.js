@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ROWS, bannerOf, byKey, canSave, dirtyKeys, hasSaved, otherProblems, overriddenInfo, restartSettled, rowProblems, rowState, runningInfo,
-  savePayload, stateInfo, summary, textOf, wideningHeading,
+  ROWS, bannerOf, byKey, canSave, dirtyKeys, hasSaved, notServingKeys, otherProblems, overriddenInfo, restartSettled, rowProblems, rowState,
+  runningInfo, savePayload, stateInfo, summary, textOf, wideningHeading,
 } from './configModel.js'
 import { KEYS, configDoc } from './__fixtures__/configFixtures.js'
 
@@ -35,13 +35,13 @@ describe('the state of a setting', () => {
   const doc = configDoc({ saved: { max_concurrent: '8', tool_runtimes: 'claude' }, running: { max_concurrent: ['4', 'default'], tool_runtimes: ['claude,codex', 'env'], turn_timeout: ['15m', 'saved'] } })
   const by = byKey(doc)
 
-  it('says each of the five, with a tone, a name and a hint of its own, and an unexpected one is unknown', () => {
-    const states = ['applied', 'pending_restart', 'overridden', 'not_running', 'unknown']
+  it('says each of the six, with a tone, a name and a hint of its own, and an unexpected one is unknown', () => {
+    const states = ['applied', 'pending_restart', 'overridden', 'not_running', 'unknown', 'not_serving']
     const info = states.map(s => stateInfo({ state: s }))
-    expect(info.map(i => i.id)).toEqual(['applied', 'pending', 'overridden', 'notRunning', 'unknown'])
-    expect(new Set(info.map(i => i.text)).size).toBe(5)
-    expect(new Set(info.map(i => i.hint)).size).toBe(5)
-    expect(info.map(i => i.tone)).toEqual(['ok', 'warn', 'hot', 'muted', 'muted'])
+    expect(info.map(i => i.id)).toEqual(['applied', 'pending', 'overridden', 'notRunning', 'unknown', 'notServing'])
+    expect(new Set(info.map(i => i.text)).size).toBe(6)
+    expect(new Set(info.map(i => i.hint)).size).toBe(6)
+    expect(info.map(i => i.tone)).toEqual(['ok', 'warn', 'hot', 'muted', 'muted', 'bad'])
     expect(stateInfo({ state: 'something new' }).id).toBe('unknown')
     expect(stateInfo({}).id).toBe('unknown')
     expect(stateInfo({ state: 'constructor' }).id).toBe('unknown')
@@ -87,6 +87,22 @@ describe('the state of a row', () => {
     expect(stateInfo(rowState(row('turn_timeout'), {})).id).toBe('unknown')
     expect(stateInfo(rowState(row('tls'), { tls_cert_file: { state: 'applied' } })).id).toBe('applied') // the one it has
   })
+
+  it('ranks a listener that is not up with the states that need attention: after a pending restart, before unknown and applied', () => {
+    const pair = { tls_cert_file: '/a.pem', tls_key_file: '/a.key' }
+    const stateOf = (running, notServing) => stateInfo(rowState(row('tls'), byKey(configDoc({ saved: pair, running, notServing })))).id
+    expect(stateOf({}, ['tls_key_file'])).toBe('notServing') // one file whose listener is not up beats the other, which is applied
+    expect(stateOf({}, ['tls_cert_file', 'tls_key_file'])).toBe('notServing')
+    expect(stateOf({ tls_cert_file: ['', 'default'] }, ['tls_key_file'])).toBe('pending') // an actual pending restart still beats it
+    expect(stateOf({ tls_cert_file: ['/b.pem', 'env'] }, ['tls_key_file'])).toBe('overridden') // and so does an override, which beats a pending one
+    // against states that a document gives other rows, by the ranking alone
+    const rank = (a, b) => stateInfo(rowState(row('tls'), { tls_cert_file: { state: a }, tls_key_file: { state: b } })).id
+    expect(rank('not_serving', 'unknown')).toBe('notServing')
+    expect(rank('unknown', 'not_serving')).toBe('notServing')
+    expect(rank('something new', 'not_serving')).toBe('notServing') // a state this page does not know ranks as unknown
+    expect(rank('not_serving', 'not_running')).toBe('notServing')
+    expect(rank('applied', 'not_serving')).toBe('notServing')
+  })
 })
 
 describe('the banner of what a restart is for', () => {
@@ -108,13 +124,43 @@ describe('the banner of what a restart is for', () => {
     expect(bannerOf(configDoc({ saved: { max_concurrent: '8' }, running: { max_concurrent: ['6', 'flag'] } }))).toEqual({ kind: 'none', keys: [] })
   })
 
+  it('says a dedicated listener is not up when no setting is pending, naming the settings', () => {
+    const doc = configDoc({
+      saved: { v1_addr: '0.0.0.0:9443', tls_cert_file: '/a.pem', tls_key_file: '/a.key' }, running: {}, autostart: true,
+      notServing: ['v1_addr', 'tls_cert_file', 'tls_key_file'],
+    })
+    expect(doc.restart_needed).toBe(false) // the CLI's: only a pending setting needs a restart
+    expect(bannerOf(doc)).toEqual({ kind: 'notServing', keys: ['v1_addr', 'tls_cert_file', 'tls_key_file'] })
+    expect(bannerOf(configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, running: {}, notServing: ['v1_addr'] }))).toEqual({ kind: 'notServing', keys: ['v1_addr'] })
+  })
+
+  it('still asks for the restart first when a setting is pending too, and says nothing of a listener when no daemon runs', () => {
+    const both = configDoc({ saved: { v1_addr: '0.0.0.0:9443', max_concurrent: '8' }, running: { max_concurrent: ['4', 'default'] }, notServing: ['v1_addr'] })
+    expect(bannerOf(both)).toEqual({ kind: 'restart', keys: ['max_concurrent'] })
+    expect(bannerOf(configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, notServing: ['v1_addr'] }))).toEqual({ kind: 'idle', keys: [] }) // no daemon: every state is not_running
+  })
+
   it('is settled when the daemon runs, reports, and has nothing pending', () => {
     const pending = { max_concurrent: ['4', 'default'] }
     expect(restartSettled(configDoc({ saved: { max_concurrent: '8' }, running: {} }))).toBe(true)
+    // a listener that is not up does not keep it from settling: the daemon took what is saved, and what the restart came to is said apart
+    expect(restartSettled(configDoc({ saved: { v1_addr: '0.0.0.0:9443' }, running: {}, notServing: ['v1_addr'] }))).toBe(true)
     expect(restartSettled(configDoc({ saved: { max_concurrent: '8' }, running: pending }))).toBe(false)
     expect(restartSettled(configDoc({ saved: { max_concurrent: '8' } }))).toBe(false) // not running yet
     expect(restartSettled(configDoc({ running: 'old' }))).toBe(false) // running, but does not say what with
     expect(restartSettled(null)).toBe(false)
+  })
+})
+
+describe('the settings whose dedicated listener is not up', () => {
+  it('are the ones the CLI says are not_serving, in its order, and none for a document without them', () => {
+    const doc = configDoc({ saved: { v1_addr: '0.0.0.0:9443', tls_key_file: '/a.key' }, running: {}, notServing: ['tls_key_file', 'v1_addr'] })
+    expect(notServingKeys(doc)).toEqual(['v1_addr', 'tls_key_file'])
+    expect(notServingKeys(configDoc({ running: {} }))).toEqual([])
+    expect(notServingKeys(configDoc())).toEqual([]) // no daemon
+    expect(notServingKeys(null)).toEqual([])
+    expect(notServingKeys({})).toEqual([])
+    expect(notServingKeys({ settings: [null, { key: 'v1_addr', state: 'not_serving' }] })).toEqual(['v1_addr'])
   })
 })
 

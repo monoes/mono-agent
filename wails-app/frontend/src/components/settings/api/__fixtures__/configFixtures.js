@@ -33,8 +33,11 @@ export const DEFAULTS = Object.fromEntries(KEYS.map(k => [k, SPECS[k].def]))
  *   unless the object says otherwise for a key: [value, source] with a source of flag, env, saved or default.
  * @param {boolean} [o.autostart] the daemon is registered for auto-start
  * @param {Array<{key: string, message: string}>} [o.problems]
+ * @param {string[]} [o.notServing] keys of the settings whose dedicated listener the daemon could not bring up (the CLI says it
+ *   for v1_addr, tls_cert_file and tls_key_file): one that the daemon took as it is saved, which would be applied, is not_serving
+ *   instead. A pending or an overridden one stays as it is, and `restart_needed` is still some setting pending.
  */
-export function configDoc({ saved = {}, running = null, autostart = false, problems = [], environment = 'shell' } = {}) {
+export function configDoc({ saved = {}, running = null, autostart = false, problems = [], environment = 'shell', notServing = [] } = {}) {
   const settings = KEYS.map((key) => {
     const { flag, env, def } = SPECS[key]
     const s = saved[key] || ''
@@ -43,7 +46,7 @@ export function configDoc({ saved = {}, running = null, autostart = false, probl
     if (running === null) return { ...row, state: 'not_running' }
     if (running === 'old') return { ...row, state: 'unknown' }
     const [value, source] = running[key] || [effective, s ? 'saved' : 'default']
-    const state = source === 'flag' || source === 'env' ? 'overridden' : value === effective ? 'applied' : 'pending_restart'
+    const state = source === 'flag' || source === 'env' ? 'overridden' : value !== effective ? 'pending_restart' : notServing.includes(key) ? 'not_serving' : 'applied'
     return { ...row, running: value, running_source: source, state }
   })
   return {
