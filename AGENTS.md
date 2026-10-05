@@ -307,6 +307,7 @@ monoagentcli library logout
 ```bash
 monoagentcli mcp                     # stdio JSON-RPC MCP server, read-only tools only
 monoagentcli mcp --allow-mutations   # also serve mutating tools
+monoagentcli mcp --allow-mutations --allow-api-exposure   # also let api_config_set widen what the API's server exposes
 ```
 
 Register it with any MCP client (stdio transport). Prefer MCP when the
@@ -335,13 +336,33 @@ dangerous calls.
   among them for the models of `MONOAGENT_API_IMAGE_RUNTIMES` and `tools` for
   those of `MONOAGENT_API_TOOL_RUNTIMES` that can call them. It takes the flags of
   that command as `for`, `confinement`, `context_confinement` and
-  `auto_confinement`, otherwise reads this MCP server's own environment, and
+  `auto_confinement`, otherwise reads this MCP server's own environment and
+  then the settings saved with `api config` (the layer below the environment,
+  so it says what a server started now would apply, as `api models` does; a
+  saved setting that fails its rule stops it, naming the setting), and
   asks the installed runtimes for their model lists: the first call takes a
   few seconds, calls at once share that load, the list is reused for a minute,
   and after that the previous one is served at once while a new one loads in
   the background, as `/v1/models` does. The load a call waits for ends with
   the call or the server; the background reload is detached, as the gateway's
   is, and takes at most 90 seconds)
+- `api_status` (the document of `api status --json`: where the API listens,
+  whether it answers, the profile's key count and whether the `auto` model
+  works; it probes each listener over HTTP, which takes a few seconds when
+  nothing answers) and `api_config_get` (the document of `api config show
+  --json`: the ten saved server settings, what a server started from this MCP
+  server's environment would use, what the running daemon started with and where
+  each setting stands, `applied`, `pending_restart`, `overridden`, `not_serving`
+  (the dedicated listener is not up), `not_running` or `unknown`). Both are built
+  by `internal/apiconfig`, the code the commands
+  run, with this MCP server's own environment (`api_config_get` says
+  `"environment":"mcp"` where the command says `"shell"`), the server's profile
+  and the daemon's heartbeat. A saved row that cannot be read stops both, and
+  `api_models_list`, with the command's message passed on as it is (it starts
+  `the saved settings are damaged` and names `api config unset --all --yes`): a
+  model tells the user, who runs that command, or the operator allows
+  `api_config_set` with `unset: "all"` to remove the row (the gate below). A row
+  a newer version saved is an error that nothing here removes.
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -378,6 +399,71 @@ existing MCP client config that relies on them.
   transcript, but run by an agent through a shell tool it lands in that
   transcript too. The `api_*` tools are MCP only (the chat assistant has
   none), and a grant-mode server serves none of them.
+- `api_config_set` — saves or removes settings of the API's server (`set`: an
+  object of setting keys to values, `max_concurrent` also a number; `unset`: a
+  list of keys, or the word `all`), under the rules of `api config set|unset`
+  (the same code, `apiconfig.Apply`: the same checks, canonical spellings and
+  document, and the same transaction, so two calls at once both land). **A change
+  that makes the server reach further than it did is refused, and nothing is
+  saved, unless the operator started this MCP server with `--allow-api-exposure`
+  (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`)**: a dedicated listener beyond this
+  machine, moved to another host beyond it or to every interface, a higher
+  confinement class, a runtime list that gains a runtime it did not have (one of
+  the default list that a saved list left out counts when it comes back), a
+  runtime list that leaves `none`; removing a `confinement` of `chat-only` or an
+  `image_runtimes` of `none` or of `codex` counts, and so does removing a saved row that cannot be read (`unset`
+  of `all`: the widening `saved_settings`, since what the row limited cannot be
+  told; with the flag the result says `removed_unreadable_row`)
+  (`apiconfig.Widens` and `Apply` decide, in the transaction that replaces the
+  row). That is the operator's switch, read once when the server starts: no
+  argument of the tool is one, since a model sets the arguments and an argument
+  would protect nothing, and the schema offers none. The refusal says which
+  setting and why, that the user can make the change with
+  `api config set ... --yes` (or `unset`) or in the desktop app (for a row that
+  cannot be read it names `api config unset --all --yes` alone), and what the
+  operator can do; with the flag, the reasons are in the result's `widening`,
+  as the command prints them. While the row cannot be read every other change
+  fails with the command's message (`the saved settings are damaged ...`), and a
+  row a newer version saved is an error for all of them.
+  `--allow-api-exposure` adds nothing to `--allow-mutations`, which the tool
+  needs first, and grant mode refuses it. It guards that tool and nothing else:
+  `--allow-mutations` also serves `workflow_node_add` (which accepts the node type
+  `system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
+  that has them can have a workflow of the profile run `monoagentcli api config set
+  ... --yes` as the OS user; if a model must not be able to widen the server, do
+  not give it `--allow-mutations` (SECURITY.md). A value that holds an API key
+  (`sk-ma-`) is refused, because what is saved is shown to whoever reads
+  `api_config_get`; a value over 4096 characters (an address over 260) is
+  refused; and no error repeats an argument: the reasons of the gate print the
+  address of the call and, for a move between two binds, the one saved before
+  it, and the refusal names no address and no host, in any spelling, and no
+  runtime outside the default list. A saved setting takes effect when the
+  server starts: the tool restarts nothing.
+- `api_config_apply` — restarts the daemon through the auto-start service it is
+  registered as (`daemon restart`, through the same `autostart.RestartRegistered`
+  over `autostart.Installer`), so that it reads the saved settings; the result
+  is the command's `{"restarted":true,"via":"launchd"}` (`via` is `launchd`,
+  `systemd` or `schtasks`). Annotated destructive: **it interrupts what the
+  daemon is running** (workflows, org runs), and nothing here promises that the
+  daemon finishes first, since how it ends is the service manager's. It reads the
+  saved settings first, as the command does, and restarts nothing when they
+  cannot be used (the message of every tool that reads them, byte for byte the
+  command's), since a daemon that cannot use them starts without the API. A
+  daemon that is not registered for auto-start is an error with the command's
+  words: stop it and start `monoagentcli daemon` again, or `daemon install`.
+- `api_auto_set` — switches the Jev surface `api_auto` (the `auto` model) on or
+  off for the MCP server's profile, as `jev enable|disable api_auto` does, and
+  answers that command's `--json` document plus `auto`, what `api_status` says of
+  the auto model after the change (`available`, or what it is `missing`: the
+  surface, a Jev key). Switching on needs `acknowledge_egress: true`, because the
+  first 4,000 characters of the last user message of a request for `auto` (of an
+  image request, its prompt) and the names, descriptions and validated cost and
+  latency of the models the API serves then go to TypeSafe; without it the error
+  shows that list and nothing changes, and the result of switching on carries it
+  as `egress`. It never creates, stores, uses or shows the Jev key (it only asks
+  where one is: `TYPESAFE_API_KEY`, or the vault entry the user stored with `jev
+  key set`, whose value it does not decrypt), so with no key the surface is on
+  and `auto` stays unavailable, which `auto` says.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -511,11 +597,14 @@ a key. It lives in `internal/openaiapi/`; the spec is
   (metadata only). `api models` evaluates this shell's flags, environment and
   saved settings (see **Server settings**), not a running server; `api status`
   reports what a running daemon applies.
-  `monoagentcli mcp` serves the same key management and the model list as tools
-  for its own profile, with no `--all-profiles`: `api_key_list` and
-  `api_models_list`, and with `--allow-mutations` `api_key_create`,
-  `api_key_update` and `api_key_revoke` (see [MCP server](#mcp-server): creating
-  a key there puts it in the host's transcript).
+  `monoagentcli mcp` serves the same key management, the model list, the status
+  and the server's settings as tools for its own profile, with no
+  `--all-profiles`: `api_key_list`, `api_models_list`, `api_status` and
+  `api_config_get`, and with `--allow-mutations` `api_key_create`,
+  `api_key_update`, `api_key_revoke`, `api_config_set`, `api_config_apply` and
+  `api_auto_set` (see [MCP server](#mcp-server): creating a key there puts it in
+  the host's transcript, and a change of the settings that makes the server reach
+  further needs the operator's `--allow-api-exposure`).
   `org teardown-profile` revokes a profile's keys. A key never opens the
   legacy routes, and the legacy token never opens `/v1`. Revoking applies to
   the next request: a turn already running finishes, within its timeout.
@@ -590,8 +679,9 @@ a key. It lives in `internal/openaiapi/`; the spec is
   gives `"capabilities":["text","image"]` to the models that can, and
   `api models --json` (and the MCP tool `api_models_list`, which is its document)
   the same per model, `api models` also as an IMAGES column of its table, read
-  from this shell's `MONOAGENT_API_IMAGE_RUNTIMES` (the tool reads its own
-  server's). The runtime has to write the file, so
+  from this shell's `MONOAGENT_API_IMAGE_RUNTIMES`, else the saved
+  `image_runtimes` (the tool reads its own server's, and then the saved one).
+  The runtime has to write the file, so
   the model must run as `sandboxed` or `unconfined`: under `--confinement
   chat-only`, or for a `--context` key held to chat-only, a request without a
   model is 403 `policy_denied` saying to raise `--confinement` (and
@@ -650,7 +740,8 @@ a key. It lives in `internal/openaiapi/`; the spec is
   tools is refused for), and `api models --json` the same,
   per model, with `api models` also as a TOOLS column of its table and the MCP
   tool `api_models_list`, which is that document, from its own server's
-  `MONOAGENT_API_TOOL_RUNTIMES`; `none` switches tool calling off: no model has
+  `MONOAGENT_API_TOOL_RUNTIMES`, else the saved `tool_runtimes` (the shell's
+  likewise); `none` switches tool calling off: no model has
   the capability, a request that declares tools is 400 `unsupported_parameter`
   saying it is switched off, `auto` has nothing to pick for one, and the server
   logs it once at start).
@@ -986,14 +1077,25 @@ a key. It lives in `internal/openaiapi/`; the spec is
   | keys: create, list, revoke, context on/off | `api key` | `api_key_*` | yes |
   | key: rename | `api key update --name` | `api_key_update` | not yet |
   | models, capabilities, what `auto` may pick | `api models` | `api_models_list` | yes (read-only) |
-  | status: listeners, base URLs, scheme, confinement | `api status` | not yet | yes (read-only) |
-  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | not yet | yes (Settings › Jev) |
-  | server settings: show | `api config show` | not yet (stage 2) | read-only fragments (stage 3: the block) |
-  | server settings: change and keep | `api config set`, `unset` | not yet (stage 2) | not yet (stage 3) |
-  | apply a change (restart the daemon) | `daemon restart` | not yet (stage 2) | not yet (stage 3) |
-
-  Until MCP has it, `api_models_list` reads the environment and not the saved
-  settings.
+  | status: listeners, base URLs, scheme, confinement | `api status` | `api_status` | yes (read-only) |
+  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | `api_auto_set` (needs `acknowledge_egress`) | yes (Settings › Jev) |
+  | server settings: show | `api config show` | `api_config_get` | read-only fragments (stage 3: the block) |
+  | server settings: change and keep | `api config set`, `unset` | `api_config_set` (a change that reaches further needs the operator's `--allow-api-exposure`) | not yet (stage 3) |
+  | apply a change (restart the daemon) | `daemon restart` | `api_config_apply` | not yet (stage 3) |
+- **The exposure gate from MCP.** `api_config_set` calls the same
+  `apiconfig.Apply`, with `Change.Confirm` set to the MCP server's
+  `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), read when the
+  server starts and never from an argument of the call: where the CLI has
+  `--yes`, MCP has a switch that the operator sets and the model cannot, and a
+  refused change saves nothing. The repair of a row that cannot be read stands
+  behind it too: `api_config_set` with `unset: "all"` is refused without the
+  flag (the reason `saved_settings`) and removes the row with it. Of the
+  mutating tools only `api_config_set` has it; `api_config_apply` and
+  `api_auto_set` are held back by
+  `--allow-mutations` alone (the latter also by `acknowledge_egress`, which the
+  caller sets: it makes what leaves the machine visible, and is not an access
+  control). `api_models_list` reads the saved settings under the environment, as
+  `api models` does.
 - **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
   folded until opened, read again when Settings is shown again) runs the
   commands above through `wails-app/app_api.go`. It shows every listener that

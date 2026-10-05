@@ -2884,9 +2884,10 @@ OPENAI-COMPATIBLE API (/v1)
                                    (see "Server settings" below)
 
   monoagentcli mcp has the same management as tools, for its own profile:
-  api_key_list and api_models_list, and with --allow-mutations api_key_create
-  (it returns the key once, in its result, which puts it in the MCP host's
-  transcript), api_key_update and api_key_revoke.
+  api_key_list, api_models_list, api_status and api_config_get, and with
+  --allow-mutations api_key_create (it returns the key once, in its result,
+  which puts it in the MCP host's transcript), api_key_update, api_key_revoke,
+  api_config_set, api_config_apply and api_auto_set (see "Server settings").
 
   --context adds excerpts of the profile's own knowledge to requests made
   with the key; only chat-only models serve such a key unless the server
@@ -3014,6 +3015,33 @@ OPENAI-COMPATIBLE API (/v1)
   says why on stderr and in its log, while it runs everything else.
   --db-path on api config edits a database that the login service's daemon
   does not read.
+
+  From MCP (monoagentcli mcp): api_status, api_config_get, api_config_set and
+  api_config_apply return the documents of api status --json, api config show
+  --json, api config set|unset --json and daemon restart --json, with
+  "environment":"mcp" where the command says "shell". api_config_set refuses a
+  change that reaches further, and saves nothing, unless the operator started
+  mcp with --allow-api-exposure (or MONOAGENT_MCP_ALLOW_API_EXPOSURE=1): a
+  switch of the host's own configuration that no argument of a tool can set,
+  since the model sets the arguments. What reaches further is what needs --yes
+  above: a dedicated listener that reaches further than the saved one (beyond
+  this machine, another host beyond it, or every interface where it was one
+  host), a higher confinement class, a runtime list that gains a runtime it did
+  not have, none left (tool calling or image generation switched on again), and
+  removing a saved row that cannot be read (saved_settings). It also refuses a
+  value that holds an API key, and no error of it repeats an argument. The flag
+  guards that tool only: --allow-mutations also serves workflow_node_add (which
+  accepts the node type system.execute_command), workflow_set_active and
+  workflow_run, so a model that has them can have a workflow of the profile run
+  api config set ... --yes as the OS user; if a model must not be able to widen
+  the server, do not give it --allow-mutations. api_config_apply restarts the
+  daemon as daemon restart does (it reads the saved settings first and restarts
+  nothing when they cannot be used), and interrupts what it is running.
+  api_auto_set switches the api_auto surface of the server's profile on (it
+  needs acknowledge_egress: true, because prompts then go to TypeSafe) or off, as
+  jev enable|disable api_auto does, and adds auto, what api_status says of the
+  auto model; it never creates or reads the Jev key. api_models_list reads the
+  saved settings under its server's environment, as api models does.
 
   Walkthrough: examples/openai-api-quickstart.md. Security model: SECURITY.md.
 

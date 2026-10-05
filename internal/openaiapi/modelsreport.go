@@ -12,8 +12,8 @@ import (
 const (
 	// ReportSourceShell is `monoagentcli api models`: its own flags and environment.
 	ReportSourceShell = "shell"
-	// ReportSourceMCP is the MCP tool api_models_list: the arguments of the call and
-	// the environment of the MCP server process.
+	// ReportSourceMCP is the MCP tool api_models_list: the arguments of the call, the
+	// environment of the MCP server process and the settings saved with `api config`.
 	ReportSourceMCP = "mcp"
 )
 
@@ -70,8 +70,8 @@ type ReportPolicy struct {
 	// listener: the auto maximum, never above Confinement.
 	AutoConfinement string `json:"auto_confinement"`
 	// Source says whose settings these are: ReportSourceShell or ReportSourceMCP,
-	// the flags and environment of whoever evaluated them, which a running server
-	// may not share.
+	// the flags, environment and saved settings of whoever evaluated them, which a
+	// running server may not share.
 	Source string `json:"source"`
 }
 

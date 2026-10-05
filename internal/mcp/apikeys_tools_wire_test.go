@@ -183,6 +183,12 @@ func TestGrantModeServesNoAPIKeyTool(t *testing.T) {
 		{"api_key_create", map[string]any{"name": "role-made"}},
 		{"api_key_update", map[string]any{"id": "key_zzzzzzzzzzzz", "context": true}},
 		{"api_key_revoke", map[string]any{"id": "key_zzzzzzzzzzzz"}},
+		// The tools of the API's server: its status, its settings, the restart and the auto model.
+		{"api_status", map[string]any{}},
+		{"api_config_get", map[string]any{}},
+		{"api_config_set", map[string]any{"set": map[string]any{"max_concurrent": "8"}}},
+		{"api_config_apply", map[string]any{}},
+		{"api_auto_set", map[string]any{"enabled": true, "acknowledge_egress": true}},
 	}
 	lines := []string{request(100, "tools/list", map[string]interface{}{})}
 	for i, c := range calls {
@@ -212,5 +218,9 @@ func TestGrantModeServesNoAPIKeyTool(t *testing.T) {
 	var n int
 	if err := f.db.DB.QueryRow(`SELECT COUNT(*) FROM api_keys`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("a grant-mode call stored %d keys (%v)", n, err)
+	}
+	// Nor did a call change the API's settings or switch a Jev surface on.
+	if err := f.db.DB.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'api_gateway_config' OR key LIKE 'jev.%'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a grant-mode call saved %d settings of the API or of Jev (%v)", n, err)
 	}
 }

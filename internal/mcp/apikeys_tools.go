@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/apiconfig"
 	"github.com/monoes/mono-agent/internal/apikeys"
 	"github.com/monoes/mono-agent/internal/openaiapi"
 )
@@ -35,16 +35,17 @@ func apiTools() []tool {
 				"whether a listener of the given kind serves it, whether a key created with context may use it, whether the auto model may pick it, " +
 				"and whether the auto model works for the active profile: the document of `monoagentcli api models --json`. " +
 				"The policy comes from the arguments, else from MONOAGENT_API_CONFINEMENT, MONOAGENT_API_CONTEXT_CONFINEMENT and MONOAGENT_API_AUTO_CONFINEMENT " +
-				"in this MCP server's environment, else the listener's defaults, the runtimes that make images from MONOAGENT_API_IMAGE_RUNTIMES there (default codex and antigravity) " +
-				"and the runtimes that serve tool calling from MONOAGENT_API_TOOL_RUNTIMES there (default claude and codex; none switches it off), " +
-				"so it can differ from what a running server applies (`monoagentcli api status` shows that). " +
+				"in this MCP server's environment, else from the settings saved for the server (api_config_get shows them, api_config_set changes them), else the listener's defaults. " +
+				"The runtimes that make images come from MONOAGENT_API_IMAGE_RUNTIMES in this environment, else the saved image_runtimes, else codex and antigravity, " +
+				"and the runtimes that serve tool calling from MONOAGENT_API_TOOL_RUNTIMES, else the saved tool_runtimes, else claude and codex (none switches either off). " +
+				"That is what a server started now would apply, so it can differ from what a running one applies, which is what it read when it started: api_status and api_config_get say what it runs. " +
 				"Loading the models asks every installed agent runtime for its list, which takes a few seconds: calls at once share one load, the list is reused for a minute, " +
-				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does.",
+				"and after that the previous one is served at once while a new one is loaded in the background, as the server's own /v1/models does. " + damagedRowNote,
 			schema: objSchema(map[string]interface{}{
 				"for":                 strParam("loopback (default) or network: the kind of listener to evaluate"),
-				"confinement":         strParam("Strongest class the listener serves: chat-only, sandboxed or any (default: the environment, else any on loopback and chat-only on a network listener)"),
-				"context_confinement": strParam("Strongest class a key created with context may use: chat-only, sandboxed or any (default: the environment, else chat-only; never above the listener's)"),
-				"auto_confinement":    strParam("Strongest class the auto model may pick: chat-only, sandboxed or any (default: the environment, else chat-only; never above the listener's)"),
+				"confinement":         strParam("Strongest class the listener serves: chat-only, sandboxed or any (default: the environment, else the saved confinement, else any on loopback and chat-only on a network listener)"),
+				"context_confinement": strParam("Strongest class a key created with context may use: chat-only, sandboxed or any (default: the environment, else the saved context_confinement, else chat-only; never above the listener's)"),
+				"auto_confinement":    strParam("Strongest class the auto model may pick: chat-only, sandboxed or any (default: the environment, else the saved auto_confinement, else chat-only; never above the listener's)"),
 			}),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolAPIModelsList,
@@ -56,7 +57,8 @@ func apiTools() []tool {
 				"Treat it as a password and give it only to the user: it is now part of this conversation's transcript, which the host may keep " +
 				"(`monoagentcli api key create` writes the key to stdout: run by the user in their own terminal it keeps the key out of any transcript, run by an agent through a shell tool it puts the key in that transcript too). " +
 				"The name rule is the store's: " + apikeys.ErrInvalidName.Error() + ". A name must also be unique among the profile's active keys. " +
-				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models, and is refused tool calling, unless the server raises --context-confinement (and --confinement, on a chat-only listener) above chat-only.",
+				"With context true, requests made with the key get excerpts of the profile's own knowledge added, and such a key is served only by chat-only models, and is refused tool calling, unless the server raises --context-confinement (and --confinement, on a chat-only listener) above chat-only: " +
+				"the settings context_confinement and confinement, which api_config_get shows (saved, and as the running daemon started with them) and api_config_set changes, a change that reaches further and that the operator must have allowed.",
 			schema: objSchema(map[string]interface{}{
 				"name":    strParam("Key name, unique among the profile's active keys"),
 				"context": boolParam("Add the profile's own knowledge (documents and captures) to requests made with this key (default false)"),
@@ -237,27 +239,34 @@ func toolAPIModelsList(ctx context.Context, s *Server, args json.RawMessage) (in
 	if err != nil {
 		return nil, errors.New("for must be loopback or network")
 	}
-	policy, err := openaiapi.EffectivePolicy(addr, a.Confinement, os.Getenv)
-	if err != nil {
-		return nil, errBadClass("confinement", "MONOAGENT_API_CONFINEMENT")
-	}
-	if policy.ContextMax, err = openaiapi.EffectiveContextMax(a.ContextConfinement, os.Getenv); err != nil {
-		return nil, errBadClass("context_confinement", "MONOAGENT_API_CONTEXT_CONFINEMENT")
-	}
-	if policy.AutoMax, err = openaiapi.EffectiveAutoMax(a.AutoConfinement, os.Getenv); err != nil {
-		return nil, errBadClass("auto_confinement", "MONOAGENT_API_AUTO_CONFINEMENT")
-	}
-	imageRuntimes, err := openaiapi.EffectiveImageRuntimes(os.Getenv)
-	if err != nil { // a fixed text, like the others: the shared parser quotes the value
-		return nil, errors.New("MONOAGENT_API_IMAGE_RUNTIMES must be a comma-separated list of runtime ids, such as codex,antigravity")
-	}
-	toolRuntimes, err := openaiapi.EffectiveToolRuntimes(os.Getenv)
-	if err != nil { // a fixed text too
-		return nil, errors.New("MONOAGENT_API_TOOL_RUNTIMES must be a comma-separated list of runtime ids, such as claude,codex")
-	}
 	rt, err := s.runtime()
 	if err != nil {
 		return nil, err
+	}
+	// What a server started now would read: this server's environment, with the settings saved
+	// with api_config_set under it. A saved setting that fails its rule stops such a server, so it
+	// stops this call too, naming the setting and not repeating its value.
+	getenv, err := apiconfig.EnvWithSaved(ctx, rt.db.DB, s.getenv())
+	if err != nil {
+		return nil, err
+	}
+	policy, err := openaiapi.EffectivePolicy(addr, a.Confinement, getenv)
+	if err != nil {
+		return nil, errBadClass("confinement", "MONOAGENT_API_CONFINEMENT")
+	}
+	if policy.ContextMax, err = openaiapi.EffectiveContextMax(a.ContextConfinement, getenv); err != nil {
+		return nil, errBadClass("context_confinement", "MONOAGENT_API_CONTEXT_CONFINEMENT")
+	}
+	if policy.AutoMax, err = openaiapi.EffectiveAutoMax(a.AutoConfinement, getenv); err != nil {
+		return nil, errBadClass("auto_confinement", "MONOAGENT_API_AUTO_CONFINEMENT")
+	}
+	imageRuntimes, err := openaiapi.EffectiveImageRuntimes(getenv)
+	if err != nil { // a fixed text, like the others: the shared parser quotes the value
+		return nil, errors.New("MONOAGENT_API_IMAGE_RUNTIMES must be a comma-separated list of runtime ids, such as codex,antigravity")
+	}
+	toolRuntimes, err := openaiapi.EffectiveToolRuntimes(getenv)
+	if err != nil { // a fixed text too
+		return nil, errors.New("MONOAGENT_API_TOOL_RUNTIMES must be a comma-separated list of runtime ids, such as claude,codex")
 	}
 	// Bound to the call's context: it ends when the server stops its calls, and the
 	// call does not wait for monomind's processes to close their pipes.
