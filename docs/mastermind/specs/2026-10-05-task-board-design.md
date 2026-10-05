@@ -26,7 +26,7 @@ A personal task board in monoagent that people and AI agents share.
 | D6 | The human gate. Everything captured (Chrome, OS) or created by an agent lands in Inbox. Only the operator moves a task to Ready. Agents claim only from Ready. An agent's finish goes to Review, never Done. Done, archiving and sending a task back to Ready are the operator's. Text captured from web pages is untrusted and an agent will act on a task as on the user's own words: moving it to Ready is the step where the person has read it. | lead |
 | D7 | Who is the operator. The store takes an actor kind (`human`, `agent`, `capture`) and enforces §5.1. The CLI derives the kind: an agent-context marker in the environment (`orgsign.AgentContextMarker()`, the list org signing already uses: `CLAUDECODE`, `CODEX_*`, `MONOMIND_*`, ...) or `--as NAME` makes the caller an agent, and operator-only commands then refuse (exit 3, code `operator_only`); otherwise the caller is human. MCP callers are agents; the daemon's `task.add` and the OS menu are captures. It is the guard org signing uses: it stops an agent acting by accident or on injected text, not one that deliberately unsets its environment. | lead |
 | D8 | A claim is one conditional UPDATE inside `BEGIN IMMEDIATE` (as `vault.Register` does), with a lease: 30 minutes by default, 24 hours at most, renewed by the claimant's comment or by claiming again under the same name. A claim past its lease is stale and `next` may take it over. The name in `--as` is a coordination label, not authentication. | lead |
-| D9 | `project` is the main working tree of the git repository the caller is in (so every worktree of one repo is one project), else the real working directory, else a free label (§4.4). `next` matches the caller's project and tasks with no project. | lead |
+| D9 | `project` is the main working tree of the git repository the caller is in (so every worktree of one repo is one project), else the real working directory, else a free label (§4.5). `next` takes only tasks of the caller's project; tasks with no project are reached only with `--any-project` (MCP `any_project`), so a capture approved without a project is not claimed by whichever session asks first. Approving can set the project (`approve --project P`, and the app asks). | lead |
 | D10 | Boards are per profile. Task ids are integers shared across profiles; an id of another profile is "not found" (precedent: the MCP cross-profile isolation test). | lead |
 | D11 | Storage is migration 062: `tasks`, `task_events`, `task_board_rev` (§4). Positions are integers with gaps; timestamps are fixed-width UTC text like the other stores. No triggers and no `/* */` (the migration splitter cannot read them). | lead |
 | D12 | A board revision, one counter per profile bumped by every write transaction, makes change detection a primary-key read. The app polls it in-process and refetches only when it moves. | lead |
@@ -144,16 +144,16 @@ CREATE TABLE IF NOT EXISTS task_board_rev (
 
 ### 4.4 Events
 
-One row per change, written in the same transaction as the change. Kinds: `created`, `edited`, `moved`, `claimed`, `reclaimed` (a stale claim taken over), `comment`, `question`, `result`, `released`, `archived`, `unarchived`. At most 500 per task: a comment beyond that is refused (`limit`) and the agent is told to finish or release.
+One row per change, written in the same transaction as the change. Kinds: `created`, `edited`, `moved`, `claimed`, `reclaimed` (a stale claim taken over), `comment`, `question`, `result`, `released`, `archived`, `unarchived`. A comment is refused (`limit`) once a task has 500 events, and the agent is told to finish or release; changes of state are always recorded.
 
 ### 4.5 Project key
 
-`ProjectKey(dir)`: inside a git work tree it is the real path of the repository's main working tree (from `git rev-parse --path-format=absolute --git-common-dir`, the common directory's parent; a git older than 2.31 has no `--path-format`, so its relative answer is resolved against the directory), so a session in `.claude/worktrees/x` and one in the main checkout share a project; outside git it is the real path of `dir`. A `--project` value that is not an existing directory and has no path separator is a label and is kept as given (for example `personal`). `.` and relative paths resolve from the caller's working directory. An empty project means "any". `list --project P` matches exactly; `next` matches `P` and the empty project. The app shows the last path element. MCP tools take `project` (the absolute path of the working directory the agent is in) and default to the server's working directory.
+`ProjectKey(dir)`: inside a git work tree it is the real path of the repository's main working tree (from `git rev-parse --path-format=absolute --git-common-dir`, the common directory's parent; a git older than 2.31 has no `--path-format`, so its relative answer is resolved against the directory), so a session in `.claude/worktrees/x` and one in the main checkout share a project; outside git it is the real path of `dir`. A `--project` value that is not an existing directory and has no path separator is a label and is kept as given (for example `personal`). `.` and relative paths resolve from the caller's working directory. An empty project marks a task for any project: only `--any-project` reaches it from `next`. `list --project P` and `next` match `P` exactly; `next --any-project` also takes the tasks with the empty project. The app shows the last path element. MCP tools take `project` (the absolute path of the working directory the agent is in) and default to the server's working directory.
 
 ### 4.6 Order, limits, cleaning
 
 - Position: integers with gaps of 1024; a move between two neighbours takes the midpoint; with no room left the column is renumbered in the same transaction. A task new to a column goes to the top of Inbox, Review and Done (newest first) and to the bottom of Ready and In progress (a queue). `move` takes `--before ID`, `--after ID`, `--top`, `--bottom`.
-- Limits: title 200 characters; notes 64 KiB; a comment 8 KiB; project 512 bytes; URL 2,048 bytes; page title 200; app name 100; actor 64 characters of `[A-Za-z0-9._#@:-]`; client id 64 of `[A-Za-z0-9_-]`; 500 events per task; 2,000 non-archived tasks per profile; 20 agent-created tasks per hour per profile.
+- Limits: title 200 characters; notes 64 KiB; a comment 8 KiB; project 512 bytes; URL 2,048 bytes; page title 200; app name 100; actor 64 characters of `[A-Za-z0-9._#@:-]`; client id 64 of `[A-Za-z0-9_-]`; 500 events per task before comments are refused (§4.4); 2,000 non-archived tasks per profile; 20 agent-created tasks per hour per profile.
 - Cleaning: invalid UTF-8 is replaced, control characters other than newline and tab are removed, line ends become `\n`, a title's whitespace is collapsed; notes over the limit are cut and end with `[truncated: N characters in the original]`. A URL must parse, be `http` or `https`, and loses its user-info; otherwise it is stored empty.
 - Title from text (D29): with text and no title, the title is the first non-empty line, collapsed and cut at 120 characters with `…`; the notes are the whole text when it has more lines or more characters than the title, else empty. A page capture's title is the page title, else the URL, and its notes are empty.
 
@@ -177,8 +177,8 @@ A refusal names its code: `operator_only`, `not_ready`, `claimed` (with who and 
 ### 5.2 Claims and leases
 
 - `claim ID`: in one `BEGIN IMMEDIATE` transaction, a conditional UPDATE sets `status = 'in_progress'`, `claimed_by`, `claim_until`, `updated_at` where the task is Ready, or In progress with a stale claim, or In progress and already claimed under the same name (which renews); `RowsAffected` 0 is followed by a read to give the right refusal. A `claimed` or `reclaimed` event is written in the same transaction.
-- `next --claim`: picks and claims in that one transaction: the Ready tasks of the caller's project or with no project, lowest position first, then stale In progress tasks, oldest lease first. `next` without `--claim` only reads: two agents that peek may see the same task, and the second claim is refused (`claimed`).
-- Lease: 30 minutes by default, `--lease` up to 24 hours. The claimant's `comment` renews it by the default lease; `finish` and `release` clear it.
+- `next --claim`: picks and claims in that one transaction: the Ready tasks of the caller's project (with `--any-project`, also those with no project), lowest position first, then stale In progress tasks of the same scope, oldest lease first. `next` without `--claim` only reads: two agents that peek may see the same task, and the second claim is refused (`claimed`).
+- Lease: 30 minutes by default, `--lease` up to 24 hours. A renewal, by the claimant's `comment` or by claiming again under the same name, sets `claim_until` to the later of its current value and now plus the lease (30 minutes for a comment): it never shortens a lease. `finish` and `release` clear it.
 - Stale claims stay where they are until someone takes them or the operator sends them back to Ready: nothing sweeps in the background. The app shows a stale claim in amber.
 - The name is not authenticated. Two agents that choose the same name are one claimant.
 
@@ -211,10 +211,10 @@ monoagentcli task board [--project P] [--done-limit N]
 monoagentcli task show ID
 monoagentcli task edit ID [--title T] [--notes TEXT] [--project P]
 monoagentcli task move ID STATUS [--before ID | --after ID | --top | --bottom]
-monoagentcli task approve ID...            # Inbox to Ready, bottom of Ready; --top
+monoagentcli task approve ID... [--project P] [--top]   # Inbox to Ready, at the bottom of Ready
 monoagentcli task archive ID... | --status done
 monoagentcli task unarchive ID...
-monoagentcli task next [--project P] [--claim --as NAME [--lease DUR]]
+monoagentcli task next [--project P] [--any-project] [--claim --as NAME [--lease DUR]]
 monoagentcli task claim ID --as NAME [--lease DUR]
 monoagentcli task comment ID TEXT [--as NAME]
 monoagentcli task finish ID --as NAME (--result TEXT | --question TEXT)
@@ -223,7 +223,7 @@ monoagentcli task digest [--project P]
 ```
 
 - `board` is the app's one read: `--json` gives `{rev, counts, tasks: {inbox, ready, in_progress, review, done}}` with Done cut to `--done-limit` (default 50) and `rev` the board revision; in text it prints the columns. `list` shows every status but archived to the operator and `ready,in_progress,review` to an agent, unless `--status` names others.
-- The source of a task added by the CLI is `os` with `--source os`, `agent` when the caller is an agent, else `cli`. `move` takes the five board statuses; archiving is `archive`.
+- A caller that is an agent (a marker or `--as`) is classified as one first: its tasks are `agent` tasks under D14's limit, and `--source os` from it is refused (`invalid_input`), so the flag cannot be used to skip the limit; the OS menu never runs under a marker. Otherwise the source is `os` with `--source os`, else `cli`. `move` takes the five board statuses; archiving is `archive`.
 - Ids are written `42` or `#42`. `--project .` and the default for `next`, `list --project` and `digest` resolve from the working directory (§4.5). `add` with no `--project` leaves the project empty unless `--project .` is given.
 - `add --stdin` reads the text from standard input (read up to 1 MiB, then cleaned and cut); `--source os` is what the OS menu passes; any other source (`chrome`, `agent`) is set by the host that knows it, not by a flag. `--ready` is refused for a capture and for an agent.
 - Agent commands (`claim`, `comment` as an agent, `finish`, `release`, `next --claim`) need `--as NAME` or `MONOAGENT_ACTOR`; there is no default, and the error says how to choose one. A caller with an agent-context marker and no `--as` gets that error, not a guess. `comment` without `--as` and without a marker is the operator's comment.
@@ -240,8 +240,8 @@ Tools, in `internal/mcp/task_tools.go` (a family `taskTools()` with `taskToolNam
 |---|---|---|---|
 | `task_list` | no | `status` (one or several), `project`, `limit` (default 50, at most 200) | `{tasks, note}`; default statuses `ready,in_progress,review` |
 | `task_get` | no | `id` | the task with its events |
-| `task_next` | no | `project` | `{task or null, note}`: the one `task_claim` with `next` would take; claims nothing |
-| `task_claim` | yes | `id` or `next: true`; `project`; `lease_minutes` | the claimed task and how to continue |
+| `task_next` | no | `project`, `any_project` | `{task or null, note}`: the one `task_claim` with `next` would take; claims nothing |
+| `task_claim` | yes | `id` or `next: true`; `project`; `any_project`; `lease_minutes` | the claimed task and how to continue |
 | `task_comment` | yes | `id`, `text` | the task; renews the lease |
 | `task_finish` | yes | `id`, `result` or `question` | the task, now in Review |
 | `task_release` | yes | `id`, `note` | the task, back in Ready |
@@ -270,7 +270,7 @@ Not in v1: the in-app assistant's chat tools, a resource or prompt in the MCP se
 - Placement: `NAV_ITEMS` gets `{id: 'tasks', labelKey: 'tasks', icon: SquareKanban, section: 'DATA'}` right after Documents; `persistentPages` gets `tasks: <Tasks isActive={activePage === 'tasks'} />` (an id missing there silently shows the dashboard); `sidebar.nav.tasks` in `en.json` and `es.json`. The badge is Inbox plus Review (tooltip: the split), driven by the `tasks:changed` event, so it is right before the tab was ever opened.
 - Files: `wails-app/app_tasks.go` (bindings shelling out with `cliJSON`/`runMonoCLI`), `app_tasks_watch.go` (the watcher, restarted on startup, profile switch and shutdown like the document watcher), `frontend/src/pages/Tasks.jsx` with its parts in `pages/tasks/` (`Board`, `Column`, `Card`, `Drawer`, `QuickAdd`, `useTasksBoard`, `useCardDrag`), pure logic in `lib/taskModel.js` (grouping, ordering, drop targets, filters), `pages/tasks/tasks.css` for the keyframes (a feature this size has its own CSS file, as the stage does), regenerated `wailsjs` bindings, `tasks.*` locale keys in both languages.
 - Layout: a header (title, search, project filter, New task, a "How to capture" hint); five columns, each with its name, count and (Inbox, Ready) a quick-add; columns scroll on their own and the board scrolls sideways under 1,100 px; Done shows the 50 most recent.
-- Card: two-line title; a source chip (a globe and the domain for Chrome, the app's name for the OS, a terminal for the CLI, a spark for an agent); the project's last path element; age; for a claimed task, the claimant's initial with a pulse and the lease countdown, amber when stale. Inbox cards have a one-click "Approve", Review cards "Done" and "Back to Ready".
+- Card: two-line title; a source chip (a globe and the domain for Chrome, the app's name for the OS, a terminal for the CLI, a spark for an agent); the project's last path element; age; for a claimed task, the claimant's initial with a pulse and the lease countdown, amber when stale. Inbox cards have a one-click "Approve" (on a card with no project it asks first: a small menu of the known projects, or "Any project"), Review cards "Done" and "Back to Ready".
 - Drawer: editable title and notes (markdown shown, plain text edited), the source as a link, the project, a history timeline of human and agent events (questions highlighted), the operator's comment box, Approve, Move to... and Archive.
 - Interaction: drag with the app's mouse ghost-drag (no native drag), a glowing drop zone, a drop indicator between cards, column auto-scroll; the move is applied at once and the CLI call follows; a refusal reverts it and says why. Keyboard (nothing in the app has this yet): Tab reaches cards; Enter opens; Shift+Left and Shift+Right move to the neighbouring column; Alt+Up and Alt+Down reorder; `A` approves an Inbox card; `N` opens quick add; `/` focuses search; Escape closes the drawer; an `aria-live` region announces each move.
 - Motion: cards enter with a short scale and fade; reorders animate by FLIP; a Done card gets a check pulse; a claim pulses softly. All of it is off under `prefers-reduced-motion` (the global rule plus a JS check).
@@ -292,7 +292,7 @@ Not in v1: the in-app assistant's chat tools, a resource or prompt in the MCP se
 ### 11.2 `task.add` on the request channel
 
 - Go (`internal/extension/task_add.go`): `MethodTaskAdd = "task.add"`, registered by `registerTaskHandlers` only when a `TaskSink` has been set (a host with no sink does not advertise it); `TaskSink.AddCaptured(ctx, CapturedTask{ProfileID, ClientID, Text, URL, Title, Kind, Origin})` returns `{id, created}`. `cmd/monoagentcli` wires the sink as it wires `SetProfileSource`: an adapter over `internal/tasks` that opens the database lazily, since whichever process hosts the bridge (the daemon, `extension serve`, a workflow run) answers.
-- Params: `client_id`, `text`, `url`, `title`, `kind` (`selection`, `page`, `note`), `profile` (validated as `captureScopeOf` validates it). The worker fills `url` and `title` from the sending tab; a `note` typed in the side panel has neither. The handler cleans and caps again (§4.6), takes the browser from the server-set `req.Origin` for `source_app`, and creates the task as a capture: Inbox only. `unavailable` means "no sink or no database yet" and is shown as waiting; other codes are real errors.
+- Params: `client_id`, `text`, `url`, `title`, `kind` (`selection`, `page`, `note`), `profile`: an empty one means the active profile, and an id that is not a profile in the database is refused (`invalid_input`); `captureScopeOf` only checks that an id is usable as a monomind scope, which would let a stale id file tasks under a profile no board shows. The worker fills `url` and `title` from the sending tab; a `note` typed in the side panel has neither. The handler cleans and caps again (§4.6), takes the browser from the server-set `req.Origin` for `source_app`, and creates the task as a capture: Inbox only. `unavailable` means "no sink or no database yet" and is shown as waiting; other codes are real errors.
 - Extension: `MonoAsk.request` from a worker handler, used only when `supports("task.add")`.
 
 ### 11.3 Outbox
@@ -371,8 +371,8 @@ Custom columns; labels, due dates, priorities and subtasks; deleting tasks for g
 
 ## 17. Open points for the user
 
-1. D5 to D32 are the lead's, as the owner's proxy; each is open until the user says otherwise. The ones most worth a look: the Ready gate (D6), the 30-minute lease and the 20-per-hour agent limit (D8, D14), `project` matching including the empty project (D9), the keyboard map (§10).
-2. The operator guard is an environment guard (D7): an agent that unsets `CLAUDECODE` and the other markers can approve. The same is true of org signing today.
+1. D5 to D32 are the lead's, as the owner's proxy; each is open until the user says otherwise. The ones most worth a look: the Ready gate (D6), the 30-minute lease and the 20-per-hour agent limit (D8, D14), `project` matching, exact by default (D9), the keyboard map (§10).
+2. The operator guard is an environment guard (D7): an agent that unsets `CLAUDECODE` and the other markers can approve. The same is true of org signing today. Its practical cost: nothing can be approved from inside Claude Code. The shell of a Claude Code session carries `CLAUDECODE=1` (checked in the session that wrote this spec), and the `!` prefix is expected to run under the same environment (not tested), so people approve in the app or in a normal terminal.
 3. An operator action in the app fails when the app was started from an agent's shell. The message says to reopen it; the alternative (the app clearing the markers for its own children) was not chosen.
 4. The skill reaches every machine with `~/.claude` on the next CLI run after the release (D3).
 5. The extension must be reloaded after updating; there is no store or update channel.
