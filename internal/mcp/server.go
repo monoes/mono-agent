@@ -63,12 +63,13 @@ type Options struct {
 	// saved. It adds nothing to AllowMutations, which api_config_set needs
 	// first. Also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=="1".
 	AllowAPIExposure bool
-	// APIEnv is what the documents of the API tools (api_status,
-	// api_config_get/set) read of this process: its environment, the daemon's
-	// heartbeat, the service manager and the HTTP probes. The zero value is the
-	// process's own, which is what the command uses; tests give fakes, so that
-	// none of them runs a service manager or depends on the machine. Its
-	// Environment is ignored: the documents of this server always say "mcp".
+	// APIEnv is what the API tools (api_status, api_config_get/set/apply) read
+	// of this process: its environment, the daemon's heartbeat, the service
+	// manager (api_config_apply restarts the daemon through it) and the HTTP
+	// probes. The zero value is the process's own, which is what the command
+	// uses; tests give fakes, so that none of them runs a service manager or
+	// depends on the machine. Its Environment is ignored: the documents of
+	// this server always say "mcp".
 	APIEnv apiconfig.Env
 	// Grant, when set, serves grant mode: only the automations of that
 	// grant's (org, role) bundle, for monomind's role tool provider. See
