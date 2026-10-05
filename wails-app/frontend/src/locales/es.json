@@ -576,6 +576,17 @@
           "restartBody": "El daemon en marcha arrancó antes de que se guardaran estos ajustes, así que aún usa los valores antiguos: {{keys}}. Lee los ajustes guardados cuando se reinicia.",
           "olderBody": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro de que lee los ajustes guardados.",
           "idleBody": "No hay ningún daemon en marcha: el servidor lee estos ajustes cuando arranca."
+        },
+        "save": "Guardar",
+        "saveLabel": "Guardar {{setting}}",
+        "saving": "Guardando…",
+        "useDefault": "Usar el valor por defecto",
+        "useDefaultLabel": "Usar el valor por defecto de {{setting}}",
+        "note": {
+          "saved": "Guardado.",
+          "removed": "Vuelve al valor por defecto.",
+          "unchanged": "Nada cambió: ya estaba guardado así.",
+          "also": "Esto también hace que el servidor llegue más lejos, de formas que el diálogo no listaba:"
         }
       }
     }

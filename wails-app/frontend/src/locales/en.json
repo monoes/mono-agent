@@ -576,6 +576,17 @@
           "restartBody": "The running daemon started before these were saved, so it still runs the old values: {{keys}}. It reads the saved settings when it restarts.",
           "olderBody": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure it reads the saved settings.",
           "idleBody": "No daemon is running: the server reads these settings when it starts."
+        },
+        "save": "Save",
+        "saveLabel": "Save {{setting}}",
+        "saving": "Saving…",
+        "useDefault": "Use the default",
+        "useDefaultLabel": "Use the default for {{setting}}",
+        "note": {
+          "saved": "Saved.",
+          "removed": "Back to the default.",
+          "unchanged": "Nothing changed: it is already saved like this.",
+          "also": "This also makes the server reach further, in ways the dialog did not list:"
         }
       }
     }
