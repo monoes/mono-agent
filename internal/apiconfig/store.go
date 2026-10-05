@@ -23,10 +23,29 @@ const FormatVersion = 1
 // document is never rewritten: a binary that cannot read all of it would drop the rest.
 var ErrTooNew = errors.New("saved API settings are in a newer format")
 
+// ErrDamaged is wrapped by the error of a row that cannot be decoded: its value is not a JSON
+// object, its version is not a whole number from 1, or a field this binary knows has the wrong
+// type. Apply with All removes such a row, which nothing else can read. A failing database is
+// not this, and a row in a newer format is ErrTooNew, which nothing removes.
+var ErrDamaged = errors.New("saved API settings are damaged")
+
+// RemoveRowSQL removes the row by hand: for a row in a newer format, which this version does
+// not remove because it would lose what the newer version saved.
+const RemoveRowSQL = "delete from settings where key = '" + Row + "'"
+
+// damagedError is the error of a row that cannot be decoded. Its message names the way out.
+type damagedError struct{ what string }
+
+func (e *damagedError) Error() string {
+	return e.what + "; `monoagentcli api config unset --all` removes the row"
+}
+func (e *damagedError) Unwrap() error { return ErrDamaged }
+
 // Load reads the saved settings: empty when nothing is saved. The values are not checked
 // (Validate does), so that an invalid one can still be shown and removed. A document that is
-// not a JSON object, whose version is not a whole number from 1, or one of whose known fields
-// has the wrong type is an error; so is one in a newer format (ErrTooNew).
+// not a JSON object (an empty value included), whose version is not a whole number from 1, or
+// one of whose known fields has the wrong type is an ErrDamaged; one in a newer format is an
+// ErrTooNew.
 func Load(ctx context.Context, db *sql.DB) (Settings, error) {
 	var doc string
 	err := db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, Row).Scan(&doc)
@@ -46,18 +65,25 @@ func Load(ctx context.Context, db *sql.DB) (Settings, error) {
 // document Load would refuse, rolls everything back. Nothing is written when fn changed
 // nothing, and a document left with no setting and no field of a newer binary's is deleted.
 func Update(ctx context.Context, db *sql.DB, fn func(*Settings) error) error {
-	return update(ctx, db, false, fn)
+	_, err := update(ctx, db, updateOpts{}, fn)
+	return err
 }
 
-// update is Update, which with dry set runs fn over the stored document and rolls back.
-func update(ctx context.Context, db *sql.DB, dry bool, fn func(*Settings) error) error {
+// updateOpts says how update runs: dry runs fn over the stored document and rolls back, and
+// repair lets a row that cannot be decoded (ErrDamaged, never ErrTooNew) be replaced by what fn
+// leaves of an empty document, which is how Apply's unset all removes it.
+type updateOpts struct{ dry, repair bool }
+
+// update is Update with its options. It reports whether it found a row it had to repair: with
+// dry set, whether it would.
+func update(ctx context.Context, db *sql.DB, opts updateOpts, fn func(*Settings) error) (repaired bool, err error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("saved API settings: %w", err)
+		return false, fmt.Errorf("saved API settings: %w", err)
 	}
 	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("saved API settings: %w", err)
+		return false, fmt.Errorf("saved API settings: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -71,25 +97,31 @@ func update(ctx context.Context, db *sql.DB, dry bool, fn func(*Settings) error)
 	}()
 
 	var doc string
+	found := true
 	switch err := conn.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, Row).Scan(&doc); {
 	case errors.Is(err, sql.ErrNoRows):
+		found = false
 	case err != nil:
-		return fmt.Errorf("reading the saved API settings: %w", err)
+		return false, fmt.Errorf("reading the saved API settings: %w", err)
 	}
 	var s Settings
-	if doc != "" {
-		if s, err = decode(doc); err != nil {
-			return err
+	if found { // a row whose value is empty is a row, and is not JSON
+		var derr error
+		if s, derr = decode(doc); derr != nil {
+			if !opts.repair || !errors.Is(derr, ErrDamaged) {
+				return false, derr
+			}
+			s, repaired = Settings{}, true
 		}
 	}
 	before := s
 	if err := fn(&s); err != nil {
-		return err
+		return false, err
 	}
-	if dry {
-		return nil
+	if opts.dry {
+		return repaired, nil
 	}
-	if !sameValues(before, s) {
+	if repaired || !sameValues(before, s) {
 		text, empty := encode(s)
 		if empty {
 			_, err = conn.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, Row)
@@ -97,14 +129,14 @@ func update(ctx context.Context, db *sql.DB, dry bool, fn func(*Settings) error)
 			_, err = conn.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, Row, text)
 		}
 		if err != nil {
-			return fmt.Errorf("saving the API settings: %w", err)
+			return false, fmt.Errorf("saving the API settings: %w", err)
 		}
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("saving the API settings: %w", err)
+		return false, fmt.Errorf("saving the API settings: %w", err)
 	}
 	committed = true
-	return nil
+	return repaired, nil
 }
 
 func sameValues(a, b Settings) bool {
@@ -120,15 +152,17 @@ func sameValues(a, b Settings) bool {
 func decode(doc string) (Settings, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(doc), &fields); err != nil || fields == nil {
-		return Settings{}, fmt.Errorf("the saved API settings (settings table, key %s) are not a JSON object", Row)
+		return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s) are not a JSON object", Row)}
 	}
 	if raw, ok := fields["v"]; ok {
 		v, ok := wholeNumber(raw)
 		if !ok || v < 1 {
-			return Settings{}, fmt.Errorf("the saved API settings (settings table, key %s) have a version that is not a whole number from 1", Row)
+			return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s) have a version that is not a whole number from 1", Row)}
 		}
 		if v > FormatVersion {
-			return Settings{}, fmt.Errorf("%w: the row %s is in format %d and this monoagentcli reads format %d, so update monoagentcli; nothing was changed", ErrTooNew, Row, v, FormatVersion)
+			return Settings{}, fmt.Errorf("%w: the row %s is in format %d and this monoagentcli reads format %d; use the monoagentcli that wrote it, "+
+				"or remove the row by hand with `sqlite3 <database> \"%s\"` (the database this command opened, ~/.monoagent/monoagent.db unless --db-path names another); nothing was changed",
+				ErrTooNew, Row, v, FormatVersion, RemoveRowSQL)
 		}
 		delete(fields, "v")
 	}
@@ -141,7 +175,7 @@ func decode(doc string) (Settings, error) {
 		delete(fields, key)
 		text, err := textOf(key, raw)
 		if err != nil {
-			return Settings{}, fmt.Errorf("the saved API settings (settings table, key %s): %v", Row, err)
+			return Settings{}, &damagedError{fmt.Sprintf("the saved API settings (settings table, key %s): %v", Row, err)}
 		}
 		_ = s.Set(key, text)
 	}

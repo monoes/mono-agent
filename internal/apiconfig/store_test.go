@@ -192,21 +192,27 @@ func TestADocumentOfANewerFormatIsRefusedAndLeftAsItWas(t *testing.T) {
 	}
 }
 
+// Rows that cannot be decoded, one of each kind. Apply with All removes them, and nothing else
+// reads them.
+var damagedDocuments = map[string]string{
+	"not json":        `{"v":1,`,
+	"an array":        `[1,2]`,
+	"a string":        `"x"`,
+	"a null":          `null`,
+	"an empty value":  ``,
+	"v zero":          `{"v":0}`,
+	"v negative":      `{"v":-1}`,
+	"v a string":      `{"v":"1"}`,
+	"v fractional":    `{"v":1.5}`,
+	"v null":          `{"v":null}`,
+	"a number as str": `{"v":1,"v1_addr":5}`,
+	"an object":       `{"v":1,"confinement":{"a":1}}`,
+	"a string number": `{"v":1,"turn_timeout":15}`,
+	"a bool":          `{"v":1,"max_concurrent":true}`,
+}
+
 func TestADamagedDocumentIsAnErrorThatNamesTheRow(t *testing.T) {
-	for name, doc := range map[string]string{
-		"not json":        `{"v":1,`,
-		"an array":        `[1,2]`,
-		"a string":        `"x"`,
-		"v zero":          `{"v":0}`,
-		"v negative":      `{"v":-1}`,
-		"v a string":      `{"v":"1"}`,
-		"v fractional":    `{"v":1.5}`,
-		"v null":          `{"v":null}`,
-		"a number as str": `{"v":1,"v1_addr":5}`,
-		"an object":       `{"v":1,"confinement":{"a":1}}`,
-		"a string number": `{"v":1,"turn_timeout":15}`,
-		"a bool":          `{"v":1,"max_concurrent":true}`,
-	} {
+	for name, doc := range damagedDocuments {
 		t.Run(name, func(t *testing.T) {
 			db := openDB(t)
 			putRow(t, db, doc)
@@ -222,6 +228,50 @@ func TestADamagedDocumentIsAnErrorThatNamesTheRow(t *testing.T) {
 				t.Errorf("the damaged document was rewritten: %s", v)
 			}
 		})
+	}
+}
+
+// A row that cannot be decoded is ErrDamaged, which names the way out; a failing database is
+// not, and a row in a newer format is ErrTooNew, which names another way out.
+func TestDamageHasItsOwnErrorAndNamesTheWayOut(t *testing.T) {
+	ctx := context.Background()
+	for name, doc := range damagedDocuments {
+		t.Run(name, func(t *testing.T) {
+			db := openDB(t)
+			putRow(t, db, doc)
+			_, err := Load(ctx, db)
+			if !errors.Is(err, ErrDamaged) || errors.Is(err, ErrTooNew) {
+				t.Fatalf("Load: %v, want ErrDamaged and not ErrTooNew", err)
+			}
+			if !strings.Contains(err.Error(), "monoagentcli api config unset --all") {
+				t.Errorf("the message must name the recovery: %q", err)
+			}
+		})
+	}
+
+	db := openDB(t)
+	putRow(t, db, `{"v":2,"max_concurrent":true}`) // a newer binary may type a field as it likes
+	_, err := Load(ctx, db)
+	if !errors.Is(err, ErrTooNew) || errors.Is(err, ErrDamaged) {
+		t.Fatalf("a newer format: %v, want ErrTooNew and not ErrDamaged", err)
+	}
+	for _, want := range []string{"format 2", "format 1", "monoagentcli that wrote it", RemoveRowSQL, "--db-path"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message %q must say %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "unset --all") {
+		t.Errorf("unset --all does not remove a newer row, and the message must not offer it: %q", err)
+	}
+	if RemoveRowSQL != "delete from settings where key = 'api_gateway_config'" {
+		t.Errorf("RemoveRowSQL = %q", RemoveRowSQL)
+	}
+
+	// A database that fails is neither.
+	closed := openDB(t)
+	closed.Close()
+	if _, err := Load(ctx, closed); err == nil || errors.Is(err, ErrDamaged) || errors.Is(err, ErrTooNew) {
+		t.Errorf("a closed database: %v", err)
 	}
 }
 
@@ -335,7 +385,7 @@ func TestADryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	putRow(t, db, `{"v":1,"v1_addr":":9443"}`)
 	var seen string
-	if err := update(ctx, db, true, func(s *Settings) error {
+	if _, err := update(ctx, db, updateOpts{dry: true}, func(s *Settings) error {
 		seen = s.V1Addr
 		return s.Set("confinement", "any")
 	}); err != nil {

@@ -16,7 +16,9 @@ type Change struct {
 	Set map[string]string
 	// Unset lists settings whose saved value is removed. One that is not saved is not an error.
 	Unset []string
-	// All removes every saved setting. It cannot be combined with Set or Unset.
+	// All removes every saved setting. It cannot be combined with Set or Unset. It is also the
+	// repair: a saved row that cannot be decoded (ErrDamaged) is removed, and the result says so
+	// (RemovedUnreadableRow). A row in a newer format (ErrTooNew) is not: that is an error.
 	All bool
 	// Confirm opens the widening gate: the CLI's --yes, the MCP server's --allow-api-exposure. A
 	// change that makes the server reach further is refused without it.
@@ -38,6 +40,11 @@ type ChangeResult struct {
 	Changed []string `json:"changed"`
 	// Widening says how the change makes the server reach further; [] when it does not.
 	Widening []Widening `json:"widening"`
+	// RemovedUnreadableRow: the saved row could not be read (not a JSON object, a version that
+	// is not a whole number from 1, a known field of the wrong type) and unset all removed it;
+	// for a dry run, would remove it. Omitted when it did not. Only unset all does this, and
+	// never to a row in a newer format, which is an ErrTooNew.
+	RemovedUnreadableRow bool `json:"removed_unreadable_row,omitempty"`
 }
 
 // WideningError is the error of a change that makes the server reach further when it was not
@@ -63,6 +70,10 @@ func (e *WideningError) Error() string {
 // Confirm, a *WideningError. Neither writes anything or asks the service manager. Only what the
 // change touches is checked: an invalid value somebody left in the document does not stop a
 // change that does not touch it, and Unset removes it.
+//
+// A row that cannot be decoded is an ErrDamaged for every change but one: All removes it (and
+// says so in RemovedUnreadableRow), since nothing else could. A row in a newer format is an
+// ErrTooNew for every change, All included: it holds what a newer version saved.
 func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, error) {
 	req, err := parseChange(ch)
 	if err != nil {
@@ -71,7 +82,7 @@ func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, e
 	var after Settings
 	var changed []string
 	var widening []Widening
-	err = update(ctx, db, ch.DryRun, func(s *Settings) error {
+	repaired, err := update(ctx, db, updateOpts{dry: ch.DryRun, repair: ch.All}, func(s *Settings) error {
 		before := *s
 		next := before
 		for _, key := range req.unset {
@@ -109,7 +120,7 @@ func Apply(ctx context.Context, db *sql.DB, env Env, ch Change) (ChangeResult, e
 	if widening == nil {
 		widening = []Widening{}
 	}
-	return ChangeResult{ConfigReport: report(ctx, after, env), Applied: !ch.DryRun, Changed: changed, Widening: widening}, nil
+	return ChangeResult{ConfigReport: report(ctx, after, env), Applied: !ch.DryRun, Changed: changed, Widening: widening, RemovedUnreadableRow: repaired}, nil
 }
 
 // request is a Change that passed its checks: keys in their canonical spelling, values in the

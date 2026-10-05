@@ -127,7 +127,9 @@ func newAPIConfigUnsetCmd(cfg *globalConfig) *cobra.Command {
 		Long: "Removes the saved value of each setting named (its key, such as max_concurrent, or the spelling of its flag, " +
 			"max-concurrent), or of every setting with --all; the server then uses the environment or the default. One that is " +
 			"not saved is left alone. Removing a value that was below its default (a confinement of chat-only, image_runtimes none) " +
-			"gives the server more reach, and needs --yes like any change that does.",
+			"gives the server more reach, and needs --yes like any change that does. A saved row that cannot be read (not JSON, a " +
+			"version that is not a whole number, a field of the wrong type) stops every other command, and --all removes it and says " +
+			"so. A row written by a newer version is never removed by it: use that version, or remove the row by hand.",
 		Example: "  monoagentcli api config unset max_concurrent turn_timeout\n  monoagentcli api config unset --all --dry-run",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -166,6 +168,10 @@ func runConfigChange(cfg *globalConfig, cmd *cobra.Command, ch apiconfig.Change,
 		return writeJSONTo(cmd.OutOrStdout(), r)
 	}
 	printConfigChange(cmd.OutOrStdout(), r, verb)
+	if r.RemovedUnreadableRow && r.Applied {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: the saved settings row could not be read, so it was removed, and whatever it held is gone. "+
+			"The server uses its flags, its environment and the defaults until settings are saved again.")
+	}
 	return nil
 }
 
@@ -269,6 +275,10 @@ func printConfigNotes(w io.Writer, r apiconfig.ConfigReport) {
 func printConfigChange(w io.Writer, r apiconfig.ChangeResult, verb string) {
 	changed := strings.Join(r.Changed, ", ")
 	switch {
+	case r.RemovedUnreadableRow && r.Applied:
+		fmt.Fprintln(w, "Removed: the saved settings row, which could not be read.")
+	case r.RemovedUnreadableRow:
+		fmt.Fprintln(w, "Dry run: nothing was removed. It would remove the saved settings row, which cannot be read.")
 	case !r.Applied && len(r.Changed) == 0:
 		fmt.Fprintln(w, "Dry run: nothing was saved, and nothing would change.")
 	case !r.Applied:
