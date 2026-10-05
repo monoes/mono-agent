@@ -118,6 +118,31 @@ func TestStartDaemonUsesTheServiceOnlyWithDefaults(t *testing.T) {
 	}
 }
 
+// What a restart asks before it stops the daemon is the refusal startDaemon would give after: a
+// daemon that cannot be started again is not stopped, and the two say the same thing.
+func TestDaemonStartBlockedIsTheRefusalStartDaemonGives(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	ctx := context.Background()
+	custom := []string{"daemon", "--db-path", "/tmp/x.db"}
+
+	registered := &fakeAutostart{installed: true}
+	want := startDaemon(ctx, custom, registered, func(string) {})
+	got := daemonStartBlocked(ctx, custom, registered)
+	if want == nil || got == nil || got.Error() != want.Error() {
+		t.Fatalf("daemonStartBlocked = %v, startDaemon = %v: want the same refusal", got, want)
+	}
+	if err := daemonStartBlocked(ctx, []string{"daemon"}, registered); err != nil {
+		t.Errorf("the service starts the daemon with the defaults, but the check refused: %v", err)
+	}
+	if err := daemonStartBlocked(ctx, custom, &fakeAutostart{installed: false}); err != nil {
+		t.Errorf("nothing is registered, so the daemon is started on its own, but the check refused: %v", err)
+	}
+	if registered.started != 0 {
+		t.Errorf("the check started the service %d times", registered.started)
+	}
+}
+
 func TestBridgeOwner(t *testing.T) {
 	cases := []struct {
 		pid, daemon   int

@@ -76,6 +76,10 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 		// The profile as doctor resolved it: --profile may be a name.
 		return startDaemon(ctx, daemonArgs(cfg, env.ProfileID), autostart.New(), progress)
 	}
+	env.StopDaemon = stopDaemon
+	env.CanStartDaemon = func(ctx context.Context) error {
+		return daemonStartBlocked(ctx, daemonArgs(cfg, env.ProfileID), autostart.New())
+	}
 
 	env.ClaudeSkills = claudeSkillsState
 	env.InstallClaudeSkills = func() error { return installClaudeSkill(false) }
@@ -97,11 +101,8 @@ func startDaemon(ctx context.Context, args []string, as autostart.Installer, pro
 		return nil
 	}
 	if ok, where := as.Status(ctx); ok {
-		if len(args) > 1 {
-			// One daemon per home: the service's daemon would take the
-			// lock, on the default database and profile.
-			return fmt.Errorf("the registered login service (%s) runs the daemon with the default database and profile, not %s — "+
-				"start it yourself: monoagentcli %s", where, strings.Join(args[1:], " "), strings.Join(args, " "))
+		if err := serviceStartRefusal(where, args); err != nil {
+			return err
 		}
 		progress("starting the registered service (" + where + ")")
 		return as.Start(ctx)
@@ -129,6 +130,109 @@ func startDaemon(ctx context.Context, args []string, as autostart.Installer, pro
 	}
 	progress(fmt.Sprintf("started `%s %s` in the background (pid %d, log %s)", filepath.Base(exe), strings.Join(args, " "), cmd.Process.Pid, logPath))
 	return cmd.Process.Release()
+}
+
+// serviceStartRefusal is why the registered login service, at where, cannot
+// start the daemon with args: nil when it can. The service runs the daemon
+// with the default database and profile, and one daemon runs per home (the
+// service's would take the lock), so it cannot start one with others.
+func serviceStartRefusal(where string, args []string) error {
+	if len(args) <= 1 {
+		return nil
+	}
+	return fmt.Errorf("the registered login service (%s) runs the daemon with the default database and profile, not %s — "+
+		"start it yourself: monoagentcli %s", where, strings.Join(args[1:], " "), strings.Join(args, " "))
+}
+
+// daemonStartBlocked says, before anything is stopped, whether startDaemon
+// would refuse to start the daemon with args (the registered service cannot
+// run it with another database or profile): nil when it would not.
+func daemonStartBlocked(ctx context.Context, args []string, as autostart.Installer) error {
+	if ok, where := as.Status(ctx); ok {
+		return serviceStartRefusal(where, args)
+	}
+	return nil
+}
+
+// daemonStopPollInterval is how often stopDaemon re-checks whether the daemon
+// has stopped.
+const daemonStopPollInterval = 300 * time.Millisecond
+
+// daemonStopGrace is how long stopDaemon waits for a SIGTERM'd daemon to
+// finish its own graceful shutdown (draining in-flight workflow executions,
+// see daemon.go) before it escalates to a forced kill. A variable so that a
+// test can shorten it.
+var daemonStopGrace = 15 * time.Second
+
+// stopDaemon stops the daemon at pid so a caller can start a fresh one on
+// the current binary without racing its own shutdown: SIGTERM, then wait for
+// it to exit, escalating to SIGKILL if it has not gone within daemonStopGrace.
+//
+// It waits for the process and not for the daemon lock alone. A service
+// manager that keeps the daemon alive (launchd's KeepAlive) starts a new one
+// the instant the old one exits, and that one may hold the lock before the
+// next poll sees it free, so a wait for the lock could outlast the old daemon
+// and then fail to kill a process that is gone. A process that has exited but
+// that its parent has not reaped (a daemon this process started) still answers
+// kill -0, and its lock is free: when the lock was held at the start, a free
+// lock counts as stopped too. A daemon built before the lock existed holds
+// none, and only its exit tells.
+func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
+	if pid <= 1 {
+		// kill(0), kill(-1) and kill(1) are a process group, every process and init.
+		return fmt.Errorf("refusing to signal pid %d", pid)
+	}
+	if !daemonhb.ProcessAlive(pid) {
+		return nil // already stopped
+	}
+	if !heartbeatNames(pid) {
+		return fmt.Errorf("pid %d is not the daemon this machine's heartbeat names — not signaling it", pid)
+	}
+	holdsLock := daemonhb.Locked()
+	stopped := func() bool {
+		return !daemonhb.ProcessAlive(pid) || (holdsLock && !daemonhb.Locked())
+	}
+	if err := terminateProcess(pid); err != nil && !stopped() {
+		return fmt.Errorf("signaling pid %d: %w", pid, err)
+	}
+	deadline := time.Now().Add(daemonStopGrace)
+	forced := false
+	for !stopped() {
+		if time.Now().After(deadline) {
+			if forced {
+				return fmt.Errorf("pid %d would not stop even after SIGKILL", pid)
+			}
+			// No second heartbeatNames check here: the daemon removes its heartbeat
+			// as soon as SIGTERM arrives, so it would always fail while a hung
+			// daemon drains. pid was verified before the signal went out, and the
+			// loop saw it running as recently as one poll ago.
+			progress(fmt.Sprintf("pid %d did not stop within %s — forcing it", pid, daemonStopGrace))
+			if err := killProcess(pid); err != nil && !stopped() {
+				return fmt.Errorf("force-stopping pid %d: %w", pid, err)
+			}
+			forced = true
+			deadline = time.Now().Add(5 * time.Second)
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(daemonStopPollInterval):
+		}
+	}
+	progress(fmt.Sprintf("stopped pid %d", pid))
+	return nil
+}
+
+// heartbeatNames reports whether the daemon's heartbeat names pid and is live
+// (fresh, and its process running). It is what lets stopDaemon refuse a pid
+// that is not the daemon this machine runs: the bridge's pid comes from
+// whatever answered on its port, and the heartbeat is what the daemon itself
+// wrote. It does not say who holds the lock: the file holds a pid and a time,
+// and a crash leaves it behind until it goes stale.
+func heartbeatNames(pid int) bool {
+	hb, ok := daemonhb.Read()
+	return ok && hb.PID == pid
 }
 
 // daemonArgs is `daemon` plus the --db-path and --profile doctor runs

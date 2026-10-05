@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	FixExtensionInstall    = "browser.extension.install"
 	FixExtensionPair       = "browser.extension.pair"
 	FixExtensionPermission = "browser.extension.permission"
+	FixBridgeRestart       = "browser.bridge.restart"
 )
 
 var browserFeatures = []string{"crawling", "page capture", "platform logins"}
@@ -47,6 +49,8 @@ func browserFixes() []Fix {
 			Command: "monoagentcli extension pair"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixExtensionPermission, Label: "Grant Full Disk Access", Safety: SafetyManual,
 			Command: "System Settings → Privacy & Security → Full Disk Access → enable your terminal app, then re-run doctor"}, Apply: manual},
+		{FixInfo: FixInfo{ID: FixBridgeRestart, Label: "Restart the daemon (it runs the extension bridge)", Safety: SafetyConfirm,
+			Command: "monoagentcli doctor fix " + FixBridgeRestart}, Apply: fixBridgeRestart},
 	}
 }
 
@@ -106,10 +110,100 @@ func checkBridge(ctx context.Context, env *Env) Result {
 		summary += " — run by " + b.Owner
 	}
 	if skewed(b.Version, env.Version) {
-		return Result{Status: StatusWarn, Summary: summary,
-			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version)}
+		res := Result{Status: StatusWarn, Summary: summary,
+			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version),
+			FixID:  FixBridgeRestart}
+		// Where no fix is offered, what to do goes in the detail: a result's FixCommand is
+		// shown only with a fix, and is not in the report without one.
+		if runtime.GOOS == "windows" {
+			// Windows has no way to signal the daemon, so doctor can't restart it.
+			res.FixID = ""
+			res.Detail += "; doctor can't stop the daemon on Windows, so restart it yourself"
+		} else if isDaemonOwned(ctx, env, b) {
+			if blocked := startBlocker(ctx, env); blocked != nil {
+				// A restart that is certain to be refused is not offered: "Fix issues"
+				// would fail every time. The user gets what to do instead.
+				res.FixID = ""
+				res.Detail += fmt.Sprintf("; doctor can't restart it: %v (stop the daemon, pid %d, first: it holds the daemon lock)", blocked, b.PID)
+			} else {
+				res.FixCommand = "monoagentcli doctor fix " + FixBridgeRestart
+			}
+		} else {
+			owner := b.Owner
+			if owner == "" {
+				owner = "whatever started it"
+			}
+			res.FixCommand = "restart it yourself — it's run by " + owner + ", not this machine's daemon, so doctor can't restart it for you"
+		}
+		return res
 	}
 	return Result{Status: StatusOK, Summary: summary}
+}
+
+// startBlocker says why a new daemon could not be started once the running
+// one is stopped: nil when it could, or when nothing says that it could not.
+func startBlocker(ctx context.Context, env *Env) error {
+	if env.CanStartDaemon == nil {
+		return nil
+	}
+	return env.CanStartDaemon(ctx)
+}
+
+// isDaemonOwned reports whether b is the bridge this machine's own daemon
+// serves, as opposed to a bare `extension serve` or someone else's process —
+// the one case fixBridgeRestart can safely restart on its own.
+func isDaemonOwned(ctx context.Context, env *Env, b BridgeInfo) bool {
+	if env.Daemon == nil {
+		return false
+	}
+	d := env.Daemon(ctx)
+	return d.Running && d.PID == b.PID
+}
+
+// fixBridgeRestart restarts a stale, daemon-owned bridge so it picks up the
+// routing (and everything else) the running CLI already has: stop the old
+// daemon, then start a fresh one the same way fixDaemonStart does. A bridge
+// owned by anything else (a bare `extension serve`, someone's own service)
+// is not this fix's to touch — it returns the same instruction checkBridge
+// already showed instead of guessing at how to reach that process.
+func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) error {
+	if env.Bridge == nil {
+		return fmt.Errorf("restarting the bridge is not available here")
+	}
+	b, ok := env.Bridge(ctx)
+	if !ok {
+		return fmt.Errorf("no bridge is running to restart")
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("doctor can't stop the daemon on Windows — restart it yourself")
+	}
+	if !isDaemonOwned(ctx, env, b) {
+		owner := b.Owner
+		if owner == "" {
+			owner = "whatever started it"
+		}
+		return fmt.Errorf("the bridge on %s is run by %s, not this machine's daemon — restart that yourself "+
+			"(e.g. Ctrl+C the terminal running `extension serve`, then run it again)", b.Addr, owner)
+	}
+	if env.StopDaemon == nil || env.StartDaemon == nil || env.Daemon == nil {
+		return fmt.Errorf("restarting the daemon is not available here")
+	}
+	// Stopping the daemon is the point of no return: when a new one could not be
+	// started (the login service refuses a start with another database or
+	// profile), refuse first, with the old daemon still running.
+	if err := startBlocker(ctx, env); err != nil {
+		// The reason ends with "start it yourself": with the daemon still running that
+		// only meets its lock, so it is said to be stopped first.
+		return fmt.Errorf("not restarting the daemon, which is left running: %w (it holds the daemon lock: stop it, pid %d, before you do)", err, b.PID)
+	}
+	progress(fmt.Sprintf("stopping the daemon (pid %d, bridge %s)", b.PID, b.Version))
+	if err := env.StopDaemon(ctx, b.PID, progress); err != nil {
+		return fmt.Errorf("stopping the old daemon: %w", err)
+	}
+	if err := fixDaemonStart(ctx, env, progress); err != nil {
+		return fmt.Errorf("the old daemon is stopped, but a new one did not start: %w", err)
+	}
+	return nil
 }
 
 // bridgeDown reports a bridge that isn't running. Starting the daemon
