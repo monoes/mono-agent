@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -27,17 +29,24 @@ func TestClock(t *testing.T) {
 		t.Fatalf("after Set back, Now = %v", c.Now())
 	}
 	var wg sync.WaitGroup
+	start := make(chan struct{}) // released together, so the goroutines overlap
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			<-start
 			for j := 0; j < 100; j++ {
 				c.Advance(time.Second)
 				_ = c.Now()
 			}
 		}()
 	}
+	close(start)
 	wg.Wait()
+	// Every Advance must land: a read-then-Set Advance is free of data races yet loses updates.
+	if want := DefaultNow.Add(-time.Hour + 800*time.Second); !c.Now().Equal(want) {
+		t.Fatalf("after 800 concurrent Advance(1s) calls, Now = %v, want %v", c.Now(), want)
+	}
 }
 
 func TestNewTrustsOnlyItsKeyAndEnforces(t *testing.T) {
@@ -93,6 +102,54 @@ func TestTokenDefaultsAndOverrides(t *testing.T) {
 	two := claimsOf(t, f.Token(TokenOptions{Audience: []string{"a", account.Audience}, Plan: "pro", Lifetime: 2 * time.Hour}))
 	if aud, ok := two["aud"].([]any); !ok || len(aud) != 2 || two["plan"] != "pro" || two["exp"].(float64)-two["iat"].(float64) != 7200 {
 		t.Fatalf("overridden claims = %v", two)
+	}
+}
+
+func TestTokenIssuerClientAndSingleAudienceOptions(t *testing.T) {
+	f := New(t)
+	claims := claimsOf(t, f.Token(TokenOptions{Issuer: "https://evil.example/api/auth", ClientClaim: "someone-else", Audience: []string{"https://monoes.me/api/other"}}))
+	if claims["iss"] != "https://evil.example/api/auth" {
+		t.Errorf("the Issuer option was ignored: iss = %v", claims["iss"])
+	}
+	if claims["azp"] != "someone-else" {
+		t.Errorf("the ClientClaim option was ignored: azp = %v", claims["azp"])
+	}
+	if aud, ok := claims["aud"].(string); !ok || aud != "https://monoes.me/api/other" {
+		t.Errorf("a one-element Audience must be written as a string, got %#v", claims["aud"])
+	}
+}
+
+// A token built from a value that cannot be marshalled would silently lose a
+// segment and be refused as "not a compact JWS", so a test of a refusal would
+// pass for the wrong reason. Sign fails loudly instead.
+func TestSignPanicsOnAValueThatCannotBeMarshalled(t *testing.T) {
+	f := New(t)
+	header := map[string]any{"alg": "EdDSA", "kid": f.Key.KID}
+	claims := map[string]any{"sub": "x"}
+	cases := []struct {
+		name           string
+		header, claims map[string]any
+		part           string
+	}{
+		{"a channel in the header", map[string]any{"alg": "EdDSA", "x": make(chan int)}, claims, "header"},
+		{"infinity in the header", map[string]any{"alg": "EdDSA", "x": math.Inf(1)}, claims, "header"},
+		{"a function in the claims", header, map[string]any{"sub": func() {}}, "claims"},
+		{"NaN in the claims", header, map[string]any{"iat": math.NaN()}, "claims"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("Sign returned a token for a value that cannot be marshalled")
+				}
+				err, ok := r.(error)
+				if !ok || !strings.Contains(err.Error(), "accounttest: Sign") || !strings.Contains(err.Error(), c.part) || errors.Unwrap(err) == nil {
+					t.Fatalf("Sign panicked with %v, want an error that names Sign and the %s and wraps the marshalling error", r, c.part)
+				}
+			}()
+			f.Sign(c.header, c.claims)
+		})
 	}
 }
 

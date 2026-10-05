@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -83,11 +84,18 @@ func (f *Fixture) Token(o TokenOptions) string {
 // Sign signs any header and claims with the fixture key, whatever alg the
 // header names. It is how a test builds a token that is wrong in a way
 // TokenOptions cannot say (a missing claim, a claim of the wrong type, extra
-// headers).
+// headers). It panics when the header or the claims cannot be marshalled to
+// JSON, so that no test builds a token that silently lacks a segment.
 func (f *Fixture) Sign(header, claims map[string]any) string {
 	enc := base64.RawURLEncoding
-	h, _ := json.Marshal(header)
-	c, _ := json.Marshal(claims)
+	h, err := json.Marshal(header)
+	if err != nil {
+		panic(fmt.Errorf("accounttest: Sign: the header cannot be marshalled: %w", err))
+	}
+	c, err := json.Marshal(claims)
+	if err != nil {
+		panic(fmt.Errorf("accounttest: Sign: the claims cannot be marshalled: %w", err))
+	}
 	signed := enc.EncodeToString(h) + "." + enc.EncodeToString(c)
 	return signed + "." + enc.EncodeToString(ed25519.Sign(f.Private, []byte(signed)))
 }
