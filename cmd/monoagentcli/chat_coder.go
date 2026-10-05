@@ -12,19 +12,23 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
-// coderTurn is one full-access turn: the agent runs as a Claude Code session
-// in cwd with the user's normal setup loaded and no tool restrictions.
+// coderTurn is one full-access turn: the agent runs as a full session of
+// its runtime's own CLI in cwd, with the user's normal setup loaded and no
+// tool restrictions.
 type coderTurn struct {
-	prompt string
-	model  string
-	resume string
-	cwd    string
+	runtime string // "" = claude
+	prompt  string
+	model   string
+	effort  string
+	resume  string
+	cwd     string
+	orgMode string // ai.OrgModeDynamic lets the agent spawn workers (#226)
 }
 
-// coderSystemPrompt is appended to Claude Code's own system prompt (not a
-// replacement: monomind keeps the preset with --settings).
+// coderSystemPrompt is appended to the runtime's own system prompt (not a
+// replacement: monomind keeps the CLI's preset with --settings).
 func coderSystemPrompt(cwd string) string {
-	return "You are running as mono-agent's coder chat: a full Claude Code session with unrestricted " +
+	return "You are running as mono-agent's coder chat: a full coding-agent session with unrestricted " +
 		"access to this computer, working in " + cwd + ". The user sees every tool call you make " +
 		"(commands, edits, file writes) live in the chat. Work inside that folder unless the user " +
 		"asks for something elsewhere, and say plainly what you changed."
@@ -38,7 +42,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	if err != nil {
 		return fmt.Errorf("initializing database: %w", err)
 	}
-	settings, err := requireCoderReady(cmd, db.DB)
+	settings, st, rt, err := requireCoderReady(cmd, db.DB, t.runtime)
 	db.Close()
 	if err != nil {
 		return err
@@ -46,15 +50,17 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	if fi, err := os.Stat(t.cwd); err != nil || !fi.IsDir() {
 		return errInvalidInput("this coder conversation's folder %s no longer exists; start a new conversation", t.cwd)
 	}
-	bin, _, err := monomind.Ensure(ctx)
+	bin, err := monomind.EnsureIn(ctx, t.cwd)
 	if err != nil {
 		return err
 	}
 	opts := monomind.ExecOptions{
 		Bin:          bin,
-		Runtime:      coderRuntime,
+		Runtime:      rt.ID,
 		Prompt:       t.prompt,
 		Model:        t.model,
+		Effort:       t.effort,
+		EffortFlag:   st.caps.Has(monomind.CapAgentExecEffort),
 		Resume:       t.resume,
 		Cwd:          t.cwd,
 		Access:       monomind.AccessFull,
@@ -70,10 +76,28 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 	}
 	if journal != nil {
 		journal.cwd = t.cwd
+		journal.coderRuntime = rt
 		journal.notice(noticeCoderWorkspace, "Working in "+t.cwd, chatevents.SeverityInfo)
 		onEvent = journal.handle
 	}
+	var closeOrg func()
+	if journal != nil && t.orgMode == ai.OrgModeDynamic {
+		var leadEvent func(monomind.Event)
+		closeOrg, leadEvent = startDynamicOrg(ctx, cfg, journal, settings, st, rt, t, &opts)
+		if leadEvent != nil {
+			journalEvent := onEvent
+			onEvent = func(ev monomind.Event) {
+				leadEvent(ev)
+				journalEvent(ev)
+			}
+		}
+	}
 	res, err := monomind.Exec(ctx, opts, onEvent)
+	if closeOrg != nil {
+		// The lead is done: workers still running are stopped and their
+		// ends journaled before the turn finishes.
+		closeOrg()
+	}
 	if journal != nil {
 		if err != nil && res == nil {
 			res = &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}}
@@ -108,8 +132,9 @@ func (c coderFolderChoice) set() int {
 	return n
 }
 
-// coderFolder resolves c to a ready folder.
-func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice) (string, error) {
+// coderFolder resolves c to a ready folder for runtime ("" = claude),
+// initialized with that runtime's setup files.
+func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice, runtime string) (string, error) {
 	switch c.set() {
 	case 0:
 		return "", errInvalidInput("coder mode needs a folder: pass --cwd <dir>, --coder-root or --new-workspace")
@@ -122,7 +147,7 @@ func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice) (st
 		return "", fmt.Errorf("initializing database: %w", err)
 	}
 	defer db.Close()
-	settings, err := requireCoderReady(cmd, db.DB)
+	settings, _, rt, err := requireCoderReady(cmd, db.DB, runtime)
 	if err != nil {
 		return "", err
 	}
@@ -131,7 +156,7 @@ func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice) (st
 		if c.root {
 			setUp = rootCoderWorkspace
 		}
-		ws, err := setUp(cmd.Context(), expandHome(settings.WorkspaceRoot))
+		ws, err := setUp(cmd.Context(), expandHome(settings.WorkspaceRoot), rt.InitTarget)
 		if err != nil {
 			return "", err
 		}
@@ -143,18 +168,19 @@ func coderFolder(cmd *cobra.Command, cfg *globalConfig, c coderFolderChoice) (st
 	}
 	// A folder the user picked may be their own repo: add only what is
 	// missing, never touch what is there.
-	if _, err := initWorkspace(cmd.Context(), "", dir); err != nil {
+	if _, err := initWorkspace(cmd.Context(), "", dir, rt.InitTarget); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
 
-// createCoderConversation is `chat history create --mode coder`.
-func createCoderConversation(cmd *cobra.Command, cfg *globalConfig, runtimeID, model, workflowID string, folder coderFolderChoice) (ai.Conversation, error) {
-	if runtimeID != coderRuntime {
-		return ai.Conversation{}, errInvalidInput("coder mode runs on the %s runtime only (got %q)", coderRuntime, runtimeID)
+// createCoderConversation is `chat history create --mode coder`; runtimeID
+// "" means claude.
+func createCoderConversation(cmd *cobra.Command, cfg *globalConfig, runtimeID, model, effort, workflowID string, folder coderFolderChoice) (ai.Conversation, error) {
+	if runtimeID == "" {
+		runtimeID = monomind.DefaultCoderRuntime
 	}
-	dir, err := coderFolder(cmd, cfg, folder)
+	dir, err := coderFolder(cmd, cfg, folder, runtimeID)
 	if err != nil {
 		return ai.Conversation{}, err
 	}
@@ -163,5 +189,5 @@ func createCoderConversation(cmd *cobra.Command, cfg *globalConfig, runtimeID, m
 		return ai.Conversation{}, err
 	}
 	defer closeDB()
-	return store.CreateConversationMode(profileID, "agent", workflowID, runtimeID, "", model, ai.ModeCoder, dir)
+	return store.CreateConversationModeEffort(profileID, "agent", workflowID, runtimeID, "", model, ai.ModeCoder, dir, effort)
 }

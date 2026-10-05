@@ -24,7 +24,8 @@
           "approval": "required",
           "max_calls_per_run": 20,
           "max_calls_per_day": 200,
-          "max_output_bytes": 16384
+          "max_output_bytes": 16384,
+          "tier": "irreversible"
         }
       ],
       "tool_providers": [
@@ -78,6 +79,7 @@
     "policy": "Never approve spend over $50.",
     "on_decider_failure": "deny",
     "limits": { "max_decisions_per_run": 200, "max_decider_usd_per_run": 2 },
+    "paused_until": "2099-01-01T00:00:00Z",
     "future_key": { "kept": true }
   }
 }

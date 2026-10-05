@@ -40,12 +40,25 @@ func newHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
 	if err != nil {
 		// If file store can't be created, wrap SQLite-only in a hybrid shell
 		// so callers always get the same type.
-		return workflow.NewHybridWorkflowStore(nil, sqlStore)
+		return withGrantTierRefresh(db, workflow.NewHybridWorkflowStore(nil, sqlStore))
 	}
 	// Workflows saved file-only (the desktop editor, older CLI versions)
 	// get their SQLite rows backfilled; cheap after the first run.
-	_, _ = syncFileWorkflowsToSQL(context.Background(), db.DB, dir)
-	return workflow.NewHybridWorkflowStore(fileStore, sqlStore)
+	synced, _ := syncFileWorkflowsToSQL(context.Background(), db.DB, dir)
+	store := withGrantTierRefresh(db, workflow.NewHybridWorkflowStore(fileStore, sqlStore))
+	for _, id := range synced {
+		raiseGrantTiersForWorkflow(context.Background(), db, store.GetWorkflow, id)
+	}
+	return store
+}
+
+// withGrantTierRefresh makes every save through store re-derive the tiers
+// of the saved workflow's org grants (#284).
+func withGrantTierRefresh(db *storage.Database, store *workflow.HybridWorkflowStore) *workflow.HybridWorkflowStore {
+	store.SetOnSaved(func(ctx context.Context, id string) {
+		raiseGrantTiersForWorkflow(ctx, db, store.GetWorkflow, id)
+	})
+	return store
 }
 
 // createOrOverwriteWorkflowAtomically persists wf (metadata + nodes +

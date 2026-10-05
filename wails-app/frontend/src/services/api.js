@@ -119,6 +119,7 @@ export const api = {
   rejectDraftPersonMessage: (id) => GoApp.RejectDraftPersonMessage(id),
   getPendingPeopleApprovals: () => (GoApp.GetPendingPeopleApprovals ? GoApp.GetPendingPeopleApprovals() : Promise.resolve([])).catch(guard('pending people', [])),
   approvePendingPerson: (id, intro = '', sendNow = false) => GoApp.ApprovePendingPerson(id, intro, sendNow),
+  deletePeople: (ids) => GoApp.DeletePeople(ids),
   rejectPendingPerson: (id) => GoApp.RejectPendingPerson(id),
   getLatestPersonStatus: (personId) => GoApp.GetLatestPersonStatus(personId).catch(guard('latest status', null)),
   addPersonStatus:       (personId, text) => GoApp.AddPersonStatus(personId, text).catch(guard('add status', null)),
@@ -151,6 +152,17 @@ export const api = {
   // for antigravity/codex, which discover their own model catalog by shelling
   // out to themselves; harmless to omit for claude (curated list, ignores it).
   getAgentRuntimeModels: (runtimeID, binary) => GoApp.GetAgentRuntimeModels(runtimeID, binary || '').then(s => JSON.parse(s)).catch(guard('agent runtime models', [])),
+  // Validated agent roster (#225): `agent roster|validate --json`. Errors
+  // come back as {error} objects, never rejections.
+  agentRoster:          () => GoApp.AgentRoster().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentValidatePlan:    (runtimes = [], models = [], staleOnly = false) => GoApp.AgentValidatePlan(runtimes, models, staleOnly).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  startAgentValidation: (runtimes = [], models = [], staleOnly = false) => GoApp.StartAgentValidation(runtimes, models, staleOnly).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  stopAgentValidation:  () => GoApp.StopAgentValidation().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentRosterAdd:       (runtimeID, model) => GoApp.AgentRosterAdd(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  agentRosterRemove:    (runtimeID, model) => GoApp.AgentRosterRemove(runtimeID, model).then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  // Automatic re-validation (#230): `agent roster auto-revalidate status|on|off --json`.
+  agentRosterAutoRevalidate:    () => GoApp.AgentRosterAutoRevalidate().then(parseRosterJSON).catch(e => ({ error: String(e) })),
+  setAgentRosterAutoRevalidate: on => GoApp.SetAgentRosterAutoRevalidate(!!on).then(parseRosterJSON).catch(e => ({ error: String(e) })),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
   // bindings"). Every call goes through parseStreamResult: a synchronous
   // {"error":...} shape
@@ -158,12 +170,16 @@ export const api = {
   // remember to check. A business-status reply (e.g. StartChatTurn's
   // {ok:false,status:"busy"}) is NOT that shape, so it passes through as a
   // normal value for the caller to branch on.
-  createChatConversation: (workflowID, runtimeID, model) =>
-    GoApp.CreateChatConversation(workflowID, runtimeID, model).then(parseStreamResult),
+  createChatConversation: (workflowID, runtimeID, model, effort = '') =>
+    GoApp.CreateChatConversation(workflowID, runtimeID, model, effort).then(parseStreamResult),
   startChatTurn: (conversationID, turnID, message, tools, allowRuns) =>
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>
     GoApp.StopChatTurn(conversationID, turnID).then(parseStreamResult),
+  // One worker of a dynamic-org turn; the lead and the other workers keep
+  // running (#255).
+  stopChatAgent: (conversationID, turnID, agentID) =>
+    GoApp.StopChatAgent(conversationID, turnID, agentID).then(parseStreamResult),
   listChatConversations: (cursor = '', limit = 50) =>
     GoApp.ListChatConversations(cursor, limit).then(parseStreamResult),
   getChatTurns: (conversationID, cursor = '', limit = 50) =>
@@ -182,12 +198,18 @@ export const api = {
   coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
     GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
   // {stopped, gone, refused} pids of a turn's leftover background processes.
+  // Dynamic org (#226): 'solo' or 'dynamic', from the next turn on.
+  // Answer a dynamic-org worker's question (#256).
+  answerAgentQuestion: (conversationID, turnID, agentID, questionID, text) =>
+    GoApp.AnswerAgentQuestion(conversationID, turnID, agentID, questionID, text).then(parseStreamResult),
+  setChatOrgMode: (conversationID, mode) =>
+    GoApp.SetChatOrgMode(conversationID, mode).then(parseStreamResult),
   coderStopBackground: (conversationID, turnID) =>
     GoApp.CoderStopBackground(conversationID, turnID).then(parseStreamResult),
-  coderWorkspaceRoot: () => GoApp.CoderWorkspaceRoot().then(parseStreamResult),
+  coderWorkspaceRoot: (runtimeID = '') => GoApp.CoderWorkspaceRoot(runtimeID).then(parseStreamResult),
   coderWorkspaceList: () => GoApp.CoderWorkspaceList().then(parseStreamResult),
-  createCoderConversation: (runtimeID, model, cwd, newWorkspace = false) =>
-    GoApp.CreateCoderConversation(runtimeID, model, cwd, newWorkspace).then(parseStreamResult),
+  createCoderConversation: (runtimeID, model, effort, cwd, newWorkspace = false) =>
+    GoApp.CreateCoderConversation(runtimeID, model, effort || '', cwd, newWorkspace).then(parseStreamResult),
   // Native folder picker; resolves '' when cancelled.
   pickCoderFolder:    () => GoApp.PickCoderFolder(),
   openPathWithOS:     (path) => GoApp.OpenPathWithOS(path),
@@ -208,9 +230,18 @@ export const api = {
   denyOrgAction:      (name, role, action) => GoApp.DenyOrgAction(name, role, action).then(s => JSON.parse(s)),
   gateApproveOrgAction: (name, gateID, resolution = '') => GoApp.GateApproveOrgAction(name, gateID, resolution).then(s => JSON.parse(s)),
   gateRejectOrgAction:  (name, gateID, resolution = '') => GoApp.GateRejectOrgAction(name, gateID, resolution).then(s => JSON.parse(s)),
-  streamOrgEvents:    (orgName) => GoApp.StreamOrgEvents(orgName).then(s => JSON.parse(s)),
-  stopOrgEvents:      (orgName) => GoApp.StopOrgEvents(orgName).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
+  // streamId (newOrgEventsStreamId) names one tail, so the stop that ends it
+  // can't be lost to a race with the start or end a newer tail by mistake.
+  streamOrgEvents:    (orgName, streamId) => GoApp.StreamOrgEvents(orgName, streamId).then(s => JSON.parse(s)),
+  stopOrgEvents:      (orgName, streamId) => GoApp.StopOrgEvents(orgName, streamId).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
   runOrg:             (orgName, task = '') => GoApp.RunOrg(orgName, task).then(s => JSON.parse(s)),
+  // Org bubbles (#229): `org chat …` and `org stop|pause|resume`. Each
+  // resolves to the CLI's JSON or {error}; they never reject.
+  getOrgChatHistory:  (org, run = '') => GoApp.GetOrgChatHistory(org, run).then(s => JSON.parse(s)).catch(asError),
+  sendOrgChat:        (org, text) => GoApp.SendOrgChat(org, text).then(s => JSON.parse(s)).catch(asError),
+  answerOrgChat:      (org, questionID, answer) => GoApp.AnswerOrgChat(org, questionID, answer).then(s => JSON.parse(s)).catch(asError),
+  resolveOrgChat:     (org, ref, approve, note = '') => GoApp.ResolveOrgChat(org, ref, approve, note).then(s => JSON.parse(s)).catch(asError),
+  controlOrg:         (org, verb) => GoApp.ControlOrg(org, verb).then(s => JSON.parse(s)).catch(asError),
   // Org Designer — direct config-file read/write, distinct from the org
   // observe/action surface above (which proxies `monoagentcli org <sub>`,
   // read-only + question/gate actions). See wails-app/app_orgs_design.go.
@@ -229,6 +260,14 @@ export const api = {
   // Full-access roles (#205): grant ('full', only after the confirm dialog)
   // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.
   orgRoleSetAccess:    (name, roleID, access) => GoApp.OrgRoleSetAccess(name, roleID, access).then(parseStreamResult),
+  // Signed org definitions (#288, monomind 2.21): the state
+  // {supported, state, detail, sha256, message}, monomind's review (signs
+  // nothing), and signing the reviewed definition (the review's hash,
+  // instructions files included). Refusals reject
+  // with the CLI's text.
+  orgSignatureStatus:  (name) => GoApp.OrgSignatureStatus(name).then(parseStreamResult),
+  orgSignatureReview:  (name) => GoApp.OrgSignatureReview(name).then(parseStreamResult),
+  orgSign:             (name, hash) => GoApp.OrgSign(name, hash).then(parseStreamResult),
   // `org validate`'s report {valid, error?, warnings}, taint problems
   // included. An invalid org's report has "error" too, so only a reply
   // without "valid" is a failure.
@@ -388,6 +427,29 @@ export function onAgentSession(callback) {
 // helpers already avoid).
 export function onChatEvent(callback) {
   return subscribeEvent('chat:event', callback)
+}
+
+// parseRosterJSON parses a roster binding's reply; unparseable text becomes
+// an {error} object.
+function parseRosterJSON(s) {
+  try { return JSON.parse(s) } catch { return { error: String(s || 'empty reply') } }
+}
+
+// onAgentValidate streams `agent validate --json` progress lines.
+export function onAgentValidate(callback) {
+  return subscribeEvent('agents:validate', callback)
+}
+
+export function onAgentValidateClosed(callback) {
+  return subscribeEvent('agents:validateClosed', callback)
+}
+
+// newOrgEventsStreamId returns an id for api.streamOrgEvents that is unique
+// across page reloads too (the Go side outlives them).
+let orgEventsStreamSeq = 0
+export function newOrgEventsStreamId() {
+  orgEventsStreamSeq += 1
+  return `${Date.now().toString(36)}-${orgEventsStreamSeq}`
 }
 
 export function onOrgEventsClosed(callback) {

@@ -56,6 +56,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		runtime   string
 		model     string
+		effort    string
 		resume    string
 		canvasID  string
 		historyID string
@@ -87,7 +88,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"`chat history`): its runtime, model and session come from the conversation, and the turn " +
 			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
 			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
-			"`history` subcommand.",
+			"`history` or `turn` subcommand.",
 		Args: cobra.MinimumNArgs(1),
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"
@@ -113,8 +114,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				if conversationID == "" || turnID == "" {
 					return errInvalidInput("--conversation and --turn go together")
 				}
-				if runtime != "" || model != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace || coderRoot {
-					return errInvalidInput("--runtime, --model, --resume, --canvas, --history-id, --mode and --cwd come from the conversation; drop them with --conversation")
+				if runtime != "" || model != "" || effort != "" || resume != "" || canvasID != "" || historyID != "" || mode != "" || coderCwd != "" || newWorkspace || coderRoot {
+					return errInvalidInput("--runtime, --model, --effort, --resume, --canvas, --history-id, --mode and --cwd come from the conversation; drop them with --conversation")
 				}
 				jstore, jprofile, closeJournal, err := openChatHistory(cfg)
 				if err != nil {
@@ -141,27 +142,24 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 						journal.fail(retErr)
 					}
 				}()
-				runtime, model, resume = conv.RuntimeID, conv.Model, conv.SessionID
+				runtime, model, resume, effort = conv.RuntimeID, conv.Model, conv.SessionID, conv.Effort
 				noHistory = true
 				if conv.Mode == ai.ModeCoder {
 					if tools != "" {
 						return errInvalidInput("--tools does not apply to a coder conversation: it has full access")
 					}
-					return runCoderTurn(cmd, cfg, journal, coderTurn{prompt: prompt, model: model, resume: resume, cwd: conv.Cwd})
+					return runCoderTurn(cmd, cfg, journal, coderTurn{runtime: conv.RuntimeID, prompt: prompt, model: model, effort: conv.Effort, resume: resume, cwd: conv.Cwd, orgMode: conv.OrgMode})
 				}
 			}
 			if mode == ai.ModeCoder {
 				if tools != "" || canvasID != "" || historyID != "" {
 					return errInvalidInput("--tools, --canvas and --history-id don't apply to --mode coder")
 				}
-				if runtime != "" && runtime != coderRuntime {
-					return errInvalidInput("coder mode runs on the %s runtime only (got %q)", coderRuntime, runtime)
-				}
-				dir, err := coderFolder(cmd, cfg, coderFolderChoice{cwd: coderCwd, root: coderRoot, newWorkspace: newWorkspace})
+				dir, err := coderFolder(cmd, cfg, coderFolderChoice{cwd: coderCwd, root: coderRoot, newWorkspace: newWorkspace}, runtime)
 				if err != nil {
 					return err
 				}
-				return runCoderTurn(cmd, cfg, nil, coderTurn{prompt: prompt, model: model, resume: resume, cwd: dir})
+				return runCoderTurn(cmd, cfg, nil, coderTurn{runtime: runtime, prompt: prompt, model: model, effort: effort, resume: resume, cwd: dir})
 			}
 			if mode != "" && mode != ai.ModeAssistant {
 				return errInvalidInput("unknown --mode %q (assistant or coder)", mode)
@@ -291,9 +289,19 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				Runtime:   runtime,
 				Prompt:    prompt,
 				Model:     model,
+				Effort:    effort,
 				Resume:    resume,
 				Timeout:   timeout,
 				BudgetUSD: budget,
+				// A canvas-only or plain turn keeps its empty --cwd unless it
+				// is sandboxed; then it runs in an empty chat workspace (no
+				// guidance files, so none of the overhead described above).
+				Sandbox:          monomind.TurnSandboxMode,
+				WorkspacePurpose: monomind.WorkspaceChat,
+			}
+			if effort != "" {
+				set, _ := capabilityProbe(cmd)
+				opts.EffortFlag = set.Has(monomind.CapAgentExecEffort)
 			}
 
 			var toolSpecs []monomind.ToolSpec
@@ -377,15 +385,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				// prompt-injected instruction hidden in one could otherwise
 				// try to walk the model into running something well outside
 				// what "help me create an org" ever needs.
-				opts.AllowBashPrefixes = []string{"monomind org", "monoagentcli org", "monoagentcli workflow"}
-				systemPromptParts = append(systemPromptParts, fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
-
-1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
-2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
-3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s BEFORE the subcommand instead of --project, e.g. monoagentcli --profile %s workflow create <name>.
-4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
-
-Changes made this way appear in the app automatically — orgs are picked up live by an existing filesystem watcher, no separate refresh step needed.`, projectRoot, projectRoot, profileID, profileID))
+				opts.AllowBashPrefixes = chatBashPrefixes
+				systemPromptParts = append(systemPromptParts, chatBashPrompt(projectRoot, profileID))
 			}
 			// Only the EMPTY case gets extra framing. An earlier version also
 			// added a "you might have no tools, be careful" caution AND a
@@ -521,6 +522,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	}
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimicode, … — see `agent scan`)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override for the runtime")
+	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort level for the model")
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")
 	cmd.Flags().StringVar(&historyID, "history-id", "", "Persistence/session bucket key (defaults to --canvas's id when unset)")
@@ -535,6 +537,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().BoolVar(&coderRoot, "coder-root", false, "Coder mode: work in the coder root folder itself")
 	cmd.Flags().BoolVar(&newWorkspace, "new-workspace", false, "Coder mode: work in a fresh, randomly named test folder")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
+	cmd.AddCommand(newChatTurnCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
 	// With --json a failure also ends stdout with {"error","code"}; an agent
 	// that is not installed or not logged in is code agent_not_setup.
@@ -757,4 +760,64 @@ func registryNodeTypes(db *sql.DB) []aichat.NodeTypeInfo {
 		out = append(out, aichat.NodeTypeInfo{Type: t, Label: t, Category: cat, Description: ""})
 	}
 	return out
+}
+
+// chatBashPrefixes are the only Bash commands a tools turn may run. The
+// match is literal (monomind's canUseTool), so every command
+// chatBashPrompt shows must start with one of them: its example
+// `monoagentcli --profile <id> workflow create` was always denied (#247).
+//
+// Org commands are listed one by one (#288) so the assistant can't reach
+// the operator's own: signing an org definition (`org sign`), full-access
+// grants (`org role set-access`), approving quarantined paths
+// (`approve-paths`), and `monomind org create`, which signs what it
+// writes. A signature is the user's review, never the assistant's.
+var chatBashPrefixes = chatOrgPrefixes()
+
+// chatAgentOrgSubcommands are the `monoagentcli org` subcommands a chat
+// may run: all of them but sign and role.
+var chatAgentOrgSubcommands = []string{
+	"answer", "approvals", "approve", "automation", "automation-role", "autonomy", "chat", "costs", "create-json",
+	"decisions", "delete", "deny", "effective-tools", "events", "flow", "gate-approve", "gate-reject",
+	"gates", "grant", "group", "legacy", "list", "logs", "memory", "pause", "questions", "queued",
+	"reconcile", "reconcile-doc", "reload", "rename", "report", "resume", "run", "send", "serve", "status", "stop",
+	"summary", "teardown-profile", "validate",
+}
+
+// chatMonomindOrgSubcommands are the `monomind org` subcommands a chat may
+// run: all of them but sign, role, approve-paths and create. monomind
+// matches a prefix only up to a space, so "approve" can't admit
+// approve-paths — and "automation" doesn't admit automation-role, which
+// is listed itself.
+var chatMonomindOrgSubcommands = []string{
+	"answer", "approvals", "approve", "branch", "costs", "decisions", "delete", "deny", "events",
+	"flow", "gate-approve", "gate-reject", "gates", "inbox", "list", "logs", "mark-complete", "memory",
+	"migrate", "pause", "questions", "reload", "replay", "report", "resume", "resume-from", "run", "serve", "skills",
+	"status", "stop", "supervisor", "test-loop", "validate", "watch",
+}
+
+func chatOrgPrefixes() []string {
+	var out []string
+	for _, s := range chatMonomindOrgSubcommands {
+		out = append(out, "monomind org "+s)
+	}
+	for _, s := range chatAgentOrgSubcommands {
+		out = append(out, "monoagentcli org "+s)
+	}
+	return append(out, "monoagentcli workflow")
+}
+
+// chatBashPrompt is the system prompt part that explains the scoped Bash
+// access of a tools turn.
+func chatBashPrompt(projectRoot, profileID string) string {
+	return fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". Each call must be ONE plain command: pipes, "&&", ";", "2>&1", redirection and $(...) are rejected — read the JSON output as-is. To inspect an org use "monoagentcli org list|summary|report|logs|flow|costs|decisions|gates|approvals <name> --project ..." (there is no "org show"; run "monoagentcli org --help" for the rest). If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
+
+1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
+2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. The template scaffolder (org create) cannot set custom roles and is not available here — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
+3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s instead of --project. Put --profile AFTER the subcommand, e.g. monoagentcli workflow create <name> --profile %s. With --profile before the subcommand the command is denied: only commands that begin with one of the allowed prefixes run.
+4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
+
+5. Never sign an org or grant a role full access ("org sign", "org role set-access" are the user's own and are denied here). A change you make to an org may leave it waiting for the user's review; tell them to review and sign it in the app (the org's "Review & sign" banner).
+
+Changes made this way appear in the app automatically — orgs are picked up live by an existing filesystem watcher, no separate refresh step needed.`, projectRoot, projectRoot, profileID, profileID)
 }

@@ -51,7 +51,11 @@ func objSchema(props map[string]interface{}, required ...string) map[string]inte
 // user configured themselves — and a clear refusal is more useful than a
 // misleading "doesn't exist" for someone whose config used to work.
 func toolDefinitions(allowMutations bool) []map[string]interface{} {
-	tools := allTools()
+	return definitionsOf(allTools(), allowMutations)
+}
+
+// definitionsOf is toolDefinitions over the tools a server serves (see servedTools).
+func definitionsOf(tools []tool, allowMutations bool) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
 		if t.mutating && !allowMutations {
@@ -74,7 +78,7 @@ func toolDefinitions(allowMutations bool) []map[string]interface{} {
 // JSON text. Errors are returned as Go errors; the server renders them as
 // tool results with isError=true (per MCP spec), never protocol errors.
 func callTool(ctx context.Context, s *Server, name string, args json.RawMessage) (string, error) {
-	for _, t := range allTools() {
+	for _, t := range s.servedTools() {
 		if t.name != name {
 			continue
 		}
@@ -90,6 +94,13 @@ func callTool(ctx context.Context, s *Server, name string, args json.RawMessage)
 			return "", fmt.Errorf("render tool result: %w", err)
 		}
 		return string(b), nil
+	}
+	if s.opts.APIOnly {
+		for _, t := range allTools() {
+			if t.name == name {
+				return "", notServedByAPIOnly(name) // it exists, and this server does not serve it
+			}
+		}
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }
@@ -206,7 +217,9 @@ func allTools() []tool {
 			handler:     toolDocs,
 		},
 	}
-	return append(native, monoagentAdaptedTools()...)
+	native = append(native, monoagentAdaptedTools()...)
+	native = append(native, apiTools()...)
+	return append(native, apiConfigTools()...)
 }
 
 func decodeArgs(args json.RawMessage, dst interface{}) error {

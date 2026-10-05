@@ -2,8 +2,11 @@ package monomind
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,7 +17,7 @@ func TestOrgListAgainstFake(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	out, err := OrgList(context.Background(), ".")
+	out, err := OrgList(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("OrgList: %v", err)
 	}
@@ -27,7 +30,7 @@ func TestOrgStatusAgainstFake(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	out, err := OrgStatus(context.Background(), ".", "growth")
+	out, err := OrgStatus(context.Background(), t.TempDir(), "growth")
 	if err != nil {
 		t.Fatalf("OrgStatus: %v", err)
 	}
@@ -40,7 +43,7 @@ func TestOrgStatusErrorSurfacesStderr(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
 	defer os.Unsetenv(EnvOverride)
 
-	_, err := OrgStatus(context.Background(), ".", "missing-org")
+	_, err := OrgStatus(context.Background(), t.TempDir(), "missing-org")
 	if err == nil {
 		t.Fatal("OrgStatus() = nil error, want an error for a nonexistent org")
 	}
@@ -54,7 +57,7 @@ func TestOrgEventsStreamsLines(t *testing.T) {
 	defer os.Unsetenv(EnvOverride)
 
 	var lines [][]byte
-	err := OrgEvents(context.Background(), ".", "growth", OrgEventsOptions{}, func(line []byte) {
+	err := OrgEvents(context.Background(), t.TempDir(), "growth", OrgEventsOptions{}, func(line []byte) {
 		cp := make([]byte, len(line))
 		copy(cp, line)
 		lines = append(lines, cp)
@@ -97,7 +100,7 @@ func TestOrgRunCancelGroupKill(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := OrgRun(ctx, ".", "growth", "", false)
+		_, err := OrgRun(ctx, t.TempDir(), "growth", "", false)
 		errCh <- err
 	}()
 
@@ -147,7 +150,7 @@ func TestOrgEventsAbortsPromptlyOnCancelDuringHandshake(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- OrgEvents(ctx, ".", "growth", OrgEventsOptions{Follow: true}, func([]byte) {})
+		done <- OrgEvents(ctx, t.TempDir(), "growth", OrgEventsOptions{Follow: true}, func([]byte) {})
 	}()
 	select {
 	case err := <-done:
@@ -156,5 +159,71 @@ func TestOrgEventsAbortsPromptlyOnCancelDuringHandshake(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OrgEvents() did not return within 5s of ctx cancellation during handshake")
+	}
+}
+
+// writeRuntime writes <root>/.monomind/orgs/<name>/runtime.json.
+func writeRuntime(t *testing.T, root, name, body string) {
+	t.Helper()
+	dir := filepath.Join(root, ".monomind", "orgs", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// deadPID is above any pid_max: no such process.
+const deadPID = 2147483646
+
+// monoes/monomind#573: monomind's `org status` keeps calling a run
+// "running" after its process died. OrgStatus reports it stopped, like
+// `org summary`, so the org bubble's header and every caller agree (#294).
+func TestOrgStatusReportsADeadRunAsStopped(t *testing.T) {
+	os.Setenv(EnvOverride, fakeBin(t, "fake-monomind.sh"))
+	defer os.Unsetenv(EnvOverride)
+	root := t.TempDir()
+
+	writeRuntime(t, root, "growth", fmt.Sprintf(`{"status":"running","run":"r1","pid":%d}`, deadPID))
+	out, err := OrgStatus(context.Background(), root, "growth")
+	if err != nil {
+		t.Fatalf("OrgStatus: %v", err)
+	}
+	var st struct{ Name, Status string }
+	if err := json.Unmarshal(out, &st); err != nil || st.Name != "growth" || st.Status != "stopped" {
+		t.Fatalf("dead run: status = %s (%v), want stopped", out, err)
+	}
+
+	writeRuntime(t, root, "growth", fmt.Sprintf(`{"status":"running","run":"r1","pid":%d}`, os.Getpid()))
+	out, _ = OrgStatus(context.Background(), root, "growth")
+	if err := json.Unmarshal(out, &st); err != nil || st.Status != "running" {
+		t.Fatalf("live run: status = %s, want running", out)
+	}
+}
+
+func TestDeadRunsStoppedInAList(t *testing.T) {
+	root := t.TempDir()
+	writeRuntime(t, root, "dead", fmt.Sprintf(`{"status":"running","pid":%d}`, deadPID))
+	writeRuntime(t, root, "live", fmt.Sprintf(`{"status":"running","pid":%d}`, os.Getpid()))
+	raw := json.RawMessage(`{"v":1,"items":[{"name":"dead","status":"running"},{"name":"live","status":"running"},{"name":"nofile","status":"running"},{"name":"idle","status":"stopped"}]}`)
+	var got struct {
+		V     int `json:"v"`
+		Items []struct{ Name, Status string }
+	}
+	if err := json.Unmarshal(deadRunsStopped(root, raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"dead": "stopped", "live": "running", "nofile": "running", "idle": "stopped"}
+	if got.V != 1 || len(got.Items) != 4 {
+		t.Fatalf("list = %+v", got)
+	}
+	for _, it := range got.Items {
+		if want[it.Name] != it.Status {
+			t.Errorf("%s = %s, want %s", it.Name, it.Status, want[it.Name])
+		}
+	}
+	if out := deadRunsStopped(root, json.RawMessage(`{"v":1,"items":[{"name":"live","status":"running"}]}`)); string(out) != `{"v":1,"items":[{"name":"live","status":"running"}]}` {
+		t.Errorf("an unchanged list is rewritten: %s", out)
 	}
 }

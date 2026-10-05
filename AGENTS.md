@@ -61,7 +61,7 @@ monoagentcli --help         # command list; the root help includes an agents not
 | `ref templates` | The bundled ready-to-run workflow templates |
 | `ref connections` | Profiles, OAuth, credential resolution — **read before touching `--profile` or credentials** |
 | `ref crawling` | Automating sites with no built-in node type |
-| `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping |
+| `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping, and the OpenAI-compatible `/v1` API |
 
 Prefer `ref` over guessing from `--help` alone.
 
@@ -217,6 +217,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `profile list|get|current|switch|create [--root-dir] [--icon]`
   - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
   - `profile documents list|get|capture|index|rm`, and `profile documents sync`, which scans the profile folder and reconciles documents
+  - Browser captures saved into a profile are indexed automatically by the extension bridge (the daemon's or `extension serve`) within seconds, into that profile's own monomind store (scope `profile:<id>`), and the row records Indexed or the error. `profile documents index --all [--all-profiles]` is the backfill: every capture that is not indexed, has changed, or failed before. "Ask your brain" in the extension and chat knowledge search read the same store, so a capture is searchable only from its own profile.
 - **Chat:**
   - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
   - `chat history create --runtime R [--model M] [--workflow W] [--mode coder --cwd DIR|--coder-root|--new-workspace]` makes a conversation (coder mode: see "Coder mode" below), `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
@@ -226,6 +227,12 @@ The desktop app does everything through these commands; they are equally usable 
 - **monoes.me library:** `library status [--offline]|login|logout|list|show|install|publish|update|installed` (see [monoes.me library](#monoesme-library)). All reads need a login: without one they exit 4 with `"login_required": true`. `library login` streams `{"kind":"url","url"}` on stderr with `--json` and waits for the browser; the app kills it to cancel.
 - **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
+- **Org bubbles (chat with a running org's boss):**
+  - `org chat send <org> -- <text>` messages the boss as `human:operator` (live, or queued for the org's next start).
+  - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
+  - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
+  - `org stop|pause|resume <org>` are the bubble's controls.
+- **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|update <id> --name=N|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`), and `api config show|set|unset` (with `--dry-run` and `--yes`) and `daemon restart` for its Server settings (`wails-app/app_api_config.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. The settings calls pass the keys of the ten settings, a text for each attached to its flag, and the paths of the two TLS files, never their contents. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
 
 ## monoes.me library
 
@@ -300,6 +307,8 @@ monoagentcli library logout
 ```bash
 monoagentcli mcp                     # stdio JSON-RPC MCP server, read-only tools only
 monoagentcli mcp --allow-mutations   # also serve mutating tools
+monoagentcli mcp --allow-mutations --allow-api-exposure   # also let api_config_set widen what the API's server exposes, and api_auto_set switch the auto model on
+monoagentcli mcp --api-only --allow-mutations --allow-api-exposure   # the same, serving the OpenAI-compatible API's tools (api_*) and no other
 ```
 
 Register it with any MCP client (stdio transport). Prefer MCP when the
@@ -314,12 +323,47 @@ dangerous calls.
   description for values), `node_schema`
 - `hil_list`
 - `vault_item_list`, `vault_item_get_path`, `profile_document_search`
-- `secret_list` (metadata only — values are never returned by any tool)
+- `secret_list` (metadata only — vault values are never returned by any tool;
+  the one secret a tool returns is the new key of `api_key_create`, below)
 - `person_list`, `person_get`
 - `message_list`, `message_get` (results carry an untrusted-content
   provenance fence)
 - `social_list_list`, `template_list`
 - `org_list`, `org_get`, `org_validate`
+- `api_key_list` (the active profile's API keys for the
+  [OpenAI-compatible API](#openai-compatible-api-v1): metadata only, never a
+  key), `api_models_list` (the document of `api models --json`: the models
+  `/v1` would serve with each one's confinement class and capabilities, `image`
+  among them for the models of `MONOAGENT_API_IMAGE_RUNTIMES` and `tools` for
+  those of `MONOAGENT_API_TOOL_RUNTIMES` that can call them. It takes the flags of
+  that command as `for`, `confinement`, `context_confinement` and
+  `auto_confinement`, otherwise reads this MCP server's own environment and
+  then the settings saved with `api config` (the layer below the environment,
+  so it says what a server started now would apply, as `api models` does; a
+  saved setting that fails its rule stops it, naming the setting), and
+  asks the installed runtimes for their model lists: the first call takes a
+  few seconds, calls at once share that load, the list is reused for a minute,
+  and after that the previous one is served at once while a new one loads in
+  the background, as `/v1/models` does. The load a call waits for ends with
+  the call or the server; the background reload is detached, as the gateway's
+  is, and takes at most 90 seconds)
+- `api_status` (the document of `api status --json`: where the API listens,
+  whether it answers, the profile's key count and whether the `auto` model
+  works; it probes each listener over HTTP, which takes a few seconds when
+  nothing answers) and `api_config_get` (the document of `api config show
+  --json`: the ten saved server settings, what a server started from this MCP
+  server's environment would use, what the running daemon started with and where
+  each setting stands, `applied`, `pending_restart`, `overridden`, `not_serving`
+  (the dedicated listener is not up), `not_running` or `unknown`). Both are built
+  by `internal/apiconfig`, the code the commands
+  run, with this MCP server's own environment (`api_config_get` says
+  `"environment":"mcp"` where the command says `"shell"`), the server's profile
+  and the daemon's heartbeat. A saved row that cannot be read stops both, and
+  `api_models_list`, with the command's message passed on as it is (it starts
+  `the saved settings are damaged` and names `api config unset --all --yes`): a
+  model tells the user, who runs that command, or the operator allows
+  `api_config_set` with `unset: "all"` to remove the row (the gate below). A row
+  a newer version saved is an error that nothing here removes.
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -338,6 +382,113 @@ existing MCP client config that relies on them.
   `org_role_set_reports_to`, `org_role_remove`, `org_reload`
 - `org_automation_add`, `org_grant_set`, `org_autonomy_set` (the last two
   preview unless `confirm:true`)
+- `api_key_create`, `api_key_update`, `api_key_revoke` — the active profile's
+  API keys, under the rules of `api key create|update|revoke` (names, the
+  context switch, the errors); a key of another profile is "not found". A name
+  can be neither a key (anything holding `sk-ma-`, in any case) nor the shape
+  of a key id (`key_` and 12 characters of a-z and 2-7), because `api_key_list`
+  shows names: a key pasted where a name goes is refused, by the key store, so
+  by `api key create|update` too. No error of any `api_*` tool repeats an
+  argument, since a caller may paste a key anywhere.
+  `api_key_revoke` is annotated destructive and asks for no confirmation: the
+  host gates it. **`api_key_create` is the one tool that returns a secret:** the
+  new key, once, in the `key` field of its result. Only its SHA-256 is stored,
+  so no tool, `api_key_list` included, can show it again. It also makes the key
+  part of the MCP host's transcript, which the host may keep and, for a hosted
+  model, send to its provider. `monoagentcli api key create` writes the key to
+  its stdout (also with `--json`): run in your own terminal it stays out of any
+  transcript, but run by an agent through a shell tool it lands in that
+  transcript too. The `api_*` tools are MCP only (the chat assistant has
+  none), and a grant-mode server serves none of them.
+- `api_config_set` — saves or removes settings of the API's server (`set`: an
+  object of setting keys to values, `max_concurrent` also a number; `unset`: a
+  list of keys, or the word `all`), under the rules of `api config set|unset`
+  (the same code, `apiconfig.Apply`: the same checks, canonical spellings and
+  document, and the same transaction, so two calls at once both land). **A change
+  that makes the server reach further than it did is refused, and nothing is
+  saved, unless the operator started this MCP server with `--allow-api-exposure`
+  (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`)**: a dedicated listener beyond this
+  machine, moved to another host beyond it or to every interface, a higher
+  confinement class, a runtime list that gains a runtime it did not have (one of
+  the default list that a saved list left out counts when it comes back), a
+  runtime list that leaves `none`; removing a `confinement` of `chat-only` or an
+  `image_runtimes` of `none` or of `codex` counts, and so does removing a saved row that cannot be read (`unset`
+  of `all`: the widening `saved_settings`, since what the row limited cannot be
+  told; with the flag the result says `removed_unreadable_row`)
+  (`apiconfig.Widens` and `Apply` decide, in the transaction that replaces the
+  row). That is the operator's switch, read once when the server starts: no
+  argument of the tool is one, since a model sets the arguments and an argument
+  would protect nothing, and the schema offers none. The refusal says which
+  setting and why, that the user can make the change with
+  `api config set ... --yes` (or `unset`) or in the desktop app (for a row that
+  cannot be read it names `api config unset --all --yes` alone), and what the
+  operator can do; with the flag, the reasons are in the result's `widening`,
+  as the command prints them. While the row cannot be read every other change
+  fails with the command's message (`the saved settings are damaged ...`), and a
+  row a newer version saved is an error for all of them.
+  `--allow-api-exposure` adds nothing to `--allow-mutations`, which the tool
+  needs first, and grant mode refuses it. It guards that tool and `api_auto_set`
+  (below) and nothing else:
+  `--allow-mutations` also serves `workflow_node_add` (which accepts the node type
+  `system.execute_command`), `workflow_set_active` and `workflow_run`, so a model
+  that has them can have a workflow of the profile run `monoagentcli api config set
+  ... --yes` as the OS user; if a model must not be able to widen the server, do
+  not give it `--allow-mutations`, or start the server with `--api-only`
+  (SECURITY.md). A value that holds an API key
+  (`sk-ma-`) is refused, because what is saved is shown to whoever reads
+  `api_config_get`; a value over 4096 characters (an address over 260) is
+  refused; and no error repeats an argument: the reasons of the gate print the
+  address of the call and, for a move between two binds, the one saved before
+  it, and the refusal names no address and no host, in any spelling, and no
+  runtime outside the default list. A saved setting takes effect when the
+  server starts: the tool restarts nothing.
+- `api_config_apply` — restarts the daemon through the auto-start service it is
+  registered as (`daemon restart`, through the same `autostart.RestartRegistered`
+  over `autostart.Installer`), so that it reads the saved settings; the result
+  is the command's `{"restarted":true,"via":"launchd"}` (`via` is `launchd`,
+  `systemd` or `schtasks`). Annotated destructive: **it interrupts what the
+  daemon is running** (workflows, org runs), and nothing here promises that the
+  daemon finishes first, since how it ends is the service manager's. It reads the
+  saved settings first, as the command does, and restarts nothing when they
+  cannot be used (the message of every tool that reads them, byte for byte the
+  command's), since a daemon that cannot use them starts without the API. A
+  daemon that is not registered for auto-start is an error with the command's
+  words: stop it and start `monoagentcli daemon` again, or `daemon install`.
+- `api_auto_set` — switches the Jev surface `api_auto` (the `auto` model) on or
+  off for the MCP server's profile, as `jev enable|disable api_auto` does, and
+  answers that command's `--json` document plus `auto`, what `api_status` says of
+  the auto model after the change (`available`, or what it is `missing`: the
+  surface, a Jev key). Switching on needs two things, because the
+  first 4,000 characters of the last user message of a request for `auto` (of an
+  image request, its prompt) and the names, descriptions and validated cost and
+  latency of the models the API serves then go to TypeSafe: the operator must have
+  started the MCP server with `--allow-api-exposure` (what leaves the machine is
+  the operator's decision, made when the server starts, and no argument can make
+  it: the owner's decision of 2026-10-05, after the security review of phase 6
+  found `acknowledge_egress` to be a speed bump), and the caller sets
+  `acknowledge_egress: true`. Without the first the error shows what would be
+  sent, why no argument can allow it and what the user can do (`jev enable
+  api_auto`, the desktop app) and nothing changes; without the second it shows
+  that list and nothing changes, and the result of switching on carries it
+  as `egress`. Switching off needs neither. It never creates, stores, uses or shows the Jev key (it only asks
+  where one is: `TYPESAFE_API_KEY`, or the vault entry the user stored with `jev
+  key set`, whose value it does not decrypt), so with no key the surface is on
+  and `auto` stays unavailable, which `auto` says.
+- **`--api-only`** (or `MONOAGENT_MCP_API_ONLY=1`) serves the OpenAI-compatible
+  API's tools (the ten `api_*` tools, `apiToolNames`) and no other: no workflow,
+  vault, secret, person, org or documentation tool, and a call by name of one
+  that exists is refused ("is not served ... `--api-only`"), an unknown name
+  still unknown. It is for a model that is to manage the API and nothing else,
+  because `--allow-mutations`, which the API's mutating tools need, also serves
+  the workflow tools that can run a command as the OS user (the owner asked for
+  it on 2026-10-05, after the security review of phase 6 found that). It takes
+  tools away and changes none that stay: the mutating ones still need
+  `--allow-mutations`, the gates of `api_config_set` and `api_auto_set` are still
+  `--allow-api-exposure`, and with it that flag guards what the model reaches
+  through this server. A host that has tools of its own, such as a shell tool, is
+  not stopped by it. Grant mode refuses it. A test keeps the family and the
+  filter in step: every tool called `api_*` is one of the API's and the other way
+  round.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -346,9 +497,9 @@ granted automations (`automation_<alias>`, `automation_status`,
 calls in `monoagentcli daemon`, and refuses a grant used by another org or
 role. Plain `mcp` refuses to start inside an org role's process.
 
-Most of this surface (vault, secrets, people, orgs) is the same
-implementation the chat feature already uses natively — see "Assistant
-chat & tools" below for the safety properties (metadata-only secrets,
+Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is
+the same implementation the chat feature already uses natively — see
+"Assistant chat & tools" below for the safety properties (metadata-only secrets,
 pre-delete backups, `confirm:true` previews on destructive/cascading
 actions, untrusted-content fencing on messages), which apply unchanged
 here; MCP is just a second transport onto the same tool implementations.
@@ -372,7 +523,11 @@ the token is generated on first start and stored in the active profile's
 secrets vault (`secret list`, name `httpapi-token`). Output items go
 through the same redaction as `workflow run --json` — pass
 `X-Full-Outputs: 1` to opt out per request, mirroring
-`workflow run --full-outputs`. Full endpoint list:
+`workflow run --full-outputs`. Workflow reads and mutations are scoped to
+the server's profile in both standalone and daemon-hosted mode: another
+profile's workflow ID returns 404. Legacy workflows with no profile ID
+belong to `default`. The daemon still serves every profile's triggers
+internally. Full endpoint list:
 `internal/httpapi/openapi.yaml` (OpenAPI 3, validated in CI); curl
 walkthrough: `examples/httpapi-quickstart.md`; offline copy of this
 section: `monoagentcli ref api`.
@@ -392,6 +547,646 @@ No endpoint ever returns a generic 500 for a condition the CLI classifies
 more specifically — this repo prefers honest, mapped statuses (see the
 README's Feature Highlights on `SUCCESS_WITH_ERRORS` runs) over collapsing
 everything to 200/500.
+
+### OpenAI-compatible API (`/v1`)
+
+The same `httpapi` and `daemon` processes also serve standard OpenAI-style
+endpoints over the agent runtimes installed on the machine (claude, codex,
+antigravity, …), so any OpenAI SDK or tool works with just a `base_url` and
+a key. It lives in `internal/openaiapi/`; the spec is
+`docs/mastermind/specs/2026-10-01-openai-compatible-api-design.md`.
+
+- **Endpoints.** `GET /v1/models`, `GET /v1/models/{id}`,
+  `POST /v1/chat/completions` (JSON, or `"stream": true` for server-sent
+  events) and `POST /v1/images/generations` (see **Images** below). Model ids
+  are `<runtime>/<model>` (`claude/sonnet`,
+  `codex/gpt-6-astra`; each runtime's own list decides, so read
+  `GET /v1/models`); a bare runtime (`codex`) is its default model and
+  `agy` is accepted for `antigravity`. Sampling parameters are accepted and
+  ignored, because `agent exec` has none. These are rejected with 400
+  `unsupported_parameter`: `n` above 1, `logprobs: true`, an `audio` object, a
+  non-empty `functions`, a `function_call` other than `"none"` and `function`
+  messages (declare functions with `tools`, see **Tool calling** below),
+  content parts that are not text (images, audio, files) and a
+  `response_format` other than `text` or `json_object`. Image input is not
+  available.
+- **The `auto` model.** `"model": "auto"` lets [TypeSafe Jev](#typesafe-jev-decisions-only)
+  pick, per request, among the models the listener serves (a `--context` key:
+  among those its own cap allows). It is the `api_auto` Jev surface: off until
+  `monoagentcli jev enable api_auto` on the key's profile, which also needs
+  that profile's Jev key (`jev key set`, or `TYPESAFE_API_KEY` in the server's
+  environment, which the gateway blanks in its agent turns). Without them
+  `auto` is not listed and answers 404 `model_not_found` naming what is
+  missing (`api models` and `api status` say it too, and that a key from the
+  environment is that shell's). It is listed after the concrete models, so a
+  client that takes the first model is not moved to it. What is sent to
+  TypeSafe: the first 4,000 characters of the last user message (of an image
+  request, its prompt) and each
+  candidate's name, description and validated cost and latency, never the
+  system prompt, earlier turns, the profile's knowledge or a key. Jev only
+  picks among options the code lists: the models the policy allows within
+  `--auto-confinement` (`MONOAGENT_API_AUTO_CONFINEMENT`), which is `chat-only`
+  unless the operator raised it, because a prompt can steer which model Jev
+  picks and its author need not hold the key. It never goes above the
+  listener's policy or a context key's cap, and a model the client names itself
+  is not affected; `api models` shows what auto may pick (`auto_allowed` per
+  model, `auto.candidates`, `auto.held_back`). A failure, a timeout
+  (8 seconds, key lookup included), an answer that is not an option or a
+  probability under the surface's threshold (default 0, set it with `jev
+  enable api_auto --threshold`) uses a rule instead: of the validated models
+  the most confined, then the cheapest, then the fastest, and with none
+  validated a runtime's default model, claude first. Three questions in a row
+  with no answer stop a profile's questions for 30 seconds (then one question
+  probes whether Jev is back), so an outage does not cost every request its 8
+  seconds: the rule decides meanwhile, and the log says when. The response names the
+  pick in `model` and `X-Monoagent-Model`, and who chose in
+  `X-Monoagent-Auto` (`jev` or `rule`; `rule` also when there was only one
+  model to pick and Jev was not asked). A question to Jev is recorded under
+  `api_auto` in `jev usage`, and the server's log line has `auto=jev|rule` and
+  never the prompt.
+- **Auth is a per-profile API key** (`sk-ma-…`), never the legacy token above.
+  `monoagentcli api key create --name <n> [--context]` prints the key once and
+  stores only its SHA-256, so it needs no vault and no keyring and works on a
+  headless server. A key belongs to one profile: its requests run as that
+  profile, in that profile's folder, and nothing of another profile's is
+  looked up for them (what a runtime can read on the machine is set by its
+  confinement class, below). `--context` adds excerpts of that profile's own
+  knowledge (documents and captures) to the prompt, otherwise the key reaches
+  a plain model. A
+  context key is served only by chat-only models unless the operator raises
+  `--context-confinement` (`MONOAGENT_API_CONTEXT_CONFINEMENT`), because the
+  excerpts include captured web pages nobody vetted.
+  `api key list|show|update|revoke`, `api models` and `api status` complete
+  the group (all take `--json`; exit 2 not found, 3 invalid input).
+  `api key list --all-profiles` is the one command that spans profiles
+  (metadata only). `api models` evaluates this shell's flags, environment and
+  saved settings (see **Server settings**), not a running server; `api status`
+  reports what a running daemon applies.
+  `monoagentcli mcp` serves the same key management, the model list, the status
+  and the server's settings as tools for its own profile, with no
+  `--all-profiles`: `api_key_list`, `api_models_list`, `api_status` and
+  `api_config_get`, and with `--allow-mutations` `api_key_create`,
+  `api_key_update`, `api_key_revoke`, `api_config_set`, `api_config_apply` and
+  `api_auto_set` (see [MCP server](#mcp-server): creating a key there puts it in
+  the host's transcript, and a change of the settings that makes the server reach
+  further, or the auto model switched on, needs the operator's
+  `--allow-api-exposure`; `--api-only` serves a model these tools and no other).
+  `org teardown-profile` revokes a profile's keys. A key never opens the
+  legacy routes, and the legacy token never opens `/v1`. Revoking applies to
+  the next request: a turn already running finishes, within its timeout.
+- **Isolation.** Every request is one `monomind agent exec` turn in a slot
+  folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+  (`<hash>` is a hash of the profile id; never the profile's own folder;
+  emptied before and after every turn), with no tools (but the functions a
+  request declares, see **Tool calling**), no settings and the
+  workspace-write sandbox where the runtime has one. The folders are fixed
+  because agent CLIs keep per-folder session state that a folder per request
+  would pile up, and per profile so that state is never shared between
+  profiles. Requests are stateless. A folder that cannot be emptied (a tree
+  deeper than 100 levels, or one that takes more than 30 seconds to empty,
+  say), or that a turn replaced with a link, is moved
+  to `~/.monoagent/workspaces/api/.quarantine` and replaced by an empty one, and
+  the log says where: delete it when you like. A turn's prompt files live in a
+  private (mode 0700) folder under `~/.monoagent/workspaces/api/.tmp` until it
+  ends, and its own temp directory (`TMPDIR`, `TMP`, `TEMP`) is a folder inside
+  its working folder, emptied with it. Only one process per home serves `/v1` at a time, because the slot
+  folders are emptied around every turn. A second `httpapi` serves its other
+  routes without `/v1` and says why (`httpapi --v1-addr` exits), a second
+  `daemon` is refused outright (one daemon per home), and a process that
+  cannot build the API at all (its folders are not writable) does what one
+  that finds them taken does. A listener that cannot bind never keeps the
+  folders.
+- **Confinement.** A runtime's class is `chat-only` (claude: monomind's
+  allow-list gate is the only tool gate), `sandboxed` (codex: writes confined
+  to the turn's folder and the system temp directory, reads and the runtime's
+  own MCP tools open) or
+  `unconfined` (antigravity: its native tools run as the OS user). `api models`
+  shows each model's class, and a successful non-streaming response's
+  `X-Monoagent-Sandbox` header how monomind sandboxed the turn (`sandboxed`,
+  `scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`; a
+  stream has none).
+  `--confinement chat-only|sandboxed|any` (`MONOAGENT_API_CONFINEMENT`) is the
+  strongest class the process serves, one value for all its listeners (unset,
+  a loopback listener allows `any` and a network one `chat-only`); a model
+  above it is unlisted, `GET /v1/models/{id}` answers 404 for it and a
+  completion that names it gets 403 `policy_denied`.
+  `--context-confinement chat-only|sandboxed|any`
+  (`MONOAGENT_API_CONTEXT_CONFINEMENT`, default `chat-only`) is the strongest
+  class a key created with `--context` may use, never above the listener's.
+  `--auto-confinement chat-only|sandboxed|any` (`MONOAGENT_API_AUTO_CONFINEMENT`,
+  default `chat-only`) is the strongest class the `auto` model may pick, never
+  above the listener's or a context key's. A request that declares tools changes
+  none of this, except that a key created with `--context` is refused tools (403
+  `policy_denied`, before anything starts, naming `--context-confinement`, or
+  `--confinement` when the listener is chat-only, since the key is held to the
+  lower of the two, or both when both are) unless that cap is above chat-only; its
+  codex leg runs read-only (**Tool calling**).
+- **Images.** `POST /v1/images/generations` takes `{model, prompt, n, size,
+  response_format}` and answers `{"created":…,"data":[{"b64_json":…}]}`: base64
+  only, so `response_format: "url"` is 400 `unsupported_parameter`, as is
+  `stream: true`. `n` is 1 to 4 (default 1; a runtime that saves fewer still
+  answers with what it saved, at least one), `size` is `auto` or `WxH` with each
+  side from 64 to 8192 and reaches the prompt only in that form, `quality`,
+  `style`, `output_format`, `background` and `user` are accepted and ignored, and
+  the body is capped at 64 KiB. Which runtimes make images is configuration, not
+  knowledge of any CLI, because monomind does not report image output:
+  `MONOAGENT_API_IMAGE_RUNTIMES`, default `codex,antigravity`; `none` switches
+  image generation off (no model has the capability, and a request without a
+  model or for `auto` is 404 `model_not_found` and one naming a model 400
+  `invalid_value`, each saying it is switched off). `model` is
+  `<runtime>/<model>`, a runtime of that list, `auto`, or missing, which means
+  the first installed runtime of the list that the policy allows. A model that
+  cannot make images is 400 `invalid_value` (a runtime of the list that runs as
+  chat-only cannot, so it is not one; the message names the runtimes whose models
+  the key may use that can, or says that none can) and an unknown one 404. When
+  no runtime of the list can make images a request without a model is a 404 that
+  says why for each: not installed, or installed but chat-only; the server logs the
+  same once, with the first list of models it loads. `GET /v1/models`
+  gives `"capabilities":["text","image"]` to the models that can, and
+  `api models --json` (and the MCP tool `api_models_list`, which is its document)
+  the same per model, `api models` also as an IMAGES column of its table, read
+  from this shell's `MONOAGENT_API_IMAGE_RUNTIMES`, else the saved
+  `image_runtimes` (the tool reads its own server's, and then the saved one).
+  The runtime has to write the file, so
+  the model must run as `sandboxed` or `unconfined`: under `--confinement
+  chat-only`, or for a `--context` key held to chat-only, a request without a
+  model is 403 `policy_denied` saying to raise `--confinement` (and
+  `--context-confinement` for such a key), and one naming a model above the
+  policy is 403 as for chat. No knowledge excerpts are added to an image
+  request, only the cap applies. The turn is a chat turn (slot folder, private
+  temp directory, no tools, no settings, the sandbox required for a `sandboxed`
+  model) with a fixed system prompt: generate each image with your own built-in
+  image capability, do not draw it programmatically, save each file in the
+  folder `./out-<16 random characters>/`, which exists already in the working
+  folder and is new for every turn (copy it there if your tool saves elsewhere,
+  save nothing anywhere else), reply with the file names, reply `NO_IMAGE_TOOL`
+  on a line of its own if you cannot. The prompt is the request's
+  `prompt` plus "Create N distinct images." (n above 1) and "Preferred size:
+  WxH.". After the turn, and before the slot folder is emptied, the gateway
+  reads the files at the top of that output folder, and of nothing else, that
+  are PNG, JPEG, WebP or GIF by their first bytes, at most 20 MiB each, the first
+  `n` by name. A file the runtime saved anywhere else in its working folder is not
+  returned, however it is named: a process an earlier turn left running keeps
+  writing where it wrote, and only the folder the next turn was told is read. The
+  log counts such files as outside the turn's folder, and a turn whose
+  runtime ignored the folder is a 502. The gateway runs as the OS user outside
+  the runtime's sandbox, so it never follows a link (a runtime could plant one to
+  any image on the disk), never opens a FIFO or a device, ignores folders and goes
+  through the folder's own handle, like the emptying. It reads only the first 12
+  bytes of a file that is no image, looks at no more than 64 entries (the first 64
+  the system lists, so "the first `n` by name" is among those) and gives up
+  after a minute or when the client has left. `NO_IMAGE_TOOL` as a line of its
+  own in the reply, with no image in the folder, is 400
+  `image_generation_unsupported` (a reply that only mentions it is not, and an
+  image wins over it); no image is 502 `image_generation_failed` with the
+  runtime's reply (300 characters, one line) in the message, and the log says what
+  was left out by reason and count, never by name, for a success too. The
+  response is written as the images are encoded, the slot is given back as soon
+  as the turn is over, and a client has two minutes to read the body. In the
+  probes and live checks of 2026-10-01 and 2026-10-02 a turn took 40 to 105 s
+  (codex 105 s, antigravity 75 s) and about 40,000 input tokens, on the
+  runtime's account (codex and antigravity report no cost). `"model": "auto"` has Jev pick among the image models `auto` may pick:
+  image runtimes are `sandboxed` or `unconfined`, so with `--auto-confinement`
+  at its default `chat-only` there are none and it answers 404 `model_not_found`
+  saying what to raise (`--auto-confinement`, or the confinement flags when the
+  key could not use an image model at all); raised to `sandboxed` at least, it
+  picks among them (`X-Monoagent-Auto` as for chat), and sends TypeSafe the first
+  4,000 characters of the image prompt. The `auto` model object lists `image` among its
+  capabilities only when it has image candidates.
+- **Tool calling.** `tools`, `tool_choice`, `tool_calls` and `tool` messages
+  work on `POST /v1/chat/completions`, streaming and not, so a client that runs
+  its own tools (a coding assistant, an SDK tool loop) can use the runtimes.
+  They are served on `claude` and `codex` (`MONOAGENT_API_TOOL_RUNTIMES`,
+  default `claude,codex`: antigravity called its own tools instead of the
+  declared one in the spike, so any other runtime, and a model of a listed one
+  that monomind cannot run read-only (see below), is 400 `unsupported_parameter`
+  on `tools` before anything starts; `GET /v1/models` gives `"tools"` among the
+  capabilities of the models that serve them (not to a key created with
+  `--context` while `--context-confinement` is chat-only, which a request with
+  tools is refused for), and `api models --json` the same,
+  per model, with `api models` also as a TOOLS column of its table and the MCP
+  tool `api_models_list`, which is that document, from its own server's
+  `MONOAGENT_API_TOOL_RUNTIMES`, else the saved `tool_runtimes` (the shell's
+  likewise); `none` switches tool calling off: no model has
+  the capability, a request that declares tools is 400 `unsupported_parameter`
+  saying it is switched off, `auto` has nothing to pick for one, and the server
+  logs it once at start).
+  A request declares up to 128 `tools` of type `function` (a name of 1 to 64
+  characters of `[A-Za-z0-9_-]`, unique, where a name of 55 or more is known to
+  monomind and to the model by an alias of 54 characters (its first 45, an
+  underscore and 8 hex digits of its SHA-256) and the client sees its own name
+  everywhere, an alias that collides with another name being a 400; a `description` of at most 16 KiB;
+  `parameters`, a JSON schema object of at most 64 KiB whose `type` is `object`,
+  whose `properties` is an object of schemas and whose `required` is a list of
+  strings; `strict` is accepted and ignored),
+  a `tool_choice` (`none` passes no tools, `auto`, `required`, or a named
+  function: the last two are a best-effort instruction in the system prompt)
+  and `parallel_tool_calls` (accepted and treated as false). monomind keeps only
+  the top-level properties of a schema, and of a property only its type and an
+  enum of strings (any other enum there rejects every call), so the arguments of
+  a root `anyOf`, `oneOf` or `allOf`, of a local `$ref`, of an `if`, `then` or
+  `else`, of what `dependentSchemas`, `dependencies` and `dependentRequired` ask
+  for and of a `const` or an `enum` of objects are named at the top level too
+  (optional where the schema lets a call do without them, and as any value where only a branch that may not apply defines
+  them: monomind rejects a call that does not match the type or the enum it was
+  told of, so they come only from what holds for every call; without naming them
+  monomind drops every one and the client gets `{}`),
+  the whole schema is also folded into the tool's description, and an enum that
+  is not a list of strings is left out of what monomind gets, not refused. A
+  schema that names no property and allows free-form keys
+  (`additionalProperties` or `unevaluatedProperties` true or a schema,
+  `patternProperties`), or whose references cannot be followed (`$dynamicRef`, a
+  `$ref` that is not local or leads nowhere), or whose `const` or
+  `enum` (the root's, an `allOf`'s or a `$ref`'s that applies) holds a value that
+  is not an object (the arguments of a call are one), or that nests more
+  than 8 levels deep or holds more than 2000 schemas, or functions whose schemas
+  together take more than 100,000 steps to read (a step is a schema read, a reference followed, a property or a listed name met, an enum entry compared,
+  each time it is done; a reference is read once however it is spelled, so the
+  cost is bounded by the request), is 400
+  `invalid_value` on `tools[i].function.parameters`, while the tools are passed
+  (`internal/openaiapi/tools_hoist.go`). `tool_choice` `none` passes no tools, so
+  no argument is named and none of those naming refusals applies; the declaration
+  is checked whatever the choice (`validateTools`, `inspectParams` and
+  `validateToolMessages`, 400 `invalid_value` on the parameter: more than 128 functions; a tool that is not an object; a name that is not 1 to
+  64 characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is
+  another function's name (a name of 55 or more reaches the model as an alias of
+  54, and you always see your own); a `description` of more than 16 KiB;
+  `parameters` of more than 64 KiB, that are not a JSON schema object, whose
+  root `type` is not `object`, whose `properties` is not an object or holds a
+  property that is not a schema, or whose `required` is not a list of strings; a
+  `tool_choice` that is not `none`, `auto`, `required` or a function, or that
+  names a function that is not declared; and in the conversation more than 64
+  calls in one message, a call with an id of no characters or of more than 128
+  bytes, a call whose name is not printable ASCII without `[ ] < > & ' "` or a
+  backtick, a call whose `arguments` is not a string, a result of more than 256
+  KiB, and a tool message that answers no call of an earlier assistant message;
+  with other codes, 400 `unsupported_parameter` for a tool or a call of a type
+  other than `function`, a `tool_choice` of another type, and a `tool_choice`
+  that forces a call when no tools are declared; 400
+  `missing_required_parameter` for a tool with no `function`, a `tool_choice`
+  that names no function, and a tool message with no `tool_call_id`). **A
+  response carries one call.** The turn (a leg) ends at the model's first call:
+  it is cancelled there (monomind's cancel frame; for codex also SIGTERM to the
+  process group; a group kill only if monomind has not exited within its grace,
+  and none once it has), and the answer is a message with one
+  `tool_calls` entry (`id` `call_<random>`, `type` `function`, `function`
+  `{name, arguments}` with `arguments` a string of JSON) and
+  `finish_reason: "tool_calls"`, `content` null or what the model said before the
+  call, and no `usage`; streamed, a chunk with the call's `index`, `id`, `type`
+  and `name` and empty `arguments`, a chunk with the arguments, a chunk that
+  finishes with `tool_calls`, then `[DONE]`. The model asks for the other calls
+  of a batch in the next round, which costs a round (two calls in one leg
+  resumed with both results worked once in three on claude). The client runs the
+  call and sends the conversation again with an assistant message carrying the
+  `tool_calls` (its `content` may be null) and a `role: "tool"` message with the
+  `tool_call_id` (it must answer a call of an earlier assistant message) and the
+  result (text, at most 256 KiB), and the next leg answers or calls again. A
+  leg that calls nothing is an ordinary answer. No process waits for the
+  result and no slot is held meanwhile; a leg is a turn like any other (slot,
+  timeout, cleanup). The follow-up **resumes** the runtime's own session when
+  the leg that made the call left a record that fits: single-use, in memory (a
+  restart loses them), ten minutes, 1,024 in all and 64 per key, holding ids
+  and names and hashes, never the arguments or the result. It must be the same
+  key and profile, model, function (with the arguments the model gave the call,
+  compared as a hash of a canonical form of what the JSON says: the keys of every
+  object in order, each string written one way (a character as itself or as an
+  escape, `<` as itself or as its JSON escape, `/` as itself or as `\/`), no
+  spacing, and each number as it was written; so a client that stores its history
+  and writes the arguments again, with the keys in another order or other
+  escapes, still resumes, while one that changed a value, a number (`1.0` is not
+  `1`), the order of an array or the normalisation of a string gets a replay;
+  text that is not JSON is compared as it is, trimmed; the arguments of the
+  earlier calls of the conversation are compared the same way) and declared
+  tools, the conversation before
+  the call must be the one the session saw (a hash of the messages, and for
+  codex also the system prompt among them, the tool choice and the response
+  format: a client that edits or compacts its history gets a replay, and one that
+  changes its system prompt gets one on codex, whose resumed thread keeps the
+  first leg's; claude's resumed leg is given the system prompt, the tool choice
+  and the response format again, so for claude only the user, assistant and tool
+  messages count),
+  the result must answer that one call, and nothing but user messages may follow
+  it; otherwise, and when the runtime cannot continue the session (an error of
+  its own before it said or called anything or ran a tool of its own: claude's
+  `No conversation found` and codex's `no rollout found` both end that way
+  within a few seconds, and no wording is matched), the transcript is
+  **replayed** in a new turn with the tools declared again, which always works.
+  A resume that fails before the model ran (nothing said or called, and no tool
+  of the runtime's own that monomind did not deny) for a rate limit, the quota,
+  a budget or a sign-in gives its record back with the expiry it had, so the retry
+  resumes while the ten minutes of the leg last. A tool of
+  the runtime's own that ran (codex using one of the user's own MCP servers) is
+  never run again by either: its leg is neither replayed nor given back. The system prompt of a resumed claude leg says that the
+  caller ran the call and that its result is real: cancelling a leg at its call
+  makes the claude CLI write a rejected result and an interrupt marker into the
+  session, and a model that read them distrusted the result (0 of 3 with the
+  note in the user message, 3 of 3 in the system prompt). codex's runner passes
+  no system prompt on a resumed thread, so codex is not told; it did not need
+  it (it distrusted 0 of 18 results). For the same reason the conversation hash
+  of a codex leg includes the system prompt and the tool choice: a client that
+  sends `required` or a named function in one round and `auto` in the next gets a
+  replay each round (on claude it does not: the resumed leg is told the new
+  choice). A result is fenced in
+  the prompt (`<function_result>`), with the fence's tags and any line that
+  would open a turn of the transcript defanged, reading the text as a model does
+  (every kind of line break ends a line, whatever renders as nothing is not
+  there, look-alikes of ASCII are ASCII by NFKD, a letter with a diacritic is the
+  letter and Unicode tag characters (U+E0000 to U+E007F) are their ASCII twins,
+  case does not matter; a match is neutralised in place and nothing else changes,
+  CRLF included. A marker is a role word in brackets at the start of a line or
+  `[tool NAME (ID)]`, so `[tool.poetry]`, `[User guide](url)` and
+  `[tool for tool in tools]` are text; the fence's tag spelled with an underscore
+  is a tag anywhere, the spellings without one only as a closing tag where the
+  name ends: `internal/openaiapi/tools_defang.go`; the fence is the defence, this
+  a second layer). The arguments of a call that the client
+  sends back are rendered as compact JSON, or defanged like a result when they
+  are not JSON, and the name of such a call must be printable ASCII without
+  `[ ] < > & ' "` or a backtick (400 `invalid_value`, naming the parameter, never
+  the value), while an id that is not (1 to 128 bytes of anything) is shown as
+  `call_1`, `call_2`, ... in order of appearance (`labelCalls`; the follow-up
+  replays, only the gateway's own id resumes). monomind rejects a call whose top-level
+  types, string enums or required names do not match what it was told of the
+  schema: it never comes back (the model retries, and after monomind's round cap
+  of 10 the client gets 200 with the cap's text and `finish_reason: "length"`);
+  what monomind cannot see (nested properties, items, patterns, formats, ranges,
+  lengths) is returned as the model wrote it and counted in the log when it does
+  not match, and the client decides. A
+  resumed leg can ask for the same call again instead of using the result (1 of
+  19 single-result claude legs in the spike, 0 of 18 on codex), and codex repeats
+  an identical call two or three times within a leg (the leg ends at the first
+  and ignores the repeats): nothing detects either, so a client whose tools have
+  side effects should make them idempotent. That is reliability, not security.
+  With `tool_choice: "none"`, or tool history and
+  no `tools`, the turn is a plain one and earlier rounds are text in its
+  transcript. Declaring tools changes no confinement field or policy check, and
+  no tool leg runs without monomind's sandbox: every leg, a chat-only claude's
+  too, is started with the sandbox required, because under it monomind lets only
+  the prefixed names (`mcp__org__<name>`) of the declared functions through,
+  while without it a function called `Bash` would open claude's own Bash. A leg
+  whose sandbox cannot be applied is 403 `policy_denied` with nothing run, and a
+  model has the `tools` capability only where it can be (monomind's
+  `agent-exec-sandbox` and the `workspace-write` mode in the runtime's scan
+  entry; otherwise a request with tools is 400 `unsupported_parameter`). claude's
+  own tools stay denied by monomind. codex's would stay in play and
+  pull the model away from the declared ones (31 of 31 native attempts in the
+  spike, and the declared tool used 0 of 4 times), so a codex leg runs with
+  `--access read`, which monomind turns into a read-only sandbox (its start
+  event says `native_sandbox: read-only`, still `sandboxed`; `sandbox_applied`
+  in it only echoes the sandbox the gateway requested, and a write probe found
+  the environment read-only): it cannot write files, reads and the runtime's own
+  MCP servers stay open. A runtime that
+  monomind cannot run read-only is not served. `auto` with tools picks among the
+  models that serve them within `--auto-confinement`; none is a 404
+  `model_not_found` that says what to raise. The log line adds
+  `tools=<n> leg=first|resume|replay` (and `badargs=1`), never a name, an
+  argument or a result. Tool results are untrusted data (fenced in the prompt,
+  but a model can still follow what is in them), and the agent CLIs' own session
+  stores keep the arguments and results of a leg: see
+  [SECURITY.md](SECURITY.md#openai-compatible-api-surface).
+- **Exposure.** `/v1` is mounted on the main HTTP API listener only while it
+  is loopback (default `127.0.0.1:9322`, where every runtime is allowed
+  unless `--confinement` says otherwise). To serve it
+  beyond the machine, give it its own listener with `--v1-addr`
+  (`MONOAGENT_API_V1_ADDR`) on `httpapi` or `daemon`: it serves only `/v1` and
+  `/health`, is TLS only off-loopback (`MONOAGENT_API_TLS_CERT`/`_KEY`, else a
+  self-signed certificate cached under `~/.monoagent/api-tls/` that remote
+  clients must trust explicitly) and defaults to `--confinement chat-only`.
+  With the two certificate variables set, the listener speaks TLS on a
+  loopback bind too: unset them for a proxy that forwards plain HTTP. Behind
+  a reverse proxy the bind is loopback, so set `--confinement` explicitly.
+  `httpapi` exits when the dedicated listener cannot start (a bad
+  certificate, a port in use); `daemon` only prints a warning and keeps
+  running without it, so check `api status`, which says when the daemon
+  reports no dedicated listener, and which scheme each listener that answers
+  speaks (`scheme`, `http` or `https`, in `--json`, absent for one that does not
+  answer; `serves /v1 over https` in the text): the address does not tell a
+  dedicated loopback listener that has a certificate from one that has not. Read
+  [SECURITY.md](SECURITY.md#openai-compatible-api-surface) before exposing it.
+- **Limits.** 2 MiB request body (64 KiB for an image request), 4 concurrent turns (`--max-concurrent`,
+  `MONOAGENT_API_MAX_CONCURRENT`; a full server answers 429 with
+  `Retry-After: 2`), a 10 minute turn timeout (`MONOAGENT_API_TURN_TIMEOUT`)
+  and no CORS. The errors of the four routes use the OpenAI shape
+  `{"error":{"message","type","param","code"}}` and carry an `X-Request-Id`;
+  a path or method the API does not have gets Go's plain-text 404 or 405.
+  The server logs one line per chat completion, per image request and per failed authentication
+  (and per failure to list models or to search a context key's knowledge,
+  among others), and never a prompt, an answer, a tool name, argument or
+  result, or a key. Stopping the server
+  answers a turn in flight with a 503 the client can retry.
+- **Server settings.** The settings a server reads at start can be saved in the
+  database, so that a daemon the login service starts (which has no flags and
+  not this shell's environment) has them: `monoagentcli api config
+  show|set|unset`. There are ten, named by the keys of `api config show --json`:
+  `v1_addr`, `tls_cert_file`, `tls_key_file`, `confinement`,
+  `context_confinement`, `auto_confinement`, `max_concurrent`, `turn_timeout`,
+  `image_runtimes` and `tool_runtimes`. `set` takes the flags the server has
+  (`--v1-addr`, `--confinement`, `--context-confinement`, `--auto-confinement`,
+  `--max-concurrent`) and `--tls-cert-file`, `--tls-key-file`, `--turn-timeout`,
+  `--image-runtimes` and `--tool-runtimes`, which `httpapi` and `daemon` do not
+  have (the environment is the only way to give those at a start); it changes
+  only the settings it is given, and `unset` takes keys (or a flag's spelling,
+  `v1-addr`) or `--all`. A value has the syntax of its environment variable and
+  is refused where the flag or the variable would be (exit 3, naming the
+  setting; `internal/openaiapi` owns the rules, `internal/apiconfig` the
+  document), and an empty one is refused (use `unset`). The saved layer is
+  stricter than the flags and the environment in two ways, because it outlives
+  the process that wrote it and is shown to people and to models: no value may
+  contain a control character, and a TLS file is an absolute path (a service
+  starts in another folder, and nothing expands a `~`). What is accepted is
+  stored in a canonical spelling (`900s` as `15m`, `agy, Codex` as
+  `antigravity,codex`). Per setting the order is **flag, then environment
+  variable, then saved, then default**; the two TLS files are one setting (if
+  either variable is set, both come from the environment, and one without the
+  other is an error there, as before). `newAPIRuntime`, `api models` and
+  `api status` read all of it through `internal/apiconfig`, so what they say is
+  what a server started now would do. The saved settings are one JSON row
+  (`{"v":1, ...}`, key `api_gateway_config`) of the existing `settings` table,
+  machine-wide like the daemon and not per profile, so a `--db-path` other than
+  the default edits a database that the login service's daemon does not read.
+  Every change is one `BEGIN IMMEDIATE` read-modify-write, so two writers never
+  lose each other's change; a
+  field this binary does not know is kept when the row is written, and a row in
+  a higher format (`v`) is refused and never rewritten.
+- **Applying a change, and where a setting stands.** A server reads the saved
+  settings when it starts and never while it runs (the policy is bound to each
+  listener when it is mounted). `monoagentcli daemon restart` restarts the
+  daemon through the auto-start service it is registered as (`launchctl
+  kickstart -k`, `systemctl --user restart`, the Windows Scheduled Task's end and
+  run; see `daemon install`), and says first, on stderr, that this interrupts
+  what the daemon is running (workflows, org runs). A daemon that is not
+  registered cannot be restarted by it (exit 3: stop it and start it again, or
+  `daemon install`); one started by hand while the service is registered has to
+  be stopped first. `--json` prints `{"restarted":true,"via":"launchd"}` (`via`
+  is `launchd`, `systemd` or `schtasks`). The running daemon records the
+  effective value and the source (`flag`, `env`, `saved` or `default`) of every
+  setting in its heartbeat (`api_settings`), and `api config show` gives each
+  setting a `state` from it: `applied` (the daemon runs the saved value, or the
+  default where none is saved, and a start now would resolve that),
+  `pending_restart` (a start now would resolve something else), `overridden`
+  (the daemon was given a flag or a variable of its own, so a saved value has no
+  effect until that is removed, whether or not one is saved), `not_serving`
+  (only for `v1_addr` and the two TLS files: the daemon took the value, and it
+  is what a start now would resolve, but the dedicated listener they describe is
+  not up, because it could not bind the address or load the certificate: its log
+  says which, and a restart does not cure it until the setting is corrected),
+  `not_running` or `unknown` (a daemon that predates the report). The state ignores this shell's
+  environment, which a login service does not read; `effective` and `source`
+  are what a server started from this shell would use. `restart_needed` is true
+  when a setting is `pending_restart`, and `daemon.autostart` says whether
+  `daemon restart` can restart the daemon.
+- **The exposure gate.** A change that makes the server reach further than it
+  did needs `--yes`: without it `set` and `unset` exit 3 with the reasons, on a
+  terminal too (there is no prompt), and `--dry-run` says what a change would do,
+  the reasons included, and saves nothing. With `--json` they print the
+  `show` document of the state after the change plus `applied`, `changed` (keys)
+  and `widening` (a list of `{key, reason}`). The gate compares the effective
+  policy of the two saved documents (`apiconfig.Widens`): a dedicated listener
+  (`v1_addr`) whose bind reaches further than the saved one (the order is no
+  listener or loopback, then one host beyond this machine, then every interface:
+  so beyond this machine from none or loopback, another host, or every interface
+  from one host; an empty host, `0.0.0.0` and `[::]` are every interface, and any
+  host name other than `localhost` is a host, a name and its address being two;
+  the port alone changes nothing); a higher class for
+  `confinement`, `context_confinement` or `auto_confinement`, on the loopback
+  kind of listener or on the kind beyond this machine (both are judged whether or
+  not a `v1_addr` is saved, because the daemon's own environment may supply one:
+  so raising `confinement` to `sandboxed` or `any` always needs `--yes`, and
+  `chat-only` never does); a runtime list that gains a runtime the old effective
+  list did not have (a runtime of the default list that a saved list left out
+  counts when it comes back, as a class that rises back to its default does), or
+  leaves `none`; and the removal of a saved row that cannot
+  be read (below), which has a key of its own, `saved_settings`. Unsetting is
+  judged the same way: removing
+  a `confinement` of `chat-only`, an `image_runtimes` of `none` or of `codex`
+  (which leaves antigravity out) gives the
+  server more reach. Narrowing, `max_concurrent`, `turn_timeout` and the TLS
+  files never need it, and a value that equals the default is not a change of
+  the policy. A row that cannot be read (not a JSON object, a `v` that is not a
+  whole number, a field of the wrong type) is invalid saved data the user can
+  fix: `show`, `set`, `unset <setting>`, the server, `api models` and
+  `api status` stop at it with exit 3 and one message that starts `the saved
+  settings are damaged` (`apiconfig.DamagedMessage`) and names the repair, so a
+  caller that has only the exit code and the last line of stderr (the app) can
+  offer it: `api config unset --all --yes` removes the row and says so
+  (`removed_unreadable_row` in `--json`, a note on stderr). It needs `--yes`, in
+  the CLI and through `apiconfig.Apply` (`Change.Confirm`), because what the row
+  limited cannot be told, so removing it may reach further than anything: the
+  widening `saved_settings`, which a dry run reports and which is exit 3 without
+  `--yes`. A row a newer `monoagentcli` wrote is exit 1, is not offered a reset
+  and is never removed, by `unset --all --yes` either, because that would lose
+  what it saved: use that version, or remove the row by hand
+  (`apiconfig.RemoveRowSQL`, in the database the command opened). A failing
+  database is never taken for damage. A value that fails its
+  rule in a row somebody edited is listed under `problems` by `show`, stops the
+  server, `api models` and `api status` (exit 3, naming the setting), is not
+  looked at by a `set` that does not touch it, and is removed by `unset`. The
+  daemon is the exception to "stops the server": it does more than serve the
+  API, and a login service would start it again and again, so it does not stop
+  with settings it cannot use. It starts without the OpenAI-compatible API (no
+  `/v1` on its HTTP API listener, no dedicated listener, no settings in its
+  heartbeat), says why on stderr and in its log with the way out, and runs
+  everything else; a saved setting is never ignored to make the API start, since
+  that would serve with the defaults a server that someone had limited, and a
+  bad flag or variable of that start is still an error. `daemon restart` reads
+  the saved settings (and opens the database) first and refuses, restarting
+  nothing, with exit 3 and the same message when they cannot be used (exit 1 for
+  a row in a newer format), since a restart would replace a daemon that serves
+  the API with one that does not.
+- **One surface each, as far as it goes today.** The aim of this phase is that
+  every setting and action of the API can be done in the CLI (a headless
+  server has nothing else), in MCP and in the desktop app, with the same
+  behaviour, the same checks and the same words (the documents are built in
+  `internal/apiconfig`, which the CLI only prints). Where each stands:
+
+  | | CLI | MCP | Desktop |
+  |---|---|---|---|
+  | keys: create, list, revoke, context on/off | `api key` | `api_key_*` | yes |
+  | key: rename | `api key update --name` | `api_key_update` | yes (Settings › the keys table) |
+  | models, capabilities, what `auto` may pick | `api models` | `api_models_list` | yes (read-only) |
+  | status: listeners, base URLs, scheme, confinement | `api status` | `api_status` | yes (read-only) |
+  | `auto` on/off for the profile (Jev surface `api_auto`) | `jev enable api_auto` | `api_auto_set` (switching on needs the operator's `--allow-api-exposure` and `acknowledge_egress`) | yes (Settings › Jev) |
+  | server settings: show | `api config show` | `api_config_get` | yes (Settings › Server settings) |
+  | server settings: change and keep | `api config set`, `unset` | `api_config_set` (a change that reaches further needs the operator's `--allow-api-exposure`) | yes (Settings › Server settings) |
+  | apply a change (restart the daemon) | `daemon restart` | `api_config_apply` | yes (Settings › Server settings) |
+- **The exposure gate from MCP.** `api_config_set` calls the same
+  `apiconfig.Apply`, with `Change.Confirm` set to the MCP server's
+  `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), read when the
+  server starts and never from an argument of the call: where the CLI has
+  `--yes`, MCP has a switch that the operator sets and the model cannot, and a
+  refused change saves nothing. The repair of a row that cannot be read stands
+  behind it too: `api_config_set` with `unset: "all"` is refused without the
+  flag (the reason `saved_settings`) and removes the row with it. Of the
+  mutating tools `api_config_set` and, to switch the auto model on,
+  `api_auto_set` have it (what leaves the machine is the operator's decision
+  too); `api_config_apply` is held back by `--allow-mutations` alone, and
+  `api_auto_set` also needs `acknowledge_egress`, which the
+  caller sets: it makes what leaves the machine visible, and is not an access
+  control. `api_models_list` reads the saved settings under the environment, as
+  `api models` does.
+- **Desktop app.** Settings › "OpenAI-compatible API" (after the Jev section,
+  folded until opened, read again when Settings is shown again) runs the
+  commands above through `wails-app/app_api.go`. It shows every listener that
+  serves `/v1`, a network one never left out for a loopback one that answers:
+  its base URL with a copy button (the scheme is the one `api status` saw
+  answer, derived only for a listener that did not or a CLI that predates it;
+  an address that is not a host name or IP address and a port gets no URL),
+  whether it runs, "bound to loopback" or "network" (a proxy, tunnel or port
+  forward on the machine can still expose a loopback one) and the confinement
+  the running daemon reports, or that is assumed from the app's environment.
+  The header says Network when any listener that serves `/v1` is bound beyond
+  loopback. The active profile's keys: create with a show-once panel (Escape
+  does not close it, only Done: the key is not shown again), a context switch
+  (turning it on asks first, since excerpts of the profile's documents reach the
+  model's provider) and revoke after a confirmation. The models: their class,
+  whether the policy of the first listener that answers `/v1` (the first listed
+  when none does) serves them, and whether a context key and `auto` may use them. `auto` says what it picks among
+  (with one model the rule uses it and Jev is not asked) and how many served
+  models `--auto-confinement` holds back, or what it is missing, with a link to
+  the Jev settings when that is where it is switched on (the `api_auto` surface,
+  a Jev key). A key is renamed in the keys table (`api key update --name`: the
+  name and nothing else, never the context switch; Enter saves, Escape
+  cancels).
+  The folded "Server settings" block below the status (`wails-app/app_api_config.go`
+  and `api/ApiConfigBlock.jsx`) has nine rows for the ten settings of `api config`
+  (the two TLS files are one row, saved and removed together), each with its
+  saved value (editable), what the running daemon
+  started with and its source, and its state from `api config show` (applied,
+  restart needed, overridden by the daemon's own flag or variable, daemon not
+  running, unknown). Save and "Use the default" are `api config set` and
+  `unset`, each in two calls: a dry run (`--dry-run`) that says what the change
+  would do and whether it makes the server reach further, then the change
+  itself, unconfirmed. When the CLI says it widens, a dialog lists its reasons as
+  it worded them (Cancel is where the focus starts) and only its confirmation
+  makes the second call with `--yes`. The app judges nothing itself: a value,
+  what widens and each state are the CLI's to say, shown in the page's language
+  for the rules the page knows and as the CLI said it, marked English,
+  otherwise. It only trims the spaces around what is typed. A saved row the
+  CLI cannot read (exit 3, "the saved settings are damaged") is shown as the
+  CLI worded it with a "Reset the saved settings" button, a change that widens
+  like the others (`unset --all --dry-run`, the dialog, then `--yes`), after
+  which the status and the models are read again; a row in a newer format
+  (exit 1) gets its message and no reset. A banner says when
+  a restart is needed. When the daemon is registered for auto-start (`daemon.autostart`
+  of the document) a button restarts it after a dialog (`daemon restart`: it
+  interrupts workflows and org runs; nothing here claims a graceful stop), and
+  the settings are read again after a moment, a few times, until the daemon
+  runs what is saved; otherwise the banner shows the commands to run
+  (`monoagentcli daemon` after stopping it, and `monoagentcli daemon install`)
+  with a copy button. A setting whose dedicated listener the daemon could not
+  bring up (`not_serving`, for `v1_addr` and the two TLS files only: the daemon
+  took the saved value and its log says why) says "Listener not up" in its row
+  and in the banner, which names the settings and says to correct them and
+  restart (with the same button, or the same commands, as the restart banner),
+  and a restart that ends with the daemon back and such a listener not up says so
+  instead of that it runs the saved settings. A restart the CLI refuses for the
+  saved settings (exit 3: a damaged row, a value that fails its rule) is shown
+  as the CLI said it, and the settings are read again, which brings the reset for
+  a damaged row; only the refusal that starts "the daemon is not registered for
+  auto-start" shows the commands.
+
+Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
+`examples/openai-api-quickstart.md`; paths and schemas:
+`internal/httpapi/openapi.yaml`.
 
 ## Assistant chat & tools
 
@@ -438,24 +1233,25 @@ event.
 
 ### Coder mode (full access)
 
-Coder mode is a chat where the agent runs as a full Claude Code session in
-a folder: it can run any command and read or change any file the user can,
-with no approval prompts, and it loads the user's normal Claude Code setup
-(CLAUDE.md, skills, hooks, MCP servers) plus the folder's own.
+Coder mode is a chat where the agent runs as a full session of a coding
+CLI (Claude Code, Codex, OpenCode, …) in a folder: it can run any command
+and read or change any file the user can, with no approval prompts, and it
+loads the user's normal setup for that CLI (its instructions files, skills,
+hooks, MCP servers) plus the folder's own.
 
 ```bash
-monoagentcli coder status --json                          # settings + whether monomind supports it
+monoagentcli coder status --json                          # settings, monomind support, and each runtime's readiness
 monoagentcli coder enable --yes-i-understand              # off until enabled; the CLI enforces it
 monoagentcli coder set --workspace-root ~/monoagent-coder --max-turns 200 --timeout 60m --budget-usd 5
 monoagentcli coder workspace root --json                  # the coder root itself, set up as a shared working folder
 monoagentcli coder workspace new --json                   # or a fresh random test folder inside it
-monoagentcli chat history create --runtime claude --mode coder --coder-root   # or --cwd <any folder>, --new-workspace
+monoagentcli chat history create --runtime codex --mode coder --effort high --coder-root   # or --cwd <any folder>, --new-workspace; runtime defaults to claude
 monoagentcli chat --conversation <conv> --turn <id> -- "make the tests pass"
 monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled turn
 ```
 
-- The mode and folder are fixed when the conversation is created. Claude
-  Code keys its sessions by folder, so a conversation always resumes in the
+- The mode and folder are fixed when the conversation is created. The
+  CLIs key their sessions by folder, so a conversation always resumes in the
   same one.
 - A picked folder is initialized with `monomind init --if-missing`, which
   adds missing setup files and never touches existing ones.
@@ -465,11 +1261,361 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
 - Every tool call is journaled (`tool.started` with `native: true` /
   `tool.completed`); startup progress and background processes left running
   arrive as `coder.status` / `coder.background` notices.
-- It runs on the `claude` runtime only, refuses to run as root, and needs
-  monomind's `agent-exec-full-access`, `agent-exec-settings`,
-  `agent-exec-tool-activity` and `init-json` capabilities. Without them it
-  fails with code `needs_monomind_update`. When disabled, the code is
-  `coder_disabled`.
+- Provider rate limits (any chat turn): monomind retries a 429 itself (3
+  attempts, agent-exec rev 20). Each retry is an `agent.rate_limit_retry`
+  warning notice ("Rate limited (429) by X; retrying in 2s (attempt 2/3)").
+  When it gives up, error `rate-limited` becomes an `agent.rate_limited`
+  error notice with monomind's message, and the turn fails. The
+  conversation is not affected, so the next turn runs as usual. Used-up
+  quota or credits stay `quota` and are not retried.
+- It refuses to run as root, and needs monomind's `agent-exec-full-access`,
+  `agent-exec-settings`, `agent-exec-tool-activity` and `init-json`
+  capabilities. Without them it fails with code `needs_monomind_update`.
+  When disabled, the code is `coder_disabled`.
+- **Runtimes.** `coder status --json` keeps `runtime: "claude"` for older
+  apps and adds `runtimes: [{id, installed, fullAccess, ready, toolActivity,
+  resume, effort, maxTurns, reportsCost, initTarget}]`, one per scanned
+  runtime, from `agent scan`'s `full_access`, `tool_activity_fidelity`,
+  `resume`, `effort`, `max_turns`, `reports_cost` and `init_target`. A runtime
+  is ready when it is installed, monomind runs it with full access, and the
+  capabilities above are present. A monomind without
+  `agent-exec-full-access-any` runs only claude. A runtime monomind won't run
+  with full access fails with code `coder_runtime_unsupported`. An uninstalled
+  one is not refused up front, so the turn reports it as not set up. A new
+  folder gets that runtime's setup files (`monomind init --target
+  <initTarget>`). pi, dsh, grok, copilot, qwen and crush report `agents`,
+  which writes AGENTS.md alone. A runtime with no init target (an older
+  monomind) gets a minimal AGENTS.md written by mono-agent. Only claude
+  folders get Claude's setup (CLAUDE.md, `.claude/`, `.mcp.json`).
+- The conversation keeps its runtime and effort. Effort goes to monomind as
+  `--effort` when it has `agent-exec-effort` (mapped per runtime). An older
+  monomind gets it only for claude, as `CLAUDE_EFFORT`.
+- Native tool calls carry monomind's normalized `kind` (`shell`, `edit`,
+  `write`, `read`, `search`, `web`, `mcp`, `task`, `todo`, `patch`, `other`)
+  on `tool.started`, with canonical input keys. `fileExisted` comes from
+  `file_path` for edit/write, and a shell call's `exitCode` from the end
+  event's `exit_code`. Claude tool names are the fallback for an older
+  monomind. On a `start-only` runtime no call reports an end, so calls still
+  open when the turn finishes close with `ok: null` (outcome unknown), not
+  as cancelled.
+- Granting an org role full access is refused inside any agent. The
+  markers mirror monomind's `AGENT_CONTEXT_ENV_MARKERS`: `CLAUDECODE`,
+  `CLAUDE_CODE_ENTRYPOINT`, `MONOMIND_ORG_ROLE`, `MONOMIND_SDK_AGENT`,
+  `MONOMIND_AGENT_EXEC`, `AI_AGENT`, `AGENT`, `CODEX_SANDBOX`,
+  `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_CI`,
+  `OPENCODE`, `OPENCODE_PID`, `ANTIGRAVITY_AGENT`, `GEMINI_CLI`,
+  `GROK_SESSION_ID`, `GROK_MANAGED_BY_NPM`, `COPILOT_CLI_BINARY_VERSION`,
+  `COPILOT_AGENT_SESSION_ID`, `CRUSH`, `PI_CODING_AGENT`, `PI_SESSION_ID`,
+  `QWEN_CODE`, `DSH_SHELL`, `DSH_SESSION_ID`, and `MONOMIND_CLINE_TURN` /
+  `MONOMIND_AIDER` (set by monomind's runners, since cline and aider set
+  none of their own). A shell that sets the generic `AI_AGENT` or `AGENT`
+  itself is refused too.
+- **cline, aider, DeepSeek Harness (`dsh`) and pi** have no model-listing
+  command, so `agent models` reports them unsupported and mono-agent
+  offers a curated list. It includes free OpenRouter models
+  (`qwen/qwen3.8-27b:free`, `nvidia/nemotron-3-super-120b-a12b:free`,
+  `google/gemma-4-31b-it:free`, `poolside/laguna-s-2.1:free`,
+  `cohere/north-mini-code:free`) that need only a free
+  `OPENROUTER_API_KEY`. aider, pi and dsh name them `openrouter/<id>`.
+  cline takes the bare id and needs its OpenRouter provider (`cline auth
+  openrouter`, or `CLINE_PROVIDER=openrouter`). dsh also lists DeepSeek's
+  own models and free NVIDIA-hosted ones. The coder header names each
+  runtime's key setup files: `.clinerules/monomind.md` for cline,
+  `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
+  and pi. The app shows `dsh` as "DeepSeek Harness".
+
+#### Dynamic org (a coder chat that spawns workers)
+
+`chat history create --mode coder --org dynamic`, or `chat history set-org
+<conversation> dynamic` on an existing coder conversation, lets the chat's
+agent (the **lead**) bring in **worker** agents. The lead gets six caller
+tools:
+
+| Tool | What it does |
+|---|---|
+| `org_roster` | The models, roles and access profiles it can staff with, the limits, and the workers so far. |
+| `org_spawn` | Starts a worker on a brief. The lead may choose the worker's `role`, `skills`, `runtime`/`model`, `effort` and `access`; anything left out is picked for it. With `wait` it waits up to 100s. `allow_spawn` lets the worker start sub-workers (below). |
+| `org_wait` | Waits for workers and returns their reports. |
+| `org_message` | Sends a follow-up to a finished worker, or to a veteran from an earlier turn (below), resuming its session when the runtime can. |
+| `org_stop` | Stops a worker. |
+| `org_rate` | Rates a worker's latest report `good` or `bad`, once per report. The rating feeds the roster's track record (below). |
+
+Outside the turn, `monoagentcli chat turn stop <conversation> <turn> --agent
+<id> [--wait 20s] --json` stops one worker and leaves the lead and the other
+workers running (#255); the app's stage drawer calls it through
+`App.StopChatAgent`. The control path is a mailbox folder next to the
+database, `<db dir>/chat-control/<turn-id>/`: the command drops a
+`stop-<agent-id>` file, and the turn process, which polls the folder while
+its conductor runs, calls `Conductor.Stop` and removes the file (that removal
+is the acknowledgement). A file works from any process of the same user, on
+every OS, whichever window owns the turn. The journal then shows the usual
+`agent.status` to `cancelled` and `agent.finished` with outcome `cancelled`,
+and the command reports the worker's status from it. A worker or turn that
+already finished is a no-op (`requested: false`), and an agent the turn
+doesn't have reports `unknown`. The turn removes its folder when it ends,
+and writes its pid into it: a stop against a crashed turn (dead pid) is an
+immediate no-op with `detail`, and `chat history reconcile` (app start)
+sweeps folders whose pid is gone. The app passes the ids after `--`.
+
+How the conductor staffs a worker:
+
+- **The lead's choices win.** They are only checked: a model must be in the
+  validated roster (`agent roster`), and a role must exist.
+- **Role:** `monomind pick --agents` in the chat folder, with Jev choosing
+  from the shortlist when pick isn't confident. Without a match it falls
+  back to a built-in role: coder, reviewer, tester, researcher or planner.
+- **Skills:** `monomind pick --skills`, up to three, only when pick is
+  confident. Their text comes from `monomind org skills show`.
+- **Model and effort:** Jev chooses when a TypeSafe key is set; otherwise
+  rules decide. Research goes to the cheapest, fastest ready model, and
+  writing work to the lead's own model. `coder set --org-model-picker lead`
+  makes the lead name every model itself.
+- **Track record (#230):** every worker result and every `org_rate`
+  rating is stored in `agent_model_outcome_events` with the runtime, model
+  and the worker's role category. A result counts when it is `done`
+  (success) or `failed` on the worker's own error or timeout (failure; the
+  timeout is the turn's exec timeout, `cfg.Base.Timeout`, so a model too
+  slow for it counts as failing). A cancelled run, a budget refusal or
+  budget stop (`ErrBudget`), and a model that couldn't run at all (auth,
+  quota, `rate-limited`, model unavailable, missing binary) are not
+  counted, and the lead can't rate them. A rating weighs twice as much as a
+  bare result. Each event's weight halves every 30 days, and the score is
+  smoothed with a Beta prior of 4 events at 75%, so it is not the plain
+  share of results that succeeded. A score counts only from 3 **results**
+  per model and category (ratings don't add to that count). One turn
+  records at most 2 results per model and category (`QualityTurnCap`), and
+  ratings only of those, so a single bad turn can't bench a model. Below
+  50% the model is a **bad fit** for that category: the rules pick it only
+  when nothing else can run the worker, fallbacks try it last, and Jev gets
+  each score and the plain counts in its state and in the option text
+  ("engineering score 38% (0 of 4 succeeded)"). The lead's own choice of
+  model still wins. A bad fit recovers only as its failures decay (about
+  18 days for 3 fresh failures, about 54–65 days when the lead also rated
+  2–3 of them bad), or through new results when Jev or the lead still
+  picks it. `agent roster` shows the scores
+  (`track_record` in `--json`).
+
+Each worker's access profile is set by the lead, and none goes past the
+coder chat's own full access. A `research` worker is confined, in order of
+preference, by `--access read`, else by a read-only sandbox
+(`--sandbox read-only` where the runtime's `sandbox_modes` list it). With
+neither (monomind without `agent-exec-access-read`, or a runtime with no
+`read` access mode and no sandbox), only its prompt keeps it from editing,
+so it runs with full access and takes the write lease like a writer. Staffing
+by rule picks a model that confines research before a cheaper one that
+doesn't. Each `agent.status` of a research worker says which path its run
+took (`confinement`: `access-read`, `sandbox-read-only` or `write-lease`).
+A confined researcher only falls back to models that confine
+it too. The sandbox fails closed: the run passes `RequireSandbox`, so if
+`Exec` can't apply the read-only sandbox at run time (the scan was stale,
+the runtime changed), or the start event reports anything but `sandboxed`,
+the run is refused or cancelled. It then runs again without the sandbox,
+holding the write lease. A refusal is not recorded as a model outcome, and
+neither is a run the org's budget refused or monomind stopped at its
+budget.
+
+| Profile | Access |
+|---|---|
+| `coding` | Full access. |
+| `qa`, `automation` | Full access, plus `monoagentcli` for the browser, extension, workflows and automations. |
+| `research` | Read-only, confined as described below. |
+
+How workers run:
+
+- **Processes:** each worker is its own `agent exec` in the chat folder,
+  with the user's setup loaded.
+- **Leases:** one worker edits at a time (the write lease), and one uses the
+  browser at a time (the browser lease). Readers run in parallel. The lead's
+  own file edits (`Edit`, `Write`, patch tool calls in its event stream)
+  take the write lease from the call's start to its end, or until the lead
+  calls `org_wait` or its turn ends. Writers queue behind the lead. The
+  lead's native tools can't be refused, so an edit it starts while a
+  worker holds the lease is reported instead: an `org_lead_edit_conflict`
+  warning notice, and `warnings` in its next org tool result. Only edit
+  tool calls are seen (`isEditCall` in `internal/dynorg/lead.go`): a lead
+  that edits through the shell (`sed -i`, `cat >`, a codex exec command)
+  takes no lease and gets no warning.
+- **Isolated writers (#230, `coder set --org-writers isolated`; default
+  `shared`, the lease above).** Each writing worker (`coding`, `qa`,
+  `automation`) gets its own git worktree at
+  `<chat folder>/.monoagent-worktrees/<turn>/<worker>` on branch
+  `monoagent/<turn>/<worker>`, cut from the chat folder's `HEAD` (not the
+  lead's uncommitted edits), and runs there without the write lease, so
+  writers run in parallel. The folder sits inside the chat folder (writable,
+  same disk, inside what the runtimes already allow) and is added to the
+  repository's `.git/info/exclude`, never to the tracked `.gitignore`.
+  After each run the worker's changes are committed on its branch as a
+  checkpoint, with `--no-verify` and signing off: **merged work never
+  passed the repository's pre-commit hooks**, so the lead is told to run
+  the project's checks after merging. A checkpoint is only made in a
+  folder that is the top of a worktree whose `HEAD` is the worker's own
+  branch; a worktree that lost its `.git` or a worker that checked out
+  another branch gets an `org_checkpoint_failed` notice instead, so git
+  can never fall through to the chat folder's repository and commit the
+  user's own work. The lead gets `org_merge <agent_id>`, which merges the
+  branch into the chat folder (`--no-ff`) under the write lease, one merge
+  at a time; a worker being merged can't take a follow-up. A failed
+  checkpoint fails the merge. A conflict aborts the merge, leaves the tree
+  as it was, and returns a tool error listing the conflicting files.
+  `agent.spawned`, `agent.status` and `org_wait` carry the `branch`, and
+  the stage drawer shows it.
+  - **Cleanup:** at turn end each worktree is removed. A worktree with
+    changes that can't be committed, or whose `git status` fails, is kept.
+    Files git ignores in it (build output, `*.local` config) are removed
+    with it and listed in an `org_ignored_removed` notice. Its branch is
+    deleted only once another local branch contains it (a detached `HEAD`
+    doesn't count); otherwise it is kept with an `org_branch_kept` notice.
+    Worktrees of turns no longer running are cleaned the same way by
+    `chat history reconcile` (app start; `worktrees` in its `--json`) and
+    at the start of the next isolated turn in that folder. A running turn
+    holds a lock file (`<turn>/.lock`) and is skipped even when the
+    database already calls it finished. Every removal is checked to be
+    inside the worktree folder (no symlinks out), and a folder in it that
+    isn't a worktree is left unless empty.
+  - **Visible to some tools:** git ignores the worktrees, but tools that
+    don't read git's excludes (jest's haste map, some globs, file
+    watchers) see duplicate files under `.monoagent-worktrees/` while a
+    turn runs; the lead's prompt says so.
+  - A chat folder outside git, or a repository with no commit, keeps the
+    lease with an `org_writers_shared` notice. Research workers and the
+    lead's own edits keep the lease rules above.
+- **Limits:** `coder set --org-max-agents` (default 6), `--org-max-concurrent`
+  (default 3) and `--org-budget-usd` (worker cost; 0 = none, the default), plus
+  3 follow-ups (`org_message`) per worker.
+  - Every spawn and follow-up checks the budget.
+  - Each worker exec gets the remaining budget as its own `--budget-usd`, so
+    concurrent workers can together overshoot by at most
+    `--org-max-concurrent` × the remainder.
+  - Runtimes that report no cost (codex, copilot, …; the scan's
+    `reports_cost`, monomind 2.19+) are priced from the tokens their exec
+    reports with the built-in price table (`agentroster.TokenCost`,
+    `internal/dynorg/estimate.go`). The estimate is journaled as
+    `costEstimated` on `usage.updated` and `agent.finished`, and the stage,
+    bubbles and chat show it with "≈".
+  - Estimates run high: exec reports no cache split, so all input is priced
+    as uncached. A subscription plan (codex on ChatGPT, copilot) has no
+    per-token bill at all. So estimates count toward the budget only when
+    the user set `--org-budget-usd`. There is no default budget, so without
+    one they are only shown. With one set, a worker's estimate can refuse
+    the next spawn or exec, and it stops a running worker once it reaches
+    that exec's budget. A run that completes anyway stays done.
+  - A run with neither a cost nor tokens, or on a model the table can't
+    price, counts nothing, and is bounded only by `--max-turns` and the
+    timeout.
+  - A limit makes the tool return an error the lead can read.
+- **Names:** role and skill names from the lead must match
+  `[A-Za-z0-9][A-Za-z0-9._-]*`. An unknown skill is refused.
+- **Tools and MCP servers:** workers get only `ask_user` (below) and, when
+  the lead allows it, the sub-worker tools as caller tools. They load the
+  user's settings like the coder chat itself (`--settings
+  user,project,local`), so they see the same MCP servers the lead does. "No
+  messaging or people" is a rule in their prompt, not a tool filter.
+- **Fallback:** when a model can't run (not signed in, out of quota, unknown
+  model), the next ready model takes over (`agent.reassigned`). The failure
+  is also written back to the roster.
+- **End of turn:** when the lead's turn ends, workers still running are
+  stopped.
+- **Solo fallback:** when the runtime can't take caller tools with full
+  access (monomind 2.19's `agent-exec-full-access-tools`, scan
+  `caller_tools_with_full_access`), the turn runs solo with an
+  `org.unavailable` notice.
+
+**Sub-workers** (#230): `org_spawn` with `allow_spawn: true` gives that
+worker `org_spawn`, `org_wait` and `org_message` for sub-workers of its
+own, when its exec can take caller tools. Code: `internal/dynorg/tree.go`.
+- **Depth:** at most lead → worker → sub-worker. Sub-workers never get
+  `org_spawn`, and `allow_spawn` on a sub-worker is refused.
+- **Limits:** the turn's workers, concurrency and budget count the whole
+  tree. A worker waiting in `org_wait` for its sub-workers lets go of its
+  leases and slot, like a worker waiting on the user, so its sub-workers
+  can't deadlock on them.
+- **Access:** never more than the parent's. Research takes research only;
+  coding takes coding or research; qa and automation also take their own
+  profile. An access the parent names beyond its own is refused, and one
+  staffing picks is lowered to coding. A research parent's sub-workers
+  must run confined (`--access read` or a read-only sandbox): only
+  confining models staff them, and when the sandbox isn't applied at run
+  time they fail instead of running unconfined.
+- **Scope:** a worker waits for and messages only its own sub-workers. The
+  lead can `org_wait` and `org_stop` any worker, but messages only its own.
+- **Ending:** a sub-worker's run derives from its parent's run, so it ends
+  when its parent's run ends or is stopped.
+- **Journal:** `agent.spawned.parentId` is the parent worker (and
+  `allowSpawn` marks a worker that may spawn); the brief and follow-ups
+  come `from` the parent. The stage draws the edge from it.
+
+**Veterans** (#230): workers persist per conversation. After each run the
+turn saves the worker (session id, folder, runtime and model, role and
+access, skills, last report, parent) in `ai_chat_org_workers` (migration
+060, one row per worker id, gone with the conversation). The next
+dynamic-org turn loads the latest 12 as idle **veterans**: `agent.spawned`
+with `veteran: true`, then `agent.status` `idle`. Code:
+`internal/dynorg/veterans.go`.
+- `org_roster` and `org_wait` list them (`veteran: true`, no report until
+  they run again). New workers are numbered after them.
+- `org_message` resumes a veteran's session (`agent exec --resume`) when
+  its runtime resumes and the chat's folder is the one it ran in;
+  otherwise it is re-briefed with its last report.
+- A veteran holds no slot or lease and doesn't count toward the turn's
+  workers until it runs; each run counts as a follow-up (3 per turn).
+- A veteran sub-worker comes back only with its parent, and only its
+  parent may message it.
+- A veteran runs only on a model that is still ready (in the validated
+  roster, or the lead's own); otherwise `org_message` is refused and
+  org_roster shows why, so the lead spawns a new worker. A research
+  worker's veteran sub-worker also needs a model that still confines it.
+  Any sub-worker of a research worker fails closed on a model that can't
+  confine it: no exec, and it never takes the write lease.
+- A run that ends with no report or session keeps the stored ones.
+- The stage greys out idle veterans until they run.
+
+**Questions for the user** (#256): a worker whose exec can take caller
+tools gets `ask_user`.
+- **Asking:** a question is journaled as `agent.status` `waiting_user` with
+  the question id as its detail, then `agent.message` with `direction:
+  "question"`, a `questionId` and `to: "user"`. Question ids (`q1`, `q2`,
+  …) never repeat within a turn, not even across follow-up runs. A worker
+  may ask at most 3 questions per run.
+- **Waiting:** the worker lets go of its leases and its concurrency slot,
+  and takes them back in the usual order (leases, then a slot). `org_wait`
+  shows the open question.
+- **Answering:** `monoagentcli chat turn answer <conversation> <turn>
+  --agent w1 --question q1 --text "…"` records the answer; the app's worker
+  row has an answer box that calls it. The running turn passes the answer
+  to the worker within a second.
+- **How a question closes:** always as `agent.message` `direction:
+  "followup"` with the same `questionId`, from `"user"` (the answer) or from
+  `"system"` (no answer within 10 minutes, or the worker was stopped). After
+  a timeout the worker is told to go on with its best judgment and say what
+  it assumed. A closed question, or one of a finished turn, can't be
+  answered.
+- **Limits:** background processes the worker started keep running while
+  it waits. A tool call made in the same message as `ask_user` isn't held
+  back by the lease it gave up, so the prompt tells the worker to ask on
+  its own.
+
+**Journal.** New events are `agent.spawned`, `agent.status`,
+`agent.message` (brief, result, followup), `agent.reassigned` and
+`agent.finished`. A worker's own tool calls reuse
+`tool.started`/`tool.completed` with `agentId` set and call ids `<agentId>:<id>`.
+Its text is `assistant.delta` with `agentId` and part ids `<agentId>:p<n>`
+(at most 64 KB per worker), and its usage is `usage.updated` with `agentId`:
+a running total across its execs, never part of the lead's usage.
+`agent.spawned` and `agent.reassigned` carry the runtime's tool-activity
+`fidelity` (`full`, `start-only`, `none`). Each `agent.status` lists the
+`leases` its worker holds (`write`, `browser`), which is where the app's
+pen and browser indicators come from. The lead's own write lease is
+reported the same way, as `agent.status` for `lead` (`working`, with
+`leases`). A native subagent (Claude's `Task`/`Agent` tool; monomind's
+`subagent` events, `agent-exec-subagent-events`) is journaled as agent
+`native:<call id>` under the agent that called it: `agent.spawned`
+(`agentType: "native"`), `agent.status` with its progress summary as
+`detail`, its own text as `assistant.delta` (never part of its caller's
+text or answer), and `agent.message` (result) plus `agent.finished`. With an
+older monomind the stage infers it from the `Task` call instead. The lead's own events carry no
+`agentId`. `chat history events --agent <id|lead>` filters a turn's
+events, and `chat history transcript --by-agent <conversation> <turn>`
+shows the turn split by agent.
 
 ## How AI works in mono-agent
 
@@ -489,6 +1635,104 @@ login (and its bill) is what the turn uses.
   `pi-rpc` transports). `monoagentcli agent install <runtime>` installs one
   (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
   that also proves the login works.
+- **Freebuff.** Compatibility preparation is documented in
+  [docs/freebuff-runtime.md](docs/freebuff-runtime.md). Execution requires
+  monomind's `freebuff` runner ([monomind#600](https://github.com/monoes/monomind/issues/600));
+  installing the interactive Freebuff CLI alone does not enable it. Its
+  executable override is `FREEBUFF_CLI_BIN`. Runtime capabilities still come
+  from monomind's scan.
+- **Kilo Code.** Compatibility preparation is documented in
+  [docs/kilo-runtime.md](docs/kilo-runtime.md). Execution requires monomind's
+  `kilo` runner ([monomind#601](https://github.com/monoes/monomind/issues/601)).
+  Its executable override is `KILO_CLI_BIN`; model and access capabilities
+  still come from monomind's scan.
+- **Pinned binaries (#301).** monomind, its node and every agent CLI it
+  starts by name run from global installs a project can't redirect. A
+  version-manager shim (mise, asdf, Volta, nodenv) is resolved once from
+  your home directory; proto shims are refused (set `MONOMIND_BIN`). The
+  agent CLIs are passed by absolute path (`CODEX_CLI_BIN`, `OPENCODE_BIN`,
+  …). In monomind's children, PATH loses its relative entries, anything
+  inside the project, and the shims dirs. The managers' global tool dirs
+  (`mise bin-paths`, `asdf current`/`asdf where`, `nodenv prefix`) go after
+  the system dirs instead. So agent sessions and org roles get your
+  **global** tool versions, not the project's `.tool-versions`/`mise.toml`
+  ones: use `mise exec -- <cmd>` (or `asdf exec`) for a per-project
+  version. When a manager can't list its global tools (Volta, or a failing
+  `mise bin-paths`), its shims dir is appended last instead, with a
+  one-line notice in the log. Residual risk: a tool found nowhere else is
+  then still picked by the project's version files. The agent CLIs are not:
+  one that can't be pinned is pointed at a file that never exists
+  (`~/.monoagent/unpinned/<name>`), so monomind reports it missing.
+- **Validated roster.** `monoagentcli agent validate` sends the one-word test
+  turn to every listed model of every installed runtime (`--all`, the
+  default, or only `--runtime`/`--model`) and stores what answered: `ok`, `ok_unexpected`,
+  `auth`, `quota`, `model_unavailable`, `timeout`, `missing_binary` or `error`,
+  with latency and cost. Each test is a real model call, so `--dry-run` prints
+  the call count and estimated cost first, and `--stale-only` skips models
+  that are already ready. `--json` streams NDJSON progress (`validate.plan`,
+  `validate.started`, `validate.result`, `validate.done`). With monomind 2.18.5 or newer
+  (capability `agent-test-json`), each test is monomind's own `agent test
+  --json`, so statuses match monomind's classification and a runtime that
+  reports no cost gets a pricing-table estimate (`cost_estimated`, shown with
+  "≈"). `agent test` has no sandbox option, so a
+  runtime whose exec turns run sandboxed keeps the sandboxed test turn, like
+  an older monomind; mono-agent classifies it. `monomind.SandboxArgs` decides
+  that with the runtime's `agent scan` `sandbox_modes`: codex and grok (env
+  path, or `--sandbox` on 2.19.0 since they list the mode) go through exec;
+  claude, copilot and the other runtimes that list only `full` get no sandbox
+  from exec either and use `agent test`. When `agent test` fails fast without
+  JSON (the command itself isn't supported) the exec test runs instead; any
+  other failure is the result, never a second model call. The plan
+  line's `checker` says which one ran. The plan's `est_cost_usd` uses each
+  model's stored cost; a model with none yet is priced from a built-in
+  table (`internal/agentroster/prices.go`, from monomind's pricing table,
+  input at the cache-write rate) and counted in `table_estimated`; a
+  runtime's own price covers only its `default` model, and a model the
+  table can't price (or a dearer `-pro`/`-max` variant of one it can)
+  counts in `unknown_cost`. Auto re-validation's next plan has the same
+  `table_estimated`. `sign_in` lists planned runtimes
+  whose last test failed to sign in, since a runtime can list more models
+  once signed in. An `auth` result carries monomind's `login_hint`, shown by
+  `agent validate`, `agent roster` and the GUI.
+  `monoagentcli agent roster [--ready-only] --json` reads the stored results
+  without calling any model. A model is **ready** when it answered within
+  `--max-age` (7 days) on the current runtime version, **stale** when older
+  or when the runtime has been updated or its last test was rate-limited
+  (`rate_limited`, a transient 429; `stale_reason` says which), and
+  **failed** otherwise. A worker's rate limit never demotes a validated
+  model; only auth, quota and model-unavailable failures do. `agent roster add <runtime> <model>`
+  adds a model id that the runtime doesn't list. Each model's **track
+  record** column (`track_record` in JSON) is its score per role
+  category from real dynamic-org workers (see "Dynamic org"). The roster is machine-wide,
+  not per profile, and the AI agents page shows it with live validation.
+- **Automatic re-validation (off by default; it spends money).**
+  `monoagentcli agent roster auto-revalidate on|off|status` (#230). When on,
+  the daemon re-checks **stale** roster models (never failed or untested
+  ones) in the background: one runtime at a time, its oldest stale models
+  first, only while no chat turn (`ai_chat_turns` active in the last 2h),
+  workflow run (RUNNING with a live pid) or org run (`org serve` heartbeat
+  lists one) is active and after a quiet period, never at startup. A run
+  in progress re-checks that and the setting every 5s and is cancelled when
+  the app gets busy or it is turned off (the run still counts). The roster
+  scan runs before the lock is taken, and after "nothing stale" planning
+  waits an hour. Limits:
+  `on --per-day N` runtimes a day (default 1, max 24), `--max-models N` per
+  run (default 3, max 20), `--quiet 15m`. The daily count is persisted in
+  `settings` (`agent_roster.auto_revalidate[.state]`) per local day (the
+  daemon's time zone) and counts a run before its calls are made; a state
+  that can't be read stops runs instead of resetting the count (`status`
+  reports `state_error`; `on` resets it). The plan is made again under the
+  lock from the cached scan, so models a manual validate just re-checked
+  aren't tested twice, and calls cancelled mid-flight still count in the
+  day's spend (or as unknown cost). Every validation, manual or automatic, takes
+  `~/.monoagent/agent-validate.lock`, so a second `agent validate` fails
+  with "another validation is running" instead of overlapping. `status
+  --json` has the setting, today's runs and spend, the last run and the next
+  run's targets with their estimated cost (the same estimate as `validate
+  --dry-run`) and the daily ceiling (`daily_max_usd`: runs × models ×
+  the priciest cost seen so far; models with unknown cost not included).
+  With `--no-scan`, `next` names no runtime (`next_unchecked`). The roster section of the AI agents page has the toggle,
+  which asks first and shows that estimate.
 - **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
   (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
   else the first installed runtime in a fixed order starting with `claude`
@@ -501,6 +1745,60 @@ login (and its bill) is what the turn uses.
   Node.js >= 22.12; without one, `monoagentcli nodejs install` provides a
   private copy. Install monomind itself with
   `npm install -g @monoes/monomindcli` or the `monomind.install` doctor fix.
+- **Sandbox.** Every agent turn except coder mode asks for
+  `monomind.TurnSandboxMode` (`workspace-write`: the turn writes only its
+  `--cwd` and the temp dir, reads elsewhere, network on). That covers chat,
+  `agent test`, `agent validate`, `agent.ask`, the jev TYPE_TEXT helper,
+  capture summaries, recording analysis, application matching, config
+  generation and the org `model` decider. `monomind.SandboxArgs` is the one
+  place that decides what that means:
+  - monomind advertises `agent-exec-sandbox` (monomind#396): `agent exec
+    --sandbox workspace-write`, only for a runtime whose `agent scan --json`
+    `sandbox_modes` lists the mode (monomind refuses any other mode as
+    fatal). On monomind 2.22.0 claude, codex, copilot, grok and dsh list it, so
+    their turns are `sandboxed`; antigravity (`restricted`, `full`) and hermes (`full`) do
+    not, and run unsandboxed (`unsupported`). Where claude lists no such
+    mode it keeps its `scoped` access. Whether a runtime's native tools are
+    confined is a separate question, which the OpenAI-compatible API
+    answers per runtime (see [HTTP API](#http-api)). With the scan failed,
+    no flag is passed and the env path below applies;
+  - otherwise, monomind >= 2.11.1 and runtime `codex` or `grok`:
+    `--env MONOMIND_GIT_LEVEL=read`. The runner reads that level from the
+    turn's env (never the caller's process env) and starts codex with
+    `--sandbox workspace-write` plus network, grok with `--sandbox
+    workspace`. It also keeps monomind's git guard at read.
+  - `claude` without the capability keeps `--access scoped` (status
+    `scoped`); copilot, qwen, antigravity and every other runtime run
+    unsandboxed until #396 (status `awaiting-monomind`); monomind older
+    than 2.11.1 gets nothing (`needs-monomind`). No args means the turn
+    runs exactly as before.
+  - **Folder.** A turn with a folder keeps it (the profile root for chat
+    with monoagent tools, the decider's and validation's own empty
+    folders). One without runs in an empty `~/.monoagent/workspaces/<purpose>`
+    (`chat`, `agent-ask`, `text-helper`, `summary`, `record-analyze`,
+    `matching`, `agent-test`), created only when sandbox args are passed.
+    `claude` always keeps its folder: its sessions are keyed by folder.
+  - **Temp files.** `monomind.Exec` writes the prompt, system-prompt and tools
+    files it hands monomind in `~/.monoagent/tmp` (mode 0700; files of its own
+    older than a day are swept), unless the caller gives it a `TempDir`. It
+    does not use the system temp directory (but for a home that cannot hold
+    that folder), which a workspace-write turn may write: another turn could
+    rewrite those files before monomind reads them. monomind's own copies of a
+    prompt (hermes, cline and kimicode write one under their temp directory) go
+    where the child's `TMPDIR` points: a caller that runs turns for others sets
+    `ExecOptions.Env` `TMPDIR`, `TMP` and `TEMP`, as the API gateway does.
+  - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
+    `scoped`, `unsupported` (after #396, a runtime that can't honour it),
+    `awaiting-monomind`, `needs-monomind` or `off`. Once monomind reports
+    `sandbox` / `sandbox_unsupported` on the start event, that report wins.
+    Exec adds the verdict to the start event as `sandbox_status`, so `chat`
+    stdout carries it. A journaled turn records it as an `agent.sandbox`
+    notice (message = the status) and in `turn.finished.sandbox`, and
+    `agent.ask` items get `_agent_sandbox`. The app shows it as a badge.
+  - **Doctor.** The `monomind.agent_sandbox` row is info either way.
+  - **Coder mode** asks for no sandbox; it has its own full-access contract.
+  - Every monomind name (flag, modes, capability, env level, start-event
+    fields) lives only in `internal/monomind/sandbox.go`.
 - **Checking it.** `monoagentcli doctor --group monomind` checks Node.js,
   the binary, the protocol handshake (version floor
   `internal/monomind.MinMonomindVersion`, currently `2.10.0`), capabilities
@@ -552,13 +1850,70 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   row, and never create one from the file.
 - A role's first grant pre-fills `denyTools: ["Bash"]`: Bash can run
   `monoagentcli` directly and bypass every grant. Workflows with outbound
-  nodes (email, chat, social, service writes, non-GET HTTP, shell) default
-  to `--approval required`.
-- A granted tool's arguments reach the workflow as `input`. monomind
-  passes only the arguments the tool's schema lists, so the tool lists the
-  fields the workflow's templates read (`{{ $json.input.<field> }}`); a
-  workflow that reads its input another way needs an `input_schema` on the
-  role's `automations` entry in the org file.
+  nodes default to `--approval required` and tier `irreversible`, so a
+  person approves their calls at `mid`.
+- Outbound is deny-by-default (`internal/orggrant/outbound.go`): every
+  node type counts except the reviewed `readOnlyNodes`: the engine's four
+  triggers (`trigger.manual|org|schedule|webhook`), control flow, data and
+  image transforms, `*_read`-style reads, mono-agent's own stores (people,
+  applications, documents), `ai.choose` and the deprecated `ai.*` stubs.
+  `http.request` counts only for methods other than GET/HEAD, and
+  `data.spreadsheet` only for writes. So `comm.*`/`service.*` sends,
+  `db.*`, `org.*`, every social write (DMs, posts, comments, likes,
+  follows, `instagram.watch_stories`), `gemini.*`, `browser.jev`,
+  `agent.ask`/`ai.agent`, `ai.extract_page`, `applications.evaluate`,
+  `system.execute_command`, `http.ftp`/`ssh`, `data.write_binary_file`,
+  `vault.secret_save`, installed packages' actions and any unknown type
+  need a person at `mid`.
+- "Not outbound" is not "harmless". A GET can still act (some APIs change
+  state on GET) and its URL and query string can carry workflow data
+  out, and `ai.choose` sends its input to TypeSafe's API. These stay in
+  the `consequential` tier, which the decider may approve at `mid`.
+- The official browser read actions (find/list/scrape/export/metrics,
+  `readOnlyActions`) are verified on every check against the INSTALLED
+  definition, not trusted by name: the package must have `builtin` trust,
+  the action must declare `sideEffects` read or none, and every step
+  (nested, and in called fragments) must be a read step or a bot method
+  listed for that action, with none marked `sideEffect`. Anything that
+  can't be loaded or verified (no registry, `-tags nosocial`, an edited or
+  updated package) counts as outbound.
+- Automation package ids may not be a built-in node namespace (`trigger`,
+  `core`, `data`, `http`, `image`, …; `automation.ReservedID`). Install
+  refuses them, an already installed one is unavailable, and a legacy
+  `~/.monoagent/actions/<dir>` with such a name registers no nodes (it
+  used to panic at startup on a collision like `image.resize`).
+- A new node type fails `TestEveryRegisteredNodeTypeIsClassified` (run it
+  with and without `-tags nosocial`) until it is classified: add it to
+  `readOnlyNodes` only if its implementation can't act outside mono-agent,
+  otherwise to `outboundNodes`. A new official browser read action goes in
+  `readOnlyActions` with the bot methods it calls
+  (`TestReadOnlyActionsVerifiedAgainstInstalledPackages` checks it). A new
+  built-in namespace goes in `automation.reservedIDs`
+  (`TestBuiltinNamespacesAreReserved`). When in doubt, outbound.
+- After upgrading, grants whose workflows use a node that is now outbound
+  are raised to `irreversible` at the next save or reconcile (#286; never
+  lowered), so expect more approvals for a person at `mid`.
+- A waiting granted call (`wait`, mode `run`) returns as soon as the run
+  is final. It stops waiting at the tool's timeout, or `postEOFGrace` (3 s)
+  after the client closes stdin. It then reads the run once more and, if
+  the run is still going, says how long it waited and why; the role checks
+  it later with `automation_status`.
+- A granted tool's arguments reach the workflow as `input`, and each field
+  is also copied to the top level of the trigger item, so a workflow
+  written for `workflow run --input '{"keywords":…}'` (`{{ $json.keywords }}`)
+  works unchanged as a granted tool. The copy never overrides the keys the
+  handler sets (`org`, `input`, `trace`, `trigger_type`, `org_message`,
+  `org_event`, `monoagent_trace`, anything starting with `_`; see
+  `orggrant.IsReservedTriggerKey`). monomind passes only the arguments the
+  tool's schema lists, so the tool lists the fields the workflow's
+  templates read: every `{{ $json.input.<field> }}`, plus the top-level
+  `{{ $json.<field> }}` of the nodes the trigger feeds directly. A workflow
+  that reads its input another way needs an `input_schema` on the role's
+  `automations` entry in the org file, which wins.
+- A missing template value (`{{ $json.missing }}`, or a JSON null) renders
+  as the empty string, never the literal `<no value>`, so a node's
+  required-input check catches it. `{{ if $json.x }}…{{ else }}…{{ end }}`
+  still sees it as absent.
 - A granted run (and an automation role's run started by a role's
   message) carries the role's workdir as `org.workdir`; file nodes refuse
   paths that resolve outside it (`path escapes org workdir`). Shell
@@ -748,7 +2103,7 @@ probabilities, in one ~100–300 ms request. It **never generates text**.
   surface does exactly what it did without Jev.
 - **Opt-in per surface, per profile.** Every implicit surface
   (`action_fallback`, `hil`, `people_review`, `capture`, `inbox`,
-  `people_links`, `asks`, `retry`) is off until enabled. `enable` prints what
+  `people_links`, `asks`, `retry`, `api_auto`) is off until enabled. `enable` prints what
   that surface sends to TypeSafe and asks (or needs `--yes` when stdin is not
   a terminal). Workflow nodes that use Jev (e.g. `browser.jev`) opt in by
   being used; the org decider opts in through its own autonomy config.
@@ -839,6 +2194,15 @@ regardless of where the binary runs from.
 | `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only, plain HTTP). Override it under Docker/VMs so published ports actually forward — any non-loopback bind is always served over TLS (see [SECURITY.md](SECURITY.md#webhook-trigger-surface)), never plaintext. |
 | `MONOAGENT_WEBHOOK_TLS_CERT` / `MONOAGENT_WEBHOOK_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback webhook bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/webhook-tls/` instead. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
+| `MONOAGENT_API_V1_ADDR` | Bind address (`host:port`) of the OpenAI-compatible API's dedicated listener (`--v1-addr` wins). It serves only `/v1` and `/health`, and any non-loopback bind is served only over TLS. Default: unset — no dedicated listener; `/v1` is served on the main HTTP API listener when that is loopback. |
+| `MONOAGENT_API_TLS_CERT` / `MONOAGENT_API_TLS_KEY` | Explicit TLS certificate/key file paths for the `--v1-addr` listener; when set they also make a loopback bind speak TLS. Both or neither: setting only one, or a pair that cannot be loaded, stops `httpapi` at startup, while `daemon` only prints a warning and serves no dedicated listener. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/api-tls/`, and a loopback bind is plain HTTP. |
+| `MONOAGENT_API_CONFINEMENT` | Strongest runtime class the OpenAI-compatible API serves: `chat-only`, `sandboxed` or `any` (`--confinement` wins). One value for every listener of the process, the loopback main one included. Default: unset — `any` on a loopback listener, `chat-only` on any other. |
+| `MONOAGENT_API_CONTEXT_CONFINEMENT` | Strongest runtime class a key created with `--context` may use on the OpenAI-compatible API: `chat-only`, `sandboxed` or `any` (`--context-confinement` wins). Never above the listener's own confinement. Default: unset — `chat-only`, because the knowledge such a key adds includes captured web pages nobody vetted. |
+| `MONOAGENT_API_AUTO_CONFINEMENT` | Strongest runtime class the `auto` model of the OpenAI-compatible API may pick: `chat-only`, `sandboxed` or `any` (`--auto-confinement` wins). Never above the listener's own confinement, nor a `--context` key's cap. Default: unset — `chat-only`, because a prompt can steer which model Jev picks and its author need not hold the key. |
+| `MONOAGENT_API_IMAGE_RUNTIMES` | Runtimes whose models can generate images on the OpenAI-compatible API (`POST /v1/images/generations`), comma-separated runtime ids in the order "the first installed one" is looked for (`agy` means `antigravity`; case and spaces do not matter). A runtime that runs as chat-only cannot make images however it is listed. `none` switches image generation off: no model gets the `image` capability and every image request says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `codex,antigravity`. |
+| `MONOAGENT_API_TOOL_RUNTIMES` | Runtimes that serve tool calling on the OpenAI-compatible API (`tools` on `POST /v1/chat/completions`), comma-separated runtime ids (`agy` means `antigravity`; case and spaces do not matter). A model of a listed runtime that is not chat-only is served only where monomind can run it read-only (`agent-exec-access-read`, and `read` among the runtime's access modes). A request for tools on any other model is 400 `unsupported_parameter`. `none` switches tool calling off: no model gets the `tools` capability and every request that declares tools says it is switched off. A bad value stops `httpapi` and `daemon` at start. Default: unset — `claude,codex`. |
+| `MONOAGENT_API_MAX_CONCURRENT` | How many OpenAI-compatible API turns may run at once, from 1 to 64; more get 429 (`--max-concurrent` wins). Default: unset — 4. |
+| `MONOAGENT_API_TURN_TIMEOUT` | Wall-clock cap of one OpenAI-compatible API turn: a duration of at least `10s`, such as `15m`. Default: unset — 10 minutes. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
 | `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` | Path to a chmod-600 file whose first line is the file-keyring passphrase — the non-interactive source for the desktop app and services (a path, never the passphrase itself). Default: unset — use `~/.monoagent/keyring-passphrase` when `secret keyring set-passphrase` wrote one, else prompt on stdin, or on `/dev/tty` when stdin carries the command's input. |
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |
@@ -852,6 +2216,39 @@ regardless of where the binary runs from.
 | `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
 | `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
 | `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
+
+The ten `MONOAGENT_API_*` settings above (`V1_ADDR`, `TLS_CERT` and `TLS_KEY`, the three `*CONFINEMENT`, `IMAGE_RUNTIMES`, `TOOL_RUNTIMES`, `MAX_CONCURRENT`, `TURN_TIMEOUT`) can also be saved in the database with `monoagentcli api config set`: a variable that is set (not empty) still wins over a saved value, and a flag over both; the default is what is used when none of the three gives one. See **Server settings** under [OpenAI-compatible API](#openai-compatible-api-v1).
+
+### UI style guide: form controls
+
+The GUI (`wails-app/frontend`) runs in WebKitGTK on Linux. There, a
+`<select>` whose `appearance` is not reset renders as a light native GTK
+combo box and ignores the page's colours. To keep every control dark:
+
+- **Selects get their look from the global `select` rule** in
+  `src/index.css`: appearance reset, `--elevated` fill, `--border`, the cyan
+  chevron, hover, focus ring, dimmed `:disabled`, and `color-scheme: dark`.
+  A bare `<select>` with no class and no style is already correct.
+  Inputs use the token classes (`.form-input`, `.search-input`).
+- **Modifier classes** (on top of the base rule):
+  - `.select-compact`: 10px, tight padding, for dense rows such as the chat
+    runtime/model/effort row. Override `fontSize` inline if you need 11px.
+  - `.form-select`: full width, form typography; use it inside `.form-group` forms.
+  - `.filter-select`: the display face, for filter bars.
+  - `select[multiple]` and `select[size]` list boxes drop the chevron
+    automatically.
+- **Never re-style the chrome inline.** Inline `style` on a select is for
+  layout only (`flex`, `width`, `minWidth`, `maxWidth`, margins, `fontSize`).
+  Don't set `appearance`, colours, borders, or the chevron there. If a new
+  look is needed, add a modifier class next to the rule in `index.css`.
+- **Never use the `background` shorthand** in an inline style on a form
+  control, and don't spread a shared input style that contains one. Inline
+  styles beat the stylesheet, and the shorthand resets `background-image`,
+  so it wipes the chevron. Use `backgroundColor` if you really must.
+
+`src/selectStyle.test.js` enforces this. It fails when a `<select>`'s
+inline style (or a `const` style object it spreads) sets `appearance` or
+`background`, or when `index.css` loses the global rule.
 
 ## Resource limits
 

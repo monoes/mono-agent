@@ -4,6 +4,7 @@ import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import KeyValueFields, { newRow, validateRows } from '../components/KeyValueFields.jsx'
 import VaultItemModal from '../components/VaultItemModal.jsx'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
 const fmtDate = (s) => {
   if (!s) return '—'
@@ -103,7 +104,7 @@ function SortableHeader({ col, active, dir, onClick, children, style }) {
   )
 }
 
-export default function Vault() {
+export default function Vault({ isActive = true }) {
   const [entries, setEntries] = useState([])
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(emptyForm())
@@ -133,6 +134,7 @@ export default function Vault() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useReloadOnActivate(isActive, load)
 
   // Toggling the same column flips direction; switching columns starts each
   // at its more useful default (name: A-Z, date: newest first).
@@ -278,14 +280,8 @@ export default function Vault() {
             <select
               value={form.kind}
               onChange={e => setForm({ ...form, kind: e.target.value })}
-              style={{
-                // WebKitGTK draws <select> with native GTK chrome (light bg,
-                // dark text) unless appearance is explicitly reset.
-                ...inputStyle, flex: '0 0 auto', appearance: 'none', paddingRight: 22,
-                backgroundColor: '#060b11', cursor: 'pointer', outline: 'none',
-                backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-                backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
-              }}
+              className="select-compact"
+              style={{ flex: '0 0 auto', fontSize: 11 }}
             >
               <option value="secret">Keys</option>
               <option value="login">Login</option>

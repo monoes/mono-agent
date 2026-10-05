@@ -524,6 +524,59 @@ func TestExecFlagMappingSandboxing(t *testing.T) {
 	}
 }
 
+// TestExecWritesItsFilesInTempDir: a caller whose turn runs in a sandbox that can
+// write the system temp directory gives Exec a private one, so another turn
+// cannot rewrite the prompt files between their creation and monomind reading
+// them.
+func TestExecWritesItsFilesInTempDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	record := filepath.Join(dir, "files.txt")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ] && [ \"$2\" = \"--json\" ]; then echo '{\"v\":1,\"version\":\"2.10.0\",\"min_caller\":\"1.0.0\",\"capabilities\":[\"agent-exec\",\"agent-scan\",\"org-json-v1\"]}'; exit 0; fi\n" +
+		"if [ \"$1\" = \"agent\" ] && [ \"$2\" = \"exec\" ]; then\n" +
+		"  prev=\"\"\n" +
+		"  for a in \"$@\"; do\n" +
+		"    if [ \"$prev\" = \"--prompt-file\" ] || [ \"$prev\" = \"--system-file\" ]; then echo \"$a\" >> \"" + record + "\"; fi\n" +
+		"    prev=\"$a\"\n" +
+		"  done\n" +
+		"  echo '{\"v\":1,\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"stop_reason\":\"end_turn\",\"text\":\"ok\"}'\n" +
+		"  echo '{\"v\":1,\"type\":\"done\",\"exit_code\":0}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo 'unsupported' >&2; exit 2\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "private")
+	if err := os.MkdirAll(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "claude", Prompt: "p", SystemPrompt: "s", TempDir: private}, nil); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := strings.Fields(string(raw))
+	if len(files) != 2 {
+		t.Fatalf("want the prompt file and the system file, got %q", files)
+	}
+	for _, f := range files {
+		if filepath.Dir(f) != private {
+			t.Errorf("%s is not in TempDir %s", f, private)
+		}
+	}
+	if left, _ := os.ReadDir(private); len(left) != 0 {
+		t.Errorf("Exec must remove its files when the turn ends: %d left", len(left))
+	}
+}
+
 // TestFilteredEnvironStripsMonomindOverrides guards the env-injection fix:
 // ambient MONOMIND_* values (and Claude session markers) must never reach
 // a spawned monomind child, where a duplicate entry could shadow the
@@ -677,6 +730,41 @@ exit 0
 		}
 		if res.HasInputTokens {
 			t.Errorf("HasInputTokens = true, want false — tokens were never reported")
+		}
+	})
+	// Protocol rev 28 (agent-exec-cost-null): an unknown cost is null, never
+	// 0 — it must read as unavailable, and must not wipe a cost an earlier
+	// event of the turn reported.
+	t.Run("null", func(t *testing.T) {
+		bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"usage","input_tokens":10,"output_tokens":5,"cost_usd":null}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok","input_tokens":10,"output_tokens":5,"cost_usd":null}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if res.HasCostUSD || res.CostUSD != 0 {
+			t.Errorf("HasCostUSD=%v CostUSD=%v, want false/0 — a null cost is unknown", res.HasCostUSD, res.CostUSD)
+		}
+		if !res.HasInputTokens || res.InputTokens != 10 {
+			t.Errorf("HasInputTokens=%v InputTokens=%v, want true/10", res.HasInputTokens, res.InputTokens)
+		}
+
+		bin = writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"usage","input_tokens":10,"output_tokens":5,"cost_usd":0.004}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok","cost_usd":null}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err = Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if !res.HasCostUSD || res.CostUSD != 0.004 {
+			t.Errorf("HasCostUSD=%v CostUSD=%v, want the earlier 0.004 kept", res.HasCostUSD, res.CostUSD)
 		}
 	})
 }

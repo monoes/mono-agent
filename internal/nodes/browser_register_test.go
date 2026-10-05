@@ -156,3 +156,18 @@ func TestLegacyUpgrade_GoogleMapsAliasResolves(t *testing.T) {
 		}
 	}
 }
+
+func TestWebAutomations_ListsEveryAutomationWithActions(t *testing.T) {
+	action.SetDefSource(fakeSource{list: []string{
+		"acme-crm/create_contact",
+		"acme-crm/list_contacts",
+		"local-widgets/scrape",
+		"broken-entry",
+	}})
+	t.Cleanup(func() { action.SetDefSource(nil) })
+
+	got := WebAutomations()
+	if len(got) != 2 || got["acme-crm"] != "acme-crm" || got["local-widgets"] != "local-widgets" {
+		t.Fatalf("WebAutomations() = %v", got)
+	}
+}

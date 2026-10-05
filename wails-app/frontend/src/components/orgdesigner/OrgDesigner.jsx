@@ -49,6 +49,7 @@ import AutomationsDrawer from './AutomationsDrawer.jsx'
 import GrantDialog from './GrantDialog.jsx'
 import GrantsMatrix from './GrantsMatrix.jsx'
 import DesignerToolbar from './DesignerToolbar.jsx'
+import OrgSignatureBanner from '../orgs/OrgSignatureBanner.jsx'
 import { isAutomationNode } from './RoleNode.jsx'
 import useOrgAutomations from './useOrgAutomations.js'
 import useOrgActivity from './useOrgActivity.js'
@@ -616,6 +617,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
         onToggleFullscreen={onToggleFullscreen}
         onOpenAutomations={openAutomations}
       />
+      <OrgSignatureBanner orgName={orgName} refreshKey={configStamp} />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {paletteOpen ? (
@@ -738,6 +740,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onOpenWorkflow={onOpenWorkflow}
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
                 fullAccess={selectedId ? fullAccessByRole[selectedId] || null : null}
+                orgRuntime={orgMeta?.runtime || ''}
                 onAccessChanged={() => { rolesAccess.refresh(); cliValidation.refresh() }}
               />
             </div>

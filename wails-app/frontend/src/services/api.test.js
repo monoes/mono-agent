@@ -12,6 +12,7 @@ vi.mock('../wailsjs/go/main/App', () => ({
   CreateChatConversation: vi.fn(),
   StartChatTurn: vi.fn(),
   StopChatTurn: vi.fn(),
+  StopChatAgent: vi.fn(),
   ListChatConversations: vi.fn(),
   GetChatTurns: vi.fn(),
   GetChatEvents: vi.fn(),
@@ -152,10 +153,17 @@ describe('new chat bindings', () => {
     eventListeners.clear()
   })
 
-  it('createChatConversation parses a successful conversation payload', async () => {
+  it('createChatConversation parses a successful conversation payload and forwards effort', async () => {
+    GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent', effort: 'high' }))
+    const conv = await api.createChatConversation('general', 'claude', 'sonnet', 'high')
+    expect(GoApp.CreateChatConversation).toHaveBeenCalledWith('general', 'claude', 'sonnet', 'high')
+    expect(conv).toEqual({ id: 'conv-1', backend: 'agent', effort: 'high' })
+  })
+
+  it('createChatConversation defaults effort to empty string', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent' }))
-    const conv = await api.createChatConversation('general', 'claude', '')
-    expect(conv).toEqual({ id: 'conv-1', backend: 'agent' })
+    await api.createChatConversation('general', 'claude', '')
+    expect(GoApp.CreateChatConversation).toHaveBeenCalledWith('general', 'claude', '', '')
   })
 
   it('createChatConversation rejects on the {error} shape instead of resolving it', async () => {
@@ -194,6 +202,15 @@ describe('new chat bindings', () => {
 
     GoApp.DeleteChatConversation.mockResolvedValueOnce(JSON.stringify({ ok: true }))
     await expect(api.deleteChatConversation('conv-1')).resolves.toEqual({ ok: true })
+  })
+
+  it('stopChatAgent passes the worker and resolves the CLI result', async () => {
+    GoApp.StopChatAgent.mockResolvedValueOnce(JSON.stringify({ ok: true, agent_id: 'w2', status: 'cancelled', requested: true }))
+    await expect(api.stopChatAgent('conv-1', 'turn-1', 'w2')).resolves.toMatchObject({ status: 'cancelled' })
+    expect(GoApp.StopChatAgent).toHaveBeenCalledWith('conv-1', 'turn-1', 'w2')
+
+    GoApp.StopChatAgent.mockResolvedValueOnce(JSON.stringify({ ok: false, error: 'boom' }))
+    await expect(api.stopChatAgent('conv-1', 'turn-1', 'w2')).rejects.toThrow('boom')
   })
 
   it('onChatEvent subscribes under the chat:event name', () => {

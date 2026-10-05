@@ -222,7 +222,11 @@ func (a *App) GateRejectOrgAction(name, gateID, resolution string) string {
 // subprocess is tracked the same way agent chat is (a.runningCmds, keyed so
 // a new stream for the same org supersedes the previous one) and killed as
 // a process group on Stop/supersede/shutdown — as chat turns are.
-func (a *App) StreamOrgEvents(orgName string) string {
+//
+// streamID is the caller's name for this stream, which StopOrgEvents takes:
+// Wails runs each call on its own goroutine, so a stop can arrive before the
+// stream it ends is registered, and it must not be lost (#235).
+func (a *App) StreamOrgEvents(orgName, streamID string) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return aiError(err)
@@ -234,7 +238,7 @@ func (a *App) StreamOrgEvents(orgName string) string {
 		eventsArgs = append(eventsArgs, "--project", projectRoot)
 		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
 	}
-	eventsArgs = append(eventsArgs, "events", orgName, "--follow")
+	eventsArgs = append(eventsArgs, "events", "--follow", "--", orgName)
 	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(eventsArgs, " "), logSuffix))
 	cmd := exec.Command(cliBin, eventsArgs...)
 	setChatProcessGroup(cmd)
@@ -249,20 +253,15 @@ func (a *App) StreamOrgEvents(orgName string) string {
 	}
 
 	key := "orgevents:" + orgName
-	a.runningMu.Lock()
-	if prev, ok := a.runningCmds[key]; ok {
-		killChatProcessGroup(prev)
-		delete(a.runningCmds, key)
+	if !a.registerOrgEvents(key, streamID, cmd) {
+		// Stopped before it was registered: end it now.
+		killChatProcessGroup(cmd)
+		go func() { _ = waitChatProcess(cmd) }()
+		return `{"ok":true,"stopped":true}`
 	}
-	a.runningCmds[key] = cmd
-	a.runningMu.Unlock()
 
 	go func() {
-		defer func() {
-			a.runningMu.Lock()
-			delete(a.runningCmds, key)
-			a.runningMu.Unlock()
-		}()
+		defer a.unregisterOrgEvents(key, cmd)
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
@@ -281,13 +280,70 @@ func (a *App) StreamOrgEvents(orgName string) string {
 	return `{"ok":true}`
 }
 
-// StopOrgEvents kills the in-flight org event tail subprocess for an org.
-func (a *App) StopOrgEvents(orgName string) string {
+// orgEventStopTTL is how long a stop for a stream that isn't registered yet
+// is remembered. The gap it covers is two calls racing, so a minute is
+// ample; a stop for a stream that already ended simply expires.
+const orgEventStopTTL = time.Minute
+
+// registerOrgEvents records cmd as the event tail under key, superseding the
+// previous one, and reports true. It reports false, registering nothing,
+// when StopOrgEvents already asked for streamID to stop.
+func (a *App) registerOrgEvents(key, streamID string, cmd *exec.Cmd) bool {
+	a.runningMu.Lock()
+	defer a.runningMu.Unlock()
+	a.pruneOrgEventStops()
+	if _, stopped := a.orgEventStops[streamID]; stopped {
+		delete(a.orgEventStops, streamID)
+		return false
+	}
+	if prev, ok := a.runningCmds[key]; ok {
+		killChatProcessGroup(prev)
+	}
+	a.runningCmds[key] = cmd
+	if a.orgEventIDs == nil {
+		a.orgEventIDs = make(map[string]string)
+	}
+	a.orgEventIDs[key] = streamID
+	return true
+}
+
+// unregisterOrgEvents drops cmd once it has ended, unless a newer stream has
+// taken its key.
+func (a *App) unregisterOrgEvents(key string, cmd *exec.Cmd) {
+	a.runningMu.Lock()
+	defer a.runningMu.Unlock()
+	if a.runningCmds[key] == cmd {
+		delete(a.runningCmds, key)
+		delete(a.orgEventIDs, key)
+	}
+}
+
+// pruneOrgEventStops forgets expired stops. Call with runningMu held.
+func (a *App) pruneOrgEventStops() {
+	for id, at := range a.orgEventStops {
+		if time.Since(at) > orgEventStopTTL {
+			delete(a.orgEventStops, id)
+		}
+	}
+}
+
+// StopOrgEvents kills the org event tail StreamOrgEvents started as
+// streamID. A newer stream for the same org is left alone; a stream not
+// registered yet is killed as soon as it is.
+func (a *App) StopOrgEvents(orgName, streamID string) string {
 	key := "orgevents:" + orgName
 	a.runningMu.Lock()
+	a.pruneOrgEventStops()
 	cmd, ok := a.runningCmds[key]
+	ok = ok && a.orgEventIDs[key] == streamID
 	if ok {
 		delete(a.runningCmds, key)
+		delete(a.orgEventIDs, key)
+	} else {
+		if a.orgEventStops == nil {
+			a.orgEventStops = make(map[string]time.Time)
+		}
+		a.orgEventStops[streamID] = time.Now()
 	}
 	a.runningMu.Unlock()
 	if !ok {

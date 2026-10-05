@@ -102,12 +102,13 @@ func orgSummaryFor(ctx context.Context, root string, db *storage.Database, profi
 	var svc *orgdecide.Service
 	if dbErr == nil {
 		svc = orgdecide.NewService(db.DB, nil)
+		svc.LoadWorkflow = grantWorkflowLoader(db)
 	}
 	now := time.Now()
 	rows := make([]orgSummaryRow, len(names))
 	var wg sync.WaitGroup
 	for i, name := range names {
-		row := orgSummaryRow{Name: name, Running: running[name], Level: orgdesign.LevelManual}
+		row := orgSummaryRow{Name: name, Running: running[name] || monomind.OrgRunLive(root, name), Level: orgdesign.LevelManual}
 		if svc != nil {
 			if a, err := svc.Store.Get(ctx, profileID, name); err == nil && a != nil {
 				row.Level = a.EffectiveLevel(now)

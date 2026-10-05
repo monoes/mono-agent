@@ -49,12 +49,16 @@ type Conversation struct {
 	RuntimeID       string `json:"runtimeId,omitempty"`
 	ProviderID      string `json:"providerId,omitempty"`
 	Model           string `json:"model,omitempty"`
+	Effort          string `json:"effort,omitempty"`
 	SessionID       string `json:"sessionId,omitempty"`
 	// Mode is "assistant" or "coder". A coder conversation runs every turn
 	// with full access inside Cwd, fixed at creation: Claude Code keys its
 	// sessions by folder, so resuming needs the same one.
-	Mode       string `json:"mode"`
-	Cwd        string `json:"cwd"`
+	Mode string `json:"mode"`
+	Cwd  string `json:"cwd"`
+	// OrgMode is a coder conversation's org: "solo" (the agent works
+	// alone) or "dynamic" (it can spawn workers, #226).
+	OrgMode    string `json:"orgMode,omitempty"`
 	HistoryKey string `json:"-"`
 	CreatedAt  string `json:"createdAt"`
 	UpdatedAt  string `json:"updatedAt"`
@@ -78,6 +82,9 @@ type Turn struct {
 const turnStatusActive = "active"
 
 func (s *AIStore) initChatEventTables() error {
+	if err := s.ensureAnswersTable(); err != nil {
+		return err
+	}
 	const conversationsSQL = `CREATE TABLE IF NOT EXISTS ai_chat_conversations (
 		id TEXT PRIMARY KEY,
 		profile_id TEXT NOT NULL,
@@ -150,6 +157,8 @@ func (s *AIStore) initChatEventTables() error {
 	for _, alter := range []string{
 		`ALTER TABLE ai_chat_conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'assistant'`,
 		`ALTER TABLE ai_chat_conversations ADD COLUMN cwd TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ai_chat_conversations ADD COLUMN effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ai_chat_conversations ADD COLUMN org_mode TEXT NOT NULL DEFAULT 'solo'`,
 	} {
 		if err := addColumnIfMissing(s.db, alter); err != nil {
 			return err
@@ -171,7 +180,12 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // when unused by an agent-backend conversation) so provider conversations
 // always have an opaque model-context bucket distinct from workflowContext.
 func (s *AIStore) CreateConversation(profileID, backend, workflowContext, runtimeID, providerID, model string) (Conversation, error) {
-	return s.CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "")
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "", "")
+}
+
+// CreateConversationEffort is CreateConversation with an explicit effort level.
+func (s *AIStore) CreateConversationEffort(profileID, backend, workflowContext, runtimeID, providerID, model, effort string) (Conversation, error) {
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, ModeAssistant, "", effort)
 }
 
 // Conversation modes.
@@ -183,6 +197,11 @@ const (
 // CreateConversationMode is CreateConversation with an explicit mode and
 // working folder (coder conversations need one).
 func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd string) (Conversation, error) {
+	return s.CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd, "")
+}
+
+// CreateConversationModeEffort is CreateConversationMode with an explicit effort level.
+func (s *AIStore) CreateConversationModeEffort(profileID, backend, workflowContext, runtimeID, providerID, model, mode, cwd, effort string) (Conversation, error) {
 	switch mode {
 	case ModeAssistant:
 		cwd = ""
@@ -205,16 +224,18 @@ func (s *AIStore) CreateConversationMode(profileID, backend, workflowContext, ru
 		RuntimeID:       runtimeID,
 		ProviderID:      providerID,
 		Model:           model,
+		Effort:          effort,
 		Mode:            mode,
 		Cwd:             cwd,
+		OrgMode:         OrgModeSolo,
 		HistoryKey:      uuid.NewString(),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	const q = `INSERT INTO ai_chat_conversations
-		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`
-	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.Mode, c.Cwd, c.HistoryKey, c.CreatedAt, c.UpdatedAt); err != nil {
+		(id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`
+	if _, err := s.db.Exec(q, c.ID, c.ProfileID, c.Backend, c.WorkflowContext, c.RuntimeID, c.ProviderID, c.Model, c.Mode, c.Cwd, c.HistoryKey, c.CreatedAt, c.UpdatedAt, c.Effort); err != nil {
 		return Conversation{}, fmt.Errorf("create conversation: %w", err)
 	}
 	return c, nil
@@ -228,11 +249,11 @@ func (s *AIStore) GetConversation(id, profileID string) (Conversation, error) {
 	if profileID == "" {
 		profileID = "default"
 	}
-	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
+	const q = `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort, org_mode
 		FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`
 	var c Conversation
 	err := s.db.QueryRow(q, id, profileID).Scan(
-		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt, &c.Effort, &c.OrgMode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Conversation{}, ErrConversationNotFound
@@ -254,7 +275,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 		limit = 50
 	}
 	args := []any{profileID}
-	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at
+	q := `SELECT id, profile_id, backend, workflow_context, runtime_id, provider_id, model, session_id, mode, cwd, history_key, created_at, updated_at, effort, org_mode
 		FROM ai_chat_conversations WHERE profile_id = ?`
 	if cursor != "" {
 		q += ` AND updated_at || '|' || id < ?`
@@ -272,7 +293,7 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Backend, &c.WorkflowContext, &c.RuntimeID, &c.ProviderID, &c.Model, &c.SessionID, &c.Mode, &c.Cwd, &c.HistoryKey, &c.CreatedAt, &c.UpdatedAt, &c.Effort, &c.OrgMode); err != nil {
 			return nil, "", fmt.Errorf("scan conversation: %w", err)
 		}
 		out = append(out, c)
@@ -288,6 +309,32 @@ func (s *AIStore) ListConversations(profileID, cursor string, limit int) ([]Conv
 		out = out[:limit]
 	}
 	return out, nextCursor, nil
+}
+
+// Org modes of a coder conversation.
+const (
+	OrgModeSolo    = "solo"
+	OrgModeDynamic = "dynamic"
+)
+
+// SetConversationOrgMode switches a conversation between the solo and the
+// dynamic org; it takes effect from the next turn.
+func (s *AIStore) SetConversationOrgMode(id, profileID, mode string) error {
+	if mode != OrgModeSolo && mode != OrgModeDynamic {
+		return fmt.Errorf("org mode must be %q or %q, got %q", OrgModeSolo, OrgModeDynamic, mode)
+	}
+	if profileID == "" {
+		profileID = "default"
+	}
+	res, err := s.db.Exec(`UPDATE ai_chat_conversations SET org_mode = ?, updated_at = ? WHERE id = ? AND profile_id = ?`,
+		mode, nowRFC3339(), id, profileID)
+	if err != nil {
+		return fmt.Errorf("set org mode: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrConversationNotFound
+	}
+	return nil
 }
 
 // BindConversationSession records a runtime-reported resumable session id
@@ -716,12 +763,13 @@ func (s *AIStore) GetEvents(conversationID, turnID, profileID string, afterSeq i
 // — "commit before emit" — without a second read. ev is the zero value when
 // alreadyFinalized is true (nothing was written this call) or err != nil.
 func (s *AIStore) FinalizeTurn(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason string, exitCode *int, historySaved bool) (ev chatevents.Event, alreadyFinalized bool, err error) {
-	return s.FinalizeTurnCode(profileID, conversationID, turnID, status, reason, "", exitCode, historySaved)
+	return s.FinalizeTurnCode(profileID, conversationID, turnID, status, reason, "", exitCode, historySaved, "")
 }
 
-// FinalizeTurnCode is FinalizeTurn with a failure code for the turn.finished
-// payload (chatevents.TurnFinishedPayload.Code).
-func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason, code string, exitCode *int, historySaved bool) (ev chatevents.Event, alreadyFinalized bool, err error) {
+// FinalizeTurnCode is FinalizeTurn with a failure code and the turn's
+// sandbox for the turn.finished payload (chatevents.TurnFinishedPayload's
+// Code and Sandbox).
+func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason, code string, exitCode *int, historySaved bool, sandbox string) (ev chatevents.Event, alreadyFinalized bool, err error) {
 	if profileID == "" {
 		profileID = "default"
 	}
@@ -749,6 +797,7 @@ func (s *AIStore) FinalizeTurnCode(profileID, conversationID, turnID string, sta
 		Code:         code,
 		ExitCode:     exitCode,
 		HistorySaved: historySaved,
+		Sandbox:      sandbox,
 	}, time.Now())
 	if err != nil {
 		return chatevents.Event{}, false, err
@@ -807,9 +856,11 @@ type ConversationRecord struct {
 	RuntimeID       string `json:"runtime_id"`
 	ProviderID      string `json:"provider_id"`
 	Model           string `json:"model"`
+	Effort          string `json:"effort,omitempty"`
 	SessionID       string `json:"session_id"`
 	Mode            string `json:"mode"`
 	Cwd             string `json:"cwd"`
+	OrgMode         string `json:"org_mode,omitempty"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 }
@@ -818,8 +869,8 @@ type ConversationRecord struct {
 func (c Conversation) Record() ConversationRecord {
 	return ConversationRecord{
 		ID: c.ID, ProfileID: c.ProfileID, Backend: c.Backend, WorkflowContext: c.WorkflowContext,
-		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, SessionID: c.SessionID,
-		Mode: c.Mode, Cwd: c.Cwd, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, Effort: c.Effort, SessionID: c.SessionID,
+		Mode: c.Mode, Cwd: c.Cwd, OrgMode: c.OrgMode, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
 
@@ -827,8 +878,8 @@ func (c Conversation) Record() ConversationRecord {
 func (r ConversationRecord) Conversation() Conversation {
 	return Conversation{
 		ID: r.ID, ProfileID: r.ProfileID, Backend: r.Backend, WorkflowContext: r.WorkflowContext,
-		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, SessionID: r.SessionID,
-		Mode: r.Mode, Cwd: r.Cwd, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, Effort: r.Effort, SessionID: r.SessionID,
+		Mode: r.Mode, Cwd: r.Cwd, OrgMode: r.OrgMode, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
 

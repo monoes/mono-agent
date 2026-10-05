@@ -315,17 +315,17 @@ func TestApp_StopAll_KillsRunningTurnsAndWaitsForTheirFinish(t *testing.T) {
 // --- history bindings ---
 
 func TestApp_CreateChatConversation_ShellsOutAndKeepsTheShape(t *testing.T) {
-	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","session_id":"","mode":"assistant","cwd":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","effort":"high","session_id":"","mode":"assistant","cwd":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
 	a, _ := newCLIChatApp(t, bin)
-	out := a.CreateChatConversation("general", "fake-runtime", "m1")
-	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","mode":"assistant","cwd":"","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
+	out := a.CreateChatConversation("general", "fake-runtime", "m1", "high")
+	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","effort":"high","mode":"assistant","cwd":"","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
 	if out != want {
 		t.Errorf("CreateChatConversation = %s\nwant %s", out, want)
 	}
-	a.CreateChatConversation("draft", "codex", "")
+	a.CreateChatConversation("draft", "codex", "", "")
 	got := readArgsLog(t, argsLog)
 	wantArgs := []string{
-		"--profile default --json chat history create --runtime fake-runtime --workflow general --model m1",
+		"--profile default --json chat history create --runtime fake-runtime --workflow general --model m1 --effort high",
 		"--profile default --json chat history create --runtime codex --workflow draft",
 	}
 	if strings.Join(got, "|") != strings.Join(wantArgs, "|") {
@@ -426,7 +426,7 @@ func TestApp_GetChatTurns_OwnedByThisInstance(t *testing.T) {
 func TestApp_GetChatTurns_UnknownConversationIsEmpty(t *testing.T) {
 	bin, _ := chatFakeCLI(t, fakeChatReply{match: "chat history turns", code: 2, stderr: "chat: conversation not found\n"})
 	a, _ := newCLIChatApp(t, bin)
-	if out := a.GetChatTurns("nope", "", 10); out != `{"items":[],"nextCursor":""}` {
+	if out := a.GetChatTurns("nope", "", 10); out != `{"items":[],"nextCursor":"","notFound":true}` {
 		t.Errorf("unknown conversation = %s", out)
 	}
 }
@@ -510,6 +510,39 @@ func TestApp_StopChatTurn_ForeignUnknownAndFinishedTurns(t *testing.T) {
 		}
 	}
 	if calls := readArgsLog(t, argsLog); calls[0] != "--profile default --json chat history turn c1 t-foreign" {
+		t.Errorf("argv = %q", calls)
+	}
+}
+
+func TestApp_StopChatAgent_ShellsOutToChatTurnStop(t *testing.T) {
+	a, _ := newCLIChatApp(t, "")
+	bin, argsLog := chatFakeCLI(t,
+		fakeChatReply{match: "chat turn stop --agent=w2 --wait 20s -- c1 t1", stdout: `{"agent_id":"w2","status":"cancelled","requested":true,"turn_status":"active"}`},
+		fakeChatReply{match: "-- c1 t-unknown", code: 2, stderr: "chat: turn not found\n"},
+	)
+	a.chatSup.findCLI = func() (string, error) { return bin, nil }
+
+	var r struct {
+		OK        bool   `json:"ok"`
+		Status    string `json:"status"`
+		Requested bool   `json:"requested"`
+		Error     string `json:"error"`
+	}
+	json.Unmarshal([]byte(a.StopChatAgent("c1", "t1", "w2")), &r)
+	if !r.OK || r.Status != "cancelled" || !r.Requested {
+		t.Errorf("StopChatAgent = %+v", r)
+	}
+	r = struct {
+		OK        bool   `json:"ok"`
+		Status    string `json:"status"`
+		Requested bool   `json:"requested"`
+		Error     string `json:"error"`
+	}{}
+	json.Unmarshal([]byte(a.StopChatAgent("c1", "t-unknown", "w2")), &r)
+	if r.OK || !strings.Contains(r.Error, "turn not found") {
+		t.Errorf("StopChatAgent on an unknown turn = %+v, want the CLI's error", r)
+	}
+	if calls := readArgsLog(t, argsLog); calls[0] != "--profile default --json chat turn stop --agent=w2 --wait 20s -- c1 t1" {
 		t.Errorf("argv = %q", calls)
 	}
 }

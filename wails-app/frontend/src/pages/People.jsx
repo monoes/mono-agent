@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Users, Search, RefreshCw, CheckCircle, ExternalLink, Plus, X, Tag, Check, Palette } from 'lucide-react'
+import { Users, Search, RefreshCw, CheckCircle, ExternalLink, Plus, X, Tag, Check, Palette, Trash2 } from 'lucide-react'
 import { api, subscribeEvent } from '../services/api.js'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
+import { confirm } from '../components/ConfirmDialog.jsx'
 
 // ── Tag colour palette ────────────────────────────────────────
 export const TAG_COLORS = [
@@ -814,7 +816,7 @@ function TagsCell({ personId, username, fullName, initialTags }) {
 }
 
 // ── Main People page ──────────────────────────────────────────
-export default function People({ onProfile }) {
+export default function People({ onProfile, isActive = true }) {
   const [people, setPeople]   = useState([])
   const [tagsMap, setTagsMap] = useState({})
   const [count, setCount]     = useState(0)
@@ -824,6 +826,7 @@ export default function People({ onProfile }) {
   const [search, setSearch]   = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [offset, setOffset]   = useState(0)
+  const [selected, setSelected] = useState(() => new Set())
   const LIMIT = 50
 
   const debounceRef = useRef(null)
@@ -836,8 +839,8 @@ export default function People({ onProfile }) {
     }, 300)
   }, [search])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (opts) => {
+    if (opts?.silent !== true) setLoading(true)
     try {
       setError(null)
       const [data, total] = await Promise.all([
@@ -864,12 +867,34 @@ export default function People({ onProfile }) {
   }, [platform, debouncedSearch, offset])
 
   useEffect(() => { load() }, [load])
+  useReloadOnActivate(isActive, () => load({ silent: true }))
 
   // Reload whenever a workflow finishes (may have saved new people).
   useEffect(() => {
     const off = subscribeEvent('workflow:complete', load)
     return off
   }, [load])
+
+  // A selection only makes sense for the page it was made on.
+  useEffect(() => { setSelected(new Set()) }, [platform, debouncedSearch, offset])
+
+  const toggle = (id) => setSelected(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+
+  const deleteSelected = async () => {
+    const ids = [...selected]
+    if (!(await confirm(`Delete ${ids.length} ${ids.length === 1 ? 'person' : 'people'}? Their saved photos are removed too.`, { title: 'Delete people', confirmLabel: 'Delete' }))) return
+    try {
+      await api.deletePeople(ids)
+      setSelected(new Set())
+    } catch (e) {
+      setError(e?.message || 'Failed to delete')
+    }
+    load({ silent: true })
+  }
 
   const handlePlatformChange = (p) => {
     setPlatform(p)
@@ -893,6 +918,11 @@ export default function People({ onProfile }) {
           <div className="page-subtitle">Discovered Profiles</div>
         </div>
         <div className="page-header-right">
+          {selected.size > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ gap: 5, color: 'var(--red)' }}>
+              <Trash2 size={12} /> Delete ({selected.size})
+            </button>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={load} style={{ gap: 5 }}>
             <RefreshCw size={12} /> Refresh
           </button>
@@ -939,6 +969,14 @@ export default function People({ onProfile }) {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        checked={people.length > 0 && selected.size === people.length}
+                        onChange={e => setSelected(e.target.checked ? new Set(people.map(p => p.id)) : new Set())}
+                      />
+                    </th>
                     <th>Profile</th>
                     <th>Platform</th>
                     <th>Full Name</th>
@@ -954,6 +992,14 @@ export default function People({ onProfile }) {
                     const profileUrl = p.profile_url || PLATFORM_PROFILE_URL[p.platform?.toUpperCase()]?.(p.username)
                     return (
                       <tr key={p.id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select @${p.username}`}
+                            checked={selected.has(p.id)}
+                            onChange={() => toggle(p.id)}
+                          />
+                        </td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <Avatar username={p.username} imageUrl={p.image_url} />

@@ -289,7 +289,7 @@ func accountsSection(ctx context.Context, o Options) *AccountsSection {
 		return s
 	}
 	rows, err := o.DB.QueryContext(ctx, `SELECT platform, username, expiry FROM crawler_sessions
-		WHERE profile_id = ? ORDER BY platform, username`, o.ProfileID)
+		WHERE profile_id = ? AND platform <> '' ORDER BY platform, username`, o.ProfileID)
 	if err != nil {
 		s.Error = err.Error()
 		return s
@@ -302,6 +302,7 @@ func accountsSection(ctx context.Context, o Options) *AccountsSection {
 			s.Error = err.Error()
 			return s
 		}
+		r.Username = automation.DisplayUsername(r.Username)
 		r.Expiry = expiry.UTC().Format(time.RFC3339)
 		switch {
 		case expiry.Before(o.Now):

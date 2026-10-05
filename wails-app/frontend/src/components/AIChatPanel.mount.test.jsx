@@ -63,7 +63,7 @@ describe('AIChatPanel agent-only chat', () => {
     await waitFor(() => expect(sendButton).not.toBeDisabled())
     fireEvent.click(sendButton)
 
-    await waitFor(() => expect(createChatConversation).toHaveBeenCalledWith('general', 'claude', 'sonnet'))
+    await waitFor(() => expect(createChatConversation).toHaveBeenCalledWith('general', 'claude', 'sonnet', ''))
     expect(startChatTurn).toHaveBeenCalledWith('agent-conv-1', expect.any(String), 'hello', expect.any(Boolean), expect.any(Boolean))
     expect(screen.queryByTitle('Chat backend')).not.toBeInTheDocument()
   })

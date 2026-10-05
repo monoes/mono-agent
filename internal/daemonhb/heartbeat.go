@@ -25,10 +25,35 @@ type Heartbeat struct {
 	TS         time.Time `json:"ts"`
 	APIAddr    string    `json:"api_addr,omitempty"`    // "" when the API is off
 	BridgeAddr string    `json:"bridge_addr,omitempty"` // "" when the extension bridge is off
-	Version    string    `json:"version,omitempty"`
+	V1Addr     string    `json:"v1_addr,omitempty"`     // "" without a dedicated OpenAI-compatible API listener
+	// APIConfinement and V1Confinement are the confinement policies the daemon
+	// really applies on the OpenAI-compatible API of its HTTP API listener and
+	// of its dedicated listener ("" where that listener does not serve it).
+	// ContextConfinement is the strongest class a key created with --context
+	// may use, and AutoConfinement the strongest the auto model may pick.
+	// `api status` cannot work any of them out from its own environment.
+	APIConfinement     string `json:"api_confinement,omitempty"`
+	V1Confinement      string `json:"v1_confinement,omitempty"`
+	ContextConfinement string `json:"context_confinement,omitempty"`
+	AutoConfinement    string `json:"auto_confinement,omitempty"`
+	// APISettings is, for each setting of the OpenAI-compatible API's server (by its key:
+	// v1_addr, confinement, max_concurrent, ...), the value the daemon started with and where
+	// it came from, so that a reader can tell what a restart would change. A daemon that
+	// predates it has none.
+	APISettings map[string]APISetting `json:"api_settings,omitempty"`
+	Version     string                `json:"version,omitempty"`
 	// Schedules are the registered schedule triggers with the scheduler's
 	// own next fire time, refreshed on every write.
 	Schedules []Schedule `json:"schedules,omitempty"`
+}
+
+// APISetting is one effective setting of the OpenAI-compatible API's server.
+type APISetting struct {
+	// Value is the canonical text of the effective value: "" where the setting has no value
+	// (no dedicated listener, a policy that follows the listener, no certificate).
+	Value string `json:"value"`
+	// Source is where it came from: flag, env, saved or default.
+	Source string `json:"source"`
 }
 
 // Schedule is one registered schedule trigger.

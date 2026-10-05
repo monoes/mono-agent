@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -40,55 +44,107 @@ type ingestPayload struct {
 // cmd.Dir here silently indexes nothing, ever, no matter how many
 // documents are uploaded.
 func IngestDocument(ctx context.Context, db *sql.DB, profileID, path string) error {
-	bin, err := Find()
-	if err != nil {
-		return err
-	}
-
 	profileDir := profiledir.MonomindDir(db, profileID)
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return fmt.Errorf("monomind.IngestDocument: creating profile monomind dir: %w", err)
 	}
+	if err := runIngest(ctx, profiledir.Root(db, profileID), profileDir, map[string]string{"path": path}); err != nil {
+		return fmt.Errorf("monomind.IngestDocument: %w", err)
+	}
+	return nil
+}
 
-	params, err := json.Marshal(map[string]string{"path": path})
+// CaptureScope is the monomind knowledge scope holding profileID's browser
+// captures: `profile:<id>`, a store of its own under monomind's global
+// brain (packages/@monomind/cli/src/knowledge/profile-store.ts). It is ""
+// for an id profiledir would not accept, so a hostile id never reaches an
+// argv or a store path.
+func CaptureScope(profileID string) string {
+	id := strings.TrimSpace(profileID)
+	if !profiledir.ValidProfileID(id) {
+		return ""
+	}
+	return "profile:" + id
+}
+
+// IngestCapture indexes one browser capture (the envelope's primary
+// artifact, normally readable.md) into profileID's capture store —
+// CaptureScope, named explicitly rather than left to monomind's
+// meta.json routing, so a capture that predates `meta.profile` lands in
+// the same store as one that carries it.
+//
+// The working directory is the profile's DEFAULT root, not
+// profiledir.Root: capture.ProfileInbox never follows a moved root_dir,
+// and knowledge_ingest refuses a path outside its working directory. A
+// profile whose root was moved would otherwise refuse every capture.
+func IngestCapture(ctx context.Context, profileID, path string) error {
+	scope := CaptureScope(profileID)
+	if scope == "" {
+		return fmt.Errorf("monomind.IngestCapture: unusable profile id %q", profileID)
+	}
+	monomindDir := profiledir.MonomindDir(nil, profileID)
+	if err := os.MkdirAll(monomindDir, 0700); err != nil {
+		return fmt.Errorf("monomind.IngestCapture: creating profile monomind dir: %w", err)
+	}
+	if err := runIngest(ctx, filepath.Dir(monomindDir), monomindDir, map[string]string{"path": path, "scope": scope}); err != nil {
+		// The most common cause is a monomind that predates capture
+		// indexing; say so on the row rather than leave "all chunk stores
+		// failed" to be decoded.
+		if set, capErr := Capabilities(ctx); capErr == nil && set != nil && !CaptureIndexingSupported(set.Version, set.Has(CapKnowledgeProfileCaptures)) {
+			return fmt.Errorf("monomind.IngestCapture: %w (monomind %s cannot index every saved page; update to %s or newer: npm install -g @monoes/monomindcli@latest)",
+				err, set.Version, CaptureCompanionsVersion)
+		}
+		return fmt.Errorf("monomind.IngestCapture: %w", err)
+	}
+	return nil
+}
+
+// runIngest runs one knowledge_ingest call in dir with MONOMIND_CWD set to
+// monomindDir, and decides success from the tool's own payload.
+func runIngest(ctx context.Context, dir, monomindDir string, params map[string]string) error {
+	bin, err := findIn(dir)
 	if err != nil {
-		return fmt.Errorf("monomind.IngestDocument: marshal params: %w", err)
+		return err
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("marshal params: %w", err)
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(params), "--format", "json")
-	cmd.Dir = profiledir.Root(db, profileID)
-	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+profileDir)
+	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(raw), "--format", "json")
+	cmd.Dir = dir
+	cmd.Env = PinEnvIn(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin, dir)
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("monomind.IngestDocument: knowledge_ingest: %w", err)
+		return fmt.Errorf("knowledge_ingest: %w", err)
 	}
 
 	jsonStr, err := extractJSONObject(string(out))
 	if err != nil {
-		return fmt.Errorf("monomind.IngestDocument: %w", err)
+		return err
 	}
 	var envelope cliEnvelope
 	if err := json.Unmarshal([]byte(jsonStr), &envelope); err != nil {
-		return fmt.Errorf("monomind.IngestDocument: decoding CLI envelope: %w", err)
+		return fmt.Errorf("decoding CLI envelope: %w", err)
 	}
 	if len(envelope.Result.Content) == 0 {
-		return fmt.Errorf("monomind.IngestDocument: empty response content")
+		return fmt.Errorf("empty response content")
 	}
 
 	var payload ingestPayload
 	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &payload); err != nil {
-		return fmt.Errorf("monomind.IngestDocument: decoding tool payload: %w", err)
+		return fmt.Errorf("decoding tool payload: %w", err)
 	}
 	// Exit code 0 alone does not mean the tool succeeded -- check both the
 	// envelope-level flag and the inner payload's own success field.
 	if envelope.Result.IsError || !payload.Success {
 		if payload.Error != "" {
-			return fmt.Errorf("monomind.IngestDocument: knowledge_ingest: %s", payload.Error)
+			return fmt.Errorf("knowledge_ingest: %s", payload.Error)
 		}
-		return fmt.Errorf("monomind.IngestDocument: knowledge_ingest reported failure with no error message")
+		return fmt.Errorf("knowledge_ingest reported failure with no error message")
 	}
 	return nil
 }
@@ -183,11 +239,21 @@ type knowledgeSearchPayload struct {
 }
 
 // SearchKnowledge queries profileID's Second Brain via
-// `monomind mcp exec -t knowledge_search`, scoped to store="project" (this
-// profile's own ingested documents — never "global"/"all", which would
-// pull in the user's personal cross-project brain). Only "excerpt"-kind
-// results are returned; knowledge-graph/rule/memory result kinds are
-// filtered out (out of scope — see the design spec).
+// `monomind mcp exec -t knowledge_search` and returns the best excerpts
+// from both of the profile's stores:
+//
+//   - its documents: store="project" in the profile's own monomind home
+//     (uploads and discovered files; never "global"/"all", which would
+//     pull in the user's personal cross-project brain);
+//   - its browser captures: CaptureScope, the `profile:<id>` store
+//     monomind files a capture saved into this profile under. Searched
+//     for document excerpts only — the knowledge-graph, rule and memory
+//     surfaces belong to whatever project the process runs in, not to the
+//     profile.
+//
+// The two run in parallel and are merged by score. One store failing
+// still returns the other's results; the error is returned only when both
+// fail. Only "excerpt"-kind results are returned (see the design spec).
 func SearchKnowledge(ctx context.Context, db *sql.DB, profileID, query string) ([]KnowledgeResult, error) {
 	bin, err := Find()
 	if err != nil {
@@ -199,36 +265,83 @@ func SearchKnowledge(ctx context.Context, db *sql.DB, profileID, query string) (
 		return nil, fmt.Errorf("monomind.SearchKnowledge: creating profile monomind dir: %w", err)
 	}
 
-	params, err := json.Marshal(map[string]string{"query": query, "store": "project"})
+	type search struct {
+		params  map[string]any
+		dir     string
+		results []KnowledgeResult
+		err     error
+	}
+	searches := []*search{{params: map[string]any{"query": query, "store": "project"}, dir: profileDir}}
+	if scope := CaptureScope(profileID); scope != "" {
+		searches = append(searches, &search{
+			params: map[string]any{"query": query, "store": "project", "scope": scope, "surfaces": []string{"chunks"}},
+			dir:    profiledir.MonomindDir(nil, profileID),
+		})
+	}
+
+	var wg sync.WaitGroup
+	for _, s := range searches {
+		wg.Add(1)
+		go func(s *search) {
+			defer wg.Done()
+			s.results, s.err = runKnowledgeSearch(ctx, bin, s.dir, s.params)
+		}(s)
+	}
+	wg.Wait()
+
+	results := make([]KnowledgeResult, 0)
+	var firstErr error
+	failed := 0
+	for _, s := range searches {
+		if s.err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = s.err
+			}
+			continue
+		}
+		results = append(results, s.results...)
+	}
+	if failed == len(searches) {
+		return nil, fmt.Errorf("monomind.SearchKnowledge: %w", firstErr)
+	}
+	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	return results, nil
+}
+
+// runKnowledgeSearch runs one knowledge_search call with MONOMIND_CWD set
+// to monomindDir and returns its excerpt-kind results.
+func runKnowledgeSearch(ctx context.Context, bin, monomindDir string, params map[string]any) ([]KnowledgeResult, error) {
+	raw, err := json.Marshal(params)
 	if err != nil {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: marshal params: %w", err)
+		return nil, fmt.Errorf("marshal params: %w", err)
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_search", "-p", string(params), "--format", "json")
-	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+profileDir)
+	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_search", "-p", string(raw), "--format", "json")
+	cmd.Env = PinEnv(append(FilteredEnviron(), "MONOMIND_CWD="+monomindDir), bin)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: knowledge_search: %w", err)
+		return nil, fmt.Errorf("knowledge_search: %w", err)
 	}
 
 	jsonStr, err := extractJSONObject(string(out))
 	if err != nil {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: %w", err)
+		return nil, err
 	}
 	var envelope cliEnvelope
 	if err := json.Unmarshal([]byte(jsonStr), &envelope); err != nil {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: decoding CLI envelope: %w", err)
+		return nil, fmt.Errorf("decoding CLI envelope: %w", err)
 	}
 	if len(envelope.Result.Content) == 0 {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: empty response content")
+		return nil, fmt.Errorf("empty response content")
 	}
 
 	var payload knowledgeSearchPayload
 	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &payload); err != nil {
-		return nil, fmt.Errorf("monomind.SearchKnowledge: decoding tool payload: %w", err)
+		return nil, fmt.Errorf("decoding tool payload: %w", err)
 	}
 
 	results := make([]KnowledgeResult, 0, len(payload.Results))
@@ -239,4 +352,35 @@ func SearchKnowledge(ctx context.Context, db *sql.DB, profileID, query string) (
 		results = append(results, KnowledgeResult{Path: r.FilePath, Excerpt: r.Text, Score: r.Similarity})
 	}
 	return results, nil
+}
+
+// CaptureCompanionsVersion is the first monomind that ingests a capture's
+// companion documents (transcript.md, summary.md) as documents of their
+// own. Earlier releases file them under the page's URL as a new version
+// of it, superseding readable.md, and refuse to ingest any capture whose
+// URL has a query string (every YouTube video): "all chunk stores failed".
+const CaptureCompanionsVersion = "2.18.3"
+
+// CapKnowledgeProfileCaptures is advertised by monomind releases after
+// 2.18.3 that ingest browser captures fully (see CaptureCompanionsVersion).
+// Either it or the version is enough.
+const CapKnowledgeProfileCaptures = "knowledge-profile-captures"
+
+// SupportsCaptureCompanions reports whether the installed monomind can take
+// a capture's companion documents. False when monomind is missing or its
+// version cannot be read.
+func SupportsCaptureCompanions(ctx context.Context) bool {
+	set, err := Capabilities(ctx)
+	if err != nil || set == nil {
+		return false
+	}
+	return CaptureIndexingSupported(set.Version, set.Has(CapKnowledgeProfileCaptures))
+}
+
+// CaptureIndexingSupported reports whether a monomind can index every
+// browser capture: it advertises CapKnowledgeProfileCaptures, or its
+// version is CaptureCompanionsVersion or later (2.18.3 has the fix but not
+// the capability).
+func CaptureIndexingSupported(version string, hasCapability bool) bool {
+	return hasCapability || versionAtLeast(version, CaptureCompanionsVersion)
 }

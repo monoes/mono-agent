@@ -34,6 +34,11 @@ type Installer interface {
 	// Start (re)starts the registered service now. Idempotent when it is
 	// already running.
 	Start(ctx context.Context) error
+	// Restart stops the running service and starts it again, through the
+	// service manager's own restart, and starts it when it was not running. It
+	// interrupts whatever the daemon is running. A caller that cannot tell
+	// whether anything is registered asks Status first (RestartRegistered).
+	Restart(ctx context.Context) error
 }
 
 // Result describes what Install did, for the CLI to print.

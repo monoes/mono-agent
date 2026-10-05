@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,7 +20,9 @@ import (
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
-// withCoderCaps stands in for a monomind that advertises caps.
+// withCoderCaps stands in for a monomind that advertises caps, and whose
+// scan finds claude and codex installed with only claude full-access (as
+// monomind 2.18 reports them) unless withCoderScan says otherwise.
 func withCoderCaps(t *testing.T, caps ...string) {
 	t.Helper()
 	old := capabilityProbe
@@ -26,6 +30,19 @@ func withCoderCaps(t *testing.T, caps ...string) {
 		return monomind.NewCapabilitySet("9.0.0", caps...), nil
 	}
 	t.Cleanup(func() { capabilityProbe = old })
+	withCoderScan(t,
+		monomind.ScanEntry{ID: "claude", Installed: true, FullAccess: true, ToolActivityFidelity: "full"},
+		monomind.ScanEntry{ID: "codex", Installed: true, ToolActivityFidelity: "none"})
+}
+
+// withCoderScan stands in for `agent scan` finding entries.
+func withCoderScan(t *testing.T, entries ...monomind.ScanEntry) {
+	t.Helper()
+	old := runtimeScan
+	runtimeScan = func(context.Context) (*monomind.ScanResult, error) {
+		return &monomind.ScanResult{V: 1, Agents: entries}, nil
+	}
+	t.Cleanup(func() { runtimeScan = old })
 }
 
 // writeCoderMonomind writes a fake monomind that answers the handshake,
@@ -180,8 +197,25 @@ func TestCoderConversationFolders(t *testing.T) {
 			t.Errorf("%s: exit %d, want 3: %s", name, code, out)
 		}
 	}
-	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "codex", "--mode", "coder", "--cwd", picked); code != 3 {
-		t.Errorf("codex runtime: exit %d, want 3: %s", code, out)
+	// This monomind runs only claude with full access (see withCoderCaps).
+	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "codex", "--mode", "coder", "--cwd", picked); code != 3 || !strings.Contains(out, `"code":"coder_runtime_unsupported"`) {
+		t.Errorf("codex runtime on an older monomind: exit %d, want 3: %s", code, out)
+	}
+	// One that runs codex with full access: accepted, set up for codex,
+	// and the effort kept on the conversation.
+	withCoderCaps(t, append(monomind.CoderCapabilities, monomind.CapAgentExecFullAccessAny)...)
+	codexTarget := "codex"
+	withCoderScan(t, monomind.ScanEntry{ID: "codex", Installed: true, FullAccess: true, ToolActivityFidelity: "full", InitTarget: &codexTarget})
+	out, code = runChatHistory(t, dbPath, "default", "create", "--runtime", "codex", "--mode", "coder", "--cwd", picked, "--effort", "high")
+	decodeChatJSON(t, out, &rec)
+	if code != 0 || rec.RuntimeID != "codex" || rec.Effort != "high" || rec.Cwd != real {
+		t.Fatalf("codex with full access: exit %d %+v", code, rec)
+	}
+	if logged, _ := os.ReadFile(argsLog); !strings.Contains(string(logged), "init --project "+real+" --if-missing --json --no-graph --target codex") {
+		t.Errorf("codex folder not set up with --target codex:\n%s", logged)
+	}
+	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "vercel", "--mode", "coder", "--cwd", picked); code != 3 || !strings.Contains(out, "coder_runtime_unsupported") {
+		t.Errorf("unknown runtime: exit %d %s", code, out)
 	}
 
 	out, _ = runCoderCLI(t, dbPath, "workspace", "list")
@@ -211,7 +245,11 @@ const coderTranscript = `  echo '{"v":1,"type":"start","runtime":"claude","cwd":
 func TestCoderTurnRunsWithFullAccessAndJournalsToolActivity(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
 	big := strings.Repeat("y", chatevents.MaxToolPreviewBytes)
-	bin, argsLog := writeCoderMonomind(t, strings.Replace(coderTranscript, "BIG", big, 1))
+	// A process the turn left running, still alive when the turn ends.
+	left := startBackground(t, "sleep", "60")
+	transcript := strings.Replace(coderTranscript, "BIG", big, 1)
+	transcript = strings.Replace(transcript, `"background_pids":[4242]`, `"background_pids":[`+strconv.Itoa(left)+`]`, 1)
+	bin, argsLog := writeCoderMonomind(t, transcript)
 	withCoderCaps(t, monomind.CoderCapabilities...)
 	setCoderSettings(t, dbPath, coderSettings{Enabled: true, BudgetUSD: 3})
 	cwd := t.TempDir()
@@ -257,7 +295,7 @@ func TestCoderTurnRunsWithFullAccessAndJournalsToolActivity(t *testing.T) {
 		noticeCoderWorkspace + ": Working in " + cwd,
 		noticeCoderStatus + ": Starting Claude Code… loading MCP servers (1)",
 		noticeCoderStatus + ": Ready. Not available: monomind (failed)",
-		noticeCoderBackground + ": 1 process started during this turn still running: 4242",
+		noticeCoderBackground + ": 1 process started during this turn still running: " + strconv.Itoa(left) + " (sleep 60)",
 	}
 	if len(notices) != len(wantNotices) {
 		t.Fatalf("notices = %+v", notices)
@@ -358,4 +396,18 @@ func TestCoderRootIsOneSharedFolder(t *testing.T) {
 	if out, code := runChatHistory(t, dbPath, "default", "create", "--runtime", "claude", "--mode", "coder", "--coder-root", "--new-workspace"); code != 3 {
 		t.Errorf("--coder-root with --new-workspace: exit %d %s", code, out)
 	}
+}
+
+// startBackground starts a process as a turn would leave one behind and
+// returns its pid; cleanup kills and reaps it.
+func startBackground(t *testing.T, name string, args ...string) int {
+	t.Helper()
+	c := exec.Command(name, args...)
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := make(chan struct{})
+	go func() { c.Wait(); close(reaped) }()
+	t.Cleanup(func() { c.Process.Kill(); <-reaped })
+	return c.Process.Pid
 }

@@ -435,3 +435,736 @@ allowlist) if browser-based callers need to reach it; without it the
 server emits no CORS headers at all, so cross-origin browser requests are
 blocked outright — see [Runtime environment variables in
 AGENTS.md](AGENTS.md#runtime-environment-variables).
+
+## OpenAI-compatible API surface
+
+`monoagentcli httpapi` and `monoagentcli daemon` serve `GET /v1/models`,
+`GET /v1/models/{id}`, `POST /v1/chat/completions` and
+`POST /v1/images/generations` over the agent
+runtimes installed on the machine (`internal/openaiapi/`). A request is a
+real agent turn run through `monomind agent exec`; this section is what that
+means for exposure. Setup: `examples/openai-api-quickstart.md`.
+
+**Credentials.** A key is `sk-ma-` plus 32 random bytes and belongs to one
+profile. Only its SHA-256 is stored (table `api_keys`), so it is shown once,
+at creation, and verifying a request needs no vault and no keyring. There is
+no authentication cache: `api key revoke` and `org teardown-profile` take
+effect on the next request. A request authenticates as the key's profile and
+as nothing else; a key of another profile is "not found" in every command
+except `api key list --all-profiles`, which lists every profile's keys
+(metadata only, never a secret) to whoever can run it on this machine.
+The MCP tools over keys (`api_key_list`, and with `mcp --allow-mutations`
+`api_key_create`, `api_key_update` and `api_key_revoke`) act on the MCP
+server's own profile only. `api_key_create` returns the new key in its result,
+once, so that key passes through the MCP host: into its transcript and, for a
+hosted model, to its provider. When that matters, run `api key create` in your
+own terminal and not through an agent's shell tool: it writes the key to its
+stdout (also with `--json`), so whatever runs it, an agent included, receives
+the key. A key is refused as the name of a key (names are listed, and one
+holding `sk-ma-` or shaped like a key id is refused), and no error of these
+tools repeats an argument.
+The legacy HTTP API token (vault entry `httpapi-token`) is a separate
+credential for the other routes: a key never opens them and the token never
+opens `/v1`. Treat a key like a password; it has no scopes and no expiry.
+
+**What a key can make this machine do.** Every request starts one agent turn
+in a slot folder of its profile, `~/.monoagent/workspaces/api/p-<hash>/slot-N`
+(`<hash>` is a hash of the profile id, so two profiles never share a folder;
+never the profile's own folder; emptied before and after every turn), with no
+tools (the functions a request declares aside: see **Tool calling**), no
+settings and the workspace-write sandbox where the runtime has
+one. What that confines depends on the runtime, and
+`monoagentcli api models` reports it per model instead of pretending
+otherwise:
+
+| Class | Meaning | For example |
+|---|---|---|
+| `chat-only` | monomind's allow-list gate is the only tool gate, and a request carries no caller tools, so no native tool is reachable | claude |
+| `sandboxed` | writes are confined to the turn's folder and the system temp directory; reads and the network are open, and the runtime's own configuration still applies | codex |
+| `unconfined` | the runtime's native tools run as the OS user | antigravity, and any runtime monomind does not vouch for |
+
+Which runtime lands in which class follows what monomind reports, so it can
+change with a monomind upgrade. `sandboxed` confines writes, nothing more: a
+runtime keeps the MCP servers and instructions files of the OS user it runs
+as, so a key holder can ask codex to use any tool you configured for it.
+
+Profiles are kept apart by their folders and by what the API looks up for a
+key, not by an OS boundary. Every profile's data lives under the same
+`~/.monoagent`, and a runtime that can read the disk (codex under `sandboxed`,
+antigravity) can read it, the prompt files of a turn that is running for
+another profile included.
+
+The class is decided from `monomind agent scan` and fails closed: anything
+not vouched for is `unconfined`. A `sandboxed` model's turn is started with
+the sandbox required, so one whose sandbox cannot be applied is refused (403)
+instead of running unconfined. The class is checked again when the turn
+starts, against the confinement the `start` event reports (monomind 2.22
+reports it), and a turn that is weaker than the listener's policy is
+cancelled (403 `policy_denied`) before any of its text reaches the caller. A
+streamed response is committed (status 200) on its first content or after 5
+seconds of silence, so a refusal later than that is an error event in the
+stream rather than a 403. A successful non-streaming response also carries
+monomind's sandbox verdict for the turn in `X-Monoagent-Sandbox` (`sandboxed`,
+`scoped`, `unsupported`, `awaiting-monomind`, `needs-monomind` or `off`),
+which is not the class above; a streamed response and an error have none.
+
+Be precise about what is and is not guaranteed. claude's `chat-only` rests on
+monomind's design (its allow-list gate); the live check
+`MONOAGENT_LIVE_API_TESTS=1 go test ./internal/openaiapi -run TestLiveClaudeIsChatOnly`
+tries to make it do otherwise: it asks claude to run `ls /`, read `/etc/hosts`
+and write a file. It was run on 2026-10-02 against claude 2.1.287 and monomind
+2.22.0: claude did try its Bash, Read and Write tools, monomind refused every
+call ("not in the tool list this exec call was given"), nothing ran and no file
+was written. That is one machine and one version of each, so run it again after
+upgrading either; read the class as measured for that pair and as the design
+beyond it. codex under
+`workspace-write` can still read files outside its folder, and antigravity
+can run a shell command with the permissions of the OS user. **Run the server
+as a dedicated unprivileged OS user**, with nothing of value readable by it,
+before giving a key to anyone you would not give a shell.
+
+**Exposure.**
+
+- `/v1` rides the main HTTP API listener only while that bind is loopback
+  (default `127.0.0.1:9322`), where by default every runtime is served.
+  Off-loopback the
+  main listener never serves `/v1`; it logs a pointer to `--v1-addr`.
+- `--v1-addr` (`MONOAGENT_API_V1_ADDR`) starts a dedicated listener that
+  serves only `/v1/*` and `GET /health`: no workflow, node, HIL or org
+  endpoint exists on it. Any non-loopback bind is served only over TLS, with
+  no way to serve it in the clear: `MONOAGENT_API_TLS_CERT` and `_KEY`, else
+  a self-signed certificate cached under `~/.monoagent/api-tls/` (key file
+  mode 0600) that covers `localhost` only, so remote clients reject it until
+  they trust it explicitly. Set a real certificate, or terminate TLS in a
+  reverse proxy. The two variables also make a loopback `--v1-addr` bind
+  speak TLS, so a proxy that forwards plain HTTP needs them unset. The webhook
+  server follows the same rules (see above). `httpapi` exits when the
+  listener cannot start; `daemon` prints a warning and keeps running without
+  it, so check `api status` after starting it.
+- The default confinement is `chat-only` off-loopback and `any` on loopback.
+  Behind a reverse proxy the bind is loopback, so **set `--confinement`
+  (`MONOAGENT_API_CONFINEMENT`) explicitly**; it is one value for every
+  listener of the process, so it also limits the loopback main listener. A
+  model above the policy is not listed, `GET /v1/models/{id}` answers 404 for
+  it and a completion that names it answers 403.
+- TLS protects the key in transit; it does not limit who may try one. There
+  is no rate limit per caller and no lockout, so a key is only as safe as it
+  is long and secret (256 bits). Put a proxy or a firewall in front of a
+  listener that faces the internet. There is no CORS: browser clients are out
+  of scope.
+
+**Saved server settings.** The settings that decide the exposure above
+(`--v1-addr`, the TLS files, the three confinement classes and the two runtime
+lists) and the two limits can be saved with `monoagentcli api config set`, so
+that a daemon the login service starts, which has no flags, has them. They are
+one JSON row (`api_gateway_config`) of the `settings` table of
+`~/.monoagent/monoagent.db`: paths of TLS files, never their contents, and no
+secret. The order is flag, then environment variable, then saved, then default,
+so a saved value never loosens what a flag or a variable of the process says (a
+`MONOAGENT_API_CONFINEMENT=chat-only` in the service's own environment holds
+whatever is saved), and it fills what they leave out.
+
+- Whoever can write that database (the OS user the daemon runs as, and root)
+  can change what the daemon exposes the next time it starts, as whoever can
+  edit its LaunchAgent, systemd unit or Scheduled Task can. The row is not a new
+  boundary: run the server as a dedicated OS user, whose database it is.
+- A change takes effect when the server starts, never while it runs.
+  `monoagentcli daemon restart` starts it again through the service manager the
+  daemon is registered with, and **interrupts what the daemon is running**
+  (workflows, org runs); it says so first. A daemon that is not registered, or
+  that was started by hand, is not restarted by it. How the daemon ends is the
+  service manager's (launchd, systemd) and nothing here claims a graceful stop.
+  On Windows the Scheduled Task is ended with `schtasks /end`, and whether that
+  stops the process its `cmd` wrapper started was not verified on Windows; the
+  command waits for the daemon to release its lock before it starts it again.
+- A change that makes the server reach further needs `--yes` (`api config set`
+  and `unset`; without it exit 3 with the reasons, `--dry-run` shows them): a
+  dedicated listener that reaches further than the saved one (beyond this
+  machine, another host beyond it, or every interface where it was one host), a
+  higher confinement class (of a listener, of a `--context` key or of `auto`) on
+  a listener on this machine or beyond it, a runtime list that gains a runtime
+  it did not have (one of the default list that a saved list left out counts
+  when it comes back, so undoing a `codex`-only list needs `--yes`), tool calling
+  or image generation switched on again, or the removal of a saved
+  row that cannot be read (below). It guards against a
+  script, an agent's shell tool or a hurried edit widening the server without
+  saying so. It is not an access control: whoever can run the CLI as your OS
+  user can pass `--yes`. The check compares the effective policy, so it also
+  catches an `unset` that takes a value held below its default back up (a
+  class, or a runtime list). One
+  cost: raising `confinement` always needs `--yes`, because the daemon's own
+  environment may name a listener beyond the machine that the row does not.
+- What the saved text may be. The saved layer outlives the process that wrote
+  it, is printed by `api config show` and handed to every model that reads the
+  settings, and can be written by a caller that is not the operator, so it is
+  held to two rules the flags and the environment are not: no value may contain
+  a control character (an escape sequence in a TLS path would drive the
+  terminal that shows it; `show` also writes any that is already in the row
+  out as `\x1b`), and a TLS file must be an absolute path (a service starts in
+  another folder and nothing expands a `~`). A certificate or key file is read
+  as a regular file of at most 1 MiB, whoever named it, so a path that names a
+  FIFO or a device such as `/dev/zero` is an error that the server reports and
+  not a start that hangs or runs out of memory. Printable text is still text:
+  a model that reads a saved path reads whatever words it holds, which is a
+  reason to give an agent host that can change settings no more than it needs.
+- The desktop app (Settings › OpenAI-compatible API › Server settings) can
+  change these settings through the same commands, and before a change that makes
+  the server reach further it lists the reasons the CLI gives in a dialog whose
+  default is Cancel (it passes `--yes` only after that confirmation), as it asks
+  before it restarts the daemon.
+- A saved value that fails its rule (a hand edit) makes `httpapi` exit at
+  start (exit 3, naming the setting), and `api models` and `api status`
+  refuse, rather than guess; `api config unset <setting>` removes it. A row that
+  cannot be read at all (not a JSON object, a bad version, a field of the wrong
+  type) stops every `api config` command, `httpapi`, `api models` and
+  `api status` too, with exit 3 and a message that starts `the saved settings
+  are damaged`; one command removes it: `api config unset --all --yes`. The
+  daemon does not stop with either: it does more than serve the API, and a
+  login service would start it again and again, so it starts without the
+  OpenAI-compatible API (no `/v1` anywhere, nothing in its heartbeat), says why
+  on stderr and in its log, and runs everything else; it never ignores a saved
+  setting to start the API, which would serve with the defaults a server that
+  someone had limited. `daemon restart` refuses, restarting nothing, when the
+  saved settings cannot be used. Removing a row that cannot be read asks
+  for `--yes` because what the row limited cannot be told (a `confinement` of
+  `chat-only` in it, say), so returning every setting to its default may reach
+  further than anything: the same gate as any other widening, so a damaged row
+  is not a way to drop a restriction without confirming. What the row held is
+  gone, and the server then starts on its flags, its environment and the
+  defaults. A row written by a newer `monoagentcli` is the exception: it is exit
+  1, never rewritten and never removed by these commands, since that would lose
+  what that version saved.
+- The daemon's heartbeat (`~/.monoagent/daemon-heartbeat.json`) lists each
+  setting's effective value and where it came from (`flag`, `env`, `saved`,
+  `default`): addresses, classes and paths, no secret.
+- **From MCP.** With `mcp --allow-mutations`, `api_config_set` saves and removes
+  the same settings, with the same checks and the same gate, and the
+  confirmation moves to where a model cannot reach it. A change that makes the
+  server reach further (the cases above, `unset` included) is refused, and
+  nothing is saved, unless the operator started the MCP server with
+  `--allow-api-exposure` (or `MONOAGENT_MCP_ALLOW_API_EXPOSURE=1`), a switch read
+  once when the server starts. It is a flag of the host's configuration and not
+  an argument of the tool because a model sets the arguments of a call: an
+  argument that confirmed would be set by whatever the model was told, a
+  prompt-injected page included, and would protect nothing. No argument can open
+  it (the schema offers none, and the tests send the obvious spellings of one), and
+  the refusal names the setting and the reason, the operator's switch, and the
+  user's own way: `api config set ... --yes`, or the desktop app (for a row that
+  cannot be read it names `api config unset --all --yes` alone). Removing such a
+  row (`unset` of `all`) is one of the changes the flag allows, since what the
+  row limited cannot be told: without it the call is refused with the reason
+  `saved_settings`, and with it the row is removed and the result says
+  `removed_unreadable_row`. While the row cannot be read the other changes and
+  the read tools fail with the command's message (`the saved settings are
+  damaged ...`), which a model passes on to the user, and a row a newer version
+  saved is an error that nothing here removes. **What it does
+  not do:** it does not stop a host that also gives the model a shell tool, or
+  any tool that runs commands as your OS user, from running `monoagentcli api
+  config set ... --yes` itself; the flag guards the tool as `--yes` guards the
+  command, and neither is an access control. **`--allow-mutations`, which the
+  tool needs first, is itself such a tool:** it also serves `workflow_node_add`
+  (which accepts the node type `system.execute_command`), `workflow_set_active`
+  and `workflow_run`, and a model that can use them can have a workflow of the
+  profile run `monoagentcli api config set ... --yes` as the OS user (the
+  security review of phase 6 did it, against a workflow that had a trigger). The
+  flag therefore stops `api_config_set` and `api_auto_set` and nothing else that
+  `--allow-mutations` allows. If the model must not be able to widen the server,
+  do not give it `--allow-mutations`, start the MCP server with `--api-only`
+  (below), or run it in a sandbox.
+  `--allow-api-exposure` without `--allow-mutations` does nothing, since the
+  tool is then not served, and `mcp --grant` refuses it. The tool also refuses a
+  value that holds an API key (`sk-ma-`) and a value of unreasonable length, so
+  that a key pasted by mistake is not saved in clear where the read-only
+  `api_config_get` shows it to whoever calls it; no error of the tool repeats an
+  argument (the reasons of the gate print the address of the call and, for a move
+  between two binds, the one saved before it, or a runtime; the refusal names no
+  address and no host, in any spelling, and no runtime outside the default list);
+  and the result of an allowed change shows what was saved, paths and addresses
+  included, and the command's reasons, never a secret.
+- `api_config_apply` (`--allow-mutations`) restarts the daemon through the
+  service manager it is registered with, as `daemon restart` does, **and
+  interrupts what the daemon is running** (workflows, org runs), with whatever
+  is saved at that moment, which includes a change that reaches further that the
+  user saved with `--yes` and did not mean to apply yet. The tool is annotated
+  destructive so that a host can ask first, and its description says so. It
+  restarts only a daemon registered for auto-start (anything else is an error
+  that says what the user can do), and nothing here claims a graceful stop.
+- `api_auto_set` (`--allow-mutations`) switches `auto` on or off for the MCP
+  server's profile, as `jev enable api_auto` does. Switching it on makes the
+  server send the first 4,000 characters of each `auto` request's prompt, and
+  the models' descriptions, to TypeSafe (see **The `auto` model**), so it needs
+  the operator's `--allow-api-exposure` too (the owner's decision of 2026-10-05:
+  what leaves the machine is the operator's to allow, made when the server
+  starts, as the exposure of the API's server is, and no argument of the tool
+  can make it) and `acknowledge_egress: true`, which shows that list, as `jev
+  enable` needs `--yes`. The acknowledgement is an argument, so like `--yes` it
+  makes the data visible before it moves and is not an access control; the flag
+  is. Switching off sends nothing and needs neither. Only where a Jev key
+  already exists does switching on send anything. The tool never creates,
+  stores, uses or shows the Jev key; it only asks where one is.
+- `--api-only` (or `MONOAGENT_MCP_API_ONLY=1`) gives a model the API's tools and
+  no other: the ten `api_*` tools, with no workflow, vault, secret, person, org
+  or documentation tool, so with `--allow-mutations` it has nothing that runs a
+  command as the OS user, which `--allow-mutations` alone does (above). It
+  takes tools away and changes none that stay: the mutating ones still need
+  `--allow-mutations`, and `--allow-api-exposure` is still what lets `api_config_set`
+  widen the server and `api_auto_set` switch `auto` on, so the flag is a boundary
+  for what that model can reach through this server. It is not one against a host
+  that gives the model tools of its own besides this server, such as a shell
+  tool. A call by name of a tool the server does not serve is refused and says
+  why; `mcp --grant` refuses the flag.
+
+**Context keys.** A key created with `--context` adds up to five excerpts
+(1,200 characters each, source base names only, never paths) from that
+profile's own documents and captures to the system prompt, framed as data
+whose instructions must be ignored. Captured web pages are in that knowledge
+and nobody vetted them, and the framing reduces prompt injection without
+removing it, so **by default a context key is served only by `chat-only`
+models**: a runtime with native tools could be steered into using them.
+`--context-confinement sandboxed|any` (`MONOAGENT_API_CONTEXT_CONFINEMENT`)
+raises that on purpose, for example to give a coding agent on your own
+machine your notes. It never goes above the listener's own `--confinement`,
+and raising it accepts that a captured page could steer that runtime. The same
+cap decides **tool calling**: a request that declares `tools` (and does not set
+`tool_choice` to `none`) with a context key is 403 `policy_denied`, before
+anything starts (naming `--context-confinement`, or `--confinement` when the
+listener is chat-only, which holds the key to the lower of the two, or both),
+unless that cap is above chat-only, because an
+instruction in a captured page could steer the calls the model proposes and the
+client runs those with its own authority. The
+excerpts leave the machine like any prompt, to the runtime's provider. The
+personal brain and other profiles are never searched.
+
+**The `auto` model.** A request for `"model": "auto"` has TypeSafe Jev pick
+the runtime and model. It is off until the key's profile runs `monoagentcli
+jev enable api_auto` (which prints what follows and asks first) and has a Jev
+key: its vault entry, else the server's `TYPESAFE_API_KEY`, so with that
+variable set every profile that switches the surface on spends it. Then each
+such request sends TypeSafe, a third party besides the runtime's provider that
+answers the prompt, the first 4,000 characters of the last user message (of an
+image request, its prompt) and,
+for every model the key may use, its name, description and validated cost and
+latency. Never the system prompt, earlier turns, the excerpts of a context key
+or a key. So whoever holds a key of that profile decides what is sent to
+TypeSafe: enable the surface only where you accept that. `auto` is listed after
+the concrete models, so a client that takes the first model of the list is not
+moved to it, and its prompts to TypeSafe, by switching the surface on.
+
+What Jev can decide is bounded by structure, not by its instructions. The prompt
+goes as data (`state.untrusted_prompt`, and Jev is told to treat it so), but Jev
+can only answer with one of the listed model ids, anything else is discarded,
+and the list is already cut before Jev sees it: to what the key's policy allows
+(the listener's `--confinement`, a context key's `--context-confinement`) and
+within `--auto-confinement`, which is **chat-only unless the operator raised
+it**. A prompt that steers Jev can therefore never reach a model the key could
+not have named itself and, by default, never one with native tools. The author
+of a prompt need not be the holder of the key (an app that forwards its users'
+text, say), so letting a prompt choose the confinement class of its own turn is
+a permission the operator gives, with `--auto-confinement sandboxed|any`
+(`MONOAGENT_API_AUTO_CONFINEMENT`); `api models` shows which models auto may
+pick and how many are held back. A model the client names itself is not subject
+to it. A context key stays at chat-only unless `--context-confinement` says
+otherwise, through `auto` as well.
+Jev's answer is used only when it arrives within 8 seconds (looking up the key
+included), with no retry, and is sure enough for the surface's threshold; an
+outage, a timeout or a doubt falls back to a rule, never to a wider set: of the
+validated models the most confined, then the cheapest, then the fastest, so that
+an outage does not move a request to a less confined model for being cheaper. An
+outage costs a profile's first three `auto` requests up to those 8 seconds each,
+with their slots held; then its questions stop for 30 seconds and the rule decides
+at once, and one question after that finds out whether Jev is back.
+Each question is recorded in `jev_usage` under `api_auto` (counts only), and the
+log line of the request says `auto=jev` or `auto=rule` and never the prompt. The
+gateway blanks `TYPESAFE_API_KEY` in the environment of its agent turns, which
+inherit the rest of the server's: a turn that runs commands could read it.
+
+**Image generation.** `POST /v1/images/generations` runs one turn of a runtime
+from `MONOAGENT_API_IMAGE_RUNTIMES` (codex and antigravity unless the operator
+changed it) that runs as `sandboxed` or `unconfined`: the runtime has to write
+the file, so a `chat-only` runtime cannot make images, and the route is refused
+under `--confinement chat-only` and, for a key created with `--context`, under
+`--context-confinement` (chat-only unless raised). An operator who wants no
+image route at all sets `MONOAGENT_API_IMAGE_RUNTIMES=none`: nothing runs, every
+image request says it is switched off, and no model is listed with the `image`
+capability. It is the chat turn in the same slot folder, so everything above
+holds. Two things differ, and both reach further than chat does.
+
+- *The turn is told to use the runtime's native tools.* It makes the image with
+  its own tool and then copies the file into the folder it was given with a shell
+  command from the runtime's own state folder (in the probes of 2026-10-01,
+  codex's `~/.codex/generated_images/` and antigravity's
+  `~/.gemini/antigravity-cli/brain/`), and a runtime may read its own skill files
+  outside the folder first. What a `sandboxed` or `unconfined` runtime can read
+  or run was already in reach of such a key through chat; here it is the normal
+  path.
+- *The gateway returns bytes.* Each turn is told a folder of its own to save its
+  images in, `./out-<16 random characters>/` inside the slot folder, which the
+  gateway makes (mode 0700) before the turn starts. After the turn, and before the
+  slot folder is emptied, it reads the files at the top of that folder, and of
+  nothing else, that are PNG, JPEG, WebP or GIF by their first bytes (at most
+  20 MiB each, at most `n` of them, `n` at most 4) and sends them in the response.
+  A key holder, or a prompt that steers the runtime, can therefore have it copy
+  any image file it can read into that folder and receive it, and the test is on
+  the first bytes only: a file that begins with the eight bytes of the PNG
+  signature and goes on with anything is returned, so a runtime that can read a
+  file can have that file returned by putting those bytes in front of it. Under
+  `sandboxed` and `unconfined` the runtime reads the disk as the OS user, and chat
+  could already have it say what it read; what this adds is the transport of the
+  bytes themselves, of any file it can read. The gateway runs as that user outside
+  the runtime's sandbox, so the collection does not trust the folder. It never
+  follows a link (one planted to an image elsewhere is left out, and the log
+  counts it), never opens a FIFO or a device (a read would wait for a writer),
+  ignores folders, and reads through the folder's own handle, the one the emptying
+  uses, which refuses a path that leaves it; a file that is swapped between the
+  look and the read, or grows past 20 MiB, is left out. It is bounded as well: of
+  a file that is no image only the first 12 bytes are read, no more than 64
+  entries of the folder are looked at (the first 64 the system lists, so "the
+  first `n` by name" is among those), and it gives up after a minute or when the
+  client has left, and does not wait for a step that does not return. A copy or a
+  hard link is a plain file and is returned: a runtime can make one of anything it
+  can read, which is the point above.
+
+The folder is new for every turn and its name is not known beforehand, so that a
+process an earlier turn left running that keeps writing to the paths it knew (the
+slot folder, or the earlier turn's folder) does not put a file into a later
+request's response. What it writes elsewhere is not returned: the log line counts
+the files at the top of the slot folder that are outside the turn's folder, and a
+turn whose runtime ignored the folder it was told is a 502 and not a silent
+fallback to unnamed files. That is all the name does. A process of the same OS
+user that survives and looks can list the slot folder while a later turn runs,
+read the name of the folder, and write into it, or read what it holds (the images
+of the turn, before they are returned): the name keeps a writer that does not look
+out, it does not keep out one that does. Run the server as a dedicated OS user and
+look at what it leaves, as below.
+
+An image turn took 40 to 105 seconds and about 40,000 input tokens in the
+probes, on the runtime's own account (codex and antigravity report no cost), and
+there is no quota per key: the concurrency cap is the bound. Its prompt goes to
+the runtime's provider, and with `auto` the first 4,000 characters of it also to
+TypeSafe. No excerpts of a context key's knowledge are added to an image
+request. `auto` picks among image models only within `--auto-confinement`, so by
+default none: image models are `sandboxed` or `unconfined` and `auto` is held to
+chat-only until the operator raises it. The runtimes keep the images they generate
+in their own state folders, as they do for any use of them: the gateway empties
+the slot folder, not those. The response is written as the images are encoded,
+not built in memory first, the slot is given back as soon as the turn is over, and
+a client has two minutes to read the body before the connection is cut. Until the
+last byte is written the images are held in memory (up to four of 20 MiB), so a
+client that starts requests and does not read them holds that for those two
+minutes for as many requests as it can start turns for: the concurrency cap
+bounds the turns, not the responses that wait to be read.
+
+**Tool calling.** A request that declares `tools` gives the model functions of
+the caller's own. The model proposes a call and the caller's program runs it,
+wherever that program runs and whatever it is allowed to do: the gateway
+executes nothing of the caller's. What this changes, and what it does not:
+
+- *The confinement class does not change.* Declaring tools moves no class, no
+  policy and no check of the start event, and a `sandboxed` model's turn still
+  requires its sandbox. A tool leg of any model, a chat-only one included,
+  requires the sandbox too (below): the one thing tools change for chat-only
+  models. A runtime that is not `chat-only` keeps its own tools in
+  play, which pulled the model away from the declared ones in the spike (codex
+  made 31 of 31 native attempts and edited files itself while the caller got
+  nothing), so its leg runs with read access: for codex monomind makes the
+  sandbox read-only (the start event says `native_sandbox: read-only`, which is
+  still the `sandboxed` class; `sandbox_applied` in it only echoes the sandbox
+  the gateway requested, and a write probe in the spike found the environment
+  read-only). That is stricter than `workspace-write`: such a leg cannot write
+  files. It does not shut anything else out: reads anywhere the
+  OS user can read, the runtime's own MCP servers and its instruction files stay
+  open (the spike saw codex use one of the user's own MCP servers once, in a run
+  with tools declared). A model whose runtime monomind cannot run read-only is
+  refused with a 400 instead of run with its own tools in play, and so is any
+  runtime outside `MONOAGENT_API_TOOL_RUNTIMES` (claude and codex unless the
+  operator changed it; an operator who wants no caller tools reachable on a
+  listener at all sets it to `none`). claude's own tools stay denied by monomind
+  (it denied all 15 attempts in the spike), and that holds only because every
+  tool leg requires monomind's sandbox. Under it monomind lets only the prefixed
+  names (`mcp__org__<name>`) of the declared functions through; without it a
+  declared function is allow-listed by its bare name too, so a function called
+  `Bash`, `Write` or `Read` would open the native tool of that name, for a key
+  holder, a tool result or a captured page that can steer the call. So every
+  leg (first, resume and replay, every runtime) is started with the sandbox
+  required, and `monomind.Exec` refuses it (403 `policy_denied`, nothing run, the
+  answer names no function) when the sandbox cannot be applied: the scan or the
+  handshake failed, or monomind is one whose claude lists no `workspace-write`
+  mode (2.19.0 lists only `full`). A model has the `tools` capability only where
+  it can be applied, and a request that declares tools for any other is 400
+  `unsupported_parameter` before anything starts.
+- *What the model proposes can be steered, and for the client's own functions the
+  caller decides.* A tool result is untrusted data. The prompt fences it
+  (`<function_result>`): the fence is the defence, a model is told that what is
+  inside is data. A second layer defangs the fence's tags and any line of a result
+  that would open a turn of the transcript, so a result does not pass for the
+  user's or the assistant's words, and it reads the result as a model does, not as
+  an ASCII pattern does: every character a renderer may end a line at (CR, VT, FF,
+  the information separators, NEL, the line and paragraph separators) ends one,
+  every kind of space is a space, case does not matter, a look-alike of an ASCII
+  character (full-width, bold, circled or superscript letters, full-width
+  brackets, ligatures: NFKD) is that character, a letter with a diacritic is the
+  letter (precomposed or written apart: `[üser]` is `[user]`), a Unicode tag character
+  (U+E0000 to U+E007F, which renders as nothing and which a model may read as the
+  ASCII character it is the twin of: "ASCII smuggling") is that character, and
+  whatever renders as nothing (control and format characters, the Hangul and
+  braille blanks, combining marks) is not there, so spelling a marker or a tag
+  with them gains nothing against a reader of that kind (a fuzz of random
+  compositions of them, judged by a reader written the other way round, is in the
+  tests: that judge calls none of the code, but it shares with it Unicode's
+  tables, `unicode.IsSpace`, NFKD and the model of deleting everything that is not
+  a letter, a digit, a space or ASCII, so a wrong belief of that model is a blind
+  spot of both; a corpus of code, documentation and logs that must come out
+  unchanged grades the other direction). A match is neutralised in place and
+  nothing else of a result is changed: line ends of every kind reach the model as
+  they were (a file with CRLF line ends is read as it is), and so does everything
+  that only looks like a marker or a tag. A role marker is a role word in brackets
+  at the start of a line, with spaces allowed around the word, or the header of a
+  result, `[tool NAME (ID)]`: `[tool.poetry]`, `[User guide](url)`,
+  `[tool for tool in tools]` and `[ user = root ]` are text, while the `[user]`
+  header of a gitconfig is indistinguishable from a marker and is defanged with the
+  rest. A fence tag spelled as the fence spells it (with an underscore) is one
+  wherever it stands and whatever follows it, so `List<function_result>` is
+  changed too; the spellings a reader folds into it (camel case, no underscore)
+  are one only as a closing tag, where the name ends (`Promise<FunctionResult>`,
+  `i < functionResult.length` and `</FunctionResultList>` are text,
+  `</functionResult>` is not).
+  The arguments of a call that a client sends back, which the transcript renders
+  outside the fence, are rendered as compact JSON (with the characters that end a
+  line escaped, and a marker or a tag found in it defanged as in a result) or, when
+  they are not JSON, defanged as a result is; the name
+  of such a call is refused (400) unless it is printable ASCII without
+  `[ ] < > & ' "` or a backtick. An id of that kind is shown as it is, and any
+  other id (a client may send one of 1 to 128 bytes of anything) is shown to the
+  model as `call_1`, `call_2`, ... in order of appearance, never as sent: the
+  transcript is the only place an id is shown, and a session is resumed only for
+  the id the gateway made, which is such a token. The second layer does not look
+  through a letter that only resembles a Latin one and is not one with a mark or
+  a case of one (a Cyrillic "е", a Greek omicron, a small capital "ᴜ"), which would
+  take a table of confusables: against such a disguise the fence is the defence.
+  The words of the
+  user are rendered as the client sent them (they are the conversation). The words
+  an assistant said before a call are not: a result can steer what a model says,
+  and the client sends it back, so in a replay (a conversation with tool history,
+  whether or not tools are still offered) they are defanged as a result is, and
+  are not fenced (a conversation without tools is rendered as it always was).
+  The tags of the fence carry no per-request token. The
+  knowledge excerpts of a context key have their own, narrower defence: only
+  their `<knowledge` tags are defanged.
+  None of that keeps a model from following what a result says: a tool that
+  fetched a web page can return instructions, and a key created with `--context`
+  puts excerpts of captured pages in the system prompt. Either can steer which
+  calls the model proposes next, so a context key is refused tools unless the
+  operator raised `--context-confinement` (and, on a chat-only listener,
+  `--confinement`: the key is held to the lower of the two) above chat-only (403
+  `policy_denied`, before anything starts; a result is still untrusted data on
+  any other key). The gateway cannot tell a steered call from an asked one, and it
+  returns every call monomind lets through, valid or not: monomind rejects a call
+  whose top-level types, string enums or required names do not match what it was
+  told (such a call never comes back), and one that does not match the rest of its
+  schema is returned too and counted in the log. So a client that runs calls without asking runs whatever
+  the model was steered to propose, with its own permissions: give such a client
+  keys whose prompts you trust, and keep a person, or a policy of the client's
+  own, between a call and its execution.
+- *Not every call is the client's.* What the caller decides is its own functions.
+  A codex leg may use a tool of one of the user's own MCP servers (the spike saw
+  it once): the runtime makes that call itself, the gateway never sees it as a
+  call to return, the read-only sandbox of the leg does not cover it (it limits
+  what the runtime writes, not which servers it talks to) and the caller does not
+  decide it, so a steered model can reach it without the client. A leg in which
+  such a tool ran is never replayed or given back (so it does not run twice), but
+  it ran once. An operator who does not want that removes those servers from
+  codex's configuration, or leaves codex out of `MONOAGENT_API_TOOL_RUNTIMES`
+  (claude's own tools are denied by monomind, which is stricter).
+- *What is kept.* No process waits for a result and no slot is held while the
+  client runs the call. A continuation record (the id the client was given, key
+  id, profile, model, function name, a hash of the declared tools, a hash of the
+  conversation the leg was given, a hash of the call's arguments and the
+  runtime's session id) lives in memory
+  for ten minutes, at most 1,024 in all and 64 per key, and is used once (given
+  back, with the expiry it had, only when a resume fails before the model ran, for
+  a rate limit, the quota or a sign-in, and no tool of the runtime's own had
+  run: such a tool is never run a second time by a replay or a retry, and a
+  retry does not extend how long a session lives); a restart loses them and the follow-ups then start from their
+  transcripts. It holds no argument and no result, and a follow-up continues the
+  session only when its conversation before the call hashes the same. A record belongs to
+  its key: another key, even of the same profile, finds nothing and is served by
+  replaying the transcript it sends, and a revoked key cannot authenticate at all.
+  The session id comes from the record, never from the client. The agent CLIs
+  keep the sessions they resumed or cancelled in their own stores, which hold the
+  arguments and results of every leg, as they hold prompts (see below).
+- *Logs and errors.* The line of a request with tools adds how many tools it
+  declared and how its leg started (`tools=<n> leg=first|resume|replay`, and
+  `badargs=1` when a call did not match its schema). It never holds a function
+  name, an argument or a result, and an error sent to the caller names a
+  parameter, never what the client put in it, and never echoes a tool result.
+- *A cancelled leg's runtime can outlive it a few seconds.* A leg ends by
+  cancelling its turn: monomind's cancel for claude, SIGTERM to the process group
+  for codex, and a group kill only if monomind has not exited within its grace.
+  The slot's folder is emptied and the slot freed when Exec returns, not when the
+  runtime's process is gone, and in the live check claude's own binary outlived
+  a cancelled leg by about 5 s, an orphan of monomind that exited by itself (codex
+  left nothing). For those seconds a process of the cancelled leg still has the
+  slot's folder as its working directory. A freed slot joins the back of the
+  queue, so with the default four another request takes that folder only after
+  three others have been served, and `--max-concurrent 1` makes it the next one;
+  a turn starts in an emptied folder, and the process wrote nothing there in the
+  live check. It is the same runtime under the same confinement, so no policy is
+  crossed; a runtime that hung would not be killed, which is a matter for
+  `monomind.Exec`.
+- *Reliability, not security.* A resumed leg can ask for the same call again
+  instead of using the result: 1 of 19 single-result claude legs did in the
+  spike, 0 of 18 on codex, and nothing detects it. codex repeats an identical
+  call two or three times within a leg (7 of 16 legs): the leg ends at the first
+  and ignores the repeats. A client whose tool has a side effect (a write, a
+  send) should make it idempotent, or look at a call identical to the last it
+  ran before running it again. Neither crosses a boundary; both are why side
+  effects the client cannot take back deserve a look first.
+- *Cost.* Every leg is a real turn, and a loop of N calls is N + 1 of them, each
+  on the runtime's account; a leg that cannot continue a session pays for the
+  whole transcript again (a resumed leg cost about half of a replayed one on
+  claude in the spike). There is no limit on the rounds of a client's loop and no
+  quota per key: the concurrency cap, the body size and the turn timeout are the
+  bounds, as for chat. A response carries one call, so a model that wants several
+  asks for them in successive rounds.
+
+**Cost and abuse limits.** There are no per-key quotas: every request is a real
+model turn on your subscription or account, and some runtimes report no cost
+(for what an image turn took, see above).
+The bound is the concurrency cap (4 turns, 429 beyond it; `--max-concurrent`),
+the 2 MiB request body (64 KiB for an image request) and the 10 minute turn
+timeout. A request that is
+rejected (invalid, over policy, or busy) starts nothing and takes no slot.
+Tools have bounds of their own, each a 400 `invalid_value` that names the
+parameter and never what was written, answered before anything starts. Whatever the `tool_choice` (the tools are checked when they are declared): more
+than 128 functions; a tool that is not an object; a name that is not 1 to 64
+characters of `[A-Za-z0-9_-]`, one declared twice, or an alias that is another
+function's name (a name of 55 or more reaches the model as an alias of 54, and
+you always see your own); a `description` of more than 16 KiB; `parameters` of
+more than 64 KiB, that are not a JSON schema object, whose root `type` is not
+`object`, whose `properties` is not an object or holds a property that is not a
+schema, or whose `required` is not a list of strings; a `tool_choice` that is
+not `none`, `auto`, `required` or a function, or that names a function that is
+not declared; and in the conversation more than 64 calls in one message, a call
+with an id of no characters or of more than 128 bytes, a call whose name is not
+printable ASCII without `[ ] < > & ' "` or a backtick, a call whose `arguments`
+is not a string, a result of more than 256 KiB, and a tool message that answers
+no call of an earlier assistant message. Other codes: 400
+`unsupported_parameter` for a tool or a call of a type other than `function`, a
+`tool_choice` of another type, and a `tool_choice` that forces a call when no
+tools are declared; 400 `missing_required_parameter` for a tool with no
+`function`, a `tool_choice` that names no function, and a tool message with no
+`tool_call_id`. While the tools are passed to the model
+(`tool_choice` is not `none`, which passes none, so no argument is named and these
+do not apply): a function whose schema names no property and allows free-form keys
+(`additionalProperties` or `unevaluatedProperties` true or a schema,
+`patternProperties`) or whose references cannot be followed (`$dynamicRef`, a
+`$ref` that is not local or leads nowhere); a schema whose `const` or `enum` (the
+root's, an `allOf`'s or a `$ref`'s that applies) holds a value that is not an
+object; a schema that nests combinators and references more than 8 levels deep or
+holds more than 2,000 schemas; and functions whose schemas together take more than
+100,000 steps to read (a step is a schema read, a reference followed, a property
+or a listed name met, an enum entry compared): the work of naming the arguments is
+bounded by the request, before a slot is held.
+
+**Logs and errors.** One line per chat completion or image request names the
+request id, key
+id, profile, model, status, duration, how many knowledge excerpts were
+added (chat only) and, for `auto`, who chose the model, plus, for a failure, the
+operator-only detail (a Go error or a
+runtime's error code; for an image request, whether it made images or not, how
+many of the files it looked at the collection left out and why, never a file
+name). A failure to list models, a failed knowledge search and
+a failure to verify a key are logged too; a successful listing is not. None
+of the gateway's lines holds a prompt, an answer or a key. monomind's own
+diagnostics (its stderr) reach the server log as they do for any use, and
+nothing in this repo shows that they never echo a prompt. A failed
+authentication is logged with the address of the connection, never the key it
+sent (behind a reverse proxy that is the proxy's address: `X-Forwarded-For` is
+not read); a request that sent no credential at all is not logged. Error
+messages sent to callers are generic for internal failures and for a runtime
+error other than a setup hint, a rate limit, quota or a timeout; of those,
+only the part monomind classified reaches the caller, on one line and at most
+300 characters. The one other place a runtime's words reach the caller is the
+502 of an image request whose turn made no image: what the runtime replied, on
+one line and at most 300 characters, the answer to the caller's own prompt.
+Every response of the four routes carries an `X-Request-Id`
+to quote to the operator. A path or method the API does not have gets Go's
+plain-text 404 or 405, without one. `GET /health` on the dedicated listener is
+unauthenticated and returns the server version.
+
+**What this does not cover.**
+
+- Revocation applies to the next request: a turn already running finishes,
+  within the turn timeout. Stopping the daemon or `httpapi` ends the turns in
+  flight (their clients get a 503 they can retry) and waits for their
+  processes to be killed, up to a few seconds longer than monomind's kill grace
+  when a second Ctrl+C forces the exit, so that no agent CLI outlives the
+  command. `httpapi` and a dedicated listener first give running requests 10
+  seconds to finish; the daemon's main listener does not.
+- The agent CLIs keep session transcripts of their turns in their own stores
+  (claude's `~/.claude/projects/<folder>`), prompts and answers included, as
+  they do for any use, and the arguments and results of the tool calls of a
+  conversation with tools. The fixed slot folders keep the number of those
+  folders bounded (one per profile and slot), not their content, and keep
+  one profile's apart from another's.
+- Some runtimes (antigravity) pass the prompt on their command line, which
+  other local users can read with `ps` while the turn runs. So does a context
+  key's knowledge search, for every runtime, claude included: it runs
+  `monomind mcp exec -t knowledge_search` with the first 500 characters of the
+  last user message in its arguments, for up to 30 seconds, in two parallel
+  processes (documents and captures). On a shared host, run the server on a
+  machine or an OS user of its own.
+- A turn's prompt and system prompt (which carry a context key's excerpts) are
+  written to files in a private folder (mode 0700) under
+  `~/.monoagent/workspaces/api/.tmp`, outside every turn's writable area, and
+  removed when the turn ends (a crash leaves them until the next start, which
+  clears the folder). The mode keeps other OS users out, not other turns: a
+  runtime that can read the disk can read them while the turn runs, another
+  profile's included, and an unconfined runtime can write there.
+- monomind keeps copies of its own: its hermes, cline and kimicode runners write
+  the prompt, or an agent file, under the temp directory and hand the CLI its
+  path. A sandboxed turn can write the system temp directory and `/tmp`
+  (checked with codex's `workspace-write` on macOS), so it could rewrite such a
+  copy before it is read. Each API turn therefore gets a temp directory of its
+  own (`TMPDIR`, `TMP` and `TEMP`), a folder inside its own folder that no other
+  turn's sandbox reaches, emptied with the rest of the turn's files. That
+  protects the turns of the API, and only those. A turn that does not come
+  through it (a workflow, a chat) keeps monomind's copies in the system temp
+  directory, and a sandboxed API turn can still write `/tmp`: where that is the
+  temp directory (Linux), it could rewrite such a turn's prompt file. On a host
+  that also runs hermes, cline or kimicode turns as the same OS user, run the
+  API server as a user of its own, or with `--confinement chat-only`. The files
+  `monomind.Exec` itself makes for every other caller go to `~/.monoagent/tmp`
+  (mode 0700, files older than a day swept), or to the system temp directory
+  when that folder cannot be made.
+- A runtime can leave a process behind it (a command started with `nohup`, say)
+  that keeps its write access to the turn's folder. Emptying the folder does
+  not stop it. For an image turn a process that keeps writing where it wrote
+  before cannot put a file into a later request's response, which is read from a
+  folder with a name it did not know in advance; one that looks (lists the slot
+  folder, reads the name) can still read and write whatever that folder holds
+  while the turn runs, as a process of the same OS user (see Image generation). A sandbox that only confines writes below the turn's folder
+  (macOS's, checked) still lets the turn remove that folder and put a link in
+  its place. The gateway looks at the folder from its parent, which no turn can
+  change, and acts on it through open handles: a link is set aside, not
+  followed, so neither such a process nor such a turn can send the emptying
+  outside the folder. A folder it makes impossible to empty (a tree deeper
+  than 100 levels), or too slow to (more than 30 seconds: it keeps changing the
+  tree, or swaps a directory for a FIFO that the walk then waits on) is moved to
+  `~/.monoagent/workspaces/api/.quarantine` and replaced. A walk that was given
+  up on is not waited for; one stuck on a FIFO holds a thread and a few file
+  descriptors until the server restarts. Nothing ends the process. Run the server as a dedicated OS user and
+  look at what it leaves.
+- Where a turn's sandbox is rooted is a path: the turn's folder. A process that
+  outlives its turn can replace that folder with a link in the moment between
+  the gateway's last look at it and the start of the next turn of the slot, and
+  that turn's sandbox is then rooted where the link points, an OS user's home
+  included. The gateway looks right before it starts the process, which narrows
+  the window to milliseconds and cannot close it: only a runtime that roots its
+  sandbox on an open directory could. Read `sandboxed` as confining a prompt,
+  not a determined key holder, and keep the OS user's own files out of reach (a
+  dedicated user, as above).
+
+**Not part of this surface.** Running a caller's tool: the gateway returns the
+call and the caller runs it. The runtime's own native tools are a separate matter,
+covered by the classes above.

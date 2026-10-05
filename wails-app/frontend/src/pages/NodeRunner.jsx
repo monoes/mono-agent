@@ -21,6 +21,7 @@ import WorkflowImportDialog from './WorkflowImportDialog.jsx'
 import PublishToMonoesDialog from '../components/library/PublishToMonoesDialog.jsx'
 import { derivePlatformId, isSessionPicker, isMediaField, automationIdsFrom } from './nodeInspectorRules.js'
 import { onAutomationsChanged } from '../lib/appEvents.js'
+import { paletteCategoryLabel, paletteSectionOf, splitPaletteSections } from './paletteSections.js'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
@@ -267,8 +268,9 @@ function Palette({ categories, onAdd, onNodeMouseDown }) {
   const q = search.toLowerCase()
   const filtered = categories.map(cat => ({
     ...cat,
-    nodes: q ? cat.nodes.filter(n => n.label.toLowerCase().includes(q) || n.subtype.toLowerCase().includes(q)) : cat.nodes,
+    nodes: q ? cat.nodes.filter(n => n.label.toLowerCase().includes(q) || n.subtype.toLowerCase().includes(q) || cat.label.toLowerCase().includes(q)) : cat.nodes,
   })).filter(cat => cat.nodes.length > 0)
+  const sections = splitPaletteSections(filtered)
 
   return (
     <div style={{
@@ -296,7 +298,21 @@ function Palette({ categories, onAdd, onNodeMouseDown }) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0 12px' }}>
-        {filtered.map(cat => {
+        {sections.map(sec => (
+          <div key={sec.id} data-testid={`palette-section-${sec.id}`}>
+            <div style={{
+              padding: '10px 10px 4px', fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+              letterSpacing: 1.8, textTransform: 'uppercase', color: 'var(--text-muted)',
+              borderTop: sec.id === 'nodes' ? '1px solid rgba(0,180,216,0.08)' : 'none',
+            }}>
+              {sec.label}
+            </div>
+            {sec.categories.length === 0 && (
+              <div style={{ padding: '2px 10px 8px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {search ? 'No matches' : 'None installed — install web automations from the monoes.me library'}
+              </div>
+            )}
+        {sec.categories.map(cat => {
           const isOpen = search ? true : (open[cat.id] !== false)
           const color = catColor(cat.id)
           return (
@@ -336,6 +352,8 @@ function Palette({ categories, onAdd, onNodeMouseDown }) {
             </div>
           )
         })}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -432,6 +450,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas, aut
               <select
                 value={node.config?.credential_id ?? ''}
                 onChange={e => onConfigChange(node.id, 'credential_id', String(e.target.value))}
+                className="select-compact"
                 style={selectStyle}
                 disabled={loadingCreds}
               >
@@ -532,6 +551,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas, aut
                     <select
                       value={val}
                       onChange={onChange}
+                      className="select-compact"
                       style={selectStyle}
                     >
                       {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
@@ -926,16 +946,10 @@ const inputStyle = {
   boxSizing: 'border-box', resize: 'vertical',
 }
 
-// WebKitGTK draws <select> with native GTK chrome (light bg, dark text)
-// unless appearance is explicitly reset — see AIChatPanel.jsx. Spread over
-// inputStyle at each <select> below; not merged into inputStyle itself
-// since that's shared with plain <input>/<textarea> elements too.
-const selectStyle = {
-  ...inputStyle, appearance: 'none', paddingRight: 22,
-  backgroundColor: '#060b11', cursor: 'pointer', outline: 'none',
-  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
-}
+// <select>s take their look from the global `select` rule plus
+// `.select-compact` (index.css); only layout goes inline, and never
+// inputStyle's `background` shorthand, which would wipe the chevron.
+const selectStyle = { width: '100%', fontSize: 11 }
 
 function Label({ children, style }) {
   return (
@@ -1254,7 +1268,8 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
     GetWorkflowNodeTypes().then(data => {
       const cats = Object.entries(data).map(([id, nodes]) => ({
         id,
-        label: id.toUpperCase(),
+        label: (paletteCategoryLabel(nodes) || id).toUpperCase(),
+        section: paletteSectionOf(nodes),
         nodes: Array.isArray(nodes) ? nodes.map(n => ({
           subtype: n.type,
           label: n.label,

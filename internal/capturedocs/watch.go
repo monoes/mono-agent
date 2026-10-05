@@ -86,9 +86,16 @@ func (w *Watcher) poll(emit bool) {
 	}
 }
 
+// IndexStampFile is touched beside the inbox (in the profile's monomind
+// home) by every indexing pass that changed a capture row's index status
+// (internal/captureindex), so a watcher sees "Indexed" arrive, not only
+// the capture itself.
+const IndexStampFile = ".capture-index.stamp"
+
 // InboxSignature summarises the landed captures in inbox — each envelope
-// directory's name and its meta.json's mtime and size — so two calls
-// return the same string exactly when the listing would be the same.
+// directory's name and its meta.json's mtime and size, plus the indexing
+// stamp beside the inbox — so two calls return the same string exactly
+// when the listing would be the same.
 // Staging directories (dot-prefixed) and directories without a meta.json
 // are ignored, as capture.List ignores them. A missing inbox is empty, not
 // an error; ok is false only for an inbox that exists but cannot be read.
@@ -112,5 +119,8 @@ func InboxSignature(inbox string) (sig string, ok bool) {
 		parts = append(parts, d.Name()+"\x00"+fi.ModTime().UTC().Format(time.RFC3339Nano)+"\x00"+strconv.FormatInt(fi.Size(), 10))
 	}
 	sort.Strings(parts)
+	if fi, err := os.Stat(filepath.Join(filepath.Dir(inbox), IndexStampFile)); err == nil {
+		parts = append(parts, "\x00index\x00"+fi.ModTime().UTC().Format(time.RFC3339Nano))
+	}
 	return strings.Join(parts, "\n"), true
 }

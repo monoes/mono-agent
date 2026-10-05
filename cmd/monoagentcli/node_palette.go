@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -18,7 +19,19 @@ type paletteNode struct {
 	Category    string               `json:"category"`
 	Description string               `json:"description"`
 	Schema      *workflow.NodeSchema `json:"schema,omitempty"`
+	// Section splits the palette in two: "web_automation" for the actions
+	// of an installed web automation, "nodes" for everything else.
+	Section string `json:"section"`
+	// CategoryLabel names the category: the automation's name for a web
+	// automation, empty for the built-in categories.
+	CategoryLabel string `json:"category_label,omitempty"`
 }
+
+// Palette sections (paletteNode.Section).
+const (
+	paletteSectionWebAutomation = "web_automation"
+	paletteSectionNodes         = "nodes"
+)
 
 // newNodePaletteCmd prints the node palette: every runnable node type,
 // grouped by palette category, with a label, a description and its schema.
@@ -235,6 +248,12 @@ func nodePalette(db *sql.DB) map[string][]paletteNode {
 	}
 
 	reg := noderegistry.Build(db)
+	webAutomations := nodes.WebAutomations()
+	automationOf := func(t string) (string, bool) {
+		prefix, _, _ := strings.Cut(t, ".")
+		_, ok := webAutomations[prefix]
+		return prefix, ok
+	}
 	infraCategories := map[string]bool{
 		"control": true, "data": true, "http": true, "system": true, "db": true,
 		"comm": true, "service": true, "ai": true, "people": true, "image": true, "org": true,
@@ -261,8 +280,8 @@ func nodePalette(db *sql.DB) map[string][]paletteNode {
 	}
 	deriveLabel := func(t string) string {
 		prefix, rest, _ := strings.Cut(t, ".")
-		if infraCategories[groupOf(t)] {
-			return title(rest)
+		if _, ok := automationOf(t); ok || infraCategories[groupOf(t)] {
+			return title(rest) // the category already names the automation
 		}
 		return title(prefix) + ": " + title(rest)
 	}
@@ -288,5 +307,17 @@ func nodePalette(db *sql.DB) map[string][]paletteNode {
 		}
 	}
 
+	for group, list := range catalog {
+		for i := range list {
+			list[i].Section = paletteSectionNodes
+			if id, ok := automationOf(list[i].Type); ok {
+				list[i].Section = paletteSectionWebAutomation
+				list[i].CategoryLabel = webAutomations[id]
+			}
+		}
+		if len(list) == 0 {
+			delete(catalog, group)
+		}
+	}
 	return catalog
 }

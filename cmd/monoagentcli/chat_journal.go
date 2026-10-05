@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
+	"github.com/monoes/mono-agent/internal/dynorg"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -54,6 +56,10 @@ func admitJournaledTurn(store *ai.AIStore, profileID, conversationID, turnID, in
 	return conv, turn, existed, nil
 }
 
+// noticeAgentSandbox is the notice a sandboxed turn journals when its
+// runtime starts; its message is the monomind.SandboxStatus* value.
+const noticeAgentSandbox = "agent.sandbox"
+
 // turnJournal turns one runtime's protocol events into committed chat
 // events: it coalesces assistant text, bounds tool and notice text, binds
 // the session, and finalizes the turn exactly once. Calls are serialized
@@ -73,9 +79,23 @@ type turnJournal struct {
 	currentPartID string
 	finished      bool
 
-	// coder turns: the folder, and each open native tool call by id.
-	cwd       string
-	nativeRun map[string]nativeCall
+	// coder turns: the folder, the runtime's coder support (its name and
+	// tool-activity fidelity), and each open native tool call by id.
+	cwd          string
+	coderRuntime monomind.CoderRuntime
+	nativeRun    map[string]nativeCall
+	// subagents journals the agent's native subagents (monomind#387).
+	subagents dynorg.Subagents
+	// backgroundPids are what the done event said the turn left running;
+	// the notice is written at finish, for those still alive then (#294).
+	backgroundPids []int
+}
+
+// lockedEmitter journals through a turnJournal whose mu the caller holds.
+type lockedEmitter struct{ j *turnJournal }
+
+func (e lockedEmitter) Emit(typ chatevents.EventType, payload any) {
+	_ = e.j.appendLocked(typ, payload)
 }
 
 func newTurnJournal(store *ai.AIStore, profileID, conversationID, turnID, runtimeID string, out io.Writer) *turnJournal {
@@ -163,6 +183,20 @@ func (j *turnJournal) usageLocked(source string) {
 	_ = j.appendLocked(chatevents.EventUsageUpdated, p)
 }
 
+// Notice codes for provider rate limits (agent-exec rev 20): each retry
+// agent exec makes, and the turn's failure once it stops retrying.
+const (
+	noticeRateLimitRetry = "agent.rate_limit_retry"
+	noticeRateLimited    = "agent.rate_limited"
+)
+
+// isRateLimitRetry reports whether ev is agent exec's notice that it is
+// waiting out a 429 before retrying: {phase:"notice", message:"Rate
+// limited (429) by <x>; retrying in <N>s (attempt <k>/3)"}.
+func isRateLimitRetry(ev monomind.Event) bool {
+	return ev.Phase == "notice" && strings.HasPrefix(ev.ErrMessage, "Rate limited (429)")
+}
+
 // handle journals one protocol event.
 func (j *turnJournal) handle(ev monomind.Event) {
 	j.mu.Lock()
@@ -172,7 +206,19 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	}
 	monomind.ApplyEventToResult(&j.usage, ev)
 
+	// A native subagent's lifecycle and text are its own, not the lead's.
+	if ev.Type == monomind.EventSubagent || (ev.Type == monomind.EventAssistant && ev.ParentToolUseID != "") {
+		j.forceFlushLocked()
+		j.subagents.Handle(lockedEmitter{j}, ev, "", "")
+		return
+	}
+
 	switch ev.Type {
+	case monomind.EventStart:
+		// The badge the app shows on the turn; message is the status key.
+		if ev.SandboxStatus != "" {
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeAgentSandbox, Message: ev.SandboxStatus, Severity: chatevents.SeverityInfo})
+		}
 	case monomind.EventSession:
 		if ev.SessionID != "" {
 			_ = j.store.BindConversationSession(j.conversationID, j.profileID, j.runtimeID, ev.SessionID)
@@ -205,20 +251,28 @@ func (j *turnJournal) handle(ev monomind.Event) {
 	case monomind.EventToolActivity:
 		j.toolActivityLocked(ev)
 	case monomind.EventStatus:
-		if msg := coderStatusMessage(ev); msg != "" {
+		if isRateLimitRetry(ev) {
+			// Kept in the timeline (a coder.status line disappears once
+			// the turn has output): the wait can come after tools ran.
+			j.forceFlushLocked()
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeRateLimitRetry, Message: ev.ErrMessage, Severity: chatevents.SeverityWarning})
+		} else if msg := coderStatusMessage(ev, j.coderRuntime.ID); msg != "" {
 			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderStatus, Message: msg, Severity: chatevents.SeverityInfo})
 		}
 	case monomind.EventDone:
-		if len(ev.BackgroundPids) > 0 {
-			j.forceFlushLocked()
-			_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(ev.BackgroundPids))
-		}
+		j.backgroundPids = ev.BackgroundPids
 	case monomind.EventUsage:
 		j.usageLocked("usage")
 	case monomind.EventResult:
 		j.usageLocked("result")
 	case monomind.EventError:
-		if !ev.Fatal {
+		if ev.Code == monomind.ErrRateLimited {
+			// agent exec gave up retrying; its message says why and what
+			// to do ("Rate limited by <model> (429) after 3 attempts. …").
+			j.forceFlushLocked()
+			msg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
+			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeRateLimited, Message: msg, Severity: chatevents.SeverityError})
+		} else if !ev.Fatal {
 			j.forceFlushLocked()
 			msg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
 			_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: ev.Code, Message: msg, Severity: chatevents.SeverityWarning})
@@ -247,19 +301,27 @@ func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, c
 	j.forceFlushLocked()
 	j.closeOpenNativeCallsLocked()
 	j.finished = true
+	// The runtime's own helpers (e.g. the MCP servers opencode starts) are
+	// still alive when it reports done and exit with it; only processes
+	// that outlive the runtime are worth a warning.
+	if pids := stillRunning(j.backgroundPids, backgroundSettle); len(pids) > 0 {
+		_ = j.appendLocked(chatevents.EventNotice, backgroundNotice(pids))
+	}
 
 	status, reason := chatevents.ComputeTurnStatus(stopRequested, res)
 	var exitCode *int
+	sandbox := ""
 	if res != nil {
 		v := res.ExitCode
 		exitCode = &v
+		sandbox = res.SandboxStatus
 	}
-	ev, already, err := j.store.FinalizeTurnCode(j.profileID, j.conversationID, j.turnID, status, reason, code, exitCode, true)
+	ev, already, err := j.store.FinalizeTurnCode(j.profileID, j.conversationID, j.turnID, status, reason, code, exitCode, true, sandbox)
 	switch {
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "warning: finalizing turn %s: %v\n", j.turnID, err)
 		live, buildErr := chatevents.New(j.profileID, j.conversationID, j.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
-			Status: status, Reason: reason, Code: code, ExitCode: exitCode, HistorySaved: false,
+			Status: status, Reason: reason, Code: code, ExitCode: exitCode, HistorySaved: false, Sandbox: sandbox,
 		})
 		if buildErr == nil {
 			j.print(live.Record())

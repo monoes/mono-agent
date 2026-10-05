@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -13,9 +14,14 @@ import (
 // RuntimeModel is one selectable model for an agent runtime — an id to pass
 // as --model plus a human-readable label for the picker.
 type RuntimeModel struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Description  string   `json:"description,omitempty"`
+	EffortLevels []string `json:"effort_levels,omitempty"`
+	// AliasOf is set when `agent models` lists this id as another name for
+	// an earlier entry's model (protocol rev 28, capability
+	// agent-models-alias-of): the canonical id.
+	AliasOf string `json:"alias_of,omitempty"`
 }
 
 // claudeModels is curated by hand: unlike antigravity and codex (see
@@ -30,16 +36,72 @@ type RuntimeModel struct {
 // agent-models, see listAgentModels), and this copy of it as of 2026-09-28
 // is only the fallback for a monomind without that capability.
 var claudeModels = []RuntimeModel{
-	{ID: "claude-opus-5-5", Label: "Opus 5.5"},
-	{ID: "claude-fable-5-1", Label: "Fable 5.1"},
-	{ID: "claude-sonnet-5", Label: "Sonnet 5"},
+	{ID: "claude-opus-5-5", Label: "Opus 5.5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-fable-5-1", Label: "Fable 5.1", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-sonnet-5", Label: "Sonnet 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
 	{ID: "claude-haiku-4-5-20251001", Label: "Haiku 4.5"},
-	{ID: "claude-opus-5", Label: "Opus 5"},
-	{ID: "claude-fable-5", Label: "Fable 5"},
-	{ID: "claude-opus-4-8", Label: "Opus 4.8"},
-	{ID: "claude-opus-4-7", Label: "Opus 4.7"},
-	{ID: "claude-opus-4-6", Label: "Opus 4.6"},
-	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6"},
+	{ID: "claude-opus-5", Label: "Opus 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-fable-5", Label: "Fable 5", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-8", Label: "Opus 4.8", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-7", Label: "Opus 4.7", EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+	{ID: "claude-opus-4-6", Label: "Opus 4.6", EffortLevels: []string{"low", "medium", "high", "max"}},
+	{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6", EffortLevels: []string{"low", "medium", "high", "max"}},
+}
+
+// freeOpenRouterModels are zero-cost OpenRouter models that take tools and
+// reasoning (checked against openrouter.ai/api/v1/models and `pi
+// --list-models free` on 2026-09-29): each needs only a free OpenRouter key
+// (OPENROUTER_API_KEY). Free models are rate-limited.
+var freeOpenRouterModels = []struct{ id, label string }{
+	{"qwen/qwen3.8-27b:free", "Qwen3.8 27B"},
+	{"nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super"},
+	{"google/gemma-4-31b-it:free", "Gemma 4 31B"},
+	{"poolside/laguna-s-2.1:free", "Laguna S 2.1"},
+	{"cohere/north-mini-code:free", "North Mini Code"},
+}
+
+// openRouterFree lists freeOpenRouterModels for one runtime: prefix is how
+// that runtime names an OpenRouter model ("openrouter/" for aider's litellm
+// names and pi's provider/id, "" for cline, whose provider is its own
+// setting), note says how to point the runtime at OpenRouter.
+func openRouterFree(prefix, note string, efforts []string) []RuntimeModel {
+	out := make([]RuntimeModel, 0, len(freeOpenRouterModels))
+	for _, m := range freeOpenRouterModels {
+		out = append(out, RuntimeModel{
+			ID:           prefix + m.id,
+			Label:        m.label + " (free, OpenRouter)",
+			Description:  note,
+			EffortLevels: efforts,
+		})
+	}
+	return out
+}
+
+// curatedModels are the fallback lists for runtimes with no model-listing
+// command (monomind's agent models reports supported:false for them), so
+// their pickers are never empty. Effort levels are monomind's --effort
+// names each runtime maps: cline --thinking has none|low|medium|high|xhigh,
+// aider's reasoning_effort low|medium|high, pi's --thinking all six. dsh
+// mirrors monomind's DSH_MODELS (dsh-runner-models.ts) without the two
+// OpenRouter ids OpenRouter no longer lists (glm-5.2, minimax-m3), levels
+// limited to monomind's names, plus the free OpenRouter set on dsh's pi-ai
+// "openrouter/" route (Laguna S 2.1 comes from there).
+var curatedModels = map[string][]RuntimeModel{
+	"cline": openRouterFree("", "Needs cline's OpenRouter provider (cline auth openrouter, or CLINE_PROVIDER=openrouter with OPENROUTER_API_KEY)",
+		[]string{"off", "low", "medium", "high", "xhigh"}),
+	"aider": openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY",
+		[]string{"low", "medium", "high"}),
+	"pi": openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY (or pi's own openrouter login)",
+		[]string{"off", "low", "medium", "high", "xhigh", "max"}),
+	"dsh": append([]RuntimeModel{
+		{ID: "deepseek-flash", Label: "DeepSeek V4.1 Flash", Description: "Needs DEEPSEEK_API_KEY", EffortLevels: []string{"off", "low", "high", "max"}},
+		{ID: "deepseek-v4-pro", Label: "DeepSeek V4 Pro", Description: "Needs DEEPSEEK_API_KEY", EffortLevels: []string{"off", "low", "high", "max"}},
+		{ID: "nvidia/deepseek-ai/deepseek-v4-flash-0731", Label: "DeepSeek V4 Flash (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "high", "max"}},
+		{ID: "nvidia/deepseek-ai/deepseek-v4-pro-0813", Label: "DeepSeek V4 Pro (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "high", "max"}},
+		{ID: "nvidia/moonshotai/kimi-k3", Label: "Kimi K3 (free, NVIDIA)", Description: "Needs a free NVIDIA_API_KEY", EffortLevels: []string{"off", "low", "medium", "high"}},
+		{ID: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", Label: "Nemotron 3 Ultra (free, OpenRouter)", Description: "Needs OPENROUTER_API_KEY", EffortLevels: []string{"off", "medium", "high"}},
+		{ID: "openrouter/openrouter/free", Label: "OpenRouter free-models router", Description: "Needs OPENROUTER_API_KEY", EffortLevels: []string{"off", "low", "medium", "high"}},
+	}, openRouterFree("openrouter/", "Needs OPENROUTER_API_KEY", []string{"off", "low", "medium", "high"})...),
 }
 
 // ListModels returns the models selectable for runtimeID's --model flag.
@@ -50,18 +112,55 @@ var claudeModels = []RuntimeModel{
 // returns a nil, nil slice so callers can fall back to a plain free-text
 // model field.
 func ListModels(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
+	models, err := ListModelsStrict(ctx, runtimeID, binary)
+	if errors.Is(err, ErrBuiltinModels) {
+		err = nil
+	}
+	return models, err
+}
+
+// ErrBuiltinModels accompanies the models ListModelsStrict returns when the
+// runtime's own listing failed and a built-in list stands in for it. The models
+// are usable, but they are not what the runtime said (claude's curated ids are
+// not the aliases it lists), so a caller that serves them to clients should
+// look again soon rather than keep them.
+var ErrBuiltinModels = errors.New("the runtime's model listing failed: these are the built-in models")
+
+// ListModelsStrict is ListModels, except that it returns ErrBuiltinModels along
+// with the list when a built-in list stands in for a listing that failed. A
+// runtime with no listing command, or a monomind without agent models, is not
+// a failure: its built-in list is the answer.
+func ListModelsStrict(ctx context.Context, runtimeID, binary string) ([]RuntimeModel, error) {
 	if set, err := Capabilities(ctx); err == nil && set.Has(CapAgentModels) {
 		models, supported, err := listAgentModels(ctx, runtimeID)
 		switch {
-		case err == nil && !supported:
-			return nil, nil
+		case err == nil && (!supported || len(models) == 0):
+			// No listing command (cline, aider, dsh, pi have none in
+			// monomind's agent models): the curated list, if any.
+			return builtinModels(ctx, runtimeID, binary)
 		case err == nil:
 			return models, nil
 		}
 		// A failed listing (runtime not logged in, timed out) falls back to
 		// the built-in sources rather than leaving the picker empty.
+		fallback, berr := builtinModels(ctx, runtimeID, binary)
+		if berr == nil && len(fallback) > 0 && hasStaticList(runtimeID) {
+			return fallback, ErrBuiltinModels
+		}
+		return fallback, berr
 	}
 	return builtinModels(ctx, runtimeID, binary)
+}
+
+// hasStaticList reports whether runtimeID's built-in models are a curated list
+// written into this package, as opposed to the runtime's own listing command
+// (antigravity, codex), which is as live as monomind's.
+func hasStaticList(runtimeID string) bool {
+	if runtimeID == "claude" {
+		return true
+	}
+	_, ok := curatedModels[runtimeID]
+	return ok
 }
 
 // builtinModels is ListModels without monomind's agent models: the
@@ -81,6 +180,9 @@ func builtinModels(ctx context.Context, runtimeID, binary string) ([]RuntimeMode
 	case "claude":
 		return claudeModels, nil
 	default:
+		if m, ok := curatedModels[runtimeID]; ok {
+			return m, nil
+		}
 		return nil, nil
 	}
 }
@@ -127,14 +229,15 @@ func listAntigravityModels(ctx context.Context, binary string) ([]RuntimeModel, 
 }
 
 // codexModelCatalog mirrors the fields of `codex debug models`' JSON output
-// that matter here — that command dumps far more per-model metadata (full
-// system-prompt text, reasoning-effort tiers, etc.) which is irrelevant to
-// a model picker and deliberately left unparsed.
+// that matter here: slug, display name, visibility, and supported reasoning levels.
 type codexModelCatalog struct {
 	Models []struct {
-		Slug        string `json:"slug"`
-		DisplayName string `json:"display_name"`
-		Visibility  string `json:"visibility"`
+		Slug                     string `json:"slug"`
+		DisplayName              string `json:"display_name"`
+		Visibility               string `json:"visibility"`
+		SupportedReasoningLevels []struct {
+			Effort string `json:"effort"`
+		} `json:"supported_reasoning_levels"`
 	} `json:"models"`
 }
 
@@ -165,9 +268,30 @@ func listCodexModels(ctx context.Context, binary string) ([]RuntimeModel, error)
 		if label == "" {
 			label = m.Slug
 		}
-		models = append(models, RuntimeModel{ID: m.Slug, Label: label})
+		var efforts []string
+		for _, l := range m.SupportedReasoningLevels {
+			efforts = append(efforts, l.Effort)
+		}
+		models = append(models, RuntimeModel{ID: m.Slug, Label: label, EffortLevels: execEfforts(efforts)})
 	}
 	return models, nil
+}
+
+// agentExecEfforts are the names `agent exec --effort` accepts; it maps
+// each to the runtime's own levels and rejects any other with a usage error.
+var agentExecEfforts = map[string]bool{"off": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// execEfforts keeps the levels agent exec accepts: a runtime's own name
+// outside them (codex's "ultra", dsh's "minimal") would fail the turn.
+// nil when none is left.
+func execEfforts(levels []string) []string {
+	var out []string
+	for _, l := range levels {
+		if agentExecEfforts[l] {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // CapAgentModels is `monomind agent models` (monomind#369).
@@ -177,11 +301,13 @@ const CapAgentModels = "agent-models"
 type agentModelsResult struct {
 	Supported bool `json:"supported"`
 	Models    []struct {
-		ID          string `json:"id"`
-		ResolvedID  string `json:"resolved_id"`
-		Label       string `json:"label"`
-		Description string `json:"description"`
-		Default     bool   `json:"default"`
+		ID           string   `json:"id"`
+		ResolvedID   string   `json:"resolved_id"`
+		Label        string   `json:"label"`
+		Description  string   `json:"description"`
+		Default      bool     `json:"default"`
+		EffortLevels []string `json:"effort_levels"`
+		AliasOf      string   `json:"alias_of"`
 	} `json:"models"`
 	Error *struct {
 		Code    string `json:"code"`
@@ -204,7 +330,7 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 	cctx, cancel := context.WithTimeout(ctx, agentModelsTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, bin, "agent", "models", "--runtime", runtimeID, "--json")
-	cmd.Env = FilteredEnviron()
+	cmd.Env = PinEnv(FilteredEnviron(), bin)
 	out, runErr := cmd.Output()
 	var res agentModelsResult
 	if err := json.Unmarshal(lastJSONDocument(out), &res); err != nil {
@@ -223,7 +349,13 @@ func listAgentModels(ctx context.Context, runtimeID string) (models []RuntimeMod
 		if m.ID == "" {
 			continue
 		}
-		models = append(models, RuntimeModel{ID: m.ID, Label: modelLabel(m.Label, m.Description, m.ID, m.Default), Description: m.Description})
+		models = append(models, RuntimeModel{
+			ID:           m.ID,
+			Label:        modelLabel(m.Label, m.Description, m.ID, m.Default),
+			Description:  m.Description,
+			EffortLevels: execEfforts(m.EffortLevels),
+			AliasOf:      m.AliasOf,
+		})
 	}
 	return models, res.Supported, nil
 }

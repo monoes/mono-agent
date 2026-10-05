@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -31,7 +32,10 @@ func RegisterBrowserNodes(r *workflow.NodeTypeRegistry) {
 		}
 		automationID, actionType := parts[0], parts[1]
 		nodeType := automationID + "." + actionType
-		if registered[nodeType] || !compiledIn(automationID) {
+		// A built-in namespace (a legacy ~/.monoagent/actions/<dir>, or a
+		// package installed before ids were reserved) never registers: it
+		// would collide with a built-in type or pass as one.
+		if registered[nodeType] || !compiledIn(automationID) || automation.ReservedID(strings.ToLower(automationID)) || r.Has(nodeType) {
 			continue
 		}
 		p, a := automationID, actionType
@@ -102,4 +106,32 @@ func compiledIn(automationID string) bool {
 		return m.Requires.Native == "" || bot.PlatformCompiledIn(m.Requires.Native)
 	}
 	return bot.PlatformCompiledIn(automationID)
+}
+
+// WebAutomations returns the web automations whose actions RegisterBrowserNodes
+// turns into nodes, as id → display name (the manifest name, else the id).
+// The node palette uses it to list those nodes apart from the built-in ones,
+// so an automation installed later shows up there with no code change.
+func WebAutomations() map[string]string {
+	ensureAutomationsBooted()
+	available, err := listActions()
+	if err != nil {
+		return map[string]string{}
+	}
+	out := map[string]string{}
+	for _, entry := range available {
+		id, _, ok := strings.Cut(entry, "/")
+		if !ok || id == "" || !compiledIn(id) {
+			continue
+		}
+		if _, done := out[id]; done {
+			continue
+		}
+		name := id
+		if m, ok := bootedManifest(id); ok && strings.TrimSpace(m.Name) != "" {
+			name = strings.TrimSpace(m.Name)
+		}
+		out[id] = name
+	}
+	return out
 }

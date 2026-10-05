@@ -190,7 +190,7 @@ func daemonArgs(cfg *globalConfig, profileID string) []string {
 	if cfg.DBPath != "" && expandPath(cfg.DBPath) != expandPath(defaultDBPath) {
 		args = append(args, "--db-path", expandPath(cfg.DBPath))
 	}
-	if cfg.ProfileID != "" && profileID != "" {
+	if cfg.ProfileID != "" && profileID != "" && profileID != "default" && strings.ToLower(cfg.ProfileID) != "default" {
 		args = append(args, "--profile", profileID)
 	}
 	return args

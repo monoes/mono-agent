@@ -11,6 +11,7 @@ import {
   sourceLabel, documentType, viewerFilename, isCapture, sortDocuments, nextSort,
   loadSort, saveSort, sourceOptions, filterBySource,
 } from '../lib/documentSort.js'
+import { useReloadOnActivate } from '../lib/useReloadOnActivate'
 
 // maxInlinePreviewBytes mirrors the backend's own GetProfileDocumentData
 // cap (wails-app/app_files.go) so an oversized file is routed straight to
@@ -55,7 +56,7 @@ export function isMonomindMissing(indexError) {
   return isMonomindNotFound(indexError)
 }
 
-export default function Documents() {
+export default function Documents({ isActive = true }) {
   const [docs, setDocs] = useState([])
   const [error, setError] = useState(null)
   const [query, setQuery] = useState('')
@@ -101,6 +102,7 @@ export default function Documents() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useReloadOnActivate(isActive, load)
   useEffect(() => { api.isMonomindInitialized().then(v => setNotInitialized(!v)) }, [])
 
   // Live-refresh: the background document watcher (wails-app/app_documents_watch.go)

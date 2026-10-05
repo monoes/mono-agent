@@ -28,7 +28,7 @@ export default function SessionTab({ automation, manifest, onChanged }) {
     const offD = onConnectionDone(async d => {
       if (d?.platform !== id) return
       if (d.success) {
-        setPhase('idle'); setMsg({ ok: true, text: `Logged in as ${d.accountID}` })
+        setPhase('idle'); setMsg({ ok: true, text: d.accountID ? `Logged in as ${d.accountID}` : 'Logged in' })
         await Promise.all([loadRows(), onChanged?.()])
       } else {
         // A failed confirm (not logged in yet) keeps the confirm button.

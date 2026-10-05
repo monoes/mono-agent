@@ -1,0 +1,284 @@
+package apiconfig
+
+import (
+	"fmt"
+	"net"
+	"slices"
+	"strings"
+
+	"github.com/monoes/mono-agent/internal/openaiapi"
+	"github.com/monoes/mono-agent/internal/tlsserve"
+)
+
+// Widening is one way a change makes the server reach further than it did: a stable Key, and
+// a Reason in one sentence, to be shown as it is.
+type Widening struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+// WideningKeySavedSettings is the key of the Widening that removing a saved row that cannot be
+// read (an ErrDamaged) is: what the row limited cannot be told, so returning every setting to
+// its default may reach further than anything. Widens never returns it, since it judges two
+// documents and an unreadable row is none; Apply adds it to the change that removes such a
+// row (unset all), so that every surface asks for confirmation, and its result and its
+// WideningError carry it like any other.
+const WideningKeySavedSettings = "saved_settings"
+
+// unreadableRowWidening is the one Widening of removing a row that cannot be read: a sentence
+// that says nothing of what the row held.
+func unreadableRowWidening() Widening {
+	return Widening{
+		Key: WideningKeySavedSettings,
+		Reason: "The saved settings cannot be read, so what they limited cannot be told: " +
+			"removing them returns every setting to its default, which may reach further.",
+	}
+}
+
+// Widens says how the change from before to after makes the server reach further. It
+// compares the effective policy the two saved documents give, not the words in them, so
+// that an unset which takes a value back to a higher default counts, and saving a value
+// that spells the default does not:
+//
+//   - v1_addr: the dedicated listener's bind reaches further (P9): beyond this machine where it
+//     did not (none, or loopback), another host beyond it, or every interface where it was one
+//     host (bindOf says how the hosts are read);
+//   - confinement, context_confinement, auto_confinement: the class rises, on the loopback
+//     kind of listener or on the network kind. Both kinds are judged in every document, named
+//     dedicated listener or not, because the daemon's own environment may supply the address
+//     of one; context and auto are judged after the cap that confinement puts on them;
+//   - image_runtimes, tool_runtimes: the list gains a runtime that the old effective list did
+//     not have (S2: a runtime of the default list that a saved list left out counts when it
+//     comes back, as a class that rises back to its default does), or leaves none.
+//
+// max_concurrent, turn_timeout and the TLS files are not exposure. The result is in the order
+// of the settings. A document that does not pass Validate is read with its invalid values
+// taken for unset; refusing it is Validate's business.
+func Widens(before, after Settings) []Widening {
+	var out []Widening
+	if w, ok := addressWidening(before, after); ok {
+		out = append(out, w)
+	}
+	for _, d := range classDimensions {
+		for _, k := range listenerKinds {
+			b, a := classesOf(before, k.network), classesOf(after, k.network)
+			if from, to := d.pick(b), d.pick(a); to > from {
+				out = append(out, Widening{Key: d.key + "." + k.name, Reason: d.reason(k, className(to), className(from))})
+			}
+		}
+	}
+	for _, r := range []struct {
+		key, what string
+		parse     func(string) ([]string, error)
+		before    string
+		after     string
+	}{
+		{KeyImageRuntimes, "Image generation", openaiapi.ParseImageRuntimes, before.ImageRuntimes, after.ImageRuntimes},
+		{KeyToolRuntimes, "Tool calling", openaiapi.ParseToolRuntimes, before.ToolRuntimes, after.ToolRuntimes},
+	} {
+		if reason, ok := runtimesWidening(r.what, r.parse, r.before, r.after); ok {
+			out = append(out, Widening{Key: r.key, Reason: reason})
+		}
+	}
+	return out
+}
+
+// addressWidening is rule (a): the dedicated listener's bind reaches further than it did (P9).
+func addressWidening(before, after Settings) (Widening, bool) {
+	b, a := bindOf(before), bindOf(after)
+	if !b.widenedBy(a) {
+		return Widening{}, false
+	}
+	return Widening{Key: KeyV1Addr, Reason: bindReason(b, a, className(classesOf(after, true).confinement))}, true
+}
+
+// bindKind is how far a dedicated listener's bind reaches, the least first.
+type bindKind int
+
+const (
+	bindThisMachine    bindKind = iota // no dedicated listener, or one on loopback
+	bindOneHost                        // one host beyond this machine
+	bindEveryInterface                 // every interface: an empty host, 0.0.0.0, [::]
+)
+
+// bind is where a dedicated listener is bound, as far as the gate sees.
+type bind struct {
+	kind bindKind
+	host string // bindOneHost: the host in the one spelling that two spellings of it share
+	addr string // the address as saved, for the reasons
+}
+
+// bindOf reads the bind of a document. Loopback is the server's own test
+// (tlsserve.IsLoopbackAddr: `localhost` and the IP addresses of loopback). A host that is not an
+// IP address is another host beyond the machine, and two names are one host only when they are
+// the same name (a name is read in lower case and without a trailing dot), since the gate cannot
+// know what a name resolves to: a name and its address are two hosts. An IP address is one host
+// with every other spelling of it (IPv6 written another way, an IPv4 address as IPv4-mapped
+// IPv6); the zone of a link-local address is part of the host, and an address with a zone is
+// read as a name, as net.ParseIP does not take it.
+func bindOf(s Settings) bind {
+	addr := listenAddr(s)
+	if addr == "" || tlsserve.IsLoopbackAddr(addr) {
+		return bind{kind: bindThisMachine, addr: addr}
+	}
+	host, _, _ := net.SplitHostPort(addr) // listenAddr has checked the shape
+	if host == "" {
+		return bind{kind: bindEveryInterface, addr: addr}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsUnspecified() {
+			return bind{kind: bindEveryInterface, addr: addr}
+		}
+		return bind{kind: bindOneHost, host: ip.String(), addr: addr}
+	}
+	return bind{kind: bindOneHost, host: strings.TrimSuffix(strings.ToLower(host), "."), addr: addr}
+}
+
+// widenedBy says that the new bind reaches somewhere the old one did not: beyond this machine
+// from nothing or loopback, another host beyond it, or every interface from one host. The port
+// alone, the same host, and any move to a bind that reaches less or the same never do.
+func (b bind) widenedBy(a bind) bool {
+	switch a.kind {
+	case bindEveryInterface:
+		return b.kind != bindEveryInterface
+	case bindOneHost:
+		return b.kind == bindThisMachine || (b.kind == bindOneHost && b.host != a.host)
+	}
+	return false
+}
+
+// bindReason is the sentence for a bind that reaches further, as the old one was.
+func bindReason(b, a bind, class string) string {
+	switch {
+	case b.kind == bindOneHost && a.kind == bindEveryInterface:
+		return fmt.Sprintf("The dedicated /v1 listener would listen on every interface (%s), where it listened only on %s before, and serve runtimes up to %s.", a.addr, b.addr, class)
+	case b.kind == bindOneHost:
+		return fmt.Sprintf("The dedicated /v1 listener would move from %s to %s, another address beyond this machine, and serve runtimes up to %s.", b.addr, a.addr, class)
+	}
+	return fmt.Sprintf("The dedicated /v1 listener would listen on %s, beyond this machine, and serve runtimes up to %s; it did not listen beyond this machine before.", a.addr, class)
+}
+
+// listenAddr is the dedicated listener's address, "" when there is none or the text is not
+// an address.
+func listenAddr(s Settings) string {
+	if ValidListenAddr(s.V1Addr) != nil {
+		return ""
+	}
+	return s.V1Addr
+}
+
+// A kind of listener: the main one is always on loopback, and the dedicated one is a network
+// listener unless it is bound there.
+type listenerKind struct {
+	name    string
+	network bool
+}
+
+var listenerKinds = []listenerKind{{"loopback", false}, {"network", true}}
+
+func (k listenerKind) where() string {
+	if k.network {
+		return "a /v1 listener beyond this machine"
+	}
+	return "the /v1 listener on this machine"
+}
+
+// classes are the strongest runtime class each use may reach on one kind of listener.
+type classes struct {
+	confinement, context, auto openaiapi.Class
+}
+
+// classesOf is what the server serves on a listener of one kind: confinement unset is any on
+// loopback and chat-only beyond it, context and auto unset are chat-only, and neither is ever
+// above confinement. Text that is not a class is not saved.
+func classesOf(s Settings, network bool) classes {
+	conf := openaiapi.Unconfined
+	if network {
+		conf = openaiapi.ChatOnly
+	}
+	if c, ok := classOf(s.Confinement); ok {
+		conf = c
+	}
+	limit := func(text string) openaiapi.Class {
+		c, ok := classOf(text)
+		if !ok {
+			c = openaiapi.ChatOnly
+		}
+		return min(c, conf)
+	}
+	return classes{confinement: conf, context: limit(s.ContextConfinement), auto: limit(s.AutoConfinement)}
+}
+
+func classOf(text string) (openaiapi.Class, bool) {
+	p, err := openaiapi.ParsePolicy(text)
+	if err != nil {
+		return 0, false
+	}
+	return p.Max, true
+}
+
+func className(c openaiapi.Class) string { return openaiapi.Policy{Max: c}.String() }
+
+// classDimensions are the three classes, in the order of the settings.
+var classDimensions = []struct {
+	key    string
+	pick   func(classes) openaiapi.Class
+	reason func(k listenerKind, to, from string) string
+}{
+	{KeyConfinement, func(c classes) openaiapi.Class { return c.confinement }, func(k listenerKind, to, from string) string {
+		if k.network {
+			return fmt.Sprintf("%s (a dedicated listener from v1_addr, --v1-addr or MONOAGENT_API_V1_ADDR) would serve runtimes up to %s, where it served up to %s.",
+				capitalise(k.where()), to, from)
+		}
+		return fmt.Sprintf("%s would serve runtimes up to %s, where it served up to %s.", capitalise(k.where()), to, from)
+	}},
+	{KeyContextConfinement, func(c classes) openaiapi.Class { return c.context }, func(k listenerKind, to, from string) string {
+		return fmt.Sprintf("A key created with --context could use runtimes up to %s on %s, where it could use up to %s.", to, k.where(), from)
+	}},
+	{KeyAutoConfinement, func(c classes) openaiapi.Class { return c.auto }, func(k listenerKind, to, from string) string {
+		return fmt.Sprintf("The auto model could pick runtimes up to %s on %s, where it could pick up to %s.", to, k.where(), from)
+	}},
+}
+
+func capitalise(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
+
+// runtimesWidening is rule (c) for one list: a list that leaves none, or gains a runtime that the
+// old effective list did not have. An unset list is the default list, none is the empty one, and
+// text that is not a list is the default. A gained runtime of the default list ("which it was not
+// before") and one beyond it ("beyond the default list") are told apart in the sentence, since the
+// second is what an operator did not expect to be there at all.
+func runtimesWidening(what string, parse func(string) ([]string, error), before, after string) (string, bool) {
+	defaults, _ := parse("")
+	effective := func(text string) []string {
+		list, err := parse(text)
+		if err != nil {
+			return defaults
+		}
+		return list
+	}
+	b, a := effective(before), effective(after)
+	if len(b) == 0 && len(a) > 0 {
+		return fmt.Sprintf("%s, which is switched off, would be served by %s.", what, strings.Join(a, ", ")), true
+	}
+	var back, beyond []string // gained: of the default list, and outside it
+	for _, r := range a {
+		switch {
+		case slices.Contains(b, r):
+		case slices.Contains(defaults, r):
+			back = append(back, r)
+		default:
+			beyond = append(beyond, r)
+		}
+	}
+	var parts []string
+	if len(back) > 0 {
+		parts = append(parts, strings.Join(back, ", ")+", which it was not before")
+	}
+	if len(beyond) > 0 {
+		parts = append(parts, fmt.Sprintf("%s, beyond the default list (%s)", strings.Join(beyond, ", "), strings.Join(defaults, ", ")))
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("%s would be served by %s.", what, strings.Join(parts, ", and by ")), true
+}

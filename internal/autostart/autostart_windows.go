@@ -8,6 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/daemonhb"
 )
 
 func newPlatformInstaller() Installer { return windowsInstaller{} }
@@ -69,6 +72,29 @@ func (windowsInstaller) Uninstall(ctx context.Context) error {
 func (windowsInstaller) Status(ctx context.Context) (bool, string) {
 	err := exec.CommandContext(ctx, "schtasks", "/query", "/tn", taskName).Run()
 	return err == nil, "scheduled task " + taskName
+}
+
+// schtasks runs schtasks and returns its combined output; tests replace it.
+var schtasks = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "schtasks", args...).CombinedOutput()
+}
+
+// daemonStopWait is how long Restart waits for the daemon to let go of its lock after its task
+// was ended.
+const daemonStopWait = 10 * time.Second
+
+// waitDaemonStopped waits for no daemon to hold the home's lock; tests replace it.
+var waitDaemonStopped = func(ctx context.Context) error {
+	if err := waitFor(ctx, func() bool { return !daemonhb.Locked() }, daemonStopWait, 200*time.Millisecond); err != nil {
+		return fmt.Errorf("the daemon was still running %v after its task was ended (schtasks /end): %w", daemonStopWait, err)
+	}
+	return nil
+}
+
+// Restart ends the task, waits for the daemon to stop and runs the task again: the task has
+// a logon trigger and no keep-alive, so a /run that raced the old process would leave no daemon.
+func (windowsInstaller) Restart(ctx context.Context) error {
+	return endThenRun(ctx, schtasks, waitDaemonStopped, taskName)
 }
 
 func (windowsInstaller) Start(ctx context.Context) error {

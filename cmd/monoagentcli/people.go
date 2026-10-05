@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/personphoto"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +38,7 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 		newPeopleReviewCmd(cfg),
 		newPeopleTagCmd(cfg),
 		newPeopleLinksCmd(cfg),
+		newPeoplePhotosCmd(cfg),
 	)
 
 	return cmd
@@ -222,6 +225,39 @@ func newPeopleCountCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+func newPeoplePhotosCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:   "photos",
+		Short: "Download the profile photos still stored as remote URLs",
+		Long: "Saves a local copy (in the image vault) of every person's photo that is still a remote URL, " +
+			"and points the person at it. Photos that can no longer be fetched keep their URL.",
+		Example: `  monoagentcli --json people photos`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing database: %w", err)
+			}
+			defer db.Close()
+
+			saved, errs := personphoto.Localize(cmd.Context(), db.DB, cfg.ProfileID, nil)
+			vault.Wait()
+			if cfg.JSONOutput {
+				failed := make([]string, len(errs))
+				for i, e := range errs {
+					failed[i] = e.Error()
+				}
+				return printReviewJSON(map[string]interface{}{"saved": saved, "failed": failed})
+			}
+			fmt.Printf("saved %d photos, %d could not be fetched\n", saved, len(errs))
+			for _, e := range errs {
+				fmt.Fprintln(cmd.ErrOrStderr(), e)
+			}
+			return nil
+		},
+	}
+}
+
 func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <id>",
@@ -350,29 +386,36 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 
 func newPeopleDeleteCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a person from the database",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <id>...",
+		Short:   "Delete people from the database, with their saved photos",
+		Example: `  monoagentcli --json people delete <id> [<id>...]`,
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			personID := args[0]
-
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
 
-			result, err := db.DB.Exec("DELETE FROM people WHERE id = ? AND profile_id = ?", personID, cfg.ProfileID)
-			if err != nil {
-				return fmt.Errorf("deleting person: %w", err)
+			deleted := 0
+			for _, personID := range args {
+				// The photo goes first (the row says where it is); a person
+				// that isn't there has no photo to lose.
+				personphoto.Delete(cmd.Context(), db.DB, cfg.ProfileID, []string{personID})
+				result, err := db.DB.Exec("DELETE FROM people WHERE id = ? AND profile_id = ?", personID, cfg.ProfileID)
+				if err != nil {
+					return fmt.Errorf("deleting person %s: %w", personID, err)
+				}
+				if n, _ := result.RowsAffected(); n == 0 {
+					return fmt.Errorf("person %q not found (%d deleted)", personID, deleted)
+				}
+				deleted++
 			}
-
-			affected, _ := result.RowsAffected()
-			if affected == 0 {
-				return fmt.Errorf("person %q not found", personID)
+			vault.Wait()
+			if cfg.JSONOutput {
+				return printReviewJSON(map[string]int{"deleted": deleted})
 			}
-
-			fmt.Fprintf(os.Stdout, "Deleted person %s.\n", personID)
+			fmt.Fprintf(os.Stdout, "Deleted %d people.\n", deleted)
 			return nil
 		},
 	}

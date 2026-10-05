@@ -102,6 +102,7 @@ func newRootCmd() *cobra.Command {
 		newOrgCmd(cfg),
 		newMCPCmd(cfg),
 		newHTTPAPICmd(cfg),
+		newAPICmd(cfg),
 		newJevCmd(cfg),
 		newAutomationCmd(cfg),
 		newRecordCmd(cfg),
@@ -154,7 +155,18 @@ func rejectUnknownSubcommands(cmd *cobra.Command) {
 		rejectUnknownSubcommands(sub)
 	}
 	if cmd.HasSubCommands() && cmd.Args == nil && cmd.Run == nil && cmd.RunE == nil {
-		cmd.Args = cobra.NoArgs
+		cmd.Args = func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			names := make([]string, 0, len(c.Commands()))
+			for _, sub := range c.Commands() {
+				if !sub.Hidden {
+					names = append(names, sub.Name())
+				}
+			}
+			return fmt.Errorf("unknown command %q for %q (available: %s)", args[0], c.CommandPath(), strings.Join(names, ", "))
+		}
 		cmd.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
 	}
 }

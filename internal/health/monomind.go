@@ -24,6 +24,7 @@ const (
 	CheckMonomindHandshake    = "monomind.handshake"
 	CheckMonomindCapabilities = "monomind.capabilities"
 	CheckMonomindProfileInit  = "monomind.profile_init"
+	CheckMonomindAgentSandbox = "monomind.agent_sandbox"
 
 	FixNodeInstall         = "monomind.node.install"
 	ActionNodeUpdate       = "monomind.node.update"
@@ -57,6 +58,8 @@ func monomindChecks() []Check {
 			DependsOn: []string{CheckMonomindBinary}, Timeout: 30 * time.Second, Run: checkMonomindHandshake},
 		{ID: CheckMonomindCapabilities, Group: GroupMonomind, Title: "monomind features",
 			DependsOn: []string{CheckMonomindHandshake}, Timeout: 30 * time.Second, Run: checkMonomindCapabilities},
+		{ID: CheckMonomindAgentSandbox, Group: GroupMonomind, Title: "agent sandbox", Features: []string{"agent chat", "AI agents"},
+			DependsOn: []string{CheckMonomindHandshake}, Timeout: 30 * time.Second, Run: checkMonomindAgentSandbox},
 		{ID: CheckMonomindProfileInit, Group: GroupMonomind, Title: "monomind profile", Features: []string{"orgs", "memory", "knowledge graph"},
 			DependsOn: []string{CheckMonomindHandshake, CheckProfile}, Run: checkMonomindProfileInit},
 	}
@@ -268,13 +271,47 @@ func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
 			missing = append(missing, fmt.Sprintf("%s — %s", oc.cap, oc.feature))
 		}
 	}
+	// Not a capability but a version: older releases fail to index most
+	// pages saved from the browser, so "Ask your brain" finds nothing.
+	if !monomind.CaptureIndexingSupported(vi.Version, vi.HasCapability(monomind.CapKnowledgeProfileCaptures)) {
+		missing = append(missing, fmt.Sprintf("monomind %s or newer — indexing pages saved from the browser "+
+			"(any page with a ? in its URL, e.g. every YouTube video) and their transcripts and summaries, "+
+			"so \"Ask your brain\" and chat can find them", monomind.CaptureCompanionsVersion))
+	}
 	if len(missing) > 0 {
 		res := Result{Status: StatusWarn, Summary: fmt.Sprintf("%d feature(s) disabled until monomind is updated", len(missing)),
 			Detail: strings.Join(missing, "\n")}
 		offerUpdate(env, &res)
 		return res
 	}
-	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities))}
+	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities)+1)}
+}
+
+// checkMonomindAgentSandbox says whether agent turns run in the runtime's
+// sandbox. Info either way: without the capability they run as they always
+// have, which is not a fault of this install.
+func checkMonomindAgentSandbox(ctx context.Context, env *Env) Result {
+	if env.MonomindHandshake == nil {
+		return Result{Status: StatusSkip, Summary: "not available"}
+	}
+	vi, err := env.MonomindHandshake(ctx)
+	if err != nil {
+		return Result{Status: StatusSkip, Summary: "handshake failed"}
+	}
+	caps := monomind.NewCapabilitySet(vi.Version, vi.Capabilities...)
+	// The env path decides this row: codex is sandboxed from monomind
+	// 2.11.1 on, with or without the --sandbox flag (whose per-runtime
+	// modes only a scan can tell; doctor doesn't run one).
+	if _, eff := monomind.SandboxArgs(caps, nil, "codex", monomind.TurnSandboxMode); eff != monomind.SandboxStatusSandboxed {
+		return Result{Status: StatusInfo, Summary: "agent turns run without a sandbox until monomind supports agent exec " + monomind.SandboxFlag,
+			Detail: fmt.Sprintf("monomind %s or newer sandboxes codex and grok turns; update monomind", monomind.SandboxEnvMinVersion)}
+	}
+	if caps.Has(monomind.CapAgentExecSandbox) {
+		return Result{Status: StatusInfo, Summary: "agent turns run in the runtime's sandbox where it has one (agent scan lists its sandbox_modes)",
+			Detail: "claude keeps --access scoped; a runtime without a sandbox mode runs without one, and its turns say so"}
+	}
+	return Result{Status: StatusInfo, Summary: "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec " + monomind.SandboxFlag,
+		Detail: "claude keeps --access scoped; copilot, qwen, antigravity and the rest wait for monomind#396"}
 }
 
 func checkMonomindProfileInit(_ context.Context, env *Env) Result {

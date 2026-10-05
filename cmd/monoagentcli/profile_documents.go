@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/capturedocs"
+	"github.com/monoes/mono-agent/internal/captureindex"
 	"github.com/monoes/mono-agent/internal/capturesummary"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/vault"
 
 	"github.com/spf13/cobra"
@@ -210,12 +212,35 @@ func newProfileDocumentsRmCmd(cfg *globalConfig) *cobra.Command {
 // JSON map, not documents-list's PascalCase struct encoding): behaviorally
 // this is upload-document's sibling (both attempt one ingest and report
 // pass/fail), not list's.
+//
+// A browser capture row goes to the profile's capture store instead (see
+// internal/captureindex). --all is the backfill: every capture of the
+// profile that is not indexed, has changed, or failed before.
 func newProfileDocumentsIndexCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
-		Use:     "index <id>",
-		Short:   "Index (or re-index) a profile document for knowledge search",
-		Args:    cobra.ExactArgs(1),
-		Example: `  monoagentcli profile documents index doc-003`,
+	var all, allProfiles bool
+	cmd := &cobra.Command{
+		Use:   "index <id> | --all",
+		Short: "Index (or re-index) a profile document for knowledge search",
+		Long: "Index one document by id, or with --all every browser capture of the profile\n" +
+			"that is not indexed yet, has changed since, or failed before. Captures are\n" +
+			"indexed automatically by the extension bridge when they land; --all is the\n" +
+			"backfill for captures saved before that, or while the bridge was not running.\n" +
+			"--all-profiles does the same for every profile.",
+		Example: `  monoagentcli profile documents index doc-003
+  monoagentcli profile documents index --all
+  monoagentcli profile documents index --all --all-profiles`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all || allProfiles {
+				if len(args) > 0 {
+					return errInvalidInput("give a document id or --all, not both")
+				}
+				return nil
+			}
+			if len(args) != 1 {
+				return errInvalidInput("give a document id, or --all for every capture")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -223,25 +248,38 @@ func newProfileDocumentsIndexCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.DB.Close()
 
-			docs, err := vault.ListDocuments(cmd.Context(), db.DB, cfg.ProfileID)
+			if all || allProfiles {
+				return runIndexAllCaptures(cmd, cfg, db.DB, allProfiles)
+			}
+
+			doc, err := vault.GetDocument(cmd.Context(), db.DB, cfg.ProfileID, args[0])
 			if err != nil {
 				return fmt.Errorf("looking up document: %w", err)
 			}
-			var path string
-			found := false
-			for _, d := range docs {
-				if d.ID == args[0] {
-					path = d.Path
-					found = true
-				}
-			}
-			if !found {
+			if doc == nil {
 				return errNotFound("document %q not found", args[0])
 			}
 
-			indexed, indexErrMsg, setErr := indexDocument(cmd.Context(), db.DB, cfg.ProfileID, args[0], path)
-			if setErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record indexing status: %v\n", setErr)
+			var indexed bool
+			var indexErrMsg string
+			if doc.CaptureDir != "" {
+				ix := &captureindex.Indexer{}
+				rep, ixErr := ix.IndexProfile(cmd.Context(), db.DB, cfg.ProfileID, captureindex.Options{IDs: []string{doc.ID}, Force: true, RetryFailed: true})
+				switch {
+				case ixErr != nil:
+					indexErrMsg = ixErr.Error()
+				case len(rep.Outcomes) == 0:
+					// Sync dropped the row: its capture left the inbox.
+					return errNotFound("capture %q is no longer in the inbox", args[0])
+				default:
+					indexed, indexErrMsg = rep.Outcomes[0].Indexed, rep.Outcomes[0].Error
+				}
+			} else {
+				var setErr error
+				indexed, indexErrMsg, setErr = indexDocument(cmd.Context(), db.DB, cfg.ProfileID, args[0], doc.Path)
+				if setErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record indexing status: %v\n", setErr)
+				}
 			}
 
 			if cfg.JSONOutput {
@@ -261,6 +299,58 @@ func newProfileDocumentsIndexCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Index every browser capture of the profile that is not indexed, has changed, or failed before")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "With --all: every profile, not only the active one")
+	return cmd
+}
+
+// runIndexAllCaptures is `profile documents index --all`: one retrying pass
+// per profile. Exit 1 when any capture could not be indexed, so a script
+// can tell.
+func runIndexAllCaptures(cmd *cobra.Command, cfg *globalConfig, db *sql.DB, allProfiles bool) error {
+	ids := []string{cfg.ProfileID}
+	if allProfiles {
+		profiles, err := profiledir.List(cmd.Context(), db)
+		if err != nil {
+			return fmt.Errorf("listing profiles: %w", err)
+		}
+		ids = ids[:0]
+		for _, p := range profiles {
+			ids = append(ids, p.ID)
+		}
+	}
+	ix := &captureindex.Indexer{}
+	reports := make([]*captureindex.Report, 0, len(ids))
+	failed := 0
+	for _, id := range ids {
+		rep, err := ix.IndexProfile(cmd.Context(), db, id, captureindex.Options{RetryFailed: true})
+		if err != nil {
+			return fmt.Errorf("indexing captures of %s: %w", id, err)
+		}
+		reports = append(reports, rep)
+		failed += rep.Failed
+		if !cfg.JSONOutput {
+			for _, o := range rep.Outcomes {
+				if o.Indexed {
+					fmt.Fprintf(cmd.OutOrStdout(), "indexed  %s  %s\n", o.ID, o.Title)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "FAILED   %s  %s — %s\n", o.ID, o.Title, o.Error)
+				}
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: %d indexed, %d failed, %d already up to date.\n", id, rep.Indexed, rep.Failed, rep.UpToDate)
+		}
+	}
+	if cfg.JSONOutput {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]any{"profiles": reports}); err != nil {
+			return err
+		}
+	}
+	if failed > 0 {
+		return reportedError{fmt.Errorf("%d capture(s) could not be indexed", failed)}
+	}
+	return nil
 }
 
 func newProfileSearchKnowledgeCmd(cfg *globalConfig) *cobra.Command {

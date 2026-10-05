@@ -25,7 +25,7 @@ const RuntimeEnvVar = "MONOAGENT_AI_RUNTIME"
 // runtimePriority orders installed runtimes when no explicit choice is made.
 var runtimePriority = []string{
 	"claude", "codex", "kimicode", "qwen", "grok", "crush", "copilot",
-	"pi", "antigravity", "opencode", "qwen-rpc", "pi-rpc",
+	"pi", "antigravity", "opencode", "qwen-rpc", "pi-rpc", "kilo", "freebuff",
 }
 
 // maxHTMLChars caps the HTML sent in the prompt (DOM relevant to selectors
@@ -140,6 +140,7 @@ func (g *AgentGenerator) GenerateConfig(
 		Prompt:       prompt,
 		SystemPrompt: agentSystemPrompt,
 		Cwd:          sandbox,
+		Sandbox:      monomind.TurnSandboxMode,
 		BudgetUSD:    agentGenBudgetUSD,
 		Timeout:      170 * time.Second,
 	}, func(ev monomind.Event) {

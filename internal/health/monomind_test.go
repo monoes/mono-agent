@@ -94,6 +94,17 @@ func TestMonomindHandshakeAndCapabilities(t *testing.T) {
 	for _, oc := range optionalCapabilities {
 		vi.Capabilities = append(vi.Capabilities, oc.cap)
 	}
+	// Every capability, but a monomind too old to index browser captures.
+	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusWarn || !strings.Contains(res.Detail, "pages saved from the browser") {
+		t.Errorf("old monomind, capture indexing: %+v", res)
+	}
+	// A later monomind may advertise the capability; that alone is enough.
+	vi.Capabilities = append(vi.Capabilities, monomind.CapKnowledgeProfileCaptures)
+	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusOK {
+		t.Errorf("capability without the version: %+v", res)
+	}
+	vi.Capabilities = vi.Capabilities[:len(vi.Capabilities)-1]
+	vi.Version = monomind.CaptureCompanionsVersion
 	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusOK {
 		t.Errorf("all caps: %+v", res)
 	}
@@ -206,5 +217,29 @@ func TestRuntimeInstallFixShowsWhatRuns(t *testing.T) {
 	}
 	if f := got["runtimes.codex"].Fix; f == nil || !strings.Contains(f.Command, "npm install -g @openai/codex") {
 		t.Errorf("codex fix command %+v, want the npm package", f)
+	}
+}
+
+// The agent sandbox row is information either way, never a warning.
+func TestCheckMonomindAgentSandbox(t *testing.T) {
+	ctx := context.Background()
+	if res := checkMonomindAgentSandbox(ctx, &Env{}); res.Status != StatusSkip {
+		t.Errorf("no handshake: %+v", res)
+	}
+	vi := &monomind.VersionInfo{V: 1}
+	env := &Env{MonomindHandshake: func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }}
+	for _, tc := range []struct {
+		version string
+		caps    []string
+		summary string
+	}{
+		{"2.10.0", nil, "agent turns run without a sandbox until monomind supports agent exec --sandbox"},
+		{"2.18.5", nil, "codex and grok turns run in the runtime's sandbox; other runtimes run without one until monomind supports agent exec --sandbox"},
+		{"9.0.0", []string{monomind.CapAgentExecSandbox}, "agent turns run in the runtime's sandbox where it has one (agent scan lists its sandbox_modes)"},
+	} {
+		vi.Version, vi.Capabilities = tc.version, tc.caps
+		if res := checkMonomindAgentSandbox(ctx, env); res.Status != StatusInfo || res.Summary != tc.summary {
+			t.Errorf("monomind %s: %+v", tc.version, res)
+		}
 	}
 }

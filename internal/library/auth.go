@@ -259,7 +259,15 @@ func (c *Client) LoginPKCE(ctx context.Context, opts LoginOptions) (*Token, erro
 		}
 	})}
 	go func() { _ = srv.Serve(ln) }()
-	defer srv.Close()
+	// Shutdown, not Close: Close cuts connections that are still writing, so
+	// the browser that delivered the code could get EOF instead of the
+	// "you can close this tab" page (and the test that plays it failed
+	// intermittently on CI). Shutdown lets that response finish, briefly.
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
 
 	if opts.OnURL != nil {
 		opts.OnURL(authURL)

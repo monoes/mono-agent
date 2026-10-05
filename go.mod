@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
-	github.com/ProtonMail/go-crypto v1.5.1
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/disintegration/imaging v1.6.2
@@ -17,7 +17,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jlaffaye/ftp v0.2.4
 	github.com/lib/pq v1.12.3
-	github.com/mmcdole/gofeed v1.4.2
+	github.com/mmcdole/gofeed v1.5.0
 	github.com/olekukonko/tablewriter v1.1.5
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -33,7 +33,8 @@ require (
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
-	modernc.org/sqlite v1.59.0
+	golang.org/x/text v0.42.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -73,8 +74,7 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	modernc.org/libc v1.75.7 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

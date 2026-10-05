@@ -8,6 +8,7 @@ import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
 import BrowserBindingsSection from '../components/settings/BrowserBindingsSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
+import ApiSection from '../components/settings/ApiSection.jsx'
 import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
 import CoderModeSection from '../components/settings/CoderModeSection.jsx'
 
@@ -286,20 +287,6 @@ function LanguageSection() {
       <select
         value={i18n.resolvedLanguage || i18n.language}
         onChange={e => i18n.changeLanguage(e.target.value)}
-        style={{
-          // backgroundColor, not the `background` shorthand: a shorthand here
-          // would reset backgroundImage below to none regardless of order.
-          backgroundColor: 'var(--elevated)', color: 'var(--text)',
-          border: '1px solid var(--border)', borderRadius: 6,
-          padding: '6px 28px 6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
-          outline: 'none', cursor: 'pointer',
-          // WebKitGTK draws <select> with native GTK chrome (light bg, dark
-          // text) unless appearance is explicitly reset — see AIChatPanel.jsx.
-          appearance: 'none',
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 10px center',
-        }}
       >
         <option value="en">English</option>
         <option value="es">Español</option>
@@ -308,7 +295,7 @@ function LanguageSection() {
   )
 }
 
-export default function Settings({ onNavigate, navData }) {
+export default function Settings({ onNavigate, navData, isActive = true }) {
   const { t } = useTranslation()
   // Deep links (the dashboard's "health" and "Jev" rows) scroll to a section.
   const sectionRefs = { health: useRef(null), jev: useRef(null), version: useRef(null) }
@@ -421,8 +408,10 @@ export default function Settings({ onNavigate, navData }) {
         <CoderModeSection />
 
         <div ref={sectionRefs.jev} data-section="jev">
-          <JevSection collapsible defaultExpanded={section === 'jev'} />
+          <JevSection collapsible defaultExpanded={section === 'jev'} expandToken={section === 'jev' ? navData : null} />
         </div>
+
+        <ApiSection onNavigate={onNavigate} isActive={isActive} />
 
         {/* Application Info */}
         <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

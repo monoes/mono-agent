@@ -34,6 +34,31 @@ PROCESSES
   roles cannot run, and every org behaves as autonomy level manual.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SIGNED DEFINITIONS (monomind 2.21+)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  org sign <org> --status           signed | unsigned | changed | ...
+  org sign <org>                    monomind's review; signs nothing
+                                    (asks first on a terminal)
+  org sign <org> --yes [--expect-hash <hash>]    sign (only that definition)
+
+  monomind runs or reloads an org only when the operator signed its
+  definition (everything but goal, status and role titles,
+  responsibilities and layout). monoagentcli re-signs its own edits of
+  a signed org; an org edited any other way, imported, written whole
+  with create-json, or changed from inside a coding agent is left
+  unsigned with a warning until you review and sign it (the review's
+  "hash" is what --expect-hash signs). org run refuses such an org with
+  code org_not_signed, and
+  org status shows each org's "signature".
+
+  Orgs under a symlinked .monomind (or with a symlink on the way to an
+  instructions file), on a network or FUSE/FAT filesystem, or on Windows
+  are never re-signed automatically, and their review hands over no hash
+  unless monomind 2.22 reviews and signs them itself: sign those with
+  "monomind org sign <org>" in a terminal.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATIONS AND GRANTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -55,11 +80,14 @@ AUTOMATIONS AND GRANTS
   --approval required (each call is a decision). The first grant of a
   role pre-fills denyTools Bash.
 
-  The tool's arguments reach the workflow as input in its trigger data.
-  monomind passes only the arguments a tool's schema lists, so the tool
-  lists the input fields the workflow's templates read (input.<field>);
-  a workflow that reads its input some other way (a code node) needs an
-  input_schema on the role's automations entry in the org file.
+  The tool's arguments reach the workflow as input in its trigger data,
+  and each field is also copied to the top level ($json.<field>), never
+  over org, input, trace or the other keys the run sets. monomind passes
+  only the arguments a tool's schema lists, so the tool lists the fields
+  the workflow's templates read (input.<field>, and $json.<field> in the
+  nodes the trigger feeds); a workflow that reads its input some other
+  way (a code node) needs an input_schema on the role's automations entry
+  in the org file.
 
   A granted run gets the calling role's workdir (its run_config.workspace
   directory) as org.workdir in its trigger data; so does an automation
@@ -102,6 +130,16 @@ MESSAGES AND LIFECYCLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   org send <org> --to <role> [--from org:role] --subject S --body B
+  org chat send <org> -- <text>     message the boss as human:operator
+  org chat history <org> [--run R] [--limit N]
+                                    the boss thread: your messages, the boss's
+                                    replies, questions, approvals, gates
+                                    (pending or how they ended), team rows
+  org chat answer <org> <questionId> -- <answer>
+  org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]
+                                    idempotent ("already": true when resolved
+                                    before); refused (exit 3) while the org is
+                                    not running, and nothing is sent
   org queued <org>                  messages waiting for the org's next start
                                     (read-only view of monomind's inbox.jsonl)
   org stop|pause|resume <org>
@@ -111,8 +149,8 @@ MESSAGES AND LIFECYCLE
   org reconcile                     rewrite every org file's generated blocks
                                     from the grant rows (after a folder move)
   org teardown-profile [--dry-run]  the org half of deleting a profile: revoke
-                                    its grants, endpoints, autonomy; stop its
-                                    orgs and org daemon
+                                    its grants, endpoints, autonomy and API
+                                    keys; stop its orgs and org daemon
 
   Crossings carry "[trace chn_… hop=N]" and stop at run_config.max_hops
   (default 8) or max_repeats calls to one target per minute (default 20).

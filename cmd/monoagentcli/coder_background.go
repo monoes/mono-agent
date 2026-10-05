@@ -61,6 +61,28 @@ func shortCommand(pid int) string {
 	return cmd
 }
 
+// backgroundSettle is how long a turn's end waits for the processes its
+// done event listed to exit before warning about them.
+var backgroundSettle = 2 * time.Second
+
+// stillRunning is the pids still alive once they had up to settle to exit.
+func stillRunning(pids []int, settle time.Duration) []int {
+	deadline := time.Now().Add(settle)
+	for {
+		var alive []int
+		for _, pid := range pids {
+			if processAlive(pid) {
+				alive = append(alive, pid)
+			}
+		}
+		if len(alive) == 0 || !time.Now().Before(deadline) {
+			return alive
+		}
+		pids = alive
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // backgroundStop is `coder stop-background --json`.
 type backgroundStop struct {
 	Stopped []int `json:"stopped"`

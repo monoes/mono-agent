@@ -31,6 +31,15 @@ const (
 	EventUsageUpdated   EventType = "usage.updated"
 	EventNotice         EventType = "notice"
 	EventTurnFinished   EventType = "turn.finished"
+
+	// Dynamic org (monoes/mono-agent#226): the workers a coder chat's lead
+	// agent spawns. Their tool calls reuse tool.started/tool.completed with
+	// AgentID set; the lead's own events carry no AgentID.
+	EventAgentSpawned    EventType = "agent.spawned"
+	EventAgentStatus     EventType = "agent.status"
+	EventAgentMessage    EventType = "agent.message"
+	EventAgentReassigned EventType = "agent.reassigned"
+	EventAgentFinished   EventType = "agent.finished"
 )
 
 // Event is one journaled/emitted line — the outer envelope. Payload is kept
@@ -117,8 +126,11 @@ type SessionBoundPayload struct {
 // PartID, so text/tool ordering survives even though tool events flow on a
 // separate lane.
 type AssistantDeltaPayload struct {
-	PartID string `json:"partId"`
-	Text   string `json:"text"`
+	// AgentID is the dynamic-org worker that wrote the text (#258); "" for
+	// the lead. A worker's part ids are its own ("w1:p1").
+	AgentID string `json:"agentId,omitempty"`
+	PartID  string `json:"partId"`
+	Text    string `json:"text"`
 }
 
 // ToolStartedPayload is tool.started's payload — one call, appended once as
@@ -126,6 +138,8 @@ type AssistantDeltaPayload struct {
 // stable handle a later tool.completed uses to update this same step:
 // "Tool identity is (turnId,callId), never array position or name."
 type ToolStartedPayload struct {
+	// AgentID is the dynamic-org worker that made the call; "" for the lead.
+	AgentID   string          `json:"agentId,omitempty"`
 	CallID    string          `json:"callId"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -136,6 +150,10 @@ type ToolStartedPayload struct {
 	// FileExisted says, for a file-writing tool, whether its target existed
 	// when the call started (a Write that creates vs. overwrites).
 	FileExisted *bool `json:"fileExisted,omitempty"`
+	// Kind is a native call's normalized tool kind (shell, edit, write,
+	// read, search, web, mcp, task, todo, patch, other); Arguments then use
+	// that kind's canonical keys. "" when unknown.
+	Kind string `json:"kind,omitempty"`
 }
 
 // ToolCompletedPayload is tool.completed's payload. OK is nullable (some
@@ -143,6 +161,7 @@ type ToolStartedPayload struct {
 // present once this event fires — an empty string is a valid result, not a
 // missing one, so it is a plain string rather than a pointer.
 type ToolCompletedPayload struct {
+	AgentID    string `json:"agentId,omitempty"`
 	CallID     string `json:"callId"`
 	OK         *bool  `json:"ok"`
 	Result     string `json:"result"`
@@ -161,10 +180,17 @@ type ToolCompletedPayload struct {
 // "result"), since usage semantics differ by source and must not be summed
 // across sources without verified delta semantics.
 type UsageUpdatedPayload struct {
+	// AgentID is the dynamic-org worker this snapshot is for (#257): its
+	// running total across its execs so far. "" is the lead's own usage;
+	// a worker's never counts toward it.
+	AgentID      string   `json:"agentId,omitempty"`
 	InputTokens  *int64   `json:"inputTokens"`
 	OutputTokens *int64   `json:"outputTokens"`
 	CostUSD      *float64 `json:"costUsd"`
-	Source       string   `json:"source"`
+	// CostEstimated: a worker's cost is (partly) estimated from its tokens,
+	// because its runtime reports none (#230).
+	CostEstimated bool   `json:"costEstimated,omitempty"`
+	Source        string `json:"source"`
 }
 
 // NoticeSeverity classifies a notice event for display — a warning/info
@@ -225,6 +251,10 @@ type TurnFinishedPayload struct {
 	Code         string `json:"code,omitempty"`
 	ExitCode     *int   `json:"exitCode"`
 	HistorySaved bool   `json:"historySaved"`
+	// Sandbox is the sandbox the turn ran in (monomind.SandboxStatus*:
+	// "sandboxed", "unsupported", "needs-monomind", "off"); empty when the
+	// turn asked for none (coder mode) or never got that far.
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 // Record is an Event as `monoagentcli chat` prints it: a snake_case
@@ -255,4 +285,114 @@ func (r Record) Event() Event {
 		Version: r.Version, ProfileID: r.ProfileID, ConversationID: r.ConversationID, TurnID: r.TurnID,
 		Seq: r.Seq, At: r.At, Type: r.Type, Payload: r.Payload,
 	}
+}
+
+// AgentSpawnedPayload is agent.spawned's payload: a worker the lead added,
+// with how it was staffed. Why says who chose what ("lead chose the model;
+// role from pick"). The confidences are nil when that step didn't ask.
+type AgentSpawnedPayload struct {
+	AgentID  string `json:"agentId"`
+	ParentID string `json:"parentId,omitempty"` // "" = the lead
+	// Veteran: a worker of an earlier turn of the conversation, loaded
+	// idle for the lead to message (#230). AllowSpawn: the lead let it
+	// spawn sub-workers.
+	Veteran    bool     `json:"veteran,omitempty"`
+	AllowSpawn bool     `json:"allowSpawn,omitempty"`
+	Role       string   `json:"role"`
+	AgentType  string   `json:"agentType,omitempty"` // monomind agent id, or "native" for a Claude subagent
+	Skills     []string `json:"skills,omitempty"`
+	Runtime    string   `json:"runtime,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Effort     string   `json:"effort,omitempty"`
+	Access     string   `json:"access,omitempty"` // coding, qa, automation, research
+	// Fidelity is the runtime's tool-activity fidelity (#259): "full",
+	// "start-only" (tool starts, never their ends) or "none"; "" unknown.
+	Fidelity       string   `json:"fidelity,omitempty"`
+	Brief          string   `json:"brief,omitempty"`
+	Why            string   `json:"why,omitempty"`
+	PickConfidence *float64 `json:"pickConfidence,omitempty"`
+	JevConfidence  *float64 `json:"jevConfidence,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
+}
+
+// Worker statuses (agent.status's To).
+const (
+	AgentQueued       = "queued"
+	AgentStarting     = "starting"
+	AgentWorking      = "working"
+	AgentWaitingLease = "waiting_lease"
+	AgentWaitingUser  = "waiting_user" // asked the user a question (#256)
+	AgentIdle         = "idle"
+	AgentDone         = "done"
+	AgentFailed       = "failed"
+	AgentCancelled    = "cancelled"
+)
+
+// AgentStatusPayload is agent.status's payload.
+type AgentStatusPayload struct {
+	AgentID string `json:"agentId"`
+	From    string `json:"from,omitempty"`
+	To      string `json:"to"`
+	Detail  string `json:"detail,omitempty"` // e.g. which lease it waits for
+	// Leases are the leases the worker holds at this status ("write",
+	// "browser"): the org stage shows who holds the pen and the browser
+	// from them (#228).
+	Leases []string `json:"leases,omitempty"`
+	// Branch is the git branch an isolated writer works on (#230).
+	Branch string `json:"branch,omitempty"`
+	// Confinement says what keeps a research worker from editing on its
+	// current run (Confinement* constants); "" for the other profiles.
+	Confinement string `json:"confinement,omitempty"`
+}
+
+// A research worker's confinement (#230): agent exec --access read, else a
+// read-only sandbox, else the prompt fallback for an older monomind or a
+// runtime with neither — full access, told to stay read-only, holding the
+// write lease so it never runs beside a writer.
+const (
+	ConfinementAccessRead = "access-read"
+	ConfinementSandbox    = "sandbox-read-only"
+	ConfinementWriteLease = "write-lease"
+)
+
+// AgentMessagePayload is agent.message's payload: a brief, a result, a
+// follow-up or a question passing between the lead and a worker.
+type AgentMessagePayload struct {
+	AgentID   string `json:"agentId"`
+	Direction string `json:"direction"` // brief | result | followup | question
+	// QuestionID names a worker's question ("q1") and, on the user's
+	// answer (a followup from "user"), the question it answers.
+	QuestionID string `json:"questionId,omitempty"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Text       string `json:"text"`
+	Truncated  bool   `json:"truncated,omitempty"`
+}
+
+// AgentReassignedPayload is agent.reassigned's payload: the chosen model
+// could not run (sign-in, quota, unknown model) and the next one took over.
+type AgentReassignedPayload struct {
+	AgentID     string `json:"agentId"`
+	FromRuntime string `json:"fromRuntime"`
+	FromModel   string `json:"fromModel"`
+	ToRuntime   string `json:"toRuntime"`
+	ToModel     string `json:"toModel"`
+	Reason      string `json:"reason"`
+	// Fidelity is the new runtime's tool-activity fidelity, as in
+	// agent.spawned.
+	Fidelity string `json:"fidelity,omitempty"`
+}
+
+// AgentFinishedPayload is agent.finished's payload.
+type AgentFinishedPayload struct {
+	AgentID       string   `json:"agentId"`
+	Outcome       string   `json:"outcome"` // done | failed | cancelled
+	Summary       string   `json:"summary,omitempty"`
+	InputTokens   *int64   `json:"inputTokens,omitempty"`
+	OutputTokens  *int64   `json:"outputTokens,omitempty"`
+	CostUSD       *float64 `json:"costUsd,omitempty"`
+	CostEstimated bool     `json:"costEstimated,omitempty"`
+	DurationMs    int64    `json:"durationMs,omitempty"`
+	FilesChanged  []string `json:"filesChanged,omitempty"`
 }

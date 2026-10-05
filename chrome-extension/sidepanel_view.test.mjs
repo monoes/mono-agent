@@ -199,3 +199,42 @@ test("offline with only a machine-made id, the header does not print a UUID", ()
   assert.equal(view.saveLabel, "Save to your last profile");
   assert.doesNotMatch(view.saveLabel, /2c16787b/);
 });
+
+// ── what an Ask says when it has no passage ─────────────────────────
+
+test("an ask with answers counts them", () => {
+  assert.equal(V.askStatus({ answers: [{}, {}] }, "work").text, "2 passages");
+  assert.equal(V.askStatus({ answers: [{}] }, "").text, "1 passage");
+});
+
+test("answers while pages are still indexing say so", () => {
+  const s = V.askStatus({ answers: [{}], brain: { captures: 3, indexed: 2, pending: 1, failed: 0 } }, "work");
+  assert.match(s.text, /^1 passage\. 1 page is still being indexed/);
+});
+
+test("an empty brain says nothing is saved, naming the profile", () => {
+  const s = V.askStatus({ answers: [], brain: { captures: 0, indexed: 0, pending: 0, failed: 0 } }, "work");
+  assert.equal(s.text, "Nothing saved in work yet. Save a page, then ask about it.");
+});
+
+test("pending pages are not reported as no match", () => {
+  const s = V.askStatus({ answers: [], brain: { captures: 1, indexed: 0, pending: 1, failed: 0 } }, "work");
+  assert.match(s.text, /still being indexed/);
+  assert.equal(s.tone, "");
+});
+
+test("a brain whose pages all failed to index says so and how to retry", () => {
+  const s = V.askStatus(
+    { answers: [], brain: { captures: 1, indexed: 0, pending: 0, failed: 1, lastError: "all chunk stores failed" } },
+    "work"
+  );
+  assert.equal(s.tone, "warn");
+  assert.match(s.text, /could not be indexed \(all chunk stores failed\)/);
+  assert.match(s.text, /profile documents index --all/);
+});
+
+test("no brain status (shared inbox, older bridge) keeps the old line", () => {
+  assert.equal(V.askStatus({ answers: [] }, "").text, "Nothing in your captures matches that yet.");
+  const s = V.askStatus({ answers: [], brain: { captures: 4, indexed: 4, pending: 0, failed: 0 } }, "work");
+  assert.equal(s.text, "Nothing in your captures in work matches that yet.");
+});

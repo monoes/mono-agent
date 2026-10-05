@@ -80,7 +80,9 @@ func main() {
 	// docs/i18n.md.
 	i18n.SetLocale(i18n.Detect(os.Args[1:]))
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGHUP too: a CLI whose terminal or parent goes away must cancel, so
+	// commands end what they started (monoes/mono-agent#235).
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
@@ -97,11 +99,21 @@ func reportCommandError(args []string, err error, stdout, stderr io.Writer) {
 	fmt.Fprintln(stderr, err)
 	var reported reportedError
 	if wantsJSONError(args) && !errors.As(err, &reported) {
-		body := map[string]string{"error": err.Error()}
+		body := map[string]any{"error": err.Error()}
 		// An org command that needs the AI agent says so by code, as
-		// withJSONErrors does; its other failures keep {"error"} alone.
+		// withJSONErrors does, and so does an error that knows its own
+		// machine-readable form (an org refused for its signature);
+		// other failures keep {"error"} alone.
 		if monomind.IsAgentNotSetup(err) {
 			body["code"] = monomind.AgentNotSetupCode
+		}
+		var fields jsonErrorFields
+		if errors.As(err, &fields) {
+			for k, v := range fields.JSONErrorFields() {
+				if k != "error" {
+					body[k] = v
+				}
+			}
 		}
 		b, _ := json.Marshal(body)
 		fmt.Fprintln(stdout, string(b))

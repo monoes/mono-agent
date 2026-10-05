@@ -21,16 +21,10 @@ const labelStyle = {
   textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4, display: 'block',
 }
 
-// WebKitGTK draws <select> with native GTK chrome (light bg, dark text)
-// unless appearance is explicitly reset — see AIChatPanel.jsx. Spread over
-// inputStyle at each <select> below; not merged into inputStyle itself
-// since that's shared with plain <input>s too.
-const selectStyle = {
-  ...inputStyle, appearance: 'none', paddingRight: 22,
-  backgroundColor: '#060b11', cursor: 'pointer', outline: 'none',
-  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
-}
+// <select>s take their look from the global `select` rule plus
+// `.select-compact` (index.css); only layout goes inline, and never
+// inputStyle's `background` shorthand, which would wipe the chevron.
+const selectStyle = { width: '100%', fontSize: 11 }
 
 function Field({ label, children }) {
   return (
@@ -108,7 +102,7 @@ function ResizePanel({ onApply, busy }) {
       <Field label="Width (px)"><NumberInput value={width} onChange={setWidth} min={1} max={8000} /></Field>
       <Field label="Height (px)"><NumberInput value={height} onChange={setHeight} min={1} max={8000} /></Field>
       <Field label="Fit mode">
-        <select value={fit} onChange={e => setFit(e.target.value)} style={selectStyle}>
+        <select value={fit} onChange={e => setFit(e.target.value)} className="select-compact" style={selectStyle}>
           {['contain','cover','fill','width','height'].map(f => <option key={f} value={f}>{f}</option>)}
         </select>
       </Field>
@@ -176,7 +170,7 @@ function ConvertPanel({ onApply, busy }) {
   return (
     <div>
       <Field label="Output format">
-        <select value={format} onChange={e => setFormat(e.target.value)} style={selectStyle}>
+        <select value={format} onChange={e => setFormat(e.target.value)} className="select-compact" style={selectStyle}>
           {['jpeg','png','gif','tiff','bmp'].map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
         </select>
       </Field>

@@ -1,0 +1,153 @@
+{
+  "boss": "ceo",
+  "boss_title": "Chief",
+  "items": [
+    {
+      "id": "run-a-1000-0",
+      "kind": "status",
+      "pending": false,
+      "text": "org started (goal: ship the release)",
+      "ts": 1000
+    },
+    {
+      "from": "human:operator",
+      "id": "run-a-1100-2",
+      "kind": "human",
+      "pending": false,
+      "subject": "Chat from the operator",
+      "text": "Please ship the release notes today.",
+      "to": "ceo",
+      "ts": 1100
+    },
+    {
+      "id": "run-a-1300-5",
+      "kind": "boss",
+      "pending": false,
+      "role": "ceo",
+      "text": "On it. I'm asking dev to draft them.",
+      "ts": 1300
+    },
+    {
+      "from": "ceo",
+      "id": "run-a-1370-8",
+      "kind": "team",
+      "pending": false,
+      "subject": "Draft release notes",
+      "text": "Draft the notes for v1.2",
+      "to": "dev",
+      "ts": 1370
+    },
+    {
+      "action": "Bash",
+      "id": "run-a-1600-13",
+      "kind": "approval",
+      "pending": false,
+      "ref": "dev:Bash:1600",
+      "resolution": "approved",
+      "resolved_by": "human",
+      "role": "dev",
+      "text": "Approval required for Bash",
+      "ts": 1600
+    },
+    {
+      "answer": "1.2.0",
+      "id": "run-a-1700-15",
+      "kind": "question",
+      "pending": false,
+      "ref": "q-1700-ab12",
+      "resolution": "answered",
+      "resolved_by": "human",
+      "role": "ceo",
+      "text": "Which version number should the notes use?",
+      "ts": 1700
+    },
+    {
+      "from": "dev",
+      "id": "run-a-1800-16",
+      "kind": "team",
+      "pending": false,
+      "subject": "Re: Draft release notes",
+      "text": "Draft ready in NOTES.md",
+      "to": "ceo",
+      "ts": 1800
+    },
+    {
+      "id": "run-a-1850-17",
+      "kind": "gate",
+      "name": "publish-notes",
+      "pending": true,
+      "ref": "gate-1850-x1",
+      "role": "ceo",
+      "text": "Publish the v1.2 release notes to the blog?",
+      "ts": 1850
+    },
+    {
+      "id": "run-a-2000-20",
+      "kind": "boss",
+      "pending": false,
+      "role": "ceo",
+      "text": "Waiting on your version answer and the publish gate.",
+      "ts": 2000
+    },
+    {
+      "external": true,
+      "from": "acme:ceo",
+      "id": "run-a-2050-21",
+      "kind": "team",
+      "pending": false,
+      "subject": "Notes coming",
+      "text": "Release notes for v1.2 are nearly ready.",
+      "to": "herald:editor",
+      "ts": 2050
+    },
+    {
+      "id": "run-a-2250-25",
+      "kind": "question",
+      "pending": true,
+      "ref": "q-2250-cd34",
+      "role": "qa",
+      "text": "Should I run the e2e suite too?",
+      "ts": 2250
+    },
+    {
+      "id": "q-0900-zz99",
+      "kind": "question",
+      "pending": true,
+      "ref": "q-0900-zz99",
+      "role": "ceo",
+      "text": "Left over from the last run: keep the old changelog?",
+      "ts": 900
+    }
+  ],
+  "org": "acme",
+  "paused": false,
+  "pending": {
+    "approvals": 0,
+    "gates": 1,
+    "questions": 2
+  },
+  "roles": [
+    {
+      "id": "ceo",
+      "reports_to": null,
+      "title": "Chief",
+      "type": "boss"
+    },
+    {
+      "id": "dev",
+      "reports_to": "ceo",
+      "title": "Developer",
+      "type": "coder"
+    },
+    {
+      "id": "qa",
+      "reports_to": "dev",
+      "title": "QA",
+      "type": "tester"
+    }
+  ],
+  "run": "run-a",
+  "status": "running",
+  "v": 1,
+  "warnings": []
+}

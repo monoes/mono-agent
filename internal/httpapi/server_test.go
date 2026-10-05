@@ -4,14 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/monoes/mono-agent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -264,5 +270,121 @@ func TestRedactionMasksCredentialShapedValue(t *testing.T) {
 	full := redactItemsUnlessFull(fullReq, items)
 	if got := full[0].JSON["api_key"]; got != "sk-super-secret" {
 		t.Errorf("full-outputs api_key = %v, want unredacted", got)
+	}
+}
+
+// Exercise both the standalone engine and the daemon's all-profile engine.
+// The API must enforce its own profile boundary before calling either one.
+func TestWorkflowMutationProfileIsolation(t *testing.T) {
+	t.Setenv("MONOAGENT_WEBHOOK_ADDR", "127.0.0.1:0")
+	for _, hosted := range []bool{false, true} {
+		for _, apiProfile := range []string{"default", "other"} {
+			t.Run(fmt.Sprintf("hosted=%t/profile=%s", hosted, apiProfile), func(t *testing.T) {
+				seed := newTestServer(t, true)
+				ctx := context.Background()
+				if _, err := seed.rt.db.DB.Exec(`INSERT INTO profiles (id, name) VALUES ('other', 'Other')`); err != nil {
+					t.Fatal(err)
+				}
+				seed.rt.profileID = apiProfile
+				s := seed
+				if hosted {
+					logger := zerolog.Nop()
+					sched := scheduler.NewScheduler(logger)
+					sched.Start()
+					t.Cleanup(func() { _ = sched.Stop() })
+					engine := workflow.NewWorkflowEngineWithStore(seed.rt.store, seed.rt.db.DB, sched,
+						noderegistry.Build(seed.rt.db.DB), workflow.EngineConfig{
+							ProfileID: "default", AllowAllProfiles: true,
+						}, logger)
+					if err := engine.Start(ctx); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = engine.Stop() })
+					var err error
+					s, err = NewServer(Options{DB: seed.rt.db, Store: seed.rt.store, Engine: engine,
+						Profile: apiProfile, AllowMutations: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(s.Close)
+				}
+				tok := testToken(t, s)
+				for _, action := range []string{"run", "activate", "deactivate"} {
+					for _, owner := range []string{"default", "other", ""} {
+						id := action + "-" + owner
+						active := action != "activate"
+						wf := &workflow.Workflow{ID: id, Name: id, ProfileID: owner, IsActive: active,
+							Nodes: []workflow.WorkflowNode{{ID: "t", Type: "trigger.manual", Name: "Trigger"}}}
+						if err := s.rt.store.CreateWorkflow(ctx, wf); err != nil {
+							t.Fatal(err)
+						}
+						foreign := owner != apiProfile && !(owner == "" && apiProfile == "default")
+						for _, read := range []struct{ method, suffix string }{
+							{"GET", ""}, {"GET", "/executions"}, {"POST", "/validate"},
+						} {
+							rw := doReq(t, s, read.method, "/workflows/"+id+read.suffix, tok, nil)
+							want := http.StatusOK
+							if foreign {
+								want = http.StatusNotFound
+							}
+							if rw.Code != want {
+								t.Errorf("%s %s owner=%q: status=%d, want %d, body=%s", read.method, read.suffix, owner, rw.Code, want, rw.Body.String())
+							}
+						}
+						rw := doReq(t, s, "POST", "/workflows/"+id+"/"+action, tok, nil)
+						want := http.StatusOK
+						if foreign {
+							want = http.StatusNotFound
+						}
+						if rw.Code != want {
+							t.Errorf("%s owner=%q: status=%d, want %d, body=%s", action, owner, rw.Code, want, rw.Body.String())
+						}
+						if foreign {
+							got, err := s.rt.store.GetWorkflow(ctx, id)
+							if err != nil || got == nil || got.IsActive != active {
+								t.Errorf("foreign workflow changed: %+v, err=%v", got, err)
+							}
+							execs, err := s.rt.store.ListExecutions(ctx, id, 10)
+							if err != nil || len(execs) != 0 {
+								t.Errorf("foreign workflow executed: %+v, err=%v", execs, err)
+							}
+						}
+					}
+					rw := doReq(t, s, "POST", "/workflows/missing/"+action, tok, nil)
+					if rw.Code != http.StatusNotFound {
+						t.Errorf("%s missing workflow: status=%d, body=%s", action, rw.Code, rw.Body.String())
+					}
+				}
+				list := doReq(t, s, "GET", "/workflows", tok, nil)
+				if list.Code != http.StatusOK {
+					t.Fatalf("list status=%d, body=%s", list.Code, list.Body.String())
+				}
+				var workflows []workflow.Workflow
+				if err := json.Unmarshal(list.Body.Bytes(), &workflows); err != nil {
+					t.Fatal(err)
+				}
+				wantCount := 3
+				if apiProfile == "default" {
+					wantCount = 6 // three explicitly owned and three legacy workflows
+				}
+				if len(workflows) != wantCount {
+					t.Errorf("listed %d workflows, want %d: %s", len(workflows), wantCount, list.Body.String())
+				}
+				if hosted {
+					// HTTP isolation must leave the daemon's own all-profile work intact.
+					foreignID := "run-other"
+					if apiProfile == "other" {
+						foreignID = "run-default"
+					}
+					execID, err := s.rt.engine.TriggerWorkflow(ctx, foreignID, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if exec := waitForExecution(ctx, s.rt, execID, time.Second*5); exec.Status != "SUCCESS" {
+						t.Errorf("daemon's direct foreign run: %+v", exec)
+					}
+				}
+			})
+		}
 	}
 }

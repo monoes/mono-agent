@@ -16,7 +16,7 @@ func TestInputFields_ListsTemplatedInputReferences(t *testing.T) {
 		node("Mail", "comm.email_send", map[string]interface{}{"attachments": []interface{}{"{{ $json.input['attach'] }}"}}),
 		node("Multi", "core.set", map[string]interface{}{"value": "{{\n  .json.input.dest + $json.input[\"file name\"]\n}}"}),
 		// not templates, or not the input: ignored
-		node("Plain", "core.set", map[string]interface{}{"value": "input.literal", "other": "{{ $json.userinput.x }}"}),
+		node("Plain", "core.set", map[string]interface{}{"value": "input.literal", "other": "{{ $node[\"Start\"].json.userinput.x }}"}),
 	)
 	off := node("Off", "core.set", map[string]interface{}{"value": "{{ $json.input.disabled }}"})
 	off.Disabled = true

@@ -332,30 +332,6 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
       </nav>
 
       <div className="sidebar-footer">
-        {/* Platform session indicators — platform set derived from active sessions */}
-        {stats?.sessions?.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {[...new Set(stats.sessions.filter(s => s.active).map(s => s.platform))].map(p => {
-              const session = stats.sessions.find(s => s.platform === p && s.active)
-              if (!session) return null
-              return (
-                <div key={p} style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 8px', borderRadius: 4,
-                  fontSize: 11, fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-secondary)',
-                }}>
-                  <span className="status-dot connected" />
-                  <span style={{ color: 'var(--text-muted)', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1 }}>
-                    {p.slice(0, 2)}
-                  </span>
-                  <span style={{ marginLeft: 2 }}>{session.username}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
         <div className="db-status">
           <span className={`status-dot ${dbConnected ? 'connected pulse' : 'disconnected'}`} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

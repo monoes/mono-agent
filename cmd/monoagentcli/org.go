@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orgsign"
 )
 
 // newOrgCmd exposes monomind's org observe/action surface: thin proxies over
@@ -54,6 +59,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgReloadCmd(root),
 		newOrgRoleCmd(root),
 		newOrgCreateJSONCmd(env),
+		newOrgSignCmd(env),
 		newOrgAutomationCmd(env),
 		newOrgGrantCmd(env),
 		newOrgEffectiveToolsCmd(env),
@@ -65,6 +71,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgLifecycleCmd(env, "pause", "Pause an org: current turns finish, no new cycles start", monomind.OrgPause),
 		newOrgLifecycleCmd(env, "resume", "Resume a paused org", monomind.OrgResume),
 		newOrgSendCmd(env),
+		newOrgChatCmd(env),
 		newOrgQueuedCmd(env),
 		newOrgRenameCmd(env),
 		newOrgDeleteCmd(env),
@@ -111,7 +118,7 @@ func newOrgStatusCmd(root func() string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printOrgJSON(out)
+			return printOrgJSON(withOrgSignature(cmd.Context(), root(), out))
 		},
 	}
 }
@@ -374,20 +381,47 @@ func newOrgEventsCmd(root func() string) *cobra.Command {
 		Short: "Stream the org's bus event log as NDJSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return monomind.OrgEvents(cmd.Context(), root(), args[0], monomind.OrgEventsOptions{
+			// A reader that went away (the app quit) must end the tail, not
+			// kill this process with SIGPIPE before it stops monomind: with
+			// SIGPIPE ignored the write fails with EPIPE, which cancels.
+			signal.Ignore(syscall.SIGPIPE)
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+			w := &eventsWriter{w: os.Stdout, cancel: cancel}
+			err := monomind.OrgEvents(ctx, root(), args[0], monomind.OrgEventsOptions{
 				Run:    run,
 				Follow: follow,
 				Since:  since,
-			}, func(line []byte) {
-				os.Stdout.Write(line)
-				os.Stdout.Write([]byte("\n"))
-			})
+			}, w.writeLine)
+			if w.err != nil {
+				return w.err
+			}
+			return err
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: current run)")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "Keep streaming as new events arrive")
 	c.Flags().StringVar(&since, "since", "", "Replay from a cursor (event id or ISO timestamp)")
 	return c
+}
+
+// eventsWriter prints `org events` lines and cancels the tail on the first
+// failed write, so monomind's follower is stopped instead of left writing
+// to nobody (monoes/mono-agent#235).
+type eventsWriter struct {
+	w      io.Writer
+	cancel context.CancelFunc
+	err    error
+}
+
+func (e *eventsWriter) writeLine(line []byte) {
+	if e.err != nil {
+		return
+	}
+	if _, err := e.w.Write(append(line, '\n')); err != nil {
+		e.err = fmt.Errorf("write events: %w", err)
+		e.cancel()
+	}
 }
 
 func newOrgValidateCmd(root func() string) *cobra.Command {
@@ -471,6 +505,9 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 				}
 				// Grants, providers, and endpoints in the document only
 				// survive when a row backs them (C-3).
+				// A whole document can come from anyone, the chat assistant
+				// included, so it is never signed here: the user reviews it
+				// with `org sign`.
 				rep, err := saveOrgReconciled(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID))
 				if err != nil {
 					return err
@@ -478,8 +515,10 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 				findings = rep.Findings
 			} else if docCarriesEnforcedKeys(&d) {
 				return fmt.Errorf("this document carries grants, tool providers, or automation roles, which need the active profile's org folder: %w", perr)
-			} else if _, err := orgdesign.Save(root(), &d); err != nil {
+			} else if _, out, err := saveOrgSigned(cmd.Context(), root(), name, &d); err != nil {
 				return err
+			} else {
+				warnOrgSignature(out)
 			}
 			path, _ := orgdesign.ConfigPath(root(), name)
 			sha, err := fileSHA256(path)
@@ -528,6 +567,16 @@ func newOrgReloadCmd(root func() string) *cobra.Command {
 				payload["error"] = reloadErr.Error()
 			} else {
 				payload["output"] = out
+			}
+			// monomind 2.21 keeps a running org on its last verified
+			// definition until this one is signed: say so, with the fix.
+			if orgSigningOn(cmd.Context(), root()) {
+				if raw, _, err := orgsign.ReadFile(root(), name); err == nil {
+					if st := orgSignStatus(cmd.Context(), root(), name, raw); st.Refused() {
+						payload["signature"] = st
+						payload["warning"] = orgsign.Message(name, st) + " — until then the running org keeps its last signed definition"
+					}
+				}
 			}
 			b, err := json.Marshal(payload)
 			if err != nil {

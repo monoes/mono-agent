@@ -6,7 +6,7 @@ import { render, screen, waitFor, cleanup, act, fireEvent } from '@testing-libra
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import OrgsPanel from './OrgsPanel.jsx'
-import { api } from '../services/api.js'
+import { api, newOrgEventsStreamId } from '../services/api.js'
 // The real i18n setup, as main.jsx loads it, so the panel's tab labels come
 // from src/locales/*.json and the English names below stay findable.
 import i18n from '../i18n.js'
@@ -38,10 +38,13 @@ vi.mock('../services/api.js', () => ({
   onOrgRunStatus: vi.fn(() => () => {}),
   onOrgDesignUpdated: vi.fn(() => () => {}),
   notify: vi.fn(),
+  newOrgEventsStreamId: vi.fn(),
 }))
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  let seq = 0
+  newOrgEventsStreamId.mockImplementation(() => `s${++seq}`)
   await i18n.changeLanguage('en')
 })
 
@@ -154,6 +157,47 @@ describe('org unification in OrgsPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Group/ }))
     expect(await screen.findByText('This holding org has no child orgs yet.')).toBeInTheDocument()
     expect(api.orgGroupStatus).toHaveBeenCalledWith('hq')
+  })
+
+  // #235: a stop is matched to its stream by id, so under StrictMode's
+  // stream/stop/stream each tail is stopped by its own id and a late stop
+  // can't end (or miss) the wrong one.
+  it('stops each live event tail by the id it was started with', async () => {
+    api.listOrgDesigns.mockResolvedValue({ items: [{ name: 'test-org', goal: 'a goal', status: 'active', roleCount: 1 }] })
+    const { unmount } = render(
+      <React.StrictMode>
+        <OrgsPanel />
+      </React.StrictMode>,
+    )
+    fireEvent.click(await screen.findByText('test-org'))
+    await waitFor(() => expect(api.streamOrgEvents).toHaveBeenCalledWith('test-org', expect.any(String)))
+    unmount()
+    const started = api.streamOrgEvents.mock.calls.map(([, id]) => id)
+    const stopped = api.stopOrgEvents.mock.calls.map(([, id]) => id)
+    expect(new Set(started).size).toBe(started.length)
+    expect(stopped.sort()).toEqual([...started].sort())
+    for (const [name] of api.stopOrgEvents.mock.calls) expect(name).toBe('test-org')
+  })
+
+  // #229: the org list and the selected org's header open the org as a
+  // chat bubble, through the app-wide event the bubble store listens to.
+  it('opens an org as a bubble from its list row and from its header', async () => {
+    api.listOrgDesigns.mockResolvedValue({ items: [{ name: 'test-org', goal: 'a goal', status: 'active', roleCount: 1 }] })
+    const opened = []
+    const onOpen = e => opened.push(e.detail.org)
+    window.addEventListener('monoagent:open-org-bubble', onOpen)
+    try {
+      render(<OrgsPanel />)
+      await screen.findByText('test-org')
+      fireEvent.click(screen.getByRole('button', { name: 'Open test-org as a chat bubble' }))
+      expect(opened).toEqual(['test-org'])
+      fireEvent.click(screen.getByText('test-org'))
+      await waitFor(() => expect(screen.getAllByTestId('org-open-bubble')).toHaveLength(2))
+      fireEvent.click(screen.getAllByTestId('org-open-bubble')[0])
+      expect(opened).toEqual(['test-org', 'test-org'])
+    } finally {
+      window.removeEventListener('monoagent:open-org-bubble', onOpen)
+    }
   })
 
   it('has every tab-bar string in both locales', () => {

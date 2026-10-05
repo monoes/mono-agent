@@ -31,16 +31,29 @@ var orgTimeout = 60 * time.Second
 // runOrgJSON runs `monomind org <args...> --format json` with cwd=projectRoot
 // and returns the raw stdout payload.
 func runOrgJSON(ctx context.Context, projectRoot string, args ...string) (json.RawMessage, error) {
-	bin, _, err := Ensure(ctx)
+	return runOrgJSONFull(ctx, projectRoot, args, append(append([]string{"org"}, args...), "--format", "json"))
+}
+
+// runOrgJSONText is runOrgJSON for a subcommand whose trailing values are
+// free text (an answer, a gate's resolution) or ids: cmd is the subcommand
+// and its flags, and values go after "--", so a value like "--by=rule" is
+// never read as a flag.
+func runOrgJSONText(ctx context.Context, projectRoot string, cmd []string, values ...string) (json.RawMessage, error) {
+	full := append(append([]string{"org"}, cmd...), "--format", "json", "--")
+	return runOrgJSONFull(ctx, projectRoot, append(append([]string(nil), cmd...), values...), append(full, values...))
+}
+
+// runOrgJSONFull runs `monomind <full...>`; args names the command in errors.
+func runOrgJSONFull(ctx context.Context, projectRoot string, args, full []string) (json.RawMessage, error) {
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return nil, err
 	}
-	full := append(append([]string{"org"}, args...), "--format", "json")
 
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, full...)
-	cmd.Dir = projectRoot
+	cmd := CommandContext(cctx, bin, full...)
+	inRoot(cmd, projectRoot)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -77,18 +90,31 @@ func orgCommandError(args []string, err error) error {
 // using orgCommandError's stderr-extraction pattern already established for
 // runOrgJSON.
 func runOrgText(ctx context.Context, projectRoot string, args ...string) (string, error) {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return "", err
 	}
-	full := append([]string{"org"}, args...)
+	return runOrgTextWith(ctx, bin, projectRoot, args...)
+}
 
+// runOrgTextWith is runOrgText through a given monomind binary.
+func runOrgTextWith(ctx context.Context, bin, projectRoot string, args ...string) (string, error) {
+	out, err := orgTextOutput(ctx, bin, projectRoot, args...)
+	return orgTextResult(args, out, err)
+}
+
+// orgTextOutput runs `<bin> org <args...>` in projectRoot: its combined
+// output and exit error, unformatted.
+func orgTextOutput(ctx context.Context, bin, projectRoot string, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, full...)
-	cmd.Dir = projectRoot
+	cmd := CommandContext(cctx, bin, append([]string{"org"}, args...)...)
+	inRoot(cmd, projectRoot)
+	return cmd.CombinedOutput()
+}
 
-	out, err := cmd.CombinedOutput()
+// orgTextResult is runOrgTextWith's result from orgTextOutput's.
+func orgTextResult(args []string, out []byte, err error) (string, error) {
 	if err != nil {
 		// CombinedOutput leaves ExitError.Stderr empty, so orgCommandError
 		// alone would say only "exit status 1": keep what monomind printed
@@ -187,8 +213,11 @@ func dropUnnamableOrgs(raw json.RawMessage) json.RawMessage {
 // the only deadline that should apply here. Callers that need a bounded
 // wait should poll OrgStatus instead of waiting on this call to return.
 func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (json.RawMessage, error) {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkOrgSigned(ctx, projectRoot, name); err != nil {
 		return nil, err
 	}
 	args := []string{"run", name, "--yes"}
@@ -207,8 +236,8 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	// above, so cancellation is the only way most callers ever stop it).
 	// setProcessGroup + a manual ctx.Done()/killProcessGroup select mirrors
 	// OrgEvents below, the most similar long-running case.
-	cmd := exec.Command(bin, full...)
-	cmd.Dir = projectRoot
+	cmd := Command(bin, full...)
+	inRoot(cmd, projectRoot)
 	setProcessGroup(cmd)
 
 	var stdout, stderr bytes.Buffer
@@ -235,7 +264,11 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 			if msg == "" {
 				msg = err.Error()
 			}
-			return nil, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg)
+			if signatureRefusalReason(msg) == "" && signatureRefusalReason(stdout.String()) != "" {
+				// org run prints a signature refusal on stdout.
+				msg = strings.TrimSpace(msg + "\n" + stdout.String())
+			}
+			return nil, asSignatureRefusal(name, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg))
 		}
 		trimmed := bytes.TrimSpace(stdout.Bytes())
 		if len(trimmed) == 0 {
@@ -256,16 +289,19 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 // here kills it: OrgStop (`monomind org stop`) ends it cooperatively, the
 // same on every platform, so startDetached keeps it out of our jobs.
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
+		return err
+	}
+	if err := checkOrgSigned(ctx, projectRoot, name); err != nil {
 		return err
 	}
 	args := []string{"org", "run", name, "--yes"}
 	if task != "" {
 		args = append(args, "--task", task)
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = projectRoot
+	cmd := Command(bin, args...)
+	inRoot(cmd, projectRoot)
 	cmd, err = startDetached(cmd)
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
@@ -286,9 +322,65 @@ func OrgStatus(ctx context.Context, projectRoot, name string) (json.RawMessage, 
 	}
 	// `status` with no name is a list too, and carries the same phantoms.
 	if name == "" {
-		return dropUnnamableOrgs(raw), nil
+		return deadRunsStopped(projectRoot, dropUnnamableOrgs(raw)), nil
 	}
-	return raw, nil
+	return deadRunsStopped(projectRoot, raw), nil
+}
+
+// deadRunsStopped reports a "running" org whose run is dead (OrgRunDead)
+// as "stopped", in a one-org status or in the list's items, so the GUI and
+// every caller agree with `org summary` (#294, monoes/monomind#573).
+func deadRunsStopped(projectRoot string, raw json.RawMessage) json.RawMessage {
+	fix := func(item json.RawMessage) (json.RawMessage, bool) {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(item, &obj) != nil {
+			return item, false
+		}
+		var name, status string
+		_ = json.Unmarshal(obj["name"], &name)
+		_ = json.Unmarshal(obj["status"], &status)
+		if status != "running" || !orgdesign.ValidOrgName(name) || !OrgRunDead(projectRoot, name) {
+			return item, false
+		}
+		obj["status"] = json.RawMessage(`"stopped"`)
+		out, err := json.Marshal(obj)
+		if err != nil {
+			return item, false
+		}
+		return out, true
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return raw
+	}
+	itemsRaw, isList := envelope["items"]
+	if !isList {
+		out, _ := fix(raw)
+		return out
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(itemsRaw, &items) != nil {
+		return raw
+	}
+	changed := false
+	for i, item := range items {
+		if out, ok := fix(item); ok {
+			items[i], changed = out, true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return raw
+	}
+	envelope["items"] = b
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // OrgLogs returns the org's bus event log (`org logs <name>`). There is no
@@ -359,6 +451,19 @@ func OrgGates(ctx context.Context, projectRoot, name string) (json.RawMessage, e
 	return runOrgJSON(ctx, projectRoot, "gates", name)
 }
 
+// OrgHumanItemsAll returns every question, approval or gate of the org,
+// resolved ones included (`org questions|approvals|gates <name> --all`):
+// kind is "questions", "approvals" or "gates". Resolving an item twice is
+// only safe when the caller can tell "already resolved" from "unknown".
+func OrgHumanItemsAll(ctx context.Context, projectRoot, name, kind string) (json.RawMessage, error) {
+	switch kind {
+	case "questions", "approvals", "gates":
+	default:
+		return nil, fmt.Errorf("monomind org: unknown item kind %q", kind)
+	}
+	return runOrgJSON(ctx, projectRoot, kind, name, "--all")
+}
+
 // OrgDecisions returns the org's decision trace (`org decisions <name>`).
 // run, when non-empty, scopes to that specific run id (`--run <id>`) instead
 // of monomind's own default of "the most recent run".
@@ -378,7 +483,7 @@ func OrgMemoryStats(ctx context.Context, projectRoot, name string) (json.RawMess
 // OrgAnswer answers a pending human-input question
 // (`org answer <name> <questionID> <answer...>`).
 func OrgAnswer(ctx context.Context, projectRoot, name, questionID, answer string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "answer", name, questionID, answer)
+	return runOrgJSONText(ctx, projectRoot, []string{"answer"}, name, questionID, answer)
 }
 
 // OrgApprove approves a pending tool-approval request
@@ -395,20 +500,20 @@ func OrgDeny(ctx context.Context, projectRoot, name, role, action string) (json.
 // OrgGateApprove approves a decision gate
 // (`org gate-approve <name> <gateID> [resolution...]`).
 func OrgGateApprove(ctx context.Context, projectRoot, name, gateID, resolution string) (json.RawMessage, error) {
-	args := []string{"gate-approve", name, gateID}
+	values := []string{name, gateID}
 	if resolution != "" {
-		args = append(args, resolution)
+		values = append(values, resolution)
 	}
-	return runOrgJSON(ctx, projectRoot, args...)
+	return runOrgJSONText(ctx, projectRoot, []string{"gate-approve"}, values...)
 }
 
 // OrgGateReject rejects a decision gate (`org gate-reject <name> <gateID> [resolution...]`).
 func OrgGateReject(ctx context.Context, projectRoot, name, gateID, resolution string) (json.RawMessage, error) {
-	args := []string{"gate-reject", name, gateID}
+	values := []string{name, gateID}
 	if resolution != "" {
-		args = append(args, resolution)
+		values = append(values, resolution)
 	}
-	return runOrgJSON(ctx, projectRoot, args...)
+	return runOrgJSONText(ctx, projectRoot, []string{"gate-reject"}, values...)
 }
 
 // OrgEventsOptions configures OrgEvents.
@@ -425,7 +530,7 @@ type OrgEventsOptions struct {
 // process group is killed so no `monomind` or agent-CLI grandchild survives
 // the caller, matching Exec's cancellation contract).
 func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOptions, onLine func(line []byte)) error {
-	bin, _, err := Ensure(ctx)
+	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -440,8 +545,8 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 		args = append(args, "--since", opts.Since)
 	}
 
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = projectRoot
+	cmd := Command(bin, args...)
+	inRoot(cmd, projectRoot)
 	setProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
