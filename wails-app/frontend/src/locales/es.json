@@ -473,6 +473,73 @@
           "tlsPair": "El archivo del certificado y el de la clave se guardan juntos: indica los dos.",
           "widenedMeanwhile": "No se guardó nada: los ajustes guardados cambiaron mientras tanto y este cambio ahora hace que el servidor llegue más lejos. Vuelve a intentarlo para revisarlo.",
           "notRegistered": "El daemon no está registrado para arrancar solo, así que desde aquí nada puede reiniciarlo."
+        },
+        "rows": {
+          "v1_addr": {
+            "label": "Punto de escucha propio de /v1",
+            "hint": "Dónde escucha /v1 además de la API HTTP principal, como host:puerto, por ejemplo 0.0.0.0:9443. Fuera de este equipo solo habla TLS.",
+            "empty": "Sin punto de escucha propio"
+          },
+          "tls": {
+            "label": "Certificado y clave TLS",
+            "hint": "Rutas de los archivos PEM de ese punto de escucha, que se leen al arrancar el servidor. Indica los dos, o ninguno para usar un certificado autofirmado.",
+            "empty": "Certificado autofirmado",
+            "certLabel": "Archivo del certificado",
+            "keyLabel": "Archivo de la clave"
+          },
+          "confinement": {
+            "label": "Clase más fuerte que se sirve",
+            "hint": "chat-only, sandboxed o any: la clase más fuerte de entorno de agentes que sirve el servidor.",
+            "empty": "Por defecto: any en loopback, chat-only fuera de él"
+          },
+          "context_confinement": {
+            "label": "Clase más fuerte para claves con contexto",
+            "hint": "Una clave creada con contexto la sirven los entornos hasta esta clase, y nunca por encima de la clase más fuerte que se sirve."
+          },
+          "auto_confinement": {
+            "label": "Clase más fuerte que puede elegir auto",
+            "hint": "El modelo auto elige entre entornos hasta esta clase, y nunca por encima de la clase más fuerte que se sirve."
+          },
+          "max_concurrent": {
+            "label": "Turnos a la vez",
+            "hint": "Cuántas peticiones se ejecutan al mismo tiempo. Más allá, el servidor responde 429."
+          },
+          "turn_timeout": {
+            "label": "Tiempo límite de un turno",
+            "hint": "Lo más que puede durar un turno, como 15m."
+          },
+          "image_runtimes": {
+            "label": "Entornos que generan imágenes",
+            "hint": "Ids de entornos separados por comas cuyos modelos sirven la generación de imágenes, o none para desactivarla."
+          },
+          "tool_runtimes": {
+            "label": "Entornos que sirven llamadas a herramientas",
+            "hint": "Ids de entornos separados por comas cuyos modelos sirven las llamadas a herramientas, o none para desactivarlas."
+          }
+        },
+        "state": {
+          "applied": "Aplicado",
+          "pending": "Hay que reiniciar",
+          "overridden": "Anulado",
+          "notRunning": "Daemon parado",
+          "unknown": "Desconocido"
+        },
+        "stateHint": {
+          "applied": "El daemon en marcha usa el valor guardado, o el valor por defecto si no hay ninguno.",
+          "pending": "Guardado después de que arrancara el daemon en marcha: lo usará cuando se reinicie.",
+          "overridden": "El daemon se inició con su propia opción o variable de entorno para este ajuste, así que un valor guardado no tiene efecto hasta que se quite.",
+          "notRunning": "No hay ningún daemon en marcha. El servidor lee el valor guardado cuando arranca.",
+          "unknown": "El daemon en marcha es anterior al informe de ajustes, así que no se sabe qué ejecuta. Reinícialo para estar seguro."
+        },
+        "widening": {
+          "kind": {
+            "v1_addr": "Un punto de escucha fuera de este equipo",
+            "confinement": "Se sirve una clase de entorno más fuerte",
+            "context_confinement": "Las claves con contexto podrán usar más",
+            "auto_confinement": "auto podrá elegir más",
+            "image_runtimes": "Más entornos generan imágenes",
+            "tool_runtimes": "Más entornos sirven llamadas a herramientas"
+          }
         }
       }
     }

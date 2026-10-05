@@ -473,6 +473,73 @@
           "tlsPair": "The certificate file and the key file are saved together: give both.",
           "widenedMeanwhile": "Nothing was saved: the saved settings changed meanwhile, and this change now makes the server reach further. Try again to review it.",
           "notRegistered": "The daemon isn't registered for auto-start, so nothing can restart it from here."
+        },
+        "rows": {
+          "v1_addr": {
+            "label": "Dedicated /v1 listener",
+            "hint": "Where /v1 listens besides the main HTTP API, as host:port, such as 0.0.0.0:9443. Beyond this computer it speaks TLS only.",
+            "empty": "No dedicated listener"
+          },
+          "tls": {
+            "label": "TLS certificate and key",
+            "hint": "Paths of the PEM files for that listener, read when the server starts. Give both, or neither for a self-signed certificate.",
+            "empty": "Self-signed certificate",
+            "certLabel": "Certificate file",
+            "keyLabel": "Key file"
+          },
+          "confinement": {
+            "label": "Strongest class served",
+            "hint": "chat-only, sandboxed or any: the strongest class of agent runtime the server serves.",
+            "empty": "Default: any on loopback, chat-only beyond"
+          },
+          "context_confinement": {
+            "label": "Strongest class for keys with context",
+            "hint": "A key created with context is served by runtimes up to this class, and never above the strongest class served."
+          },
+          "auto_confinement": {
+            "label": "Strongest class auto may pick",
+            "hint": "The auto model picks among runtimes up to this class, and never above the strongest class served."
+          },
+          "max_concurrent": {
+            "label": "Turns at once",
+            "hint": "How many requests run at the same time. Beyond that the server answers 429."
+          },
+          "turn_timeout": {
+            "label": "Turn timeout",
+            "hint": "The longest one turn may run, such as 15m."
+          },
+          "image_runtimes": {
+            "label": "Runtimes that make images",
+            "hint": "Comma-separated runtime ids whose models serve image generation, or none to switch it off."
+          },
+          "tool_runtimes": {
+            "label": "Runtimes that serve tool calling",
+            "hint": "Comma-separated runtime ids whose models serve tool calling, or none to switch it off."
+          }
+        },
+        "state": {
+          "applied": "Applied",
+          "pending": "Restart needed",
+          "overridden": "Overridden",
+          "notRunning": "Daemon not running",
+          "unknown": "Unknown"
+        },
+        "stateHint": {
+          "applied": "The running daemon uses the saved value, or the default where none is saved.",
+          "pending": "Saved after the running daemon started: it uses it once it restarts.",
+          "overridden": "The daemon was started with its own flag or environment variable for this setting, so a saved value has no effect until that is removed.",
+          "notRunning": "No daemon is running. The server reads the saved value when it starts.",
+          "unknown": "The running daemon predates the settings report, so what it runs is unknown. Restart it to be sure."
+        },
+        "widening": {
+          "kind": {
+            "v1_addr": "A listener beyond this computer",
+            "confinement": "A stronger class of runtime is served",
+            "context_confinement": "Keys with context may use more",
+            "auto_confinement": "auto may pick more",
+            "image_runtimes": "More runtimes make images",
+            "tool_runtimes": "More runtimes serve tool calling"
+          }
         }
       }
     }
