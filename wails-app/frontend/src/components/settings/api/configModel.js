@@ -153,7 +153,8 @@ export function summary(doc) {
 }
 
 // What each way of reaching further is about, in plain words, above the CLI's own sentence about it. The CLI's keys are
-// a kind, and for the three classes the listener it is about after a dot (confinement.network).
+// a kind, and for the three classes the listener it is about after a dot (confinement.network). saved_settings is the
+// removal of a saved row that cannot be read: what it limited cannot be told.
 const KINDS = {
   v1_addr: 'settings.api.config.widening.kind.v1_addr',
   confinement: 'settings.api.config.widening.kind.confinement',
@@ -161,6 +162,7 @@ const KINDS = {
   auto_confinement: 'settings.api.config.widening.kind.auto_confinement',
   image_runtimes: 'settings.api.config.widening.kind.image_runtimes',
   tool_runtimes: 'settings.api.config.widening.kind.tool_runtimes',
+  saved_settings: 'settings.api.config.widening.kind.saved_settings',
 }
 
 /** The string that names a kind of widening, or null for a kind this page does not know (its reason is shown all the same). */

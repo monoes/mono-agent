@@ -73,6 +73,18 @@ describe('ApiWideningDialog', () => {
     expect(w.confirmUnset).not.toBe(w.confirmSave)
   })
 
+  it('says it for resetting the saved settings too (the CLI\'s reason under what is unknown), in words of its own', async () => {
+    await mount({ kind: 'reset', widening: [WIDENING.savedSettings] })
+    expect(within(dialog()).getAllByRole('listitem').map(li => li.textContent)).toEqual([w.kind.saved_settings + WIDENING.savedSettings.reason])
+    expect(within(dialog()).getAllByRole('button').map(b => b.textContent)).toEqual([w.cancel, w.confirmReset])
+    expect(dialog()).toHaveAccessibleDescription(new RegExp(w.introReset))
+    expect(dialog()).toHaveTextContent(w.note)
+    expect(cancel()).toHaveFocus()
+    // three things that are done, and each says which
+    expect(new Set([w.confirmSave, w.confirmUnset, w.confirmReset]).size).toBe(3)
+    expect(new Set([w.introSave, w.introUnset, w.introReset]).size).toBe(3)
+  })
+
   it('cancels with its button, with Escape, and with a click on the page behind it, and confirms with nothing but its own button', async () => {
     const p = await mount()
     fireEvent.click(cancel())
@@ -114,6 +126,20 @@ describe('ApiWideningDialog', () => {
     expect(reason).toHaveAttribute('lang', 'en') // the CLI's words, whatever the language of the page
     expect(within(d).getByText(s.kind.v1_addr)).not.toHaveAttribute('lang')
     expect(s.title).not.toBe(w.title)
+  })
+
+  it('speaks Spanish for resetting the saved settings too, and the CLI\'s reason stays English', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    const s = es.settings.api.config.widening
+    await mount({ kind: 'reset', widening: [WIDENING.savedSettings] })
+    const d = screen.getByRole('alertdialog', { name: s.title })
+    expect(within(d).getAllByRole('button').map(b => b.textContent)).toEqual([s.cancel, s.confirmReset])
+    expect(within(d).getByText(s.kind.saved_settings)).toBeInTheDocument()
+    expect(within(d).getByText(s.introReset)).toBeInTheDocument()
+    expect(within(d).getByText(WIDENING.savedSettings.reason)).toHaveAttribute('lang', 'en')
+    expect(s.confirmReset).not.toBe(w.confirmReset)
+    expect(s.introReset).not.toBe(w.introReset)
+    expect(s.kind.saved_settings).not.toBe(w.kind.saved_settings)
   })
 
   it('does not mark the CLI\'s sentences when the page is in English', async () => {

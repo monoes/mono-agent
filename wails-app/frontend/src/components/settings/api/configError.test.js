@@ -3,6 +3,7 @@ import i18n from '../../../i18n.js'
 import en from '../../../locales/en.json'
 import es from '../../../locales/es.json'
 import { describeConfigError, isDamagedRow } from './configError.js'
+import { DAMAGED, NEWER } from './__fixtures__/configFixtures.js'
 
 // What the page receives when a call of the server settings fails: the CLI's last stderr line, led by the class of its
 // exit code (app_api.go): "invalid_input: " for exit 3, nothing for the others. These are the CLI's own words
@@ -10,9 +11,7 @@ import { describeConfigError, isDamagedRow } from './configError.js'
 const invalid = (msg) => new Error(`invalid_input: ${msg}`)
 const WIDENING = 'this change makes the server reach further: The dedicated /v1 listener would listen on 0.0.0.0:9443, beyond this machine, and serve runtimes up to chat-only; it did not listen beyond this machine before. Pass --yes to make the change anyway.'
 // A saved row the CLI cannot read is exit 3, and its message always starts the same way (apiconfig.DamagedMessage); one in a
-// newer format is exit 1, with a message of its own (internal/apiconfig/store.go).
-const DAMAGED = 'the saved settings are damaged (settings table, key api_gateway_config: not a JSON object); `monoagentcli api config unset --all --yes` removes them'
-const NEWER = 'saved API settings are in a newer format: the row api_gateway_config is in format 2 and this monoagentcli reads format 1; use the monoagentcli that wrote it, or remove the row by hand; nothing was changed'
+// newer format is exit 1, with a message of its own (internal/apiconfig/store.go): DAMAGED and NEWER, in the fixtures.
 const NOT_REGISTERED = 'the daemon is not registered for auto-start, so nothing can restart it: stop it and start `monoagentcli daemon` again, or run `monoagentcli daemon install` to have the system manage it'
 
 const t = (k, o) => i18n.t(k, o)

@@ -170,7 +170,8 @@ describe('the problems of the saved settings', () => {
     { key: 'max_concurrent', message: 'max_concurrent must be an integer from 1 to 64' },
     { key: 'tls_cert_file', message: 'tls_cert_file and tls_key_file must be set together' },
     { key: 'tls_key_file', message: 'tls_key_file is odd' },
-    { key: '', message: 'the saved settings are damaged' },
+    // the contract allows a problem of the document as a whole (key ""); the CLI sends none today: a row that cannot be read is an error
+    { key: '', message: 'a problem of the saved settings as a whole' },
     { key: 'a_setting_of_the_future', message: 'a_setting_of_the_future is odd' },
   ]
   const doc = configDoc({ saved: { max_concurrent: 'abc', tls_cert_file: '/x.pem' }, problems })
@@ -182,7 +183,7 @@ describe('the problems of the saved settings', () => {
   })
 
   it('are the block\'s own when they are of the document, or of a setting this page has no row for', () => {
-    expect(otherProblems(doc).map(p => p.message)).toEqual(['the saved settings are damaged', 'a_setting_of_the_future is odd'])
+    expect(otherProblems(doc).map(p => p.message)).toEqual(['a problem of the saved settings as a whole', 'a_setting_of_the_future is odd'])
     expect(otherProblems(configDoc())).toEqual([])
     expect(otherProblems(null)).toEqual([])
     expect(rowProblems(row('tls'), null)).toEqual([])
@@ -205,6 +206,7 @@ describe('what a widening is about', () => {
     expect(wideningHeading('auto_confinement.network')).toBe('settings.api.config.widening.kind.auto_confinement')
     expect(wideningHeading('image_runtimes')).toBe('settings.api.config.widening.kind.image_runtimes')
     expect(wideningHeading('tool_runtimes')).toBe('settings.api.config.widening.kind.tool_runtimes')
+    expect(wideningHeading('saved_settings')).toBe('settings.api.config.widening.kind.saved_settings') // removing a row that cannot be read
   })
 
   it('has no name for a kind of its own to come, and the reason is shown all the same', () => {

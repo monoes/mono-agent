@@ -10,7 +10,8 @@ import { Said, hint, mono } from './ui.jsx'
 
 /**
  * @param {Array<{key: string, reason: string}>} widening The `widening` of a dry run.
- * @param {'set'|'unset'} kind Whether a value is being saved or removed.
+ * @param {'set'|'unset'|'reset'} kind Whether a value is being saved or removed, or the saved settings are being reset
+ *   (removed, a row that cannot be read with them).
  * @param {() => void} onCancel
  * @param {() => void} onConfirm
  */
@@ -20,10 +21,10 @@ export default function ApiWideningDialog({ widening, kind, onCancel, onConfirm 
     <ApiConfirmDialog
       title={t('settings.api.config.widening.title')}
       cancelLabel={t('settings.api.config.widening.cancel')}
-      confirmLabel={kind === 'unset' ? t('settings.api.config.widening.confirmUnset') : t('settings.api.config.widening.confirmSave')}
+      confirmLabel={kind === 'reset' ? t('settings.api.config.widening.confirmReset') : kind === 'unset' ? t('settings.api.config.widening.confirmUnset') : t('settings.api.config.widening.confirmSave')}
       onCancel={onCancel} onConfirm={onConfirm}
     >
-      <div style={hint}>{kind === 'unset' ? t('settings.api.config.widening.introUnset') : t('settings.api.config.widening.introSave')}</div>
+      <div style={hint}>{kind === 'reset' ? t('settings.api.config.widening.introReset') : kind === 'unset' ? t('settings.api.config.widening.introUnset') : t('settings.api.config.widening.introSave')}</div>
       <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '40vh', overflowY: 'auto' }}>
         {widening.map((w, i) => {
           const heading = wideningHeading(w.key)

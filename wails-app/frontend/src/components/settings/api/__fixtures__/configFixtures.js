@@ -67,4 +67,10 @@ export const WIDENING = {
   autoNetwork: { key: 'auto_confinement.network', reason: 'The auto model could pick runtimes up to sandboxed on a /v1 listener beyond this machine, where it could pick up to chat-only.' },
   imageRuntimes: { key: 'image_runtimes', reason: 'Image generation would be served by copilot, beyond the default list (codex, antigravity).' },
   toolRuntimes: { key: 'tool_runtimes', reason: 'Tool calling, which is switched off, would be served by claude, codex.' },
+  // removing a saved row that cannot be read (`unset --all`): what it limited cannot be told (apiconfig.DamagedMessage's repair)
+  savedSettings: { key: 'saved_settings', reason: 'The saved settings cannot be read, so what they limited cannot be told: removing them returns every setting to its default, which may reach further.' },
 }
+
+/** What the CLI says (a rejection of the app's binding: its exit class, then its words) of a saved row that cannot be read (exit 3), and of one in a newer format (exit 1, no class). */
+export const DAMAGED = 'the saved settings are damaged (settings table, key api_gateway_config: not a JSON object); `monoagentcli api config unset --all --yes` removes them'
+export const NEWER = 'saved API settings are in a newer format: the row api_gateway_config is in format 2 and this monoagentcli reads format 1; use the monoagentcli that wrote it, or remove the row by hand; nothing was changed'
