@@ -1,0 +1,28 @@
+//go:build windows
+
+package account
+
+import (
+	"errors"
+	"os"
+
+	"golang.org/x/sys/windows"
+)
+
+// tryLock takes an exclusive LockFileEx lock without waiting, the way
+// internal/daemonhb does; Store.Lock polls it so a context can end the wait.
+func tryLock(f *os.File) error {
+	ol := new(windows.Overlapped)
+	err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ol)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return errLockHeld
+		}
+		return err
+	}
+	return nil
+}
+
+func unlock(f *os.File) {
+	_ = windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, new(windows.Overlapped))
+}
