@@ -260,6 +260,29 @@ func TestSaveReportsASessionItCannotEncodeAndWritesNothing(t *testing.T) {
 	}
 }
 
+// A nil session is a caller's bug, and the gate must not crash a daemon over it:
+// Save refuses it with an error and writes nothing, and a session already on disk
+// stays as it is.
+func TestSaveRefusesANilSessionInsteadOfPanicking(t *testing.T) {
+	st, dir := newStore(t)
+	if err := st.Save(nil); err == nil || err.Error() != "account: no session to save" {
+		t.Fatalf("Save(nil) err = %v, want account: no session to save", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Save(nil) created %s (stat err %v)", dir, err)
+	}
+	if err := st.Save(&account.Session{Host: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, dir)
+	if err := st.Save(nil); err == nil {
+		t.Fatal("Save(nil) with a session on disk returned no error")
+	}
+	if !reflect.DeepEqual(snapshot(t, dir), before) {
+		t.Fatalf("Save(nil) changed the directory (now %v)", names(t, dir))
+	}
+}
+
 // The first write makes the directory with every missing parent, all private: on
 // a fresh machine ~/.monoagent does not exist yet, and Lock is a first write too.
 func TestTheFirstWriteCreatesEveryMissingParentPrivately(t *testing.T) {

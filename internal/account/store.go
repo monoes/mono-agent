@@ -91,6 +91,9 @@ func (s *fileStore) Save(sess *Session) error {
 	if s.err != nil {
 		return s.err
 	}
+	if sess == nil {
+		return errors.New("account: no session to save")
+	}
 	cp := *sess
 	cp.V = sessionVersion
 	data, err := json.MarshalIndent(&cp, "", "  ")
