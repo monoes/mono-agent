@@ -210,3 +210,17 @@ func TestValidateSectionsInvariant(t *testing.T) {
 		}
 	}
 }
+
+func TestSetSectionLeadRetainsDedicatedFormerLead(t *testing.T) {
+	d := fixtureDoc(t)
+	section := d.Sections.Find("development")
+	section.Members = []string{"coder"}
+	mustValid(t, d)
+	if err := d.SetSectionLead("development", "coder"); err != nil {
+		t.Fatal(err)
+	}
+	if section.Lead != "coder" || !reflect.DeepEqual(section.Members, []string{"coder", "dev-lead"}) {
+		t.Fatalf("section = %+v", section)
+	}
+	mustValid(t, d)
+}

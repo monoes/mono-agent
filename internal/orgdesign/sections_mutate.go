@@ -282,6 +282,11 @@ func (d *Doc) SetSectionLead(section, id string) error {
 	if err := d.checkPlaceable(id, section, false); err != nil {
 		return err
 	}
+	// A dedicated lead also belongs to the section. Keep it there when
+	// another role takes over, or it would become an unassigned role.
+	if s.Lead != "" && s.Lead != id && !containsString(s.Members, s.Lead) {
+		s.Members = append(s.Members, s.Lead)
+	}
 	s.Lead = id
 	return nil
 }
