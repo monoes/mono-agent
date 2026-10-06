@@ -71,27 +71,33 @@ func (g *Guard) runLoop(ctx context.Context) {
 		// which the corrected clock and monoes.me agree on, repairs it; nothing in
 		// this process would before the clock came round to the mark again.
 		//
-		// A marker that another process left (a CLI whose answer was lost while this loop
-		// held after a refresh or waited out a backoff) is on a clock: monoes.me repeats its
-		// answer for 300 s and the guard drops the token after pendingRetryWindow, so waiting
-		// out a hold of half an hour or a backoff of five minutes would lose a token that a
-		// retry still recovers. It ends a hold and caps the wait at backoffMin. The loop's own
-		// marker keeps the backoff, whose retries at +30, +90 and +210 s are inside the window.
+		// A marker is on a clock: monoes.me repeats its answer for 300 s and the guard drops
+		// the token after pendingRetryWindow, so waiting out a hold of half an hour or a
+		// backoff of five minutes would lose a token that a retry still recovers. No hold
+		// keeps a pass off while there is one. One that another process left (a CLI whose
+		// answer was lost while this loop held after a refresh or waited out a backoff) also
+		// caps the wait at backoffMin. A marker that the loop follows, its own or one it has
+		// retried, keeps the backoff, which starts again at backoffMin for each new marker,
+		// so that its retries at +30, +90 and +210 s are inside the window.
 		pending := g.pendingStamp()
 		if pending.IsZero() {
 			ownPending = time.Time{}
 		}
 		foreign := !pending.IsZero() && !pending.Equal(ownPending)
-		held := holdUntil.After(now) && !heldAt.After(now) && st.Reason != ReasonClockRollback && !foreign
+		held := holdUntil.After(now) && !heldAt.After(now) && st.Reason != ReasonClockRollback && pending.IsZero()
 		wait := notBefore.Sub(now)
 		// A notBefore further away than the longest backoff means the clock went back.
 		if !held && (!notBefore.After(now) || wait > backoffMax || (foreign && wait > backoffMin)) {
 			_, oc, _ := g.refreshIfDue(ctx, modeBackground)
 			switch oc {
 			case outcomeFailed:
+				stamp := g.pendingStamp()
+				if !stamp.IsZero() && !stamp.Equal(ownPending) {
+					backoff = 0 // a marker that the loop has not followed before: its schedule starts at backoffMin
+				}
 				backoff = min(max(backoff*2, backoffMin), backoffMax)
 				notBefore = now.Add(backoff)
-				ownPending = g.pendingStamp() // an attempt that failed with its marker kept is the loop's own
+				ownPending = stamp // an attempt that failed with its marker kept is the loop's own
 			case outcomeRefreshed:
 				backoff, notBefore = 0, time.Time{}
 				_, rcpt := g.cached()

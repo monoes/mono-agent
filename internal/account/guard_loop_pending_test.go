@@ -232,3 +232,75 @@ func TestAForeignMarkerWithTheStampOfAnEarlierOwnMarkerIsStillForeign(t *testing
 		t.Fatal("the account was revoked")
 	}
 }
+
+// A marker that another process left during the hold, whose first retry by the loop is lost
+// again, stays on the schedule: the hold of the last refresh does not come back because the
+// loop now follows that marker, and the next retry, 30 s later, recovers inside the window.
+func TestAForeignMarkerWhoseFirstRetryIsLostAgainIsNotLeftToTheHold(t *testing.T) {
+	e, srv, net, g := loopMachine(t, 40*time.Minute) // past its half-life: the first pass refreshes
+	g.StartRefresher(context.Background())
+	waitForGrants(t, net, 1, "the first refresh")
+	expectGrants(t, net, 1, "the hold")
+	waitForHW(t, e, e.f.Clock.Now(), "the first pass that holds to write the mark")
+
+	anotherProcessLosesAnAnswer(t, e, srv)
+	net.then(lost)
+	e.f.Clock.Advance(30 * time.Second) // the hold has 30 minutes to go
+	waitForGrants(t, net, 2, "the first retry of the marker the other process left")
+	expectGrants(t, net, 2, "the first retry, lost again")
+	e.f.Clock.Advance(31 * time.Second) // +61 s from the other process's send
+	waitForGrants(t, net, 3, "the second retry, 30 s after the first")
+	eventually(t, "the second retry to be answered and stored", func() bool { return e.rawPending() == "" && e.session().LastResult == "ok" })
+	if srv.isRevoked() || !reflect.DeepEqual(srv.presented(), []string{"rt-1", "rt-rotated-1", "rt-rotated-1", "rt-rotated-1"}) {
+		t.Fatalf("monoes.me was presented %v (revoked %t), want the other process's token twice more, inside the window", srv.presented(), srv.isRevoked())
+	}
+}
+
+// The same during a long backoff: the loop has backed off to 240 s after four settled failures,
+// and its first retry of a marker another process left is lost again. The next retry is 30 s
+// away, not the five minutes the backoff would double to, by which time the token is dropped.
+func TestAForeignMarkerWhoseFirstRetryIsLostAgainIsNotLeftToALongBackoff(t *testing.T) {
+	e, srv, net, g := loopMachine(t, 2*time.Hour)
+	net.then(unsent, unsent, unsent, unsent)
+	g.StartRefresher(context.Background())
+	for i, step := range []time.Duration{0, 31 * time.Second, 61 * time.Second, 121 * time.Second} {
+		e.f.Clock.Advance(step)
+		waitForGrants(t, net, i+1, "a settled failure")
+		expectGrants(t, net, i+1, "the backoff after it")
+	}
+
+	anotherProcessLosesAnAnswer(t, e, srv)
+	net.then(lost)
+	e.f.Clock.Advance(30 * time.Second) // 210 s of the backoff to go
+	waitForGrants(t, net, 5, "the first retry of the marker the other process left")
+	expectGrants(t, net, 5, "the first retry, lost again")
+	e.f.Clock.Advance(31 * time.Second) // +61 s from the other process's send
+	waitForGrants(t, net, 6, "the second retry, 30 s after the first")
+	eventually(t, "the second retry to be answered and stored", func() bool { return e.rawPending() == "" && e.session().LastResult == "ok" })
+	if srv.isRevoked() || !reflect.DeepEqual(srv.presented(), []string{"rt-1", "rt-1", "rt-1"}) {
+		t.Fatalf("monoes.me was presented %v (revoked %t), want the other process's token twice more, inside the window", srv.presented(), srv.isRevoked())
+	}
+}
+
+// The loop's own first lost answer after a run of settled failures starts the schedule again:
+// its retries come at +30, +90 and +210 s from the send that may have rotated the token, not
+// at the 240 s that the backoff of the settled failures would double to.
+func TestTheRefreshersOwnLostAnswerAfterSettledFailuresIsRetriedFromThirtySeconds(t *testing.T) {
+	e, srv, net, g := loopMachine(t, 2*time.Hour)
+	net.then(unsent, unsent, unsent, lost)
+	g.StartRefresher(context.Background())
+	for i, step := range []time.Duration{0, 31 * time.Second, 61 * time.Second, 121 * time.Second} {
+		e.f.Clock.Advance(step)
+		waitForGrants(t, net, i+1, "an attempt")
+		expectGrants(t, net, i+1, "the backoff after it")
+	}
+	if e.rawPending() == "" {
+		t.Fatal("the lost answer left no marker")
+	}
+	e.f.Clock.Advance(31 * time.Second)
+	waitForGrants(t, net, 5, "the first retry of the loop's own marker, 30 s after its send")
+	eventually(t, "the retry to be answered and stored", func() bool { return e.rawPending() == "" && e.session().LastResult == "ok" })
+	if srv.isRevoked() || !reflect.DeepEqual(srv.presented(), []string{"rt-1", "rt-1"}) {
+		t.Fatalf("monoes.me was presented %v (revoked %t), want the lost grant and its retry, inside the window", srv.presented(), srv.isRevoked())
+	}
+}
