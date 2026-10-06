@@ -723,7 +723,7 @@ Expected: `Your API description is valid.`, one warning (`operation-4xx-response
 +      required: [state, reason]
 +      properties:
 +        state: { type: string, enum: [ok, grace, locked] }
-+        reason: { type: string, description: "Empty when ok. For grace, why the login was not renewed (unreachable, server_error, keyring_unavailable); for locked, why it is refused (not_logged_in, expired, refused, clock_rollback, clock_skew, key_unknown, invalid)." }
++        reason: { type: string, description: "Empty when ok. For grace, why the login was not renewed (unreachable, server_error, keyring_unavailable, unconfirmed); for locked, why it is refused (not_logged_in, expired, refused, clock_rollback, clock_skew, key_unknown, unconfirmed, invalid)." }
 +        valid_until: { type: string, format: date-time, description: When the access token expires; absent without a session. }
 +        enforced: { type: boolean, description: "Whether anything is refused. False while dormant and before the enforcement date, when state can be locked while every route answers. Present in GET /health; absent from a login_required 401, which implies it." }
  
