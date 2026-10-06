@@ -1081,7 +1081,7 @@ func TestAddRefusesTextThatCleansToNothing(t *testing.T) {
 	for _, in := range []AddInput{
 		{Text: " \x1b\x00 \t\n"},
 		{Title: "\x07 \x1b"},
-		{Text: "\U000E0049\u202e"},
+		{Text: "\U000E0049\U0000202e"},
 		{},
 	} {
 		if _, _, err := s.Add(bg, "default", in, human); !errors.Is(err, ErrInvalid) {
