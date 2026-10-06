@@ -73,13 +73,26 @@ func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account
 }
 
 // guardOn is a guard over the env's session that refreshes through ref and
-// wakes every poll. It is closed when the test ends.
+// wakes every poll. It is closed when the test ends, and a Close that does not
+// return within 5 seconds fails the test instead of hanging the test binary.
 func (e *env) guardOn(ref account.Refresher, poll time.Duration) *account.Guard {
 	e.t.Helper()
 	g := account.NewGuard(account.GuardOptions{
 		Store: account.OpenStore(e.dir, e.seal), Refresher: ref, Now: e.f.Clock.Now, Poll: poll,
 	})
-	e.t.Cleanup(g.Close)
+	t := e.t
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			g.Close()
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("Close did not return")
+		}
+	})
 	return g
 }
 

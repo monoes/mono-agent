@@ -12,8 +12,9 @@ import (
 // token on every use, so the refresher must never refresh more than once per
 // half-life of the token it has just obtained, even when the local clock runs so
 // far ahead of monoes.me that the new token already looks past its half-life.
-// The tests move the fixture clock; the refresher's tick (loopPoll) is the only
-// real time in them.
+// The tests move the fixture clock. Real time is only the refresher's tick
+// (loopPoll), the quiet() waits for what must not happen and the eventually waits
+// (3 seconds at most) for what must.
 
 func TestTheRefresherRefreshesOncePerHalfLifeWhenTheLocalClockRunsAhead(t *testing.T) {
 	// monoes.me issues a token that lives an hour. By a clock that is lag ahead of
@@ -79,6 +80,29 @@ func TestAClockSetBackEndsTheHoldSoTheRefresherCanRepairIt(t *testing.T) {
 			expectCalls(t, srv, 2, "the hold the second refresh began")
 		})
 	}
+}
+
+func TestAClockSetBackThatLocksTheGuardIsRepairedByTheRefresherDespiteItsHold(t *testing.T) {
+	// The refresh stores hw at the new token's iat, T, and the refresher then holds
+	// for half an hour without doing anything that moves hw. A clock set back 10
+	// minutes puts the guard before hw minus 5 minutes: locked(clock_rollback).
+	// Only a refresh repairs that, and the hold must not stand in its way. The
+	// clock does not move again here, so a refresher that waited out the hold
+	// would leave the guard locked for good.
+	e := newEnv(t)
+	srv := newLoopServer(e) // no lag
+	srv.signIn(40*time.Minute, time.Hour)
+	g := e.guardOn(srv, loopPoll)
+	g.StartRefresher(context.Background())
+	waitForCalls(t, srv, 1, "the first refresh")
+	expectCalls(t, srv, 1, "the hold")
+
+	back := e.f.Clock.Now().Add(-10 * time.Minute)
+	if st := account.Evaluate(e.session(), back); st.State != account.StateLocked || st.Reason != account.ReasonClockRollback {
+		t.Fatalf("the stored session at the set-back time is %s/%q, want locked/clock_rollback: the test sets nothing up", st.State, st.Reason)
+	}
+	e.f.Clock.Set(back)
+	eventually(t, "the refresh that repairs the clock rollback", func() bool { return g.Status().State == account.StateOK })
 }
 
 func TestTheHoldIsCountedFromTheStartOfTheRefresh(t *testing.T) {
