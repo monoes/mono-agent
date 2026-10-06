@@ -46,10 +46,15 @@ func (g *Guard) runLoop(ctx context.Context) {
 	var heldAt, holdUntil time.Time
 	for ctx.Err() == nil {
 		now := g.now()
+		st := g.Status() // follows the file and fires OnRefused, whatever the pass does next
 		// A hold made after now means the clock went back, and ends it. A stored time
 		// must never keep a refresh off, or a clock set back could not be repaired by
-		// the refresh that resets it (see elapsed).
-		held := holdUntil.After(now) && !heldAt.After(now)
+		// the refresh that resets it (see elapsed). So does the verdict of a clock that
+		// went back: the loop that holds keeps the high-water mark current, so a clock
+		// corrected after that lies before the mark and is locked, and one refresh,
+		// which the corrected clock and monoes.me agree on, repairs it; nothing else
+		// would before the clock came round to the mark again.
+		held := holdUntil.After(now) && !heldAt.After(now) && st.Reason != ReasonClockRollback
 		// A notBefore further away than the longest backoff means the clock went back.
 		if !held && (!notBefore.After(now) || notBefore.Sub(now) > backoffMax) {
 			_, oc, _ := g.refreshIfDue(ctx, modeBackground)
@@ -65,8 +70,7 @@ func (g *Guard) runLoop(ctx context.Context) {
 				backoff, notBefore = 0, time.Time{}
 			}
 		} else {
-			g.Status()     // still follows the file and fires OnRefused
-			g.touchHW(now) // and, as a pass that finds nothing due does, keeps the high-water mark current
+			g.touchHW(now) // as a pass that finds nothing due does, keeps the high-water mark current
 		}
 		select {
 		case <-ctx.Done():

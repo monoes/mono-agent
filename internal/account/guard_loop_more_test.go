@@ -199,20 +199,21 @@ func TestTheRefresherWakesOncePerPoll(t *testing.T) {
 	store := newCountingStore(account.OpenStore(e.dir, e.seal))
 	var readings atomic.Int64
 	// A clock that moves on every reading, so that every Status looks at the
-	// file again: the number of looks is then the number of passes, twice.
+	// file again: the number of looks is then the number of passes, three times
+	// (the loop's own Status, and the two of the pass that finds nothing to do).
 	now := func() time.Time { return e.f.Clock.Now().Add(time.Duration(readings.Add(1)) * time.Second) }
 	const poll = 50 * time.Millisecond
 	g := account.NewGuard(account.GuardOptions{Store: store, Now: now, Poll: poll})
 	t.Cleanup(g.Close)
 	start := time.Now()
 	g.StartRefresher(context.Background())
-	// It wakes: three passes, with two looks each, however slow the machine is.
+	// It wakes: two passes, with three looks each, however slow the machine is.
 	eventually(t, "six looks at session.json", func() bool { return store.calls("Mtime") >= 6 })
 	// And it sleeps between passes: one that did not would make thousands of looks
 	// in the time this waits.
 	time.Sleep(10 * poll)
 	passes := int32(time.Since(start)/poll) + 1 // a pass at once, then one per tick
 	if n, most := int32(store.calls("Mtime")), 6*passes; n > most {
-		t.Fatalf("%d looks at session.json in %d polls: two per pass is %d and no more than %d is allowed; a refresher that does not sleep makes far more", n, passes, 2*passes, most)
+		t.Fatalf("%d looks at session.json in %d polls: three per pass is %d and no more than %d is allowed; a refresher that does not sleep makes far more", n, passes, 3*passes, most)
 	}
 }
