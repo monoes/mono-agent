@@ -272,7 +272,10 @@ func isTypedNil(err error) bool {
 // attempt presents it again and monoes.me repeats its answer, which can be stored
 // then; after it the token is dropped without being presented. Deleting it here
 // would only be the same drop without the retry, and a delete that fails would leave
-// a dead token with nothing to say so.
+// a dead token with nothing to say so. A session that cannot be saved after the new
+// refresh token was leaves the grant's marker on disk beside that new, valid token,
+// and a pass after the window drops it: one needless sign-in after a failed write,
+// accepted.
 func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *TokenSet) (Status, outcome, error) {
 	next, verr := NewSession(cur.Host, ts.AccessToken, cur.User, now)
 	if ts.RefreshToken != "" && ts.RefreshToken != oldRefresh {
