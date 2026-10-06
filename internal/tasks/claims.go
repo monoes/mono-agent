@@ -26,10 +26,12 @@ func clampLease(d time.Duration) time.Duration {
 }
 
 // leaseEnd is when a lease of d that begins at now ends, as a stored time. A time is kept to the second,
-// so the end is rounded up to the next whole second: a lease is never shorter than the one asked for,
-// and a short one is not over at the second it began in, where anybody could take the task at once. The
-// cap comes after the rounding and wins over it: a claim is stamped with the whole second it began in, so
-// the end is never more than MaxLease after that second, and the longest lease is not made a second longer.
+// so the end is rounded up to the next whole second: a lease is not shorter than the one asked for, except
+// at the cap, and a short one is not over at the second it began in, where anybody could take the task at
+// once. The cap comes after the rounding and wins over it: a claim is stamped with the whole second it
+// began in, so the end is never more than MaxLease after that second. A lease within a second of MaxLease
+// therefore ends at the cap, less than a second short of the one asked for, and the longest lease is not
+// made a second longer.
 func leaseEnd(now time.Time, d time.Duration) time.Time {
 	end := now.Add(d)
 	if end.Nanosecond() != 0 {
@@ -39,14 +41,6 @@ func leaseEnd(now time.Time, d time.Duration) time.Time {
 		end = last
 	}
 	return end
-}
-
-// later is the later of two times: a renewal keeps the lease it would otherwise shorten.
-func later(a, b time.Time) time.Time {
-	if b.After(a) {
-		return b
-	}
-	return a
 }
 
 // needName refuses what is not an agent with a usable name: a claim is held under a name, the same one
@@ -327,48 +321,62 @@ func (s *Store) Comment(ctx context.Context, profileID string, id int64, text st
 		if _, err := s.profileOf(ctx, x, profileID); err != nil {
 			return err
 		}
-		var cur Task
-		var err error
-		if actor.Kind == Agent {
-			cur, err = s.heldBy(ctx, x, profileID, id, actor)
-		} else {
-			cur, err = s.getTx(ctx, x, profileID, id)
-		}
+		t, err := s.commentTx(ctx, x, profileID, id, text, actor)
 		if err != nil {
-			return err
-		}
-		n, err := s.eventCount(ctx, x, id)
-		if err != nil {
-			return err
-		}
-		if n >= MaxEventsPerTask {
-			return limit("task #%d already has %d events: no more comments fit (an agent that holds it can finish or release it instead)", id, n)
-		}
-		now := s.now().UTC()
-		stamp := now.Format(timeFmt)
-		if actor.Kind == Agent {
-			until := later(cur.Claim.Until, leaseEnd(now, DefaultLease))
-			_, err = x.ExecContext(ctx, `UPDATE tasks SET claim_until = ?, updated_at = ? WHERE id = ? AND profile_id = ?`,
-				until.Format(timeFmt), stamp, id, profileID)
-		} else {
-			_, err = x.ExecContext(ctx, `UPDATE tasks SET updated_at = ? WHERE id = ? AND profile_id = ?`, stamp, id, profileID)
-		}
-		if err != nil {
-			return fmt.Errorf("tasks: commenting on #%d: %w", id, err)
-		}
-		if err := s.event(ctx, x, id, stamp, actor.Label(), "comment", "", "", text); err != nil {
 			return err
 		}
 		if err := s.bump(ctx, x, profileID); err != nil {
 			return err
 		}
-		out, err = s.getTx(ctx, x, profileID, id)
-		return err
+		out = t
+		return nil
 	})
 	if err != nil {
 		return Task{}, err
 	}
 	return out, nil
+}
+
+// commentTx writes the comment (already cleaned and cut) in the caller's write transaction, as claimTx
+// writes a claim: the task is checked first, the UPDATE of the task and the event follow, and the task is
+// read again for the caller. An agent's comment renews its lease in the UPDATE itself, with the care of the
+// UPDATE of a claim: the later of the end the row holds and half an hour from now, and only on a row that
+// the agent holds, so no read can make a comment shorten a lease or touch one that is not the agent's.
+func (s *Store) commentTx(ctx context.Context, x dbx, profileID string, id int64, text string, actor Actor) (Task, error) {
+	var err error
+	if actor.Kind == Agent {
+		_, err = s.heldBy(ctx, x, profileID, id, actor)
+	} else {
+		_, err = s.getTx(ctx, x, profileID, id)
+	}
+	if err != nil {
+		return Task{}, err
+	}
+	n, err := s.eventCount(ctx, x, id)
+	if err != nil {
+		return Task{}, err
+	}
+	if n >= MaxEventsPerTask {
+		return Task{}, limit("task #%d already has %d events: no more comments fit (an agent that holds it can finish or release it instead)", id, n)
+	}
+	now := s.now().UTC()
+	stamp := now.Format(timeFmt)
+	if actor.Kind == Agent {
+		_, err = x.ExecContext(ctx,
+			`UPDATE tasks SET claim_until = CASE WHEN status = 'in_progress' AND claimed_by = ? THEN max(claim_until, ?) ELSE claim_until END,
+			        updated_at = ?
+			 WHERE id = ? AND profile_id = ?`,
+			actor.Label(), leaseEnd(now, DefaultLease).Format(timeFmt), stamp, id, profileID)
+	} else {
+		_, err = x.ExecContext(ctx, `UPDATE tasks SET updated_at = ? WHERE id = ? AND profile_id = ?`, stamp, id, profileID)
+	}
+	if err != nil {
+		return Task{}, fmt.Errorf("tasks: commenting on #%d: %w", id, err)
+	}
+	if err := s.event(ctx, x, id, stamp, actor.Label(), "comment", "", "", text); err != nil {
+		return Task{}, err
+	}
+	return s.getTx(ctx, x, profileID, id)
 }
 
 // Finish hands a held task back to the operator, in Review, with a result or a question (exactly one).

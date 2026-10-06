@@ -75,7 +75,7 @@ func claimsClaim(t *testing.T, s *Store, id int64, name string, lease time.Durat
 // names the holder whose claim ended. It returns how many claims the histories hold.
 func claimsExplainEveryTask(t *testing.T, s *Store, db *sql.DB) int {
 	t.Helper()
-	rows, err := db.Query(`SELECT id, status, claimed_by FROM tasks ORDER BY id`)
+	rows, err := db.Query(`SELECT id, status, claimed_by FROM tasks WHERE profile_id = 'default' ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}

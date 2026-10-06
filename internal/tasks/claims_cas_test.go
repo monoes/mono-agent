@@ -10,18 +10,24 @@ import (
 	"time"
 )
 
-// meddler is the transaction's own connection with a change made on each side of the UPDATE of a claim:
-// before runs just before it reaches the database, after just after it returns. The write lock keeps
-// every other connection from changing a task between the read of a claim and its UPDATE, so the change
-// is made through the connection of the transaction. What is under test is that the UPDATE alone decides
-// what a claim takes, and that the claim says so when what it read does not agree with what it did.
+// meddler is the transaction's own connection with a change made on each side of the UPDATE of a claim
+// (or of the statement that begins with prefix): before runs just before it reaches the database, after
+// just after it returns. The write lock keeps every other connection from changing a task between the
+// read of a claim and its UPDATE, so the change is made through the connection of the transaction. What
+// is under test is that the UPDATE alone decides what a claim takes, and that the claim says so when what
+// it read does not agree with what it did.
 type meddler struct {
 	dbx
+	prefix        string // the statements to meddle with begin with this: the UPDATE of a claim when empty
 	before, after func(x dbx)
 }
 
 func (m *meddler) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
-	if !strings.HasPrefix(strings.TrimSpace(q), "UPDATE tasks SET status = 'in_progress'") {
+	prefix := m.prefix
+	if prefix == "" {
+		prefix = "UPDATE tasks SET status = 'in_progress'"
+	}
+	if !strings.HasPrefix(strings.TrimSpace(q), prefix) {
 		return m.dbx.ExecContext(ctx, q, args...)
 	}
 	if m.before != nil {
@@ -204,5 +210,51 @@ func TestAClaimThatIsNoRenewalEndsExactlyOneLeaseAfterNow(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The UPDATE of an agent's comment renews the lease by itself, with the care of the UPDATE of a claim: it
+// keeps the later of the end the row holds and half an hour from now, and only on a row that the agent
+// holds, whatever the comment read. The task is changed through the transaction's connection between the
+// comment's read of it and its UPDATE, and the row the UPDATE leaves is what is looked at.
+func TestTheUpdateOfACommentNeverShortensALeaseNorTouchesOneItDoesNotHold(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		before string // the change made to the task after it was read, with its id as the one argument
+		row    string // the row afterwards, in the transaction
+	}{
+		{"a lease made longer after the comment read the task", `UPDATE tasks SET claim_until = '2026-10-05T17:00:00Z' WHERE id = ?`,
+			"default|in_progress|one|2026-10-05T17:00:00Z"},
+		{"a task that another agent took over after it was read", `UPDATE tasks SET claimed_by = 'other', claim_until = '2026-10-05T11:00:00Z' WHERE id = ?`,
+			"default|in_progress|other|2026-10-05T11:00:00Z"},
+		{"a card moved to Review after it was read, with a claim left on it", `UPDATE tasks SET status = 'review', claim_until = '2026-10-05T12:10:00Z' WHERE id = ?`,
+			"default|review|one|2026-10-05T12:10:00Z"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, _, _ := newTestStore(t)
+			id := mustAdd(t, s, "default", "held", true).ID
+			claimsClaim(t, s, id, "one", time.Hour) // until 13:00, longer than the half hour that a comment renews for
+			var row string
+			err := s.tx(bg, func(x dbx) error {
+				m := &meddler{dbx: x, prefix: "UPDATE tasks SET claim_until", before: func(x dbx) {
+					if _, e := x.ExecContext(bg, c.before, id); e != nil {
+						t.Error(e)
+					}
+				}}
+				if _, err := s.commentTx(bg, m, "default", id, "going on", bot("one")); err != nil {
+					t.Errorf("the comment: %v", err)
+				}
+				if e := x.QueryRowContext(bg, `SELECT profile_id || '|' || status || '|' || claimed_by || '|' || claim_until FROM tasks WHERE id = ?`, id).Scan(&row); e != nil {
+					t.Error(e)
+				}
+				return errors.New("undo")
+			})
+			if err == nil || err.Error() != "undo" {
+				t.Fatalf("the transaction: %v", err)
+			}
+			if row != c.row {
+				t.Errorf("the row is %q, want %q", row, c.row)
+			}
+		})
 	}
 }

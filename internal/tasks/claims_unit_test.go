@@ -38,25 +38,11 @@ func TestTheClaimCapIsTwoThousandEventsAndTheCommentCapStaysAtFiveHundred(t *tes
 	}
 }
 
-func TestLaterKeepsTheLaterOfTwoTimes(t *testing.T) {
-	a := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	b := a.Add(time.Second)
-	if got := later(a, b); !got.Equal(b) {
-		t.Errorf("later(a, b) = %v, want b", got)
-	}
-	if got := later(b, a); !got.Equal(b) {
-		t.Errorf("later(b, a) = %v, want b: a renewal never shortens a lease", got)
-	}
-	if got := later(a, a); !got.Equal(a) {
-		t.Errorf("later(a, a) = %v", got)
-	}
-}
-
 // A time is stored to the second, so a lease ends on a whole second: the one after the end it was
-// asked for. A stored lease is never shorter than the one asked for, and one that is asked for is
-// never over already (a lease of a millisecond would otherwise end at the second it began in). The
-// rounding up stops at the cap (R11): the end is never more than MaxLease after the whole second the
-// lease began in, which is what the claim is stamped with.
+// asked for. A stored lease is not shorter than the one asked for, except at the cap (R11), and one
+// that is asked for is never over already (a lease of a millisecond would otherwise end at the second
+// it began in). The rounding up stops at the cap (R11): the end is never more than MaxLease after the
+// whole second the lease began in, which is what the claim is stamped with.
 func TestALeaseEndsOnTheWholeSecondAfterTheEndItWasAskedFor(t *testing.T) {
 	whole := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	half := whole.Add(500 * time.Millisecond)
