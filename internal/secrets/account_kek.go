@@ -47,8 +47,10 @@ const accountKEKID = "monoes..account"
 //     create=true returns the key that exists (in the OS keychain or the file
 //     keyring) or an error.
 //
-// A key store that cannot be opened is an error, not found=false. The key is a
-// copy the caller may wipe.
+// Every call reads the key store afresh, a creating one included: nothing is
+// remembered between calls, so a key that was replaced in the key store while the
+// process runs is the key the next call returns. A key store that cannot be
+// opened is an error, not found=false. The key is a copy the caller may wipe.
 func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 	if interactive || !fileKeyringEnabled() {
 		// Without the file keyring there is no passphrase to ask for, so one path
@@ -58,15 +60,25 @@ func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 	} else {
 		kek, found, err = accountKEKQuiet(create)
 	}
-	// getOrCreateKEK returns the vault's memoized slice. The caller gets a copy of
-	// its own, so wiping its key cannot change the key every later call gets.
+	// The caller gets a copy of its own, so wiping it cannot change the key any
+	// other call gets.
 	return bytes.Clone(kek), found, err
 }
 
 // accountKEKVault reads or creates the key through the vault's own functions.
+// It creates through fetchOrCreateKEK, not the vault's memoized getOrCreateKEK:
+// the key store's entry can be replaced while a process runs (a keychain reset,
+// then a sign-in in another process that makes a new key), and a remembered key
+// would seal the next refresh token under a key no process, this one included,
+// can find again. fetchOrCreateKEK reads first and makes a key only when the OS
+// keychain answers that it has no entry: a key store error is returned and
+// writes nothing. Under the file keyring opt-in it goes to the file keyring
+// instead, as it does for the vault. Within a process keyringIOMu makes its read
+// and its write one step; across processes the account's callers make every
+// creating call under session.lock, and the file keyring creates with O_EXCL.
 func accountKEKVault(create bool) ([]byte, bool, error) {
 	if create {
-		kek, err := getOrCreateKEK(accountKEKID)
+		kek, err := fetchOrCreateKEK(accountKEKID)
 		return kek, err == nil, err
 	}
 	kek, found, err := peekKEK(accountKEKID)
