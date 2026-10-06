@@ -1,6 +1,7 @@
 package account_test
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -33,12 +34,39 @@ func TestEveryGlobalStateSeamPanicsWhenMixedWithTParallel(t *testing.T) {
 			expectParallelConflict(t, "t.Parallel after "+s.name, panicOf(t.Parallel))
 		})
 	}
-	// One parallel subtest, so that a seam that failed to panic could not race another test.
+	// A seam that panics after it has written, before its cleanup is registered, leaves
+	// the write in place for good, and a default build has no key, no date and no guard
+	// for a write of nil to be seen against. So the state to leave alone is one a default
+	// build does not have, and it is looked at after every recovered panic. One parallel
+	// subtest, so that a seam that failed to panic could not race another test.
 	t.Run("t.Parallel then each seam", func(t *testing.T) {
-		t.Parallel()
-		for _, s := range seams {
-			expectParallelConflict(t, s.name+" after t.Parallel", panicOf(func() { s.use(t) }))
-		}
+		e := newEnv(t) // trusts its key and enforces the gate: a date and a key
+		account.InstallForTest(t, e.g)
+		date, keys := account.EnforceDate(), account.TrustedKeys()
+		t.Run("in parallel", func(t *testing.T) {
+			t.Parallel()
+			for _, s := range seams {
+				expectParallelConflict(t, s.name+" after t.Parallel", panicOf(func() { s.use(t) }))
+				if got := account.EnforceDate(); !got.Equal(date) {
+					t.Errorf("%s left the enforcement date at %v, want %v", s.name, got, date)
+				}
+				if got := account.TrustedKeys(); len(got) != 1 || got[0].KID != keys[0].KID {
+					t.Errorf("%s left %d trusted keys, want the fixture's one (%s)", s.name, len(got), keys[0].KID)
+				}
+				if account.Current() != e.g {
+					t.Errorf("%s left the installed guard replaced", s.name)
+				}
+				// Strictness shows only with no guard, an enforced date and a test that did not ask for it.
+				account.Install(nil)
+				if err := account.Require(context.Background()); err != nil {
+					t.Errorf("%s left strictness on: Require with no guard = %v", s.name, err)
+				}
+				account.Install(e.g)
+				if t.Failed() {
+					return // the state is polluted now: what the other seams would report is noise
+				}
+			}
+		})
 	})
 }
 
