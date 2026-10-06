@@ -434,3 +434,18 @@ func TestSectionsRootFollowsMonomind(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestInheritLoadedKeepsLayoutForAReplacementDoc(t *testing.T) {
+	d, root, path := loadFixture(t, sectionsOrg)
+	var fresh Doc // as decoded from a CLI answer: no file state
+	if err := json.Unmarshal([]byte(sectionsOrg), &fresh); err != nil {
+		t.Fatal(err)
+	}
+	fresh.InheritLoaded(d)
+	if fresh.LoadedSHA() != d.LoadedSHA() {
+		t.Fatal("sha not inherited")
+	}
+	if _, err := Save(root, &fresh); err != nil || mustRead(t, path) != sectionsOrg {
+		t.Fatalf("replacement doc did not keep the layout: %v", err)
+	}
+}

@@ -216,3 +216,13 @@ func Delete(profileRoot, name string) error {
 	}
 	return nil
 }
+
+// InheritLoaded makes d describe the same file state as from: the bytes (and
+// their sha) the next Save lays out and the re-sign rule compares against.
+// For a caller that replaces a Doc it has just saved with an equivalent one
+// built another way (decoded from a CLI's JSON): without it the replacement
+// has no file layout to follow, and the next Save would reorder the file.
+// Only call it when d is from's content as reconciled, not a different file.
+func (d *Doc) InheritLoaded(from *Doc) {
+	d.loadedSHA, d.loadedRaw = from.loadedSHA, from.loadedRaw
+}

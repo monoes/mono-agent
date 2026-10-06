@@ -509,6 +509,11 @@ func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
 	if res.Org == nil {
 		return fmt.Errorf("reconcile org rows: the CLI returned no document")
 	}
+	// The document the CLI sends back was decoded from JSON, so it knows
+	// nothing of the file it came from: carry the loaded bytes over, or the
+	// write after this reorders the file's keys and the re-sign check loses
+	// its sha.
+	res.Org.InheritLoaded(d)
 	*d = *res.Org
 	return nil
 }
