@@ -10,120 +10,11 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	"github.com/monoes/mono-agent/internal/storage"
 )
-
-// storedStamp is the one format the board writes a time in.
-const storedStamp = "2006-01-02T15:04:05Z"
-
-// taskSeed is a tasks row written straight into the table, around the store: the
-// commands that bring a card to In progress, Review or Done belong to later tasks.
-type taskSeed struct {
-	profile   string // "" is default
-	title     string
-	notes     string
-	status    string // "" is inbox
-	source    string // "" is cli
-	link      string
-	pageTitle string
-	app       string
-	holder    string    // claimed_by
-	until     time.Time // claim_until, for a holder
-	created   time.Time // zero is now
-}
-
-// seedTaskRows writes the rows in one connection, in order, each below the cards
-// before it in its column, and returns their ids.
-func seedTaskRows(t *testing.T, dbPath string, rows ...taskSeed) []int64 {
-	t.Helper()
-	raw, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	ids := make([]int64, 0, len(rows))
-	for _, r := range rows {
-		if r.profile == "" {
-			r.profile = "default"
-		}
-		if r.status == "" {
-			r.status = "inbox"
-		}
-		if r.source == "" {
-			r.source = "cli"
-		}
-		if r.created.IsZero() {
-			r.created = time.Now()
-		}
-		until := ""
-		if r.holder != "" {
-			until = r.until.UTC().Format(storedStamp)
-		}
-		created := r.created.UTC().Format(storedStamp)
-		res, err := raw.DB.Exec(`INSERT INTO tasks (profile_id, title, notes, status, position, source_kind, source_url, source_title, source_app, claimed_by, claim_until, created_at, updated_at)
-			VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.profile, r.title, r.notes, r.status, r.source, r.link, r.pageTitle, r.app, r.holder, until, created, created)
-		if err != nil {
-			t.Fatal(err)
-		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// seedTaskEvent writes a row of a task's history, around the store.
-func seedTaskEvent(t *testing.T, dbPath string, taskID int64, at time.Time, actor, kind, from, to, note string) {
-	t.Helper()
-	raw, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	if _, err := raw.DB.Exec(`INSERT INTO task_events (task_id, at, actor, kind, from_status, to_status, note) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		taskID, at.UTC().Format(storedStamp), actor, kind, from, to, note); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// addTaskProfile inserts a profile besides the bootstrapped default.
-func addTaskProfile(t *testing.T, dbPath, id, name string) {
-	t.Helper()
-	raw, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	if _, err := raw.DB.Exec(`INSERT INTO profiles (id, name) VALUES (?, ?)`, id, name); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func titlesOf(l listJSON) []string {
-	titles := make([]string, 0, len(l.Tasks))
-	for _, task := range l.Tasks {
-		titles = append(titles, task.Title)
-	}
-	return titles
-}
-
-// heldJSON is the part of a task document that says who holds it.
-type heldJSON struct {
-	Tasks []struct {
-		Title string `json:"title"`
-		Claim *struct {
-			By    string `json:"by"`
-			Stale bool   `json:"stale"`
-		} `json:"claim"`
-	} `json:"tasks"`
-}
 
 func TestTaskListTextIsATableWithTheProfileTheAgeAndTheHolder(t *testing.T) {
 	db := newTaskTestDB(t)
+	zone := localNoonZone(t)
 	addTaskProfile(t, db, "work-id", "Work")
 	now := time.Now()
 	ids := seedTaskRows(t, db,
@@ -131,6 +22,7 @@ func TestTaskListTextIsATableWithTheProfileTheAgeAndTheHolder(t *testing.T) {
 		taskSeed{profile: "work-id", title: "Pay the invoice", status: "ready", source: "os", created: now.Add(-73 * time.Hour)},
 		taskSeed{profile: "work-id", title: "Fix the build", status: "in_progress", holder: "bot", until: now.Add(time.Hour), created: now.Add(-5*time.Hour - 10*time.Minute)},
 		taskSeed{profile: "work-id", title: "Old claim", status: "in_progress", holder: "gone", until: now.Add(-time.Hour), created: now.Add(-12*time.Minute - 10*time.Second)},
+		taskSeed{profile: "work-id", title: "Next day", status: "in_progress", holder: "late", until: now.Add(30 * time.Hour)},
 		taskSeed{profile: "work-id", title: "Check the results", status: "review"},
 		taskSeed{profile: "work-id", title: "Shipped", status: "done", created: now.Add(-49 * time.Hour)},
 	)
@@ -139,18 +31,20 @@ func TestTaskListTextIsATableWithTheProfileTheAgeAndTheHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 8 || lines[0] != "Profile: Work" {
-		t.Fatalf("want the profile line, a header and six rows, got %d lines:\n%s", len(lines), out)
+	if len(lines) != 9 || lines[0] != "Profile: Work" {
+		t.Fatalf("want the profile line, a header and seven rows, got %d lines:\n%s", len(lines), out)
 	}
 	if !regexp.MustCompile(`^ID\s+STATUS\s+TITLE\s+SOURCE\s+AGE\s+HELD BY$`).MatchString(lines[1]) {
 		t.Errorf("the header: %q", lines[1])
 	}
-	until := now.Add(time.Hour).Local().Format("15:04")
+	until := now.Add(time.Hour).In(zone).Format("15:04")
+	nextDay := now.Add(30 * time.Hour).In(zone).Format("01-02 15:04")
 	for i, want := range []struct{ status, title, source, age, held string }{
 		{"inbox", "Draft the report", "cli", "now", ""},
 		{"ready", "Pay the invoice", "os", "3d", ""},
 		{"in_progress", "Fix the build", "cli", "5h", "bot until " + until},
 		{"in_progress", "Old claim", "cli", "12m", "stale: gone"},
+		{"in_progress", "Next day", "cli", "now", "late until " + nextDay},
 		{"review", "Check the results", "cli", "now", ""},
 		{"done", "Shipped", "cli", "2d", ""},
 	} {
@@ -167,6 +61,7 @@ func TestTaskListTextIsATableWithTheProfileTheAgeAndTheHolder(t *testing.T) {
 
 func TestTaskBoardTextListsTheFiveColumnsInOrderWithTheirCards(t *testing.T) {
 	db := newTaskTestDB(t)
+	zone := localNoonZone(t)
 	addTaskProfile(t, db, "work-id", "Work")
 	now := time.Now()
 	ids := seedTaskRows(t, db,
@@ -208,7 +103,7 @@ REVIEW (1)
 
 DONE (1)
   #%d  Shipped
-`, fromCLI.Task.ID, ids[0], ids[1], ids[2], readyFromCLI.Task.ID, ids[3], now.Add(time.Hour).Local().Format("15:04"), ids[4], ids[5], ids[6])
+`, fromCLI.Task.ID, ids[0], ids[1], ids[2], readyFromCLI.Task.ID, ids[3], now.Add(time.Hour).In(zone).Format("15:04"), ids[4], ids[5], ids[6])
 	if out != want {
 		t.Errorf("the board as text:\n%s\nwant:\n%s", out, want)
 	}
@@ -275,10 +170,13 @@ func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 	for _, c := range []struct {
 		args  []string
 		shown int
+		more  string // the line that says what was left out, "" for none
 	}{
-		{[]string{"board"}, 50},
-		{[]string{"board", "--done-limit", "3"}, 3},
-		{[]string{"board", "--done-limit", "0"}, 55},
+		{[]string{"board"}, 50, "  ... 5 more (task list --status done)"},
+		{[]string{"board", "--done-limit", "3"}, 3, "  ... 52 more (task list --status done)"},
+		{[]string{"board", "--done-limit", "54"}, 54, "  ... 1 more (task list --status done)"},
+		{[]string{"board", "--done-limit", "55"}, 55, ""},
+		{[]string{"board", "--done-limit", "0"}, 55, ""},
 	} {
 		var board struct {
 			Counts map[string]int        `json:"counts"`
@@ -293,13 +191,27 @@ func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 		if err != nil || !strings.Contains(text, "DONE (55)") || strings.Count(after, "\n  #") != c.shown {
 			t.Errorf("task %s as text: %v, %d Done lines, want the heading DONE (55) and %d lines", strings.Join(c.args, " "), err, strings.Count(after, "\n  #"), c.shown)
 		}
+		// The cut is said in a line of its own after the cards, and only when something was cut.
+		var said []string
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, "...") {
+				said = append(said, line)
+			}
+		}
+		wantSaid := []string(nil)
+		if c.more != "" {
+			wantSaid = []string{c.more}
+		}
+		if !slices.Equal(said, wantSaid) || (c.more != "" && !strings.HasSuffix(text, c.more+"\n")) {
+			t.Errorf("task %s as text says %q, want %q as its last line", strings.Join(c.args, " "), said, wantSaid)
+		}
 	}
 	var board struct {
 		Tasks map[string][]taskJSON `json:"tasks"`
 	}
 	mustTaskJSON(t, db, "default", &board, "", "board")
-	if done := board.Tasks["done"]; done[0].Title != "done 01" || done[49].Title != "done 50" {
-		t.Errorf("the cut keeps the top of the column: %q to %q", done[0].Title, done[len(done)-1].Title)
+	if done := board.Tasks["done"]; len(done) != 50 || done[0].Title != "done 01" || done[49].Title != "done 50" {
+		t.Errorf("the cut keeps the top of the column: %d cards, not done 01 to done 50", len(done))
 	}
 }
 
@@ -345,6 +257,7 @@ func TestTaskListFlagsNarrowTheList(t *testing.T) {
 // that ended a while ago, one that ends this very second, and one still to run.
 func TestTaskStaleClaimsAreMarkedInEveryView(t *testing.T) {
 	db := newTaskTestDB(t)
+	zone := localNoonZone(t)
 	now := time.Now()
 	ids := seedTaskRows(t, db,
 		taskSeed{title: "live", status: "in_progress", holder: "bot", until: now.Add(time.Hour)},
@@ -353,6 +266,9 @@ func TestTaskStaleClaimsAreMarkedInEveryView(t *testing.T) {
 	)
 	var held heldJSON
 	mustTaskJSON(t, db, "default", &held, "", "list")
+	if len(held.Tasks) != 3 {
+		t.Fatalf("the list has %d tasks, want the 3 that are held: %+v", len(held.Tasks), held.Tasks)
+	}
 	for i, want := range []struct {
 		by    string
 		stale bool
@@ -367,7 +283,7 @@ func TestTaskStaleClaimsAreMarkedInEveryView(t *testing.T) {
 		t.Errorf("--stale lists %q", titlesOf(onlyStale))
 	}
 
-	live := "bot until " + now.Add(time.Hour).Local().Format("15:04")
+	live := "bot until " + now.Add(time.Hour).In(zone).Format("15:04")
 	table, _, _ := runTask(t, db, "default", false, "", "list")
 	board, _, _ := runTask(t, db, "default", false, "", "board")
 	for _, want := range []string{live, "stale: gone", "stale: edge"} {
@@ -390,10 +306,63 @@ func TestTaskReadCommandsRefuseAnUnknownProfileAndWrongArguments(t *testing.T) {
 			t.Errorf("task %s with an unknown profile: %v", strings.Join(args, " "), doc)
 		}
 	}
-	for _, args := range [][]string{{"list", "extra"}, {"board", "extra"}, {"show"}, {"show", "1", "2"}} {
-		if out, _, err := runTask(t, db, "default", false, "", args...); err == nil || out != "" {
-			t.Errorf("task %s: %v, %q; want an error and no output", strings.Join(args, " "), err, out)
+	// A mistake in the number of arguments is invalid input like any other: exit 3, and under
+	// --json the {"error","code"} document (cobra's own argument check would exit 1 with none).
+	for _, c := range []struct {
+		args []string
+		want string // what the refusal says
+	}{
+		{[]string{"list", "extra"}, "task list takes no arguments"},
+		{[]string{"list", "one", "two"}, "task list takes no arguments"},
+		{[]string{"board", "extra"}, "task board takes no arguments"},
+		{[]string{"show"}, "task show takes one task id"},
+		{[]string{"show", "1", "2"}, "task show takes one task id"},
+	} {
+		doc := failedTaskJSON(t, db, "default", 3, c.args...)
+		if msg, _ := doc["error"].(string); doc["code"] != "invalid_input" || !strings.Contains(msg, c.want) {
+			t.Errorf("task %s --json: %v, want the code invalid_input and the words %q", strings.Join(c.args, " "), doc, c.want)
 		}
+		out, _, err := runTask(t, db, "default", false, "", c.args...)
+		if exitCode(err) != 3 || out != "" || !strings.Contains(errText(err), c.want) {
+			t.Errorf("task %s as text: exit %d (%v), %q; want exit 3, the refusal and no output", strings.Join(c.args, " "), exitCode(err), err, out)
+		}
+	}
+}
+
+// The Archive is not a column: it is listed when it is named, by the operator and by an
+// agent alike (spec 4.1 and 5.1), and the default list and the board never show it.
+func TestTaskListShowsTheArchiveWhenItIsNamed(t *testing.T) {
+	db := newTaskTestDB(t)
+	seedTaskRows(t, db,
+		taskSeed{title: "inbox one"},
+		taskSeed{title: "ready one", status: "ready"},
+		taskSeed{title: "put away", status: "archived"},
+		taskSeed{title: "put away too", status: "archived"},
+	)
+	for _, c := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"the operator's default", nil, []string{"inbox one", "ready one"}},
+		{"the operator names the archive", []string{"--status", "archived"}, []string{"put away", "put away too"}},
+		{"the operator names it among others", []string{"--status", "ready,archived"}, []string{"ready one", "put away", "put away too"}},
+		{"an agent's default", []string{"--as", "bot"}, []string{"ready one"}},
+		{"an agent names the archive", []string{"--as", "bot", "--status", "archived"}, []string{"put away", "put away too"}},
+	} {
+		var got listJSON
+		mustTaskJSON(t, db, "default", &got, "", append([]string{"list"}, c.args...)...)
+		if !slices.Equal(titlesOf(got), c.want) {
+			t.Errorf("%s: %q, want %q", c.name, titlesOf(got), c.want)
+		}
+	}
+	var board struct {
+		Counts map[string]int        `json:"counts"`
+		Tasks  map[string][]taskJSON `json:"tasks"`
+	}
+	mustTaskJSON(t, db, "default", &board, "", "board")
+	if len(board.Tasks) != 5 || board.Counts["inbox"] != 1 || board.Counts["ready"] != 1 {
+		t.Errorf("the board with an archive: %+v", board)
 	}
 }
 
@@ -403,7 +372,7 @@ func TestTaskReadCommandsRefuseAnUnknownProfileAndWrongArguments(t *testing.T) {
 func TestTaskReadRefusalsRepeatOnlyAShortStretchOfWhatTheyRefuse(t *testing.T) {
 	db := newTaskTestDB(t)
 	for _, huge := range []string{strings.Repeat("x", 10<<10), strings.Repeat("\xc3\xa9", 5<<10)} {
-		for _, args := range [][]string{{"list", "--status", huge}, {"list", "--source", huge}, {"show", huge}} {
+		for _, args := range [][]string{{"list", "--status", huge}, {"list", "--source", huge}, {"show", huge}, {"list", huge}, {"board", huge}} {
 			out, _, err := runTask(t, db, "default", true, "", args...)
 			var doc map[string]any
 			if exitCode(err) != 3 || json.Unmarshal([]byte(out), &doc) != nil {

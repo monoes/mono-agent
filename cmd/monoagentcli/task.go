@@ -200,13 +200,7 @@ const echoRunes = 64
 
 // cutArg is s cut for an error message that repeats it: a huge argument must not
 // make a huge message.
-func cutArg(s string) string {
-	r := []rune(s)
-	if len(r) <= echoRunes {
-		return s
-	}
-	return string(r[:echoRunes-1]) + "\U00002026"
-}
+func cutArg(s string) string { return taskCut(s, echoRunes) }
 
 // parseTaskID reads 42 or #42.
 func parseTaskID(s string) (int64, error) {

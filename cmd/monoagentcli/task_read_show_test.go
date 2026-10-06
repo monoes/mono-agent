@@ -19,6 +19,7 @@ import (
 // commands) print with.
 var (
 	_ func(io.Writer, tasks.Profile, tasks.Task, []tasks.Event) = printTask
+	_ func(io.Writer, string)                                   = printNotes
 	_ func(tasks.Task) string                                   = heldNote
 	_ func(string, int) string                                  = taskCut
 	_ func(time.Time, time.Time) string                         = taskAge
@@ -30,6 +31,7 @@ const ellipsis = "\U00002026"
 
 func TestTaskShowTextPrintsTheTaskItsHolderAndItsHistory(t *testing.T) {
 	db := newTaskTestDB(t)
+	zone := localNoonZone(t)
 	addTaskProfile(t, db, "work-id", "Work")
 	created := time.Date(2026, 10, 5, 9, 30, 0, 0, time.UTC)
 	until := time.Now().Add(time.Hour)
@@ -44,7 +46,7 @@ func TestTaskShowTextPrintsTheTaskItsHolderAndItsHistory(t *testing.T) {
 	seedTaskEvent(t, db, id, at(35), "bot", "claimed", "ready", "in_progress", "")
 	seedTaskEvent(t, db, id, at(40), "bot", "comment", "", "", "Looking at it.\nSecond line")
 	seedTaskEvent(t, db, id, at(50), "agent:claude-code#a3f9", "comment", "", "", strings.Repeat("x", 300))
-	stamp := func(minutes int) string { return at(minutes).Local().Format("01-02 15:04") }
+	stamp := func(minutes int) string { return at(minutes).In(zone).Format("01-02 15:04") }
 
 	out, _, err := runTask(t, db, "Work", false, "", "show", "#"+strconv.FormatInt(id, 10))
 	if err != nil {
@@ -59,10 +61,12 @@ Held by:  bot until %s
 Created:  %s
 
 %s
-Line one
-Line two
+    Line one
+    Line two
+%s
 
 History:
+%s
   %s  chrome       created -> inbox
   %s  you          moved -> ready
   %s  bot          claimed -> in_progress
@@ -70,8 +74,9 @@ History:
       Looking at it. Second line
   %s  agent:claude-code#a3f9 comment
       %s
-`, id, until.Local().Format("15:04"), created.Local().Format("2006-01-02 15:04"), untrustedNotice,
-		stamp(0), stamp(30), stamp(35), stamp(40), stamp(50), strings.Repeat("x", 199)+ellipsis)
+(full text: task show %d --json)
+`, id, until.In(zone).Format("15:04"), created.In(zone).Format("2006-01-02 15:04"), untrustedNotice, notesEnd, historyNotice,
+		stamp(0), stamp(30), stamp(35), stamp(40), stamp(50), strings.Repeat("x", 199)+ellipsis, id)
 	if out != want {
 		t.Errorf("show as text:\n%s\nwant:\n%s", out, want)
 	}
@@ -79,12 +84,14 @@ History:
 
 func TestTaskShowTextOmitsWhatTheTaskDoesNotHave(t *testing.T) {
 	db := newTaskTestDB(t)
+	zone := localNoonZone(t)
 	created := time.Date(2026, 10, 5, 9, 30, 0, 0, time.UTC)
 	id := seedTaskRows(t, db, taskSeed{title: "plain", created: created})[0]
 	seedTaskEvent(t, db, id, created, "you", "created", "", "inbox", "")
 	out, _, err := runTask(t, db, "default", false, "", "show", strconv.FormatInt(id, 10))
+	// Events without a note carry no caution, and nothing says a note was cut.
 	want := fmt.Sprintf("#%d  plain\nProfile:  Default\nStatus:   Inbox\nSource:   cli\nCreated:  %s\n\nHistory:\n  %s  you          created -> inbox\n",
-		id, created.Local().Format("2006-01-02 15:04"), created.Local().Format("01-02 15:04"))
+		id, created.In(zone).Format("2006-01-02 15:04"), created.In(zone).Format("01-02 15:04"))
 	if err != nil || out != want {
 		t.Errorf("show as text: %v\n%s\nwant:\n%s", err, out, want)
 	}
@@ -247,6 +254,9 @@ func TestTaskTextCutsTitlesAtTheirLengths(t *testing.T) {
 	}
 	var listed listJSON
 	mustTaskJSON(t, db, "default", &listed, "", "list")
+	if len(listed.Tasks) != 6 {
+		t.Fatalf("the list has %d tasks, want the 6 that were added", len(listed.Tasks))
+	}
 	long := listed.Tasks[0]
 	mustTaskJSON(t, db, "default", &shown, "", "show", strconv.FormatInt(long.ID, 10))
 	text, _, _ := runTask(t, db, "default", false, "", "show", strconv.FormatInt(long.ID, 10))
@@ -270,11 +280,34 @@ func TestTaskCutShortensToNCharactersAndNeverSplitsOne(t *testing.T) {
 		{"h\U000000e9llo w\U000000f6rld", 5, "h\U000000e9ll" + ellipsis},
 		{"h\U000000e9llo", 5, "h\U000000e9llo"},
 		{"\U0001f600\U0001f600\U0001f600", 2, "\U0001f600" + ellipsis},
+		// No room at all: nothing, and never a panic.
+		{"ab", 0, ""},
+		{"ab", -1, ""},
+		{"", 0, ""},
+		{"", -1, ""},
+		{"ab", -1 << 30, ""},
 	} {
 		got := taskCut(c.in, c.n)
-		if got != c.want || !utf8.ValidString(got) || utf8.RuneCountInString(got) > c.n {
+		if got != c.want || !utf8.ValidString(got) || utf8.RuneCountInString(got) > max(c.n, 0) {
 			t.Errorf("taskCut(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
 		}
+	}
+}
+
+// The cut of an argument that an error message repeats is the same cut, at the length that
+// message allows: one rule for the ellipsis, not two copies of it.
+func TestTaskCutArgIsTaskCutAtTheEchoLength(t *testing.T) {
+	for _, in := range []string{
+		"", "short", strings.Repeat("9", echoRunes-1), strings.Repeat("9", echoRunes), strings.Repeat("9", echoRunes+1),
+		strings.Repeat("x", 10<<10), strings.Repeat("\U000000e9", 5<<10), strings.Repeat("\U0001f600", echoRunes+1),
+		strings.Repeat("\xff\xfe", 100), "a\x1b[31mred\x00",
+	} {
+		if got, want := cutArg(in), taskCut(in, echoRunes); got != want {
+			t.Errorf("cutArg(%.20q...) = %.40q, want what taskCut gives, %.40q", in, got, want)
+		}
+	}
+	if got := cutArg(strings.Repeat("9", echoRunes+1)); got != strings.Repeat("9", echoRunes-1)+ellipsis {
+		t.Errorf("a long argument is cut to %d characters ending in the ellipsis: %q", echoRunes, got)
 	}
 }
 
@@ -290,23 +323,6 @@ func TestTaskAgeUsesTheLargestWholeUnit(t *testing.T) {
 	} {
 		if got := taskAge(now.Add(-c.ago), now); got != c.want {
 			t.Errorf("a task from %v ago is %q, want %q", c.ago, got, c.want)
-		}
-	}
-}
-
-func TestTaskHeldNoteSaysWhoHoldsATaskAndWhetherTheClaimHasRunOut(t *testing.T) {
-	until := time.Date(2026, 10, 6, 14, 30, 0, 0, time.UTC)
-	for _, c := range []struct {
-		name  string
-		claim *tasks.Claim
-		want  string
-	}{
-		{"no claim", nil, ""},
-		{"a live claim", &tasks.Claim{By: "bot", Until: until}, "bot until " + until.Local().Format("15:04")},
-		{"a stale claim", &tasks.Claim{By: "bot", Until: until, Stale: true}, "stale: bot"},
-	} {
-		if got := heldNote(tasks.Task{Claim: c.claim}); got != c.want {
-			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 	}
 }
