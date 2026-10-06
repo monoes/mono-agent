@@ -242,6 +242,11 @@ func refStates(t *testing.T, what, pattern, want string) {
 	}
 }
 
+// refNames says whether a text names a command as a word: "unarchive" does not name "archive".
+func refNames(text, word string) bool {
+	return regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`).MatchString(text)
+}
+
 // thousands writes n (at least 1,000) the way the texts do: 2,000.
 func thousands(n int) string { return fmt.Sprintf("%d,%03d", n/1000, n%1000) }
 
@@ -351,10 +356,10 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 		if got := refusal(c...); got != "operator_only" {
 			t.Errorf("`task %s` run by an agent answers %q, but `ref tasks` gives it to the operator", c[0], got)
 		}
-		if !strings.Contains(operator[1], c[0]) {
+		if !refNames(operator[1], c[0]) {
 			t.Errorf("the operator's sentence of `ref tasks` does not name %q", c[0])
 		}
-		if c[0] != "add" && strings.Contains(agent[1], c[0]) {
+		if c[0] != "add" && refNames(agent[1], c[0]) {
 			t.Errorf("the agent's sentence of `ref tasks` names %q, which an agent may not run", c[0])
 		}
 	}
@@ -362,7 +367,7 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 		if got := refusal(c...); got == "operator_only" {
 			t.Errorf("`task %s` run by an agent is refused as operator_only, but `ref tasks` gives it to agents", c[0])
 		}
-		if !strings.Contains(agent[1], c[0]) {
+		if !refNames(agent[1], c[0]) {
 			t.Errorf("the agent's sentence of `ref tasks` does not name %q", c[0])
 		}
 	}
@@ -416,7 +421,7 @@ func TestRefTasksJSONSectionShowsTheDocumentsTheCommandsPrint(t *testing.T) {
 		}
 		stated := false
 		for _, line := range strings.Split(jsonText, "\n") {
-			stated = stated || strings.Contains(line, step.doc) && strings.Contains(line, step.word)
+			stated = stated || strings.Contains(line, step.doc) && refNames(line, step.word)
 		}
 		if !stated {
 			t.Errorf("the JSON section of `ref tasks` has no line that gives %s for %q", step.doc, step.word)
