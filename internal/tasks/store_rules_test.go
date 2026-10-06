@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -194,6 +195,84 @@ func TestErrorsRepeatAtMostSixtyFourRunesOfWhatTheCallerSent(t *testing.T) {
 		if len(msg) > 400 || strings.Contains(msg, strings.Repeat("x", 64)) || !strings.Contains(msg, strings.Repeat("x", 63)+"\U00002026") {
 			t.Errorf("%s: a message of %d bytes, want the caller's text cut to 63 runes and an ellipsis", c.name, len(msg))
 		}
+	}
+}
+
+// CheckAgentName is the store's judge of the name an agent acts under, for a surface that has to judge
+// one before it opens the database (the CLI before it runs a command, a server before it starts). It must
+// say what the store says, the same refusals (ErrInvalid) in the same words, and the test holds the store's
+// own callers to them (the verbs of an agent, and an add) so that the two cannot drift apart. A name is
+// 1-64 characters of letters, digits and . _ # @ : -, and the labels you, agent, capture, chrome and os are
+// reserved in any case (spec 5.1). An empty name is no name: the judge refuses it like any other name
+// outside the shape, and whether an agent may go without one is the caller's business, which the verbs and
+// an add decide before they ask: a verb says that the agent needs a name, an add lets it through as agent.
+func TestCheckAgentNameJudgesANameAsTheStoreDoes(t *testing.T) {
+	const shape = "invalid input: an agent name is 1-64 characters of letters, digits and . _ # @ : -"
+	reserved := func(name string) string {
+		return fmt.Sprintf("invalid input: an agent may not be named %q: you, agent, capture, chrome and os are reserved", name)
+	}
+	s, db, _ := newTestStore(t)
+	for _, name := range []string{
+		"claude-7f3a", "agent:claude-code#a3f9", "a.b_c@d", "A", "yo", "you2", "my-agent", "agent-7", "agents", "os.bot", "chrome#1", "capture:2",
+		strings.Repeat("n", MaxNameLen),
+	} {
+		if err := CheckAgentName(name); err != nil {
+			t.Errorf("CheckAgentName(%.40q) = %v, want the name let through", name, err)
+		}
+		if err := needName(bot(name)); err != nil {
+			t.Errorf("a verb of an agent named %.40q: %v, want the name let through", name, err)
+		}
+	}
+
+	type refusal struct{ what, name, want string }
+	refused := []refusal{
+		{"an empty name", "", shape},
+		{"one character more than a name may have", strings.Repeat("n", MaxNameLen+1), shape},
+		{"a name of 100,000 characters", strings.Repeat("n", 100000), shape},
+		{"a space", "bad name", shape},
+		{"a semicolon", "semi;colon", shape},
+		{"a newline", "bad\nname", shape},
+		{"a tab", "bad\tname", shape},
+		{"an escape byte", "a\x1b[31m", shape},
+		{"a NUL after a reserved label", "os\x00", shape},
+		{"a space before a reserved label", " you", shape},
+		{"a space after a reserved label", "you ", shape},
+		{"a newline after a reserved label", "you\n", shape},
+		{"an accented letter", "caf\U000000e9", shape},
+		{"a Cyrillic o in you", "y\U0000043eu", shape},
+		{"a zero-width space after you", "you\U0000200b", shape},
+		{"a full-width o in you", "y\U0000ff4fu", shape},
+		{"the Kelvin sign in a name", "\U0000212aey", shape},
+		{"a combining accent after agent", "agent\U00000301", shape},
+		{"a bidi override", "a\U0000202eb", shape},
+	}
+	for _, name := range []string{
+		"you", "You", "YOU", "yOu", "agent", "Agent", "AGENT", "capture", "Capture", "CAPTURE", "chrome", "Chrome", "CHROME", "os", "Os", "oS", "OS",
+	} {
+		refused = append(refused, refusal{"the reserved label " + name, name, reserved(name)})
+	}
+	for _, c := range refused {
+		if err := CheckAgentName(c.name); !errors.Is(err, ErrInvalid) || err.Error() != c.want {
+			t.Errorf("CheckAgentName(%.40q), %s: %v, want ErrInvalid saying %q", c.name, c.what, err, c.want)
+		}
+		if c.name == "" {
+			continue // the caller's business, below
+		}
+		if err := needName(bot(c.name)); err == nil || err.Error() != c.want {
+			t.Errorf("a verb of an agent named %.40q, %s: %v, want the words of CheckAgentName", c.name, c.what, err)
+		}
+		if _, _, err := s.Add(bg, "default", AddInput{Title: "t"}, bot(c.name)); err == nil || err.Error() != c.want {
+			t.Errorf("an add by an agent named %.40q, %s: %v, want the words of CheckAgentName", c.name, c.what, err)
+		}
+	}
+	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
+		t.Errorf("%d tasks were stored by agents with a refused name", n)
+	}
+	if err := needName(bot("")); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "needs a name") {
+		t.Errorf("a verb of an agent with no name: %v, want ErrInvalid saying that it needs a name", err)
+	}
+	if task, _, err := s.Add(bg, "default", AddInput{Title: "t"}, bot("")); err != nil || task.LastEvent == nil || task.LastEvent.Actor != "agent" {
+		t.Errorf("an add by an agent with no name: last event %+v, err %v, want it let through as agent", task.LastEvent, err)
 	}
 }
 

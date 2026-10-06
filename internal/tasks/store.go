@@ -264,12 +264,18 @@ func storedTime(what, text string) (time.Time, error) {
 // the operator's, an unnamed agent's and the capture surfaces'.
 var reservedNames = []string{"you", "agent", "capture", SourceChrome, SourceOS}
 
-// checkAgentName refuses a name an agent may not act under: one outside the
-// alphabet and the length of a name, and one that equals a reserved label in any
-// case (a label is read by eye, and an agent that took one would write events
-// that read as the operator's or a capture's). It is for a name that is there;
-// whether an agent may go without one is the caller's business.
-func checkAgentName(name string) error {
+// CheckAgentName refuses a name an agent may not act under: one outside the
+// alphabet and the length of a name (1 to MaxNameLen characters of letters,
+// digits and . _ # @ : -), and one that equals a reserved label in any case
+// (a label is read by eye, and an agent that took one would write events that
+// read as the operator's or a capture's). It is the rule the store itself
+// applies, exported for a surface that has to judge a name before it opens the
+// database: the refusal is an error that matches ErrInvalid, in the store's
+// words. It is for a name that is there: an empty name is refused like any
+// other outside the shape, and whether an agent may go without a name at all
+// is the caller's business (an add lets an unnamed agent through, as "agent";
+// a claim refuses it).
+func CheckAgentName(name string) error {
 	if !nameRE.MatchString(name) {
 		return invalid("an agent name is 1-%d characters of letters, digits and . _ # @ : -", MaxNameLen)
 	}
@@ -379,7 +385,7 @@ func (s *Store) Add(ctx context.Context, profileID string, in AddInput, actor Ac
 		return Task{}, false, err
 	}
 	if actor.Kind == Agent && actor.Name != "" {
-		if err := checkAgentName(actor.Name); err != nil {
+		if err := CheckAgentName(actor.Name); err != nil {
 			return Task{}, false, err
 		}
 	}

@@ -45,7 +45,7 @@ func leaseEnd(now time.Time, d time.Duration) time.Time {
 
 // needName refuses what is not an agent with a usable name: a claim is held under a name, the same one
 // for the whole task, and an event shows it, so it may not be a label the store writes for someone else
-// (checkAgentName).
+// (CheckAgentName).
 func needName(a Actor) error {
 	switch {
 	case a.Kind != Agent:
@@ -53,7 +53,7 @@ func needName(a Actor) error {
 	case a.Name == "":
 		return invalid("an agent needs a name: pass --as NAME, the same one for the whole task")
 	}
-	return checkAgentName(a.Name)
+	return CheckAgentName(a.Name)
 }
 
 // pickNext is the id of the task Next would take at now (UTC): the top of Ready, else the stale claim whose
