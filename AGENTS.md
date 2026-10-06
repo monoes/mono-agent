@@ -1236,10 +1236,12 @@ monoagentcli --profile work task digest     # for a session-start hook; silent i
 
 A claim is a lease (30 minutes by default, `--lease` up to 24 hours). A
 comment extends it to 30 minutes from the comment, if that is later, and
-never shortens it: with a long `--lease`, comment before its last 30
-minutes, or run `claim ID --lease` again. A claim that has run out may be
-taken over by another agent, and a task another agent holds answers
-`claimed`.
+never shortens it (it does not add the `--lease` you asked for), so with a
+long `--lease` a comment changes nothing until fewer than 30 minutes of it
+remain: comment then, or run `claim ID --as NAME --lease DURATION` again,
+which extends the claim to that lease counted from then, if that is later.
+A claim that has run out may be taken over by another agent, and a task
+another agent holds answers `claimed`.
 
 Limits: 2,000 open tasks per profile (every task that is not archived,
 Done ones included: archive some to make room) and 20 tasks an hour

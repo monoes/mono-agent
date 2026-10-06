@@ -98,8 +98,9 @@ func newTaskNextCmd(cfg *globalConfig) *cobra.Command {
 out. Without --claim it only looks: two agents that look may see the same task.
 With --claim and --as NAME it takes the task for you in one step, so two agents
 never get the same one. A claim lasts 30 minutes by default (--lease, at most
-24h) and is renewed by your comments. Nothing ready: the text says so, and
---json gives a null task.`,
+24h); a comment of yours extends it to 30 minutes from the comment, if that is
+later, and never shortens it. Nothing ready: the text says so, and --json gives
+a null task.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			caller := callerFor(flagAs(cmd))
 			actor := caller.actor
@@ -135,7 +136,7 @@ never get the same one. A claim lasts 30 minutes by default (--lease, at most
 		},
 	}
 	cmd.Flags().BoolVar(&claim, "claim", false, "Take the task for yourself (needs --as NAME)")
-	cmd.Flags().DurationVar(&lease, "lease", 0, "How long you hold it, renewed by your comments (default 30m, at most 24h)")
+	cmd.Flags().DurationVar(&lease, "lease", 0, "How long you hold it (default 30m, at most 24h); a comment extends it to 30 minutes from the comment, if that is later")
 	return cmd
 }
 
@@ -177,7 +178,7 @@ func newTaskClaimCmd(cfg *globalConfig) *cobra.Command {
 func newTaskCommentCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "comment ID TEXT... [--as NAME]",
-		Short: "Add a note to a task: your own, or an AI agent's progress report (renews its lease)",
+		Short: "Add a note to a task: your own, or an AI agent's progress report (extends its lease to 30 minutes from the comment, if that is later)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The comment is the operator's only when nothing says that an agent runs the command:
 			// not a marker, not --as (a blank one too), not MONOAGENT_ACTOR. An agent's comment is its own.
