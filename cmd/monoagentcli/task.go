@@ -53,6 +53,12 @@ monoagentcli ref tasks`,
 		newTaskApproveCmd(cfg),
 		newTaskArchiveCmd(cfg),
 		newTaskUnarchiveCmd(cfg),
+		newTaskNextCmd(cfg),
+		newTaskClaimCmd(cfg),
+		newTaskCommentCmd(cfg),
+		newTaskFinishCmd(cfg),
+		newTaskReleaseCmd(cfg),
+		newTaskDigestCmd(cfg),
 	)
 	for _, sub := range cmd.Commands() {
 		withJSONErrors(cfg, sub)
