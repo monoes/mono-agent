@@ -10,6 +10,12 @@ import (
 func TestCleanText(t *testing.T) {
 	cases := []struct{ name, in, want string }{
 		{"line ends", "a\r\nb\rc", "a\nb\nc"},
+		// The line and paragraph separators are line ends too: the printers split on \n only, and a renderer that
+		// breaks lines on U+2028 and U+2029 would show the rest of a line at the margin.
+		{"line and paragraph separators", "a\U00002028b\U00002029c", "a\nb\nc"},
+		{"separators next to other line ends", "a\U00002028\U00002029\r\nb", "a\n\n\nb"},
+		{"separators at the ends are trimmed", " \U00002028 a \U00002029 ", "a"},
+		{"only separators", "\U00002028\U00002029", ""},
 		{"escape byte", "red \x1b[31mtext\x1b[0m", "red [31mtext[0m"},
 		{"tab and newline stay", "a\tb\nc", "a\tb\nc"},
 		{"other controls", "a\x00b\x07c\x7fd", "abcd"},
@@ -35,6 +41,52 @@ func TestCleanText(t *testing.T) {
 				t.Errorf("cleanText(%q) is not valid UTF-8", c.in)
 			}
 		})
+	}
+}
+
+// Some invisible characters are kept on purpose, because the text of a language or of an emoji needs them:
+// the zero-width non-joiner and joiner (Persian, Indic scripts, emoji sequences), the left-to-right and
+// right-to-left marks (Hebrew and Arabic next to Latin text) and the Arabic letter mark. Each is kept
+// alone, in a title as in a text, and a mutation that cleans one away fails on that one.
+func TestTheInvisibleCharactersThatLanguagesNeedAreKept(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		mark string
+	}{
+		{"zero-width non-joiner U+200C", "\U0000200c"},
+		{"zero-width joiner U+200D", "\U0000200d"},
+		{"left-to-right mark U+200E", "\U0000200e"},
+		{"right-to-left mark U+200F", "\U0000200f"},
+		{"Arabic letter mark U+061C", "\U0000061c"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			in := "a" + c.mark + "b"
+			if got := cleanText(in); got != in {
+				t.Errorf("cleanText(%q) = %q, want it kept", in, got)
+			}
+			if got := cleanTitle("a " + c.mark + "b"); got != "a "+c.mark+"b" {
+				t.Errorf("cleanTitle kept %q, want %q", got, "a "+c.mark+"b")
+			}
+		})
+	}
+}
+
+// A title is one line: the line and paragraph separators collapse with the other white space, as a newline
+// does, and the text that a title is derived from ends its first line at one.
+func TestTheLineAndParagraphSeparatorsCollapseInATitleAndEndTheFirstLineOfATextTitle(t *testing.T) {
+	for _, in := range []string{"one\U00002028two\U00002029three", "one \U00002028 two\U00002029\U00002028three", "\U00002028one\ntwo\U00002029three\U00002029"} {
+		if got := cleanTitle(in); got != "one two three" {
+			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, "one two three")
+		}
+	}
+	for _, c := range []struct{ name, text, wantTitle, wantNotes string }{
+		{"a line separator", "Reply to Sam\U00002028about the invoice", "Reply to Sam", "Reply to Sam\nabout the invoice"},
+		{"a paragraph separator", "Reply to Sam\U00002029about the invoice", "Reply to Sam", "Reply to Sam\nabout the invoice"},
+	} {
+		title, notes, err := deriveTitleNotes("", "", c.text)
+		if err != nil || title != c.wantTitle || notes != c.wantNotes {
+			t.Errorf("%s: got (%q, %q, %v), want (%q, %q)", c.name, title, notes, err, c.wantTitle, c.wantNotes)
+		}
 	}
 }
 

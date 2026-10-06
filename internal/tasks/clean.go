@@ -28,9 +28,13 @@ func hidden(r rune) bool {
 }
 
 // cleanText makes text safe to store and to print: invalid UTF-8 becomes
-// U+FFFD, line ends become \n, control characters other than \n and \t and the
-// hidden characters are dropped (an escape byte would otherwise reach a
-// terminal), and the ends are trimmed.
+// U+FFFD, line ends (CRLF, CR and the Unicode line and paragraph separators
+// U+2028 and U+2029, which the printers would not split on) become \n, control
+// characters other than \n and \t and the hidden characters are dropped (an
+// escape byte would otherwise reach a terminal), and the ends are trimmed. The
+// characters that languages and emoji need are kept: the zero-width joiners
+// U+200C and U+200D, the marks U+200E and U+200F and the Arabic letter mark
+// U+061C.
 func cleanText(s string) string {
 	s = strings.ToValidUTF8(s, "\ufffd")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
@@ -39,6 +43,8 @@ func cleanText(s string) string {
 		switch {
 		case r == '\n' || r == '\t':
 			return r
+		case r == 0x2028, r == 0x2029:
+			return '\n'
 		case unicode.IsControl(r), hidden(r):
 			return -1
 		}
