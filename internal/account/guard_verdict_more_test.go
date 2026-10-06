@@ -3,6 +3,7 @@ package account_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -91,5 +92,41 @@ func TestStatusIsTheVerdictOfTheStoredSessionAndRequireFollowsIt(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A session the guard keeps through reads that fail is still judged by the
+// clock: it goes from ok to grace, and from grace to locked(expired), on
+// schedule, with the file unreadable and no poll succeeding. Keeping a session
+// through a bad read must not freeze its verdict.
+func TestASessionKeptThroughFailingReadsStillExpiresOnSchedule(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(10*time.Minute, time.Hour) // iat 10 minutes ago: ok for 50 more, grace for 23h50m
+	cs := newCountingStore(account.OpenStore(e.dir, e.seal))
+	g := e.guardOver(cs, time.Second) // so that steps a second apart are each a due poll
+	start := e.f.Clock.Now()
+	if st := g.Status(); st.State != account.StateOK {
+		t.Fatalf("Status = %s, want ok", describeStatus(st))
+	}
+	e.corrupt() // from now on every read fails
+	steps := []struct {
+		at     time.Duration
+		state  account.State
+		reason account.Reason
+	}{
+		{time.Second, account.StateOK, ""},
+		{49*time.Minute + 59*time.Second, account.StateOK, ""},
+		{50 * time.Minute, account.StateGrace, account.ReasonUnreachable},
+		{23*time.Hour + 49*time.Minute + 59*time.Second, account.StateGrace, account.ReasonUnreachable},
+		{23*time.Hour + 50*time.Minute, account.StateLocked, account.ReasonExpired},
+		{48 * time.Hour, account.StateLocked, account.ReasonExpired},
+	}
+	for i, s := range steps {
+		e.f.Clock.Set(start.Add(s.at))
+		if st := g.Status(); st.State != s.state || st.Reason != s.reason {
+			t.Fatalf("at +%v with the file unreadable: Status = %s, want %s/%q", s.at, describeStatus(st), s.state, s.reason)
+		}
+		// Every one of these calls was a due poll that read the file and failed.
+		cs.expectReads(t, fmt.Sprintf("at +%v", s.at), 2+i, 2+i)
 	}
 }

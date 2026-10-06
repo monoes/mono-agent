@@ -272,7 +272,7 @@ func TestAReadThatFailsNeverChangesAWorkingVerdict(t *testing.T) {
 // A guard that could not read the file tries again at every poll, whatever the
 // file's modification time says: a repair can land within the same tick of a
 // coarse file-system clock as the damage did. (What the guard keeps from a bad
-// read is the error, until a read succeeds, and never the modification time.)
+// read is the error, until a read succeeds.)
 func TestAFailedReadIsRetriedAtEveryPollWhateverTheModificationTime(t *testing.T) {
 	e := newEnv(t)
 	mtime := e.corrupt()
