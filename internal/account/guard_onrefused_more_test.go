@@ -3,6 +3,8 @@ package account_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -79,6 +81,58 @@ func TestALateOnRefusedCallbackIsCalledOnceWithTheRefusalAndNoOtherIsCalledAgain
 	quiet()
 	if len(late) != 0 || len(early) != 0 {
 		t.Fatalf("a callback was called again: %d for the late one, %d for the early one", len(late), len(early))
+	}
+}
+
+// A refusal the guard noted can be over in the file before the guard has looked
+// again. A callback registered then is called only if the refusal is still in
+// effect once the guard has looked: it is not told of a refusal that has ended.
+func TestALateOnRefusedCallbackIsNotCalledOnceTheRefusalHasEnded(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		end    func(*env)
+		state  account.State
+		reason account.Reason
+	}{
+		{"another process signs in", func(e *env) { e.signIn(10*time.Minute, time.Hour) }, account.StateOK, ""},
+		{"the login is removed", func(e *env) {
+			if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
+				e.t.Fatal(err)
+			}
+		}, account.StateLocked, account.ReasonNotLoggedIn},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.refuse()
+			early := make(chan account.Status, 4)
+			e.g.OnRefused(func(st account.Status) { early <- st })
+			receive(t, early, "the refusal that was already stored")
+
+			// The refusal ends in the file. This guard has not looked: its poll is
+			// due, and nothing has called Status since.
+			c.end(e)
+			e.f.Clock.Advance(account.PollInterval)
+			late := make(chan account.Status, 4)
+			e.g.OnRefused(func(st account.Status) { late <- st })
+			quiet()
+			if len(late) != 0 {
+				t.Fatalf("a callback registered after the refusal ended was called with %s", describeStatus(<-late))
+			}
+			if st := e.g.Status(); st.State != c.state || st.Reason != c.reason {
+				t.Fatalf("Status = %s, want %s/%q", describeStatus(st), c.state, c.reason)
+			}
+
+			// The next refusal reaches both callbacks, once each.
+			e.refuse()
+			e.f.Clock.Advance(account.PollInterval)
+			e.g.Status()
+			receive(t, early, "the early callback in the next refusal")
+			receive(t, late, "the late callback in the next refusal")
+			quiet()
+			if len(early) != 0 || len(late) != 0 {
+				t.Fatalf("a callback was called twice for the next refusal (%d, %d extra)", len(early), len(late))
+			}
+		})
 	}
 }
 

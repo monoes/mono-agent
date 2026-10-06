@@ -269,10 +269,11 @@ func TestAReadThatFailsNeverChangesAWorkingVerdict(t *testing.T) {
 	}
 }
 
-// A guard that could not read the file tries again at every poll, whether or not
-// the modification time moved: a repair can land within the same tick of a
-// coarse file-system clock as the damage did.
-func TestAFailedReadIsRetriedAtEveryPollAndNeverRemembered(t *testing.T) {
+// A guard that could not read the file tries again at every poll, whatever the
+// file's modification time says: a repair can land within the same tick of a
+// coarse file-system clock as the damage did. (What the guard keeps from a bad
+// read is the error, until a read succeeds, and never the modification time.)
+func TestAFailedReadIsRetriedAtEveryPollWhateverTheModificationTime(t *testing.T) {
 	e := newEnv(t)
 	mtime := e.corrupt()
 	cs := newCountingStore(account.OpenStore(e.dir, e.seal))
@@ -295,6 +296,32 @@ func TestAFailedReadIsRetriedAtEveryPollAndNeverRemembered(t *testing.T) {
 	e.f.Clock.Advance(account.PollInterval)
 	if st := g.Status(); st.State != account.StateOK || !st.IssuedAt.Equal(sess.HW) {
 		t.Fatalf("Status = %s after the repair, want ok and the repaired session", describeStatus(st))
+	}
+}
+
+// A guard whose first read failed has nothing cached, and a file that is then
+// removed has the very modification time the guard holds for it (none). The
+// guard must still look, or it would report an unreadable login for good, for
+// a file that no longer exists.
+func TestAFailedFirstReadDoesNotStickOnceTheFileIsRemoved(t *testing.T) {
+	e := newEnv(t)
+	e.corrupt()
+	if st := e.g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonInvalid {
+		t.Fatalf("Status = %s, want locked/invalid", describeStatus(st))
+	}
+	if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
+		t.Fatal(err)
+	}
+	for poll := 1; poll <= 3; poll++ {
+		e.f.Clock.Advance(account.PollInterval)
+		if st := e.g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn {
+			t.Fatalf("poll %d after the file was removed: Status = %s, want locked/not_logged_in", poll, describeStatus(st))
+		}
+	}
+	e.signIn(10*time.Minute, time.Hour)
+	e.f.Clock.Advance(account.PollInterval)
+	if st := e.g.Status(); st.State != account.StateOK {
+		t.Fatalf("after a sign-in: Status = %s, want ok", describeStatus(st))
 	}
 }
 

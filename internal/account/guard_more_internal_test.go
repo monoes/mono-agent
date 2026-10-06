@@ -36,6 +36,45 @@ func (c *stepClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// pausedStore holds one Load half way: the call has read the file, and it
+// returns only when it is let go. It stands for a reload that is slow to finish.
+type pausedStore struct {
+	Store
+
+	mu      sync.Mutex
+	armed   bool
+	read    chan struct{} // closed once the held Load has read the file
+	release chan struct{} // the held Load returns when this is closed
+	once    sync.Once
+}
+
+func newPausedStore(s Store) *pausedStore {
+	return &pausedStore{Store: s, read: make(chan struct{}), release: make(chan struct{})}
+}
+
+// hold makes the next Load a held one.
+func (s *pausedStore) hold() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed = true
+}
+
+// let lets the held Load go.
+func (s *pausedStore) let() { s.once.Do(func() { close(s.release) }) }
+
+func (s *pausedStore) Load() (*Session, error) {
+	sess, err := s.Store.Load()
+	s.mu.Lock()
+	held := s.armed
+	s.armed = false
+	s.mu.Unlock()
+	if held {
+		close(s.read)
+		<-s.release
+	}
+	return sess, err
+}
+
 func TestAdoptReplacesTheCachedSessionAndItsVerification(t *testing.T) {
 	clock := newStepClock()
 	SetEnforceFromForTest(t, clock.Now().Add(-24*time.Hour))
@@ -102,6 +141,100 @@ func TestAdoptEndsTheMemoryOfAFailedRead(t *testing.T) {
 	g.adopt(nil)
 	if st := g.Status(); st.State != StateLocked || st.Reason != ReasonNotLoggedIn {
 		t.Fatalf("Status = %s/%q after adopt(nil), want locked/not_logged_in", st.State, st.Reason)
+	}
+}
+
+// adopt waits for a reload that is in progress. A reload that read the file
+// before this process wrote its session, and that finishes after adopt, would
+// put its older read over the adopted one: a refusal this process has just
+// learned would become the old login again until the next poll, and OnRefused
+// would fire for the refusal a second time.
+func TestAdoptWaitsForAReloadInProgressSoAnOlderReadCannotOverwriteIt(t *testing.T) {
+	clock := newStepClock()
+	SetEnforceFromForTest(t, clock.Now().Add(-24*time.Hour))
+	token := mintToken(t, clock.Now().Add(-10*time.Minute))
+	base := OpenStore(filepath.Join(t.TempDir(), "account"), NewMemorySealer())
+	saved := 0
+	save := func(sess *Session) { // every write gets a modification time no earlier write had
+		t.Helper()
+		if err := base.Save(sess); err != nil {
+			t.Fatal(err)
+		}
+		saved++
+		at := time.Now().Add(time.Duration(saved) * time.Second)
+		if err := os.Chtimes(filepath.Join(base.Dir(), sessionFile), at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	login := func() *Session {
+		return &Session{V: 1, Host: HostURL, AccessToken: token, User: &User{ID: "u-1"}, HW: clock.Now().Add(-10 * time.Minute)}
+	}
+	save(login())
+	store := newPausedStore(base)
+	t.Cleanup(store.let)
+	g := NewGuard(GuardOptions{Store: store, Now: clock.Now})
+	t.Cleanup(g.Close)
+	fired := make(chan Status, 8)
+	g.OnRefused(func(st Status) { fired <- st })
+	if st := g.Status(); st.State != StateOK {
+		t.Fatalf("Status = %s/%q, want ok", st.State, st.Reason)
+	}
+
+	// Another process writes the login again, and the guard's next poll reads it:
+	// that reload is held after it has read the file.
+	save(login())
+	clock.Advance(PollInterval)
+	store.hold()
+	reloaded := make(chan struct{})
+	go func() {
+		g.pollIfDue(clock.Now())
+		close(reloaded)
+	}()
+	select {
+	case <-store.read:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the reload never read the file")
+	}
+
+	// This process is refused. As the refresh code does, it writes the session,
+	// adopts it and asks for the verdict.
+	refused := &Session{V: 1, Host: HostURL, User: &User{ID: "u-1"}, State: stateRefused, LastResult: "refused"}
+	save(refused)
+	adopted := make(chan struct{})
+	go func() {
+		g.adopt(refused)
+		g.Status()
+		close(adopted)
+	}()
+	// A negative wait of 150 ms, above the 100 ms floor for a test that waits on
+	// real time: an adopt that does not wait for the reload is done by now, with
+	// the older read still to come.
+	select {
+	case <-adopted:
+	case <-time.After(150 * time.Millisecond):
+	}
+	store.let()
+	for _, done := range []chan struct{}{reloaded, adopted} {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("the reload and the adopt did not both finish once the read was let go")
+		}
+	}
+
+	if sess, _ := g.cached(); sess != refused {
+		t.Error("the cached session is not the adopted refusal: the older read was assigned after it")
+	}
+	if st := g.Status(); st.State != StateLocked || st.Reason != ReasonRefused {
+		t.Errorf("Status = %s/%q right after, want locked/refused", st.State, st.Reason)
+	}
+	clock.Advance(PollInterval)
+	if st := g.Status(); st.State != StateLocked || st.Reason != ReasonRefused {
+		t.Errorf("Status = %s/%q at the next poll, want locked/refused", st.State, st.Reason)
+	}
+	time.Sleep(150 * time.Millisecond) // a refusal told a second time is told within moments
+	if n := len(fired); n != 1 {
+		t.Errorf("OnRefused fired %d times for one refusal, want 1", n)
 	}
 }
 

@@ -119,7 +119,8 @@ func (g *Guard) Require(ctx context.Context) error {
 // (EnsureFresh, Refresh or the refresher) or a re-read of a session.json that
 // another process marked refused (noticed by Status or by the refresher).
 // Any number of callbacks may be registered and every one fires. A refusal
-// already in effect calls fn at once. Each call runs on its own goroutine,
+// already in effect calls fn at once; one that has ended since the guard noted
+// it does not (the guard looks first). Each call runs on its own goroutine,
 // after the guard's locks are released, so a slow callback blocks nothing and
 // may take locks the caller of Status holds.
 func (g *Guard) OnRefused(fn func(Status)) {
@@ -128,7 +129,11 @@ func (g *Guard) OnRefused(fn func(Status)) {
 	already := g.refusedNoted
 	g.mu.Unlock()
 	if already {
-		go fn(g.Status())
+		// The refusal the guard noted may be over in the file: look, and call fn
+		// only if it is still in effect.
+		if st := g.Status(); st.State == StateLocked && st.Reason == ReasonRefused {
+			go fn(st)
+		}
 		return
 	}
 	g.Status() // a refusal in the stored session fires every callback, this one included
@@ -169,7 +174,10 @@ func (g *Guard) reload(force bool) {
 	defer g.reloadMu.Unlock()
 	mt, err := g.store.Mtime()
 	g.mu.Lock()
-	unchanged := g.loaded && err == nil && mt.Equal(g.mtime)
+	// After a failed read the guard reads again at every poll, whatever the
+	// modification time says: with nothing cached, a file that is removed since
+	// has the very modification time (none) that the guard holds for it.
+	unchanged := g.loaded && g.loadErr == nil && err == nil && mt.Equal(g.mtime)
 	g.mu.Unlock()
 	if unchanged && !force {
 		return
@@ -191,8 +199,11 @@ func (g *Guard) reload(force bool) {
 }
 
 // adopt makes sess, which the caller has just read or written under the file
-// lock, the cached session.
+// lock, the cached session. It waits for a reload in progress: a read that
+// began before the caller's write must not be assigned after it.
 func (g *Guard) adopt(sess *Session) {
+	g.reloadMu.Lock()
+	defer g.reloadMu.Unlock()
 	mt, _ := g.store.Mtime()
 	g.mu.Lock()
 	defer g.mu.Unlock()
