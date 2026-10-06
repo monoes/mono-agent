@@ -388,9 +388,15 @@ func stateOf(spent float64, alloc *float64) BudgetState {
 func (s *ScopeBudget) finish(ev *ScopeBudget) {
 	s.State = stateOf(s.SpentUSD, s.AllocationUSD)
 	if s.AllocationUSD != nil {
-		f := s.SpentUSD / *s.AllocationUSD
 		r := round6(*s.AllocationUSD - s.SpentUSD)
-		s.Fraction, s.RemainingUSD = &f, &r
+		s.RemainingUSD = &r
+		// The root reserve can be zero when sections use the entire org
+		// allocation. A percentage has no meaning then; omit it rather
+		// than producing NaN/Inf, which cannot be encoded as JSON.
+		if *s.AllocationUSD > 0 {
+			f := s.SpentUSD / *s.AllocationUSD
+			s.Fraction = &f
+		}
 	}
 	if ev != nil {
 		s.WarnedAt, s.ClosedAt, s.ReopenedAt, s.SoftClosed = ev.WarnedAt, ev.ClosedAt, ev.ReopenedAt, ev.SoftClosed

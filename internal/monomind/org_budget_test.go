@@ -167,6 +167,34 @@ func TestSectionBudgets_ToleratesJunk(t *testing.T) {
 	}
 }
 
+func TestSectionBudgets_ZeroReserveEncodesJSON(t *testing.T) {
+	for _, sectionUSD := range []float64{1, 2} {
+		for _, rootSpend := range []float64{0, 0.1} {
+			t.Run(fmt.Sprintf("section_%g_root_spend_%g", sectionUSD, rootSpend), func(t *testing.T) {
+				def := []byte(fmt.Sprintf(`{"roles":[{"id":"boss","type":"boss","reports_to":null},{"id":"worker","reports_to":"boss"}],"sections":{"work":{"members":["worker"],"budget":{"usd":%g}}},"run_config":{"budget_usd":1}}`, sectionUSD))
+				event := []byte(fmt.Sprintf(`{"type":"usage","from":"boss","data":{"cost_usd":%g}}`, rootSpend))
+				rep, err := SectionBudgets(def, [][]byte{event})
+				if err != nil {
+					t.Fatal(err)
+				}
+				reserve := rep.Reserve
+				if reserve == nil || reserve.AllocationUSD == nil || *reserve.AllocationUSD != 0 {
+					t.Fatalf("reserve = %+v, want zero allocation", reserve)
+				}
+				if reserve.Fraction != nil || reserve.State != BudgetClosed || reserve.RemainingUSD == nil || !near(*reserve.RemainingUSD, -rootSpend) {
+					t.Errorf("zero reserve = %+v, want closed with no fraction and remaining %g", reserve, -rootSpend)
+				}
+				if !near(rep.Total.SpentUSD, rootSpend) {
+					t.Errorf("total spent = %g, want %g", rep.Total.SpentUSD, rootSpend)
+				}
+				if _, err := json.Marshal(rep); err != nil {
+					t.Fatalf("budget report must encode for CLI and GUI: %v", err)
+				}
+			})
+		}
+	}
+}
+
 // OrgBudget end to end through the replaying fake monomind: the definition
 // from the project, the events from `org events` (recorded run).
 func TestOrgBudget_ThroughOrgEvents(t *testing.T) {
