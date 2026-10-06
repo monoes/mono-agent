@@ -132,8 +132,9 @@ func TestARefusalKeepsWhatTheMessageNeedsAndTruncatesTheReason(t *testing.T) {
 
 // The marker is written before the refresh token is deleted: a crash in between
 // leaves a marker beside a dead token, still locked, never a live-looking
-// session. And a write that fails changes neither the order nor the outcome for
-// this process.
+// session. And the token is deleted only once the marker is saved: a marker that
+// cannot be written leaves the refused token where it is, so that the next
+// process learns the refusal again.
 func TestARefusalWritesTheMarkerBeforeItDeletesTheRefreshToken(t *testing.T) {
 	ctx := context.Background()
 	t.Run("the order of the two writes", func(t *testing.T) {
@@ -150,7 +151,7 @@ func TestARefusalWritesTheMarkerBeforeItDeletesTheRefreshToken(t *testing.T) {
 			t.Fatalf("writes = %v, want the marker before the delete", got)
 		}
 	})
-	t.Run("a marker that cannot be written is reported and the dead token still goes", func(t *testing.T) {
+	t.Run("a marker that cannot be written is reported and the refresh token stays", func(t *testing.T) {
 		e := newEnv(t)
 		e.signIn(2*time.Hour, time.Hour)
 		e.ref.set(refusedBy("revoked"))
@@ -161,8 +162,11 @@ func TestARefusalWritesTheMarkerBeforeItDeletesTheRefreshToken(t *testing.T) {
 		if err == nil || st.State != account.StateLocked || st.Reason != account.ReasonRefused {
 			t.Fatalf("EnsureFresh = %s/%q, %v, want locked/refused and the write error", st.State, st.Reason, err)
 		}
-		if rt, _ := e.store.LoadRefresh(); rt != "" {
-			t.Fatal("the dead refresh token survived the refusal")
+		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save"}) {
+			t.Fatalf("writes = %v, want the marker only: the refresh token goes once the marker is saved", got)
+		}
+		if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
+			t.Fatal("the refresh token was deleted although the marker was not saved: the disk then holds a live-looking session with no token")
 		}
 	})
 	t.Run("a refresh token that cannot be deleted is reported, the marker stays", func(t *testing.T) {
@@ -179,6 +183,53 @@ func TestARefusalWritesTheMarkerBeforeItDeletesTheRefreshToken(t *testing.T) {
 			t.Fatal("the marker was not written")
 		}
 	})
+}
+
+// A refusal whose marker cannot be saved (a full disk, a read-only session.json)
+// must not leave the other processes working. The disk still holds the old
+// session: with the refresh token gone as well, the next process would find a due
+// session with no token, record keyring_unavailable and keep the grace for up to
+// 24 hours, and the process that was refused would forget the refusal too once
+// any process wrote session.json. With the token kept, the next process presents
+// it, is refused again (nothing is left to revoke) and writes the marker.
+func TestARefusalWhoseMarkerCouldNotBeSavedIsLearnedAgainByTheNextProcess(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.signIn(2*time.Hour, time.Hour) // due, with 22 hours of grace left
+	e.ref.set(refusedBy("revoked"))
+	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true} // the disk is full for this process
+	a := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
+	t.Cleanup(a.Close)
+
+	// Process A is refused and cannot write the marker.
+	st, err := a.EnsureFresh(ctx)
+	if err == nil || st.State != account.StateLocked || st.Reason != account.ReasonRefused {
+		t.Fatalf("process A = %s/%q, %v, want locked/refused and the write error", st.State, st.Reason, err)
+	}
+	if got := e.session().State; got != "" {
+		t.Fatalf("the stored session is marked %q: the write was meant to fail", got)
+	}
+	if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
+		t.Errorf("process A deleted the refresh token (now %q) although the marker was not saved", rt)
+	}
+
+	// Process B (a CLI command, the daemon) reads the old session. It is due, so it
+	// presents the token, is refused and, with a disk that works, writes the marker.
+	b := e.newGuard(0)
+	st, err = b.EnsureFresh(ctx)
+	if err != nil || st.State != account.StateLocked || st.Reason != account.ReasonRefused {
+		t.Errorf("process B = %s/%q, %v, want locked/refused: the refusal must not be lost with the marker", st.State, st.Reason, err)
+	}
+	if got := e.session().State; got != "refused" {
+		t.Errorf("the stored session is marked %q after process B, want refused", got)
+	}
+	e.touch() // the modification time that tells A the file changed
+
+	// Process A reads the file again at its next poll and stays refused.
+	e.f.Clock.Advance(account.PollInterval)
+	if st := a.Status(); st.State != account.StateLocked || st.Reason != account.ReasonRefused {
+		t.Errorf("process A after reading what B wrote = %s/%q, want locked/refused", st.State, st.Reason)
+	}
 }
 
 // An attempt that failed moves a stale mark forward to now (the write is being

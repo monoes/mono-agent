@@ -228,10 +228,16 @@ func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Stat
 	next.AccessToken = ""
 	next.LastAttempt, next.LastResult = now, string(ReasonRefused)
 	// The marker first, then the refresh token: a crash in between leaves a
-	// marker beside a dead token (still locked), never a live-looking session.
+	// marker beside a dead token (still locked), never a live-looking session. The
+	// token goes only once the marker is saved. If the marker cannot be written
+	// (a full disk, a read-only session.json) the disk still holds the old session,
+	// and without a token the other processes would read it as a key store problem
+	// and keep the grace for up to 24 hours, so the token stays: the next process
+	// presents it, is refused again (nothing is left to revoke) and writes the
+	// marker.
 	err := g.store.Save(&next)
-	if derr := g.store.DeleteRefresh(); err == nil {
-		err = derr
+	if err == nil {
+		err = g.store.DeleteRefresh()
 	}
 	g.adopt(&next)
 	return g.Status(), outcomeRefused, err
