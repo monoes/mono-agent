@@ -26,7 +26,7 @@ No agent runs these: each changes GitHub or Cloudflare, so the owner does. The t
 
 Copied from the index (§2, §3.2, §3.4, §4), verbatim where marked, adapted to this repository where it says so; the lines that bind this plan.
 
-- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace.
+- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace. A grant whose outcome is unknown (the request may have been processed, so monoes.me may have rotated the refresh token) or whose answer could not be saved (A24(d)) is retried within 240 seconds and after that is never presented again: this machine drops its refresh token and the reason is `unconfirmed` (A24, §3.6), a grace reason that ends as `locked(unconfirmed)`; the other installs of the account are untouched.
 - Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
 - Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard re-checks `session.json`'s mtime lazily inside `Status`, at most once per 5 seconds (no goroutine for a non-refresher guard; spec A8). The refresh request carries `resource=<Audience>`.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
@@ -40,7 +40,7 @@ Copied from the index (§2, §3.2, §3.4, §4), verbatim where marked, adapted t
 
 Failure modes the spec implies that no task's tests would otherwise exercise, most likely to bite first. Each is pinned by a test in the task that owns the code.
 
-1. A replayed or copied refresh token (a second machine, a copied session file, a retry after a crash) makes the provider delete every MonoAgent refresh token of that account, so every install locks as refused; only the client's own retry of a lost answer, within 300 seconds (the owner's choice), is answered with the same response instead. Pinned in Task 3 by "a retry inside the 300-second reuse window gets the same answer and ends nothing" and "a replayed refresh token after the window is invalid_grant and takes the account's newer MonoAgent refresh token with it", and in Task 4 by the rotated token a block must not leave replayable.
+1. A replayed or copied refresh token (a second machine, a copied session file, a retry after a crash) makes the provider delete every MonoAgent refresh token of that account, so every install locks as refused; only the client's own retry of a lost answer, within 300 seconds (the owner's choice; the client's retry window, 240 seconds, sits inside it), is answered with the same response instead. Pinned in Task 3 by "a retry inside the 300-second reuse window gets the same answer and ends nothing", "a replayed refresh token after the window is invalid_grant and takes the account's newer MonoAgent refresh token with it" and "presenting an already punished refresh token again leaves a sign-in made since alone" (a machine whose disk is full cannot save its `refused` marker and presents the dead token at every due command, spec A21: the punishment happens once, and the sign-ins made after it survive), and in Task 4 by the rotated token a block must not leave replayable.
 2. A refresh token not used for 30 days answers `invalid_grant`, which the client reads as a refusal, not as unreachable. Pinned in Task 3 by "a refresh token past its 30 days is invalid_grant".
 3. A deploy without the signing secret, or with a malformed one, must answer a loud 500 and must never sign with a key no release pins; it must not break `get-session`. Pinned in Task 6 by the `signingKeyAdapter` tests ("fails closed", "reports a malformed key when it is used") and by `disableSettingJwtHeader`.
 4. A verified JWT whose user was deleted, a token from another client or for another audience, an unsigned or foreign-key token: none may authenticate a library or community call. Pinned in Task 5 by "refuses a verified token whose user no longer exists" and the `verifyMonoagentAccessToken` cases.
@@ -686,7 +686,7 @@ B1a updates `internal/account/claims.go` from this table. Every value equals the
 | Lifetime | `exp - iat` is 3600; `expires_in` is 3600. | `MaxTokenLife` is only an upper bound |
 | Claims present | `aud azp client_id exp iat iss jti plan scope sid sub`. `sid` only on tokens from the browser flow. `plan` is `free`. | |
 | JWT or opaque | A JWT exactly when a `resource` is sent (on authorize and token, or on any refresh); otherwise opaque (32 letters), `expires_in` 3600. | |
-| Refresh token | Opaque. Rotates on every refresh. Expires 30 days after it was issued, so every rotation slides the expiry. A retry of the same request within 300 seconds of the rotation is answered again with the same response (Task 3's `refreshTokenReuseInterval`); the unmodified server has no window. The client's retries after a lost answer run at about 30, 90 and 210 seconds. | |
+| Refresh token | Opaque. Rotates on every refresh. Expires 30 days after it was issued, so every rotation slides the expiry. A retry of the same request within 300 seconds of the rotation is answered again with the same response (Task 3's `refreshTokenReuseInterval`); the unmodified server has no window. The client retries a lost answer at once and for as long as 240 seconds after the first send (spec A24, `pendingRetryWindow`), never after. | |
 | Same key, not access tokens | The ID token (`aud` `monoagent`, 10 hours) and the session JWT of `GET /api/auth/token` (`iss` and `aud` are `https://monoes.me`, no `azp`, no `typ`) carry the same `kid`. | B1a keeps the issuer, audience and client checks: they tell these apart |
 
 ## S6: what does a real token look like?
@@ -719,7 +719,7 @@ Consequence: only a block, `/oauth2/revoke`, 30 days without use, or a replay en
 
 ## Decisions taken (the lead, 2026-10-05)
 
-1. `refreshTokenReuseInterval: 300` (Task 3), the owner's to lower. The client's retries after a lost response run at about 30, 90 and 210 seconds, so a 60-second window would leave the later retries presenting a rotated token and ending every session of the account. Inside the window a replay of a used token, a thief's included, gets the same response; it does not cover an explicitly revoked token (`/oauth2/revoke`, a block), which answers `invalid_grant` at once.
+1. `refreshTokenReuseInterval: 300` (Task 3), the owner's to lower, together with the client's `pendingRetryWindow`. The client retries a lost response for as long as 240 seconds after the first send (spec A24), so a 60-second window would leave the later retries presenting a rotated token and ending every session of the account. Inside the window a replay of a used token, a thief's included, gets the same response; it does not cover an explicitly revoked token (`/oauth2/revoke`, a block), which answers `invalid_grant` at once.
 2. The email-code route (Task 7) is the one server change beyond spec §5. For the MonoAgent client's `offline_access` claim it returns a `refresh_token`, which the client trades at the token endpoint with `resource` (B1b's design), and it honors a `resource` in the verify body (one call, the token endpoint's own answer). Without `resource` the opaque access token is unchanged; a blocked account is refused.
 3. Extras approved: `disableSettingJwtHeader`; deleting a blocked account's web sessions; the optional previous-key secret for a rotation; the audience as a database row plus a client link (migration 0017). Spec §5 item 1 says `oauthProvider` "accepts the resource"; it is a row and a link, not an option.
 ````
@@ -736,7 +736,9 @@ Consequence: only a block, `/oauth2/revoke`, 30 days without use, or a replay en
 
 **Design.** The provider mints a JWT access token exactly when the request carries a `resource`. With its default `enforcePerClientResources` the resource must be a row of `oauth_resource` and the client must be linked to it in `oauth_client_resource`; the audience is therefore a migration, not an option (S6 showed `invalid_target ... is not configured` without it). The link is what keeps a dynamically registered client, which anyone can create, from obtaining the audience. `allowed_scopes` stays NULL: a list would narrow every token's scopes.
 
-`refreshTokenReuseInterval: 300` (the owner's value; the provider's default is 0). The client retries a refresh whose answer was lost at about 30, 90 and 210 seconds, and a retry presents a token the provider has already rotated: with no window that deletes every MonoAgent refresh token of the account and locks every install (S2). Inside the window the provider answers the same request again with the same response it gave the first time; the trade-off is that a replay of a used token inside those five minutes, a thief's included, gets that same response, and the owner may lower the number. It does not cover a token that was explicitly revoked (`/oauth2/revoke`, a block), which answers `invalid_grant` at once, and after the window a replay ends the account's sessions as before.
+`refreshTokenReuseInterval: 300` (the owner's value; the provider's default is 0). A client whose refresh answer was lost presents the token again, at once and for as long as 240 seconds after the first send (mono-agent's `pendingRetryWindow`, spec A24), and that token is one the provider has already rotated: with no window that deletes every MonoAgent refresh token of the account and locks every install (S2). Inside the window the provider answers the same request again with the same response it gave the first time; the trade-off is that a replay of a used token inside those five minutes, a thief's included, gets that same response. The client's 240 seconds depend on this number and the two change together: the owner may lower it only together with `pendingRetryWindow`, which must stay below it (the 60 seconds between them cover the length of the call and clocks that run at different rates). It does not cover a token that was explicitly revoked (`/oauth2/revoke`, a block), which answers `invalid_grant` at once, and after the window a replay ends the account's sessions as before.
+
+A dead token is punished once. The provider's family invalidation (`invalidateRefreshFamily` in `@better-auth/oauth-provider` 1.7.1) deletes every refresh token of the client and the user at the moment it finds a rotated-away token presented after its window, the presented token's own row included, so a later presentation of the same token finds no row and answers `invalid_grant` without touching anything else. That is what keeps a sign-in made after the first replay safe from a machine that keeps presenting its refused token: a client whose disk is full cannot save its `refused` marker (spec A21) and presents the same token at every due command. Were a provider upgrade ever to keep the dead row and invalidate again at each presentation, every new sign-in of the account would end at the next one; the spec below pins the behavior.
 
 - [ ] **Step 1: Branch.** Fetch first, or the branch starts from a stale `main` (two separate commands): `git fetch origin`, then `git switch -c feat/account-gate-audience origin/main`.
 
@@ -788,7 +790,10 @@ describe("migration 0017_monoagent_audience.sql", () => {
 });
 
 describe("the refresh-token reuse window", () => {
-  it("is the 300 seconds the owner approved: the client retries a lost refresh answer at about 30, 90 and 210 seconds", () => {
+  // mono-agent presents a refresh token whose answer was lost again, at once, for as long as 240 seconds after the
+  // first send (pendingRetryWindow in internal/account/guard.go, spec A24), and the provider answers that repeat only
+  // inside this window. The two numbers change together, and the client's must stay below this one.
+  it("is the 300 seconds the owner approved: the client's 240-second retry window (A24) sits inside it", () => {
     const auth = readFileSync(new URL("./auth.ts", import.meta.url), "utf8");
     assert.ok(/refreshTokenReuseInterval: 300,/.test(auth), "src/lib/auth.ts sets refreshTokenReuseInterval: 300");
   });
@@ -884,7 +889,7 @@ INSERT OR IGNORE INTO `oauth_client_resource` (
 
 Run the unit tests again: `ℹ pass 5`, `ℹ fail 1` (the reuse-window test waits for step 7). Apply it to the local database: `npm run db:migrate:local`, expected `0017_monoagent_audience.sql ✅` (the rows exist from Task 2's seed, and `INSERT OR IGNORE` leaves them).
 
-- [ ] **Step 6: Write the failing spec.** Create `tests/account-gate-tokens.spec.ts` (it also pins today's client, the reuse window and the replay after it, the 30-day expiry of the Review Focus, and that only `monoagent` gets the audience):
+- [ ] **Step 6: Write the failing spec.** Create `tests/account-gate-tokens.spec.ts` (it also pins today's client, the reuse window and the replay after it, that a dead token is punished once, the 30-day expiry of the Review Focus, and that only `monoagent` gets the audience):
 
 ```ts
 import { test, expect } from "@playwright/test";
@@ -987,6 +992,28 @@ test("a replayed refresh token after the window is invalid_grant and takes the a
   expect([after.status, after.body.error]).toEqual([400, "invalid_grant"]);
 });
 
+test("presenting an already punished refresh token again leaves a sign-in made since alone", async ({ baseURL }) => {
+  // A client whose disk is full cannot save its `refused` marker (spec A21), so it presents the same dead token at
+  // every due command. The first presentation after the window ends every MonoAgent session of the account and
+  // takes the dead token's own row with it; a sign-in made afterwards, here or on another machine, must survive
+  // every later presentation.
+  const first = await login(baseURL!, { resource: AUDIENCE });
+  const second = await refresh(baseURL!, first.body.refresh_token!, AUDIENCE);
+  expect(second.status).toBe(200);
+  await withDb((db) => db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.userId, first.account.userId)));
+  const punished = await refresh(baseURL!, first.body.refresh_token!, AUDIENCE);
+  expect([punished.status, punished.body.error]).toEqual([400, "invalid_grant"]);
+
+  const again = await login(baseURL!, { resource: AUDIENCE, account: first.account }); // the same account signs in again
+  expect(again.status, JSON.stringify(again.body)).toBe(200);
+  for (let i = 0; i < 3; i++) {
+    const repeat = await refresh(baseURL!, first.body.refresh_token!, AUDIENCE);
+    expect([repeat.status, repeat.body.error], `presentation ${i + 2} of the dead token`).toEqual([400, "invalid_grant"]);
+  }
+  const alive = await refresh(baseURL!, again.body.refresh_token!, AUDIENCE);
+  expect(alive.status, "the newer sign-in must survive the replays of the dead token").toBe(200);
+});
+
 test("a refresh token past its 30 days is invalid_grant, which mono-agent reads as a refusal", async ({ baseURL }) => {
   const r = await login(baseURL!, { resource: AUDIENCE });
   await withDb((db) => db.update(oauthRefreshToken).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.userId, r.account.userId)));
@@ -1017,7 +1044,7 @@ test("only the monoagent client can obtain the audience, and no other resource e
 });
 ```
 
-Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-tokens.spec.ts --reporter=line`. Expected: `2 failed, 6 passed`. One failure is `with the MonoAgent resource the access token is an audience-bound JWT` at `expect(payload.plan).toBe("free")`, `Expected: "free"`, `Received: undefined`. The other is `a retry inside the 300-second reuse window gets the same answer and ends nothing`, whose retry answers `400` (`invalid_grant`) where `200` is expected, because the window is not configured yet. (Audience, rotation, the replay after the window and expiry already work through the provider; the spec pins them so a provider upgrade that changes them is noticed.)
+Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-tokens.spec.ts --reporter=line`. Expected: `2 failed, 7 passed`. One failure is `with the MonoAgent resource the access token is an audience-bound JWT` at `expect(payload.plan).toBe("free")`, `Expected: "free"`, `Received: undefined`. The other is `a retry inside the 300-second reuse window gets the same answer and ends nothing`, whose retry answers `400` (`invalid_grant`) where `200` is expected, because the window is not configured yet. (Audience, rotation, the replay after the window, the single punishment of a dead token and expiry already work through the provider; the spec pins them so a provider upgrade that changes them is noticed.)
 
 - [ ] **Step 7: Wire `src/lib/auth.ts`.** After line 7 (`import * as schema from "@/lib/db/schema";`) add:
 
@@ -1037,7 +1064,8 @@ and replace the `oauthProvider({...})` call (lines 73-79) with:
         accessTokenExpiresIn: 3600,
         // A refresh whose answer was lost is retried with the same token; inside this many seconds the
         // provider answers it again with the same response, where outside it the replay would delete
-        // every MonoAgent refresh token of the account. Lower it to narrow what a stolen token can do.
+        // every MonoAgent refresh token of the account. mono-agent retries for as long as 240 seconds
+        // (pendingRetryWindow in internal/account/guard.go, spec A24): lower this only together with it.
         refreshTokenReuseInterval: 300,
         customAccessTokenClaims: () => accessTokenClaims(),
       }),
@@ -1045,7 +1073,7 @@ and replace the `oauthProvider({...})` call (lines 73-79) with:
 
 Run the unit command of step 3 once more: `ℹ pass 6`, `ℹ fail 0`.
 
-- [ ] **Step 8: Run the spec.** The same command. Expected: `8 passed`.
+- [ ] **Step 8: Run the spec.** The same command. Expected: `9 passed`.
 
 - [ ] **Step 9: Checks.** `npm test` (`ℹ fail 0`), `npx tsc --noEmit`, `npx eslint src/lib/auth.ts src/lib/monoagent-token.ts src/lib/access-token-claims.ts tests/helpers/oauth-api.ts tests/account-gate-tokens.spec.ts` (no output).
 
@@ -1320,7 +1348,7 @@ and replace lines 23-27 (`const updated = await db ... .returning({ id: user.id 
 
 The lines after it (`if (updated.length === 0) { ... 404 }`) stay as they are.
 
-- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts`: `8 passed` (a valid refresh is still never `invalid_grant`).
+- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts`: `9 passed` (a valid refresh is still never `invalid_grant`).
 
 - [ ] **Step 7: Checks.** `npm test`, `npx tsc --noEmit`, `npx eslint src/lib/access-token-claims.ts src/lib/auth.ts src/lib/community/revoke-oauth-access.ts "src/app/api/community/admin/users/[id]/block/route.ts" tests/account-gate-block.spec.ts`. Expected: `ℹ fail 0`, no other output.
 
@@ -2030,7 +2058,7 @@ Restart the dev server (Ctrl-C it, then `npx next dev -p 3107` again; only one `
 E2E_BASE_URL=http://localhost:3107 E2E_SIGNING_KID=<the kid from key-a.txt> npx playwright test tests/account-gate-tokens.spec.ts --reporter=line
 ```
 
-Expected: `1 failed, 7 passed`; the failure is `expect(header.kid).toBe(process.env.E2E_SIGNING_KID)`, `Received:` a 32-character id (the plugin's own key).
+Expected: `1 failed, 8 passed`; the failure is `expect(header.kid).toBe(process.env.E2E_SIGNING_KID)`, `Received:` a 32-character id (the plugin's own key).
 
 - [ ] **Step 5: Wire `src/lib/auth.ts`.** After the import of `accessTokenClaims` add:
 
@@ -2060,7 +2088,7 @@ and replace the line `jwt(),` with:
       }),
 ```
 
-- [ ] **Step 6: Pinned mode, green.** The server hot-reloads. Run the spec of step 4b again: `8 passed`. Then `npx tsx scripts/spikes/s1-key.ts <kid>`. Expected:
+- [ ] **Step 6: Pinned mode, green.** The server hot-reloads. Run the spec of step 4b again: `9 passed`. Then `npx tsx scripts/spikes/s1-key.ts <kid>`. Expected:
 
 ```
 JWKS: <kid> OKP/Ed25519 EdDSA
