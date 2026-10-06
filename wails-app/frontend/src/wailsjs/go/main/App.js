@@ -478,6 +478,10 @@ export function GetOrgReport(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetOrgReport'](arg1, arg2, arg3);
 }
 
+export function GetOrgScheduleAudit(arg1) {
+  return window['go']['main']['App']['GetOrgScheduleAudit'](arg1);
+}
+
 export function GetOrgStatus(arg1) {
   return window['go']['main']['App']['GetOrgStatus'](arg1);
 }
@@ -1076,6 +1080,10 @@ export function SetOrgGrant(arg1, arg2) {
 
 export function SetOrgRoleReportsTo(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOrgRoleReportsTo'](arg1, arg2, arg3);
+}
+
+export function SetOrgSchedule(arg1, arg2) {
+  return window['go']['main']['App']['SetOrgSchedule'](arg1, arg2);
 }
 
 export function SetWorkflowActive(arg1, arg2) {

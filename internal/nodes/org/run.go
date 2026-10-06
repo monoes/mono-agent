@@ -42,8 +42,13 @@ type orgStatus struct {
 //	"output_key" (string): key to store the run report under (default "org_result").
 //	"exclusive" (bool, default false): refuse when the org is already running a
 //	  run this node did not start, instead of joining it (C-8).
+//
 //	"wait" (bool, default true): false returns as soon as the run has started,
 //	  with the org's status, instead of pausing until it completes.
+//
+// Scheduler ownership: a workflow schedule firing this node for an org that
+// has its own `schedule` while monomind's `org serve` is live yields (the item
+// passes through with _org_skipped); monomind fires that org, not the workflow.
 //
 // Resilience: idempotency is derived purely from the org's own live status
 // (no separate pending-run table) — if it's already "running" this node
@@ -76,6 +81,11 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		return nil, err
 	}
 	root := env.root
+	if monomindOwnsSchedule(ctx, root, orgName) {
+		out := copyItemJSON(firstItem(input.Items))
+		out["_org_skipped"] = "monomind org serve already schedules " + orgName + " (one scheduler per org)"
+		return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{{JSON: out}}}}, nil
+	}
 	ledger := orgbridge.NewLedger(env.db)
 	startedHere, _ := ledger.HasCrossing(ctx, input.ExecutionID, orgbridge.DirWorkflowOut, orgName)
 

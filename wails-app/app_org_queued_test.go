@@ -17,3 +17,10 @@ func TestDocumentsArgs(t *testing.T) {
 	a, err = documentsArgs(" ", "")
 	wantErr(t, a, err, "org name required")
 }
+
+func TestScheduleAuditArgs(t *testing.T) {
+	a, err := scheduleAuditArgs("sched")
+	eqArgs(t, a, err, []string{"schedule-audit", "sched"})
+	a, err = scheduleAuditArgs(" ")
+	wantErr(t, a, err, "org name required")
+}
