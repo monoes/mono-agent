@@ -45,6 +45,9 @@ monoagentcli ref tasks`,
 	cmd.PersistentFlags().String("as", "", "Name an AI agent: the name it holds claims under, the same for a whole task (also MONOAGENT_ACTOR)")
 	cmd.AddCommand(
 		newTaskAddCmd(cfg),
+		newTaskListCmd(cfg),
+		newTaskBoardCmd(cfg),
+		newTaskShowCmd(cfg),
 	)
 	for _, sub := range cmd.Commands() {
 		withJSONErrors(cfg, sub)
