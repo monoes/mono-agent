@@ -6160,7 +6160,7 @@ For each row: apply the change with the Edit tool, run the test named, see it FA
 
 | # | File and change | Test that must fail |
 |---|---|---|
-| 1 | `store.go`, `Add`: in `if in.Ready { if actor.Kind != Human {` use `if false {` | `go test ./internal/tasks/ -run TestAddReadyIsForTheOperatorOnly` |
+| 1 | `store.go`, `Add`: in `if in.Ready && actor.Kind != Human {` (the first check of Add) use `if false {` | `go test ./internal/tasks/ -run TestAddReadyIsForTheOperatorOnly` |
 | 2 | `claims.go`, `claimTx`: replace `until = later(cur.Claim.Until, until)` by `until = until` | `-run TestSameNameClaimRenewsButNeverShortens` |
 | 3 | `claims.go`, `pickNext`: the Ready query's `ORDER BY position, id` becomes `ORDER BY id DESC` | `-run TestNextPeeksTheTopReadyTask` |
 | 4 | `store.go`, `sourceKindFor`, the `Agent` case: the condition becomes `if true {` | `-run TestSourceKindRules` |
