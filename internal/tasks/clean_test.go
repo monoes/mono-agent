@@ -127,6 +127,12 @@ func TestCleanURL(t *testing.T) {
 		{"https:///nohost", ""},
 		{"not a url", ""},
 		{"https://example.com/\x00", ""},
+		{"https://example.com/?q=a\U0000202eb", ""},    // a bidi override: net/url keeps a query exactly as typed
+		{"https://example.com/?q=a\U000E0049b", ""},    // a tag character
+		{"https://example.com/?q=a\U0000009b31mb", ""}, // a C1 control, an escape introducer in a UTF-8 terminal
+		{"https://example.com/?q=a\xffb", ""},          // invalid UTF-8
+		{"https://example.com/a\U0000202eb", ""},       // anywhere in the URL: net/url would have percent-encoded this one
+		{"https://example.com/?q=café&lang=日本語", "https://example.com/?q=café&lang=日本語"},
 		{long, ""},
 		{"", ""},
 	}

@@ -102,10 +102,15 @@ func deriveTitleNotes(title, notes, text string) (string, string, error) {
 }
 
 // cleanURL returns the URL when it is a plain http or https address, without
-// user-info and within the limit; otherwise "".
+// user-info and within the limit; otherwise "". A URL with invalid UTF-8, a
+// control character or a hidden character anywhere is refused, not rewritten:
+// net/url keeps a query exactly as typed.
 func cleanURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > MaxURLBytes {
+		return ""
+	}
+	if !utf8.ValidString(raw) || strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsControl(r) || hidden(r) }) {
 		return ""
 	}
 	u, err := url.Parse(raw)
