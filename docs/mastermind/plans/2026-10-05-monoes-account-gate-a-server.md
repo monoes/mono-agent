@@ -687,7 +687,7 @@ B1a updates `internal/account/claims.go` from this table. Every value equals the
 | Claims present | `aud azp client_id exp iat iss jti plan scope sid sub`. `sid` only on tokens from the browser flow. `plan` is `free`. | |
 | JWT or opaque | A JWT exactly when a `resource` is sent (on authorize and token, or on any refresh); otherwise opaque (32 letters), `expires_in` 3600. | |
 | Refresh token | Opaque. Rotates on every refresh. Expires 30 days after it was issued, so every rotation slides the expiry. A retry of the same request within 300 seconds of the rotation is answered again with the same response (Task 3's `refreshTokenReuseInterval`); the unmodified server has no window. The client retries a lost answer at once and for as long as 240 seconds after the first send (spec A24, `pendingRetryWindow`), never after. | |
-| Same key, not access tokens | The ID token (`aud` `monoagent`, 10 hours) and the session JWT of `GET /api/auth/token` (`iss` and `aud` are `https://monoes.me`, no `azp`, no `typ`) carry the same `kid`. | B1a keeps the issuer, audience and client checks: they tell these apart |
+| Same key, not access tokens | The ID token (`aud` `monoagent`, the access tokens' `iss`, 10 hours, no `typ`) and the session JWT of `GET /api/auth/token` (`iss` and `aud` are `https://monoes.me`, no `azp`, no `typ`) carry the same `kid`. | B1a keeps the issuer, audience and client checks: they tell these apart, the audience by design (an ID token's `aud` is the client id, and OIDC lets it carry `azp`); Task 3's spec pins both audiences. Only access tokens carry `typ: at+jwt`, so after this spike a `typ` check in the client's verifier is possible defense in depth; B1a does not make it |
 
 ## S6: what does a real token look like?
 
@@ -889,7 +889,7 @@ INSERT OR IGNORE INTO `oauth_client_resource` (
 
 Run the unit tests again: `ℹ pass 5`, `ℹ fail 1` (the reuse-window test waits for step 7). Apply it to the local database: `npm run db:migrate:local`, expected `0017_monoagent_audience.sql ✅` (the rows exist from Task 2's seed, and `INSERT OR IGNORE` leaves them).
 
-- [ ] **Step 6: Write the failing spec.** Create `tests/account-gate-tokens.spec.ts` (it also pins today's client, the reuse window and the replay after it, that a dead token is punished once, the 30-day expiry of the Review Focus, and that only `monoagent` gets the audience):
+- [ ] **Step 6: Write the failing spec.** Create `tests/account-gate-tokens.spec.ts` (it also pins today's client, that an ID token and a session JWT, signed with the same key, never carry the audience, the reuse window and the replay after it, that a dead token is punished once, the 30-day expiry of the Review Focus, and that only `monoagent` gets the audience):
 
 ```ts
 import { test, expect } from "@playwright/test";
@@ -944,6 +944,26 @@ test("with the MonoAgent resource the access token is an audience-bound JWT", as
 
   expect(await verifiesAgainstJwks(baseURL!, token), "verifies with the published public key").toBe(true);
   expect(r.body.refresh_token).toBeTruthy();
+});
+
+test("an ID token and a session JWT, signed with the same key, never carry the MonoAgent audience", async ({ baseURL }) => {
+  // mono-agent tells an access token from the other JWTs this key signs by its claims (spec §4.1). The ID token
+  // has the same issuer and, by OIDC, may carry `azp`, so its audience (the client id) is what keeps a 10-hour ID
+  // token from passing as a MonoAgent access token; the jwt() plugin's session JWT has the base URL as its audience.
+  // Neither carries `typ: at+jwt`, which a header check in the client could add as defense in depth.
+  const r = await login(baseURL!, { resource: AUDIENCE });
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+  const id = decodeJwt(r.body.id_token!);
+  expect([id.payload.aud].flat()).not.toContain(AUDIENCE);
+  expect(id.header.typ).not.toBe("at+jwt");
+
+  const res = await fetch(new URL("/api/auth/token", baseURL), { headers: { Cookie: r.account.cookie } });
+  expect(res.status).toBe(200);
+  const { token } = (await res.json()) as { token?: string };
+  expect(isJwt(token), "the jwt() plugin's session JWT").toBe(true);
+  const session = decodeJwt(token!);
+  expect([session.payload.aud].flat()).not.toContain(AUDIENCE);
+  expect(session.header.typ).not.toBe("at+jwt");
 });
 
 test("a refresh token issued without the resource can be exchanged with it, and the audience then sticks", async ({ baseURL }) => {
@@ -1044,7 +1064,7 @@ test("only the monoagent client can obtain the audience, and no other resource e
 });
 ```
 
-Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-tokens.spec.ts --reporter=line`. Expected: `2 failed, 7 passed`. One failure is `with the MonoAgent resource the access token is an audience-bound JWT` at `expect(payload.plan).toBe("free")`, `Expected: "free"`, `Received: undefined`. The other is `a retry inside the 300-second reuse window gets the same answer and ends nothing`, whose retry answers `400` (`invalid_grant`) where `200` is expected, because the window is not configured yet. (Audience, rotation, the replay after the window, the single punishment of a dead token and expiry already work through the provider; the spec pins them so a provider upgrade that changes them is noticed.)
+Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-tokens.spec.ts --reporter=line`. Expected: `2 failed, 8 passed`. One failure is `with the MonoAgent resource the access token is an audience-bound JWT` at `expect(payload.plan).toBe("free")`, `Expected: "free"`, `Received: undefined`. The other is `a retry inside the 300-second reuse window gets the same answer and ends nothing`, whose retry answers `400` (`invalid_grant`) where `200` is expected, because the window is not configured yet. (Audience, the audiences and header types of the ID token and the session JWT, rotation, the replay after the window, the single punishment of a dead token and expiry already work through the provider; the spec pins them so a provider upgrade that changes them is noticed.)
 
 - [ ] **Step 7: Wire `src/lib/auth.ts`.** After line 7 (`import * as schema from "@/lib/db/schema";`) add:
 
@@ -1073,7 +1093,7 @@ and replace the `oauthProvider({...})` call (lines 73-79) with:
 
 Run the unit command of step 3 once more: `ℹ pass 6`, `ℹ fail 0`.
 
-- [ ] **Step 8: Run the spec.** The same command. Expected: `9 passed`.
+- [ ] **Step 8: Run the spec.** The same command. Expected: `10 passed`.
 
 - [ ] **Step 9: Checks.** `npm test` (`ℹ fail 0`), `npx tsc --noEmit`, `npx eslint src/lib/auth.ts src/lib/monoagent-token.ts src/lib/access-token-claims.ts tests/helpers/oauth-api.ts tests/account-gate-tokens.spec.ts` (no output).
 
@@ -1348,7 +1368,7 @@ and replace lines 23-27 (`const updated = await db ... .returning({ id: user.id 
 
 The lines after it (`if (updated.length === 0) { ... 404 }`) stay as they are.
 
-- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts`: `9 passed` (a valid refresh is still never `invalid_grant`).
+- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts`: `10 passed` (a valid refresh is still never `invalid_grant`).
 
 - [ ] **Step 7: Checks.** `npm test`, `npx tsc --noEmit`, `npx eslint src/lib/access-token-claims.ts src/lib/auth.ts src/lib/community/revoke-oauth-access.ts "src/app/api/community/admin/users/[id]/block/route.ts" tests/account-gate-block.spec.ts`. Expected: `ℹ fail 0`, no other output.
 
@@ -2058,7 +2078,7 @@ Restart the dev server (Ctrl-C it, then `npx next dev -p 3107` again; only one `
 E2E_BASE_URL=http://localhost:3107 E2E_SIGNING_KID=<the kid from key-a.txt> npx playwright test tests/account-gate-tokens.spec.ts --reporter=line
 ```
 
-Expected: `1 failed, 8 passed`; the failure is `expect(header.kid).toBe(process.env.E2E_SIGNING_KID)`, `Received:` a 32-character id (the plugin's own key).
+Expected: `1 failed, 9 passed`; the failure is `expect(header.kid).toBe(process.env.E2E_SIGNING_KID)`, `Received:` a 32-character id (the plugin's own key).
 
 - [ ] **Step 5: Wire `src/lib/auth.ts`.** After the import of `accessTokenClaims` add:
 
@@ -2088,7 +2108,7 @@ and replace the line `jwt(),` with:
       }),
 ```
 
-- [ ] **Step 6: Pinned mode, green.** The server hot-reloads. Run the spec of step 4b again: `9 passed`. Then `npx tsx scripts/spikes/s1-key.ts <kid>`. Expected:
+- [ ] **Step 6: Pinned mode, green.** The server hot-reloads. Run the spec of step 4b again: `10 passed`. Then `npx tsx scripts/spikes/s1-key.ts <kid>`. Expected:
 
 ```
 JWKS: <kid> OKP/Ed25519 EdDSA
