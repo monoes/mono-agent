@@ -5882,8 +5882,8 @@ func TestAccountLoginStatusLogout(t *testing.T) {
 	f.must(nil, "account", "logout")
 }
 
-// Spec D5 and D27: a blocked account is locked at its next renewal and signs in
-// again once unblocked, while a monoes.me that merely fails leaves it as it was.
+// Spec D5 and D27: a blocked account is locked at its next renewal and signs in again once unblocked, while a
+// monoes.me that merely fails leaves it ok (a 500 is an unknown outcome, A24: the next renewal retries at once).
 func TestAccountStatusFollowsMonoesMe(t *testing.T) {
 	f := newLibFixture(t)
 	f.fake.AccessTTL = 2 * time.Minute // inside the renewal margin: a renewal is due
