@@ -200,15 +200,3 @@ func agentVerbsFor(n string) [][]string {
 		{"release", n},
 	}
 }
-
-// marginLines are the lines of a text that start at the margin: with the notes of a task
-// indented under a notice, they are the lines the command wrote itself.
-func marginLines(out string) []string {
-	var lines []string
-	for _, line := range strings.Split(out, "\n") {
-		if line != "" && !strings.HasPrefix(line, " ") {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}

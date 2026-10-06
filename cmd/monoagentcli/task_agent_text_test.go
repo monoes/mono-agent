@@ -40,32 +40,103 @@ func TestTaskClaimedTextIsExactlyWhatTheAgentIsToldToDo(t *testing.T) {
 	}
 }
 
-// A look shows the task and how to take it, with the profile and a place for the name: the agent has
-// not claimed anything and has not said who it is, so it is the one to choose the name.
+// A look shows the task and how to take it, with the profile and the name of the agent that looks:
+// the two commands it suggests carry that name. A caller that is no agent, or has not said who it is,
+// has no name to carry, so it is the one to choose it: the commands end in a place for it.
 func TestTaskNextTextShowsTheTaskAndHowToTakeIt(t *testing.T) {
 	db := newTaskTestDB(t)
 	cli := "monoagentcli --profile default task"
-	tail := func(n int64) string {
-		return "\nTake it:\n  " + cli + " next --claim --as <your-name>\n  " + cli + " claim " + id(n) + " --as <your-name>\n"
+	tail := func(n int64, as string) string {
+		return "\nTake it:\n  " + cli + " next --claim --as " + as + "\n  " + cli + " claim " + id(n) + " --as " + as + "\n"
 	}
 	n := opsAdd(t, db, "Fix the flaky test", "--ready", "--notes", "the CI job is red on main", "--url", "https://example.com/ci")
-	want := "Profile: Default\n" +
+	head := "Profile: Default\n" +
 		"Next task: #" + id(n) + " Fix the flaky test   [ready, from cli]\n" +
 		"Link: https://example.com/ci\n" +
 		"\n" + untrustedNotice + "\n" +
 		"    the CI job is red on main\n" +
-		notesEnd + "\n" + tail(n)
-	for _, args := range [][]string{{"next"}, {"next", "--as", "bot"}} {
-		if out, errOut, err := runTask(t, db, "default", false, "", args...); err != nil || errOut != "" || out != want {
-			t.Errorf("task %s:\n%q (%v, %q)\nwant\n%q", strings.Join(args, " "), out, err, errOut, want)
+		notesEnd + "\n"
+	for _, c := range []struct {
+		args []string
+		as   string
+	}{{[]string{"next"}, "<your-name>"}, {[]string{"next", "--as", "bot"}, "bot"}} {
+		want := head + tail(n, c.as)
+		if out, errOut, err := runTask(t, db, "default", false, "", c.args...); err != nil || errOut != "" || out != want {
+			t.Errorf("task %s:\n%q (%v, %q)\nwant\n%q", strings.Join(c.args, " "), out, err, errOut, want)
 		}
 	}
 	// A task with no notes and no link has neither block.
 	m := opsAdd(t, db, "Bare", "--ready")
 	agentRun(t, db, "claim", id(n), "--as", "bot")
-	want = "Profile: Default\nNext task: #" + id(m) + " Bare   [ready, from cli]\n" + tail(m)
+	want := "Profile: Default\nNext task: #" + id(m) + " Bare   [ready, from cli]\n" + tail(m, "<your-name>")
 	if out, _, err := runTask(t, db, "default", false, "", "next"); err != nil || out != want {
 		t.Errorf("a task with no notes and no link:\n%q (%v)\nwant\n%q", out, err, want)
+	}
+}
+
+// The look carries the name of whoever looks, written as every command of the group writes a name: as it is
+// when a shell reads it as one word, as <name> when it does not (a ; or a $( in it would be a second command,
+// a # at its start would begin a comment), and nothing but the place for a name when the caller has none:
+// the operator, an agent context that has not said its name, a blank --as. The name is the caller's, so
+// MONOAGENT_ACTOR counts as --as does, and --as wins.
+func TestTaskNextLookNamesTheCallerInTheCommandsItSuggests(t *testing.T) {
+	db := newTaskTestDB(t)
+	n := opsAdd(t, db, "Fix the flaky test", "--ready")
+	env := func(name, value string) func(t *testing.T) { return func(t *testing.T) { t.Setenv(name, value) } }
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T)
+		args  []string
+		as    string // what the two commands carry after --as
+	}{
+		{"the operator", nil, nil, "<your-name>"},
+		{"an agent named by --as", nil, []string{"--as", "bot"}, "bot"},
+		{"an agent named by MONOAGENT_ACTOR", env("MONOAGENT_ACTOR", "bot"), nil, "bot"},
+		{"--as wins over MONOAGENT_ACTOR", env("MONOAGENT_ACTOR", "other"), []string{"--as", "bot"}, "bot"},
+		{"an agent context and a name", env("CLAUDECODE", "1"), []string{"--as", "bot"}, "bot"},
+		{"a name that is an MCP client's", nil, []string{"--as", "agent:claude-code#a3f9"}, "agent:claude-code#a3f9"},
+		{"a name of 64 characters", nil, []string{"--as", strings.Repeat("a", 64)}, strings.Repeat("a", 64)},
+		{"an agent context and no name", env("CLAUDECODE", "1"), nil, "<your-name>"},
+		{"a blank --as", nil, []string{"--as", ""}, "<your-name>"},
+		{"a blank --as of spaces", nil, []string{"--as", "   "}, "<your-name>"},
+		{"a blank --as that MONOAGENT_ACTOR names", env("MONOAGENT_ACTOR", "bot"), []string{"--as", ""}, "bot"},
+		{"a name with a ; in it", nil, []string{"--as", "x; echo hi"}, "<name>"},
+		{"a name that starts a comment", nil, []string{"--as", "#bot"}, "<name>"},
+		{"a name with $( in it", nil, []string{"--as", "$(id)"}, "<name>"},
+		{"a name of 65 characters", nil, []string{"--as", strings.Repeat("a", 65)}, "<name>"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.setup != nil {
+				c.setup(t)
+			}
+			cli := "monoagentcli --profile default task"
+			want := "\nTake it:\n  " + cli + " next --claim --as " + c.as + "\n  " + cli + " claim " + id(n) + " --as " + c.as + "\n"
+			out, _, err := runTask(t, db, "default", false, "", append([]string{"next"}, c.args...)...)
+			if err != nil || !strings.HasSuffix(out, want) || strings.Count(out, " --as ") != 2 {
+				t.Errorf("the look of %s:\n%q (%v)\nwant it to end with\n%q", c.name, out, err, want)
+			}
+		})
+	}
+}
+
+// A title is shown whole, up to its 200 characters, by a look and by a claim: it is the one line that
+// says what the agent is asked to do, and the commands that cut a title for a table do not cut it here.
+func TestTaskNextAndClaimShowATitleWhole(t *testing.T) {
+	db := newTaskTestDB(t)
+	localNoonZone(t)
+	title := strings.Repeat("\U000000e9", 200)
+	n := opsAdd(t, db, title, "--ready")
+	out, _, err := runTask(t, db, "default", false, "", "next")
+	if lines := strings.Split(out, "\n"); err != nil || len(lines) < 2 || lines[1] != "Next task: #"+id(n)+" "+title+"   [ready, from cli]" {
+		t.Errorf("a look at a title of 200 characters: %q (%v)", out, err)
+	}
+	for _, args := range [][]string{{"claim", id(n), "--as", "bot"}, {"next", "--claim", "--as", "bot"}} {
+		out, _, err := runTask(t, db, "default", false, "", args...)
+		out = untilClock.ReplaceAllString(out, "until HH:MM)")
+		if lines := strings.Split(out, "\n"); err != nil || len(lines) < 2 || lines[1] != "Claimed #"+id(n)+" (bot until HH:MM): "+title {
+			t.Errorf("task %s with a title of 200 characters: %q (%v)", strings.Join(args, " "), out, err)
+		}
+		agentRun(t, db, "release", id(n), "--as", "bot") // back to Ready, for the next form
 	}
 }
 
@@ -122,7 +193,7 @@ func TestTaskAgentTextTreatsWhatTheTaskSaysAsData(t *testing.T) {
 		}
 	}
 	cli := "monoagentcli --profile work-id task"
-	peekTail := []string{"", "Take it:", "  " + cli + " next --claim --as <your-name>", "  " + cli + " claim " + n + " --as <your-name>", ""}
+	peekTail := []string{"", "Take it:", "  " + cli + " next --claim --as bot-x", "  " + cli + " claim " + n + " --as bot-x", ""}
 	claimTail := []string{"", "Work it, then hand it back. Use the same name (bot-x) for every call:",
 		"  report progress   " + cli + " comment " + n + " --as bot-x \"what you did\"",
 		"  done              " + cli + " finish " + n + " --as bot-x --result \"what you did\"",
@@ -319,25 +390,35 @@ func TestTaskCommentFinishAndReleasePrintTheProfileAndTheTaskLine(t *testing.T) 
 	}
 }
 
-// What an agent reads in --help says what the lease is, and what finish asks for.
+// What an agent reads in --help says what the lease is, what finish asks for and who reads it, and
+// what a digest and a look say when there is nothing to say: the help says no more than the commands do
+// (a digest prints its document in --json even for nothing, and a look says it in a line of text).
 func TestTaskAgentCommandsExplainTheirOptionsInTheirHelp(t *testing.T) {
 	db := newTaskTestDB(t)
 	for _, c := range []struct {
-		args  []string
-		words []string
+		args   []string
+		words  []string
+		absent []string
 	}{
-		{[]string{"next", "--help"}, []string{"30 minutes by default", "at most", "24h", "--claim", "Nothing ready: the task is null"}},
-		{[]string{"claim", "--help"}, []string{"--lease", "default 30m, at most 24h", "--as NAME"}},
-		{[]string{"finish", "--help"}, []string{"exactly one of --result", "--question"}},
-		{[]string{"release", "--help"}, []string{"--note", "back to Ready"}},
-		{[]string{"comment", "--help"}, []string{"renews its lease"}},
-		{[]string{"digest", "--help"}, []string{"always exits 0", "Prints nothing"}},
+		{[]string{"next", "--help"}, []string{"30 minutes by default", "at most", "24h", "--claim", "Nothing ready: the text says so, and --json gives a null task"}, []string{"Nothing ready: the task is null"}},
+		{[]string{"claim", "--help"}, []string{"--lease", "default 30m, at most 24h", "--as NAME"}, nil},
+		{[]string{"finish", "--help"}, []string{"exactly one of --result", "--question", "Review for the operator to read"}, []string{"for you to read"}},
+		{[]string{"release", "--help"}, []string{"--note", "back to Ready"}, nil},
+		{[]string{"comment", "--help"}, []string{"renews its lease"}, nil},
+		{[]string{"digest", "--help"}, []string{"In text, prints nothing when the profile has no ready task", "With --json it always prints its document",
+			"always exits 0 whatever goes wrong at run time"}, []string{"It always exits 0, so"}},
+		{[]string{"--help"}, []string{"(in text, prints nothing when there are none)"}, []string{"(prints nothing when there are none)"}},
 	} {
 		out, errOut, err := runTask(t, db, "default", false, "", c.args...)
 		help := strings.Join(strings.Fields(out+errOut), " ")
 		for _, w := range c.words {
 			if err != nil || !strings.Contains(help, w) {
 				t.Errorf("task %s: the help (%v) does not say %q:\n%s", strings.Join(c.args, " "), err, w, help)
+			}
+		}
+		for _, w := range c.absent {
+			if strings.Contains(help, w) {
+				t.Errorf("task %s: the help still says %q:\n%s", strings.Join(c.args, " "), w, help)
 			}
 		}
 	}

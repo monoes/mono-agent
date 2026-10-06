@@ -1,16 +1,13 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/monoes/mono-agent/internal/orgsign"
-	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/tasks"
 )
 
@@ -25,7 +22,7 @@ var badAgentNames = []string{
 // The store refuses a name an agent may not act under, but only once the database is open. An agent
 // command judges the name first, the way the operator's commands refuse an agent first: a database
 // that cannot be opened is the control (a good name gets as far as it, and fails with the plain
-// error 1), a bad name is the refusal 3 and says which kind of bad it is.
+// error 1), a bad name is the refusal 3, says which kind of bad it is, and says how to choose another.
 func TestTaskAgentVerbsRefuseABadNameBeforeTheDatabaseIsOpened(t *testing.T) {
 	newTaskTestDB(t) // the operator's environment
 	db := opsBrokenDB(t)
@@ -44,8 +41,8 @@ func TestTaskAgentVerbsRefuseABadNameBeforeTheDatabaseIsOpened(t *testing.T) {
 				want = "reserved"
 			}
 			exit, code, msg := agentRefusal(t, db, args...)
-			if exit != 3 || code != "invalid_input" || !strings.Contains(msg, want) || len(msg) > 300 {
-				t.Errorf("task %s --as %.20q: exit %d, %q, %.150q; want exit 3, invalid_input and the word %q", strings.Join(verb, " "), name, exit, code, msg, want)
+			if exit != 3 || code != "invalid_input" || !strings.Contains(msg, want) || !strings.Contains(msg, "--as NAME") || len(msg) > 300 {
+				t.Errorf("task %s --as %.20q: exit %d, %q, %.150q; want exit 3, invalid_input, the word %q and the way to choose a name (--as NAME)", strings.Join(verb, " "), name, exit, code, msg, want)
 			}
 		}
 	}
@@ -86,8 +83,8 @@ func TestTaskAgentVerbsRefuseAnAgentWithoutAUsableNameBeforeTheDatabaseIsOpened(
 				}
 				args := append(slices.Clone(verb), c.extra...)
 				exit, code, msg := agentRefusal(t, db, args...)
-				if exit != 3 || code != "invalid_input" || !strings.Contains(msg, c.want) {
-					t.Errorf("task %s: exit %d, %q, %.200q; want exit 3, invalid_input and the words %q", strings.Join(args, " "), exit, code, msg, c.want)
+				if exit != 3 || code != "invalid_input" || !strings.Contains(msg, c.want) || !strings.Contains(msg, "--as NAME") {
+					t.Errorf("task %s: exit %d, %q, %.200q; want exit 3, invalid_input, the words %q and the way to choose a name (--as NAME)", strings.Join(args, " "), exit, code, msg, c.want)
 				}
 			}
 		})
@@ -114,38 +111,39 @@ func TestTaskAgentVerbsRefusedForTheirNameWriteNothing(t *testing.T) {
 	}
 }
 
-// The store is the judge of a name, and the commands judge it a second time before it is asked. The
-// two must never part: a name the commands let through that the store refuses would cost a database
-// that was opened for nothing, a name the commands refuse that the store takes would shut out an
-// agent the store would have served. A claim on an empty board writes nothing, so it is the probe.
-func TestTaskAgentNameCheckAgreesWithTheStore(t *testing.T) {
-	db := newTaskTestDB(t)
-	raw, err := storage.NewDatabase(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	store := tasks.NewStore(raw.DB)
+// The store judges a name by tasks.CheckAgentName, and the commands judge it before the database is
+// opened by asking the same function: there is one rule, and the commands add only the way out. So the
+// table is of what that function lets through and refuses, and of what a command says of a refusal:
+// exit 3, the store's own words (not a paraphrase of them), and how to choose another name.
+func TestTaskAgentNameIsJudgedByTheStoresRuleAndSaysHowToChooseAnother(t *testing.T) {
 	names := append([]string{
 		"", " ", "bot", "bot-1", "claude-code#a3f9", "agent:claude-code#a3f9", "a.b_c@d:e-f", "#x", "-", ".", "_", "7",
 		"agents", "youth", "you2", "myos", "os2", "chromium", "captured", "A", "Z9",
 		"you", "You", "YOU", "yOu", "agent", "AGENT", "capture", "CaPtUrE", "chrome", "Chrome", "os", "OS", "Os",
-		strings.Repeat("a", 64), strings.Repeat("a", 65), strings.Repeat("\U000000e9", 3),
-		"bot\n", "\tbot", "bot 1", "a;b", "a|b", "a&b", "a'b", "a\"b", "a`b", "a$b", "a(b)", "a*b", "a~b", "a!b", "a\\b", "a/b",
+		strings.Repeat("a", 64), strings.Repeat("a", 65), strings.Repeat("a", 100000), strings.Repeat("\U000000e9", 3),
+		"bot\n", "\tbot", " you", "you ", "bot 1", "a;b", "a|b", "a&b", "a'b", "a\"b", "a`b", "a$b", "a(b)", "a*b", "a~b", "a!b", "a\\b", "a/b",
 		"a\x00b", "a\x1bb", "a\U0000202eb", "a\U0000feffb", "a\U000e0041b", "a\xffb",
+		"y\U0000043eu", "you\U0000200b", "\U0000212aey", "agent\U00000301",
 	}, badAgentNames...)
+	refused := 0
 	for _, name := range names {
-		_, storeErr := store.Next(context.Background(), "default", tasks.Actor{Kind: tasks.Agent, Name: name}, true, 0)
-		if storeErr != nil && !errors.Is(storeErr, tasks.ErrInvalid) {
-			t.Fatalf("a claim on an empty board by %q: %v, want nothing or ErrInvalid", name, storeErr)
-		}
+		storeErr := tasks.CheckAgentName(name)
 		cliErr := agentNameError(name)
 		if (storeErr != nil) != (cliErr != nil) {
-			t.Errorf("the name %q: the store says %v, the command says %v", name, storeErr, cliErr)
+			t.Errorf("the name %.40q: the store's rule says %v, the command says %v", name, storeErr, cliErr)
+			continue
 		}
-		if cliErr != nil && (exitCode(cliErr) != 3 || len(cliErr.Error()) > 300 || !utf8.ValidString(cliErr.Error())) {
-			t.Errorf("the refusal of the name %q is not a short exit 3: %d, %q", name, exitCode(cliErr), cliErr)
+		if cliErr == nil {
+			continue
 		}
+		refused++
+		msg := cliErr.Error()
+		if exitCode(cliErr) != 3 || !strings.Contains(msg, storeErr.Error()) || !strings.Contains(msg, "choose another name with --as NAME") || len(msg) > 300 || !utf8.ValidString(msg) {
+			t.Errorf("the refusal of the name %.40q: exit %d, %.200q; want exit 3, the store's words %q and the way out", name, exitCode(cliErr), msg, storeErr)
+		}
+	}
+	if refused < 40 || refused == len(names) {
+		t.Errorf("%d of %d names were refused: the table must hold names of both kinds", refused, len(names))
 	}
 }
 
