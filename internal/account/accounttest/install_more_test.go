@@ -24,6 +24,10 @@ type recordingTB struct {
 
 func (r *recordingTB) Cleanup(f func()) { r.cleanups = append(r.cleanups, f) }
 
+// Setenv does nothing, as everything the recorder is given stays off the real test
+// (the fixtures mark the test with t.Setenv; TestFixturesPanicWhenMixedWithTParallel tries that on the real one).
+func (r *recordingTB) Setenv(key, value string) {}
+
 func (r *recordingTB) TempDir() string {
 	dir := r.TB.TempDir()
 	r.dirs = append(r.dirs, dir)

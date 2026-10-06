@@ -6,8 +6,17 @@ import (
 )
 
 // The hooks below are test seams. Each panics unless the binary is a test
-// binary (testing.Testing), takes globalsMu, and restores what it changed when
-// the test ends. A test that uses one must not call t.Parallel().
+// binary (testing.Testing), marks the test with t.Setenv (testStateEnv), takes
+// globalsMu, and restores what it changed when the test ends. A test that uses one
+// must not call t.Parallel(): the marker makes the testing package panic if it does.
+
+// testStateEnv is the name of a marker that every seam that changes process-wide
+// state sets with t.Setenv, and that nothing reads. The testing package refuses to
+// combine t.Setenv with t.Parallel, before or after, so a test that mixes a seam with
+// t.Parallel fails at once instead of flaking on test order. A seam sets it right
+// after requireTestBinary, which comes first and before which nothing runs, and
+// before it touches a global.
+const testStateEnv = "MONOAGENT_ACCOUNT_TEST_STATE"
 
 // requireTestBinary panics unless the running binary is a test binary.
 func requireTestBinary(name string) { mustBeTestBinary(testing.Testing(), name) }
@@ -23,6 +32,7 @@ func mustBeTestBinary(isTest bool, name string) {
 func SetTrustedKeysForTest(t testing.TB, keys []Key) {
 	t.Helper()
 	requireTestBinary("SetTrustedKeysForTest")
+	t.Setenv(testStateEnv, "1")
 	globalsMu.Lock()
 	prevKeys, prevSet := keysOverride, keysOverridden
 	keysOverride, keysOverridden = cloneKeys(keys), true
@@ -39,6 +49,7 @@ func SetTrustedKeysForTest(t testing.TB, keys []Key) {
 func SetEnforceFromForTest(t testing.TB, at time.Time) {
 	t.Helper()
 	requireTestBinary("SetEnforceFromForTest")
+	t.Setenv(testStateEnv, "1")
 	globalsMu.Lock()
 	prev := enforceFrom
 	enforceFrom = at
@@ -57,6 +68,7 @@ func SetEnforceFromForTest(t testing.TB, at time.Time) {
 func StrictForTest(t testing.TB) {
 	t.Helper()
 	requireTestBinary("StrictForTest")
+	t.Setenv(testStateEnv, "1")
 	globalsMu.Lock()
 	prev := strict
 	strict = true

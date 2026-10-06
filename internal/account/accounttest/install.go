@@ -24,7 +24,7 @@ const (
 // switched off (strict), and restores all of it when the test ends. It returns
 // the guard. A test builds at most one fixture (here, with InstallWithFixture or
 // with New): the trusted key is process-global, so a second one replaces the
-// first one's key. And it must not call t.Parallel().
+// first one's key. And it must not call t.Parallel(): the seams it uses panic if it does.
 //
 // The guard is real and the test strict, so a gate site's "refuses when locked"
 // test cannot be let through by the test-binary exception (D24). What it cannot
@@ -40,7 +40,7 @@ func Install(t testing.TB, m Mode) *account.Guard {
 
 // InstallWithFixture is Install that also returns the Fixture, for a test that
 // needs the key to mint another token or the Clock to move time. The same two
-// rules hold: at most one fixture per test, and no t.Parallel().
+// rules hold: at most one fixture per test, and no t.Parallel() (it panics).
 func InstallWithFixture(t testing.TB, m Mode) (*account.Guard, *Fixture) {
 	t.Helper()
 	f := New(t)

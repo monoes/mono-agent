@@ -26,10 +26,11 @@ func Current() *Guard {
 
 // InstallForTest installs g for the rest of the test and puts the previous
 // guard back when it ends; a nil g installs no guard for the rest of the test.
-// A test that uses it must not call t.Parallel().
+// A test that uses it must not call t.Parallel() (see testStateEnv: it panics).
 func InstallForTest(t testing.TB, g *Guard) {
 	t.Helper()
 	requireTestBinary("InstallForTest")
+	t.Setenv(testStateEnv, "1")
 	globalsMu.Lock()
 	prev := installed
 	installed = g

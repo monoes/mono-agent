@@ -29,6 +29,11 @@ func (r *recTB) Helper()          {}
 func (r *recTB) Failed() bool     { return r.failed }
 func (r *recTB) Cleanup(f func()) { r.cleanups = append(r.cleanups, f) }
 
+// Setenv does nothing: the seams mark the test with t.Setenv, and the real test's
+// Setenv is not for goroutines that run at once, which these recorders are used from.
+// The marker is tried on the real test by TestEveryGlobalStateSeamPanicsWhenMixedWithTParallel.
+func (r *recTB) Setenv(key, value string) {}
+
 // end runs what the "test" registered, the last registered first, as the
 // testing package does. It is safe to call twice.
 func (r *recTB) end() {
