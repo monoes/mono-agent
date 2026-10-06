@@ -11,6 +11,11 @@ import (
 // minutes. It is idempotent, does nothing while the package is dormant (spec
 // D22) and ends when ctx ends or the guard is closed. A daemon starts it at
 // once; any other process starts it after LateRefresher.
+//
+// A guard starts one loop in its life. A loop that has ended with its ctx leaves
+// loopCancel set, so every later call is a no-op and the ctx of the first call
+// decides how long the refresher runs: callers must pass a ctx that lives as long
+// as the process.
 func (g *Guard) StartRefresher(ctx context.Context) {
 	if dormant() {
 		return
