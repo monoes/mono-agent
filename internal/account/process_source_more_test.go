@@ -8,23 +8,20 @@ import (
 	"testing"
 )
 
-// A tripwire for two mutations that no test can see from inside a test binary,
-// because testing.Testing() is true in every one of them (a re-executed child is
-// a test binary too):
-//
-//   - Require hands requireNoGuard testing.Testing() and the strict flag it read
-//     under globalsMu. Hand it true instead, or leave the first argument out, and a
-//     release binary (testing.Testing() false, strict never set) lets every call
-//     through when no guard is installed: the whole gate fails open. The tests of
-//     requireNoGuard pin its logic for a release binary; only this pins what
-//     Require passes it.
-//   - InstallForTest calls requireTestBinary("InstallForTest") before it touches
-//     the installed guard or the lock.
+// A tripwire for a mutation that no test can see from inside a test binary,
+// because testing.Testing() is true in every one of them (a re-executed child is a
+// test binary too): Require hands requireNoGuard testing.Testing() and the strict
+// flag it read under globalsMu. Hand it true instead, or leave the first argument
+// out, and a release binary (testing.Testing() false, strict never set) lets every
+// call through when no guard is installed: the whole gate fails open. The tests of
+// requireNoGuard pin its logic for a release binary; only this pins what Require
+// passes it. (The *ForTest hooks that must refuse in a release binary, InstallForTest
+// among them, are pinned by TestEveryForTestHookRefusesToRunInAReleaseBinary.)
 //
 // The proof on a real binary (no guard in a release build is locked once the gate
 // is enforced) is B5c's smoke. The source is read as syntax, so formatting and
 // comments change nothing; the shape of the calls does.
-func TestRequireAndInstallForTestReachTheTestBinaryChecks(t *testing.T) {
+func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "process.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -69,26 +66,6 @@ func TestRequireAndInstallForTestReachTheTestBinaryChecks(t *testing.T) {
 	})
 	if asked != 1 {
 		t.Errorf("Require calls testing.Testing() %d times, want once, as the first argument of requireNoGuard", asked)
-	}
-
-	// InstallForTest refuses to run outside a test binary before it touches anything.
-	checked, touched := false, ""
-	for _, st := range bodyOf(t, file, "InstallForTest").List {
-		if exprOf(st) == `requireTestBinary("InstallForTest")` {
-			checked = true
-			break
-		}
-		ast.Inspect(st, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && touched == "" && (id.Name == "installed" || id.Name == "globalsMu") {
-				touched = id.Name
-			}
-			return true
-		})
-	}
-	if !checked {
-		t.Error(`InstallForTest does not call requireTestBinary("InstallForTest") before it touches the installed guard`)
-	} else if touched != "" {
-		t.Errorf(`InstallForTest touches %s before it calls requireTestBinary("InstallForTest")`, touched)
 	}
 }
 
