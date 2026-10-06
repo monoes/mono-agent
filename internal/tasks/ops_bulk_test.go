@@ -189,6 +189,28 @@ func TestUnarchiveGoesBackToTheColumnItWasArchivedFrom(t *testing.T) {
 	}
 }
 
+// A history that cannot be read is a failure, not a reason to guess Inbox: the task stays where it
+// is. (The column the lookup asks for is renamed, so that this query fails and the reads that come
+// before it do not.)
+func TestUnarchiveFailsWhenItCannotReadWhereTheTaskCameFrom(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	task := mustAdd(t, s, "default", "a", true)
+	if _, err := s.Archive(bg, "default", []int64{task.ID}, human); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE task_events RENAME COLUMN from_status TO from_status_renamed`); err != nil {
+		t.Fatal(err)
+	}
+	before := dumpBoard(t, db)
+	_, err := s.Unarchive(bg, "default", []int64{task.ID}, human)
+	if err == nil || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotFound) {
+		t.Errorf("unarchive: %v, want the failure of the read", err)
+	}
+	if after := dumpBoard(t, db); after != before {
+		t.Error("a failed unarchive changed the database")
+	}
+}
+
 // ArchiveStatus takes one column, all of it, in the order it is in, and says how many.
 func TestArchiveStatusArchivesOneColumnInTheOrderItIsIn(t *testing.T) {
 	s, db, _ := newTestStore(t)

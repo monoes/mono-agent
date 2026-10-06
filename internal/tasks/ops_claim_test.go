@@ -49,8 +49,9 @@ func TestMoveWithinInProgressKeepsTheClaimAsItIs(t *testing.T) {
 	if _, err := s.Move(bg, "default", byHand.ID, StatusInProgress, Placement{}, human); err != nil {
 		t.Fatal(err)
 	}
+	carol := opsHeld(t, s, db, c, "carol's", "carol", time.Minute)
 	_, until := opsClaim(t, db, bob.ID)
-	c.advance(10 * time.Minute)
+	c.advance(10 * time.Minute) // carol's lease has run out
 	for _, p := range []Placement{{Top: true}, {Bottom: true}, {After: alice.ID}, {Before: alice.ID}, {}} {
 		got, err := s.Move(bg, "default", bob.ID, StatusInProgress, p, human)
 		if err != nil || got.Claim == nil || got.Claim.By != "bob" {
@@ -62,6 +63,13 @@ func TestMoveWithinInProgressKeepsTheClaimAsItIs(t *testing.T) {
 	}
 	if ev := opsEvents(t, s, bob.ID); strings.Contains(strings.Join(ev, ","), "released") {
 		t.Errorf("a held card moved within In progress: events %v", ev)
+	}
+	// a stale claim is kept too, and stays stale: the operator's move renews nothing
+	if got, err := s.Move(bg, "default", carol.ID, StatusInProgress, Placement{Top: true}, human); err != nil || got.Claim == nil || got.Claim.By != "carol" || !got.Claim.Stale {
+		t.Errorf("a stale claim moved within In progress: %+v, %v", got.Claim, err)
+	}
+	if ev := opsEvents(t, s, carol.ID); strings.Contains(strings.Join(ev, ","), "released") {
+		t.Errorf("a stale claim moved within In progress: events %v", ev)
 	}
 	if got, _, _ := s.Get(bg, "default", alice.ID); got.Claim == nil || got.Claim.By != "alice" {
 		t.Errorf("the other held card: %+v", got.Claim)
