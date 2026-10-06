@@ -542,6 +542,21 @@ func TestAFailedWriteOfTheRotatedRefreshTokenKeepsTheOldOneAndTheMarker(t *testi
 	if got := e.pendingOn(); !got.Equal(start) {
 		t.Fatalf("pending_since = %v, want %v: the answer was received but not stored, which is a lost answer", got, start)
 	}
+	// Past the window no process presents the dead token, this one or another: the token is
+	// dropped, and the server sees no second call.
+	other := e.newGuard(0)
+	e.f.Clock.Advance(pendingWindowPlusASecond)
+	for _, guard := range []*account.Guard{g, other} {
+		if st, err := guard.EnsureFresh(ctx); err != nil && !errors.Is(err, account.ErrKeyringUnavailable) || st.State != account.StateGrace || st.Reason == account.ReasonRefused {
+			t.Fatalf("Status = %s/%q, %v, want grace and never refused", st.State, st.Reason, err)
+		}
+	}
+	if n := e.ref.calls.Load(); n != 1 {
+		t.Fatalf("%d calls: the dead refresh token was presented again after the window", n)
+	}
+	if got := e.session().LastResult; got != "unconfirmed" {
+		t.Fatalf("last result = %q, want unconfirmed", got)
+	}
 }
 
 func TestTheRefreshTokenIsWrittenBeforeTheSession(t *testing.T) {

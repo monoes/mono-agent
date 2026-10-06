@@ -67,9 +67,16 @@ func (g *Guard) Refresh(ctx context.Context) (Status, error) {
 // dueForRefresh decides from the cached session whether a refresh should be
 // tried now. A session that is not ok (grace, expired, a clock that went back,
 // a token this build cannot verify) is always due: only a new token repairs it.
+// So is one with a marker, in both modes and whatever the margin and the negative
+// cache say (A24): a grant that may have been answered is retried at once while
+// monoes.me still repeats its answer, and dropped after that, and the lock path
+// decides which by the age of the marker.
 func dueForRefresh(sess *Session, st Status, rcpt *Receipt, now time.Time, mode refreshMode) bool {
 	if sess == nil || sess.State == stateRefused || sess.AccessToken == "" {
 		return false
+	}
+	if !sess.PendingSince.IsZero() {
+		return true
 	}
 	// Both callers read the Status and then the cache, one after the other, and a
 	// poll in another goroutine can swap the cache between the two reads: a token
@@ -142,10 +149,21 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	}
 	refreshToken, err := g.store.LoadRefresh()
 	if err != nil || refreshToken == "" {
+		if err == nil && sess.LastResult == string(ReasonUnconfirmed) {
+			// A drop took the refresh token and recorded why (A24). There is nothing to
+			// present, and a key store problem recorded over that reason would have the
+			// grace say the wrong thing, and its end say expired instead of unconfirmed.
+			return st, outcomeSkipped, nil
+		}
 		// Unreadable: the key store is unavailable or does not answer in time, or
 		// the file is gone or does not open. Not a decision about the account, so
 		// the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
+	}
+	if pendingExpired(sess, now) {
+		// The grant that left the marker is out of reach of monoes.me's reuse window, or
+		// the clock went back and its age cannot be told: the token is not presented.
+		return g.dropUnconfirmed(sess, now)
 	}
 	if err := ctx.Err(); err != nil {
 		// The last place where giving up sends nothing: reading the refresh token

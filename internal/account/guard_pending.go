@@ -41,3 +41,40 @@ func withoutPending(cur *Session) *Session {
 	next.PendingSince = time.Time{}
 	return &next
 }
+
+// pendingExpired reports whether the grant that left cur's marker is out of reach
+// of monoes.me's reuse window: the marker is older than pendingRetryWindow, or it
+// lies after now, which means that the clock went back since it was written and its
+// age cannot be told. Exactly pendingRetryWindow is still a retry.
+func pendingExpired(cur *Session, now time.Time) bool {
+	if cur.PendingSince.IsZero() {
+		return false
+	}
+	age := now.Sub(cur.PendingSince)
+	return age < 0 || age > pendingRetryWindow
+}
+
+// dropUnconfirmed gives up the refresh token that the marker is about: monoes.me may
+// have rotated it, its answer never arrived, and presenting it now would be taken for
+// theft and end every refresh token of the account. Nothing is sent and nothing is
+// revoked: this machine signs in again, and the other installs are untouched. The
+// session is recorded as unconfirmed (a grace reason, then locked) and keeps its
+// access token, which is good until it expires.
+//
+// The dead token goes FIRST (os.Remove needs no key store), whether or not the record
+// of why can be saved: a process that stops between the two steps then leaves a missing
+// token and the old marker, which the next pass reads as a key store problem, and never
+// a token that nothing marks. If the token cannot be removed the marker stays, so that
+// the next pass drops it again and never presents it.
+func (g *Guard) dropUnconfirmed(cur *Session, now time.Time) (Status, outcome, error) {
+	removed := g.store.DeleteRefresh()
+	next := cur
+	if removed == nil {
+		next = withoutPending(cur)
+	}
+	st, oc, err := g.recordAttempt(next, now, string(ReasonUnconfirmed))
+	if err == nil {
+		err = removed
+	}
+	return st, oc, err
+}

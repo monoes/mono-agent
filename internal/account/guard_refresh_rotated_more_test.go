@@ -25,6 +25,9 @@ func (e *env) answeringFirstWith(store account.Store, first *account.TokenSet, r
 	broken := refresherFunc(func(ctx context.Context, rt string) (*account.TokenSet, error) {
 		*answers++
 		if *answers > 1 {
+			if rotates && rt == "rt-1" {
+				return first, nil // a retry inside the reuse window: monoes.me repeats the answer it gave
+			}
 			return e.ref.Refresh(ctx, rt)
 		}
 		if rotates {
@@ -94,6 +97,23 @@ func TestAnAnswerWithARefreshTokenAndNoAccessToken(t *testing.T) {
 		}
 		if got := e.pendingOn(); !got.Equal(start) {
 			t.Fatalf("pending_since = %v, want %v", got, start)
+		}
+		// The key store works again and a minute has passed: the retry presents the old token,
+		// monoes.me repeats its answer, and the rotated token is stored at last, so the attempt
+		// after that presents it and not the dead one.
+		fs.mu.Lock()
+		fs.failSaveRefresh = false
+		fs.mu.Unlock()
+		e.f.Clock.Advance(time.Minute)
+		if st, err := g.EnsureFresh(ctx); err != nil || st.State != account.StateGrace || st.Reason != account.ReasonServerError {
+			t.Fatalf("the retry = %s/%q, %v, want grace/server_error (the answer has no access token) and no error", st.State, st.Reason, err)
+		}
+		if rt, _ := e.store.LoadRefresh(); rt != "rt-2" || e.rawPending() != "" {
+			t.Fatalf("refresh.enc holds %q with pending %q, want the rotated token and no marker", rt, e.rawPending())
+		}
+		e.f.Clock.Advance(time.Minute)
+		if st, err := g.EnsureFresh(ctx); err != nil || st.State != account.StateOK || e.ref.calls.Load() != 1 || answers != 3 {
+			t.Fatalf("the next attempt = %s/%q, %v with %d answers and %d network refreshes, want ok with the rotated token presented (the dead one is not)", st.State, st.Reason, err, answers, e.ref.calls.Load())
 		}
 	})
 }
