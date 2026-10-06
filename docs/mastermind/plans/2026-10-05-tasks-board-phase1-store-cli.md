@@ -6121,7 +6121,7 @@ git commit -m "feat(tasks): ref tasks, the ref commands entries, AGENTS.md, SECU
 
 - [ ] **Step 1: Re-check the migration number (spec D32)**
 
-Run (separate calls): `ls data/migrations | tail -3`, `git fetch origin master`, `git ls-tree --name-only origin/master data/migrations/ | tail -3`, and `ls` of `data/migrations` in the four other checkouts listed in Task 1.
+Run (separate calls): `ls data/migrations | tail -3`, `git fetch origin master`, `git ls-tree --name-only origin/master data/migrations/ | tail -3`, and `ls` of `data/migrations` in every checkout that `git worktree list` shows (read-only: the four listed in Task 1 and every `.claude/worktrees/*` folder).
 Expected: `062_tasks.sql` is the only 062 anywhere. If another 062 exists, stop and tell the lead.
 
 - [ ] **Step 2: Format, vet and build on every platform this repository ships**
@@ -6152,7 +6152,7 @@ go test ./... -count=1 -timeout 30m
 
 - [ ] **Step 4: Mutation checks**
 
-For each row: apply the change with the Edit tool, run the test named, see it FAIL, undo the change with the Edit tool, see it PASS again. A mutation that does not fail its test means a rule has no proof: add or sharpen the test (in the task that owns the code) before going on.
+The code moved on during the reviews (the rows below name the plan's first draft; several tasks were rewritten, split and extended): for each row take the INTENT, find the real line with `grep` and the real covering tests with `go test -list '.*' <package>` (a test name below that does not exist is the plan's, not a failure), and run the mutant in a SCRATCH EXPORT, never in the tree: `git archive HEAD internal data cmd go.mod go.sum | tar -x -C <a fresh folder under the scratchpad>`, edit there with the Edit tool, see the named tests FAIL, restore the file from the export's pristine copy and see them PASS again. A mutation that does not fail its test means a rule has no proof: add or sharpen the test (in the task that owns the code) before going on. Moved code you must look for: `later` no longer exists (the lease is computed in SQL by a CASE with `max(claim_until, ?)` in `claimTx` and in `commentTx`); the Ready gate is the first statement of `Add`; the 500-event comment cap and the 2,000-event claim cap live in `claims.go`; `Watch` is in `watch.go`. Add four rows of your own after the ten, one per property the reviews found most delicate: (11) `store.go`, the open-task count `openTasksSQL`: `status IN (...)` becomes `status <> 'archived'` (the EXPLAIN-plan test must fail); (12) `watch.go`: the profile check removed from the poll (the deleted-profile test must fail); (13) `cmd/monoagentcli/task.go`, `flagAs`: an explicitly blank `--as` returns "" (a blank `--as` would count as the operator: its tests must fail); (14) `cmd/monoagentcli/task_read.go`: the operator guard removed from `board` (the agent-refusal tests must fail).
 
 | # | File and change | Test that must fail |
 |---|---|---|
