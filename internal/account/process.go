@@ -53,18 +53,15 @@ func Require(ctx context.Context) error {
 	if g := Current(); g != nil {
 		return g.Require(ctx)
 	}
-	globalsMu.RLock()
-	isStrict := strict
-	globalsMu.RUnlock()
-	return requireNoGuard(testing.Testing(), isStrict, time.Now())
+	return requireNoGuard(testing.Testing(), isStrict(), time.Now())
 }
 
 // requireNoGuard is Require for a process with no guard installed. isTest is
 // testing.Testing(). It is a parameter so that a test can run what a release
 // binary runs, which testing.Testing() makes impossible inside a test binary
 // (the split of requireTestBinary and mustBeTestBinary in testhooks.go).
-func requireNoGuard(isTest, isStrict bool, now time.Time) error {
-	if isTest && !isStrict {
+func requireNoGuard(isTest, strictNow bool, now time.Time) error {
+	if isTest && !strictNow {
 		return nil
 	}
 	if st := noGuardStatus(now); !st.Allowed() {

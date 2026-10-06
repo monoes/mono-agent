@@ -68,19 +68,14 @@ func TestSeamsRestoreWhenTheTestEnds(t *testing.T) {
 		if keys := TrustedKeys(); !EnforceDate().Equal(at) || len(keys) != 1 || keys[0].KID != "k1" {
 			t.Fatalf("the hooks did not take effect: date %v, trusted keys %v", EnforceDate(), keys)
 		}
-		globalsMu.RLock()
-		isStrict := strict
-		globalsMu.RUnlock()
-		if !isStrict {
+		if !isStrict() {
 			t.Fatal("StrictForTest did not set the strict flag")
 		}
 	})
-	globalsMu.RLock()
-	isStrict := strict
-	globalsMu.RUnlock()
+	strictNow := isStrict()
 	_, leaked := lookupKey("k1") // the length alone cannot tell a leaked key from a pinned one once a release pins exactly one
-	if !EnforceDate().Equal(dateBefore) || len(TrustedKeys()) != keysBefore || leaked || isStrict {
-		t.Fatalf("a hook leaked out of its test: date %v (was %v), keys %d (was %d), key k1 still trusted %v, strict %v", EnforceDate(), dateBefore, len(TrustedKeys()), keysBefore, leaked, isStrict)
+	if !EnforceDate().Equal(dateBefore) || len(TrustedKeys()) != keysBefore || leaked || strictNow {
+		t.Fatalf("a hook leaked out of its test: date %v (was %v), keys %d (was %d), key k1 still trusted %v, strict %v", EnforceDate(), dateBefore, len(TrustedKeys()), keysBefore, leaked, strictNow)
 	}
 }
 
