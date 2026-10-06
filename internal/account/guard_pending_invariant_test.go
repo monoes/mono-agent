@@ -13,9 +13,11 @@ import (
 // over every kind of pass, on a clock that reads before the session's last attempt (set back)
 // and on one after it:
 //
-//   - no write of the guard moves LastAttempt back while the session it leaves has a marker or
-//     is unconfirmed: a clock that reads before it is the evidence that the clock went back, and
-//     the age of a marker cannot be told then (pendingExpired);
+//   - once a session is in doubt (it has a marker or is unconfirmed), no later write of the guard
+//     moves LastAttempt back: a clock that reads before it is the evidence that the clock went
+//     back, and the age of a marker cannot be told then (pendingExpired). The write that starts
+//     the doubt, a fresh stamp, starts the evidence at the stamp (markPending), as with nothing in
+//     doubt the last attempt follows the clock;
 //   - unconfirmed is left only by a sign-in (NewSession): it is what keeps a token that a drop
 //     gave up from being presented when that token is still, or again, on disk.
 

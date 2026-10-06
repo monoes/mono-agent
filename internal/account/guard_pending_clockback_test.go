@@ -216,3 +216,31 @@ func TestTheMarkerIsJudgedOnTheClockOfTheSendNotOfTheSessionRead(t *testing.T) {
 		}
 	})
 }
+
+// A clock that went back BEFORE a grant: an attempt recorded at t0 (offline, nothing in doubt),
+// the clock set back 59 s, and then a grant whose answer is lost. Nothing was in doubt when the
+// earlier attempt was recorded, so it says nothing about a clock that went back since the stamp:
+// the stamp starts the evidence afresh, and the retry 20 s later is a retry, not a drop.
+func TestAClockSetBackBeforeAGrantDoesNotDropItsFirstRetry(t *testing.T) {
+	r := newLostRig(t)
+	r.net.then(unsent)
+	if _, err := r.command(); err != nil { // offline at t0: the attempt is recorded, nothing is in doubt
+		t.Fatal(err)
+	}
+	r.e.f.Clock.Set(r.t0.Add(-59 * time.Second)) // the clock is set back
+	r.net.then(lost)
+	if _, err := r.command(); err != nil { // monoes.me rotates, the answer is lost: the marker at t0-59 s
+		t.Fatal(err)
+	}
+	if sess := r.e.session(); !sess.PendingSince.Equal(r.t0.Add(-59*time.Second)) || sess.LastAttempt.After(sess.PendingSince) {
+		t.Errorf("stored session = %s, want the marker at t0-59 s and no attempt recorded after it", describe(sess))
+	}
+	r.e.f.Clock.Advance(20 * time.Second) // well inside monoes.me's window
+	st, err := r.command()
+	if err != nil || st.State != account.StateOK || r.srv.isRevoked() {
+		t.Fatalf("the retry 20 s after the lost answer = %s/%q, %v (revoked %t), want ok", st.State, st.Reason, err, r.srv.isRevoked())
+	}
+	if sess := r.e.session(); sess.LastResult != "ok" || r.e.rawPending() != "" || count(r.srv.presented(), "rt-1") != 2 {
+		t.Fatalf("stored session = %s, presented %v, want the answer recovered by the retry", describe(sess), r.srv.presented())
+	}
+}

@@ -205,6 +205,48 @@ func TestTheHighWaterWriteRaisesTheLastAttemptOnlyWhileAMarkerIsPending(t *testi
 	}
 }
 
+// markPending writes a stamp only when there is none (rule 1c), and with it moves a last
+// attempt that lies after the clock back to the stamp: nothing was in doubt when that attempt was
+// recorded, so a clock that went back before the grant must not read as one gone back since it.
+// A session that already has a stamp is returned as it is and nothing is written.
+func TestMarkPendingStartsTheEvidenceAtAFreshStampAndLeavesAStampAsItIs(t *testing.T) {
+	now := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		stamp       time.Time
+		last        time.Time
+		wantLast    time.Time
+		wantWritten bool
+	}{
+		{"a fresh stamp, the last attempt before the clock", time.Time{}, now.Add(-time.Minute), now.Add(-time.Minute), true},
+		{"a fresh stamp, the last attempt after the clock", time.Time{}, now.Add(time.Minute), now, true},
+		{"a stamp already, the last attempt after the clock", now.Add(-100 * time.Second), now.Add(time.Minute), now.Add(time.Minute), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t)
+			ws := &orderStore{Store: r.store}
+			g := NewGuard(GuardOptions{Store: ws, Refresher: r.srv, Now: r.clock.Now})
+			t.Cleanup(g.Close)
+			cur := &Session{V: sessionVersion, Host: HostURL, AccessToken: "token", PendingSince: c.stamp, LastAttempt: c.last}
+			marked, wrote, err := g.markPending(cur, now)
+			if err != nil || wrote != c.wantWritten || (len(ws.writes()) == 1) != c.wantWritten {
+				t.Fatalf("markPending = wrote %t, %v with writes %v, want wrote %t", wrote, err, ws.writes(), c.wantWritten)
+			}
+			if !c.wantWritten && marked != cur {
+				t.Fatal("a session that already has a stamp was not returned as it is")
+			}
+			wantStamp := c.stamp
+			if wantStamp.IsZero() {
+				wantStamp = now
+			}
+			if !marked.PendingSince.Equal(wantStamp) || !marked.LastAttempt.Equal(c.wantLast) || !cur.LastAttempt.Equal(c.last) {
+				t.Fatalf("marked = %s (cur %s), want the stamp %v and the last attempt %v", sessionFacts(marked), sessionFacts(cur), wantStamp, c.wantLast)
+			}
+		})
+	}
+}
+
 // orderStore records the writes of a pass in order and fails the ones a test names.
 type orderStore struct {
 	Store

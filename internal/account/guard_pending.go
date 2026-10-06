@@ -41,15 +41,23 @@ import "time"
 // lock, and takes the session in. The stamp is written only when there is none: the
 // reuse window runs from the first request that monoes.me may have answered, not
 // from the last one, and a retry inside it gets the same answer and consumes
-// nothing new, so a retry that is lost again keeps the stamp it found. wrote says
-// whether this call wrote it. A marker that cannot be written is an error and
-// nothing is taken in: a grant whose outcome cannot be recorded must not be sent.
+// nothing new, so a retry that is lost again keeps the stamp it found. A fresh stamp
+// starts the evidence of a clock that went back: a last attempt recorded after it,
+// while nothing was in doubt, is moved back to the stamp. wrote says whether this
+// call wrote it. A marker that cannot be written is an error and nothing is taken
+// in: a grant whose outcome cannot be recorded must not be sent.
 func (g *Guard) markPending(cur *Session, now time.Time) (marked *Session, wrote bool, err error) {
 	if !cur.PendingSince.IsZero() {
 		return cur, false, nil
 	}
 	next := *cur
 	next.PendingSince = now
+	if next.LastAttempt.After(now) {
+		// The clock went back before this grant, while nothing was in doubt: an attempt
+		// recorded ahead of the stamp would read as a clock gone back since it
+		// (pendingExpired) and drop the first retry. The evidence starts at the stamp.
+		next.LastAttempt = now
+	}
 	if err := g.store.Save(&next); err != nil {
 		return nil, false, err
 	}
