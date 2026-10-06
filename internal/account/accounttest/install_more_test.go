@@ -2,6 +2,7 @@ package accounttest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime"
 	"slices"
@@ -325,4 +326,45 @@ func TestInstallLockedRefusedFiresOnRefused(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("OnRefused did not fire for the stored refusal marker")
 	}
+}
+
+// fatalRecorder is a recordingTB whose Fatalf records its message and ends the
+// goroutine it is called in, as the real one does, so that a test can watch a
+// fixture refuse without failing itself.
+type fatalRecorder struct {
+	recordingTB
+	msg string
+}
+
+func (r *fatalRecorder) Fatalf(format string, args ...any) {
+	r.msg = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+// A Mode that is not one of the five is a mistake in the test, and the fixture
+// fails the test on the spot instead of quietly building a guard of some other
+// mode. The zero Mode stays SignedIn (index section 3.3).
+func TestInstallFailsLoudlyOnAnUnknownMode(t *testing.T) {
+	for _, m := range []Mode{-1, Dormant + 1, 99} {
+		rec := &fatalRecorder{recordingTB: recordingTB{TB: t}}
+		t.Cleanup(rec.end)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			InstallWithFixture(rec, m)
+		}()
+		<-done
+		rec.end()
+		if want := fmt.Sprintf("accounttest: unknown mode %d", m); rec.msg != want {
+			t.Errorf("Mode %d: the fixture said %q, want %q", m, rec.msg, want)
+		}
+	}
+}
+
+func TestTheZeroModeIsSignedIn(t *testing.T) {
+	var zero Mode
+	if zero != SignedIn {
+		t.Fatalf("the zero Mode is %d, want SignedIn (%d)", zero, SignedIn)
+	}
+	expectStatus(t, Install(t, zero), account.StateOK, account.ReasonNone)
 }

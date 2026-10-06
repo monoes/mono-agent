@@ -56,6 +56,10 @@ func InstallWithFixture(t testing.TB, m Mode) (*account.Guard, *Fixture) {
 		}
 	case LockedRefused:
 		sess = &account.Session{V: 1, Host: account.HostURL, User: user, HW: now, State: "refused", LastResult: "refused", LastAttempt: now}
+	case LockedNoLogin, Dormant:
+		// no session: nobody signed in
+	default:
+		t.Fatalf("accounttest: unknown mode %d", m)
 	}
 	if sess != nil {
 		if err := store.Save(sess); err != nil {
