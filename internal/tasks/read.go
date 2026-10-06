@@ -46,9 +46,15 @@ func (s *Store) Counts(ctx context.Context, profileID string) (Counts, error) {
 	return c, nil
 }
 
+// countsSQL counts the profile's cards per column of the board. It names the five columns where it could
+// ask for every status: the archive has no limit, and a count of the profile's whole range reads all of it,
+// at every Counts, every Board and every poll of a Watch, while five equalities are five seeks in
+// idx_tasks_board, bounded by the 2,000 open tasks (as openTasksSQL).
+const countsSQL = `SELECT status, COUNT(*) FROM tasks WHERE profile_id = ? AND status IN ('inbox', 'ready', 'in_progress', 'review', 'done') GROUP BY status`
+
 func (s *Store) countsOf(ctx context.Context, x dbx, profileID string) (Counts, error) {
 	var c Counts
-	rows, err := x.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks WHERE profile_id = ? GROUP BY status`, profileID)
+	rows, err := x.QueryContext(ctx, countsSQL, profileID)
 	if err != nil {
 		return Counts{}, fmt.Errorf("tasks: counting: %w", err)
 	}
