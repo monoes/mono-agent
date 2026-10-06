@@ -10,12 +10,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link2 } from 'lucide-react'
 import { sectionEdgePath, SECTION_HEADER } from './sectionsGraph.js'
+import { budgetLine, budgetBadge, budgetTitle } from './budgetModel.js'
 
-export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget }) {
+export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget, budgets = {}, staleRates = '' }) {
   return rects.map(r => {
     const s = sections.find(x => x.name === r.name)
     const selected = selectedName === r.name
     const target = hoverEdgeTarget === r.name
+    const live = budgets[r.name]
+    const badge = budgetBadge(live)
     return (
       <div
         key={r.name}
@@ -32,13 +35,22 @@ export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect
           onMouseDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onSelect?.(r.name); if (!readOnly) onStartMove?.(r.name, e) }}
           style={{
             height: SECTION_HEADER, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px',
-            pointerEvents: 'auto', cursor: readOnly ? 'default' : 'grab', userSelect: 'none',
+            pointerEvents: 'auto', cursor: readOnly ? 'default' : 'grab', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden',
             fontFamily: 'var(--font-mono)', fontSize: 11, color: r.color,
           }}
         >
           <strong style={{ letterSpacing: 0.4 }}>{r.name}</strong>
-          {s && <span style={{ color: 'var(--text-muted)' }}>lead: {s.leadId || '—'}</span>}
-          {s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
+          {s && !live && <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>lead: {s.leadId || '—'}</span>}
+          {live
+            ? (
+              <span data-testid={`section-budget-${r.name}`} title={`${budgetTitle(live)}${staleRates ? ` · ${staleRates}` : ''}`}
+                style={{ display: 'flex', gap: 4, minWidth: 0, color: badge?.color || 'var(--text-muted)' }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{budgetLine(live).replace(' / ', '/')}</span>
+                {badge && <strong data-testid={`section-budget-badge-${r.name}`} style={{ flexShrink: 0 }}>· {badge.label}</strong>}
+                {staleRates && <em data-testid={`section-stale-rates-${r.name}`} aria-label="stale rates" title="stale rates" style={{ flexShrink: 0, opacity: 0.8 }}>≈</em>}
+              </span>
+            )
+            : s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
           <span style={{ flex: 1 }} />
           {!readOnly && (
             <button

@@ -27,6 +27,26 @@ everything else: it routed the messages, ran the real document store
 | `org-sec.json` | the org definition |
 | `fake-codex.py` | the scripted stand-in runtime (not monomind output) |
 
+## Real, budgeted run (recorded 2026-10-06, monomind 2.24.1)
+
+A second recording: `budget-org.json` is a sections org with USD budgets
+(`sections.<n>.budget.usd` 0.05 / 0.04, role `budget_usd`, `run_config.budget_usd`
+0.15) whose roles use the `grok` runtime pointed (`GROK_CLI_BIN`) at
+`fake-grok.py`, a scripted stand-in that speaks grok's `streaming-messages-json`
+and reports a `total_cost_usd` per invocation (`FAKE_COSTS`, a made-up price, so
+the dollar amounts are scripted; monomind's metering, section budget evaluation,
+warnings and soft closure are real). The codex stand-in cannot report cost
+(monomind's codex runner meters tokens only), which is why #349's run has `cost_usd: null`.
+
+| File | What it is |
+|---|---|
+| `budget-org.json` | the org definition |
+| `budget-events.ndjson` | `org events bud --run <id>`: usage events with `cost_usd`, `section-budget-warning` / `section-budget-closed` audit events (drafting, review) and the org-level warning |
+| `budget-report.txt` | `org report bud --run <id>`: monomind's own "Section budgets" table, the ground truth the Go derivation is tested against |
+| `budget-costs.json`, `budget-status.json` | `org costs --format json` and `org status --format json` for the run (status still has no cost or section data) |
+| `budget-run-stdout.txt` | stdout of `org run bud --yes`: the pre-run cost estimate with its `stale rates` line, then the run's end line |
+| `run-estimate-abort.txt` | output of `org run sec --yes --budget-usd=-1`: the estimate read without starting a run (monomind prints it, then aborts "before any tokens are spent") |
+
 ## Synthetic (hand-built)
 
 | File | What it is |
@@ -36,7 +56,7 @@ everything else: it routed the messages, ran the real document store
 
 ## Not captured
 
-`org status --format json` in 2.24.1 has no per-section state, and there is no
+`org status --format json` in 2.24.1 has no per-section state and no cost (and `org costs` / `org report --format json` have no section breakdown; the section table is text-only), and there is no
 `sections` capability in the handshake: section and document state is read
 from the document store files and the `org-docs` messages on the bus.
 `org status` mid-run was recorded with `idle_stop_*` fields; a run that is
