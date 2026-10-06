@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,26 +17,15 @@ import (
 // way), then checks its own arguments, so that a mistake is exit 3 with the --json error document that
 // cobra's Args validators would not give (they answer exit 1 and no document). The text they print
 // carries what the task says only as the notes block of printNotes, and every command an agent is told
-// to run next names the profile and, where it is the agent's own, the agent.
+// to run next is written by taskCommand, so that it names the profile and, where it is the agent's own, the agent.
 
-// agentNameRE is the alphabet and the length of an agent's name (checkAgentName in internal/tasks/store.go).
-var agentNameRE = regexp.MustCompile(fmt.Sprintf(`^[A-Za-z0-9._#@:-]{1,%d}$`, tasks.MaxNameLen))
-
-// reservedAgentNames are the labels the store writes for someone other than an agent: the operator's,
-// an unnamed agent's and the capture surfaces'. An agent named like one would write events that read as theirs.
-var reservedAgentNames = []string{"you", "agent", "capture", tasks.SourceChrome, tasks.SourceOS}
-
-// agentNameError says why the store would refuse name as the name of an agent, or is nil. The store
-// judges a name too, but only once the database is open: this is the same judgment, kept in step by a
-// test, so that a name that cannot be accepted is refused before anything is opened.
+// agentNameError says why name is not a name an agent may act under, or is nil: in the store's own words
+// (tasks.CheckAgentName, the rule the store applies itself) and with how to choose another. The store judges
+// a name only once the database is open; judged here, a name that cannot be accepted is refused before
+// anything is opened.
 func agentNameError(name string) error {
-	if !agentNameRE.MatchString(name) {
-		return errInvalidInput("an agent name is 1-%d characters of letters, digits and . _ # @ : - (got %q): choose one with --as NAME", tasks.MaxNameLen, cutArg(name))
-	}
-	for _, reserved := range reservedAgentNames {
-		if strings.EqualFold(name, reserved) {
-			return errInvalidInput("an agent may not be named %q: you, agent, capture, chrome and os are reserved labels: choose another name with --as NAME", name)
-		}
+	if err := tasks.CheckAgentName(name); err != nil {
+		return taskErr(fmt.Errorf("%w (choose another name with --as NAME)", err))
 	}
 	return nil
 }
@@ -55,27 +43,28 @@ func namedAgent(caller taskCaller) (tasks.Actor, error) {
 	return actor, nil
 }
 
-// pasteName is name as it is written after --as in a command to paste: the name itself when a shell
-// reads it as one word, else the placeholder <name>, as taskCommand writes it. The store takes a name
-// that starts with #, which a shell reads as the start of a comment: the command pasted with it would
-// lose everything after it.
-func pasteName(name string) string {
-	if pasteableName.MatchString(name) {
-		return name
+// takeCommand is a command that takes a task, as a printer suggests it. as is the name of the agent that
+// reads it: the command carries that name (taskCommand writes it, as <name> when a shell would not read it as
+// one word), and the place for a name when the reader has none, the operator or an agent that has not said who
+// it is, so that the reader is the one to choose it: pasted without --as NAME the command would run as the operator.
+func takeCommand(p tasks.Profile, as, words string) string {
+	if as == "" {
+		return taskCommand(p, "", words) + " --as <your-name>"
 	}
-	return "<name>"
+	return taskCommand(p, as, words)
 }
 
-// continueHelp tells an agent how to carry on with a task it holds. Every
-// command names the profile: the active profile can change under a session.
+// continueHelp tells an agent how to carry on with a task it holds, in four commands that carry the profile
+// (the active profile can change under a session) and the agent's name, both as taskCommand writes them.
 func continueHelp(w io.Writer, p tasks.Profile, t tasks.Task, name string) {
-	cli := "monoagentcli --profile " + p.ID + " task"
-	as := pasteName(name)
+	comment := taskCommand(p, name, fmt.Sprintf("comment %d", t.ID))
+	finish := taskCommand(p, name, fmt.Sprintf("finish %d", t.ID))
+	release := taskCommand(p, name, fmt.Sprintf("release %d", t.ID))
 	fmt.Fprintf(w, "\nWork it, then hand it back. Use the same name (%s) for every call:\n", name)
-	fmt.Fprintf(w, "  report progress   %s comment %d --as %s \"what you did\"\n", cli, t.ID, as)
-	fmt.Fprintf(w, "  done              %s finish %d --as %s --result \"what you did\"\n", cli, t.ID, as)
-	fmt.Fprintf(w, "  need an answer    %s finish %d --as %s --question \"what you need to know\"\n", cli, t.ID, as)
-	fmt.Fprintf(w, "  give it back      %s release %d --as %s --note \"why\"\n", cli, t.ID, as)
+	fmt.Fprintf(w, "  report progress   %s \"what you did\"\n", comment)
+	fmt.Fprintf(w, "  done              %s --result \"what you did\"\n", finish)
+	fmt.Fprintf(w, "  need an answer    %s --question \"what you need to know\"\n", finish)
+	fmt.Fprintf(w, "  give it back      %s --note \"why\"\n", release)
 }
 
 // printClaimed prints a task an agent has just claimed.
@@ -88,15 +77,15 @@ func printClaimed(w io.Writer, p tasks.Profile, t tasks.Task, name string) {
 	continueHelp(w, p, t, name)
 }
 
-// printNext prints the task an agent would take, and how to take it.
-func printNext(w io.Writer, p tasks.Profile, t tasks.Task) {
+// printNext prints the task an agent would take, and how to take it. as is the name of the agent that
+// looks, "" for a caller that has none (see takeCommand).
+func printNext(w io.Writer, p tasks.Profile, t tasks.Task, as string) {
 	fmt.Fprintf(w, "Next task: #%d %s   [%s, from %s]\n", t.ID, t.Title, t.Status, t.Source.Kind)
 	if t.Source.URL != "" {
 		fmt.Fprintf(w, "Link: %s\n", t.Source.URL)
 	}
 	printNotes(w, t.Notes) // Task 9's helper: the notice, the notes indented, an end line
-	cli := "monoagentcli --profile " + p.ID + " task"
-	fmt.Fprintf(w, "\nTake it:\n  %s next --claim --as <your-name>\n  %s claim %d --as <your-name>\n", cli, cli, t.ID)
+	fmt.Fprintf(w, "\nTake it:\n  %s\n  %s\n", takeCommand(p, as, "next --claim"), takeCommand(p, as, fmt.Sprintf("claim %d", t.ID)))
 }
 
 func newTaskNextCmd(cfg *globalConfig) *cobra.Command {
@@ -109,7 +98,8 @@ func newTaskNextCmd(cfg *globalConfig) *cobra.Command {
 out. Without --claim it only looks: two agents that look may see the same task.
 With --claim and --as NAME it takes the task for you in one step, so two agents
 never get the same one. A claim lasts 30 minutes by default (--lease, at most
-24h) and is renewed by your comments. Nothing ready: the task is null.`,
+24h) and is renewed by your comments. Nothing ready: the text says so, and
+--json gives a null task.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			caller := callerFor(flagAs(cmd))
 			actor := caller.actor
@@ -138,7 +128,7 @@ never get the same one. A claim lasts 30 minutes by default (--lease, at most
 				case claim:
 					printClaimed(w, p, *t, actor.Name)
 				default:
-					printNext(w, p, *t)
+					printNext(w, p, *t, caller.actor.Name)
 				}
 				return nil
 			})
@@ -223,8 +213,8 @@ func newTaskFinishCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "finish ID --as NAME (--result TEXT | --question TEXT)",
 		Short: "Hand a task you hold back for review, with a result or a question",
-		Long: `The task goes to Review for you to read. Give exactly one of --result (what you
-did) or --question (what you need to know before you can go on).`,
+		Long: `The task goes to Review for the operator to read. Give exactly one of --result
+(what you did) or --question (what you need to know before you can go on).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			actor, err := namedAgent(callerFor(flagAs(cmd)))
 			if err != nil {
@@ -289,10 +279,12 @@ func newTaskReleaseCmd(cfg *globalConfig) *cobra.Command {
 func newTaskDigestCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "digest",
-		Short: "A short line about the ready tasks, for a session-start hook (prints nothing when there are none)",
-		Long: `Prints nothing when the profile has no ready task, otherwise two short lines: the
-counts, the next task and the command to take it. It always exits 0, so a hook
-can call it: monoagentcli --profile <id> task digest`,
+		Short: "A short line about the ready tasks, for a session-start hook (in text, prints nothing when there are none)",
+		Long: `In text, prints nothing when the profile has no ready task, otherwise two short
+lines: the counts, the next task and the command to take it. With --json it always
+prints its document. It always exits 0 whatever goes wrong at run time (a failure
+is one line on standard error), so a hook can call it:
+monoagentcli --profile <id> task digest`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// A hook must never fail on a digest: what goes wrong, a mistake in the arguments too, is
 			// one line on standard error, and nothing is printed on standard output.
@@ -324,7 +316,7 @@ can call it: monoagentcli --profile <id> task digest`,
 				w := cmd.OutOrStdout()
 				fmt.Fprintf(w, "MonoAgent task board (%s): %d ready, %d in progress, %d to review. Next: #%d %s\n",
 					p.Name, c.Ready, c.InProgress, c.Review, next.ID, taskCut(next.Title, 80))
-				fmt.Fprintf(w, "Take it with: monoagentcli --profile %s task next --claim --as <your-name>\n", p.ID)
+				fmt.Fprintf(w, "Take it with: %s\n", takeCommand(p, "", "next --claim"))
 				return nil
 			})
 			if err != nil {
