@@ -29,14 +29,56 @@ func TestImportsOnlyWhatTheImportRuleAllows(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
-			first, _, _ := strings.Cut(path, "/")
-			switch {
-			case !strings.Contains(first, "."): // the standard library
-			case path == "github.com/monoes/mono-agent/internal/secrets":
-			case path == "golang.org/x/sys/windows" && (name == "lock_windows.go" || name == "rename_windows.go"):
-			default:
+			if !importAllowed(name, path) {
 				t.Errorf("%s imports %s, which the import rule does not allow", name, path)
 			}
+		}
+	}
+}
+
+// importAllowed is the import rule for the non-test file called file.
+func importAllowed(file, path string) bool {
+	first, _, _ := strings.Cut(path, "/")
+	switch {
+	case !strings.Contains(first, "."): // the standard library
+		return true
+	case path == "github.com/monoes/mono-agent/internal/secrets":
+		return true
+	case path == "golang.org/x/sys/windows":
+		return file == "lock_windows.go" || file == "rename_windows.go"
+	}
+	return false
+}
+
+// The rule is as strict as it reads: x/sys/windows only in the two files that make
+// a Windows system call, and nothing else outside the standard library but
+// internal/secrets. A rule that nothing tests could be loosened without a failure.
+func TestTheImportRuleForbidsWhatItSays(t *testing.T) {
+	const secrets = "github.com/monoes/mono-agent/internal/secrets"
+	const windows = "golang.org/x/sys/windows"
+	for _, c := range []struct {
+		file, path string
+		want       bool
+	}{
+		{"store.go", "os", true},
+		{"store.go", "encoding/json", true},
+		{"sealer.go", secrets, true},
+		{"lock_windows.go", windows, true},
+		{"rename_windows.go", windows, true},
+		{"store.go", windows, false},
+		{"guard_refresh.go", windows, false},
+		{"rename_unix.go", windows, false},
+		{"readfile_windows.go", windows, false},
+		{"lock_unix.go", "golang.org/x/sys/unix", false},
+		{"lock_windows.go", "golang.org/x/sys/unix", false},
+		{"lock_windows.go", "golang.org/x/sys/windows/registry", false},
+		{"store.go", "golang.org/x/sys/cpu", false},
+		{"sealer.go", "github.com/monoes/mono-agent/internal/library", false},
+		{"sealer.go", "github.com/monoes/mono-agent/internal/secrets/other", false},
+		{"store.go", "github.com/stretchr/testify/assert", false},
+	} {
+		if got := importAllowed(c.file, c.path); got != c.want {
+			t.Errorf("importAllowed(%q, %q) = %v, want %v", c.file, c.path, got, c.want)
 		}
 	}
 }

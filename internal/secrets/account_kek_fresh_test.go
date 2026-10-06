@@ -44,6 +44,9 @@ func TestAccountKEKCreateReturnsTheKeyTheKeyStoreHoldsNow(t *testing.T) {
 		t.Fatalf("the vault's memo does not hold the first key (err %v)", err)
 	}
 
+	if got, found, err := AccountKEK(false, false); err != nil || !found || !bytes.Equal(got, first) { // an Open before the entry is replaced
+		t.Fatalf("open before the replacement: found=%v err=%v", found, err)
+	}
 	replaced := bytes.Repeat([]byte{0x5c}, 32)
 	if err := keyring.Set(keyringService, kekAccount(accountKEKID), hex.EncodeToString(replaced)); err != nil {
 		t.Fatal(err)
@@ -60,6 +63,19 @@ func TestAccountKEKCreateReturnsTheKeyTheKeyStoreHoldsNow(t *testing.T) {
 	}
 	if stored, err := keyring.Get(keyringService, kekAccount(accountKEKID)); err != nil || stored != hex.EncodeToString(replaced) {
 		t.Errorf("the key store no longer holds the key that replaced the first one (err %v)", err)
+	}
+
+	// A keychain reset removes the entry: the next creating call makes a new key and stores it, once.
+	if err := keyring.Delete(keyringService, kekAccount(accountKEKID)); err != nil {
+		t.Fatal(err)
+	}
+	writes.Store(0)
+	made, found, err := AccountKEK(true, false)
+	if err != nil || !found || len(made) != 32 || bytes.Equal(made, first) || bytes.Equal(made, replaced) {
+		t.Fatalf("after the entry was deleted: found=%v err=%v len=%d, want a new key", found, err, len(made))
+	}
+	if stored, err := keyring.Get(keyringService, kekAccount(accountKEKID)); err != nil || stored != hex.EncodeToString(made) || writes.Load() != 1 {
+		t.Errorf("the new key was not stored once (err %v, writes %d)", err, writes.Load())
 	}
 }
 
@@ -91,7 +107,9 @@ func TestAccountKEKCreateMakesNoKeyWhenTheKeyStoreFails(t *testing.T) {
 // after the first reads the key the first one wrote. This is the in-process half
 // of "one key": across processes the account's callers hold session.lock around
 // every Seal, and the file keyring creates with O_EXCL (see accountKEKVault). The
-// calls overlap only now and then, so the race is run many times.
+// calls overlap only now and then, so the race is run many times. It has teeth
+// with two or more CPUs: with GOMAXPROCS 1 the goroutines run one after another
+// and a lock released between the read and the write is not seen.
 func TestAccountKEKConcurrentCreatesInOneProcessEndWithOneKey(t *testing.T) {
 	accountKEKTestHome(t, false)
 	failOnPassphrasePrompt(t)
@@ -181,5 +199,18 @@ func TestAccountKEKInteractiveFileKeyringAsksForThePassphraseOnce(t *testing.T) 
 	}
 	if asks != 1 {
 		t.Errorf("asked for the passphrase %d times, want once", asks)
+	}
+
+	// The file keyring's file is replaced while this process runs (same passphrase): the next creating call returns that key.
+	replaced := bytes.Repeat([]byte{0x77}, 32)
+	wrapped, err := wrapFileKEK(replaced, "pw one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileKeyringPath(accountKEKID), wrapped, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := AccountKEK(true, true); err != nil || !found || !bytes.Equal(got, replaced) {
+		t.Errorf("after the file keyring was replaced: found=%v err=%v remembered=%v, want the key the file holds now", found, err, bytes.Equal(got, created))
 	}
 }
