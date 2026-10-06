@@ -19,7 +19,7 @@
 - Every capture lands in Inbox, in the profile the request names, as the actor `Capture` named `chrome`, source kind `chrome` (D6, D7, 5.1).
 - Limits (4.6): title 200 characters; notes 64 KiB; URL 2,048 bytes; page title 200; app name 100; client id 64 of `[A-Za-z0-9_-]`; 2,000 non-archived tasks per profile. Text is capped at 64 KiB in the page and again in Go (11.4).
 - Outbox (11.3): entries `{client_id, text, url, title, kind, profile, at}` in `chrome.storage.local`; at most 200 entries and 1 MiB; an entry leaves only when the host replies `created` or `duplicate`; a refusal that would repeat is dropped and reported; `offline`, `busy`, `timeout`, `unavailable` and a missing `task.add` keep it; it flushes on every connect and on a minute alarm while it is not empty, and shows a count on the badge while it holds anything. A task is never created without being queued first, and it keeps the profile it was queued under.
-- The URL and the page title come from `sender.tab`, never from the message; the URL passes the extension's existing sanitizer before it leaves the browser and Go re-checks it; payloads are never logged; the click handlers ignore untrusted events (11.4).
+- The URL and the page title come from `sender.tab`, never from the message; the URL passes the extension's existing sanitizer before it leaves the browser and Go re-checks it, and a title that is only that address is not sent (Chrome is believed to give a page with no title its address, query string included: see the Rulings list); payloads are never logged; the click handlers ignore untrusted events (11.4).
 - No profile known: nothing is added and the control says "Choose a profile first" (4.5, 11.1).
 - Feedback (11.1): "Added to Inbox in Work", or "Saved: will sync when MonoAgent is running". No `notifications` permission.
 - Manifest version 1.5.0 goes to 1.6.0 (11.5).
@@ -42,7 +42,7 @@
 
 Failure modes the spec implies and no happy-path test would catch; each has a test in the task that owns the code, and each test fails when its rule is removed.
 
-1. A page address carrying user-info (`https://user:secret@host/`) or a session token must never be stored: not in the task's URL, not in a page task's title (which falls back to the address), not in `chrome.storage`. (Task 2 `TestTaskSinkPageTaskIsItsTitleOrItsAddress` and `TestTaskSinkPageWithAHiddenTitleIsSavedUnderItsAddress`; Task 4a "offline, the task waits ..." checks the stored outbox; Task 5 "Add page as task sends the page ...".)
+1. A page address carrying user-info (`https://user:secret@host/`) or a session token must never be stored: not in the task's URL, not in a page task's title (which falls back to the address, and which Chrome is believed to fill with the address for a page that has none), not in `chrome.storage`. (Task 2 `TestTaskSinkPageTaskIsItsTitleOrItsAddress` and `TestTaskSinkPageWithAHiddenTitleIsSavedUnderItsAddress`; Task 4a "offline, the task waits ..." checks the stored outbox, "a page with no title of its own ..." and "pageTitle drops ..." the title; Task 5 "Add page as task sends the page ..." and "Add page as task on a page with no title of its own ...".)
 2. Text hidden with `display:none` and hidden characters (bidi controls, Unicode tag characters, a terminal escape, invalid UTF-8) must not reach a task. Text hidden by colour, size or position is still selected; the operator gate is the defence for that, and the security text says so. (Task 2 `TestTaskSinkCleansWhatAPageSent`; Task 5 "Add selection as task reads the selection as the reader sees it"; Task 6 browser test "adds the selection as a task, as the reader sees it".)
 3. Two adds a moment apart, two flushes at once, a resend after a lost reply, or a burst of 200 queued tasks: none lost, none sent twice under a new id, never more than one request in flight (the bridge answers a ninth with `busy`), and a storage read that fails wipes nothing. (Task 3 "adds and removals a moment apart all land", "a storage read that fails wipes nothing"; Task 4a "two adds a moment apart both reach MonoAgent, and both say so", "two flushes at once send each task once", "a burst of 200 ...", "busy and internal stop the flush ...".)
 4. A daemon started from an agent's shell inherits `CLAUDECODE`: a Chrome capture must stay a capture (source `chrome`, Inbox, no hourly agent limit). (Task 2 `TestTaskSinkIsAChromeCaptureWhateverTheEnvironment`.)
@@ -81,6 +81,7 @@ Modify:
 - Ruling: messages are checked as `recorder_wiring.js` checks them: this extension's own pages (by `sender.url`, so the side panel opened as a tab counts) may add a note and read or dismiss the refusals; a tab's content script may only add a selection, and its address is `sender.url` of the top frame, else the tab's - a page cannot pick the profile or read the refusals - none known.
 - Ruling: a page task's title is the page title, else its address without user-info; a selection is read with `getSelection().toString()` in the clicked frame, else the menu's `selectionText`; the shortcut reads the top frame only; without the recorder's sanitizer an address is dropped, not kept raw - visible text only, fail closed - a selection in a frame that refuses scripts loses its line breaks, and one inside a frame is missed by the shortcut.
 - Ruling: the sink names a page task by its address whenever the board refuses the page's title, not only when the title is blank: it files the page under its title and, on `invalid_input` for a page that has an address, asks once more with the address as the title - a page's title is its own script's to write, and one made only of hidden or control characters (a bidi control and BEL, a tag character) is not blank to a white-space test yet cleans to nothing, so the board refuses it and the page would be lost - the sink repeats none of the board's cleaning, which could drift from it; a refusal that is not about the title (a deleted profile) is made twice and the second is the one reported, and a page with no address and no visible title, like a selection of nothing visible, is still refused and reported.
+- Ruling: `add()` drops a page title that is only the page's address (`MonoTaskBridge.pageTitle`: one call in the funnel every way in goes through, not one at each place a tab's title is read) - Chrome gives a page with no `<title>` its address as the title, query string included, and only the URL passes the sanitizer, so a session token would reach the task, and `chrome.storage`, through `tab.title`; the sink then names the page by its sanitized address - a title is only the address when it starts with a scheme, or is the page's host (port kept, `www.` ignored) alone or followed by `/`, `?` or `#`; the host only, not host and path, so a title left from before a single-page app moved on is caught and no path escape has to be matched, while a title that merely mentions the host, or starts with it and goes on in words, stays - this behaviour of Chrome is not verified here (no browser), and where Chrome does not behave so the rule is harmless: only a title shaped like an address is dropped, and the task is named by that address; a host that is not plain ASCII is not recognised (the tab's URL has it in punycode, Chrome shows it in Unicode).
 - Ruling: opening the floating panel (the `mouseup`) and every button on it need `isTrusted === true`; closing it (Escape, a press outside) takes any event - a page's script can then only close the panel; a real click the page baits by moving or covering it is still the person's, and adds only an Inbox task the operator reads - the security text claims no more than that.
 - Ruling: the panel's shell moves to a new content script, `highlight_panel.js`, loaded before `highlight_page.js`; `panel()`, `button()` and `dismiss()` stay as one-line wrappers; the menu and the shortcut live in `task_menu.js` - testable in node, and `highlight_page.js` and `task_bridge.js` stay under 500 lines - two more files.
 - Ruling: the extension says MonoAgent "needs updating" only when the bridge answered `ping` without `task.add` (`ask.js` gains `known()`); an unanswered probe is offline, so a daemon older than the request channel itself looks offline too - `probe()` answers `[]` in both cases - that oldest daemon gets "will sync" instead of "update".
@@ -1520,8 +1521,8 @@ git commit -m "feat(tasks): the extension's task outbox, and whether the bridge 
 
 **Interfaces:**
 - Consumes: Task 3's `MonoTaskOutbox.create`, `count`, `capBytes`, `MAX_TEXT_BYTES` and `MonoAsk.known()`; existing `MonoAsk.probe()` and `MonoAsk.request(method, params, opts)` (rejects with `err.code`: `offline`, `timeout`, or the reply's `code`); `MonoCaptureProfile.stickyOrAsk(ask, storage, connected)`, `.isValidProfileId(id)`, `.load(storage) -> {profile, profiles:[{id,name,default}], asked}` (storage keys `captureProfile`, `captureProfilesCache`); `MonoRecorderPrivacy.sanitizeUrl(raw)` (drops a fragment that is not a `#/` route, sets credential-like query values to `REDACTED`, keeps user-info); `MonoCaptureQueue.paintBadge(storage)` and `MonoCaptureBridge.toast(tabId, text, level)` when present (Task 4b adds `toast`).
-- Produces: `globalThis.MonoTaskBridge = { install, add, flush, connected, stickyProfile, announce, toast, feedbackFor, pageUrl, METHOD, ALARM, FOCUS_KEY }` with `METHOD = "task.add"`, `ALARM = "monoagent-task-outbox"`, `FOCUS_KEY = "taskFocusAt"`; `install({isConnected, storage})`; `add({kind, text, url, title, profile}) -> Promise<{ok, status, id, feedback: {level, text}}>` with `status` one of `added`, `queued`, `refused`, `full`, `no_profile`, `empty` and `level` one of `ok`, `warn`, `error`; `flush() -> Promise<{stopped}>`; `connected()`; `stickyProfile() -> Promise<string>`; `announce(tabId, feedback)`; `toast(tabId, text, level)`. Runtime messages: `{type: "task_add", text, profile?}` from this extension's own page (kind `note`, the `profile` it names) or from a tab's content script (kind `selection`, address from `sender.url` of the top frame else the tab, title from the tab, the sticky profile); `{type: "task_state"} -> {ok, waiting, failures}` and `{type: "task_dismiss"} -> {ok}` from this extension's own pages only. It broadcasts `{type: "task_result", feedback}` to an open side panel. The harness exports `fakeStorage`, `fakeAsk`, `refuse`, `setupTasks` (returns `{env, chrome, listeners, record, local, session, ask, net, B, M}`), `send`, `until`, `PAGE`, `PANEL`; Task 5 uses them.
-- Rulings: only `invalid_input` drops an entry, `limit` keeps it and goes on, the rest keep it and stop; the sender checks of `recorder_wiring.js`; `pageUrl` fails closed (see the Rulings list).
+- Produces: `globalThis.MonoTaskBridge = { install, add, flush, connected, stickyProfile, announce, toast, feedbackFor, pageUrl, pageTitle, METHOD, ALARM, FOCUS_KEY }` with `METHOD = "task.add"`, `ALARM = "monoagent-task-outbox"`, `FOCUS_KEY = "taskFocusAt"`; `install({isConnected, storage})`; `add({kind, text, url, title, profile}) -> Promise<{ok, status, id, feedback: {level, text}}>` with `status` one of `added`, `queued`, `refused`, `full`, `no_profile`, `empty` and `level` one of `ok`, `warn`, `error`; `flush() -> Promise<{stopped}>`; `connected()`; `stickyProfile() -> Promise<string>`; `announce(tabId, feedback)`; `toast(tabId, text, level)`. Runtime messages: `{type: "task_add", text, profile?}` from this extension's own page (kind `note`, the `profile` it names) or from a tab's content script (kind `selection`, address from `sender.url` of the top frame else the tab, title from the tab, the sticky profile); `{type: "task_state"} -> {ok, waiting, failures}` and `{type: "task_dismiss"} -> {ok}` from this extension's own pages only. It broadcasts `{type: "task_result", feedback}` to an open side panel. The harness exports `fakeStorage`, `fakeAsk`, `refuse`, `setupTasks` (returns `{env, chrome, listeners, record, local, session, ask, net, B, M}`), `send`, `until`, `PAGE`, `PANEL`; Task 5 uses them.
+- Rulings: only `invalid_input` drops an entry, `limit` keeps it and goes on, the rest keep it and stop; the sender checks of `recorder_wiring.js`; `pageUrl` fails closed; `add()` drops a title that is only the page's address (`pageTitle`) (see the Rulings list).
 
 - [ ] **Step 1: Write the shared fakes**
 
@@ -1810,6 +1811,21 @@ test("offline, the task waits, says so, keeps no secret, and goes when the bridg
   assert.equal(record.alarms.has(B.ALARM), false, "no alarm while nothing waits");
 });
 
+test("a page with no title of its own: a title that is only its address is never queued or sent", async () => {
+  const ask = fakeAsk({ reply: () => ({ id: 4, created: true }) });
+  const { listeners, local, net, B } = setupTasks({ ask, connected: false });
+  const bare = { id: "ext-id", tab: Object.assign({}, PAGE.tab, { title: "mail.example/inbox?token=abc&q=1#msg-3" }) };
+  await send(listeners, { type: "task_add", text: "Reply to Sam" }, bare);
+  assert.equal(waiting(local), 1);
+  assert.ok(!JSON.stringify(local.data.taskOutbox).includes("token=abc"), "the token was stored in chrome.storage by way of the title");
+
+  net.up = true;
+  await B.connected();
+  const p = ask.calls[0].params;
+  assert.deepEqual([p.title, p.url], ["", "https://mail.example/inbox?token=REDACTED&q=1"]);
+  assert.ok(!JSON.stringify(p).includes("token=abc"), "the token was sent by way of the title");
+});
+
 test("the minute alarm flushes what waits; another alarm does not", async () => {
   const ask = fakeAsk();
   const { listeners, local, net, B } = setupTasks({ ask, connected: false });
@@ -1963,6 +1979,39 @@ test("pageUrl keeps an http or https address within 2048 bytes, and fails closed
   delete env.MonoRecorderPrivacy;
   assert.equal(B.pageUrl("https://x.example/a"), "", "no sanitizer, no address");
 });
+
+test("pageTitle drops a title that is only the page's address, and keeps any other", () => {
+  const { B } = setupTasks();
+  const url = "https://mail.example/inbox?token=abc&q=1#msg-3";
+  // What Chrome is believed to give a page with no <title>: its address, query string and all.
+  for (const [title, at] of [
+    ["mail.example/inbox?token=abc&q=1", url],
+    ["  mail.example/inbox  ", url],
+    ["https://mail.example/inbox?token=abc&q=1#msg-3", url],
+    ["HTTPS://Mail.Example/Inbox?Token=abc", url],
+    ["ftp://files.example/x?token=abc", ""],
+    ["mail.example", "https://mail.example/"],
+    ["www.example.com/a?x=1", "https://example.com/a?x=1"],
+    ["example.com/a?x=1", "https://www.example.com/a?x=1"],
+    ["localhost:3000/app?token=abc", "http://localhost:3000/app?token=abc"],
+    ["mail.example/older?token=abc", url],
+  ]) {
+    assert.equal(B.pageTitle({ title, url: at }), "", title);
+  }
+
+  // Any other title stays, even one that has the host in it.
+  for (const title of ["Inbox (3)", "Why mail.example is slow today", "mail.example is down", "mail.example - Inbox (3)", "mail.example: the inbox"]) {
+    assert.equal(B.pageTitle({ title, url }), title, title);
+  }
+  assert.equal(B.pageTitle({ title: "  Inbox (3) ", url }), "  Inbox (3) ", "a title is returned as it came");
+
+  // With no http or https address to compare with, only a scheme gives a title away.
+  for (const at of ["", "not a url", "chrome://newtab/", "file:///home/sam/mail.example/inbox"]) {
+    assert.equal(B.pageTitle({ title: "mail.example/inbox?token=abc", url: at }), "mail.example/inbox?token=abc", at);
+  }
+  assert.equal(B.pageTitle({ title: "/home/sam/notes.txt", url: "file:///home/sam/notes.txt" }), "/home/sam/notes.txt", "no host, nothing to match");
+  for (const page of [undefined, null, {}, { title: null }, { title: 7 }, { title: "  " }]) assert.equal(B.pageTitle(page), "");
+});
 ```
 
 - [ ] **Step 3: Run the tests to see them fail**
@@ -1992,7 +2041,9 @@ Expected: FAIL (`task_bridge.js` does not exist).
  *     inbox;
  *   - a page's address and title come from Chrome's description of the
  *     sender, never from the message, and the address loses its user-info,
- *     fragment and session tokens before it is stored;
+ *     fragment and session tokens before it is stored; a title that is only
+ *     that address (what Chrome is believed to give a page with no title) is
+ *     dropped, for it would carry the tokens;
  *   - messages are checked as recorder_wiring.js checks them: only this
  *     extension's own pages may add a note or read or clear the refusals,
  *     and a tab's content script may only add a selection;
@@ -2052,16 +2103,17 @@ Expected: FAIL (`task_bridge.js` does not exist).
 
   /**
    * add queues one task, then tries to send it. `what` is {kind, text, url,
-   * title, profile}; kind is selection, page or note. Resolves {ok, status,
-   * id, feedback}: status is added, queued, refused, full, no_profile or
-   * empty, and feedback is the one line the person sees, {level, text}.
+   * title, profile}; kind is selection, page or note; a title that is only
+   * the url's address is not kept (pageTitle). Resolves {ok, status, id,
+   * feedback}: status is added, queued, refused, full, no_profile or empty,
+   * and feedback is the one line the person sees, {level, text}.
    */
   async function add(what) {
     const T = Outbox();
     const kind = what.kind;
     const text = kind === "page" ? "" : T.capBytes(String(what.text || "").trim(), T.MAX_TEXT_BYTES);
     const url = kind === "note" ? "" : pageUrl(what.url);
-    const title = kind === "note" ? "" : String(what.title || "").trim().slice(0, MAX_TITLE_CHARS);
+    const title = kind === "note" ? "" : pageTitle(what).trim().slice(0, MAX_TITLE_CHARS);
     if (!what.profile) return outcome("no_profile", { kind });
     if (kind === "page" ? !url && !title : !text) return outcome("empty", { kind });
 
@@ -2142,6 +2194,42 @@ Expected: FAIL (`task_bridge.js` does not exist).
     u.password = "";
     const out = privacy.sanitizeUrl(u.toString());
     return new TextEncoder().encode(out).length > MAX_URL_BYTES ? "" : out;
+  }
+
+  // A scheme and "://": a title that starts with one is an address.
+  const ADDRESS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//;
+  const WWW = /^www\./;
+
+  /**
+   * pageTitle is the title a task keeps of a page: page.title (a tab, or what
+   * add() is given: anything with a title and a url), unless that is only the
+   * page's address, and then "" (the sink names the page by its sanitized
+   * address). Chrome is believed to give a page with no <title> its address
+   * as the title, query string and all, and only the url passes pageUrl's
+   * sanitizer: sent as it is, a session token would reach the task, and
+   * chrome.storage, by way of the title. In lower case and without a leading "www.", a title is
+   * only the address when it starts with a scheme ("https://..."), or is the
+   * url's host (with its port) alone or followed by "/", "?" or "#" and the
+   * rest of the address. A title that merely mentions the host ("mail.example
+   * is down") or starts with it and goes on in words ("mail.example - Inbox")
+   * is a title and stays. A host that is not plain ASCII is not recognised:
+   * the url has it in punycode, Chrome shows it in Unicode. "" when there is
+   * no title.
+   */
+  function pageTitle(page) {
+    const raw = page && typeof page.title === "string" ? page.title : "";
+    const title = raw.trim().toLowerCase().replace(WWW, "");
+    if (!title) return "";
+    if (ADDRESS_SCHEME.test(title)) return "";
+    let u;
+    try {
+      u = new URL(String((page && page.url) || ""));
+    } catch {
+      return raw;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return raw;
+    const host = u.host.replace(WWW, "");
+    return title === host || (title.startsWith(host) && "/?#".includes(title[host.length])) ? "" : raw;
   }
 
   /** newClientId names a task for good: a resend under it adds nothing twice. */
@@ -2345,7 +2433,7 @@ Expected: FAIL (`task_bridge.js` does not exist).
   }
 
   root.MonoTaskBridge = {
-    install, add, flush, connected, stickyProfile, announce, toast, feedbackFor, pageUrl, METHOD, ALARM, FOCUS_KEY,
+    install, add, flush, connected, stickyProfile, announce, toast, feedbackFor, pageUrl, pageTitle, METHOD, ALARM, FOCUS_KEY,
   };
 })(globalThis);
 ```
@@ -2673,6 +2761,16 @@ test("Add page as task sends the page, reads no selection, and keeps no user-inf
   const p = ask.calls[0].params;
   assert.deepEqual([p.kind, p.text, p.url, p.title], ["page", "", "https://paper.example/a?session=REDACTED", "A paper"]);
   assert.equal(record.scripts.length, 0);
+});
+
+test("Add page as task on a page with no title of its own sends no title, only the address", async () => {
+  const ask = fakeAsk();
+  const { listeners } = setupTasks({ ask });
+  click(listeners, { menuItemId: "monoagent-tasks-page" }, Object.assign({}, TAB, { url: "https://paper.example/a?session=xyz", title: "paper.example/a?session=xyz" }));
+  await until(() => ask.calls.length === 1, "the page task");
+  const p = ask.calls[0].params;
+  assert.deepEqual([p.kind, p.url, p.title], ["page", "https://paper.example/a?session=REDACTED", ""]);
+  assert.ok(!JSON.stringify(p).includes("xyz"), "the token was sent by way of the title");
 });
 
 test("the capture items, and a click with no tab, are not the task menu's", async () => {
@@ -4116,7 +4214,7 @@ Add exactly one row to P1's surfaces table, right after its last row `| Session-
 In the `## Task board` section, insert this bullet immediately before the line `- **No HTTP route and no new port.** The task board does not listen on the network.` and leave that line as it is:
 
 ```markdown
-- **Tasks from the Chrome extension.** The extension adds tasks through the bridge it already uses (loopback, paired token): one request method, `task.add`, which only adds to the Inbox of a profile that exists, as the browser capture `chrome`, whatever the environment of the process that hosts the bridge. The page address sent with a task loses its user-info, fragment and session-token parameters in the extension, and MonoAgent checks it again. The floating selection panel sits in a closed shadow root and acts only on trusted events, so a page's script cannot open it or press its buttons with events of its own; a page can still move or cover the panel to bait a real click, which adds only an Inbox task. A selection carries what `getSelection()` reads: text hidden with `display:none` is left out, text hidden by colour, size or position is not. Both are why the operator reads a captured task before approving it.
+- **Tasks from the Chrome extension.** The extension adds tasks through the bridge it already uses (loopback, paired token): one request method, `task.add`, which only adds to the Inbox of a profile that exists, as the browser capture `chrome`, whatever the environment of the process that hosts the bridge. The page address sent with a task loses its user-info, fragment and session-token parameters in the extension, and MonoAgent checks it again; a tab title that is only that address is not sent either. The floating selection panel sits in a closed shadow root and acts only on trusted events, so a page's script cannot open it or press its buttons with events of its own; a page can still move or cover the panel to bait a real click, which adds only an Inbox task. A selection carries what `getSelection()` reads: text hidden with `display:none` is left out, text hidden by colour, size or position is not. Both are why the operator reads a captured task before approving it.
 ```
 
 - [ ] **Step 6: `CHANGELOG.md`**
@@ -4146,7 +4244,7 @@ In `docs/mastermind/specs/2026-10-05-task-board-design.md`:
 - The outbox drops an entry only on `invalid_input`. `limit` keeps it and the flush goes on; `internal`, `offline`, `busy`, `timeout`, `unavailable` and `unknown_method` keep it and stop the flush. A storage read that fails is never taken for an empty outbox. Refused tasks go to a failures list (the last 20, each with up to 2 KiB of its text) shown under "Add a task" with Dismiss, and count red on the toolbar badge with failed captures; waiting tasks count amber with queued captures. The capture bridge's own "ok" flash and the per-tab "saved" badge can hide that count until the next change, as they do for queued captures.
 - Messages follow `recorder_wiring.js`: this extension's own pages (the side panel, also when opened as a tab) may add a note and read or dismiss the refusals; a tab's content script may only add a selection, whose address is the sending frame's.
 - The floating panel's shell is `chrome-extension/highlight_panel.js`, a content script loaded before `highlight_page.js`. Opening the panel and every button need `isTrusted === true`; closing it (Escape, a press outside) takes any event. A page can still move or cover the panel and bait a real click; that adds an Inbox task only.
-- A page task's title is the page title, else its address without user-info: also when the board finds nothing visible in the page title (the bridge asks again with the address). A selection is read with `getSelection().toString()` in the clicked frame (visible text, line breaks kept), else the menu's `selectionText`; the shortcut reads the top frame only.
+- A page task's title is the page title, else its address without user-info: also when the board finds nothing visible in the page title (the bridge asks again with the address), and when the tab's title is only the tab's address, which the extension does not send. A selection is read with `getSelection().toString()` in the clicked frame (visible text, line breaks kept), else the menu's `selectionText`; the shortcut reads the top frame only.
 - The extension says MonoAgent "needs updating" only when the bridge answered `ping` without `task.add` (`MonoAsk.known()`). A daemon older than the request channel never answers `ping` and looks offline.
 
 ```
@@ -4193,3 +4291,4 @@ Write into the PR description: how the browser suite ran in Task 6 (once, headle
 5. With the daemon stopped, a task says "Saved: will sync when MonoAgent is running", the badge counts it, and it lands within a minute of the daemon starting.
 6. Against a daemon from before this release, a task waits and the toast says MonoAgent needs updating.
 7. While the panel is open on any page, `document.getElementById('monoagent-highlight-ui').shadowRoot` in that page's console is `null`.
+8. A page with no `<title>` and a token in its address (a raw text or JSON address ending `?token=abc`): *Add page as task* adds a task named by the address with the token shown as `REDACTED`, and `abc` is nowhere in the task, neither in its title nor in its page title. The build assumes Chrome gives such a page its address as the tab title and could not check it; if Chrome gives it another title, the task is named by that title.
