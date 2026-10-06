@@ -3834,11 +3834,12 @@ func Host() string {
 
 // SetHostForTest points Host at a fake monoes.me for the test and restores it on
 // cleanup. It panics outside a test binary, like the other test seams, and the
-// test must not call t.Parallel().
+// test must not call t.Parallel(): the marker it sets makes the testing package
+// panic if it does.
 func SetHostForTest(t testing.TB, host string) {
-	if !testing.Testing() {
-		panic("account: SetHostForTest outside a test binary")
-	}
+	t.Helper()
+	requireTestBinary("SetHostForTest")
+	t.Setenv(testStateEnv, "1")
 	hostMu.Lock()
 	prev := hostOverride
 	hostOverride = host
@@ -3856,11 +3857,12 @@ func SetHostForTest(t testing.TB, host string) {
 // keyring in most tests while internal/secrets remembers the account key it first
 // made for the whole process, so without this a second sign-in in one test binary
 // seals a refresh token that the keyring can no longer open. It panics outside a
-// test binary, and the test must not call t.Parallel().
+// test binary, and the test must not call t.Parallel(): the marker it sets makes
+// the testing package panic if it does.
 func SetSealerForTest(t testing.TB, s Sealer) {
-	if !testing.Testing() {
-		panic("account: SetSealerForTest outside a test binary")
-	}
+	t.Helper()
+	requireTestBinary("SetSealerForTest")
+	t.Setenv(testStateEnv, "1")
 	sealerMu.Lock()
 	prev := sealerOverride
 	sealerOverride = s
@@ -6694,7 +6696,7 @@ None changes a name or a signature of index §3. Seven notes for the lead, so th
 1. **Relies on B1a's own contract change requests**, which it lists as additions: `account.NewInteractiveKeyringSealer() Sealer` (its request 3; Task 7 uses it in `Login` and `VerifyEmailCode` only), `account.NewSession(host, accessToken string, user *User, now time.Time) (*Session, error)` (request 4; Task 5), `accounttest.DevKID` (request 8; Tasks 3 and 7) and the `extraKeys()` and `pinKey(kid, publicHex string) Key` slot of its key files (Task 7). If one of them is dropped from B1a, this plan needs the matching one-line change.
 2. **Implements the `TokenRequests` request in `b5b-docs.md`** (its Contract change requests section says B1b's plan adds it): Task 3 adds `type TokenRequest struct{ Form url.Values; Header http.Header }` and `func (s *Server) TokenRequests() []TokenRequest` exactly as proposed, and Tasks 4 and 5 pin the field set of a refresh and of a code exchange with it. It keeps what B5c reads (`b5c-smoke.md`, its Task on the rig): `libraryfake.New`, `AccessTTL`, `EmailCode`, `URL`, `Config.Handler`, `Close`, and `SetEmailOpaque` with the meaning that plan gives it (the default fake answers the email-code route with a refresh token; `SetEmailOpaque(true)` turns that off). `Server.Replays` is an `int` field.
 3. **Consumes plan A's Task 7** (the email-code route issues a `refresh_token` to the MonoAgent client and honors `resource` in the body, answering like the token endpoint). Task 5 serves both shapes. Until plan A ships, `account login --email` ends in `ErrEmailSessionUnavailable` and a headless machine cannot sign in (spec D10): the lead should keep plan A's Task 7 ahead of B1b in the merge order.
-4. **Add this plan's files and names to index §3.** Files (§3.1): `internal/account/oauth.go`, `internal/account/logout.go`, `internal/account/adopt.go`, `internal/library/session.go`, `internal/library/libraryfake/control.go`, `internal/library/libraryfake/jwt.go`, `cmd/monoagentcli/account.go`, `cmd/monoagentcli/account_login.go`, and the one-line registration in `cmd/monoagentcli/root.go`. Exported names beyond §3.2: `account.Host`, `account.SetHostForTest`, `account.SetSealerForTest`, `account.DefaultStore`, `account.NewClient` with `Client`, `account.NewRefresher`, `account.DiscoverEndpoints` and `account.AuthorizeInBrowser`; `library.SessionSource`, `library.AccountSession` and `(*library.Client).LogoutLegacy`; the switches of `libraryfake` (Task 3). The two `*ForTest` hooks follow index line 344: process globals, no `t.Parallel()`.
+4. **Add this plan's files and names to index §3.** Files (§3.1): `internal/account/oauth.go`, `internal/account/logout.go`, `internal/account/adopt.go`, `internal/library/session.go`, `internal/library/libraryfake/control.go`, `internal/library/libraryfake/jwt.go`, `cmd/monoagentcli/account.go`, `cmd/monoagentcli/account_login.go`, and the one-line registration in `cmd/monoagentcli/root.go`. Exported names beyond §3.2: `account.Host`, `account.SetHostForTest`, `account.SetSealerForTest`, `account.DefaultStore`, `account.NewClient` with `Client`, `account.NewRefresher`, `account.DiscoverEndpoints` and `account.AuthorizeInBrowser`; `library.SessionSource`, `library.AccountSession` and `(*library.Client).LogoutLegacy`; the switches of `libraryfake` (Task 3). The two `*ForTest` hooks follow index line 344: process globals, no `t.Parallel()`; each starts as B1a's hooks do (`t.Helper()`, `requireTestBinary(<its name>)`, then the marker `t.Setenv(testStateEnv, "1")`), which B1a's `TestEveryForTestHookRefusesToRunInAReleaseBinary` reads from the source.
 5. **A trap for the other plans' CLI tests.** A test that signs in through the default store (`account.Login`, `account login` through `newRootCmd`) more than once per test binary must call `account.SetSealerForTest(t, account.NewMemorySealer())`, as `libFixture` now does; see the decision on the sealer above. A test that installs its own guard with `accounttest` is not affected.
 6. **Agrees with B5a's adoption wiring** (b5a-rollout.md, its Task 6, lines 991 and 1243). B5a tries once per database and claims the try with a settings row (`INSERT OR IGNORE` of `account_adoption`) before it calls `library.AdoptIntoAccount`; Task 9 matches: one call tries every profile that has an older login, in order, and decides the fate of each refresh token itself; after `invalid_grant` the vault copy is removed, as it is after an adoption, and it stays only when the failure cannot have spent the token (nothing was sent, or monoes.me answered with an error status); a request that went out and got no readable answer removes it too (A24), and so does an answer that this machine could not store (A24(d)). B5a's limits 2 and 6 say what stays and the amended B5a plan says what goes, so nothing else changes on either side.
 7. **Relies on B1a's A24 and A25 contract** (index §3.2 and §3.6): `TransientError.Settled` (the refresher sets it, the adoption exchange reads it), `ReasonUnconfirmed` (`describeStatus` has its sentences, and `revocable` reads it) and `Session.PendingSince` (`revocable` reads it: a logout revokes only a token the guard would present), and the clock-guard record that the guard writes from the enforcement date on a machine that never signed in (`Client.Adopt` does not count it as a login: `signedIn`). Without B1a's `Settled` the refresher below does not compile; without its `ReasonUnconfirmed`, neither `describeStatus` nor `revocable` does.
