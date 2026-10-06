@@ -23,7 +23,7 @@ import (
 // TestEveryForTestHookRefusesToRunInAReleaseBinary.)
 //
 // Require is exactly: the installed guard's branch, the strict flag read, and the
-// final `return requireNoGuard(testing.Testing(), <the strict flag>, <the time>)`.
+// final `return requireNoGuard(testing.Testing(), <the strict flag>, time.Now())`.
 // The flag is read under globalsMu inline (RLock, :=, RUnlock) or through the
 // isStrict() accessor, which does the same, and the argument is that flag and no
 // other expression. The proof on a real binary (no guard in a release build is locked
@@ -57,10 +57,16 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 		call, _ = last.Results[0].(*ast.CallExpr)
 	}
 	if call == nil || types.ExprString(call.Fun) != "requireNoGuard" || len(call.Args) != 3 {
-		t.Fatal("Require must end with `return requireNoGuard(testing.Testing(), <the strict flag>, <the time>)`")
+		t.Fatal("Require must end with `return requireNoGuard(testing.Testing(), <the strict flag>, time.Now())`")
 	}
 	if got := types.ExprString(call.Args[0]); got != "testing.Testing()" {
 		t.Errorf("Require hands requireNoGuard %s as isTest, want testing.Testing()", got)
+	}
+	// The moment is the real one, as a bare call: an offset behind a condition that only a
+	// test binary meets (flag.Parsed(), say) would leave every test passing and make a
+	// release binary judge another moment than now.
+	if got := types.ExprString(call.Args[2]); got != "time.Now()" {
+		t.Errorf("Require hands requireNoGuard %s as the time, want exactly time.Now()", got)
 	}
 	// Between the two, Require reads the strict flag, in one of three ways, and does nothing else.
 	middle, flag := stmts[1:len(stmts)-1], types.ExprString(call.Args[1])
