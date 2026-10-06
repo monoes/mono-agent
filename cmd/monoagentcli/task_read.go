@@ -170,11 +170,19 @@ func countFor(c tasks.Counts, st tasks.Status) int {
 	return 0
 }
 
+// printProfileLine writes the first line of what a command prints in text: the profile it
+// acted on, by name. Every surface names its profile (spec 4.5), and the active profile can
+// change under a caller. The commands that print a list of tasks or what they did to tasks
+// begin with it, so that they all write it the same way.
+func printProfileLine(w io.Writer, p tasks.Profile) {
+	fmt.Fprintf(w, "Profile: %s\n", p.Name)
+}
+
 // printTaskTable prints a list. as is the name of the agent that runs the command ("" for
 // the operator: see taskCommand); more says how many tasks the list left out ("" for
 // none, see cutList).
 func printTaskTable(w io.Writer, p tasks.Profile, as string, ts []tasks.Task, more string) {
-	fmt.Fprintf(w, "Profile: %s\n", p.Name)
+	printProfileLine(w, p)
 	if len(ts) == 0 {
 		fmt.Fprintln(w, "No tasks.")
 		return
