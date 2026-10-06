@@ -65,7 +65,8 @@ func (g *Guard) runLoop(ctx context.Context) {
 				backoff, notBefore = 0, time.Time{}
 			}
 		} else {
-			g.Status() // still follows the file and fires OnRefused
+			g.Status()     // still follows the file and fires OnRefused
+			g.touchHW(now) // and, as a pass that finds nothing due does, keeps the high-water mark current
 		}
 		select {
 		case <-ctx.Done():
