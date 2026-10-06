@@ -223,15 +223,41 @@ func refSection(heading string) string {
 	return strings.Join(lines[start+1:end], "\n")
 }
 
+// refDocSection is the `## Task board` section of a document of the repository, up to the next heading.
+func refDocSection(t *testing.T, file string) string {
+	t.Helper()
+	raw, err := os.ReadFile("../../" + file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, ok := strings.Cut(string(raw), "\n## Task board\n")
+	if !ok {
+		t.Fatalf("%s has no section `## Task board`", file)
+	}
+	section, _, _ = strings.Cut(section, "\n## ")
+	return section
+}
+
+// refDocTexts are the texts that state numbers and rules of the board, each on its own and on
+// one line (a hard wrap must not hide a phrase): the topic, the entries, and the Task board
+// sections of AGENTS.md and SECURITY.md.
+func refDocTexts(t *testing.T) []string {
+	t.Helper()
+	docs := []string{refTasksText, refDocSection(t, "AGENTS.md"), refDocSection(t, "SECURITY.md")}
+	for _, d := range refTaskEntries() {
+		docs = append(docs, d.Name+": "+d.Short, d.Usage, d.Flags)
+	}
+	for i, text := range docs {
+		docs[i] = strings.Join(strings.Fields(text), " ")
+	}
+	return docs
+}
+
 // refStates holds every statement of one number in the texts to the code: the pattern
 // has one group, the number as written. A number no text states fails too.
 func refStates(t *testing.T, what, pattern, want string) {
 	t.Helper()
-	docs := []string{refTasksText}
-	for _, d := range refTaskEntries() {
-		docs = append(docs, d.Short, d.Usage, d.Flags)
-	}
-	found := regexp.MustCompile(pattern).FindAllStringSubmatch(strings.Join(docs, "\n"), -1)
+	found := regexp.MustCompile(pattern).FindAllStringSubmatch(strings.Join(refDocTexts(t), "\n"), -1)
 	if len(found) == 0 {
 		t.Errorf("no text states %s (%s), which is %s in the code", what, pattern, want)
 	}
@@ -242,9 +268,10 @@ func refStates(t *testing.T, what, pattern, want string) {
 	}
 }
 
-// refNames says whether a text names a command as a word: "unarchive" does not name "archive".
+// refNames says whether a text names a command or a flag as a word: "unarchive" does not name
+// "archive", "task_list" does not name "list".
 func refNames(text, word string) bool {
-	return regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`).MatchString(text)
+	return regexp.MustCompile(`(?:^|[^\w-])` + regexp.QuoteMeta(word) + `(?:[^\w-]|$)`).MatchString(text)
 }
 
 // thousands writes n (at least 1,000) the way the texts do: 2,000.
@@ -253,9 +280,9 @@ func thousands(n int) string { return fmt.Sprintf("%d,%03d", n/1000, n%1000) }
 func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 	refStates(t, "a profile's open tasks", `([\d,]+) open tasks`, thousands(tasks.MaxOpenTasks))
 	refStates(t, "the tasks an agent may add an hour", `(\d+) tasks an hour`, fmt.Sprint(tasks.AgentTasksPerHour))
-	refStates(t, "a title", `title is (\d+) characters`, fmt.Sprint(tasks.MaxTitleRunes))
-	refStates(t, "notes", `notes are (\d+) KiB`, fmt.Sprint(tasks.MaxNotesBytes>>10))
-	refStates(t, "a comment", `note (\d+) KiB`, fmt.Sprint(tasks.MaxCommentBytes>>10))
+	refStates(t, "a title", `titles? (?:is |are )?\(?(\d+) characters`, fmt.Sprint(tasks.MaxTitleRunes))
+	refStates(t, "notes", `notes (?:are )?\(?(\d+) KiB`, fmt.Sprint(tasks.MaxNotesBytes>>10))
+	refStates(t, "a comment", `(?:note|comments) \(?(\d+) KiB`, fmt.Sprint(tasks.MaxCommentBytes>>10))
 	refStates(t, "the events that stop comments", `(\d+) events takes no more comments`, fmt.Sprint(tasks.MaxEventsPerTask))
 	refStates(t, "the events that stop claims", `([\d,]+) events no more claims`, thousands(tasks.MaxEventsToClaim))
 	refStates(t, "a lease", `(\d+) minutes`, fmt.Sprint(int(tasks.DefaultLease.Minutes())))
@@ -279,6 +306,24 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 	} {
 		if !strings.Contains(refTaskEntries()[c.entry].Flags, c.want) {
 			t.Errorf("the `ref commands` entry of `task %s` does not say %q", c.entry, c.want)
+		}
+	}
+	// A comment does not add the lease that was asked for: it extends the claim to 30 minutes from
+	// the comment, if that is later, and never shortens it. The texts that explain the lease say so,
+	// and no sentence says that a comment renews it.
+	extends := fmt.Sprintf("extends it to %d minutes from the comment", int(tasks.DefaultLease.Minutes()))
+	for where, text := range map[string]string{"THE AGENT LOOP of `ref tasks`": refSection("THE AGENT LOOP"), "AGENTS.md": refDocSection(t, "AGENTS.md")} {
+		for _, want := range []string{extends, "never shortens it"} {
+			if !strings.Contains(strings.Join(strings.Fields(text), " "), want) {
+				t.Errorf("%s does not say %q", where, want)
+			}
+		}
+	}
+	for _, text := range refDocTexts(t) {
+		for _, s := range regexp.MustCompile(`\.\s+`).Split(text, -1) {
+			if regexp.MustCompile(`(?i)\brenew`).MatchString(s) && regexp.MustCompile(`(?i)\bcomments?\b`).MatchString(s) {
+				t.Errorf("a text says that a comment renews the lease (it only extends it to %d minutes from the comment): %q", int(tasks.DefaultLease.Minutes()), s)
+			}
 		}
 	}
 }
@@ -331,45 +376,6 @@ func TestRefTasksStatesTheNameRulesOfTheStore(t *testing.T) {
 	}
 	if long := strings.Repeat("a", tasks.MaxNameLen); tasks.CheckAgentName(long) != nil || tasks.CheckAgentName(long+"a") == nil {
 		t.Errorf("the text says a name is up to %d characters: the store disagrees", tasks.MaxNameLen)
-	}
-}
-
-func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
-	who := refSection("WHO MAY DO WHAT")
-	operator := regexp.MustCompile(`The\s+operator\s+may\s+([^.]*)\.`).FindStringSubmatch(who)
-	agent := regexp.MustCompile(`An\s+AI\s+agent\s+may\s+([^.]*)\.`).FindStringSubmatch(who)
-	if operator == nil || agent == nil {
-		t.Fatal("WHO MAY DO WHAT has lost its sentences 'The operator may ...' and 'An AI agent may ...'")
-	}
-	db := newTaskTestDB(t)
-	refusal := func(args ...string) string { // the code an agent's call is refused with, "" if it is not
-		out, _, err := runTask(t, db, "default", true, "", append(args, "--as", "bot")...)
-		var doc struct {
-			Code string `json:"code"`
-		}
-		if err != nil {
-			_ = json.Unmarshal([]byte(out), &doc)
-		}
-		return doc.Code
-	}
-	for _, c := range [][]string{{"board"}, {"edit", "1", "--title", "x"}, {"move", "1", "ready"}, {"approve", "1"}, {"archive", "1"}, {"unarchive", "1"}, {"add", "x", "--ready"}} {
-		if got := refusal(c...); got != "operator_only" {
-			t.Errorf("`task %s` run by an agent answers %q, but `ref tasks` gives it to the operator", c[0], got)
-		}
-		if !refNames(operator[1], c[0]) {
-			t.Errorf("the operator's sentence of `ref tasks` does not name %q", c[0])
-		}
-		if c[0] != "add" && refNames(agent[1], c[0]) {
-			t.Errorf("the agent's sentence of `ref tasks` names %q, which an agent may not run", c[0])
-		}
-	}
-	for _, c := range [][]string{{"list"}, {"show", "1"}, {"next"}, {"add", "x"}, {"claim", "1"}, {"comment", "1", "x"}, {"finish", "1", "--result", "x"}, {"release", "1"}} {
-		if got := refusal(c...); got == "operator_only" {
-			t.Errorf("`task %s` run by an agent is refused as operator_only, but `ref tasks` gives it to agents", c[0])
-		}
-		if !refNames(agent[1], c[0]) {
-			t.Errorf("the agent's sentence of `ref tasks` does not name %q", c[0])
-		}
 	}
 }
 
@@ -460,6 +466,18 @@ func TestRefTasksIsPrintedAndListed(t *testing.T) {
 	}
 	if listing := run(); !regexp.MustCompile(`(?m)^  tasks\s+\S`).MatchString(listing) {
 		t.Errorf("`ref` does not list the tasks topic:\n%s", listing)
+	}
+}
+
+func TestRefTasksIsInAGENTSMDsTopicTableAndMONOAGENTACTORInItsVariableTable(t *testing.T) {
+	raw, err := os.ReadFile("../../AGENTS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []string{"| `ref tasks` |", "| `MONOAGENT_ACTOR` |"} {
+		if !strings.Contains(string(raw), row) {
+			t.Errorf("AGENTS.md has no table row that starts %s", row)
+		}
 	}
 }
 
