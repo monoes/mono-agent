@@ -13,8 +13,25 @@
 // (the Windows lock) and internal/secrets (the keyring key), and nothing else
 // of this repository, so every other package may import it.
 //
-// Files: claims.go (constants), state.go and session.go (the verdict),
-// verify.go and keys.go (the proof), sealer.go and store.go (the session on
-// disk), guard*.go and process.go (the cached verdict and the process-wide
-// guard), testhooks.go (test seams that panic outside a test binary).
+// Files:
+//
+//	claims.go           the constants of the contract: host, audience, windows, timings
+//	state.go            State, Reason, User, Status and Allowed
+//	session.go          Session, NewSession and the verdict (Evaluate)
+//	errors.go           LoginRequiredError and the errors a Refresher returns
+//	rollout.go          the enforcement date (dormant until it is set) and Enforced
+//	globals.go          the lock and the flag behind the process-wide variables
+//	keys.go             the pinned verification keys and TrustedKeys
+//	keys_default.go     extra keys of a default build: none
+//	keys_devaccount.go  the slot for the development key of a -tags devaccount build
+//	verify.go           strict EdDSA verification of an access token
+//	sealer.go           the sealer of the refresh token, under the OS keyring key
+//	store.go            the session on disk: atomic writes and the cross-process lock
+//	lock_unix.go        the file lock on Unix (flock)
+//	lock_windows.go     the file lock on Windows (LockFileEx)
+//	syncdir_unix.go     flushes a directory after a rename or a remove
+//	syncdir_windows.go  does nothing: Windows has no directory flush
+//	guard.go            the Guard: the cached verdict, Status, Require and OnRefused
+//	guard_refresh.go    the refresh algorithm: EnsureFresh and Refresh
+//	testhooks.go        test seams that panic outside a test binary
 package account
