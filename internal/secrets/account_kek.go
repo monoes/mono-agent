@@ -47,9 +47,10 @@ const accountKEKID = "monoes..account"
 //     create=true returns the key that exists (in the OS keychain or the file
 //     keyring) or an error.
 //
-// Every call reads the key store afresh, a creating one included: nothing is
-// remembered between calls, so a key that was replaced in the key store while the
-// process runs is the key the next call returns. A key store that cannot be
+// Every call reads the key store afresh, a creating one included: no key is
+// remembered between calls (the file keyring's passphrase is, as above), so a key
+// that was replaced in the key store while the process runs is the key the next
+// call returns. A key store that cannot be
 // opened is an error, not found=false. The key is a copy the caller may wipe.
 func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 	if interactive || !fileKeyringEnabled() {
@@ -61,7 +62,7 @@ func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 		kek, found, err = accountKEKQuiet(create)
 	}
 	// The caller gets a copy of its own, so wiping it cannot change the key any
-	// other call gets.
+	// other call gets (defence in depth: every call already makes a fresh slice).
 	return bytes.Clone(kek), found, err
 }
 
@@ -72,10 +73,20 @@ func AccountKEK(create, interactive bool) (kek []byte, found bool, err error) {
 // would seal the next refresh token under a key no process, this one included,
 // can find again. fetchOrCreateKEK reads first and makes a key only when the OS
 // keychain answers that it has no entry: a key store error is returned and
-// writes nothing. Under the file keyring opt-in it goes to the file keyring
-// instead, as it does for the vault. Within a process keyringIOMu makes its read
-// and its write one step; across processes the account's callers make every
-// creating call under session.lock, and the file keyring creates with O_EXCL.
+// writes nothing. The exception is the file keyring opt-in: there an OS keychain
+// error goes to the file keyring, as it does for the vault, and a key is made
+// there if no file exists. That is the vault's fallback for hosts whose keychain
+// cannot be read at all, and it cannot tell such a host from a locked keychain: a
+// sign-in made while the keychain is locked can seal under a key the keychain
+// does not hold, and the next unlocked read opens with the keychain's key, so the
+// user signs in again. Within a process keyringIOMu makes the read and the write
+// of a create one step. Across processes nothing but session.lock keeps two
+// creators apart: go-keyring's Set is an upsert on every backend, so there is no
+// create-if-absent for a loser to adopt the winner's key from, and every creating
+// call of the account (the Seal of SaveRefresh, a sign-in's) must run with
+// session.lock held. The file keyring creates with O_EXCL. A bounded Seal that the
+// store gave up on (callKeyStore) keeps running after the lock is released and
+// could still make the first key: narrow, and not new.
 func accountKEKVault(create bool) ([]byte, bool, error) {
 	if create {
 		kek, err := fetchOrCreateKEK(accountKEKID)
