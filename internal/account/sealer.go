@@ -42,7 +42,9 @@ type keyringSealer struct {
 
 // promptingSealer is implemented by a sealer that may wait for a person: one
 // that asks for a passphrase on the terminal or shows an unlock dialog. The store
-// does not put keyStoreTimeout on the calls of such a sealer.
+// does not put keyStoreTimeout on the calls of such a sealer. The method is
+// unexported, so only a sealer of this package can say so: a wrapper of one does
+// not, and is bounded like any other.
 type promptingSealer interface{ prompts() bool }
 
 func (s keyringSealer) prompts() bool { return s.mayPrompt }
@@ -68,8 +70,13 @@ func NewKeyringSealer() Sealer {
 // passphrase, exactly as the vault does. Unlike every other sealer, the store
 // does not put keyStoreTimeout on its calls: a person types the passphrase and
 // its confirmation, or answers the unlock dialog, and that takes as long as it
-// takes. The command owns the terminal, and it is the only one that holds
-// session.lock while it waits; a refresh of another process just waits behind it.
+// takes. The command owns the terminal and holds session.lock while it waits, and
+// the other processes pay for it while the prompt is open: each refresh that
+// falls due waits lockWaitTimeout (25 s), gives up with an advisory error and
+// records nothing, so the next due command waits as long again; the high-water
+// write gives up after 2 s, so the mark stops advancing; the background
+// refresher waits 25 s at every try. Do not wrap the sealer it returns: the
+// store knows it by an unexported marker, and a wrapper is bounded like any other.
 func NewInteractiveKeyringSealer() Sealer {
 	return keyringSealer{kek: func(create bool) ([]byte, bool, error) { return secrets.AccountKEK(create, true) }, mayPrompt: true}
 }
