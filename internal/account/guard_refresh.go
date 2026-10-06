@@ -139,7 +139,10 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		return g.applyRefusal(sess, now, refused)
 	case err != nil && ctx.Err() != nil:
 		return g.Status(), outcomeSkipped, ctx.Err() // the caller gave up; that says nothing about the account
-	case err == nil && ts != nil && ts.AccessToken != "":
+	case err == nil && ts != nil:
+		// Even a token set with no usable access token: by answering, the server has
+		// rotated the refresh token, so applyTokens must keep the new one. An access
+		// token that does not verify, an empty one included, is a server error there.
 		return g.applyTokens(sess, now, refreshToken, ts)
 	case err == nil:
 		result = ReasonServerError // an answer with nothing in it is the server's fault
