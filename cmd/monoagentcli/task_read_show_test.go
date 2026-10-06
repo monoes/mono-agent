@@ -18,13 +18,13 @@ import (
 // The names and signatures the later tasks (the operator's and the agent's
 // commands) print with.
 var (
-	_ func(io.Writer, tasks.Profile, tasks.Task, []tasks.Event) = printTask
-	_ func(io.Writer, string)                                   = printNotes
-	_ func(tasks.Profile, string) string                        = taskCommand
-	_ func(tasks.Task) string                                   = heldNote
-	_ func(string, int) string                                  = taskCut
-	_ func(time.Time, time.Time) string                         = taskAge
-	_ string                                                    = untrustedNotice
+	_ func(io.Writer, tasks.Profile, string, tasks.Task, []tasks.Event) = printTask
+	_ func(io.Writer, string)                                           = printNotes
+	_ func(tasks.Profile, string, string) string                        = taskCommand
+	_ func(tasks.Task) string                                           = heldNote
+	_ func(string, int) string                                          = taskCut
+	_ func(time.Time, time.Time) string                                 = taskAge
+	_ string                                                            = untrustedNotice
 )
 
 // ellipsis ends a text that was cut.
@@ -342,7 +342,7 @@ func TestTaskCountForPicksTheCountOfTheColumn(t *testing.T) {
 // printTask is what the commands of the later tasks print a changed task with.
 func TestTaskPrintTaskPrintsATaskWithoutEvents(t *testing.T) {
 	var out bytes.Buffer
-	printTask(&out, tasks.Profile{ID: "p", Name: "Work"}, tasks.Task{ID: 7, Title: "Alone", Status: tasks.StatusReady, Source: tasks.Source{Kind: "cli"}}, nil)
+	printTask(&out, tasks.Profile{ID: "p", Name: "Work"}, "", tasks.Task{ID: 7, Title: "Alone", Status: tasks.StatusReady, Source: tasks.Source{Kind: "cli"}}, nil)
 	for _, want := range []string{"#7  Alone\n", "Profile:  Work\n", "Status:   Ready\n", "Source:   cli\n"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("%q is missing from %q", want, out.String())

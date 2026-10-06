@@ -18,12 +18,13 @@ var agentSigns = []struct {
 	setup func(t *testing.T)
 	args  []string
 	why   string // what the refusal names as the sign
+	hint  string // the name the command it suggests carries: the agent's, or the placeholder
 }{
-	{"an agent context marker", func(t *testing.T) { t.Setenv("CLAUDECODE", "1") }, nil, "CLAUDECODE"},
-	{"MONOAGENT_ACTOR", func(t *testing.T) { t.Setenv("MONOAGENT_ACTOR", "bot") }, nil, "MONOAGENT_ACTOR"},
-	{"--as", func(t *testing.T) {}, []string{"--as", "bot"}, "--as"},
-	{"a blank --as", func(t *testing.T) {}, []string{"--as", ""}, "no name"},
-	{"a blank --as of spaces", func(t *testing.T) {}, []string{"--as", "   "}, "no name"},
+	{"an agent context marker", func(t *testing.T) { t.Setenv("CLAUDECODE", "1") }, nil, "CLAUDECODE", "<name>"},
+	{"MONOAGENT_ACTOR", func(t *testing.T) { t.Setenv("MONOAGENT_ACTOR", "bot") }, nil, "MONOAGENT_ACTOR", "bot"},
+	{"--as", func(t *testing.T) {}, []string{"--as", "bot"}, "--as", "bot"},
+	{"a blank --as", func(t *testing.T) {}, []string{"--as", ""}, "no name", "<name>"},
+	{"a blank --as of spaces", func(t *testing.T) {}, []string{"--as", "   "}, "no name", "<name>"},
 }
 
 func TestTaskListHidesTheInboxFromEveryKindOfAgent(t *testing.T) {
@@ -112,8 +113,9 @@ func TestTaskBoardIsRefusedToAnAgent(t *testing.T) {
 			}
 			msg, _ := doc["error"].(string)
 			// The command it suggests names a profile like every command a printer suggests; which one is
-			// not known here, because the refusal comes before the database is opened.
-			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "monoagentcli --profile <id> task list --status inbox"} {
+			// not known here, because the refusal comes before the database is opened. It is the agent's
+			// form: pasted without --as it would run as the operator.
+			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "if you really need the Inbox: monoagentcli --profile <id> task list --status inbox --as " + c.hint + ")"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the refusal %q does not say %q", msg, want)
 				}

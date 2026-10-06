@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,13 +53,30 @@ func printNotes(w io.Writer, notes string) {
 	fmt.Fprintln(w, notesEnd)
 }
 
-// taskCommand writes a command that a printer suggests, to be pasted: it names the
+// pasteableName matches an agent name that may be written into a command to paste, as
+// it is: the alphabet and the length the store takes for a name (internal/tasks/clean.go),
+// but not a leading #, which a shell reads as the start of a comment. Every character
+// of it belongs to a shell word, so a pasted name is one word.
+var pasteableName = regexp.MustCompile(`^[A-Za-z0-9._@:-][A-Za-z0-9._#@:-]{0,63}$`)
+
+// taskCommand writes a command that a printer suggests, to be pasted. It names the
 // profile it is for, by its id, because the active profile can change under a caller
-// (the app switches it) and an agent passes --profile on every call (spec 17.8). words
-// are what follows task: taskCommand(p, "show 7 --json"). Every command a printer
-// suggests is written with it, so that none leaves the profile out.
-func taskCommand(p tasks.Profile, words string) string {
-	return "monoagentcli --profile " + p.ID + " task " + words
+// (the app switches it) and an agent passes --profile on every call (spec 17.8). It ends
+// with --as NAME when the caller is an agent that has a name (as is that name, "" for the
+// operator and for an agent with none): pasted without it, the command would run as the
+// operator. A name that is not pasteable is written as <name>, since a pasted command does
+// what it says (a ; or a $( in a name would be a second command). words are what follows
+// task: taskCommand(p, "", "show 7 --json"). Every command a printer suggests is written
+// with it, so that none leaves the profile or the agent out.
+func taskCommand(p tasks.Profile, as, words string) string {
+	command := "monoagentcli --profile " + p.ID + " task " + words
+	switch {
+	case as == "":
+		return command
+	case pasteableName.MatchString(as):
+		return command + " --as " + as
+	}
+	return command + " --as <name>"
 }
 
 // taskCut shortens s to at most n characters, ending in an ellipsis. With no room
@@ -152,9 +170,10 @@ func countFor(c tasks.Counts, st tasks.Status) int {
 	return 0
 }
 
-// printTaskTable prints a list. more says how many tasks the list left out ("" for
+// printTaskTable prints a list. as is the name of the agent that runs the command ("" for
+// the operator: see taskCommand); more says how many tasks the list left out ("" for
 // none, see cutList).
-func printTaskTable(w io.Writer, p tasks.Profile, ts []tasks.Task, more string) {
+func printTaskTable(w io.Writer, p tasks.Profile, as string, ts []tasks.Task, more string) {
 	fmt.Fprintf(w, "Profile: %s\n", p.Name)
 	if len(ts) == 0 {
 		fmt.Fprintln(w, "No tasks.")
@@ -169,7 +188,7 @@ func printTaskTable(w io.Writer, p tasks.Profile, ts []tasks.Task, more string) 
 	_ = tw.Flush()
 	if more != "" {
 		fmt.Fprintf(w, "... %s more (--limit shows more, up to %d: %s)\n", more, tasks.MaxListLimit,
-			taskCommand(p, fmt.Sprintf("list --limit %d", tasks.MaxListLimit)))
+			taskCommand(p, as, fmt.Sprintf("list --limit %d", tasks.MaxListLimit)))
 	}
 }
 
@@ -185,14 +204,17 @@ func printBoard(w io.Writer, b tasks.Board) {
 			fmt.Fprintf(w, "  #%d  %s%s\n", t.ID, taskCut(t.Title, 70), suffix)
 		}
 		// A column the board cut (Done, by --done-limit) says how many cards it left out and
-		// which status lists them.
+		// which status lists them. The board is the operator's (an agent is refused it), so
+		// the command carries no agent name.
 		if n := countFor(b.Counts, st) - len(b.Tasks[st]); n > 0 {
-			fmt.Fprintf(w, "  ... %d more (%s)\n", n, taskCommand(b.Profile, "list --status "+string(st)))
+			fmt.Fprintf(w, "  ... %d more (%s)\n", n, taskCommand(b.Profile, "", "list --status "+string(st)))
 		}
 	}
 }
 
-func printTask(w io.Writer, p tasks.Profile, t tasks.Task, events []tasks.Event) {
+// printTask prints a task with its history. as is the name of the agent that runs the
+// command ("" for the operator): the commands it suggests carry it (see taskCommand).
+func printTask(w io.Writer, p tasks.Profile, as string, t tasks.Task, events []tasks.Event) {
 	fmt.Fprintf(w, "#%d  %s\n", t.ID, t.Title)
 	fmt.Fprintf(w, "Profile:  %s\nStatus:   %s\n", p.Name, columnLabel(t.Status))
 	src := t.Source.Kind
@@ -234,7 +256,7 @@ func printTask(w io.Writer, p tasks.Profile, t tasks.Task, events []tasks.Event)
 		}
 	}
 	if cut {
-		fmt.Fprintf(w, "(full text: %s)\n", taskCommand(p, fmt.Sprintf("show %d --json", t.ID)))
+		fmt.Fprintf(w, "(full text: %s)\n", taskCommand(p, as, fmt.Sprintf("show %d --json", t.ID)))
 	}
 }
 
@@ -270,7 +292,7 @@ func newTaskListCmd(cfg *globalConfig) *cobra.Command {
 				if cfg.JSONOutput {
 					return writeJSONTo(cmd.OutOrStdout(), map[string]any{"profile": p, "tasks": ts})
 				}
-				printTaskTable(cmd.OutOrStdout(), p, ts, more)
+				printTaskTable(cmd.OutOrStdout(), p, caller.actor.Name, ts, more)
 				return nil
 			})
 		},
@@ -295,10 +317,17 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 			// The board shows the Inbox, which an agent reads only by naming it (spec 4.1),
 			// and the store's Board takes no actor: the board is the operator's, and an
 			// agent is refused before the database is opened.
-			if _, err := callerFor(flagAs(cmd)).operator("show the board"); err != nil {
+			caller := callerFor(flagAs(cmd))
+			if _, err := caller.operator("show the board"); err != nil {
 				// No profile id is known before the database is opened: the command names a placeholder.
-				inbox := taskCommand(tasks.Profile{ID: "<id>"}, "list --status inbox")
-				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (%s if you really need the Inbox)", err, inbox)
+				// It is the agent's form, with the agent's name, or a placeholder for one: pasted without
+				// it, the command would run as the operator.
+				as := caller.actor.Name
+				if as == "" {
+					as = "<name>"
+				}
+				inbox := taskCommand(tasks.Profile{ID: "<id>"}, as, "list --status inbox")
+				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (if you really need the Inbox: %s)", err, inbox)
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {
 				b, err := store.Board(ctx, p.ID, doneLimit)
@@ -329,6 +358,7 @@ func newTaskShowCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			caller := callerFor(flagAs(cmd))
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {
 				t, events, err := store.Get(ctx, p.ID, id)
 				if err != nil {
@@ -337,7 +367,7 @@ func newTaskShowCmd(cfg *globalConfig) *cobra.Command {
 				if cfg.JSONOutput {
 					return writeJSONTo(cmd.OutOrStdout(), map[string]any{"profile": p, "task": t, "events": events})
 				}
-				printTask(cmd.OutOrStdout(), p, t, events)
+				printTask(cmd.OutOrStdout(), p, caller.actor.Name, t, events)
 				return nil
 			})
 		},

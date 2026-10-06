@@ -15,10 +15,14 @@ import (
 )
 
 // moreLine is what a list of the profile with this id says when it left tasks out; n is "3", or
-// "1500+" at the store's maximum. The command in it names the profile by its id.
-func moreLine(n, profileID string) string {
-	return fmt.Sprintf("... %s more (--limit shows more, up to %d: monoagentcli --profile %s task list --limit %d)",
-		n, tasks.MaxListLimit, profileID, tasks.MaxListLimit)
+// "1500+" at the store's maximum. The command in it names the profile by its id, and the agent that
+// runs the list when there is one (as is "" for the operator).
+func moreLine(n, profileID, as string) string {
+	if as != "" {
+		as = " --as " + as
+	}
+	return fmt.Sprintf("... %s more (--limit shows more, up to %d: monoagentcli --profile %s task list --limit %d%s)",
+		n, tasks.MaxListLimit, profileID, tasks.MaxListLimit, as)
 }
 
 // A column the board cut says so under its cards, with the status that lists the rest, whichever
@@ -122,15 +126,15 @@ func TestTaskPrintTaskTableEndsWithWhatItLeftOut(t *testing.T) {
 	p := tasks.Profile{ID: "work-id", Name: "Work"}
 	one := []tasks.Task{{ID: 1, Title: "a", Status: tasks.StatusInbox, Source: tasks.Source{Kind: "cli"}, CreatedAt: time.Now()}}
 	var out bytes.Buffer
-	printTaskTable(&out, p, one, "")
+	printTaskTable(&out, p, "", one, "")
 	if strings.Contains(out.String(), "...") {
 		t.Errorf("a table that left nothing out: %q", out.String())
 	}
 	out.Reset()
-	printTaskTable(&out, p, one, "3")
+	printTaskTable(&out, p, "", one, "3")
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if got := lines[len(lines)-1]; got != moreLine("3", "work-id") {
-		t.Errorf("the last line of a table that left 3 out is %q, want %q", got, moreLine("3", "work-id"))
+	if got := lines[len(lines)-1]; got != moreLine("3", "work-id", "") {
+		t.Errorf("the last line of a table that left 3 out is %q, want %q", got, moreLine("3", "work-id", ""))
 	}
 }
 
@@ -148,11 +152,11 @@ func TestTaskListSaysHowManyTasksItLeftOut(t *testing.T) {
 	}{
 		{"a limit above what there is", []string{"--limit", "5"}, []string{"one", "two", "three"}, ""},
 		{"a limit of what there is", []string{"--limit", "3"}, []string{"one", "two", "three"}, ""},
-		{"one over", []string{"--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id")},
-		{"two over", []string{"--limit", "1"}, []string{"one"}, moreLine("2", "work-id")},
+		{"one over", []string{"--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id", "")},
+		{"two over", []string{"--limit", "1"}, []string{"one"}, moreLine("2", "work-id", "")},
 		{"no limit", nil, []string{"one", "two", "three"}, ""},
-		{"an agent that names the inbox", []string{"--as", "bot", "--status", "inbox", "--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id")},
-		{"a filter that leaves the rest out", []string{"--status", "inbox", "--source", "cli", "--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id")},
+		{"an agent that names the inbox", []string{"--as", "bot", "--status", "inbox", "--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id", "bot")},
+		{"a filter that leaves the rest out", []string{"--status", "inbox", "--source", "cli", "--limit", "2"}, []string{"one", "two"}, moreLine("1", "work-id", "")},
 	} {
 		args := append([]string{"list"}, c.args...)
 		var got listJSON
@@ -192,10 +196,10 @@ func TestTaskListSaysSoWhenTheDefaultLimitCutsIt(t *testing.T) {
 		shown int
 		more  string
 	}{
-		{nil, tasks.DefaultListLimit, moreLine("2", "default")},
-		{[]string{"--limit", "0"}, tasks.DefaultListLimit, moreLine("2", "default")},
-		{[]string{"--limit", "-3"}, tasks.DefaultListLimit, moreLine("2", "default")},
-		{[]string{"--limit", "501"}, 501, moreLine("1", "default")},
+		{nil, tasks.DefaultListLimit, moreLine("2", "default", "")},
+		{[]string{"--limit", "0"}, tasks.DefaultListLimit, moreLine("2", "default", "")},
+		{[]string{"--limit", "-3"}, tasks.DefaultListLimit, moreLine("2", "default", "")},
+		{[]string{"--limit", "501"}, 501, moreLine("1", "default", "")},
 		{[]string{"--limit", "502"}, 502, ""},
 		{[]string{"--limit", "100000"}, 502, ""},
 	} {
@@ -236,8 +240,8 @@ func TestTaskListOfAFullArchiveSaysThereMayBeMore(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	if last := lines[len(lines)-1]; last != moreLine("1500+", "default") || len(lines) != 2+tasks.DefaultListLimit+1 {
-		t.Errorf("a full archive: %d lines and the last is %q, want %d lines and %q", len(lines), last, 2+tasks.DefaultListLimit+1, moreLine("1500+", "default"))
+	if last := lines[len(lines)-1]; last != moreLine("1500+", "default", "") || len(lines) != 2+tasks.DefaultListLimit+1 {
+		t.Errorf("a full archive: %d lines and the last is %q, want %d lines and %q", len(lines), last, 2+tasks.DefaultListLimit+1, moreLine("1500+", "default", ""))
 	}
 	var got listJSON
 	mustTaskJSON(t, db, "default", &got, "", "list", "--status", "archived", "--limit", "2000")
@@ -248,7 +252,7 @@ func TestTaskListOfAFullArchiveSaysThereMayBeMore(t *testing.T) {
 
 // A command a printer suggests is one to paste, and it names the profile it is for, by its id: the
 // active profile can change under a caller (the app switches it), and an agent passes --profile on
-// every call (spec 17.8). The words are what follows task.
+// every call (spec 17.8). The words are what follows task; as is "" for the operator.
 func TestTaskCommandNamesTheProfileByItsID(t *testing.T) {
 	work := tasks.Profile{ID: "work-id", Name: "Work"}
 	for _, c := range []struct{ words, want string }{
@@ -256,11 +260,11 @@ func TestTaskCommandNamesTheProfileByItsID(t *testing.T) {
 		{"show 7 --json", "monoagentcli --profile work-id task show 7 --json"},
 		{"next --claim --as <your-name>", "monoagentcli --profile work-id task next --claim --as <your-name>"},
 	} {
-		if got := taskCommand(work, c.words); got != c.want {
+		if got := taskCommand(work, "", c.words); got != c.want {
 			t.Errorf("taskCommand(%q) = %q, want %q", c.words, got, c.want)
 		}
 	}
-	if got := taskCommand(tasks.Profile{ID: "default", Name: "Default"}, "board"); got != "monoagentcli --profile default task board" {
+	if got := taskCommand(tasks.Profile{ID: "default", Name: "Default"}, "", "board"); got != "monoagentcli --profile default task board" {
 		t.Errorf("the default profile: %q", got)
 	}
 }
@@ -281,31 +285,50 @@ func TestTaskEverySuggestedCommandNamesItsProfile(t *testing.T) {
 	long := ids[len(ids)-1]
 	seedTaskEvent(t, db, long, time.Now(), "bot", "comment", "", "", strings.Repeat("x", 300))
 
+	// check finds every command a view suggests (a task list or a task show with a flag or an id after
+	// it) and requires it to be written whole: the program, the profile, and the agent's name at its
+	// end when as is not "" (and no --as at all when it is).
 	suggested := regexp.MustCompile(`task (list|show) (--|#?[0-9])`)
-	check := func(view, text, profile string) {
+	check := func(view, text, profile, as string) {
 		t.Helper()
 		found := suggested.FindAllStringIndex(text, -1)
 		if len(found) == 0 {
 			t.Errorf("%s suggests no command: nothing to check:\n%s", view, text)
 		}
 		for _, at := range found {
-			if !strings.HasSuffix(text[:at[0]], "monoagentcli --profile "+profile+" ") {
+			start := strings.LastIndex(text[:at[0]], "monoagentcli --profile ")
+			if start < 0 || text[start:at[0]] != "monoagentcli --profile "+profile+" " {
 				t.Errorf("%s suggests a command that does not name its profile (%s): %q", view, profile, text[max(at[0]-40, 0):min(at[1]+20, len(text))])
+				continue
+			}
+			end := len(text)
+			if i := strings.IndexAny(text[at[1]:], ")\n"); i >= 0 {
+				end = at[1] + i
+			}
+			command := text[start:end]
+			if (as == "" && strings.Contains(command, "--as")) || (as != "" && !strings.HasSuffix(command, " --as "+as)) {
+				t.Errorf("%s suggests %q, which should end in --as %q (\"\" for no --as)", view, command, as)
 			}
 		}
 	}
-	for view, args := range map[string][]string{
-		"board": {"board"},
-		"list":  {"list", "--limit", "1"},
-		"show":  {"show", strconv.FormatInt(long, 10)},
+	for _, c := range []struct {
+		view string
+		args []string
+		as   string
+	}{
+		{"board", []string{"board"}, ""},
+		{"list", []string{"list", "--limit", "1"}, ""},
+		{"show", []string{"show", strconv.FormatInt(long, 10)}, ""},
+		{"an agent's list", []string{"list", "--status", "done", "--limit", "1", "--as", "bot"}, "bot"},
+		{"an agent's show", []string{"show", strconv.FormatInt(long, 10), "--as", "bot"}, "bot"},
 	} {
-		out, _, err := runTask(t, db, "Work", false, "", args...)
+		out, _, err := runTask(t, db, "Work", false, "", c.args...)
 		if err != nil {
-			t.Fatalf("task %s: %v", strings.Join(args, " "), err)
+			t.Fatalf("task %s: %v", strings.Join(c.args, " "), err)
 		}
-		check(view, out, "work-id")
+		check(c.view, out, "work-id", c.as)
 	}
 	t.Setenv("CLAUDECODE", "1")
 	_, _, err := runTask(t, db, "Work", false, "", "board")
-	check("the board's refusal", errText(err), "<id>")
+	check("the board's refusal", errText(err), "<id>", "<name>")
 }
