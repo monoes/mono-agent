@@ -108,11 +108,19 @@ func TestRequireUsesTheInstalledGuard(t *testing.T) {
 // create a file or a directory when nothing has been written (scripts/doctor-smoke.sh
 // asserts that a plain `doctor` on a fresh HOME leaves it empty, and run()
 // installs a guard for every command, open ones included).
+//
+// The guard passes below run before the enforcement date (the date is set ahead of the
+// fixture's clock, explicitly: the test never relies on the ambient one): from the date on the
+// first pass of a machine that has no session writes the clock-guard record (A25), which
+// TestAGatedPassOnAnEmptyHomeFromTheDateOnLeavesExactlyTheRecord in guard_hwrecord_test.go
+// pins. What is asserted here holds while the gate is dormant, before the date, and for a
+// call that makes no guard pass.
 func TestNothingIsCreatedOnAnEmptyHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	f := accounttest.New(t)
+	account.SetEnforceFromForTest(t, f.Clock.Now().Add(24*time.Hour))
 	ref := &fakeRefresher{f: f, valid: "rt-1"}
 	ctx := context.Background()
 

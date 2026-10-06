@@ -18,16 +18,21 @@ import (
 // set, runs first in every Save, as something another goroutine did meanwhile.
 type failingSaveStore struct {
 	account.Store
-	mu     sync.Mutex
-	fail   bool
-	tries  int
-	onSave func()
+	mu      sync.Mutex
+	fail    bool
+	okSaves int // the first okSaves Saves go through although fail is set: the marker of a grant, before the write that is meant to fail
+	tries   int
+	onSave  func()
 }
 
 func (s *failingSaveStore) Save(sess *account.Session) error {
 	s.mu.Lock()
 	s.tries++
 	fail, onSave := s.fail, s.onSave
+	if fail && s.okSaves > 0 {
+		s.okSaves--
+		fail = false
+	}
 	s.mu.Unlock()
 	if onSave != nil {
 		onSave()
@@ -151,7 +156,7 @@ func TestAFailedHighWaterWriteDoesNotRevertANewerSessionOnlyThisProcessHolds(t *
 	e.signIn(56*time.Minute, time.Hour) // due: four minutes left
 	fs := &failingSaveStore{Store: account.OpenStore(e.dir, e.seal)}
 	g := e.guardOver(fs, 0)
-	fs.fail = true
+	fs.fail, fs.okSaves = true, 1 // the marker of the grant is written (A24), the session of the answer is not
 	t0 := e.f.Clock.Now()
 	ctx := context.Background()
 	if _, err := g.EnsureFresh(ctx); err == nil {
@@ -177,7 +182,7 @@ func TestAMarkAPeerWroteOnTheOlderFileDoesNotRevertANewerSessionOnlyThisProcessH
 	e.signIn(56*time.Minute, time.Hour) // due: four minutes left
 	fs := &failingSaveStore{Store: account.OpenStore(e.dir, e.seal)}
 	g := e.guardOver(fs, 0)
-	fs.fail = true
+	fs.fail, fs.okSaves = true, 1 // the marker of the grant is written (A24), the session of the answer is not
 	t0 := e.f.Clock.Now()
 	ctx := context.Background()
 	if _, err := g.EnsureFresh(ctx); err == nil {

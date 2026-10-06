@@ -41,9 +41,11 @@ const (
 // ctx ends the waits that come before anything is sent: the wait for the
 // in-process slot and for the lock. A caller whose context has ended before the
 // request is sent, even while the refresh token is being read, sends nothing and
-// gets the context's error, unless the read failed (the key store failed or did
-// not answer, or there is no refresh token it can open): that is recorded as
-// keyring_unavailable and not reported as the context's error. Once the refresh request is sent it
+// gets the context's error, unless the read decided the attempt: it failed (the
+// key store failed or did not answer, or there is no refresh token it can open),
+// which is recorded as keyring_unavailable, or the token is one that monoes.me may
+// have rotated, which is dropped (A24). Neither is reported as the context's
+// error. Once the refresh request is sent it
 // is not cancelled by ctx, since monoes.me rotates the refresh token as it
 // answers and the answer must be stored: EnsureFresh then returns only after the
 // answer is stored, which can take up to refreshCallTimeout (20 s) after ctx has
@@ -70,9 +72,16 @@ func (g *Guard) Refresh(ctx context.Context) (Status, error) {
 // dueForRefresh decides from the cached session whether a refresh should be
 // tried now. A session that is not ok (grace, expired, a clock that went back,
 // a token this build cannot verify) is always due: only a new token repairs it.
+// So is one with a marker, in both modes and whatever the margin and the negative
+// cache say (A24): a grant that may have been answered is retried at once while
+// monoes.me still repeats its answer, and dropped after that, and the lock path
+// decides which by the age of the marker.
 func dueForRefresh(sess *Session, st Status, rcpt *Receipt, now time.Time, mode refreshMode) bool {
 	if sess == nil || sess.State == stateRefused || sess.AccessToken == "" {
 		return false
+	}
+	if !sess.PendingSince.IsZero() {
+		return true
 	}
 	// Both callers read the Status and then the cache, one after the other, and a
 	// poll in another goroutine can swap the cache between the two reads: a token
@@ -145,16 +154,53 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	}
 	refreshToken, err := g.store.LoadRefresh()
 	if err != nil || refreshToken == "" {
+		switch {
+		case err == nil && !sess.PendingSince.IsZero():
+			// No token beside a marker: a drop that stopped after it took the token out (a
+			// crash, a record that could not be saved). It is finished here, with the
+			// record it would have written, and nothing is sent (A24).
+			return g.recordAttempt(withoutPending(sess), now, string(ReasonUnconfirmed))
+		case err == nil && sess.LastResult == string(ReasonUnconfirmed):
+			// A drop took the refresh token and recorded why (A24). There is nothing to
+			// present, and a key store problem recorded over that reason would have the
+			// grace say the wrong thing, and its end say expired instead of unconfirmed.
+			// Nothing is recorded; the attempt counts as a failed one, so that the
+			// refresher backs off until a sign-in instead of trying at every wake-up.
+			return st, outcomeFailed, nil
+		case pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed):
+			// A token that must never be presented again and that cannot be read: it goes
+			// unread (os.Remove needs no key store). Recording the key store problem instead
+			// would overwrite what keeps it from being presented, unconfirmed or the last
+			// attempt that a clock gone back is measured against, and the next pass, with
+			// the key store back, would present it (A24).
+			return g.dropUnconfirmed(sess, now)
+		}
 		// Unreadable: the key store is unavailable or does not answer in time, or
 		// the file is gone or does not open. Not a decision about the account, so
 		// the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
 	}
+	if pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed) {
+		// The grant that left the marker is out of reach of monoes.me's reuse window, or
+		// the clock went back and its age cannot be told: the token is not presented. Nor
+		// is one that a drop gave up and that is still, or again, on disk (a remove that
+		// failed, a restored file): whatever the age of a marker says, it may be rotated.
+		return g.dropUnconfirmed(sess, now)
+	}
 	if err := ctx.Err(); err != nil {
 		// The last place where giving up sends nothing: reading the refresh token
 		// can take a while (a key store that prompts), and from the call on the
-		// context is no longer the caller's.
+		// context is no longer the caller's. It stays before the marker below: a
+		// marker left for a grant that was never sent would have the next attempt
+		// drop a token that was never presented.
 		return st, outcomeSkipped, err
+	}
+	// Write down that a grant is about to go out (A24), so that a process that dies
+	// or an answer that is lost leaves the evidence beside the token that may now
+	// be dead. A grant whose outcome cannot be recorded is not sent.
+	sess, stamped, err := g.markPending(sess, now)
+	if err != nil {
+		return g.Status(), outcomeFailed, err
 	}
 	// The grant gets a context of its own, not the caller's: Ctrl-C, SIGTERM, a
 	// deadline or the guard closing must not abandon a request monoes.me may
@@ -188,9 +234,20 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		return g.applyTokens(sess, now, refreshToken, ts)
 	case err == nil:
 		result = ReasonServerError // an answer with nothing in it is the server's fault
-	case errors.As(err, &transient) && transient != nil && transient.Reason == ReasonServerError:
-		result = ReasonServerError
+	case errors.As(err, &transient) && transient != nil:
+		if transient.Reason == ReasonServerError {
+			result = ReasonServerError
+		}
+		if transient.Settled && stamped {
+			// Nothing was consumed: the request never left this machine, or monoes.me
+			// answered with an HTTP status. The marker this attempt wrote says nothing
+			// then and is taken back. A marker that an earlier attempt left stays as it
+			// is: that grant may have been answered, and this one says nothing about it.
+			sess = withoutPending(sess)
+		}
 	}
+	// Any other failure keeps the marker: the request may have been processed, so
+	// the refresh token may be dead and the answer is not held.
 	return g.recordAttempt(sess, now, string(result))
 }
 
@@ -209,18 +266,32 @@ func isTypedNil(err error) bool {
 // account, which locks every install of it. Hence the order and the cleanup.
 // The new refresh token is saved before the session, even when the access token
 // that came with it is not usable, so a crash in between leaves a working pair.
-// If it cannot be saved, the dead one is removed from disk (os.Remove needs no
-// key store) so that no later process presents it.
+// If it cannot be saved, the answer is treated as a lost one (A24): the old token,
+// which monoes.me has rotated away, stays on disk with the marker that says so, and
+// the attempt is recorded as a key store failure. Within the retry window the next
+// attempt presents it again and monoes.me repeats its answer, which can be stored
+// then; after it the token is dropped without being presented. Deleting it here
+// would only be the same drop without the retry, and a delete that fails would leave
+// a dead token with nothing to say so. A session that cannot be saved after the new
+// refresh token was leaves the grant's marker on disk beside that new, valid token,
+// and a pass after the window drops it: one needless sign-in after a failed write,
+// accepted.
 func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *TokenSet) (Status, outcome, error) {
 	next, verr := NewSession(cur.Host, ts.AccessToken, cur.User, now)
 	if ts.RefreshToken != "" && ts.RefreshToken != oldRefresh {
 		if err := g.store.SaveRefresh(ts.RefreshToken); err != nil {
-			_ = g.store.DeleteRefresh() // best effort: the token on disk is dead
 			st, oc, _ := g.recordAttempt(cur, now, string(ReasonKeyringUnavailable))
 			return st, oc, err
 		}
 	}
 	if verr != nil {
+		if ts.RefreshToken != "" {
+			// An answer that says which refresh token to hold (the new one is saved, or
+			// the old one is confirmed) is a definitive one, whatever its access token is
+			// worth: nothing is in doubt any more. An answer with neither token tells
+			// nothing about the one that was presented, as one with no token set does.
+			cur = withoutPending(cur)
+		}
 		// A token this build cannot verify is never stored: a bad monoes.me
 		// deploy (an opaque token, a wrong audience) must not log every online
 		// install out. A kid it does not know is remembered, so that when the
@@ -241,6 +312,10 @@ func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *
 // marked refused (keeping the user for the message) until a new sign-in.
 func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Status, outcome, error) {
 	next := *cur
+	next.PendingSince = time.Time{} // the answer is in: monoes.me refused the token, nothing is in doubt
+	if now.After(next.HW) {
+		next.HW = now // a refused session keeps the enforcement evidence: a clock set back must not un-enforce the date
+	}
 	next.State = stateRefused
 	next.Reason = r.Description
 	if len(next.Reason) > 200 {
@@ -265,10 +340,15 @@ func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Stat
 }
 
 // recordAttempt stores the result of a failed attempt: the negative cache, and
-// the reason a session in grace shows.
+// the reason a session in grace shows. While the session it writes has a marker or
+// is unconfirmed, LastAttempt is also the evidence that the clock went back
+// (pendingExpired), so it never moves back with the clock then (A24).
 func (g *Guard) recordAttempt(cur *Session, now time.Time, result string) (Status, outcome, error) {
 	next := *cur
-	next.LastAttempt, next.LastResult = now, result
+	next.LastResult = result
+	if inDoubt := !next.PendingSince.IsZero() || result == string(ReasonUnconfirmed); !inDoubt || now.After(next.LastAttempt) {
+		next.LastAttempt = now
+	}
 	bumpHW(&next, now)
 	err := g.store.Save(&next)
 	g.adopt(&next)
@@ -283,16 +363,25 @@ func bumpHW(s *Session, now time.Time) {
 	}
 }
 
-// touchHW persists the high-water mark (spec §4.5): only when a session exists,
-// the package is not dormant, the stored mark is a minute stale, and this guard
-// has not tried in the last minute. It never waits long for the lock and never
-// reports a failure: a missed write is made up at the next call.
+// touchHW persists the high-water mark (spec §4.5): only when the package is not
+// dormant, the stored mark is a minute stale, and this guard has not tried in the
+// last minute. A refused session has no mark worth writing. A machine that has no
+// session at all keeps the record too, from the enforcement date on (A25): the date
+// is judged on max(now, hw) and hw lives only in session.json, so without a file a
+// clock set back to before the date would un-enforce the gate for a machine that was
+// refused, or never signed in. It never waits long for the lock and never reports a
+// failure: a missed write is made up at the next call.
 func (g *Guard) touchHW(now time.Time) {
 	if dormant() {
 		return
 	}
 	sess, _ := g.cached()
-	if sess == nil || sess.State == stateRefused || !now.After(sess.HW) || now.Sub(sess.HW) < hwInterval {
+	switch {
+	case sess == nil:
+		if !Enforced(now, time.Time{}) { // a date is set and the clock has reached it
+			return
+		}
+	case sess.State == stateRefused || !now.After(sess.HW) || now.Sub(sess.HW) < hwInterval:
 		return
 	}
 	g.mu.Lock()
@@ -312,7 +401,13 @@ func (g *Guard) touchHW(now time.Time) {
 	}
 	defer unlock()
 	fresh, err := g.store.Load()
-	if err != nil || fresh == nil {
+	if err != nil {
+		return
+	}
+	if fresh == nil {
+		if sess == nil { // not a session that vanished under a cached one: that file is not this guard's to bring back
+			g.keepRecord(now)
+		}
 		return
 	}
 	if fresh.State == stateRefused {
@@ -337,6 +432,17 @@ func (g *Guard) touchHW(now time.Time) {
 		return
 	}
 	g.adopt(&next)
+}
+
+// keepRecord saves the session with no token that a machine which never signed in
+// leaves (A25): a host and a mark, the record that a logout leaves, and nothing else.
+// The caller holds the lock and has found no session. A failure is not reported.
+func (g *Guard) keepRecord(now time.Time) {
+	record := &Session{V: sessionVersion, Host: HostURL, HW: now}
+	if g.store.Save(record) != nil {
+		return
+	}
+	g.adopt(record)
 }
 
 // adoptUnlessOlder takes fresh, a session just read under the file lock, in as the

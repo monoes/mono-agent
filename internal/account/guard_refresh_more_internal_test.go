@@ -137,6 +137,13 @@ type rotatingServer struct {
 	bad   string        // the access token it answers with instead of a good one
 	after func()        // runs inside the call, once it is counted
 	life  time.Duration // of the access tokens it mints; an hour when zero
+
+	// window, when set, is how long monoes.me repeats its answer to the token it has just
+	// rotated away (300 s in plan A); zero refuses a token that was used, as before.
+	window     time.Duration
+	prev       string
+	prevAnswer *TokenSet
+	prevAt     time.Time
 }
 
 func (s *rotatingServer) Refresh(ctx context.Context, refreshToken string) (*TokenSet, error) {
@@ -147,9 +154,13 @@ func (s *rotatingServer) Refresh(ctx context.Context, refreshToken string) (*Tok
 	if s.err != nil {
 		return nil, s.err
 	}
+	if s.window > 0 && refreshToken == s.prev && s.rig.clock.Now().Sub(s.prevAt) <= s.window {
+		return s.prevAnswer, nil // inside the reuse window: the same answer again
+	}
 	if refreshToken != s.valid {
 		return nil, &RefusedError{Description: "refresh token already used"}
 	}
+	s.prev, s.prevAt = refreshToken, s.rig.clock.Now()
 	s.seq++
 	s.valid = fmt.Sprintf("rt-%d", s.seq+1)
 	life := s.life
@@ -160,7 +171,8 @@ func (s *rotatingServer) Refresh(ctx context.Context, refreshToken string) (*Tok
 	if s.bad != "" {
 		access = s.bad
 	}
-	return &TokenSet{AccessToken: access, RefreshToken: s.valid}, nil
+	s.prevAnswer = &TokenSet{AccessToken: access, RefreshToken: s.valid}
+	return s.prevAnswer, nil
 }
 
 func newRig(t *testing.T) *rig {
@@ -234,7 +246,7 @@ func TestRefreshIfDueSaysWhatItDid(t *testing.T) {
 	}{
 		{name: "a healthy token, the CLI rule", mode: modeCLI, age: 10 * time.Minute, want: outcomeSkipped},
 		{name: "under five minutes left", mode: modeCLI, age: 56 * time.Minute, want: outcomeRefreshed, wantCalls: 1},
-		{name: "the server cannot be reached", mode: modeCLI, age: 2 * time.Hour, serverErr: &TransientError{Reason: ReasonUnreachable, Err: errors.New("no route")}, want: outcomeFailed, wantCalls: 1},
+		{name: "the server cannot be reached", mode: modeCLI, age: 2 * time.Hour, serverErr: &TransientError{Reason: ReasonUnreachable, Settled: true, Err: errors.New("no route")}, want: outcomeFailed, wantCalls: 1},
 		{name: "invalid_grant", mode: modeCLI, age: 2 * time.Hour, serverErr: &RefusedError{Description: "revoked"}, want: outcomeRefused, wantCalls: 1},
 		{name: "no refresh token on disk", mode: modeCLI, age: 2 * time.Hour, noRefresh: true, want: outcomeFailed},
 		{name: "a token that does not verify", mode: modeCLI, age: 2 * time.Hour, badToken: "opaque-0123456789", want: outcomeFailed, wantCalls: 1},

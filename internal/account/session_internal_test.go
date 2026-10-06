@@ -31,6 +31,7 @@ func TestGraceReason(t *testing.T) {
 		"server_error":        ReasonServerError,
 		"keyring_unavailable": ReasonKeyringUnavailable,
 		"key_unknown":         ReasonServerError,
+		"unconfirmed":         ReasonUnconfirmed,
 		"ok":                  ReasonUnreachable,
 		"refused":             ReasonUnreachable,
 		"":                    ReasonUnreachable,

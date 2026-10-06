@@ -2,6 +2,7 @@ package account_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"testing"
@@ -37,6 +38,13 @@ func TestEvaluateMatrix(t *testing.T) {
 		{"exactly iat+24h", -24 * hour, hour, 0, "unreachable", account.StateLocked, account.ReasonExpired, false},
 		{"long expired", -30 * hour, hour, 0, "unreachable", account.StateLocked, account.ReasonExpired, false},
 		{"expired after an unknown key", -30 * hour, hour, 0, "key_unknown", account.StateLocked, account.ReasonKeyUnknown, false},
+		// A refresh whose answer never arrived (A24): the refresh token is gone, so nothing repairs the login but a new sign-in.
+		{"ok after an unconfirmed refresh, while the token lasts", -10 * time.Minute, hour, 0, "unconfirmed", account.StateOK, "", true},
+		{"grace after an unconfirmed refresh", -2 * hour, hour, 0, "unconfirmed", account.StateGrace, account.ReasonUnconfirmed, true},
+		{"a second before iat+24h after an unconfirmed refresh", -24*hour + time.Second, hour, 0, "unconfirmed", account.StateGrace, account.ReasonUnconfirmed, true},
+		{"exactly iat+24h after an unconfirmed refresh", -24 * hour, hour, 0, "unconfirmed", account.StateLocked, account.ReasonUnconfirmed, false},
+		{"long expired after an unconfirmed refresh", -30 * hour, hour, 0, "unconfirmed", account.StateLocked, account.ReasonUnconfirmed, false},
+		{"rollback wins over an unconfirmed refresh", -30 * hour, hour, 2 * hour, "unconfirmed", account.StateLocked, account.ReasonClockRollback, false},
 		{"a 24h token is ok to its exp", -24*hour + time.Second, 24 * hour, 0, "ok", account.StateOK, "", true},
 		{"iat exactly 5m ahead", 5 * time.Minute, hour, 0, "ok", account.StateOK, "", true},
 		{"iat a second over 5m ahead", 5*time.Minute + time.Second, hour, 0, "ok", account.StateLocked, account.ReasonClockSkew, false},
@@ -66,6 +74,37 @@ func TestEvaluateMatrix(t *testing.T) {
 				t.Fatalf("status fields = %+v, want v 1, the sub of the token as user and plan free", st)
 			}
 		})
+	}
+}
+
+// pending_since is the guard's own bookkeeping of a refresh that is in flight (A24):
+// it never changes a verdict by itself, whatever the clock says about it.
+func TestAPendingMarkNeverChangesAVerdict(t *testing.T) {
+	f := accounttest.New(t)
+	now := f.Clock.Now()
+	const hour = time.Hour
+	cases := []struct {
+		name string
+		sess account.Session
+	}{
+		{"a fresh token", account.Session{AccessToken: f.Token(accounttest.TokenOptions{IssuedAt: now.Add(-10 * time.Minute)}), HW: now, LastResult: "ok"}},
+		{"a grace", account.Session{AccessToken: f.Token(accounttest.TokenOptions{IssuedAt: now.Add(-2 * hour)}), HW: now, LastResult: "unreachable"}},
+		{"past the grace", account.Session{AccessToken: f.Token(accounttest.TokenOptions{IssuedAt: now.Add(-30 * hour)}), HW: now, LastResult: "unreachable"}},
+		{"a clock that went back", account.Session{AccessToken: f.Token(accounttest.TokenOptions{IssuedAt: now.Add(-10 * time.Minute)}), HW: now.Add(2 * hour)}},
+		{"a refused session", account.Session{State: "refused", LastResult: "refused"}},
+		{"no token", account.Session{HW: now}},
+	}
+	for _, c := range cases {
+		for _, at := range []time.Duration{-30 * time.Minute, -time.Second, 0, time.Hour} { // inside the window, old, now and in the future
+			t.Run(fmt.Sprintf("%s, marked %v from now", c.name, at), func(t *testing.T) {
+				plain, marked := c.sess, c.sess
+				plain.V, marked.V = 1, 1
+				marked.PendingSince = now.Add(at)
+				if got, want := account.Evaluate(&marked, now), account.Evaluate(&plain, now); !reflect.DeepEqual(got, want) {
+					t.Fatalf("Evaluate with a pending mark = %+v, want what it says without one: %+v", got, want)
+				}
+			})
+		}
 	}
 }
 

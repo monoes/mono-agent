@@ -95,57 +95,62 @@ func TestTheRefresherKeepsTheHighWaterMarkCurrentWhileItWaitsToRetry(t *testing.
 	expectCalls(t, srv, 3, "the wait goes on")
 }
 
-func TestAHoldingRefresherWritesNoMarkWhileDormantOrForARefusedOrAMissingSession(t *testing.T) {
-	holding := func(t *testing.T) *env {
-		t.Helper()
-		e := newEnv(t)
-		srv := newLoopServer(e) // no lag
-		srv.signIn(40*time.Minute, time.Hour)
-		g := e.guardOn(srv, loopPoll)
-		g.StartRefresher(context.Background())
-		waitForCalls(t, srv, 1, "the first refresh")
-		expectCalls(t, srv, 1, "the hold")
-		return e
-	}
-	// Five minutes on, the mark is five minutes stale: a loop that wrote it
-	// whatever the session says would write it now.
-	later := func(t *testing.T, e *env) {
-		t.Helper()
-		e.f.Clock.Advance(5 * time.Minute)
-		quiet()
-	}
+// holdingRefresher is an env whose refresher has just refreshed and now holds for half an hour.
+func holdingRefresher(t *testing.T) *env {
+	t.Helper()
+	e := newEnv(t)
+	srv := newLoopServer(e) // no lag
+	srv.signIn(40*time.Minute, time.Hour)
+	g := e.guardOn(srv, loopPoll)
+	g.StartRefresher(context.Background())
+	waitForCalls(t, srv, 1, "the first refresh")
+	expectCalls(t, srv, 1, "the hold")
+	return e
+}
+
+// fiveMinutesLater is when the mark is five minutes stale: a loop that wrote it whatever the
+// session says would write it now.
+func fiveMinutesLater(t *testing.T, e *env) {
+	t.Helper()
+	e.f.Clock.Advance(5 * time.Minute)
+	quiet()
+}
+
+func TestAHoldingRefresherWritesNoMarkWhileDormantOrForARefusedSession(t *testing.T) {
 	t.Run("the package is dormant", func(t *testing.T) {
-		e := holding(t)
+		e := holdingRefresher(t)
 		account.SetEnforceFromForTest(t, time.Time{})
 		var old time.Time
 		e.underLock(func() { old = e.pinSession() })
-		later(t, e)
+		fiveMinutesLater(t, e)
 		if !mustMtime(t, e.store).Equal(old) {
 			t.Fatal("the loop wrote the high-water mark while the package is dormant")
 		}
 	})
 	t.Run("another process was refused", func(t *testing.T) {
-		e := holding(t)
+		e := holdingRefresher(t)
 		var old time.Time
 		e.underLock(func() {
 			e.save(refusedSession())
 			old = e.pinSession()
 		})
-		later(t, e)
+		fiveMinutesLater(t, e)
 		if !mustMtime(t, e.store).Equal(old) {
 			t.Fatal("the loop wrote the high-water mark of a refused session")
 		}
 	})
-	t.Run("the session is gone", func(t *testing.T) {
-		e := holding(t)
-		e.underLock(func() {
-			if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
-				t.Fatal(err)
-			}
-		})
-		later(t, e)
-		if _, err := os.Stat(filepath.Join(e.dir, "session.json")); !os.IsNotExist(err) {
-			t.Fatalf("the loop brought session.json back (stat error %v)", err)
+}
+
+// A session that is gone is a machine with no session (A25): the loop that holds takes the
+// loss in, and from the enforcement date on its next pass keeps the clock-guard record, so that
+// the date is still judged by a mark when the clock is set back. It does not bring back a token.
+func TestAHoldingRefresherThatFindsTheSessionGoneKeepsTheRecord(t *testing.T) {
+	e := holdingRefresher(t)
+	e.underLock(func() {
+		if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
+			t.Fatal(err)
 		}
 	})
+	fiveMinutesLater(t, e)
+	theRecord(t, e, e.f.Clock.Now())
 }

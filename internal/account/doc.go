@@ -45,6 +45,7 @@
 //	syncdir_windows.go  does nothing: Windows has no directory flush (its rename writes through)
 //	guard.go            the Guard: the cached verdict, Status, Require and OnRefused
 //	guard_refresh.go    the refresh algorithm: EnsureFresh and Refresh
+//	guard_pending.go    a grant whose answer may be lost: its marker, its age and the drop of the token
 //	guard_loop.go       the background refresher: StartRefresher and its loop
 //	process.go          the process-wide guard: Install, Current, Require, CurrentStatus
 //	testhooks.go        test seams that panic outside a test binary

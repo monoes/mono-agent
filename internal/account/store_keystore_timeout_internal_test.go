@@ -352,11 +352,12 @@ func TestAKeyStoreThatWaitsForeverDoesNotHoldTheSessionLockPastItsTimeout(t *tes
 }
 
 // The write of the new refresh token is the second key store call of a refresh,
-// made after monoes.me has rotated the old one. When it times out the dead token
-// is removed from disk (os.Remove needs no key store), so that no later process
-// presents it, and the attempt is recorded as a key store failure: the session
-// keeps its grace, and the account is not revoked.
-func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFailure(t *testing.T) {
+// made after monoes.me has rotated the old one. When it times out the answer is
+// treated as a lost one (A24, ruling d): the old token stays on disk with the
+// marker that says it may be dead, so that a retry inside the window, which
+// monoes.me answers again, can store the answer, and the attempt is recorded as a
+// key store failure: the session keeps its grace.
+func TestASaveRefreshThatTimesOutAfterTheGrantKeepsTheOldTokenAndTheMarkerAndRecordsTheFailure(t *testing.T) {
 	r := newRig(t)
 	r.signIn(2 * time.Hour) // due
 	setKeyStoreTimeout(t, 300*time.Millisecond)
@@ -364,6 +365,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	t.Cleanup(waiting.release)
 	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(a.Close)
+	start := r.clock.Now()
 
 	var st Status
 	var err error
@@ -374,25 +376,11 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	if !errors.Is(err, ErrKeyringUnavailable) || st.State != StateGrace || st.Reason != ReasonKeyringUnavailable {
 		t.Fatalf("EnsureFresh = %s/%q, %v, want grace/keyring_unavailable and an error that is ErrKeyringUnavailable", st.State, st.Reason, err)
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, refreshFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the dead refresh token is still on disk (stat err %v)", err)
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "rt-1" {
+		t.Fatalf("refresh.enc holds %q (%v), want the old token: the marker covers it and a retry inside the window needs it", rt, err)
 	}
-	if sess, err := r.store.Load(); err != nil || sess.LastResult != string(ReasonKeyringUnavailable) {
-		t.Fatalf("stored session = %+v (%v), want the attempt recorded as keyring_unavailable", sess, err)
-	}
-	// No later attempt, by this process or by another, presents the dead token.
-	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now})
-	t.Cleanup(b.Close)
-	for range 3 {
-		r.clock.Advance(2 * time.Minute)
-		for _, g := range []*Guard{a, b} {
-			if st, _ := g.EnsureFresh(context.Background()); st.State != StateGrace || st.Reason == ReasonRefused {
-				t.Fatalf("Status = %s/%q, want grace and never refused", st.State, st.Reason)
-			}
-		}
-	}
-	if n := r.srv.calls.Load(); n != 1 {
-		t.Fatalf("%d network refreshes: the dead refresh token was presented again", n)
+	if sess, err := r.store.Load(); err != nil || sess.LastResult != string(ReasonKeyringUnavailable) || !sess.PendingSince.Equal(start) {
+		t.Fatalf("stored session = %s (%v), want the attempt recorded as keyring_unavailable and the marker of this attempt, %v", sessionFacts(sess), err, start)
 	}
 	// The Seal that was given up on writes nothing when the key store answers. Two
 	// calls reached the key store: the Open that answered, and the Seal.
@@ -402,7 +390,73 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	}) {
 		t.Fatalf("the abandoned Seal did not end (%d calls began, %d ended, %d goroutines left)", waiting.began.Load(), waiting.ended.Load(), goroutinesIn("callKeyStore"))
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, refreshFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the Seal that was given up on wrote refresh.enc (stat err %v)", err)
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "rt-1" {
+		t.Fatalf("after the Seal that was given up on ended, refresh.enc holds %q (%v), want the old token: that Seal must never write", rt, err)
+	}
+}
+
+// A Seal that timed out is a lost answer (A24, ruling d), so the next process, with a key
+// store that works, presents the old token again inside monoes.me's window and gets the
+// same answer, which it can now store.
+func TestASaveRefreshThatTimedOutIsRetriedInsideTheWindowAndTheAnswerIsStored(t *testing.T) {
+	r := newRig(t)
+	r.srv.window = 300 * time.Second
+	r.signIn(2 * time.Hour) // due
+	setKeyStoreTimeout(t, 300*time.Millisecond)
+	waiting := &gatedSealer{inner: r.seal, holdSeal: make(chan struct{})}
+	t.Cleanup(waiting.release)
+	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
+	t.Cleanup(a.Close)
+	var err error
+	timed(t, "EnsureFresh", func() { _, err = a.EnsureFresh(context.Background()) })
+	if !errors.Is(err, ErrKeyringUnavailable) || r.srv.calls.Load() != 1 {
+		t.Fatalf("the first command = %v with %d network refreshes, want the key store error and the one grant whose answer was not stored", err, r.srv.calls.Load())
+	}
+
+	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now}) // another process: its key store works
+	t.Cleanup(b.Close)
+	r.clock.Advance(time.Minute)
+	st, err := b.EnsureFresh(context.Background())
+	if err != nil || st.State != StateOK || r.srv.calls.Load() != 2 {
+		t.Fatalf("the retry = %s/%q, %v with %d network refreshes, want ok after the old token was presented again", st.State, st.Reason, err, r.srv.calls.Load())
+	}
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "rt-2" {
+		t.Fatalf("refresh.enc holds %q (%v), want the rotated token that the repeated answer brought", rt, err)
+	}
+	if sess, err := r.store.Load(); err != nil || sess.LastResult != resultOK || !sess.PendingSince.IsZero() {
+		t.Fatalf("stored session = %s (%v), want ok and no marker", sessionFacts(sess), err)
+	}
+}
+
+// ...and after the window the old token is not presented again: it is dropped, with no
+// call, and the machine signs in again.
+func TestASaveRefreshThatTimedOutIsNotRetriedAfterTheWindowAndTheTokenIsDropped(t *testing.T) {
+	r := newRig(t)
+	r.srv.window = 300 * time.Second
+	r.signIn(2 * time.Hour) // due
+	setKeyStoreTimeout(t, 300*time.Millisecond)
+	waiting := &gatedSealer{inner: r.seal, holdSeal: make(chan struct{})}
+	t.Cleanup(waiting.release)
+	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
+	t.Cleanup(a.Close)
+	timed(t, "EnsureFresh", func() { _, _ = a.EnsureFresh(context.Background()) })
+
+	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now})
+	t.Cleanup(b.Close)
+	r.clock.Advance(pendingRetryWindow + time.Second)
+	st, err := b.EnsureFresh(context.Background())
+	if err != nil || st.State != StateGrace || st.Reason != ReasonUnconfirmed || r.srv.calls.Load() != 1 {
+		t.Fatalf("the attempt after the window = %s/%q, %v with %d network refreshes, want grace/unconfirmed and none beyond the first", st.State, st.Reason, err, r.srv.calls.Load())
+	}
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "" {
+		t.Fatalf("refresh.enc holds %q (%v), want the dead token gone", rt, err)
+	}
+	// The Seal that was given up on must not bring a token back when the key store answers at last.
+	waiting.release()
+	if !waitUntil(func() bool { return waiting.ended.Load() == 2 && goroutinesIn("callKeyStore") == 0 }) {
+		t.Fatalf("the abandoned Seal did not end (%d calls ended)", waiting.ended.Load())
+	}
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "" {
+		t.Fatalf("after the Seal that was given up on ended, refresh.enc holds %q (%v), want none", rt, err)
 	}
 }

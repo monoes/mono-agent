@@ -113,6 +113,19 @@ func (e *env) newGuard(poll time.Duration) *account.Guard {
 	return g
 }
 
+// guardWith is a guard that refreshes through ref, on the fixture clock, over the
+// env's session, or over store when one is given.
+func (e *env) guardWith(ref account.Refresher, store ...account.Store) *account.Guard {
+	e.t.Helper()
+	var st account.Store = account.OpenStore(e.dir, e.seal)
+	if len(store) > 0 {
+		st = store[0]
+	}
+	g := account.NewGuard(account.GuardOptions{Store: st, Refresher: ref, Now: e.f.Clock.Now})
+	e.t.Cleanup(g.Close)
+	return g
+}
+
 // signIn stores a session as a login would have: a token issued age ago for
 // life, hw at its iat, and the refresh token the fake server accepts.
 func (e *env) signIn(age, life time.Duration) *account.Session {
@@ -176,6 +189,17 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // settle gives a goroutine that should NOT act a real moment to do so.
 func settle() { time.Sleep(150 * time.Millisecond) }
 
+// transient is a failure whose outcome is known (A24): the request never left this
+// machine, or monoes.me answered with an HTTP status, so the refresh token was not
+// consumed. The zero value of Settled is "unknown", which the guard answers with a
+// marker, an immediate retry and, after 240 s, a dropped refresh token, so a fake
+// that means a plain outage must say so; lostAnswer is the one that means the other.
 func transient(reason account.Reason) error {
-	return &account.TransientError{Reason: reason, Err: fmt.Errorf("fake network failure")}
+	return &account.TransientError{Reason: reason, Settled: true, Err: fmt.Errorf("fake network failure")}
+}
+
+// lostAnswer is a failure whose outcome is unknown: the request was written and
+// nothing readable came back, so monoes.me may have rotated the refresh token.
+func lostAnswer(reason account.Reason) error {
+	return &account.TransientError{Reason: reason, Err: fmt.Errorf("fake connection reset after the request was written")}
 }

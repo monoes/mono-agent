@@ -18,6 +18,10 @@ import (
 // types and of the switch in refreshUnderLock are what keep that one from
 // panicking.
 
+// pendingWindowPlusASecond moves the clock a second past the 240 s window of the retry
+// (A24), from the instant of the attempt whose outcome is unknown.
+const pendingWindowPlusASecond = 241 * time.Second
+
 var typedNils = []struct {
 	name string
 	err  error
@@ -82,12 +86,15 @@ func TestATypedNilErrorBesideATokenSetIsTheSuccessItMeant(t *testing.T) {
 
 // anOrdinaryFailure makes the fake monoes.me answer with err and no token set, and
 // checks what the guard does with it: the session is kept and not refused, the
-// attempt is recorded as want, the refresh token stays where it is, and the
-// negative cache holds.
+// attempt is recorded as want, the refresh token stays where it is, and, since a
+// failure that is no settled *TransientError is an outcome that is unknown (A24), the
+// marker holds: the next call retries at once, inside the window, without moving the
+// stamp, and a call after the window drops the token without presenting it.
 func anOrdinaryFailure(t *testing.T, err error, want account.Reason) {
 	t.Helper()
 	e := newEnv(t)
 	e.signIn(56*time.Minute, time.Hour) // due: four minutes left
+	start := e.f.Clock.Now()
 	e.ref.set(func(r *fakeRefresher) { r.err = err })
 
 	var st account.Status
@@ -114,13 +121,28 @@ func anOrdinaryFailure(t *testing.T, err error, want account.Reason) {
 		t.Fatalf("the stored refresh token is still the first one: %t (err %v), want it untouched: it says nothing about the account", rt == "rt-1", err)
 	}
 
-	// A failure goes into the negative cache: no second call at once.
+	// The outcome is unknown, so the marker is kept: the token is presented again at
+	// once, inside the window (the negative cache does not apply), and the stamp stays.
+	if got := e.pendingOn(); !got.Equal(start) {
+		t.Fatalf("pending_since = %v, want the time of the attempt, %v", got, start)
+	}
 	e.f.Clock.Advance(time.Second)
 	if _, err := e.g.EnsureFresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := e.ref.calls.Load(); n != 1 {
-		t.Fatalf("%d network refreshes after a second call a second later, want 1: the failure was not recorded", n)
+	if n := e.ref.calls.Load(); n != 2 {
+		t.Fatalf("%d network refreshes after a second call a second later, want 2: a failure with an unknown outcome is retried at once inside the window", n)
+	}
+	if got := e.pendingOn(); !got.Equal(start) {
+		t.Fatalf("pending_since = %v after the retry, want the stamp of the first send, %v", got, start)
+	}
+	// After the window the token is dropped, not presented.
+	e.f.Clock.Advance(pendingWindowPlusASecond)
+	if _, err := e.g.EnsureFresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.ref.calls.Load(); n != 2 || e.session().LastResult != "unconfirmed" {
+		t.Fatalf("%d network refreshes and last result %q after the window, want 2 and unconfirmed: the token is not presented again", n, e.session().LastResult)
 	}
 }
 

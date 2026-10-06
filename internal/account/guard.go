@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -22,6 +23,16 @@ type TokenSet struct{ AccessToken, RefreshToken string }
 // the server takes for theft the next time it is presented. A Refresher must
 // therefore not rely on its caller's cancellation, and must let its request run
 // to its answer or to that deadline.
+//
+// A *TransientError says whether the outcome of the grant is known (Settled): true
+// only when the request never left this machine or monoes.me answered with an HTTP
+// status, so that the refresh token cannot have been consumed by an answer nobody
+// saw. Anything else, a *TransientError that does not say included, is an outcome
+// that is unknown, and the guard then treats the refresh token as one that monoes.me
+// may have rotated: it keeps a marker (Session.PendingSince), presents the token
+// again at once for pendingRetryWindow, while monoes.me repeats its answer, and drops
+// it after that, so that this machine signs in again and the other installs of the
+// account are not revoked (A24).
 //
 // Two rules the guard relies on. On any error, return a nil *TokenSet: a set
 // returned beside an error is ignored, so a rotated refresh token in it is lost.
@@ -51,6 +62,12 @@ const (
 	lockWaitTimeout    = refreshCallTimeout + 5*time.Second // a waiter outlasts the holder's network call, not one that is also slow in the key store
 	backoffMin         = 30 * time.Second                   // the refresher's first retry
 	backoffMax         = 5 * time.Minute                    // and its ceiling
+	// A grant whose answer was lost is retried at once for this long after it was
+	// first sent, and its refresh token is dropped after that. monoes.me answers a
+	// refresh token it has rotated away with the same answer for 300 s and takes it
+	// for theft after that; 240 s leaves room for the call's own duration and for
+	// clocks that do not run at the same rate.
+	pendingRetryWindow = 240 * time.Second
 )
 
 // Guard turns the stored session into a cached verdict. NewGuard does no I/O;
@@ -211,10 +228,17 @@ func (g *Guard) reload(force bool) {
 	defer g.mu.Unlock()
 	g.loaded = true
 	if lerr != nil {
-		// A read that fails now must not downgrade a session that worked: keep
-		// what is cached and retry at the next poll. With nothing cached, loadErr
-		// makes the verdict locked(invalid).
+		// A read that fails on the disk (permission denied, an I/O error) says nothing
+		// about the file and must not downgrade a session that worked: keep what is
+		// cached and retry at the next poll. A file that is there and cannot be used is
+		// what every process reads now, and a new one judges it locked(invalid): so does
+		// this guard, at once, rather than keep a session that the file no longer holds
+		// (a refusal written over it, say) until its grace ends. With nothing cached,
+		// loadErr makes the verdict locked(invalid).
 		g.loadErr = lerr
+		if errors.Is(lerr, errSessionInvalid) {
+			g.setSessionLocked(nil)
+		}
 		return
 	}
 	g.loadErr = nil

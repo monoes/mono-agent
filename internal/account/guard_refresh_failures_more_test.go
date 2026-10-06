@@ -61,8 +61,8 @@ func TestAServerThatAnswersWithoutANewRefreshTokenKeepsTheOldOne(t *testing.T) {
 			if err != nil || st.State != account.StateOK {
 				t.Fatalf("EnsureFresh = %s/%q, %v, want ok", st.State, st.Reason, err)
 			}
-			if got := fs.order(); !reflect.DeepEqual(got, []string{"Save"}) {
-				t.Fatalf("writes = %v, want the session only: a refresh token that did not change is not written", got)
+			if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save"}) {
+				t.Fatalf("writes = %v, want the marker and the session only: a refresh token that did not change is not written", got)
 			}
 			if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
 				t.Fatal("the refresh token the server did not change was lost")
@@ -103,8 +103,9 @@ func TestAnswersThatAreEmptyOrWrappedAreStillClassified(t *testing.T) {
 	}
 }
 
-// A refusal keeps the user and the mark for the message the CLI prints, records
-// the attempt, and keeps at most 200 bytes of what the server said.
+// A refusal keeps the user for the message the CLI prints, records the attempt,
+// raises the high-water mark to now (a refused session keeps the enforcement
+// evidence), and keeps at most 200 bytes of what the server said.
 func TestARefusalKeepsWhatTheMessageNeedsAndTruncatesTheReason(t *testing.T) {
 	for _, n := range []int{0, 199, 200, 201, 250} {
 		t.Run(fmt.Sprintf("a reason of %d bytes", n), func(t *testing.T) {
@@ -123,8 +124,8 @@ func TestARefusalKeepsWhatTheMessageNeedsAndTruncatesTheReason(t *testing.T) {
 				want = reason[:200]
 			}
 			got := e.session()
-			if got.Reason != want || got.User == nil || *got.User != *sess.User || got.Host != sess.Host || !got.LastAttempt.Equal(now) || !got.HW.Equal(sess.HW) {
-				t.Fatalf("stored session = %s (reason %d bytes), want %d bytes of reason, the user, the host, the mark %v and the attempt %v", describe(got), len(got.Reason), len(want), sess.HW, now)
+			if got.Reason != want || got.User == nil || *got.User != *sess.User || got.Host != sess.Host || !got.LastAttempt.Equal(now) || !got.HW.Equal(now) {
+				t.Fatalf("stored session = %s (reason %d bytes), want %d bytes of reason, the user, the host, the mark raised to now %v (A24: a refused session keeps the enforcement evidence) and the attempt %v", describe(got), len(got.Reason), len(want), now, now)
 			}
 		})
 	}
@@ -147,23 +148,23 @@ func TestARefusalWritesTheMarkerBeforeItDeletesTheRefreshToken(t *testing.T) {
 		if _, err := g.EnsureFresh(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "DeleteRefresh"}) {
-			t.Fatalf("writes = %v, want the marker before the delete", got)
+		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save", "DeleteRefresh"}) {
+			t.Fatalf("writes = %v, want the pending marker of the grant, then the refusal's marker, then the delete", got)
 		}
 	})
 	t.Run("a marker that cannot be written is reported and the refresh token stays", func(t *testing.T) {
 		e := newEnv(t)
 		e.signIn(2*time.Hour, time.Hour)
 		e.ref.set(refusedBy("revoked"))
-		fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true}
+		fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1} // the grant's marker is written, the refusal's is not
 		g := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
 		t.Cleanup(g.Close)
 		st, err := g.EnsureFresh(ctx)
 		if err == nil || st.State != account.StateLocked || st.Reason != account.ReasonRefused {
 			t.Fatalf("EnsureFresh = %s/%q, %v, want locked/refused and the write error", st.State, st.Reason, err)
 		}
-		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save"}) {
-			t.Fatalf("writes = %v, want the marker only: the refresh token goes once the marker is saved", got)
+		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save"}) {
+			t.Fatalf("writes = %v, want the grant's marker and the refusal's marker that failed: the refresh token goes once the refusal is saved", got)
 		}
 		if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
 			t.Fatal("the refresh token was deleted although the marker was not saved: the disk then holds a live-looking session with no token")
@@ -197,7 +198,10 @@ func TestARefusalWhoseMarkerCouldNotBeSavedIsLearnedAgainByTheNextProcess(t *tes
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour) // due, with 22 hours of grace left
 	e.ref.set(refusedBy("revoked"))
-	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true} // the disk is full for this process
+	// The disk fills up for this process after the marker of its grant (A24 writes one
+	// before it sends, and a grant whose marker cannot be written is not sent), so it is
+	// the refusal's marker that cannot be saved.
+	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1}
 	a := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
 	t.Cleanup(a.Close)
 
@@ -229,6 +233,42 @@ func TestARefusalWhoseMarkerCouldNotBeSavedIsLearnedAgainByTheNextProcess(t *tes
 	e.f.Clock.Advance(account.PollInterval)
 	if st := a.Status(); st.State != account.StateLocked || st.Reason != account.ReasonRefused {
 		t.Errorf("process A after reading what B wrote = %s/%q, want locked/refused", st.State, st.Reason)
+	}
+}
+
+// The accepted residual of guard_pending.go, pinned as it is documented and not because it is
+// wanted: the record of a refusal could not be saved, so the disk still holds the marker of the
+// grant beside the refresh token, which is what a lost answer leaves. A process that comes inside
+// the window learns the refusal again (above); one that comes after it cannot tell the two
+// apart and drops the token, presenting nothing, and the machine shows grace and then
+// locked(unconfirmed) instead of locked(refused). If the guard ever learns to tell them apart,
+// this test is to change with it.
+func TestARefusalWhoseRecordWasLostIsDroppedAsUnconfirmedAfterTheWindow(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	sess := e.signIn(2*time.Hour, time.Hour) // due, with 22 hours of grace left
+	e.ref.set(refusedBy("revoked"))
+	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1} // the grant's marker is written, the refusal is not
+	a := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
+	t.Cleanup(a.Close)
+	if st, err := a.EnsureFresh(ctx); err == nil || st.Reason != account.ReasonRefused {
+		t.Fatalf("process A = %s/%q, %v, want locked/refused and the write error", st.State, st.Reason, err)
+	}
+	if got := e.session(); got.State != "" || got.PendingSince.IsZero() {
+		t.Fatalf("stored session = %s, want the grant's marker and no refusal: the write was meant to fail", describe(got))
+	}
+
+	e.f.Clock.Advance(241 * time.Second)
+	st, err := e.newGuard(0).EnsureFresh(ctx)
+	if err != nil || st.State != account.StateGrace || st.Reason != account.ReasonUnconfirmed || e.ref.calls.Load() != 1 {
+		t.Fatalf("process B after the window = %s/%q, %v with %d grants, want grace/unconfirmed and only process A's grant", st.State, st.Reason, err, e.ref.calls.Load())
+	}
+	if rt, _ := e.store.LoadRefresh(); rt != "" {
+		t.Fatalf("refresh.enc holds %q, want it dropped", rt)
+	}
+	e.f.Clock.Set(sess.HW.Add(24 * time.Hour)) // the grace of the token ends at its iat + 24h
+	if st := e.newGuard(0).Status(); st.State != account.StateLocked || st.Reason != account.ReasonUnconfirmed {
+		t.Fatalf("Status once the grace is over = %s/%q, want locked/unconfirmed", st.State, st.Reason)
 	}
 }
 
@@ -274,7 +314,7 @@ func TestAFailedWriteOfAnAttemptIsReportedAndItsReasonStillShows(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour)
 	e.ref.set(func(r *fakeRefresher) { r.err = transient(account.ReasonServerError) })
-	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true}
+	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1} // the marker of the grant is written, the record of the attempt is not
 	g := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
 	t.Cleanup(g.Close)
 	st, err := g.EnsureFresh(context.Background())
