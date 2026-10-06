@@ -162,7 +162,7 @@ describe('Org Designer sections', () => {
     api.getOrgEstimate.mockResolvedValue({ text: `Cost estimate\n  ${stale}\n  Total estimate:  ~$1.80`, stale_rates: stale })
     await open()
     fireEvent.click(screen.getByRole('tab', { name: /Live/ }))
-    await waitFor(() => expect(screen.getByTestId('section-budget-alpha')).toHaveTextContent('$0.07 / $0.05'))
+    await waitFor(() => expect(screen.getByTestId('section-budget-alpha')).toHaveTextContent('$0.07/$0.05'))
     expect(screen.getByTestId('section-budget-badge-alpha')).toHaveTextContent('soft-closed')
     expect(screen.getByTestId('section-budget-badge-beta')).toHaveTextContent('$0.01 left')
     expect(screen.getByTestId('role-cap-a1')).toHaveTextContent('$0.07/$0.05')

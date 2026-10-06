@@ -68,7 +68,7 @@ describe('stale rates', () => {
     cleanup()
     const rects = [{ name: 'drafting', x: 0, y: 0, w: 300, h: 200, color: '#38bdf8' }]
     render(<SectionBoxes rects={rects} sections={[{ name: 'drafting', leadId: 'writer' }]} readOnly budgets={bySection(report)} staleRates={ESTIMATE.stale_rates} />)
-    expect(screen.getByTestId('section-stale-rates-drafting')).toHaveTextContent('stale rates')
+    expect(screen.getByTestId('section-stale-rates-drafting')).toHaveAttribute('aria-label', 'stale rates')
     expect(screen.getByTestId('section-budget-drafting')).toHaveAttribute('title', expect.stringContaining('stale rates: no live provider'))
   })
   it('shows nothing when the estimate is unavailable', () => {
@@ -108,9 +108,9 @@ describe('section header on the canvas', () => {
   const sections = [{ name: 'drafting', leadId: 'writer', budgetUsd: 0.05 }, { name: 'review', leadId: 'checker', budgetUsd: 0.04 }]
   it('shows live spend, the soft-closed badge and the warning before the cap', () => {
     render(<SectionBoxes rects={rects} sections={sections} selectedName={null} readOnly budgets={bySection(report)} />)
-    expect(screen.getByTestId('section-budget-drafting')).toHaveTextContent('$0.07 / $0.05')
+    expect(screen.getByTestId('section-budget-drafting')).toHaveTextContent('$0.07/$0.05')
     expect(screen.getByTestId('section-budget-badge-drafting')).toHaveTextContent('soft-closed')
-    expect(screen.getByTestId('section-budget-review')).toHaveTextContent('$0.03 / $0.04')
+    expect(screen.getByTestId('section-budget-review')).toHaveTextContent('$0.03/$0.04')
     expect(screen.getByTestId('section-budget-badge-review')).toHaveTextContent('$0.01 left')
   })
   it('keeps the declared budget in the design view', () => {

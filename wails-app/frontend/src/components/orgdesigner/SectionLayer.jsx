@@ -35,18 +35,19 @@ export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect
           onMouseDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onSelect?.(r.name); if (!readOnly) onStartMove?.(r.name, e) }}
           style={{
             height: SECTION_HEADER, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px',
-            pointerEvents: 'auto', cursor: readOnly ? 'default' : 'grab', userSelect: 'none',
+            pointerEvents: 'auto', cursor: readOnly ? 'default' : 'grab', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden',
             fontFamily: 'var(--font-mono)', fontSize: 11, color: r.color,
           }}
         >
           <strong style={{ letterSpacing: 0.4 }}>{r.name}</strong>
-          {s && <span style={{ color: 'var(--text-muted)' }}>lead: {s.leadId || '—'}</span>}
+          {s && !live && <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>lead: {s.leadId || '—'}</span>}
           {live
             ? (
-              <span data-testid={`section-budget-${r.name}`} title={`${budgetTitle(live)}${staleRates ? ` · ${staleRates}` : ''}`} style={{ color: badge?.color || 'var(--text-muted)' }}>
-                {budgetLine(live)}
-                {badge && <strong data-testid={`section-budget-badge-${r.name}`}> · {badge.label}</strong>}
-                {staleRates && <em data-testid={`section-stale-rates-${r.name}`} style={{ opacity: 0.8 }}> · stale rates</em>}
+              <span data-testid={`section-budget-${r.name}`} title={`${budgetTitle(live)}${staleRates ? ` · ${staleRates}` : ''}`}
+                style={{ display: 'flex', gap: 4, minWidth: 0, color: badge?.color || 'var(--text-muted)' }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{budgetLine(live).replace(' / ', '/')}</span>
+                {badge && <strong data-testid={`section-budget-badge-${r.name}`} style={{ flexShrink: 0 }}>· {badge.label}</strong>}
+                {staleRates && <em data-testid={`section-stale-rates-${r.name}`} aria-label="stale rates" title="stale rates" style={{ flexShrink: 0, opacity: 0.8 }}>≈</em>}
               </span>
             )
             : s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
