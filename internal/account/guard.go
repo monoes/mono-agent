@@ -47,7 +47,7 @@ const (
 	hwInterval         = time.Minute                        // hw is written at most this often
 	hwLockWait         = 2 * time.Second                    // a high-water write never waits longer for the lock
 	refreshCallTimeout = 20 * time.Second                   // the bound on one Refresher call, whatever the caller does
-	lockWaitTimeout    = refreshCallTimeout + 5*time.Second // a waiter outlasts the holder's refresh
+	lockWaitTimeout    = refreshCallTimeout + 5*time.Second // a waiter outlasts the holder's network call, not one that is also slow in the key store
 	backoffMin         = 30 * time.Second                   // the refresher's first retry
 	backoffMax         = 5 * time.Minute                    // and its ceiling
 )
