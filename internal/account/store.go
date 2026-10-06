@@ -24,12 +24,53 @@ const (
 type Store interface {
 	Load() (*Session, error)                             // nil, nil when there is no session.json
 	Save(*Session) error                                 // atomic, 0600
-	LoadRefresh() (string, error)                        // "", nil when none; ErrKeyringUnavailable when the key store cannot be opened
-	SaveRefresh(token string) error                      // seals it; the directory is created here if needed
+	LoadRefresh() (string, error)                        // "", nil when none; ErrKeyringUnavailable when the key store cannot be opened or does not answer in time
+	SaveRefresh(token string) error                      // seals it; the directory is created here if needed; ErrKeyringUnavailable as LoadRefresh
 	DeleteRefresh() error                                // nil when there is none
 	Lock(ctx context.Context) (unlock func(), err error) // exclusive, cross-process
 	Mtime() (time.Time, error)                           // of session.json; zero time when absent
 	Dir() string
+}
+
+// keyStoreTimeout is how long the store waits for one call into the key store
+// (Open or Seal of the refresh token) before it gives up on it. Both calls are
+// made while session.lock is held, the second one after monoes.me has rotated
+// the refresh token, and the OS key stores wait without bound for a locked
+// keychain or an unlock prompt nobody answers: one waiting key store would hold
+// the lock against every process of the machine, stop every refresh and every
+// sign-in, and keep Close and Ctrl-C waiting. A var so that a test can shorten it.
+var keyStoreTimeout = 10 * time.Second
+
+// keyStoreResult is what one call into the key store answered.
+type keyStoreResult struct {
+	data []byte
+	err  error
+}
+
+// callKeyStore runs fn, one call into the key store, and waits for its result for
+// at most keyStoreTimeout. When the wait ends first it returns an error that is
+// ErrKeyringUnavailable: the key store is not usable now, which is no decision
+// about the account, so the guard keeps the session's grace. The call itself
+// cannot be cancelled: it goes on in its goroutine until the key store answers,
+// and then ends, because the channel is buffered and its result is dropped. Only
+// the call runs there: what the caller does with a result, writing refresh.enc,
+// happens on the caller's goroutine and only for a result that came in time, so a
+// call that was given up on can never write anything.
+func callKeyStore(fn func() ([]byte, error)) ([]byte, error) {
+	timeout := keyStoreTimeout
+	done := make(chan keyStoreResult, 1)
+	go func() {
+		data, err := fn()
+		done <- keyStoreResult{data, err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.data, r.err
+	case <-timer.C:
+		return nil, fmt.Errorf("%w: the key store did not answer within %v", ErrKeyringUnavailable, timeout)
+	}
 }
 
 // DefaultDir is ~/.monoagent/account, found through os.UserHomeDir. The path
@@ -119,7 +160,8 @@ func (s *fileStore) Mtime() (time.Time, error) {
 
 // LoadRefresh unseals the refresh token. A missing refresh.enc is "", nil and
 // never reaches the key store, so reading a machine with no session cannot
-// raise a keychain prompt.
+// raise a keychain prompt. A key store that does not answer within
+// keyStoreTimeout is ErrKeyringUnavailable.
 func (s *fileStore) LoadRefresh() (string, error) {
 	if s.err != nil {
 		return "", nil
@@ -131,13 +173,16 @@ func (s *fileStore) LoadRefresh() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("account: reading %s: %w", refreshFile, err)
 	}
-	plain, err := s.sealer.Open(sealed)
+	plain, err := callKeyStore(func() ([]byte, error) { return s.sealer.Open(sealed) })
 	if err != nil {
 		return "", err
 	}
 	return string(plain), nil
 }
 
+// SaveRefresh seals the refresh token and writes refresh.enc. A key store that
+// does not answer within keyStoreTimeout is ErrKeyringUnavailable, and nothing is
+// written.
 func (s *fileStore) SaveRefresh(token string) error {
 	if s.err != nil {
 		return s.err
@@ -145,7 +190,7 @@ func (s *fileStore) SaveRefresh(token string) error {
 	if token == "" {
 		return errors.New("account: empty refresh token")
 	}
-	sealed, err := s.sealer.Seal([]byte(token))
+	sealed, err := callKeyStore(func() ([]byte, error) { return s.sealer.Seal([]byte(token)) })
 	if err != nil {
 		return err
 	}

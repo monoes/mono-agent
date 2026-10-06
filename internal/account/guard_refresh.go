@@ -43,8 +43,9 @@ const (
 // refresh request is sent it is not cancelled by ctx, since monoes.me rotates
 // the refresh token as it answers and the answer must be stored: EnsureFresh
 // then returns only after the answer is stored, which can take up to
-// refreshCallTimeout (20 s) and the write of the new refresh token after ctx
-// has ended. A process must not exit before it returns.
+// refreshCallTimeout (20 s) after ctx has ended, and then the write of the new
+// refresh token to the key store, which the store gives up on after
+// keyStoreTimeout (10 s). A process must not exit before it returns.
 func (g *Guard) EnsureFresh(ctx context.Context) (Status, error) {
 	if dormant() {
 		return g.Status(), nil
@@ -140,8 +141,9 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	}
 	refreshToken, err := g.store.LoadRefresh()
 	if err != nil || refreshToken == "" {
-		// Unreadable: the key store is unavailable, or the file is gone or
-		// does not open. Not a decision about the account, so the grace applies.
+		// Unreadable: the key store is unavailable or does not answer in time, or
+		// the file is gone or does not open. Not a decision about the account, so
+		// the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
 	}
 	if err := ctx.Err(); err != nil {

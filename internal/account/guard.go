@@ -249,9 +249,9 @@ func (g *Guard) cached() (*Session, *Receipt) {
 
 // Close stops the refresher, if one runs, and waits for it. A refresh request
 // the refresher has already sent is not abandoned: the answer must be stored, so
-// Close waits for it, up to refreshCallTimeout (20 s) and the write of the new
-// refresh token. It is safe to call twice, and a closed guard still answers
-// Status and Require.
+// Close waits for it, up to refreshCallTimeout (20 s) and then the write of the
+// new refresh token, which the store gives up on after keyStoreTimeout (10 s).
+// It is safe to call twice, and a closed guard still answers Status and Require.
 func (g *Guard) Close() {
 	g.mu.Lock()
 	g.closed = true
