@@ -2,11 +2,13 @@ package account_test
 
 import (
 	"context"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/account/accounttest"
 )
 
 // The refresher and a grant whose answer was lost (A24). Its own lost answers are retried on
@@ -378,5 +380,65 @@ func TestTheRefresherBacksOffAfterACompletedDrop(t *testing.T) {
 	}
 	if got := e.session(); got.LastResult != "unconfirmed" || !got.LastAttempt.Equal(sess.LastAttempt) || e.ref.calls.Load() != 0 {
 		t.Fatalf("stored session = %s with %d network refreshes, want unconfirmed, the last attempt as it was, and none", describe(got), e.ref.calls.Load())
+	}
+}
+
+// A running refresher keeps the evidence of a clock set back fresh. Its own lost answers record an
+// attempt only at the retries (+31, +92 and +213 s); between them it writes the high-water mark,
+// which, while the marker is pending, carries the last attempt up to the clock. A clock then set
+// back 110 s at +340 s reads +230 s: the marker looks 230 s old, inside the window, but the clock
+// reads before the last attempt the refresher wrote, so the next command drops the token instead of
+// presenting it 340 s after monoes.me rotated it. monoes.me keeps its own clock here.
+func TestARunningRefresherKeepsTheEvidenceOfAClockSetBackFresh(t *testing.T) {
+	f := accounttest.New(t) // f.Clock is monoes.me's clock
+	dir := filepath.Join(t.TempDir(), "account")
+	seal := account.NewMemorySealer()
+	store := account.OpenStore(dir, seal)
+	signInInstall(t, f, store, 57*time.Minute, time.Hour, "rt-1") // past its half-life: the refresher is due at once
+	srv := newWindowServer(f, 0, "rt-1")
+	net := &flakyNet{srv: srv}
+	net.then(lost, lost, lost, lost)
+	machine := accounttest.NewClock(f.Clock.Now()) // this machine's clock
+	m0 := machine.Now()
+	both := func(d time.Duration) { f.Clock.Advance(d); machine.Advance(d) }
+	mark := func(want time.Duration, what string) {
+		t.Helper()
+		eventually(t, what, func() bool {
+			sess, err := store.Load()
+			return err == nil && sess != nil && sess.HW.Equal(m0.Add(want))
+		})
+	}
+	daemon := account.NewGuard(account.GuardOptions{Store: account.OpenStore(dir, seal), Refresher: net, Now: machine.Now, Poll: loopPoll})
+	t.Cleanup(daemon.Close)
+	daemon.StartRefresher(context.Background())
+	waitForGrants(t, net, 1, "the first attempt")
+	for _, step := range []struct {
+		advance time.Duration
+		grants  int
+	}{{31 * time.Second, 2}, {61 * time.Second, 3}, {121 * time.Second, 4}} { // +31 s, +92 s, +213 s: all lost
+		both(step.advance)
+		waitForGrants(t, net, step.grants, "the retry")
+	}
+	mark(213*time.Second, "the record of the third retry")
+	both(61 * time.Second) // +274 s: the refresher waits for +453 s and writes the mark
+	mark(274*time.Second, "the high-water write at +274 s")
+	both(61 * time.Second) // +335 s
+	mark(335*time.Second, "the high-water write at +335 s")
+	both(5 * time.Second) // +340 s
+
+	machine.Set(m0.Add(230 * time.Second)) // set back 110 s: the marker looks 230 s old
+	cli := account.NewGuard(account.GuardOptions{Store: account.OpenStore(dir, seal), Refresher: srv, Now: machine.Now})
+	t.Cleanup(cli.Close)
+	if _, err := cli.EnsureFresh(context.Background()); err != nil {
+		t.Fatalf("the command: %v", err)
+	}
+	if got := count(srv.presented(), "rt-1"); got != 4 || srv.isRevoked() {
+		t.Fatalf("monoes.me was presented rt-1 %d times (revoked %t), want the refresher's four and none from the command: %v", got, srv.isRevoked(), srv.presented())
+	}
+	if sess, err := store.Load(); err != nil || sess.LastResult != "unconfirmed" {
+		t.Fatalf("stored session = %s (%v), want the token dropped as unconfirmed", describe(sess), err)
+	}
+	if rt, _ := store.LoadRefresh(); rt != "" {
+		t.Fatalf("refresh.enc holds %q, want the dead token gone", rt)
 	}
 }

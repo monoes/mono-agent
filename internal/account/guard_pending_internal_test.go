@@ -161,6 +161,50 @@ func TestPendingExpiredTakesAClockBeforeTheLastAttemptForAClockThatWentBack(t *t
 	}
 }
 
+// The high-water write raises the last attempt to the clock while a marker is pending (the
+// evidence pendingExpired reads, kept at most a minute old by a running refresher), and only
+// then: it never lowers it, and leaves it alone with nothing in doubt or when a drop left the
+// session unconfirmed without a marker. Nothing else changes.
+func TestTheHighWaterWriteRaisesTheLastAttemptOnlyWhileAMarkerIsPending(t *testing.T) {
+	cases := []struct {
+		name    string
+		pending bool
+		result  string
+		last    time.Duration // the stored last attempt, from now
+		want    time.Duration // after the write, from now
+	}{
+		{"a marker, the last attempt two minutes ago", true, "unreachable", -2 * time.Minute, 0},
+		{"a marker, the last attempt a minute ahead of the clock", true, "unreachable", time.Minute, time.Minute},
+		{"no marker", false, "unreachable", -2 * time.Minute, -2 * time.Minute},
+		{"unconfirmed, no marker", false, string(ReasonUnconfirmed), -2 * time.Minute, -2 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t)
+			sess := r.signIn(10 * time.Minute) // the mark at the token's iat, ten minutes stale
+			now := r.clock.Now()
+			sess.LastAttempt, sess.LastResult = now.Add(c.last), c.result
+			if c.pending {
+				sess.PendingSince = now.Add(-3 * time.Minute)
+			}
+			if err := r.store.Save(sess); err != nil {
+				t.Fatal(err)
+			}
+			g := NewGuard(GuardOptions{Store: OpenStore(r.dir, r.seal), Refresher: r.srv, Now: r.clock.Now})
+			t.Cleanup(g.Close)
+			g.Status() // the cached session that touchHW starts from
+			g.touchHW(now)
+			got, err := r.store.Load()
+			if err != nil || !got.HW.Equal(now) {
+				t.Fatalf("stored session = %s (%v), want the mark written at %v", sessionFacts(got), err, now)
+			}
+			if !got.LastAttempt.Equal(now.Add(c.want)) || got.LastResult != c.result || !got.PendingSince.Equal(sess.PendingSince) || got.AccessToken != sess.AccessToken {
+				t.Fatalf("stored session = %s, want the last attempt at %v and nothing else changed", sessionFacts(got), now.Add(c.want))
+			}
+		})
+	}
+}
+
 // orderStore records the writes of a pass in order and fails the ones a test names.
 type orderStore struct {
 	Store

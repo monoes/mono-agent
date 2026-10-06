@@ -17,14 +17,19 @@ import "time"
 // The age of a marker is read on this machine's clock, so a clock set back can make
 // it look younger than it is. A clock that reads before the marker, or before the
 // last attempt the session records (always written from this clock), has gone back,
-// and the token is dropped then too. One residual is accepted: no stored data can
-// detect a clock stepped back by less than the time since the last recorded attempt
-// when no pass ran between the stamp and the step (a machine with no daemon), and
-// closing it would need a boot-time or monotonic clock in the marker, which is out
-// of scope. The age is judged on the clock read after the refresh token, just before
-// the send; a process suspended inside the Refresher after that, before the request
-// is written (discovery, dial, TLS), is not covered: closing that needs the deadline
-// of the send handed to the transport (a later hardening of B1b's Refresher).
+// and the token is dropped then too. What the drop cannot see, an accepted
+// residual: a clock stepped back by about a minute or more, on a machine where
+// nothing runs between the last recorded evidence and the step (no daemon: a
+// CLI-only machine), so that the clock then reads inside the stamp's window although
+// more than 300 s have passed; closing that needs a boot-time or monotonic reference
+// in the marker (out of scope). With a daemon running the evidence is refreshed
+// every minute (its high-water write raises the last attempt while a marker is
+// pending) and the step is seen at its next pass.
+//
+// The age is judged on the clock read after the refresh token, just before the send;
+// a process suspended inside the Refresher after that, before the request is written
+// (discovery, dial, TLS), is not covered: closing that needs the deadline of the send
+// handed to the transport (a later hardening of B1b's Refresher).
 //
 // Nor can the marker tell a refusal whose record could not be saved from a lost
 // answer: the refresh token stays for the next process to learn the refusal again

@@ -69,6 +69,12 @@ func (g *Guard) touchHW(now time.Time) {
 	}
 	next := *fresh
 	bumpHW(&next, now)
+	if !next.PendingSince.IsZero() && now.After(next.LastAttempt) && !next.HW.Equal(fresh.HW) {
+		// A grant is in doubt: the write also carries the last attempt up to the clock,
+		// never down, so that a running refresher keeps the evidence that pendingExpired
+		// reads at most a minute old, and a clock set back is seen at its next pass (A24).
+		next.LastAttempt = now
+	}
 	if next.HW.Equal(fresh.HW) {
 		// A peer has raised the mark already: nothing to write, only to take in.
 		g.adoptUnlessOlder(fresh)
@@ -101,8 +107,10 @@ func (g *Guard) keepRecord(now time.Time) {
 // holds that session: the older file must not put it back, or the guard would go
 // back to the old token, find it due and refresh again at every call. LastAttempt
 // orders the writes that change a session (NewSession, recordAttempt and
-// applyRefusal set it); the high-water writes leave it alone, so a file that only
-// has a newer mark is as new as the session it holds.
+// applyRefusal set it); a high-water write leaves it alone, so a file that only
+// has a newer mark is as new as the session it holds, except over a grant in doubt,
+// where it raises it to the clock: that file is then newer than a cache that is
+// ahead of it, and is taken in, as it should be, since the disk holds the marker.
 func (g *Guard) adoptUnlessOlder(fresh *Session) {
 	if cur, _ := g.cached(); cur == nil || !fresh.LastAttempt.Before(cur.LastAttempt) {
 		g.adopt(fresh)

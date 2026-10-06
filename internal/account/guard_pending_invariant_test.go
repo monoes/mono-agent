@@ -183,13 +183,16 @@ func TestWithNothingInDoubtTheLastAttemptFollowsTheClockBack(t *testing.T) {
 }
 
 // The high-water write is the one write of a pass that finds nothing to try, and it reads the
-// session again under the lock and changes its mark alone. Over a session in doubt it keeps the
-// marker, the last attempt and the result as they are. (On a clock that reads before the last
-// attempt it writes nothing at all: every write of an attempt has raised the mark to within a
-// minute of it, and the mark is written only once it is a minute stale.)
+// session again under the lock. Over a session with a marker it also raises the last attempt to
+// the clock, never lowering it, so that a running refresher keeps the evidence of a clock set back
+// at most a minute old; it changes nothing else, and over a session that a drop left unconfirmed
+// without a marker it changes the mark alone. (On a clock that reads before the last attempt it
+// writes nothing at all: every write of an attempt has raised the mark to within a minute of it,
+// and the mark is written only once it is a minute stale.)
 
-// While the refresher backs off from its own lost answer, it keeps the mark current.
-func TestAHighWaterWriteWhileTheRefresherBacksOffKeepsTheMarker(t *testing.T) {
+// While the refresher backs off from its own lost answer, it keeps the mark current, and the last
+// attempt with it.
+func TestAHighWaterWriteWhileTheRefresherBacksOffRaisesTheLastAttemptAndKeepsTheMarker(t *testing.T) {
 	e, srv, net, g := loopMachine(t, 2*time.Hour) // in grace: every pass is due
 	net.then(lost, lost)
 	t0 := e.f.Clock.Now()
@@ -203,8 +206,8 @@ func TestAHighWaterWriteWhileTheRefresherBacksOffKeepsTheMarker(t *testing.T) {
 	e.f.Clock.Advance(59 * time.Second) // +90 s: the mark (t0) is a minute and a half stale
 	waitForHW(t, e, t0.Add(90*time.Second), "the high-water write while the refresher backs off")
 	after := e.session()
-	if !after.PendingSince.Equal(t0) || !after.LastAttempt.Equal(before.LastAttempt) || after.LastResult != before.LastResult {
-		t.Fatalf("stored session = %s, was %s: the high-water write changed more than the mark", describe(after), describe(before))
+	if !after.PendingSince.Equal(t0) || !after.LastAttempt.Equal(t0.Add(90*time.Second)) || after.LastResult != before.LastResult {
+		t.Fatalf("stored session = %s, was %s: want the marker and the result kept and the last attempt raised to the mark", describe(after), describe(before))
 	}
 	if net.grants() != 2 || srv.isRevoked() {
 		t.Fatalf("%d grants (revoked %t), want the two of before", net.grants(), srv.isRevoked())
