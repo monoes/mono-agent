@@ -160,3 +160,57 @@ func TestADropThatCouldNotRemoveTheTokenIsNotUndoneByAClockSetBackIntoTheWindow(
 		t.Fatalf("stored session = %s (token gone %t), want the drop done this time", describe(r.e.session()), r.refreshFileGone())
 	}
 }
+
+// A key store that cannot open the refresh token is not a missing token: the token is still
+// on disk and may be the one monoes.me rotated. The marker stays and the attempt is a key
+// store failure, so that once the token can be read it is retried inside the window, or
+// dropped after it, and never presented as a token that nothing marks.
+func TestAMarkerStaysWhileTheKeyStoreCannotOpenTheToken(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		after    time.Duration // from the lost send to the pass whose key store works again
+		recovers bool
+	}{
+		{"the key store answers again inside the window", time.Minute, true},
+		{"the key store answers again after it", 241 * time.Second, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newLostRig(t)
+			r.loseTheFirstAnswer(t)
+			r.e.f.Clock.Advance(30 * time.Second)
+			if _, err := r.e.guardWith(r.net, account.OpenStore(r.e.dir, brokenSealer{})).EnsureFresh(context.Background()); err != nil || r.net.grants() != 1 {
+				t.Fatalf("the pass whose key store fails: %v with %d grants, want no error and none beyond the lost one", err, r.net.grants())
+			}
+			if sess := r.e.session(); sess.LastResult != "keyring_unavailable" || !sess.PendingSince.Equal(r.t0) {
+				t.Fatalf("stored session = %s, want keyring_unavailable and the marker of the lost send, %v", describe(sess), r.t0)
+			}
+			if rt, _ := r.e.store.LoadRefresh(); rt != "rt-1" {
+				t.Fatalf("refresh.enc holds %q, want the token that could not be read, untouched", rt)
+			}
+			r.e.f.Clock.Set(r.t0.Add(c.after))
+			st, err := r.command()
+			if c.recovers {
+				if err != nil || st.State != account.StateOK || r.e.rawPending() != "" || !equalTokens(r.srv.presented(), "rt-1", "rt-1") || r.srv.isRevoked() {
+					t.Fatalf("the pass inside the window = %s/%q, %v (presented %v), want ok after the retry and no marker", st.State, st.Reason, err, r.srv.presented())
+				}
+				return
+			}
+			if err != nil || st.Reason != account.ReasonUnconfirmed || !r.refreshFileGone() || !equalTokens(r.srv.presented(), "rt-1") || r.srv.isRevoked() {
+				t.Fatalf("the pass after the window = %s/%q, %v (presented %v, token gone %t), want grace/unconfirmed and the token dropped, not presented", st.State, st.Reason, err, r.srv.presented(), r.refreshFileGone())
+			}
+		})
+	}
+}
+
+// equalTokens reports whether got is exactly want, in order.
+func equalTokens(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
