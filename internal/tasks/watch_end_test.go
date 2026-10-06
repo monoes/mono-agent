@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"runtime"
 	"sync/atomic"
@@ -32,62 +31,76 @@ func TestWatchRefusesAnUnknownProfileAtOnce(t *testing.T) {
 	}
 }
 
-// Deleting a profile deletes its board, and with it the revision: a watcher that went on would report
-// revision 0 and an empty board as a change. It ends instead, with ErrNotFound, and reports nothing for it.
-func TestWatchEndsWhenItsProfileIsDeleted(t *testing.T) {
-	s, db, _ := newTestStore(t)
-	p := addProfile(t, db, "p2")
-	mustAdd(t, s, p, "x", false)
-	w := startWatch(t, s, p, 5*time.Millisecond, nil)
-	if c := waitChange(t, w.changes); c.Rev != 1 {
-		t.Fatalf("the first report: %+v", c)
-	}
-	if _, err := db.Exec(`DELETE FROM profiles WHERE id = ?`, p); err != nil {
-		t.Fatal(err)
-	}
+// stillWatching lets many polls pass (the intervals of these tests are 5 ms) and fails if the watcher ended
+// or reported: a read that fails ends nothing and reports nothing.
+func stillWatching(t *testing.T, w *watcher) {
+	t.Helper()
 	select {
 	case <-w.finished:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Watch went on watching a profile that was deleted")
-	}
-	if !errors.Is(w.err, ErrNotFound) || errors.Is(w.err, ErrInvalid) {
-		t.Errorf("Watch returned %v, want an error that is ErrNotFound and not ErrInvalid", w.err)
-	}
-	select {
+		t.Fatalf("Watch ended on a read that failed: %v", w.err)
 	case c := <-w.changes:
-		t.Errorf("the deletion was reported as a change: %+v", c)
-	default:
+		t.Fatalf("a read that failed was reported: %+v", c)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// Deleting a profile deletes its board, and with it the revision: a watcher that went on would report
+// revision 0 and an empty board as a change. It ends instead, with ErrNotFound, and reports nothing for it.
+// The profile counts as one that was there once a poll has found it, report or none: in the second case every
+// poll finds the profile and then fails on its revision (set to text that is no number), so the watcher has
+// reported nothing when the profile goes.
+func TestWatchEndsWhenItsProfileIsDeleted(t *testing.T) {
+	for _, reported := range []bool{true, false} {
+		name := "after a report"
+		if !reported {
+			name = "before the first report, every poll having failed"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, db, _ := newTestStore(t)
+			p := addProfile(t, db, "p2")
+			mustAdd(t, s, p, "x", false)
+			if !reported {
+				setRev(t, db, p, "not a number")
+			}
+			w := startWatch(t, s, p, 5*time.Millisecond, nil)
+			if reported {
+				if c := waitChange(t, w.changes); c.Rev != 1 {
+					t.Fatalf("the first report: %+v", c)
+				}
+			} else {
+				stillWatching(t, w)
+			}
+			if _, err := db.Exec(`DELETE FROM profiles WHERE id = ?`, p); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-w.finished:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Watch went on watching a profile that was deleted")
+			}
+			if !errors.Is(w.err, ErrNotFound) || errors.Is(w.err, ErrInvalid) {
+				t.Errorf("Watch returned %v, want an error that is ErrNotFound and not ErrInvalid", w.err)
+			}
+			select {
+			case c := <-w.changes:
+				t.Errorf("the deletion was reported as a change: %+v", c)
+			default:
+			}
+		})
 	}
 }
 
 // A read that fails does not end the watcher: that poll is skipped and the next one tries again. A revision
 // that is not a number is a read that fails while the profile is there, so it is no deletion.
 func TestWatchSurvivesAFailingRead(t *testing.T) {
-	setRev := func(t *testing.T, db *sql.DB, rev any) {
-		t.Helper()
-		if _, err := db.Exec(`UPDATE task_board_rev SET rev = ? WHERE profile_id = 'default'`, rev); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// stillWatching lets many polls pass (the interval is 5 ms) and fails if the watcher ended or reported.
-	stillWatching := func(t *testing.T, w *watcher) {
-		t.Helper()
-		select {
-		case <-w.finished:
-			t.Fatalf("Watch ended on a read that failed: %v", w.err)
-		case c := <-w.changes:
-			t.Fatalf("a read that failed was reported: %+v", c)
-		case <-time.After(150 * time.Millisecond):
-		}
-	}
 	t.Run("after a report", func(t *testing.T) {
 		s, db, _ := newTestStore(t)
 		mustAdd(t, s, "default", "x", false)
 		w := startWatch(t, s, "default", 5*time.Millisecond, nil)
 		waitChange(t, w.changes)
-		setRev(t, db, "not a number")
+		setRev(t, db, "default", "not a number")
 		stillWatching(t, w)
-		setRev(t, db, 1)
+		setRev(t, db, "default", 1)
 		mustAdd(t, s, "default", "y", false)
 		if c := waitChange(t, w.changes); c.Rev != 2 || c.Counts.Inbox != 2 {
 			t.Fatalf("after the read worked again: %+v", c)
@@ -96,10 +109,10 @@ func TestWatchSurvivesAFailingRead(t *testing.T) {
 	t.Run("before the first report", func(t *testing.T) {
 		s, db, _ := newTestStore(t)
 		mustAdd(t, s, "default", "x", false)
-		setRev(t, db, "not a number")
+		setRev(t, db, "default", "not a number")
 		w := startWatch(t, s, "default", 5*time.Millisecond, nil)
 		stillWatching(t, w)
-		setRev(t, db, 1)
+		setRev(t, db, "default", 1)
 		if c := waitChange(t, w.changes); c.Rev != 1 || c.Counts.Inbox != 1 {
 			t.Fatalf("the first report once the read worked: %+v", c)
 		}

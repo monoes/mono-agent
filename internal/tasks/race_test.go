@@ -94,9 +94,9 @@ func TestConcurrentAddsWithOneClientIDMakeOneTask(t *testing.T) {
 // TestHelperProcess is not a test: the tests below run it in other processes,
 // so that several processes share one database file with this one. A helper
 // opens the database, says READY and waits for the word to start, so that the
-// helpers begin together and are in each other's way; its clock takes a
-// moment, asked inside the write lock, which keeps them there long enough for
-// a lock that is not taken first to show.
+// helpers begin together and are in each other's way; its store's clock takes a
+// moment (claimsSlowStore), asked inside the write lock, which keeps them there
+// long enough for a lock that is not taken first to show.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("TASKS_HELPER") != "1" {
 		t.Skip("the helper of the tests that run other processes")
@@ -107,11 +107,7 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 	defer db.Close()
-	s := NewStore(db.DB)
-	s.now = func() time.Time {
-		time.Sleep(2 * time.Millisecond)
-		return time.Now()
-	}
+	s := claimsSlowStore(db)
 	fmt.Println("READY")
 	if _, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil {
 		os.Exit(1)
@@ -144,7 +140,9 @@ func TestHelperProcess(t *testing.T) {
 // runHelpers runs n helper processes at once against the database file and
 // returns the RESULT lines they printed. It waits until every helper has the
 // database open before it lets any of them start, and a helper that hangs ends
-// with the deadline and fails the test, not the run.
+// with the deadline and fails the test, not the run. What a helper wrote to its
+// stderr (a panic, a report of the race detector) is in the message of the
+// failure.
 func runHelpers(t *testing.T, path, mode string, n int) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(bg, 2*time.Minute)
@@ -152,13 +150,17 @@ func runHelpers(t *testing.T, path, mode string, n int) []string {
 	cmds := make([]*exec.Cmd, n)
 	ins := make([]io.WriteCloser, n)
 	outs := make([]*bufio.Reader, n)
+	stderr := make([]*claimsOutput, n)
+	// atexit_sleep_ms=0: the race runtime would otherwise sleep a second before a process exits. It is added
+	// to the options this run has, not put in their place.
+	race := strings.TrimSpace(os.Getenv("GORACE") + " atexit_sleep_ms=0")
 	for i := range cmds {
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperProcess$")
 		cmd.Env = append(os.Environ(),
 			"TASKS_HELPER=1", "TASKS_HELPER_DB="+path, "TASKS_HELPER_MODE="+mode,
-			fmt.Sprintf("TASKS_HELPER_NAME=proc-%d", i),
-			"GORACE=atexit_sleep_ms=0") // the race runtime would otherwise sleep a second at exit
-		cmd.Stderr = os.Stderr
+			fmt.Sprintf("TASKS_HELPER_NAME=proc-%d", i), "GORACE="+race)
+		stderr[i] = &claimsOutput{}
+		cmd.Stderr = stderr[i]
 		in, err := cmd.StdinPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -174,22 +176,22 @@ func runHelpers(t *testing.T, path, mode string, n int) []string {
 	}
 	for i, out := range outs {
 		if line, err := out.ReadString('\n'); strings.TrimSpace(line) != "READY" {
-			t.Fatalf("helper %d said %q (%v), want READY", i, line, err)
+			t.Fatalf("helper %d said %q (%v), want READY; its stderr:\n%s", i, line, err, stderr[i])
 		}
 	}
 	for i, in := range ins {
 		if _, err := fmt.Fprintln(in, "go"); err != nil {
-			t.Fatalf("helper %d: %v", i, err)
+			t.Fatalf("helper %d: %v; its stderr:\n%s", i, err, stderr[i])
 		}
 	}
 	var lines []string
 	for i, out := range outs {
 		rest, err := io.ReadAll(out)
 		if err != nil {
-			t.Fatalf("helper %d: %v", i, err)
+			t.Fatalf("helper %d: %v; its stderr:\n%s", i, err, stderr[i])
 		}
 		if err := cmds[i].Wait(); err != nil {
-			t.Fatalf("helper %d: %v\n%s", i, err, rest)
+			t.Fatalf("helper %d: %v\n%s\nits stderr:\n%s", i, err, rest, stderr[i])
 		}
 		var mine int
 		for _, l := range strings.Split(string(rest), "\n") {

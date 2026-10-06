@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -82,6 +83,14 @@ func noChange(t *testing.T, w *watcher, d time.Duration) {
 	case c := <-w.changes:
 		t.Fatalf("no write, no report: %+v", c)
 	case <-time.After(d):
+	}
+}
+
+// setRev sets the revision of a profile's board by hand: a number, or text that is none.
+func setRev(t *testing.T, db *sql.DB, profile string, rev any) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE task_board_rev SET rev = ? WHERE profile_id = ?`, rev, profile); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -167,25 +176,79 @@ func TestWatchFollowsItsOwnProfileOnly(t *testing.T) {
 	}
 }
 
+// watchGap runs a watcher with the interval and returns how long it waited between its first poll and the
+// next one. The first call writes to the board, so that the next poll has a change to report, and the gap is
+// the time from the end of that call to the start of the next one: none of it passes in the test goroutine,
+// so a test goroutine that is slow to run cannot move it.
+func watchGap(t *testing.T, interval time.Duration) time.Duration {
+	t.Helper()
+	s, _, _ := newTestStore(t)
+	type call struct {
+		at time.Time
+		c  Change
+	}
+	second := make(chan call, 1)
+	var calls int
+	var firstEnded time.Time // written by the first call, read after the second has sent: no race
+	startWatch(t, s, "default", interval, func(c Change) {
+		calls++
+		switch calls {
+		case 1:
+			if _, _, err := s.Add(bg, "default", AddInput{Title: "x"}, human); err != nil {
+				t.Error(err)
+			}
+			firstEnded = time.Now()
+		case 2:
+			second <- call{time.Now(), c}
+		}
+	})
+	select {
+	case got := <-second:
+		if got.c.Rev != 1 {
+			t.Errorf("the second call: %+v", got.c)
+		}
+		return got.at.Sub(firstEnded)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no second call within 10 seconds, with an interval of %v", interval)
+		return 0
+	}
+}
+
 // Without an interval, or with one that is not above 0, a watcher polls every two seconds: neither without
 // waiting (an interval of 0 left as it is would make a loop that never waits) nor rarely.
 func TestWatchPollsEveryTwoSecondsWithoutAnInterval(t *testing.T) {
 	for _, d := range []time.Duration{0, -time.Second} {
 		t.Run(d.String(), func(t *testing.T) {
 			t.Parallel()
-			s, _, _ := newTestStore(t)
-			w := startWatch(t, s, "default", d, nil)
-			waitChange(t, w.changes)
-			mustAdd(t, s, "default", "x", false)
-			select {
-			case c := <-w.changes:
-				t.Fatalf("the write was reported at once, by a poll that did not wait for an interval: %+v", c)
-			case <-time.After(1500 * time.Millisecond):
-			}
-			if c := waitChange(t, w.changes); c.Rev != 1 {
-				t.Fatalf("the report that came with the next poll: %+v", c)
+			if gap := watchGap(t, d); gap < 1900*time.Millisecond || gap > 8*time.Second {
+				t.Fatalf("the watcher waited %v between two polls, want about two seconds", gap)
 			}
 		})
+	}
+}
+
+// An interval above 0 is the one the watcher waits, a shorter one than the default included.
+func TestWatchPollsAtTheIntervalItIsGiven(t *testing.T) {
+	const interval = 100 * time.Millisecond
+	if gap := watchGap(t, interval); gap < interval || gap > time.Second {
+		t.Fatalf("with an interval of %v the watcher waited %v between two polls", interval, gap)
+	}
+}
+
+// The revision is compared for difference, not for increase: a board whose revision went down (it was
+// recreated, or restored from a copy) has changed, and the watcher reports it.
+func TestWatchReportsARevisionThatWentDown(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	for i := 0; i < 3; i++ {
+		mustAdd(t, s, "default", fmt.Sprintf("t%d", i), false)
+	}
+	w := startWatch(t, s, "default", 5*time.Millisecond, nil)
+	if c := waitChange(t, w.changes); c.Rev != 3 || c.Counts.Inbox != 3 {
+		t.Fatalf("the first report: %+v", c)
+	}
+	setRev(t, db, "default", 1)
+	if c := waitChange(t, w.changes); c.Rev != 1 || c.Counts.Inbox != 3 {
+		t.Fatalf("after the revision went from 3 to 1: %+v", c)
 	}
 }
 
@@ -209,11 +272,22 @@ func TestWatchReadsTheCountsOnlyWhenTheRevisionMoves(t *testing.T) {
 }
 
 // The callback runs after the poll has ended, with no connection held: it may read the board, which is what
-// the app does with a report.
+// the app does with a report. The test writes through a handle of its own, so that the pool whose
+// connections are counted is the watcher's alone: the connection of a write goes back to its pool a moment
+// after the COMMIT, and a poll that finds the write can call back in that moment.
 func TestWatchCallsBackWithNoConnectionHeld(t *testing.T) {
-	s, db, _ := newTestStore(t)
+	path := testdb.Path(t)
+	open := func() *storage.Database {
+		db, err := storage.NewDatabase(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() }) // after the watcher, which is cancelled by a cleanup of its own
+		return db
+	}
+	watched, writer := open(), open()
 	inUse := make(chan int, 8)
-	startWatch(t, s, "default", 5*time.Millisecond, func(Change) { inUse <- db.Stats().InUse })
+	startWatch(t, NewStore(watched.DB), "default", 5*time.Millisecond, func(Change) { inUse <- watched.DB.Stats().InUse })
 	connectionsInUse := func(when string) {
 		t.Helper()
 		select {
@@ -226,7 +300,7 @@ func TestWatchCallsBackWithNoConnectionHeld(t *testing.T) {
 		}
 	}
 	connectionsInUse("at the start")
-	mustAdd(t, s, "default", "x", false)
+	mustAdd(t, NewStore(writer.DB), "default", "x", false)
 	connectionsInUse("after an add")
 }
 
