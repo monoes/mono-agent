@@ -13,6 +13,13 @@
 // (the Windows lock) and internal/secrets (the keyring key), and nothing else
 // of this repository, so every other package may import it.
 //
+// Locking rule: every LoadRefresh and SaveRefresh is called with session.lock
+// held (Store.Lock), as are the writes of session.json. The refresh algorithm
+// does so, and so must any other caller (a logout, an adoption of an older
+// login). Besides keeping the processes apart, it is what lets the store keep at
+// most one key store call parked at a time (store.go, keyStoreLimit): a caller
+// that does not hold the lock can park a second one.
+//
 // Files:
 //
 //	claims.go           the constants of the contract: host, audience, windows, timings
