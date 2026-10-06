@@ -14,8 +14,9 @@ import (
 // state sets with t.Setenv, and that nothing reads. The testing package refuses to
 // combine t.Setenv with t.Parallel, before or after, so a test that mixes a seam with
 // t.Parallel fails at once instead of flaking on test order. A seam sets it right
-// after requireTestBinary, which comes first and before which nothing runs, and
-// before it touches a global.
+// after requireTestBinary, which is the first statement of a seam after t.Helper()
+// (a nil testing.TB panics at t.Helper() itself, a refusal too, only without the
+// explicit text), and before it touches a global.
 const testStateEnv = "MONOAGENT_ACCOUNT_TEST_STATE"
 
 // requireTestBinary panics unless the running binary is a test binary.

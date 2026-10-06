@@ -114,8 +114,9 @@ func TestAnUnusableSessionFileThatIsRepairedIsTakenInAtTheNextPoll(t *testing.T)
 
 // A guard whose cached session was dropped for an unusable file is a guard with no session,
 // and from the enforcement date on such a guard keeps the clock-guard record (A25). It must
-// not write it over the unusable file: no writer writes after a failed read, and only a
-// sign-in replaces the file. Nor does a refresh, which needs a session it can read.
+// not write it over the unusable file: no writer of the guard writes after a failed read,
+// and only a sign-in (or B1b's logout, which replaces an unreadable file with a token-less
+// record) replaces it. Nor does a refresh, which needs a session it can read.
 func TestALongRunningGuardWritesNothingOverAnUnusableSessionFile(t *testing.T) {
 	for _, ep := range entryPoints {
 		t.Run(ep.name, func(t *testing.T) {

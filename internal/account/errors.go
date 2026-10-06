@@ -24,7 +24,8 @@ func (e *LoginRequiredError) Error() string {
 // callers: the CLI's JSON error wrappers add these keys to {"error": …}, so a
 // refusal that comes out of any command prints the document of index §3.4
 // item 2, not only one that comes out of the CLI gate. A raw error of this type
-// is not classified by the CLI (exit 1), so the code is carried here.
+// is not classified by the CLI until B2 maps it (index §3.5: exit 4), so the code
+// is carried here for every caller that wraps it.
 func (e *LoginRequiredError) JSONErrorFields() map[string]any {
 	return map[string]any{
 		"login_required": true,

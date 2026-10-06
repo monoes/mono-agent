@@ -68,7 +68,7 @@ type KeyringStatusInfo struct {
 	Backend            string               `json:"backend"`
 	OSKeyringError     string               `json:"os_keyring_error,omitempty"`
 	FileKeyringAllowed bool                 `json:"file_keyring_allowed"`
-	FileKeyrings       []string             `json:"file_keyrings"` // profile ids with a file keyring
+	FileKeyrings       []string             `json:"file_keyrings"` // ids with a file keyring: profile ids, and the account key's (monoes..account)
 	PassphraseFile     PassphraseFileStatus `json:"passphrase_file"`
 }
 
@@ -97,7 +97,8 @@ func KeyringStatus() KeyringStatusInfo {
 	return st
 }
 
-// existingFileKeyrings lists the profile ids that have a file keyring.
+// existingFileKeyrings lists the ids that have a file keyring: the profile ids,
+// and the monoes.me account key's (accountKEKID) once a sign-in made one there.
 func existingFileKeyrings() []string {
 	out := []string{}
 	entries, err := os.ReadDir(defaultVaultDir())

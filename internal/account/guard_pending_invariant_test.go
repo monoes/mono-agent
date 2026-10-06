@@ -74,7 +74,7 @@ var doubts = []doubt{
 	}, true},
 }
 
-// passKind is one pass of another process: the store it sees and what monoes.me does.
+// passKinds is every kind of pass of another process: the store it sees and what monoes.me does.
 var passKinds = []struct {
 	name  string
 	store func(r *lostRig) account.Store

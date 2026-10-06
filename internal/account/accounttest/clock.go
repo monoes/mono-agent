@@ -1,8 +1,11 @@
 // Package accounttest holds the fixtures every test of the monoes.me account
 // gate uses: a throwaway signing key and token minting (Fixture), a settable
 // clock (Clock), a guard in a chosen state (Install) and the fixed development
-// key pair (DevKeyPair). Only test binaries may use it: it calls the
-// account.*ForTest hooks, which panic anywhere else.
+// key pair (DevKeyPair). New, Install and InstallWithFixture change process-wide
+// state through the account.*ForTest hooks and panic outside a test binary; the
+// key pair, the clock and the token minting (Fixture.Token, Sign) do not. The
+// package is for test binaries: B1b's libraryfake imports it and is built into
+// tests only.
 package accounttest
 
 import (

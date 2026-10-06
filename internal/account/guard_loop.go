@@ -12,8 +12,8 @@ import (
 // D22) and ends when ctx ends or the guard is closed, after a grant in flight is
 // answered and stored: a grant once sent is never abandoned (A20), so the end of
 // ctx and Close wait for it, for at most the grant's timeout and the key store
-// write that follows. A daemon starts it at once; any other process starts it
-// after LateRefresher.
+// write that follows. The daemon is to start it at once and any other process after
+// LateRefresher (B3a and B2 write those calls).
 //
 // A guard starts one loop in its life. A loop that has ended with its ctx leaves
 // loopCancel set, so every later call is a no-op and the ctx of the first call

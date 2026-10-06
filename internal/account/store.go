@@ -104,7 +104,9 @@ var processKeyStoreLimit = &keyStoreLimit{}
 // store answers, and then ends, because the channel is buffered and its result is
 // dropped. Only the call runs there: what the caller does with a result, writing
 // refresh.enc, happens on the caller's goroutine and only for a result that came
-// in time, so a call that was given up on can never write anything.
+// in time, so a call that was given up on can never write refresh.enc. (A Seal
+// that was given up on can still reach the key store and make the first key: see
+// accountKEKVault in internal/secrets.)
 //
 // A call that was given up on is parked in l until it returns, and while one is
 // parked no other bounded call starts: it fails at once, saying that the key store

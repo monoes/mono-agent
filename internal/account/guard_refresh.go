@@ -71,9 +71,10 @@ func (g *Guard) Refresh(ctx context.Context) (Status, error) {
 
 // dueForRefresh decides from the cached session whether a refresh should be
 // tried now. A session that is not ok (grace, expired, a clock that went back,
-// a token this build cannot verify) is always due: only a new token repairs it.
-// So is one with a marker, in both modes and whatever the margin and the negative
-// cache say (A24): a grant that may have been answered is retried at once while
+// a token this build cannot verify) is due, in the background mode always and in
+// the CLI mode subject to the negative cache: only a new token repairs it. A
+// session with a marker is due in both modes and whatever the margin and the
+// negative cache say (A24): a grant that may have been answered is retried at once while
 // monoes.me still repeats its answer, and dropped after that, and the lock path
 // decides which by the age of the marker.
 func dueForRefresh(sess *Session, st Status, rcpt *Receipt, now time.Time, mode refreshMode) bool {
@@ -265,7 +266,9 @@ func isTypedNil(err error) bool {
 // again is taken for theft: monoes.me then revokes every refresh token of the
 // account, which locks every install of it. Hence the order and the cleanup.
 // The new refresh token is saved before the session, even when the access token
-// that came with it is not usable, so a crash in between leaves a working pair.
+// that came with it is not usable, so a crash in between leaves a pair that works
+// inside the retry window (the grant's marker is still on the disk beside it, and
+// after the window a pass drops it: see guard_pending.go).
 // If it cannot be saved, the answer is treated as a lost one (A24): the old token,
 // which monoes.me has rotated away, stays on disk with the marker that says so, and
 // the attempt is recorded as a key store failure. Within the retry window the next
@@ -330,7 +333,8 @@ func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Stat
 	// and without a token the other processes would read it as a key store problem
 	// and keep the grace for up to 24 hours, so the token stays: the next process
 	// presents it, is refused again (nothing is left to revoke) and writes the
-	// marker.
+	// marker. That holds inside the retry window of the grant's own marker; after
+	// it the token is dropped as unconfirmed instead (see guard_pending.go).
 	err := g.store.Save(&next)
 	if err == nil {
 		err = g.store.DeleteRefresh()

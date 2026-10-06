@@ -10,7 +10,8 @@ import (
 var installed *Guard
 
 // Install makes g the process-wide guard that Require and CurrentStatus use.
-// Install(nil) removes it. main() installs one for every command.
+// Install(nil) removes it. The command's main installs one for every command (B2
+// writes that call; nothing outside this package imports account before it).
 func Install(g *Guard) {
 	globalsMu.Lock()
 	installed = g
