@@ -276,6 +276,12 @@ export const api = {
     if (typeof r?.valid !== 'boolean' && r?.error) throw codedError(r.error, r.code)
     return r
   }),
+  // Runtimes a sections org refuses or flags unverified, with monomind's reasons.
+  orgSectionsRuntimes: () => GoApp.OrgSectionsRuntimes().then(s => {
+    const r = JSON.parse(s)
+    if (r?.error) throw codedError(r.error, r.code)
+    return r
+  }),
   validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
   reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
   // Org × workflow unification — grants, automations, automation roles,

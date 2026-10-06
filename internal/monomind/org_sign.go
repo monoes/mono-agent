@@ -151,6 +151,12 @@ func (t *signTool) enforcesHash(ctx context.Context, root string) bool {
 	return t.has(CapOrgSignExpectHash) && strings.Contains(t.orgSignHelp(ctx, root), "--expect-hash")
 }
 
+// roleSignRefusalMark is in monomind's refusal of `org sign` from an org
+// role or agent-exec process (v2.24.1: "Refusing: MONOMIND_ORG_ROLE is
+// set — this is an org role or agent-exec process. Only the operator signs
+// org definitions; run this yourself in a terminal.").
+const roleSignRefusalMark = "Only the operator signs org definitions"
+
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
 // OrgReview is monomind's review of one org definition.
@@ -227,6 +233,10 @@ func orgSignReviewText(ctx context.Context, bin, projectRoot, name string) (stri
 	cmd := CommandContext(cctx, bin, "org", "sign", name)
 	inRoot(cmd, projectRoot)
 	out, runErr := cmd.CombinedOutput()
+	if refusal := ansiRe.ReplaceAllString(string(out), ""); runErr != nil && strings.Contains(refusal, roleSignRefusalMark) {
+		// An org role asked: monomind's refusal is the answer, verbatim, not a review.
+		return "", fmt.Errorf("monomind org sign %s: %s", name, strings.TrimSpace(refusal))
+	}
 	var kept []string
 	for _, line := range strings.Split(ansiRe.ReplaceAllString(string(out), ""), "\n") {
 		t := strings.TrimSpace(line)

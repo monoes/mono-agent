@@ -44,10 +44,12 @@ func (a *App) GetOrgDesign(orgName string) string {
 	}
 	valid, errs := a.validateDoc(d)
 	b, err := json.Marshal(map[string]interface{}{
-		"v":      1,
-		"org":    d,
-		"valid":  valid,
-		"errors": errs,
+		"v":   1,
+		"org": d,
+		// Go decides whether the org is a sections org (Doc.SectionsEnabled).
+		"sections_enabled": d.SectionsEnabled(),
+		"valid":            valid,
+		"errors":           errs,
 	})
 	if err != nil {
 		return aiError(err)
@@ -376,7 +378,7 @@ func (a *App) saveAndRespondNew(root string, d *orgdesign.Doc, origin string, si
 		return aiError(err)
 	}
 	a.emitOrgDesignUpdated(d.Name, origin, false, d, true, nil)
-	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha, "org": d})
+	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha, "org": d, "sections_enabled": d.SectionsEnabled()})
 	return string(b)
 }
 
@@ -598,6 +600,7 @@ func (a *App) emitOrgDesignUpdated(orgName, origin string, deleted bool, d *orgd
 	}
 	if d != nil {
 		payload["org"] = d
+		payload["sections_enabled"] = d.SectionsEnabled()
 	} else {
 		payload["org"] = nil
 	}
