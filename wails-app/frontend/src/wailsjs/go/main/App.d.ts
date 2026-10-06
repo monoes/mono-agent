@@ -441,6 +441,8 @@ export function OpenVaultImportFilePicker():Promise<string>;
 
 export function OrgGroupStatus(arg1:string):Promise<string>;
 
+export function OrgSectionsRuntimes():Promise<string>;
+
 export function OrgRoleSetAccess(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function OrgSign(arg1:string,arg2:string):Promise<string>;

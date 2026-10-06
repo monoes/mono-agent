@@ -56,6 +56,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgGateRejectCmd(root),
 		newOrgEventsCmd(root),
 		newOrgValidateCmd(root),
+		newOrgSectionsRuntimesCmd(),
 		newOrgReloadCmd(root),
 		newOrgRoleCmd(root),
 		newOrgCreateJSONCmd(env),
