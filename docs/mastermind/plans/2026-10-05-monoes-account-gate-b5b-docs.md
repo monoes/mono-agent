@@ -524,9 +524,10 @@ deletes the token and the refresh token and leaves a `session.json` that holds n
 token, only the highest time this machine has seen. A machine that has never signed
 in gets the same record, and `session.lock`, from the first command that is refused
 once the enforcement date has been reached. The record is what stops setting the
-clock back before that date from switching the requirement off. The token is
-verified on your machine against public keys built into the binary: there is no
-network call per command.
+clock back before that date from switching the requirement off; like the rest of
+the requirement, it is a product check, not a security boundary (see below). The
+token is verified on your machine against public keys built into the binary: there
+is no network call per command.
 
 The key that seals the refresh token is an item of its own in that key store (in
 the OS keychain, under the vault's service name `monoagent-vault`). In a file
