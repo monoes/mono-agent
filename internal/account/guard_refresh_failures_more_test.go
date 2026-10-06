@@ -236,6 +236,42 @@ func TestARefusalWhoseMarkerCouldNotBeSavedIsLearnedAgainByTheNextProcess(t *tes
 	}
 }
 
+// The accepted residual of guard_pending.go, pinned as it is documented and not because it is
+// wanted: the record of a refusal could not be saved, so the disk still holds the marker of the
+// grant beside the refresh token, which is what a lost answer leaves. A process that comes inside
+// the window learns the refusal again (above); one that comes after it cannot tell the two
+// apart and drops the token, presenting nothing, and the machine shows grace and then
+// locked(unconfirmed) instead of locked(refused). If the guard ever learns to tell them apart,
+// this test is to change with it.
+func TestARefusalWhoseRecordWasLostIsDroppedAsUnconfirmedAfterTheWindow(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	sess := e.signIn(2*time.Hour, time.Hour) // due, with 22 hours of grace left
+	e.ref.set(refusedBy("revoked"))
+	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1} // the grant's marker is written, the refusal is not
+	a := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
+	t.Cleanup(a.Close)
+	if st, err := a.EnsureFresh(ctx); err == nil || st.Reason != account.ReasonRefused {
+		t.Fatalf("process A = %s/%q, %v, want locked/refused and the write error", st.State, st.Reason, err)
+	}
+	if got := e.session(); got.State != "" || got.PendingSince.IsZero() {
+		t.Fatalf("stored session = %s, want the grant's marker and no refusal: the write was meant to fail", describe(got))
+	}
+
+	e.f.Clock.Advance(241 * time.Second)
+	st, err := e.newGuard(0).EnsureFresh(ctx)
+	if err != nil || st.State != account.StateGrace || st.Reason != account.ReasonUnconfirmed || e.ref.calls.Load() != 1 {
+		t.Fatalf("process B after the window = %s/%q, %v with %d grants, want grace/unconfirmed and only process A's grant", st.State, st.Reason, err, e.ref.calls.Load())
+	}
+	if rt, _ := e.store.LoadRefresh(); rt != "" {
+		t.Fatalf("refresh.enc holds %q, want it dropped", rt)
+	}
+	e.f.Clock.Set(sess.HW.Add(24 * time.Hour)) // the grace of the token ends at its iat + 24h
+	if st := e.newGuard(0).Status(); st.State != account.StateLocked || st.Reason != account.ReasonUnconfirmed {
+		t.Fatalf("Status once the grace is over = %s/%q, want locked/unconfirmed", st.State, st.Reason)
+	}
+}
+
 // An attempt that failed moves a stale mark forward to now (the write is being
 // made anyway), keeps one that is less than a minute old, and never lowers one
 // that is ahead of the clock.

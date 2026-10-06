@@ -21,7 +21,11 @@ import "time"
 // detect a clock stepped back by less than the time since the last recorded attempt
 // when no pass ran between the stamp and the step (a machine with no daemon), and
 // closing it would need a boot-time or monotonic clock in the marker, which is out
-// of scope.
+// of scope. Nor can the marker tell a refusal whose record could not be saved from a
+// lost answer: the refresh token stays for the next process to learn the refusal
+// again (A21), but one that comes after the window drops it instead, and this
+// machine shows grace and then locked(unconfirmed) where it would have shown
+// locked(refused). That is accepted: nothing is presented and both end locked.
 
 // markPending writes the marker of a grant that is about to be sent, under the
 // lock, and takes the session in. The stamp is written only when there is none: the
