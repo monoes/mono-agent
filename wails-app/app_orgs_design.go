@@ -400,6 +400,11 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc, signNew bool) (sha strin
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
+		if d.LoadedSHA() == "" {
+			// A Doc decoded from JSON has no layout: follow the file's, so
+			// the diff stays reviewable. The re-sign rule is unaffected.
+			d.InheritLayout(existing)
+		}
 	}
 	// Decided before the first write: whether this save may be re-signed.
 	sig := a.orgSignBefore(root, d, signNew)

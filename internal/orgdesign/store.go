@@ -226,3 +226,11 @@ func Delete(profileRoot, name string) error {
 func (d *Doc) InheritLoaded(from *Doc) {
 	d.loadedSHA, d.loadedRaw = from.loadedSHA, from.loadedRaw
 }
+
+// InheritLayout lets d's next Save lay the file out like from's bytes without
+// claiming d was loaded from them: LoadedSHA stays as it is (empty for a Doc
+// decoded from JSON), so the re-sign rule, which trusts only a Doc loaded from
+// the exact signed bytes, is unchanged.
+func (d *Doc) InheritLayout(from *Doc) {
+	d.loadedRaw = from.loadedRaw
+}

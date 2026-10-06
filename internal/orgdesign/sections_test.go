@@ -449,3 +449,33 @@ func TestInheritLoadedKeepsLayoutForAReplacementDoc(t *testing.T) {
 		t.Fatalf("replacement doc did not keep the layout: %v", err)
 	}
 }
+
+// A Doc decoded from the designer's JSON has no file layout; InheritLayout
+// lets its save follow the file on disk without making it look loaded from
+// those bytes (so the re-sign rule still refuses it).
+func TestInheritLayoutKeepsFileBytesButNotLoadedSHA(t *testing.T) {
+	cur, root, path := loadFixture(t, sectionsOrg)
+	b, err := json.Marshal(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Doc
+	if err := json.Unmarshal(b, &d); err != nil {
+		t.Fatal(err)
+	}
+	title := "Principal Coder"
+	if _, err := d.UpdateRole("coder", RolePatch{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	d.InheritLayout(cur)
+	if d.LoadedSHA() != "" {
+		t.Fatal("InheritLayout must not make the doc look loaded from the file")
+	}
+	if _, err := Save(root, &d); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(sectionsOrg, `"title": "Coder"`, `"title": "Principal Coder"`, 1)
+	if got := mustRead(t, path); got != want {
+		t.Fatalf("save did not follow the file layout:\n%s", firstDiff(want, got))
+	}
+}
