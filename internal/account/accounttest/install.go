@@ -25,6 +25,13 @@ const (
 // the guard. A test builds at most one fixture (here, with InstallWithFixture or
 // with New): the trusted key is process-global, so a second one replaces the
 // first one's key. And it must not call t.Parallel().
+//
+// The guard is real and the test strict, so a gate site's "refuses when locked"
+// test cannot be let through by the test-binary exception (D24). What it cannot
+// catch is a gate site that skips Require when Current() is nil: that takes a
+// no-guard strict test (spec section 11), Install(t, LockedNoLogin) followed by
+// account.Install(nil), which refuses (the date Install sets is already behind the
+// real clock).
 func Install(t testing.TB, m Mode) *account.Guard {
 	t.Helper()
 	g, _ := InstallWithFixture(t, m)
