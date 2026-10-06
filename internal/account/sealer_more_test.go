@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/zalando/go-keyring"
 )
 
 func fixedKeySealer(key []byte) keyringSealer {
@@ -174,12 +175,66 @@ func TestSealAndOpenRefuseAKeyThatIsNotThirtyTwoBytes(t *testing.T) {
 	}
 }
 
+// The key store's entry is replaced while a long-running process runs (a keychain
+// reset, then a sign-in from a terminal, which makes a new key and seals its
+// refresh token under it). That process's next refresh must seal under the key
+// the key store holds now: every process, itself included, opens what it sealed,
+// and the sign-in's refresh token still opens. Sealing under a key the process
+// remembered from its first refresh would leave a refresh.enc nobody can open.
+func TestKeyringSealerSealsUnderTheKeyTheKeyStoreHoldsNow(t *testing.T) {
+	keyring.MockInit()          // an empty key store: the daemon's first refresh makes the key
+	t.Cleanup(keyring.MockInit) // and the next test finds it empty again, as TestMain left it
+	daemon := NewKeyringSealer()
+	if _, err := daemon.Seal([]byte("rt-1")); err != nil {
+		t.Fatalf("the first seal: %v", err)
+	}
+
+	replaced := bytes.Repeat([]byte{0x5c}, 32)
+	if err := keyring.Set("monoagent-vault", "kek-monoes..account", hex.EncodeToString(replaced)); err != nil {
+		t.Fatal(err)
+	}
+	signedIn, err := seal(replaced, []byte("rt-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := daemon.Seal([]byte("rt-3")) // the daemon's next refresh stores the rotated token
+	if err != nil {
+		t.Fatalf("the seal after the key was replaced: %v", err)
+	}
+	if got, err := open(replaced, rotated); err != nil || string(got) != "rt-3" {
+		t.Errorf("the rotated token is not sealed under the key the key store holds (err %v)", err)
+	}
+	blobs := []struct {
+		sealed []byte
+		plain  string
+	}{{rotated, "rt-3"}, {signedIn, "rt-2"}}
+	for name, s := range map[string]Sealer{"the daemon": daemon, "another process": NewKeyringSealer(), "a sign-in": NewInteractiveKeyringSealer()} {
+		for _, b := range blobs {
+			if got, err := s.Open(b.sealed); err != nil || string(got) != b.plain {
+				t.Errorf("%s cannot open %s (err %v)", name, b.plain, err)
+			}
+		}
+	}
+	if stored, err := keyring.Get("monoagent-vault", "kek-monoes..account"); err != nil || stored != hex.EncodeToString(replaced) {
+		t.Errorf("the seal changed the key store's entry (err %v): the sign-in's refresh token no longer opens", err)
+	}
+
+	// Through the store, as the guard's refresh writes it.
+	dir := filepath.Join(t.TempDir(), "account")
+	if err := OpenStore(dir, daemon).SaveRefresh("rt-4"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := OpenStore(dir, NewKeyringSealer()).LoadRefresh(); err != nil || got != "rt-4" {
+		t.Errorf("a store of another process does not read what the daemon's store wrote: match=%v err=%v", got == "rt-4", err)
+	}
+}
+
 // sealerFreshProcessEnv marks the child process of TestKeyringSealersInAFreshProcess.
 const sealerFreshProcessEnv = "ACCOUNT_SEALER_FRESH_PROCESS"
 
-// The production sealers keep process-wide state: secrets remembers an account
-// key it created, and the key store is the one in-memory keyring TestMain
-// installs. The checks that create a key therefore run in a child process of
+// The production sealers keep process-wide state: secrets remembers a file
+// keyring passphrase that opened a key, and the key store is the one in-memory
+// keyring TestMain installs. The checks that create a key therefore run in a child process of
 // their own (the idiom daemonhb's lock test uses) and leave nothing behind for
 // TestKeyringSealersOverTheMockKeyring or any other test of this package. What
 // they pin: the quiet sealer never makes a key, the interactive one may, an Open
@@ -269,7 +324,7 @@ func sealerFreshProcessChecks(t *testing.T) {
 		}
 
 		// The key a sealer is handed is the caller's own copy: a caller that wipes it
-		// must not change the key the next Seal uses (the vault memoizes the slice).
+		// must not change the key the next Seal uses.
 		key, _, err := NewInteractiveKeyringSealer().(keyringSealer).kek(true)
 		if err != nil || len(key) != 32 {
 			t.Fatalf("the interactive sealer's key: len=%d err=%v", len(key), err)

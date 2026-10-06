@@ -10,8 +10,9 @@ import (
 )
 
 // The import rule (index §3.1): this package imports the standard library,
-// golang.org/x/sys (the Windows lock) and internal/secrets, and nothing else of
-// this repository, so that every other package may import it without a cycle.
+// golang.org/x/sys (the Windows lock and rename) and internal/secrets, and nothing
+// else of this repository, so that every other package may import it without a
+// cycle.
 func TestImportsOnlyWhatTheImportRuleAllows(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil || len(files) == 0 {
@@ -32,7 +33,7 @@ func TestImportsOnlyWhatTheImportRuleAllows(t *testing.T) {
 			switch {
 			case !strings.Contains(first, "."): // the standard library
 			case path == "github.com/monoes/mono-agent/internal/secrets":
-			case path == "golang.org/x/sys/windows" && name == "lock_windows.go":
+			case path == "golang.org/x/sys/windows" && (name == "lock_windows.go" || name == "rename_windows.go"):
 			default:
 				t.Errorf("%s imports %s, which the import rule does not allow", name, path)
 			}

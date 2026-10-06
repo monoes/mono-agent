@@ -10,8 +10,8 @@
 // nothing locks, nothing warns and nothing contacts monoes.me implicitly.
 //
 // Import rule: this package imports the standard library, golang.org/x/sys
-// (the Windows lock) and internal/secrets (the keyring key), and nothing else
-// of this repository, so every other package may import it.
+// (the Windows lock and rename) and internal/secrets (the keyring key), and
+// nothing else of this repository, so every other package may import it.
 //
 // Locking rule: every LoadRefresh and SaveRefresh is called with session.lock
 // held (Store.Lock), as are the writes of session.json. The refresh algorithm
@@ -34,10 +34,15 @@
 //	verify.go           strict EdDSA verification of an access token
 //	sealer.go           the sealer of the refresh token, under the OS keyring key
 //	store.go            the session on disk: atomic writes and the cross-process lock
+//	readfile.go         reads a file of the store: a regular file of at most 64 KiB
+//	readfile_unix.go    opens it without waiting for a FIFO's writer (O_NONBLOCK)
+//	readfile_windows.go opens it on Windows
+//	rename_unix.go      the rename of a write on Unix (os.Rename)
+//	rename_windows.go   the rename of a write on Windows, written through (MoveFileEx)
 //	lock_unix.go        the file lock on Unix (flock)
 //	lock_windows.go     the file lock on Windows (LockFileEx)
 //	syncdir_unix.go     flushes a directory after a rename or a remove
-//	syncdir_windows.go  does nothing: Windows has no directory flush
+//	syncdir_windows.go  does nothing: Windows has no directory flush (its rename writes through)
 //	guard.go            the Guard: the cached verdict, Status, Require and OnRefused
 //	guard_refresh.go    the refresh algorithm: EnsureFresh and Refresh
 //	guard_pending.go    a grant whose answer may be lost: its marker, its age and the drop of the token

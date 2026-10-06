@@ -57,12 +57,12 @@ func TestAccountKEKIsStoredUnderItsPersistedNames(t *testing.T) {
 	}
 }
 
-// getOrCreateKEK hands out the vault's memoized key slice. A caller that wipes
-// the key it was given, as one that zeroes key material after use would, must not
-// change the key every later call gets, so AccountKEK returns a copy of its own.
+// A caller that wipes the key it was given, as one that zeroes key material after
+// use would, must not change the key any later call gets, so AccountKEK returns a
+// copy of its own.
 func TestAccountKEKHandsOutACopyOfTheKey(t *testing.T) {
 	accountKEKTestHome(t, false)
-	key, found, err := AccountKEK(true, true) // the first create: the vault memoizes this slice
+	key, found, err := AccountKEK(true, true) // the first create
 	if err != nil || !found || len(key) != 32 {
 		t.Fatalf("create: len=%d found=%v err=%v", len(key), found, err)
 	}

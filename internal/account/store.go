@@ -19,6 +19,20 @@ const (
 	lockFile    = "session.lock"
 )
 
+// errSessionInvalid is in every Load failure that means session.json is there and
+// cannot be used as it is: it does not parse, it is of a version this build does
+// not read, it is not a regular file, or it is larger than the store reads
+// (readStoreFile). A failure to open or to read the file (permission denied, an
+// I/O error) is not: it says nothing about what the file holds, so a caller can
+// tell a file that is unusable from a disk that failed. errors.Is finds it; the
+// message stays the failure's own.
+var errSessionInvalid = errors.New("account: " + sessionFile + " is not valid")
+
+// invalidSession marks a Load failure as errSessionInvalid and keeps its message.
+type invalidSession struct{ error }
+
+func (e invalidSession) Unwrap() []error { return []error{e.error, errSessionInvalid} }
+
 // Store is the on-disk session. Nothing creates a file or a directory until a
 // write: every read of a missing session answers "none". The mutating methods
 // (Save, SaveRefresh, DeleteRefresh) are safe across processes only under Lock,
@@ -177,19 +191,21 @@ func (s *fileStore) Load() (*Session, error) {
 	if s.err != nil {
 		return nil, nil
 	}
-	data, err := os.ReadFile(s.path(sessionFile))
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readStoreFile(s.path(sessionFile))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("account: reading %s: %w", sessionFile, err)
+	case errors.Is(err, errNotRegular), errors.Is(err, errTooLarge):
+		return nil, invalidSession{err}
+	case err != nil:
+		return nil, err
 	}
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, fmt.Errorf("account: %s is not valid: %w", sessionFile, err)
+		return nil, invalidSession{fmt.Errorf("account: %s is not valid: %w", sessionFile, err)}
 	}
 	if sess.V != sessionVersion {
-		return nil, fmt.Errorf("account: %s has version %d, this build reads version %d", sessionFile, sess.V, sessionVersion)
+		return nil, invalidSession{fmt.Errorf("account: %s has version %d, this build reads version %d", sessionFile, sess.V, sessionVersion)}
 	}
 	return &sess, nil
 }
@@ -233,12 +249,12 @@ func (s *fileStore) LoadRefresh() (string, error) {
 	if s.err != nil {
 		return "", nil
 	}
-	sealed, err := os.ReadFile(s.path(refreshFile))
+	sealed, err := readStoreFile(s.path(refreshFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("account: reading %s: %w", refreshFile, err)
+		return "", err
 	}
 	plain, err := callKeyStore(s.limit, s.sealer, func() ([]byte, error) { return s.sealer.Open(sealed) })
 	if err != nil {
@@ -331,7 +347,9 @@ func (s *fileStore) Lock(ctx context.Context) (func(), error) {
 // writeFileAtomic writes data to path (mode 0600, directory 0700 created on
 // the first write) through a temporary file in the same directory and a rename,
 // so a reader sees the old file or the new one, never half of one. It then syncs
-// the directory, so that a power cut cannot bring the old file back. A crash
+// the directory, so that a power cut cannot bring the old file back (Windows has
+// no directory flush: its rename is written through instead, replaceFile). Every
+// write of session.json and refresh.enc goes through here. A crash
 // between creating the temporary file and the rename leaves a 0600 ".tmp-*" file
 // that nothing reads or removes.
 func writeFileAtomic(path string, data []byte) error {
@@ -359,16 +377,22 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := renameReplacing(tmp.Name(), path); err != nil {
+	if err := renameReplacingFn(tmp.Name(), path); err != nil {
 		return err
 	}
 	syncDirFn(dir)
 	return nil
 }
 
-// renameReplacing renames over an existing file. On Windows the rename can
-// fail while another process has the target open, so it is retried briefly: a
-// lost write here could lose a rotated refresh token.
+// renameReplacingFn is renameReplacing, a variable so that a test can see every
+// write go through it.
+var renameReplacingFn = renameReplacing
+
+// renameReplacing renames over an existing file through replaceFile, which on
+// Windows writes the rename through. On Windows the rename can fail while another
+// process has the target open (a reader of the store does not share delete
+// access), so it is retried briefly: a lost write here could lose a rotated
+// refresh token.
 func renameReplacing(from, to string) error {
 	attempts := 1
 	if runtime.GOOS == "windows" {
@@ -376,7 +400,7 @@ func renameReplacing(from, to string) error {
 	}
 	var err error
 	for i := 0; i < attempts; i++ {
-		if err = os.Rename(from, to); err == nil {
+		if err = replaceFile(from, to); err == nil {
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
