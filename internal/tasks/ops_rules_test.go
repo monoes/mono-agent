@@ -298,6 +298,10 @@ func TestEachVerbWritesTheEventTheSpecNames(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// every verb dates the row with the clock too, not only the event
+		if got, _, err := s.Get(bg, "default", a.ID); err != nil || !got.UpdatedAt.Equal(c.t) {
+			t.Errorf("after the verb at %v: updated at %v, err %v", c.t, got.UpdatedAt, err)
+		}
 		c.advance(time.Minute)
 	}
 	c.advance(time.Minute)

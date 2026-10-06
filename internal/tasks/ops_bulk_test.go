@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // approve ids ... --top puts the group on top in the order it was given (the first id on the very
@@ -14,7 +15,7 @@ import (
 func TestApproveKeepsTheOrderTheIdsAreGivenIn(t *testing.T) {
 	for _, top := range []bool{false, true} {
 		t.Run(fmt.Sprintf("top %v", top), func(t *testing.T) {
-			s, _, _ := newTestStore(t)
+			s, _, c := newTestStore(t)
 			r1, r2 := mustAdd(t, s, "default", "r1", true), mustAdd(t, s, "default", "r2", true)
 			var ids []int64
 			for i := 0; i < 15; i++ {
@@ -23,13 +24,14 @@ func TestApproveKeepsTheOrderTheIdsAreGivenIn(t *testing.T) {
 			given := []int64{ids[3], ids[0]} // not the order they were made in
 			given = append(given, ids[4:]...)
 			given = append(given, ids[1], ids[2])
+			c.advance(time.Hour)
 			got, err := s.Approve(bg, "default", given, top, human)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for i, task := range got {
-				if task.ID != given[i] || task.Status != StatusReady || task.LastEvent == nil || task.LastEvent.Kind != "moved" {
-					t.Fatalf("answer %d: %+v, want task #%d in Ready", i, task, given[i])
+				if task.ID != given[i] || task.Status != StatusReady || task.LastEvent == nil || task.LastEvent.Kind != "moved" || !task.UpdatedAt.Equal(c.t) {
+					t.Fatalf("answer %d: %+v, want task #%d in Ready, moved and dated now", i, task, given[i])
 				}
 			}
 			want := append(append([]int64{}, given...), r1.ID, r2.ID)
