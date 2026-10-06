@@ -6,6 +6,52 @@ import (
 	"testing"
 )
 
+// The matrix of spec 5.1: which source a task gets for every actor and every
+// source a caller may ask for. "" is a refusal (ErrInvalid).
+func TestSourceKindMatrix(t *testing.T) {
+	asks := []string{"", SourceCLI, SourceApp, SourceChrome, SourceOS, SourceAgent, "bogus"}
+	rows := []struct {
+		name  string
+		actor Actor
+		want  []string // one per entry of asks
+	}{
+		{"operator", human, []string{SourceCLI, SourceCLI, SourceApp, "", "", "", ""}},
+		{"agent", bot("b"), []string{SourceAgent, SourceAgent, "", "", "", SourceAgent, ""}},
+		{"chrome capture", Actor{Kind: Capture, Name: SourceChrome}, []string{SourceChrome, "", "", SourceChrome, "", "", ""}},
+		{"os capture", Actor{Kind: Capture, Name: SourceOS}, []string{SourceOS, "", "", "", SourceOS, "", ""}},
+		{"nameless capture", Actor{Kind: Capture}, []string{"", "", "", SourceChrome, SourceOS, "", ""}},
+		{"no kind", Actor{}, []string{"", "", "", "", "", "", ""}},
+		{"unknown kind", Actor{Kind: 99, Name: "x"}, []string{"", "", "", "", "", "", ""}},
+	}
+	s, _, _ := newTestStore(t)
+	for _, row := range rows {
+		for i, ask := range asks {
+			task, _, err := s.Add(bg, "default", AddInput{Title: "t", SourceKind: ask}, row.actor)
+			switch {
+			case row.want[i] == "" && !errors.Is(err, ErrInvalid):
+				t.Errorf("%s asking for %q: err %v, want ErrInvalid", row.name, ask, err)
+			case row.want[i] != "" && (err != nil || task.Source.Kind != row.want[i]):
+				t.Errorf("%s asking for %q: kind %q, err %v, want %q", row.name, ask, task.Source.Kind, err, row.want[i])
+			}
+		}
+	}
+}
+
+// The gate must not depend on a name, and must hold for an actor of no kind.
+func TestAddToReadyRefusesEveryActorButTheOperator(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	for _, a := range []Actor{bot("b"), bot(""), {Kind: Capture, Name: SourceOS}, {Kind: Capture}, {}, {Kind: 99, Name: "x"}} {
+		for _, source := range []string{"", SourceCLI, SourceOS, SourceChrome} {
+			if _, _, err := s.Add(bg, "default", AddInput{Title: "go", Ready: true, SourceKind: source}, a); !errors.Is(err, ErrOperatorOnly) {
+				t.Errorf("%+v adding to Ready with source %q: %v, want ErrOperatorOnly", a, source, err)
+			}
+		}
+	}
+	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
+		t.Errorf("%d tasks stored by refused adds", n)
+	}
+}
+
 // A capture's Name is a surface: empty, exactly "chrome" or exactly "os". It is what the events say
 // about who acted, so a capture may not put a name of its own on the audit trail, and a surface files
 // only its own source.
@@ -111,6 +157,34 @@ func TestErrorsRepeatAtMostSixtyFourRunesOfWhatTheCallerSent(t *testing.T) {
 		}
 		if msg := err.Error(); len(msg) > 400 || strings.Contains(msg, strings.Repeat("x", 100)) {
 			t.Errorf("%s: a message of %d bytes", c.name, len(msg))
+		}
+	}
+}
+
+func TestClientIDAndAgentNameLengthsAndAlphabets(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	chrome := Actor{Kind: Capture, Name: SourceChrome}
+	for _, c := range []struct {
+		id string
+		ok bool
+	}{
+		{strings.Repeat("a", 64), true}, {strings.Repeat("a", 65), false}, {"A-b_9", true},
+		{"a.b", false}, {"a/b", false}, {"a:b", false}, {"é", false}, {"a b", false}, {"a\x00", false},
+	} {
+		_, _, err := s.Add(bg, "default", AddInput{Title: "t", ClientID: c.id, SourceKind: SourceChrome}, chrome)
+		if c.ok != (err == nil) || (!c.ok && !errors.Is(err, ErrInvalid)) {
+			t.Errorf("client id %q: err %v, want ok %v", c.id, err, c.ok)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		ok   bool
+	}{
+		{strings.Repeat("a", 64), true}, {strings.Repeat("a", 65), false}, {"a.b_c#d@e:f-g", true}, {"a b", false}, {"é", false},
+	} {
+		_, _, err := s.Add(bg, "default", AddInput{Title: "t"}, bot(c.name))
+		if c.ok != (err == nil) || (!c.ok && !errors.Is(err, ErrInvalid)) {
+			t.Errorf("agent name %q: err %v, want ok %v", c.name, err, c.ok)
 		}
 	}
 }
