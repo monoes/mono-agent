@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -188,6 +189,14 @@ func TestOrgBudget_ThroughOrgEvents(t *testing.T) {
 	for _, bad := range []string{"", "../x", ".hidden", "a/b"} {
 		if _, err := OrgBudget(context.Background(), root, bad, ""); err == nil {
 			t.Errorf("org name %q must be refused", bad)
+		}
+	}
+}
+
+func TestOrgBudget_RejectsBadRunIDs(t *testing.T) {
+	for _, run := range []string{"--follow", "-x", "../x", "a/b", "a b"} {
+		if _, err := OrgBudget(context.Background(), t.TempDir(), "bud", run); err == nil || !strings.Contains(err.Error(), "invalid run id") {
+			t.Errorf("run %q: err = %v, want invalid run id", run, err)
 		}
 	}
 }

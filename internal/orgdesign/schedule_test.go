@@ -57,3 +57,21 @@ func TestSetScheduleValidatesMonomindsFormat(t *testing.T) {
 		}
 	}
 }
+
+// An interval too large for monomind's timer (it overflows Node's 2^31-1 ms
+// setInterval limit and would fire every millisecond) or for an int is refused
+// with a message that names the real problem.
+func TestSetScheduleRejectsOversizedIntervals(t *testing.T) {
+	for _, s := range []string{"99999999999999999999", "99999999999999999999m", "1000h", "3000000s", "40000"} {
+		d := &Doc{}
+		err := d.SetSchedule(s)
+		if err == nil || !strings.Contains(err.Error(), "too long") {
+			t.Errorf("SetSchedule(%q) = %v, want a too-long refusal", s, err)
+		}
+	}
+	for _, s := range []string{"1s", "500h", "30000"} {
+		if err := (&Doc{}).SetSchedule(s); err != nil {
+			t.Errorf("SetSchedule(%q) = %v, want accepted", s, err)
+		}
+	}
+}

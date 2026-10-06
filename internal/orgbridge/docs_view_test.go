@@ -247,3 +247,32 @@ func TestGoldenViewMatchesFrontendFixture(t *testing.T) {
 		t.Fatalf("%s is stale; regenerate with UPDATE_GOLDEN=1", goldenView)
 	}
 }
+
+// events.jsonl is read whole: a symlink (it could point anywhere) and an
+// oversized file are refused with a reason, not read.
+func TestReadDocEventsRefusesSymlinkAndOversize(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.jsonl")
+	if err := os.WriteFile(target, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "events.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("no symlinks here")
+	}
+	if evs, why := readDocEvents(link); len(evs) != 0 || !strings.Contains(why, "symlink") {
+		t.Errorf("symlink: events=%d why=%q", len(evs), why)
+	}
+	big := filepath.Join(dir, "big.jsonl")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxDocEventsBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if evs, why := readDocEvents(big); len(evs) != 0 || !strings.Contains(why, "too large") {
+		t.Errorf("oversize: events=%d why=%q", len(evs), why)
+	}
+}

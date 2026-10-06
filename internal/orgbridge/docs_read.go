@@ -21,6 +21,9 @@ import (
 // runIDRe keeps a run id a single path segment.
 var runIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// maxDocEventsBytes caps how much of events.jsonl is read into memory.
+const maxDocEventsBytes = 32 << 20
+
 const docGenesis = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // DocsDir is monomind's per-run document store: <root>/.monomind/orgs/<org>/docs/<run>.
@@ -109,11 +112,21 @@ func applyOrgDef(in *DocInput, doc *orgdesign.Doc) {
 // it stops at the first line that breaks the chain and reports why; a torn
 // final line (a write in progress) is skipped silently.
 func readDocEvents(path string) ([]DocEvent, string) {
-	b, err := os.ReadFile(path)
+	fi, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ""
 		}
+		return nil, "events.jsonl unreadable: " + err.Error()
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return nil, "events.jsonl is a symlink; not read"
+	}
+	if fi.Size() > maxDocEventsBytes {
+		return nil, "events.jsonl is too large to read"
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
 		return nil, "events.jsonl unreadable: " + err.Error()
 	}
 	var out []DocEvent

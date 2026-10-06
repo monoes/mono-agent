@@ -9,8 +9,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// runIDRe keeps a run id one path segment that cannot read as a flag (the
+// documents reader applies the same rule).
+var runIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // Section budgets (monomind 2.24, orgrt/documents/section-budget*.ts).
 //
@@ -411,6 +416,9 @@ func SplitEventLines(b []byte) [][]byte {
 func OrgBudget(ctx context.Context, projectRoot, name, run string) (*BudgetReport, error) {
 	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
 		return nil, fmt.Errorf("invalid org name %q", name)
+	}
+	if run != "" && (!runIDRe.MatchString(run) || strings.Contains(run, "..")) {
+		return nil, fmt.Errorf("invalid run id %q", run)
 	}
 	def, err := os.ReadFile(filepath.Join(projectRoot, ".monomind", "orgs", name+".json"))
 	if err != nil {
