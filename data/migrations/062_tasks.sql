@@ -42,6 +42,6 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
 -- One counter per profile, bumped by every write transaction, so a watcher
 -- detects a change with a primary key read.
 CREATE TABLE IF NOT EXISTS task_board_rev (
-    profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
     rev        INTEGER NOT NULL
 );

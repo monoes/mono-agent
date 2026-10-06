@@ -43,8 +43,18 @@ func TestATaskNeedsAnExistingProfile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("a task in an unknown profile: err %v, want a foreign key failure", err)
 	}
-	if _, err := db.Exec(`INSERT INTO task_board_rev (profile_id, rev) VALUES ('no-such-profile', 1)`); err == nil {
-		t.Error("a revision row for an unknown profile was accepted")
+	for _, c := range []struct {
+		name    string
+		profile any
+		want    string
+	}{
+		{"a revision row for an unknown profile", "no-such-profile", "FOREIGN KEY"},
+		{"a revision row with no profile", nil, "NOT NULL"}, // SQLite lets a text primary key hold NULL unless it says NOT NULL
+	} {
+		_, err := db.Exec(`INSERT INTO task_board_rev (profile_id, rev) VALUES (?, 1)`, c.profile)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want a %s failure", c.name, err, c.want)
+		}
 	}
 }
 
@@ -80,24 +90,44 @@ func TestColumnChecksAndTheClientIDIndex(t *testing.T) {
 		t.Errorf("status bogus: err %v, want a CHECK failure", err)
 	}
 	if _, err := db.Exec(`INSERT INTO tasks (profile_id, title, source_kind, position, created_at, updated_at)
-		VALUES ('default', 'x', 'carrier-pigeon', 1, ?, ?)`, rowTime, rowTime); err == nil {
-		t.Error("an unknown source kind was accepted")
+		VALUES ('default', 'x', 'carrier-pigeon', 1, ?, ?)`, rowTime, rowTime); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("source kind carrier-pigeon: err %v, want a CHECK failure", err)
 	}
 	if _, err := db.Exec(`INSERT INTO profiles (id, name) VALUES ('p2', 'P2')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
 		profile, client string
-		wantErr         bool
+		wantErr         string // a part of the error message; empty means no error
 	}{
-		{"default", "c-1", false},
-		{"default", "c-1", true}, // the same key in the same profile
-		{"p2", "c-1", false},     // the same key in another profile
-		{"default", "", false},   // no key: any number of them
-		{"default", "", false},
+		{"default", "c-1", ""},
+		{"default", "c-1", "UNIQUE"}, // the same key in the same profile
+		{"p2", "c-1", ""},            // the same key in another profile
+		{"default", "", ""},          // no key: any number of them
+		{"default", "", ""},
 	} {
-		if _, err := insertRow(db, c.profile, "inbox", c.client); (err != nil) != c.wantErr {
-			t.Errorf("profile %s client %q: err %v, want error %v", c.profile, c.client, err, c.wantErr)
+		_, err := insertRow(db, c.profile, "inbox", c.client)
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("profile %s client %q: unexpected error %v", c.profile, c.client, err)
+		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+			t.Errorf("profile %s client %q: err %v, want a %s failure", c.profile, c.client, err, c.wantErr)
+		}
+	}
+}
+
+// A released migration cannot change a CHECK list, so every allowed value is pinned here.
+func TestEveryStatusAndSourceKindIsAccepted(t *testing.T) {
+	db := testdb.Open(t).DB
+	for _, status := range []string{"inbox", "ready", "in_progress", "review", "done", "archived"} {
+		if _, err := insertRow(db, "default", status, ""); err != nil {
+			t.Errorf("status %s: %v", status, err)
+		}
+	}
+	for _, kind := range []string{"cli", "app", "chrome", "os", "agent"} {
+		if _, err := db.Exec(`INSERT INTO tasks (profile_id, title, source_kind, position, created_at, updated_at)
+			VALUES ('default', 'x', ?, 1, ?, ?)`, kind, rowTime, rowTime); err != nil {
+			t.Errorf("source kind %s: %v", kind, err)
 		}
 	}
 }
