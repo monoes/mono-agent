@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestAddLandsInInboxAndRecordsIt(t *testing.T) {
@@ -32,15 +33,22 @@ func TestAddLandsInInboxAndRecordsIt(t *testing.T) {
 }
 
 func TestAddReadyIsForTheOperatorOnly(t *testing.T) {
-	s, _, _ := newTestStore(t)
+	s, db, _ := newTestStore(t)
 	task, _, err := s.Add(bg, "default", AddInput{Title: "go", Ready: true}, human)
 	if err != nil || task.Status != StatusReady {
 		t.Fatalf("operator with Ready: %+v, %v", task, err)
 	}
 	for _, a := range []Actor{bot("b"), {Kind: Capture, Name: SourceOS}} {
-		if _, _, err := s.Add(bg, "default", AddInput{Title: "go", Ready: true, SourceKind: SourceOS}, a); !errors.Is(err, ErrOperatorOnly) {
-			t.Errorf("%+v adding to Ready: %v, want ErrOperatorOnly", a, err)
+		// With a source the actor may use, and with one it may not: the gate
+		// itself refuses, whatever else the task asks for.
+		for _, source := range []string{"", SourceOS} {
+			if _, _, err := s.Add(bg, "default", AddInput{Title: "go", Ready: true, SourceKind: source}, a); !errors.Is(err, ErrOperatorOnly) {
+				t.Errorf("%+v adding to Ready with source %q: %v, want ErrOperatorOnly", a, source, err)
+			}
 		}
+	}
+	if n := countWhere(t, db, "tasks", "status = 'ready'"); n != 1 {
+		t.Errorf("%d Ready tasks, want the operator's one", n)
 	}
 }
 
@@ -55,6 +63,8 @@ func TestSourceKindRules(t *testing.T) {
 		{"operator cli", human, SourceCLI, SourceCLI},
 		{"operator app", human, SourceApp, SourceApp},
 		{"operator may not claim chrome", human, SourceChrome, ""},
+		{"operator may not claim agent", human, SourceAgent, ""},
+		{"no actor at all", Actor{}, "", ""},
 		{"agent default", bot("b"), "", SourceAgent},
 		{"agent with the cli default", bot("b"), SourceCLI, SourceAgent},
 		{"agent may not claim os", bot("b"), SourceOS, ""},
@@ -129,6 +139,25 @@ func TestAddCleansWhatItStores(t *testing.T) {
 	}
 }
 
+func TestAddCutsTheSourceTitleAndTheAppName(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	task, _, err := s.Add(bg, "default", AddInput{
+		Title:       "t",
+		SourceKind:  SourceChrome,
+		SourceTitle: strings.Repeat("t", MaxSourceTitleRunes+50),
+		SourceApp:   strings.Repeat("a", MaxAppRunes+50),
+	}, Actor{Kind: Capture, Name: SourceChrome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := utf8.RuneCountInString(task.Source.Title); n != MaxSourceTitleRunes {
+		t.Errorf("source title of %d runes, want %d", n, MaxSourceTitleRunes)
+	}
+	if n := utf8.RuneCountInString(task.Source.App); n != MaxAppRunes {
+		t.Errorf("app name of %d runes, want %d", n, MaxAppRunes)
+	}
+}
+
 func TestClientIDMakesAddIdempotent(t *testing.T) {
 	s, db, _ := newTestStore(t)
 	other := addProfile(t, db, "p2")
@@ -154,34 +183,96 @@ func TestClientIDMakesAddIdempotent(t *testing.T) {
 	}
 }
 
+// Spec 5.3: a replay returns the task "whatever has become of it since", and a
+// capture surface retries until it hears yes, so no limit may turn it away.
+func TestClientIDReplayReturnsTheTaskWhateverBecameOfIt(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	chrome := Actor{Kind: Capture, Name: SourceChrome}
+	in := AddInput{Title: "once", ClientID: "c-1", SourceKind: SourceChrome}
+	first, _, err := s.Add(bg, "default", in, chrome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := func(when string, want Status) {
+		t.Helper()
+		got, created, err := s.Add(bg, "default", in, chrome)
+		if err != nil || created || got.ID != first.ID || got.Status != want {
+			t.Errorf("%s: task %d as %q, created %v, err %v, want task %d back as %q", when, got.ID, got.Status, created, err, first.ID, want)
+		}
+	}
+	seedTasks(t, db, "default", MaxOpenTasks-1) // the board is full now
+	replay("on a full board", StatusInbox)
+	if _, err := db.Exec(`UPDATE tasks SET status = 'archived' WHERE id = ?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	replay("after it was archived", StatusArchived)
+	if n := countWhere(t, db, "tasks", "client_id = 'c-1'"); n != 1 {
+		t.Errorf("%d tasks hold the client id", n)
+	}
+}
+
 func TestAgentsMayAddTwentyTasksAnHour(t *testing.T) {
-	s, _, c := newTestStore(t)
-	add := func() error {
-		_, _, err := s.Add(bg, "default", AddInput{Title: "from an agent"}, bot("b"))
+	s, db, c := newTestStore(t)
+	other := addProfile(t, db, "p2")
+	add := func(profile string) error {
+		_, _, err := s.Add(bg, profile, AddInput{Title: "from an agent"}, bot("b"))
 		return err
 	}
+	for i := 0; i < 5; i++ {
+		mustAdd(t, s, "default", "from the operator", false) // they do not use up the agents' twenty
+	}
 	for i := 0; i < AgentTasksPerHour; i++ {
-		if err := add(); err != nil {
+		if err := add("default"); err != nil {
 			t.Fatalf("task %d: %v", i+1, err)
 		}
 	}
-	if err := add(); !errors.Is(err, ErrLimit) {
+	if err := add("default"); !errors.Is(err, ErrLimit) {
 		t.Fatalf("task 21: %v, want ErrLimit", err)
+	}
+	if err := add(other); err != nil {
+		t.Errorf("the limit is per profile: %v", err)
 	}
 	if _, _, err := s.Add(bg, "default", AddInput{Title: "operator"}, human); err != nil {
 		t.Errorf("the operator is not limited: %v", err)
 	}
-	c.advance(61 * time.Minute)
-	if err := add(); err != nil {
+	if n := countWhere(t, db, "tasks", "profile_id = 'default' AND source_kind = 'agent'"); n != AgentTasksPerHour {
+		t.Errorf("%d agent tasks stored, want %d: a refused add writes nothing", n, AgentTasksPerHour)
+	}
+	c.advance(59 * time.Minute)
+	if err := add("default"); !errors.Is(err, ErrLimit) {
+		t.Errorf("59 minutes later: %v, want ErrLimit", err)
+	}
+	c.advance(2 * time.Minute)
+	if err := add("default"); err != nil {
 		t.Errorf("an hour later: %v", err)
+	}
+}
+
+func TestAddRefusesAnAgentNameThatIsNotAName(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	for _, name := range []string{"two words", "red\x1b[31m", strings.Repeat("a", MaxNameLen+1)} {
+		if _, _, err := s.Add(bg, "default", AddInput{Title: "t"}, bot(name)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("agent %q: %v, want ErrInvalid", name, err)
+		}
+	}
+	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
+		t.Errorf("%d tasks were written", n)
+	}
+	task, _, err := s.Add(bg, "default", AddInput{Title: "t"}, bot("claude#1"))
+	if err != nil || task.LastEvent == nil || task.LastEvent.Actor != "claude#1" {
+		t.Errorf("a valid name: last event %+v, err %v, want the agent's name", task.LastEvent, err)
 	}
 }
 
 func TestAProfileHoldsAtMostTwoThousandOpenTasks(t *testing.T) {
 	s, db, _ := newTestStore(t)
+	other := addProfile(t, db, "p2")
 	seedTasks(t, db, "default", MaxOpenTasks)
 	if _, _, err := s.Add(bg, "default", AddInput{Title: "one too many"}, human); !errors.Is(err, ErrLimit) {
 		t.Fatalf("task 2001: %v, want ErrLimit", err)
+	}
+	if _, _, err := s.Add(bg, other, AddInput{Title: "another board"}, human); err != nil {
+		t.Errorf("the limit is per profile: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE tasks SET status = 'archived' WHERE id = (SELECT MIN(id) FROM tasks)`); err != nil {
 		t.Fatal(err)
