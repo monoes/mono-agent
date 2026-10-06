@@ -160,3 +160,21 @@ func expectCalls(t *testing.T, srv *loopServer, n int32, what string) {
 		t.Fatalf("%s: %d calls, want %d", what, got, n)
 	}
 }
+
+// waitForAttempt waits, in real time, until session.json records an attempt at at. A grant is
+// counted when it is sent, and what it got is written after the answer: a test that reads the
+// session after an attempt waits for this record, never for a while.
+func waitForAttempt(t *testing.T, store account.Store, at time.Time, what string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		sess, err := store.Load()
+		if err == nil && sess != nil && sess.LastAttempt.Equal(at) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s: stored session = %s (%v), want the last attempt at %v", what, describe(sess), err, at)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}

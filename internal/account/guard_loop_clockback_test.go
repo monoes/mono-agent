@@ -119,7 +119,6 @@ func TestTheRefresherAloneDropsTheTokenWhenTheClockGoesBackBetweenItsRetries(t *
 	m.retryAt(t, 31*time.Second, 2)
 	m.retryAt(t, 92*time.Second, 3) // the next retry is due at +212 s
 	m.both(8 * time.Second)         // +100 s
-	quiet()                         // the refresher reads +100 s
 	m.machine.Advance(-120 * time.Second)
 	m.droppedSoon(t, "it would present the token at its retry, real +332 s")
 	m.both(232 * time.Second) // the machine reads +212 s, the next retry; monoes.me +332 s
@@ -136,8 +135,7 @@ func TestARefresherDropsTheTokenAtAClockSetBackBeforeACommandComesAfterIt(t *tes
 	m.retryAt(t, 31*time.Second, 2)
 	m.retryAt(t, 92*time.Second, 3)
 	m.retryAt(t, 213*time.Second, 4)
-	m.both(37 * time.Second) // +250 s
-	quiet()
+	m.both(37 * time.Second)             // +250 s
 	m.machine.Advance(-80 * time.Second) // the machine reads +170 s
 	m.droppedSoon(t, "a command once the clock has come past +213 s would present it")
 	m.both(time.Minute) // the machine reads +230 s, monoes.me +310 s
@@ -190,7 +188,7 @@ func TestARefresherIgnoresAStepBackWithinTheTolerance(t *testing.T) {
 func TestARefresherDoesNothingAtAClockThatJumpsForward(t *testing.T) {
 	m := newSteppedMachine(t, lost, lost)
 	m.retryAt(t, 31*time.Second, 2) // the next retry is due at +91 s
-	quiet()
+	waitForAttempt(t, m.store, m.m0.Add(31*time.Second), "the record of the retry")
 	before := m.session(t)
 	m.machine.Advance(20 * time.Second) // +51 s on the machine: no retry is due, no mark is stale
 	quiet()

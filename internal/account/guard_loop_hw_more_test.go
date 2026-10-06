@@ -58,7 +58,7 @@ func TestTheRefresherKeepsTheHighWaterMarkCurrentWhileItHolds(t *testing.T) {
 	waitForCalls(t, srv, 1, "the first refresh")
 	expectCalls(t, srv, 1, "the hold")
 	start := e.f.Clock.Now()
-	expectHW(t, e, start, "right after the refresh: the mark is the new token's iat")
+	waitForHW(t, e, start, "the refresh to store the new token: the mark is its iat")
 
 	// The refresher holds for half an hour. Two minutes on, the mark is two
 	// minutes stale, and the loop that holds writes it.
@@ -84,7 +84,7 @@ func TestTheRefresherKeepsTheHighWaterMarkCurrentWhileItWaitsToRetry(t *testing.
 	e.f.Clock.Advance(61 * time.Second)
 	waitForCalls(t, srv, 3, "the third attempt") // fails at T+92s and waits 120 seconds, until T+212s
 	expectCalls(t, srv, 3, "the third failure")
-	expectHW(t, e, start.Add(92*time.Second), "after the third failure: an attempt that fails writes the mark itself")
+	waitForHW(t, e, start.Add(92*time.Second), "the record of the third failure: an attempt that fails writes the mark itself")
 
 	// 61 seconds into the wait the mark is a minute stale, and the loop that waits writes it.
 	e.f.Clock.Advance(61 * time.Second)
@@ -151,6 +151,7 @@ func TestAHoldingRefresherThatFindsTheSessionGoneKeepsTheRecord(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	fiveMinutesLater(t, e)
+	e.f.Clock.Advance(5 * time.Minute)
+	waitForHW(t, e, e.f.Clock.Now(), "the record the loop keeps")
 	theRecord(t, e, e.f.Clock.Now())
 }

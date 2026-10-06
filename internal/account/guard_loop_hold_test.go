@@ -97,6 +97,7 @@ func TestAClockSetBackThatLocksTheGuardIsRepairedByTheRefresherDespiteItsHold(t 
 	g.StartRefresher(context.Background())
 	waitForCalls(t, srv, 1, "the first refresh")
 	expectCalls(t, srv, 1, "the hold")
+	waitForHW(t, e, e.f.Clock.Now(), "the refresh to store the new token, whose iat is the mark")
 
 	back := e.f.Clock.Now().Add(-10 * time.Minute)
 	if st := account.Evaluate(e.session(), back); st.State != account.StateLocked || st.Reason != account.ReasonClockRollback {

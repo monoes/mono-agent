@@ -91,6 +91,7 @@ func TestTheRefresherStillHoldsWhenTheClockIsMoreThanTheGraceWindowAhead(t *test
 	g.StartRefresher(context.Background())
 	waitForCalls(t, srv, 1, "the first refresh")
 	expectCalls(t, srv, 1, "the hold")
+	waitForAttempt(t, e.store, e.f.Clock.Now(), "the refresh to be stored")
 	if st := g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonExpired {
 		t.Fatalf("Status = %s/%q, want locked/expired: the test sets nothing up", st.State, st.Reason)
 	}

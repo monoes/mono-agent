@@ -158,6 +158,7 @@ func TestTheRefresherDropsTheTokenWhenTheClockGoesBackBeforeItsLastAttempt(t *te
 		waitForGrants(t, net, step.grants, "the retry")
 		expectGrants(t, net, step.grants, "the retry, lost again")
 	}
+	waitForAttempt(t, e.store, t0.Add(213*time.Second), "the record of the retry at +213 s")
 	if sess := e.session(); !sess.PendingSince.Equal(t0) || !sess.LastAttempt.Equal(t0.Add(213*time.Second)) {
 		t.Fatalf("after the retries: %s, want the marker of the first send and the last attempt at +213 s", describe(sess))
 	}

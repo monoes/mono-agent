@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -127,6 +128,7 @@ func TestAMarkerAnotherProcessLeftDuringTheHoldIsRetriedWithinThirtySecondsAndRe
 func TestAMarkerAnotherProcessLeftDuringALongBackoffIsRetriedWithinThirtySecondsAndRecovers(t *testing.T) {
 	e, srv, net, g := loopMachine(t, 2*time.Hour)
 	net.then(unsent, unsent, unsent, unsent)
+	t0 := e.f.Clock.Now()
 	g.StartRefresher(context.Background())
 	waitForGrants(t, net, 1, "the first attempt")
 	expectGrants(t, net, 1, "the first failure") // the next is 30 s away
@@ -139,6 +141,7 @@ func TestAMarkerAnotherProcessLeftDuringALongBackoffIsRetriedWithinThirtySeconds
 	e.f.Clock.Advance(121 * time.Second)
 	waitForGrants(t, net, 4, "the fourth attempt")
 	expectGrants(t, net, 4, "the fourth failure") // 240 s: the next attempt is 4 minutes away
+	waitForAttempt(t, e.store, t0.Add(213*time.Second), "the record of the fourth failure, which takes back the marker it wrote")
 	if e.rawPending() != "" {
 		t.Fatal("settled failures left a marker")
 	}
@@ -247,13 +250,16 @@ func TestAForeignMarkerWithTheStampOfAnEarlierOwnMarkerIsStillForeign(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Its mark a minute old, so that the loop's next pass writes it: that write shows the
+		// pass that read this session, with no marker.
+		sess.HW = sess.HW.Add(-time.Minute)
 		e.save(sess)
 		if err := e.store.SaveRefresh(ts.RefreshToken); err != nil {
 			t.Fatal(err)
 		}
 	})
 	e.f.Clock.Advance(time.Second)
-	quiet() // the loop reads the session that has no marker
+	waitForHW(t, e, e.f.Clock.Now(), "the loop's pass over the session that has no marker")
 	if net.grants() != 2 || e.rawPending() != "" {
 		t.Fatalf("%d grants with pending %q, want two and no marker", net.grants(), e.rawPending())
 	}
@@ -364,14 +370,21 @@ func TestTheRefresherBacksOffAfterACompletedDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := newCountingStore(account.OpenStore(e.dir, e.seal))
-	g := account.NewGuard(account.GuardOptions{Store: cs, Refresher: e.ref, Now: e.f.Clock.Now, Poll: loopPoll})
-	t.Cleanup(g.Close)
-	g.StartRefresher(context.Background())
-	for i := 0; i < 120; i++ { // ten minutes, five seconds at a time
-		time.Sleep(10 * time.Millisecond) // two wake-ups of the refresher at each instant
-		e.f.Clock.Advance(5 * time.Second)
+	var read atomic.Int64 // the refresher's last reading of the clock
+	now := func() time.Time {
+		at := e.f.Clock.Now()
+		read.Store(at.UnixNano())
+		return at
 	}
-	quiet()
+	g := account.NewGuard(account.GuardOptions{Store: cs, Refresher: e.ref, Now: now, Poll: loopPoll})
+	t.Cleanup(g.Close)
+	t0 := e.f.Clock.Now()
+	g.StartRefresher(context.Background())
+	for i := 0; i < 120; i++ { // ten minutes, five seconds at a time, each instant read by the refresher before the next
+		e.f.Clock.Advance(5 * time.Second)
+		at := e.f.Clock.Now()
+		eventually(t, "the refresher to read the clock at +"+at.Sub(t0).String(), func() bool { return read.Load() == at.UnixNano() })
+	}
 	if n := cs.calls("LoadRefresh"); n < 4 || n > 6 {
 		t.Fatalf("%d passes read the refresh token in ten minutes, want the five of the backoff (30 s doubling to 5 min)", n)
 	}

@@ -61,7 +61,9 @@ func TestTheRefresherPicksUpASignInFromAnotherProcess(t *testing.T) {
 	e := newEnv(t)
 	g := e.newGuard(loopPoll)
 	g.StartRefresher(context.Background())
-	settle()
+	// The first pass keeps the record of a machine with no session (A25), and not again for a
+	// minute: wait for it, so that it cannot write over the sign-in below.
+	waitForHW(t, e, e.f.Clock.Now(), "the record of a machine with no session")
 	if st := g.Status(); st.Reason != account.ReasonNotLoggedIn {
 		t.Fatalf("Status = %s/%q", st.State, st.Reason)
 	}
