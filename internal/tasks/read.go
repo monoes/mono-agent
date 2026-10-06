@@ -1,0 +1,251 @@
+package tasks
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+)
+
+// statusOrder sorts a query by column, in board order.
+const statusOrder = `CASE status WHEN 'inbox' THEN 0 WHEN 'ready' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'done' THEN 4 ELSE 5 END`
+
+// Rev is the profile's board revision: 0 until its first write. It is one
+// primary-key read, so it needs no snapshot.
+func (s *Store) Rev(ctx context.Context, profileID string) (int64, error) {
+	return s.revOf(ctx, s.db, profileID)
+}
+
+func (s *Store) revOf(ctx context.Context, x dbx, profileID string) (int64, error) {
+	var rev int64
+	err := x.QueryRowContext(ctx, `SELECT rev FROM task_board_rev WHERE profile_id = ?`, profileID).Scan(&rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("tasks: reading the revision: %w", err)
+	}
+	return rev, nil
+}
+
+// Counts returns the profile's cards per column and its stale claims, read in
+// one snapshot.
+func (s *Store) Counts(ctx context.Context, profileID string) (Counts, error) {
+	var c Counts
+	err := s.snapshot(ctx, func(x dbx) error {
+		var err error
+		c, err = s.countsOf(ctx, x, profileID)
+		return err
+	})
+	if err != nil {
+		return Counts{}, err
+	}
+	return c, nil
+}
+
+func (s *Store) countsOf(ctx context.Context, x dbx, profileID string) (Counts, error) {
+	var c Counts
+	rows, err := x.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks WHERE profile_id = ? GROUP BY status`, profileID)
+	if err != nil {
+		return Counts{}, fmt.Errorf("tasks: counting: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return Counts{}, fmt.Errorf("tasks: counting: %w", err)
+		}
+		switch Status(st) {
+		case StatusInbox:
+			c.Inbox = n
+		case StatusReady:
+			c.Ready = n
+		case StatusInProgress:
+			c.InProgress = n
+		case StatusReview:
+			c.Review = n
+		case StatusDone:
+			c.Done = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Counts{}, fmt.Errorf("tasks: counting: %w", err)
+	}
+	// The loop ran to its end, which closes rows: the next statement is not run
+	// beside an open one.
+	err = x.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tasks WHERE profile_id = ? AND status = 'in_progress' AND claimed_by <> '' AND claim_until <= ?`,
+		profileID, s.stamp()).Scan(&c.Stale)
+	if err != nil {
+		return Counts{}, fmt.Errorf("tasks: counting stale claims: %w", err)
+	}
+	return c, nil
+}
+
+// queryTasks runs a query that selects taskCols and returns its tasks with
+// their last events. The result is never nil.
+func (s *Store) queryTasks(ctx context.Context, x dbx, q string, args ...any) ([]Task, error) {
+	rows, err := x.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("tasks: reading tasks: %w", err)
+	}
+	defer rows.Close()
+	out := []Task{}
+	for rows.Next() {
+		t, err := s.scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("tasks: reading tasks: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tasks: reading tasks: %w", err)
+	}
+	// As in countsOf, rows is closed by now.
+	if err := s.attachLast(ctx, x, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Get returns a task of the profile with its events, oldest first.
+func (s *Store) Get(ctx context.Context, profileID string, id int64) (Task, []Event, error) {
+	var t Task
+	events := []Event{}
+	err := s.snapshot(ctx, func(x dbx) error {
+		var err error
+		if t, err = s.getTx(ctx, x, profileID, id); err != nil {
+			return err
+		}
+		rows, err := x.QueryContext(ctx,
+			`SELECT id, at, actor, kind, from_status, to_status, note FROM task_events WHERE task_id = ? ORDER BY id`, id)
+		if err != nil {
+			return fmt.Errorf("tasks: reading events: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e Event
+			var at string
+			if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Kind, &e.FromStatus, &e.ToStatus, &e.Note); err != nil {
+				return fmt.Errorf("tasks: reading events: %w", err)
+			}
+			if e.At, err = storedTime("time of an event", at); err != nil {
+				return fmt.Errorf("tasks: reading events: %w", err)
+			}
+			events = append(events, e)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("tasks: reading events: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Task{}, nil, err
+	}
+	return t, events, nil
+}
+
+// defaultStatuses is what List shows when no status is named: every column to
+// the operator, and only the work that is open to an agent.
+func defaultStatuses(actor Actor) []Status {
+	if actor.Kind == Agent {
+		return []Status{StatusReady, StatusInProgress, StatusReview}
+	}
+	return BoardStatuses
+}
+
+// List returns the profile's tasks, by column and then by position.
+func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Actor) ([]Task, error) {
+	// The names are parsed and the parsed statuses are queried: "progress" and
+	// "In-Progress" are accepted as in_progress, so they must find it. A status
+	// named twice is asked for once, which keeps the query to six slots however
+	// long the caller's list is.
+	statuses := make([]Status, 0, len(BoardStatuses)+1)
+	for _, name := range f.Statuses {
+		st, err := ParseStatus(string(name))
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(statuses, st) {
+			statuses = append(statuses, st)
+		}
+	}
+	if len(statuses) == 0 {
+		statuses = defaultStatuses(actor)
+	}
+	if f.Source != "" && !validSource(f.Source) {
+		return nil, invalid("unknown source %q", echo(f.Source))
+	}
+	n := f.Limit
+	if n <= 0 {
+		n = DefaultListLimit
+	}
+	if n > MaxListLimit {
+		n = MaxListLimit
+	}
+	q := `SELECT ` + taskCols + ` FROM tasks WHERE profile_id = ? AND status IN (` + placeholders(len(statuses)) + `)`
+	args := []any{profileID}
+	for _, st := range statuses {
+		args = append(args, string(st))
+	}
+	if f.Source != "" {
+		q += ` AND source_kind = ?`
+		args = append(args, f.Source)
+	}
+	if f.ClaimedBy != "" {
+		q += ` AND claimed_by = ?`
+		args = append(args, f.ClaimedBy)
+	}
+	if f.Stale {
+		q += ` AND status = 'in_progress' AND claimed_by <> '' AND claim_until <= ?`
+		args = append(args, s.stamp())
+	}
+	q += ` ORDER BY ` + statusOrder + `, position, id LIMIT ?`
+	args = append(args, n)
+	var out []Task
+	err := s.snapshot(ctx, func(x dbx) error {
+		var err error
+		out, err = s.queryTasks(ctx, x, q, args...)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Board returns the whole board in one snapshot: the revision, the counts and
+// the five columns. The Done column is cut to doneLimit cards when it is above 0.
+func (s *Store) Board(ctx context.Context, profileID string, doneLimit int) (Board, error) {
+	b := Board{Tasks: map[Status][]Task{}}
+	err := s.snapshot(ctx, func(x dbx) error {
+		var err error
+		if b.Profile, err = s.profileOf(ctx, x, profileID); err != nil {
+			return err
+		}
+		if b.Rev, err = s.revOf(ctx, x, profileID); err != nil {
+			return err
+		}
+		if b.Counts, err = s.countsOf(ctx, x, profileID); err != nil {
+			return err
+		}
+		for _, st := range BoardStatuses {
+			q := `SELECT ` + taskCols + ` FROM tasks WHERE profile_id = ? AND status = ? ORDER BY position, id`
+			args := []any{profileID, string(st)}
+			if st == StatusDone && doneLimit > 0 {
+				q += ` LIMIT ?`
+				args = append(args, doneLimit)
+			}
+			if b.Tasks[st], err = s.queryTasks(ctx, x, q, args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Board{}, err
+	}
+	return b, nil
+}

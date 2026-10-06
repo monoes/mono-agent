@@ -46,7 +46,7 @@ func ParseStatus(name string) (Status, error) {
 	case StatusInbox, StatusReady, StatusInProgress, StatusReview, StatusDone, StatusArchived:
 		return st, nil
 	}
-	return "", invalid("unknown status %q (use inbox, ready, in_progress, review, done or archived)", name)
+	return "", invalid("unknown status %q (use inbox, ready, in_progress, review, done or archived)", echo(name))
 }
 
 // Where a task came from.
