@@ -40,7 +40,7 @@
 8. **The warnings belong to B2, B1b and B3a**, and B5c pins them end to end. This plan runs every suite with the date set (Task 2) and rehearses the day it arrives (Task 7): a test that assumed dormancy fails there, not on the day.
 9. **Adoption is wired here, once** (Task 6). B1b provides `library.AdoptIntoAccount` and leaves the call to this plan; the function removes an older login from the vault once monoes.me has given a verdict, and also when the exchange went out and its answer never arrived or arrived and could not be stored here (spec A24, A24(d): monoes.me may have rotated the token, and presenting it again after the 300-second reuse window would end every login of the account: spike S2, spec A7), and keeps one only when the failure cannot have spent it (nothing was sent, or monoes.me answered with an error status). A retry at every command would make an implicit call before every command of an offline machine, so the wiring claims one try per database before it makes it, in the root command's `PersistentPreRun`: gated and serving commands only, after the CLI gate. Once the exchange is sent it is completed even if the command's context is cancelled meanwhile (spec A20, implemented in B1b's `exchangeOlder`): a Ctrl-C at the first command after the update neither loses the answer nor leaves a spent refresh token in the vault.
 10. **One declaration each in files that other phases own** (index §3.1 and the cmd package): `pinnedKeys` in `keys.go` (B1a: "B5a pins the first key"), the initializer of `enforceFrom` in `rollout.go` (B1a), the `PersistentPreRun` of `root.go` (B1b adds its own line to `AddCommand`). `CONTRIBUTING.md` is B5b's and is not touched.
-11. **The service definitions allow a stopping daemon 35 seconds** (Task 4b). The guard's `Close` waits for a refresh grant in flight and then for the key-store write of its answer, about 20 seconds and 30 at the worst, and launchd's default `ExitTimeOut` is 20: a kill inside that window loses the answer (spec A24). One constant, `stopGrace`, sets launchd's `ExitTimeOut`, systemd's `TimeoutStopSec` and the wait of the Windows `Restart`.
+11. **The service definitions allow a stopping daemon at least 35 seconds** (Task 4b). The guard's `Close` waits for a refresh grant in flight and then for the key-store write of its answer, about 20 seconds and 30 at the worst, and launchd's default `ExitTimeOut` is 20: a kill inside that window loses the answer (spec A24). One constant, `stopGrace`, sets launchd's `ExitTimeOut` to 35; systemd's `TimeoutStopSec` is written as 90, its own default, so as not to shorten the drain of the runs in flight; on Windows a scheduled task has no stop time, the constant only sets the wait of `Restart`, and a restart inside a refresh remains the A24 case.
 
 ## Review Focus
 
@@ -51,7 +51,7 @@ The six failure modes the spec implies that no phase's tests exercise from outsi
 3. **The pinned key or claims differ from what monoes.me really signs, and every user is locked on the date.** Pinned by `TestProductionKeyVerifiesAProductionToken` (Task 1: a token signed by the production private key verifies against the pinned set) and by the production dry run of Task 8, which must pass before the merge.
 4. **The date arrives and the project's own CI, scripts and tests lock themselves out**: a `doctor-smoke` that counts the account row as an unhealthy core, a desktop test that spawns a gated CLI, a maintainer's e2e script. Pinned by the rehearsal of Task 7: every suite and `scripts/doctor-smoke.sh` run with the date in the past, compared with the committed tree.
 5. **A binary built with the `devaccount` tag ships**: it trusts a development key anyone can sign with. Pinned by `scripts/check-release-tags-test.sh` (the guard against binaries built with and without the tag, loose and inside the archives the release ships), run by the CI job `release-guard-test`, and by the `release-guard` job that runs the guard on every artifact before the approval gate (Task 5).
-6. **A daemon that its service manager kills in the middle of a refresh** loses the answer of a grant that monoes.me has already rotated: the next attempt is the A24 case, and this machine signs in again (the account survives). launchd's default stop time, 20 seconds, is shorter than the guard's worst case of 30. Pinned by `TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite`, `TestThePlistGivesTheDaemonTimeToFinishARefresh` and `TestTheUnitGivesTheDaemonTimeToFinishARefresh` (Task 4b).
+6. **A daemon that its service manager kills in the middle of a refresh** loses the answer of a grant that monoes.me has already rotated: the next attempt is the A24 case, and this machine signs in again (the account survives). launchd's default stop time, 20 seconds, is shorter than the guard's worst case of 30, and a Windows scheduled task has no stop time to set. Pinned by `TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite`, `TestThePlistGivesTheDaemonTimeToFinishARefresh` and `TestTheUnitGivesTheDaemonTimeToFinishARefresh` (Task 4b).
 
 ---
 
@@ -755,7 +755,7 @@ git commit -m "feat(update): restart a daemon that runs old code unless a run is
 
 ### Task 4b: The service definitions give a stopping daemon time to finish a refresh
 
-A24, with A20 and A22. A daemon that its service manager stops (`daemon install` over a registration, `daemon uninstall`, the manager's own restart, a logout or a shutdown) is asked to end and is killed when the manager's stop time runs out. The guard's `Close` waits for a refresh grant that is in flight and then for the key-store write of its answer: about 20 seconds with B1b's refresher, which gives up on a grant after 10, and 30 at the worst. launchd's default `ExitTimeOut` is 20 seconds, so a kill inside that window is possible, and it is the A24 case: the answer is lost, the account survives and this machine signs in again. Every definition this code writes therefore allows 35 seconds, the worst case and a margin of five: launchd's `ExitTimeOut`, systemd's `TimeoutStopSec` (its default is a distribution and user setting, which a unit does not rely on) and, on Windows, the wait of `Restart` for the daemon to let go of its lock after its task was ended (`daemonStopWait`, 10 seconds until now). A scheduled task has no stop time of its own, so that wait is the setting this code has. One constant, `stopGrace`, carries the number.
+A24, with A20 and A22. A daemon that its service manager stops (`daemon install` over a registration, `daemon uninstall`, the manager's own restart, a logout or a shutdown) is asked to end and is killed when the manager's stop time runs out. The guard's `Close` waits for a refresh grant that is in flight and then for the key-store write of its answer: about 20 seconds with B1b's refresher, which gives up on a grant after 10, and 30 at the worst. launchd's default `ExitTimeOut` is 20 seconds, so a kill inside that window is possible, and it is the A24 case: the answer is lost, the account survives and this machine signs in again. The definitions this code writes therefore allow at least 35 seconds, the worst case and a margin of five. launchd's `ExitTimeOut` is set to `stopGrace`, 35 seconds. systemd's `TimeoutStopSec` is written as 90 seconds, systemd's own default: the unit says it, so that a distribution or user setting cannot lower it, and does not shorten it, because the daemon also drains the runs in flight when it is stopped (`engine.Stop` in `cmd/monoagentcli/daemon.go`) and a stock system gives that drain 90 seconds. Windows has no counterpart: a scheduled task has no stop time of its own, and the Task Scheduler's own description of ending a task is that it sends `WM_CLOSE` and, unless the task's `AllowHardTerminate` setting is off, terminates a task that does not answer. A console daemon has no window to answer it, so this code does not rely on a graceful stop there, and a Windows restart or uninstall that lands inside a refresh is the A24 case whatever it waits. The one number this code has on Windows is the wait of `Restart` for the daemon to let go of its lock after its task was ended (`daemonStopWait`, 10 seconds until now); it follows `stopGrace`, so that a daemon that does stop by itself is not reported as still running. One constant, `stopGrace`, carries the 35 seconds.
 
 **Files:**
 - Modify: `internal/autostart/autostart.go` (the constant), `internal/autostart/autostart_darwin.go` (the plist template, `renderPlist`, `Install`), `internal/autostart/autostart_linux.go` (the unit template, `renderUnit`), `internal/autostart/autostart_windows.go` (`daemonStopWait`)
@@ -763,7 +763,7 @@ A24, with A20 and A22. A daemon that its service manager stops (`daemon install`
 
 **Interfaces:**
 - Consumes: `darwinPlistTemplate`, `linuxUnitTemplate`, `renderUnit` and `daemonStopWait`, which exist.
-- Produces: `stopGrace`, an unexported `time.Duration` constant of 35 seconds, and `renderPlist(exe, logs string) (string, error)` in the darwin file, the counterpart of `renderUnit`, so that the plist can be read without installing it.
+- Produces: `stopGrace`, an unexported `time.Duration` constant of 35 seconds, `systemdStopTimeout` (90 seconds) in the Linux file, and `renderPlist(exe, logs string) (string, error)` in the darwin file, the counterpart of `renderUnit`, so that the plist can be read without installing it.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -846,9 +846,10 @@ import (
 	"time"
 )
 
-// systemd kills a unit that has not stopped TimeoutStopSec after its SIGTERM. Its default is a distribution and
-// user setting, which a unit that needs time to finish a refresh does not rely on: the unit says how long it
-// allows, in its [Service] section.
+// systemd kills a unit that has not stopped TimeoutStopSec after its SIGTERM. Its default (90 seconds on a stock
+// system) is a distribution and user setting, which a unit that needs time to finish a refresh does not rely on:
+// the unit says how long it allows, in its [Service] section, never less than stopGrace and never less than the
+// stock default, because the daemon also drains the runs in flight when it is stopped.
 func TestTheUnitGivesTheDaemonTimeToFinishARefresh(t *testing.T) {
 	unit, err := renderUnit("/usr/local/bin/monoagentcli")
 	if err != nil {
@@ -859,8 +860,8 @@ func TestTheUnitGivesTheDaemonTimeToFinishARefresh(t *testing.T) {
 		t.Fatalf("the unit sets no TimeoutStopSec:\n%s", unit)
 	}
 	seconds, _ := strconv.Atoi(m[1])
-	if got := time.Duration(seconds) * time.Second; got < stopGrace {
-		t.Fatalf("TimeoutStopSec is %v, want at least %v", got, stopGrace)
+	if got := time.Duration(seconds) * time.Second; got < stopGrace || got < 90*time.Second {
+		t.Fatalf("TimeoutStopSec is %v, want at least %v and no less than systemd's own default of 90s", got, stopGrace)
 	}
 	at := strings.Index(unit, "TimeoutStopSec=")
 	if service, install := strings.Index(unit, "[Service]"), strings.Index(unit, "[Install]"); at < service || at > install {
@@ -878,8 +879,10 @@ package autostart
 
 import "testing"
 
-// A scheduled task has no stop time of its own: how long Restart waits for the daemon to let go of its lock after
-// the task was ended is the setting this code has, and it allows a daemon as long as the other managers do.
+// A scheduled task has no stop time of its own, and a task that is ended may be terminated outright: a restart
+// inside a refresh is the A24 case. How long Restart waits for the daemon to let go of its lock after the task was
+// ended is the one number this code has, and it follows the other managers' stop time, so that a daemon that does
+// stop by itself is not reported as still running.
 func TestRestartWaitsForAStoppingDaemonAsLongAsTheOtherManagersAllowIt(t *testing.T) {
 	if daemonStopWait < stopGrace {
 		t.Fatalf("daemonStopWait = %v, want at least %v", daemonStopWait, stopGrace)
@@ -933,8 +936,9 @@ with:
 // stopped while its account guard renews the session waits for the refresh grant in flight and then for the
 // key-store write of its answer (spec A20, A22): about 20 seconds with B1a's and B1b's timeouts, 30 at the
 // worst. A manager that kills it sooner loses the answer, which is the A24 case: the account survives and this
-// machine signs in again. launchd's default ExitTimeOut is 20 seconds, so every definition says how long it
-// allows, and the Windows wait of Restart is the same number.
+// machine signs in again. launchd's default ExitTimeOut is 20 seconds, so its definition says how long it
+// allows, and systemd's says at least as much. A scheduled task on Windows has no stop time to set: its Restart
+// waits this long for the daemon to let go of its lock.
 const stopGrace = 35 * time.Second
 
 // Installer registers and removes the per-user auto-start entry. Each OS
@@ -1051,6 +1055,24 @@ with:
 In `internal/autostart/autostart_linux.go`, replace this text:
 
 ```go
+const unitName = "monoagent-daemon.service"
+```
+
+with:
+
+```go
+const unitName = "monoagent-daemon.service"
+
+// systemdStopTimeout is the stop time the unit asks for: systemd's own default, written down so that a
+// distribution's or a user's setting cannot lower it, and never shorter than stopGrace. The daemon drains
+// the runs that are in flight when it is stopped, which may take longer than a refresh needs, so the unit
+// does not shorten the 90 seconds a stock system gives it.
+const systemdStopTimeout = 90 * time.Second
+```
+
+In `internal/autostart/autostart_linux.go`, replace this text:
+
+```go
 Restart=on-failure
 RestartSec=5
 ```
@@ -1075,7 +1097,7 @@ with:
 	if err := tmpl.Execute(&b, struct {
 		Exe     string
 		StopSec int
-	}{systemdQuote(exe), int(stopGrace / time.Second)}); err != nil {
+	}{systemdQuote(exe), int(systemdStopTimeout / time.Second)}); err != nil {
 ```
 
 In `internal/autostart/autostart_windows.go`, replace this text:
@@ -1090,8 +1112,9 @@ with:
 
 ```go
 // daemonStopWait is how long Restart waits for the daemon to let go of its lock after its task
-// was ended: as long as the other service managers allow a daemon to stop (stopGrace), because a
-// daemon that is finishing a refresh grant and saving its answer needs that time.
+// was ended: as long as the other service managers allow a daemon to stop (stopGrace), so that a
+// daemon that stops by itself is not reported as still running. A scheduled task has no stop time of
+// its own, and an ended task may be terminated outright.
 const daemonStopWait = stopGrace
 ```
 
@@ -1114,7 +1137,7 @@ GOOS=darwin GOARCH=arm64 go vet ./internal/autostart/
 
 Expected: no output. Each cross-vet type-checks the files and the test of that platform, which CI (Linux only) does not run.
 
-- [ ] **Step 6: Say the limits in the report.** (1) A registration made before this change keeps its old definition until `daemon install` runs again (it replaces the registration): `update` restarts the old definition and does not rewrite it, so the longer stop time reaches an existing install only then, and until then a kill inside launchd's 20 seconds is the A24 case. (2) The stop time applies when the manager stops the daemon through its own stop path (`launchctl bootout`, `systemctl --user stop` or `restart`, a logout, a shutdown). `Restart` on macOS is `launchctl kickstart -k`, which launchd documents as killing the running instance, so a restart that lands inside a refresh is the A24 case whatever `ExitTimeOut` says; the marker covers it. (3) Not changed here: the desktop's own grace period for the CLI children it stops (`healthGracePeriod`, 15 seconds, `wails-app/app_health.go`) is not a service definition. A child that is stopped inside a refresh is the same case, and B4 may want the same number.
+- [ ] **Step 6: Say the limits in the report.** (1) A registration made before this change keeps its old definition until `daemon install` runs again (it replaces the registration): `update` restarts the old definition and does not rewrite it, so the longer stop time reaches an existing install only then, and until then a kill inside launchd's 20 seconds is the A24 case. (2) The stop time applies when the manager stops the daemon through its own stop path (`launchctl bootout`, `systemctl --user stop` or `restart`, a logout, a shutdown). `Restart` on macOS is `launchctl kickstart -k`, which launchd documents as killing the running instance, so a restart that lands inside a refresh may not get `ExitTimeOut` at all; the marker covers it. (3) Windows has no counterpart of `ExitTimeOut` in this code. A scheduled task has no stop time, and this code does not rely on a graceful stop there: a restart, an uninstall or a logoff that ends the task inside a refresh is the A24 case, covered by the marker, and `daemonStopWait` only sets how long `Restart` waits for the lock. (4) systemd's stock default is 90 seconds, so the unit writes 90 and not 35: a smaller number would shorten what a stock system already allows and cut the drain of the runs in flight. 90 meets the 35-second floor. (5) Not changed here: the desktop's own grace period for the CLI children it stops (`healthGracePeriod`, 15 seconds, `wails-app/app_health.go`) is not a service definition. A child that is stopped inside a refresh is the same case, and B4 may want the same number.
 
 - [ ] **Step 7: Commit.**
 
