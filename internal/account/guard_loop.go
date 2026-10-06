@@ -9,8 +9,11 @@ import (
 // tells OnRefused callbacks about a refusal, and refreshes at half the token's
 // lifetime, retrying a failure with a backoff of 30 seconds doubling to 5
 // minutes. It is idempotent, does nothing while the package is dormant (spec
-// D22) and ends when ctx ends or the guard is closed. A daemon starts it at
-// once; any other process starts it after LateRefresher.
+// D22) and ends when ctx ends or the guard is closed, after a grant in flight is
+// answered and stored: a grant once sent is never abandoned (A20), so the end of
+// ctx and Close wait for it, for at most the grant's timeout and the key store
+// write that follows. A daemon starts it at once; any other process starts it
+// after LateRefresher.
 //
 // A guard starts one loop in its life. A loop that has ended with its ctx leaves
 // loopCancel set, so every later call is a no-op and the ctx of the first call

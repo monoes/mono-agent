@@ -112,10 +112,14 @@ func TestTheRefresherEndsWithItsContext(t *testing.T) {
 	}
 }
 
-func TestCloseStopsARefresherThatIsMidCallAndRecordsNothing(t *testing.T) {
+// A grant the server may already have rotated is never abandoned (A20): Close
+// waits for the call in flight and the answer is stored, so the token the server
+// now expects is on disk and no later attempt presents the dead one.
+func TestCloseWaitsForAGrantInFlightAndStoresItsAnswer(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour)
-	e.ref.set(func(r *fakeRefresher) { r.block = true })
+	release := make(chan struct{})
+	e.ref.set(func(r *fakeRefresher) { r.hold = release })
 	g := e.newGuard(loopPoll)
 	g.StartRefresher(context.Background())
 	eventually(t, "the attempt to start", func() bool { return e.ref.calls.Load() == 1 })
@@ -128,19 +132,28 @@ func TestCloseStopsARefresherThatIsMidCallAndRecordsNothing(t *testing.T) {
 	}()
 	select {
 	case <-done:
+		t.Fatal("Close returned while a refresh grant was in flight: the server may have rotated the token and its answer would be lost")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("Close did not stop a refresher that was inside a network call")
+		t.Fatal("Close did not return once the grant was answered")
+	}
+	if rt, err := e.store.LoadRefresh(); err != nil || rt != "rt-2" {
+		t.Fatalf("stored refresh token = %q (%v), want rt-2: the answer of a grant in flight must be stored", rt, err)
 	}
 	if got := e.session().LastResult; got != "ok" {
-		t.Fatalf("LastResult = %q: an attempt cut short by Close says nothing about the account", got)
+		t.Fatalf("LastResult = %q, want ok", got)
 	}
 	g.StartRefresher(context.Background()) // a closed guard starts nothing
 	settle()
 	if n := e.ref.calls.Load(); n != 1 {
 		t.Fatalf("%d calls: a closed guard started a loop", n)
 	}
-	if st := g.Status(); st.State != account.StateGrace {
-		t.Fatalf("a closed guard still answers Status: %s", st.State)
+	if st := g.Status(); st.State != account.StateOK {
+		t.Fatalf("a closed guard still answers Status, and the stored answer makes it ok: %s", st.State)
 	}
 }
 

@@ -78,10 +78,13 @@ func TestCloseDoesNotWaitForTheNextTick(t *testing.T) {
 	}
 }
 
-func TestCancellingTheContextStopsARefresherThatIsMidCallAndRecordsNothing(t *testing.T) {
+// The context of the refresher ends the loop, never the grant it has sent (A20):
+// the loop ends once the call in flight is answered and stored.
+func TestCancellingTheContextWaitsForAGrantInFlightAndStoresItsAnswer(t *testing.T) {
 	e := newEnv(t)
-	before := e.signIn(2*time.Hour, time.Hour)
-	e.ref.set(func(r *fakeRefresher) { r.block = true })
+	e.signIn(2*time.Hour, time.Hour)
+	release := make(chan struct{})
+	e.ref.set(func(r *fakeRefresher) { r.hold = release })
 	g := e.newGuard(loopPoll)
 	ctx, cancel := context.WithCancel(context.Background())
 	g.StartRefresher(ctx)
@@ -91,16 +94,28 @@ func TestCancellingTheContextStopsARefresherThatIsMidCallAndRecordsNothing(t *te
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		g.Close() // returns at once only if the loop has ended
+		g.Close() // returns only once the loop has ended
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the refresher did not end with its context while it was inside a network call")
+		t.Fatal("the loop ended while a refresh grant was in flight: the server may have rotated the token and its answer would be lost")
+	case <-time.After(300 * time.Millisecond):
 	}
-	after := e.session()
-	if after.LastResult != "ok" || !after.LastAttempt.Equal(before.LastAttempt) {
-		t.Fatalf("LastResult = %q, LastAttempt = %v (was %v): an attempt cut short by its context says nothing about the account", after.LastResult, after.LastAttempt, before.LastAttempt)
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the refresher did not end once the grant was answered")
+	}
+	if rt, err := e.store.LoadRefresh(); err != nil || rt != "rt-2" {
+		t.Fatalf("stored refresh token = %q (%v), want rt-2: the answer of a grant in flight must be stored", rt, err)
+	}
+	if got := e.session().LastResult; got != "ok" {
+		t.Fatalf("LastResult = %q, want ok", got)
+	}
+	settle()
+	if n := e.ref.calls.Load(); n != 1 {
+		t.Fatalf("%d calls: the loop went on after its context ended", n)
 	}
 }
 
