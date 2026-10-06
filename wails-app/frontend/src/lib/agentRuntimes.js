@@ -26,7 +26,10 @@ export function cachedAgentScan() {
     return Promise.resolve(cached.res)
   }
   return api.scanAgentRuntimes().then(res => {
-    cached = { res, at: Date.now() }
+    // Only a scan that worked is kept for the window. A failed one (monomind killed by a
+    // timeout while the machine is overloaded, say) would be shown again and again, for the
+    // whole window, after the cause is gone.
+    if (res && !res.error) cached = { res, at: Date.now() }
     return res
   })
 }
