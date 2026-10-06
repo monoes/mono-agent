@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 )
 
 // slot is one card of a column in the model below: its id and its position.
 type slot struct{ id, pos int64 }
 
 // colModel is the five columns as spec 4.6 says they behave, written without the store's code:
-// each column top to bottom; a card goes before, after, to the top or the bottom of the column, or
-// to its default end (the top of Inbox, Review and Done, the bottom of Ready and In progress); an
-// end takes a gap of 1024 beyond the end card, two neighbours the midpoint of theirs, and when no
-// integer is left between the neighbours the column is renumbered 1024, 2048, ... top to bottom
-// with the card in its place.
+// each column top to bottom; a card goes before, after, to the top or the bottom of the column, or,
+// when it is new to the column and no place is asked for, to its default end (the top of Inbox,
+// Review and Done, the bottom of Ready and In progress); a card that is in the column already and
+// asks for no place stays where it is; an end takes a gap of 1024 beyond the end card, two
+// neighbours the midpoint of theirs, and when no integer is left between the neighbours the column
+// is renumbered 1024, 2048, ... top to bottom with the card in its place.
 type colModel map[Status][]slot
 
 func modelOf(t *testing.T, s *Store) colModel {
@@ -38,6 +40,9 @@ func (m colModel) move(id int64, to Status, p Placement) {
 	for st, col := range m {
 		for i, c := range col {
 			if c.id == id {
+				if st == to && p == (Placement{}) {
+					return // in the column already and no place asked for: it stays
+				}
 				m[st] = append(append([]slot{}, col[:i]...), col[i+1:]...)
 				break
 			}
@@ -185,7 +190,6 @@ func TestPlaceDoesNotCountTheCardItself(t *testing.T) {
 	}{
 		{"the top card to the top", a.ID, Placement{Top: true}, 1024},
 		{"the bottom card to the bottom", c.ID, Placement{Bottom: true}, 3072},
-		{"the bottom card to the default end of Ready", c.ID, Placement{}, 3072},
 		{"the middle card to the top", b.ID, Placement{Top: true}, 0},
 		{"that card, now the top one, to the bottom", b.ID, Placement{Bottom: true}, 4096},
 	} {
@@ -196,7 +200,7 @@ func TestPlaceDoesNotCountTheCardItself(t *testing.T) {
 	}
 }
 
-// No placement means the default end of the column the card goes to, in every column.
+// No placement means the default end of the column for a card that is new to it, in every column.
 func TestPlaceWithNoPlacementGoesToTheDefaultEndOfEachColumn(t *testing.T) {
 	for _, k := range []struct {
 		to   Status
@@ -206,12 +210,23 @@ func TestPlaceWithNoPlacementGoesToTheDefaultEndOfEachColumn(t *testing.T) {
 	} {
 		t.Run(string(k.to), func(t *testing.T) {
 			s, _, _ := newTestStore(t)
+			// a card that is not in the column yet: a new card starts in Inbox, so for Inbox it goes
+			// through Done first
+			fresh := func() int64 {
+				id := mustAdd(t, s, "default", "x", false).ID
+				if k.to == StatusInbox {
+					if _, err := s.Move(bg, "default", id, StatusDone, Placement{}, human); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return id
+			}
 			for i := 0; i < 2; i++ {
-				if _, err := s.Move(bg, "default", mustAdd(t, s, "default", "x", false).ID, k.to, Placement{Bottom: true}, human); err != nil {
+				if _, err := s.Move(bg, "default", fresh(), k.to, Placement{Bottom: true}, human); err != nil {
 					t.Fatal(err)
 				}
 			}
-			got, err := s.Move(bg, "default", mustAdd(t, s, "default", "y", false).ID, k.to, Placement{}, human)
+			got, err := s.Move(bg, "default", fresh(), k.to, Placement{}, human)
 			if err != nil || got.Position != k.want {
 				t.Errorf("position %d, err %v, want %d", got.Position, err, k.want)
 			}
@@ -219,28 +234,78 @@ func TestPlaceWithNoPlacementGoesToTheDefaultEndOfEachColumn(t *testing.T) {
 	}
 }
 
-// A card moved to the column it is in is placed like any other: with no placement at the default
-// end of the column, with one where it says.
-func TestMoveToItsOwnColumnWithNoPlacementGoesToTheDefaultEnd(t *testing.T) {
-	s, _, _ := newTestStore(t)
-	a, b, c := mustAdd(t, s, "default", "a", true), mustAdd(t, s, "default", "b", true), mustAdd(t, s, "default", "c", true)
-	if _, err := s.Move(bg, "default", b.ID, StatusReady, Placement{}, human); err != nil {
-		t.Fatal(err)
-	}
-	if got := column(t, s, StatusReady); !sameIDs(got, []int64{a.ID, c.ID, b.ID}) {
-		t.Errorf("Ready, the middle card moved to Ready: %v, want it at the bottom", got)
-	}
-	x, y, z := mustAdd(t, s, "default", "x", false), mustAdd(t, s, "default", "y", false), mustAdd(t, s, "default", "z", false)
-	for _, task := range []Task{x, y, z} {
-		if _, err := s.Move(bg, "default", task.ID, StatusDone, Placement{}, human); err != nil {
+// A card that is in the column already and asks for no place stays where it is, in every column and
+// also when it is held: nothing is written, not an event, not the revision, not the time of the card,
+// and what comes back is the card as it was.
+func TestMoveToTheColumnItIsInWithNoPlacementChangesNothing(t *testing.T) {
+	s, db, c := newTestStore(t)
+	place := func(st Status, title string) Task {
+		task := mustAdd(t, s, "default", title, false)
+		got, err := s.Move(bg, "default", task.ID, st, Placement{Bottom: true}, human)
+		if err != nil {
 			t.Fatal(err)
 		}
+		return got
 	}
-	if _, err := s.Move(bg, "default", y.ID, StatusDone, Placement{}, human); err != nil {
+	middle := map[Status]Task{}
+	for _, st := range BoardStatuses {
+		place(st, "first "+string(st))
+		middle[st] = place(st, "middle "+string(st))
+		place(st, "last "+string(st))
+	}
+	if _, err := db.Exec(`UPDATE tasks SET claimed_by = 'bob', claim_until = ? WHERE id = ?`, c.t.Add(time.Hour).Format(timeFmt), middle[StatusInProgress].ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := column(t, s, StatusDone); !sameIDs(got, []int64{y.ID, z.ID, x.ID}) {
-		t.Errorf("Done, the middle card moved to Done: %v, want it at the top", got)
+	before := dumpBoard(t, db)
+	rev, _ := s.Rev(bg, "default")
+	c.advance(time.Hour)
+	for _, st := range BoardStatuses {
+		was, _, _ := s.Get(bg, "default", middle[st].ID)
+		got, err := s.Move(bg, "default", was.ID, st, Placement{}, human)
+		if err != nil || got.Status != st || got.Position != was.Position || !got.UpdatedAt.Equal(was.UpdatedAt) || (got.Claim != nil) != (st == StatusInProgress) {
+			t.Errorf("%s: %+v, %v, want the card as it was: %+v", st, got, err, was)
+		}
+		if got.LastEvent == nil || was.LastEvent == nil || got.LastEvent.Kind != was.LastEvent.Kind || !got.LastEvent.At.Equal(was.LastEvent.At) {
+			t.Errorf("%s: last event %+v, was %+v", st, got.LastEvent, was.LastEvent)
+		}
+	}
+	if after := dumpBoard(t, db); after != before {
+		t.Errorf("moves that asked for nothing changed the database:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if now, _ := s.Rev(bg, "default"); now != rev {
+		t.Errorf("the revision moved from %d to %d", rev, now)
+	}
+}
+
+// With a place asked for it is a reorder, written as one moved event (from and to the same column)
+// and one revision, also when the place is where the card is already.
+func TestMoveToTheColumnItIsInWithAPlacementReordersAndWritesOneEventAndOneBump(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	a, b, c := mustAdd(t, s, "default", "a", true), mustAdd(t, s, "default", "b", true), mustAdd(t, s, "default", "c", true)
+	for _, k := range []struct {
+		name string
+		id   int64
+		p    Placement
+		want []int64
+	}{
+		{"top", c.ID, Placement{Top: true}, []int64{c.ID, a.ID, b.ID}},
+		{"bottom", c.ID, Placement{Bottom: true}, []int64{a.ID, b.ID, c.ID}},
+		{"before", c.ID, Placement{Before: b.ID}, []int64{a.ID, c.ID, b.ID}},
+		{"after", a.ID, Placement{After: b.ID}, []int64{c.ID, b.ID, a.ID}},
+		{"top, for the card that is on top already", c.ID, Placement{Top: true}, []int64{c.ID, b.ID, a.ID}},
+	} {
+		rev, _ := s.Rev(bg, "default")
+		events := len(opsEvents(t, s, k.id))
+		if _, err := s.Move(bg, "default", k.id, StatusReady, k.p, human); err != nil {
+			t.Fatalf("%s: %v", k.name, err)
+		}
+		if got := column(t, s, StatusReady); !sameIDs(got, k.want) {
+			t.Errorf("%s: Ready is %v, want %v", k.name, got, k.want)
+		}
+		ev := opsEvents(t, s, k.id)
+		if now, _ := s.Rev(bg, "default"); now != rev+1 || len(ev) != events+1 || ev[len(ev)-1] != "moved|you|ready>ready|" {
+			t.Errorf("%s: revision %d (was %d), events %v (there were %d), want one more of each and the last a move within Ready", k.name, now, rev, ev, events)
+		}
 	}
 }
 

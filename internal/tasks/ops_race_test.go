@@ -68,7 +68,8 @@ func TestMovesAtOnceKeepEveryColumnInOrder(t *testing.T) {
 		wg.Go(func() {
 			r := rand.New(rand.NewSource(int64(w)))
 			for i := 0; i < perCaller; i++ {
-				p := []Placement{{}, {Top: true}, {Bottom: true}}[r.Intn(3)]
+				// always a placement: a card that is in the column and asks for none is not written
+				p := []Placement{{Top: true}, {Bottom: true}}[r.Intn(2)]
 				if _, err := s.Move(bg, "default", ids[r.Intn(len(ids))], BoardStatuses[r.Intn(len(BoardStatuses))], p, human); err != nil {
 					errs <- err
 				}

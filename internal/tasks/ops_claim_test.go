@@ -222,3 +222,63 @@ func TestAStrayClaimIsEndedByWhateverMovesTheCard(t *testing.T) {
 		})
 	}
 }
+
+// Every way out of In progress ends the claim in the table itself, not only in what a reader shows:
+// afterwards both claim columns are empty and the exit is a released event from In progress. The
+// held cards are rows written straight into the table, with a lease that is live and with one that
+// has run out. (Archive and ArchiveStatus go to the archive; Move to the four other columns.)
+func TestEveryExitFromInProgressEmptiesBothClaimColumnsOfTheTable(t *testing.T) {
+	move := func(to Status) func(s *Store, id int64) error {
+		return func(s *Store, id int64) error {
+			_, err := s.Move(bg, "default", id, to, Placement{}, human)
+			return err
+		}
+	}
+	exits := []struct {
+		name string
+		to   Status
+		run  func(s *Store, id int64) error
+	}{
+		{"Move to inbox", StatusInbox, move(StatusInbox)},
+		{"Move to ready", StatusReady, move(StatusReady)},
+		{"Move to review", StatusReview, move(StatusReview)},
+		{"Move to done", StatusDone, move(StatusDone)},
+		{"Archive", StatusArchived, func(s *Store, id int64) error {
+			_, err := s.Archive(bg, "default", []int64{id}, human)
+			return err
+		}},
+		{"ArchiveStatus", StatusArchived, func(s *Store, id int64) error {
+			_, err := s.ArchiveStatus(bg, "default", StatusInProgress, human)
+			return err
+		}},
+	}
+	for _, lease := range []struct {
+		name string
+		d    time.Duration
+	}{{"a live lease", time.Hour}, {"a lease that has run out", -time.Hour}} {
+		for _, k := range exits {
+			t.Run(k.name+", "+lease.name, func(t *testing.T) {
+				s, db, c := newTestStore(t)
+				id := seedRow(t, db, "default", "in_progress")
+				if _, err := db.Exec(`UPDATE tasks SET claimed_by = 'bob', claim_until = ? WHERE id = ?`, c.t.Add(lease.d).Format(timeFmt), id); err != nil {
+					t.Fatal(err)
+				}
+				if by, until := opsClaim(t, db, id); by != "bob" || until == "" {
+					t.Fatalf("setup: claim columns %q and %q", by, until)
+				}
+				if err := k.run(s, id); err != nil {
+					t.Fatal(err)
+				}
+				if by, until := opsClaim(t, db, id); by != "" || until != "" {
+					t.Errorf("claim columns after the exit: %q and %q, want both empty", by, until)
+				}
+				if n := countWhere(t, db, "task_events", "task_id = ? AND kind = 'released' AND from_status = 'in_progress' AND to_status = ?", id, string(k.to)); n != 1 {
+					t.Errorf("%d released events from in_progress to %s, want 1", n, k.to)
+				}
+				if n := countWhere(t, db, "tasks", "id = ? AND status = ?", id, string(k.to)); n != 1 {
+					t.Errorf("the card is not in %s", k.to)
+				}
+			})
+		}
+	}
+}

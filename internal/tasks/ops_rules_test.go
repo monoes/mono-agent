@@ -268,6 +268,14 @@ func TestEveryWriteBumpsTheRevisionOnceAndNothingElseDoes(t *testing.T) {
 			_, err := s.Move(bg, "default", r[1], StatusReady, Placement{Top: true, Bottom: true}, human)
 			return err
 		}},
+		{"a move to the column the card is in, asking for no place", 0, false, func() error {
+			_, err := s.Move(bg, "default", r[2], StatusReady, Placement{}, human)
+			return err
+		}},
+		{"a move to the column the card is in, asking for a place", 1, false, func() error {
+			_, err := s.Move(bg, "default", r[2], StatusReady, Placement{Top: true}, human)
+			return err
+		}},
 		{"an approval of three", 1, false, func() error { _, err := s.Approve(bg, "default", a, false, human); return err }},
 		{"an approval that fails on its last card", 0, true, func() error {
 			_, err := s.Approve(bg, "default", []int64{b[0], b[1], r[1]}, false, human)

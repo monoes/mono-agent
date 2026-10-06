@@ -203,7 +203,9 @@ func (s *Store) moveTx(ctx context.Context, x dbx, profileID string, cur Task, t
 }
 
 // Move puts a task in one of the five columns, where p says. With no placement a
-// card goes to the default end of the column, also when it is the column it is in.
+// card new to the column goes to its default end; a card that is in the column
+// already stays where it is, and nothing is written (a placement, even one that
+// changes no order, is a reorder: it writes a moved event and moves the revision).
 func (s *Store) Move(ctx context.Context, profileID string, id int64, to Status, p Placement, actor Actor) (Task, error) {
 	if actor.Kind != Human {
 		return Task{}, operatorOnly("move a task")
@@ -219,6 +221,10 @@ func (s *Store) Move(ctx context.Context, profileID string, id int64, to Status,
 		cur, err := s.getTx(ctx, x, profileID, id)
 		if err != nil {
 			return err
+		}
+		if cur.Status == to && p.set() == 0 {
+			out = cur
+			return nil
 		}
 		if err := s.moveTx(ctx, x, profileID, cur, to, p, actor, "moved", ""); err != nil {
 			return err

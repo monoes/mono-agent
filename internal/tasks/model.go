@@ -223,8 +223,9 @@ type Edit struct {
 }
 
 // Placement says where a moved card goes in its new column. At most one field
-// may be set; none means the column's default (the top of Inbox, Review and
-// Done, the bottom of Ready and In progress).
+// may be set. None means the column's default end (the top of Inbox, Review and
+// Done, the bottom of Ready and In progress) for a card that is new to the
+// column; a card that is in it already stays where it is.
 type Placement struct {
 	Before, After int64 // the id of a card in the target column
 	Top, Bottom   bool
