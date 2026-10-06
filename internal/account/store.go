@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,12 +25,102 @@ const (
 type Store interface {
 	Load() (*Session, error)                             // nil, nil when there is no session.json
 	Save(*Session) error                                 // atomic, 0600
-	LoadRefresh() (string, error)                        // "", nil when none; ErrKeyringUnavailable when the key store cannot be opened
-	SaveRefresh(token string) error                      // seals it; the directory is created here if needed
+	LoadRefresh() (string, error)                        // "", nil when none; ErrKeyringUnavailable when the key store cannot be opened, does not answer in time or still waits for an earlier call
+	SaveRefresh(token string) error                      // seals it; the directory is created here if needed; ErrKeyringUnavailable as LoadRefresh
 	DeleteRefresh() error                                // nil when there is none
 	Lock(ctx context.Context) (unlock func(), err error) // exclusive, cross-process
 	Mtime() (time.Time, error)                           // of session.json; zero time when absent
 	Dir() string
+}
+
+// keyStoreTimeout is how long the store waits for one call into the key store
+// (Open or Seal of the refresh token) before it gives up on it. Both calls are
+// made while session.lock is held, the second one after monoes.me has rotated
+// the refresh token, and the OS key stores wait without bound for a locked
+// keychain or an unlock prompt nobody answers: one waiting key store would hold
+// the lock against every process of the machine, stop every refresh and every
+// sign-in, and keep Close and Ctrl-C waiting. The interactive sealer of the
+// sign-in, which waits for a person, is exempt (callKeyStore). A var so that a
+// test can shorten it.
+var keyStoreTimeout = 10 * time.Second
+
+// keyStoreResult is what one call into the key store answered.
+type keyStoreResult struct {
+	data []byte
+	err  error
+}
+
+// keyStoreLimit counts the bounded calls into the key store that were given up
+// on and have not returned yet: parked, a goroutine each and, with go-keyring on
+// macOS, a `security` child process each. A key store that never answers (an
+// unlock dialog nobody sees) is asked again by every attempt, by a daemon every 30
+// s to 5 min, and without a limit each attempt that timed out would leave one more
+// call parked until someone answers. So while one is parked callKeyStore starts no
+// other bounded call: it fails at once with an error that is ErrKeyringUnavailable,
+// which the guard records as keyring_unavailable as it records a timeout.
+type keyStoreLimit struct{ parked atomic.Int32 }
+
+// processKeyStoreLimit is the limit every store of this process shares: they all
+// ask the same key store, so a call that one left parked refuses the calls of the
+// others. A test gives a store a limit of its own to stand for another process.
+var processKeyStoreLimit = &keyStoreLimit{}
+
+// callKeyStore runs fn, one call into the key store through sealer s, and waits
+// for its result for at most keyStoreTimeout. When the wait ends first it returns
+// an error that is ErrKeyringUnavailable: the key store is not usable now, which
+// is no decision about the account, so the guard keeps the session's grace. The
+// call itself cannot be cancelled: it goes on in its goroutine until the key
+// store answers, and then ends, because the channel is buffered and its result is
+// dropped. Only the call runs there: what the caller does with a result, writing
+// refresh.enc, happens on the caller's goroutine and only for a result that came
+// in time, so a call that was given up on can never write anything.
+//
+// A call that was given up on is parked in l until it returns, and while one is
+// parked no other bounded call starts: it fails at once, saying that the key store
+// is still waiting for an earlier request (see keyStoreLimit).
+//
+// A sealer that may wait for a person (the interactive keyring sealer, see
+// isPrompting) is neither bounded nor counted: fn runs on the caller's goroutine
+// and is waited for. A person types the passphrase and answers the unlock dialog,
+// which takes as long as it takes; the explicit sign-in owns the terminal, and the
+// lock is held by that command alone, so another process's refresh only waits
+// behind it.
+func callKeyStore(l *keyStoreLimit, s Sealer, fn func() ([]byte, error)) ([]byte, error) {
+	if isPrompting(s) {
+		return fn()
+	}
+	if l.parked.Load() > 0 {
+		return nil, fmt.Errorf("%w: the key store is still waiting for an earlier request", ErrKeyringUnavailable)
+	}
+	const (
+		callRunning  = iota // the caller waits for the call
+		callParked          // the caller gave up on the call, which is counted until it returns
+		callReturned        // the call returned
+	)
+	var state atomic.Int32
+	done := make(chan keyStoreResult, 1)
+	go func() {
+		data, err := fn()
+		done <- keyStoreResult{data, err}
+		if !state.CompareAndSwap(callRunning, callReturned) {
+			l.parked.Add(-1) // the caller had given up on it: the key store has answered at last
+		}
+	}()
+	timeout := keyStoreTimeout
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.data, r.err
+	case <-timer.C:
+		l.parked.Add(1)
+		if state.CompareAndSwap(callRunning, callParked) {
+			return nil, fmt.Errorf("%w: the key store did not answer within %v", ErrKeyringUnavailable, timeout)
+		}
+		l.parked.Add(-1) // the call returned as the timer fired: its result is in the channel
+		r := <-done
+		return r.data, r.err
+	}
 }
 
 // DefaultDir is ~/.monoagent/account, found through os.UserHomeDir. The path
@@ -45,14 +136,15 @@ func DefaultDir() (string, error) {
 type fileStore struct {
 	dir    string
 	sealer Sealer
-	err    error // the default directory could not be resolved: no session can exist, and none can be written
+	limit  *keyStoreLimit // the parked key store calls this store counts; the process's, unless a test says otherwise
+	err    error          // the default directory could not be resolved: no session can exist, and none can be written
 }
 
 // OpenStore opens the session in dir (the default directory when dir is "")
 // with s as the refresh-token sealer (the production keyring sealer when s is
 // nil). It touches nothing on disk.
 func OpenStore(dir string, s Sealer) Store {
-	st := &fileStore{dir: dir, sealer: s}
+	st := &fileStore{dir: dir, sealer: s, limit: processKeyStoreLimit}
 	if dir == "" {
 		st.dir, st.err = DefaultDir()
 	}
@@ -119,7 +211,9 @@ func (s *fileStore) Mtime() (time.Time, error) {
 
 // LoadRefresh unseals the refresh token. A missing refresh.enc is "", nil and
 // never reaches the key store, so reading a machine with no session cannot
-// raise a keychain prompt.
+// raise a keychain prompt. A key store that does not answer within
+// keyStoreTimeout, or that still waits for an earlier call that timed out, is
+// ErrKeyringUnavailable (callKeyStore).
 func (s *fileStore) LoadRefresh() (string, error) {
 	if s.err != nil {
 		return "", nil
@@ -131,13 +225,16 @@ func (s *fileStore) LoadRefresh() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("account: reading %s: %w", refreshFile, err)
 	}
-	plain, err := s.sealer.Open(sealed)
+	plain, err := callKeyStore(s.limit, s.sealer, func() ([]byte, error) { return s.sealer.Open(sealed) })
 	if err != nil {
 		return "", err
 	}
 	return string(plain), nil
 }
 
+// SaveRefresh seals the refresh token and writes refresh.enc. A key store that
+// does not answer within keyStoreTimeout, or that still waits for an earlier call
+// that timed out, is ErrKeyringUnavailable, and nothing is written.
 func (s *fileStore) SaveRefresh(token string) error {
 	if s.err != nil {
 		return s.err
@@ -145,7 +242,7 @@ func (s *fileStore) SaveRefresh(token string) error {
 	if token == "" {
 		return errors.New("account: empty refresh token")
 	}
-	sealed, err := s.sealer.Seal([]byte(token))
+	sealed, err := callKeyStore(s.limit, s.sealer, func() ([]byte, error) { return s.sealer.Seal([]byte(token)) })
 	if err != nil {
 		return err
 	}

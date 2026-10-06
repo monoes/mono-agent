@@ -31,6 +31,7 @@ type fakeRefresher struct {
 	kid       string        // the kid of the access token it mints
 	delay     time.Duration // spent inside the call, so racing callers overlap
 	block     bool          // wait for the context instead of answering
+	hold      chan struct{} // wait until it is closed, then answer; the context still ends the wait
 }
 
 func (r *fakeRefresher) set(fn func(*fakeRefresher)) {
@@ -42,11 +43,18 @@ func (r *fakeRefresher) set(fn func(*fakeRefresher)) {
 func (r *fakeRefresher) Refresh(ctx context.Context, refreshToken string) (*account.TokenSet, error) {
 	r.calls.Add(1)
 	r.mu.Lock()
-	block, delay := r.block, r.delay
+	block, hold, delay := r.block, r.hold, r.delay
 	r.mu.Unlock()
 	if block {
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if delay > 0 {
 		time.Sleep(delay)
