@@ -47,7 +47,7 @@ func TestATypedNilRefreshErrorIsAnOrdinaryFailureAndNeverARefusal(t *testing.T) 
 				t.Fatalf("stored session: %s, want it kept, not refused, with the attempt recorded as unreachable", describe(sess))
 			}
 			if rt, err := e.store.LoadRefresh(); err != nil || rt != "rt-1" {
-				t.Fatalf("the refresh token is %q (err %v), want it untouched: a typed nil says nothing about the account", rt, err)
+				t.Fatalf("the stored refresh token is still the first one: %t (err %v), want it untouched: a typed nil says nothing about the account", rt == "rt-1", err)
 			}
 
 			// An ordinary failure goes into the negative cache: no second call at once.
