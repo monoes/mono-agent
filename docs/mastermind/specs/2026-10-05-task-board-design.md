@@ -31,7 +31,7 @@ A personal task board in monoagent that people and AI agents share. Every task s
 | D11 | Storage is migration 062: `tasks`, `task_events`, `task_board_rev` (§4), each keyed to `profiles`. Positions are integers with gaps; timestamps are fixed-width UTC text like the other stores. No triggers and no `/* */` (the migration splitter cannot read them). | lead |
 | D12 | A board revision, one counter per profile bumped by every write transaction, makes change detection a primary-key read. The app polls it in-process and refetches only when it moves. | lead |
 | D13 | Limits and cleaning of §4.6, enforced in the store so no surface can skip them. | lead |
-| D14 | Agent-created tasks are limited to 20 per hour per profile: a loop must not be able to flood Inbox. | lead |
+| D14 | Agent-created tasks are limited to 20 per hour per profile: a loop must not be able to flood Inbox. The window is half-open: a task created exactly an hour ago no longer counts. | lead |
 | D15 | CLI group `task` (alias `tasks`): `add`, `list`, `board`, `show`, `edit`, `move`, `approve`, `archive`, `unarchive`, `next`, `claim`, `comment`, `finish`, `release`, `digest`, and on macOS `os install`, `os status`, `os uninstall`. Exit codes 2 (not found) and 3 (invalid or refused); `--json` with snake_case tags and arrays never null; `{"error","code"}` on stdout for errors under `--json` (§7). | lead |
 | D16 | MCP: `task_list`, `task_get`, `task_next` (a peek) are read-only and join the default server; `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add` mutate (§8). Text fields are named `_untrusted` as the org tools do. Descriptions say "the user's monoagent task board, not a monomind org's issues": agents carrying the mastermind skills use `todo`, `in_progress`, `in_review`, `done` for org issues and would otherwise mix them up. | lead |
 | D17 | `mcp --tasks-only` (env `MONOAGENT_MCP_TASKS_ONLY=1`) serves only the `task_*` tools, as `--api-only` serves only `api_*`: `--allow-mutations`, which the mutating task tools need, also serves workflow tools that can run a command as the user, and this is how an operator gives an agent the one without the other. Not combinable with `--api-only` or `--grant`. | lead |
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS task_board_rev (
 
 ### 4.4 Events
 
-One row per change, written in the same transaction as the change. Kinds: `created`, `edited`, `moved`, `claimed`, `reclaimed` (a stale claim taken over), `comment`, `question`, `result`, `released`, `archived`, `unarchived`. A comment is refused (`limit`) once a task has 500 events, and the agent is told to finish or release; changes of state are always recorded.
+One row per change, written in the same transaction as the change. Kinds: `created`, `edited`, `moved`, `claimed`, `reclaimed` (a stale claim taken over), `comment`, `question`, `result`, `released`, `archived`, `unarchived`. A comment is refused (`limit`) once a task has 500 events, and the agent is told to finish or release; changes of state are always recorded. A claim is refused (`limit`) once a task holds 2,000 events, so a loop of claims and releases cannot grow the history without bound; finish, release and the operator's actions are still recorded and still work.
 
 ### 4.5 The profile: no general tasks
 
@@ -180,6 +180,8 @@ One row per change, written in the same transaction as the change. Kinds: `creat
 | list, get, next | yes | Ready, In progress and Review by default; Inbox, Done and archived only when named; `next` never reads Inbox | no |
 
 A refusal names its code: `operator_only`, `not_ready`, `claimed` (with who and until when), `not_claimant`, `limit`, `invalid_input`, `not_found`.
+
+The Ready gate is the first check of `add`: a caller that is not the operator and asks for Ready is refused (`operator_only`) whatever the text, title or source, before any validation. Names: the labels `you`, `agent`, `capture`, `chrome` and `os` are reserved and refused, ignoring case, as agent names, so an event's actor never reads as the operator's or a capture's; a capture's name is empty, `chrome` or `os` and agrees with its source (a capture with no name must say which source it is). A `--as` that is given but blank is an agent without a usable name, never the operator.
 
 ### 5.2 Claims and leases
 
