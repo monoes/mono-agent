@@ -234,13 +234,15 @@ func TestInstallForTestPutsBackTheGuardThatWasThere(t *testing.T) {
 
 // Install, Current, Require, CurrentStatus and InstallForTest are called from
 // many goroutines at once (the doors, the gate, the refresher's callbacks). Run
-// under -race: every access to the installed guard and to the strict flag goes
-// through globalsMu, and nobody holds it while asking the guard, which takes it
-// again to read the enforcement date: a writer waiting in between would
-// deadlock a reader that did.
+// under -race: every access to the installed guard, to the strict flag, to the
+// enforcement date and to the trusted keys goes through globalsMu, in the seams that
+// write them as in the accessors that read them, and nobody holds it while asking
+// the guard, which takes it again to read the enforcement date: a writer waiting in
+// between would deadlock a reader that did.
 func TestTheProcessGuardIsSafeFromManyGoroutines(t *testing.T) {
 	account.InstallForTest(t, nil)
 	e := newEnv(t) // the fixture enforces the gate
+	date, key := account.EnforceDate(), e.f.Key
 	e.signIn(0, time.Hour)
 	signedIn := e.newGuard(0)
 	locked := account.NewGuard(account.GuardOptions{Store: account.OpenStore(t.TempDir(), account.NewMemorySealer()), Now: e.f.Clock.Now})
@@ -278,6 +280,12 @@ func TestTheProcessGuardIsSafeFromManyGoroutines(t *testing.T) {
 			if st := account.CurrentStatus(); st.V != 1 || (st.State != account.StateOK && st.State != account.StateLocked) {
 				report("CurrentStatus = %+v", st)
 			}
+			if got := account.EnforceDate(); !got.Equal(date) {
+				report("EnforceDate = %v, want %v", got, date)
+			}
+			if got := account.TrustedKeys(); len(got) != 1 || got[0].KID != key.KID {
+				report("TrustedKeys has %d keys, want the fixture's one", len(got))
+			}
 		}
 	})
 	spawn(2, func() { // writers
@@ -307,7 +315,9 @@ func TestTheProcessGuardIsSafeFromManyGoroutines(t *testing.T) {
 		panic("the goroutines did not finish in 30 seconds: a deadlock on globalsMu")
 	})
 	defer watchdog.Stop()
-	// The main goroutine flips the strict flag while the others run.
+	// The main goroutine flips the strict flag, and sets the date and the keys to what they
+	// already are (what the seams lock is under test here, not what they set), while the
+	// others run.
 	for finished := false; !finished; {
 		select {
 		case <-done:
@@ -315,6 +325,8 @@ func TestTheProcessGuardIsSafeFromManyGoroutines(t *testing.T) {
 		default:
 			rec := &recTB{TB: t}
 			account.StrictForTest(rec)
+			account.SetEnforceFromForTest(rec, date)
+			account.SetTrustedKeysForTest(rec, []account.Key{key})
 			rec.end()
 		}
 	}
