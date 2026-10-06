@@ -185,14 +185,21 @@ func TestTheRefresherDropsATokenItCouldNotConfirmAndTheGraceKeepsSayingWhy(t *te
 		t.Fatalf("Status = %s/%q, want grace/unconfirmed", st.State, st.Reason)
 	}
 
-	// The loop goes on: every pass finds no token, and none writes anything.
-	dropped := describe(e.session())
+	// The loop goes on: every pass finds no token and records nothing. (While it backs off it
+	// keeps the high-water mark current, as it does after any failed attempt: only the mark moves.)
+	withoutMark := func(s *account.Session) string {
+		c := *s
+		c.HW = time.Time{}
+		return describe(&c)
+	}
+	droppedSess := e.session()
+	dropped := withoutMark(droppedSess)
 	for i := 0; i < 3; i++ {
 		e.f.Clock.Advance(6 * time.Minute) // past its backoff
 		quiet()
 	}
-	if got := describe(e.session()); got != dropped {
-		t.Fatalf("a pass of the loop changed the session after the drop: %s, was %s", got, dropped)
+	if got := e.session(); withoutMark(got) != dropped || got.HW.Before(droppedSess.HW) {
+		t.Fatalf("a pass of the loop changed the session after the drop: %s, was %s", describe(got), describe(droppedSess))
 	}
 	if st := g.Status(); st.Reason != account.ReasonUnconfirmed {
 		t.Fatalf("Status = %s/%q, want the reason to stay unconfirmed", st.State, st.Reason)
@@ -339,5 +346,37 @@ func TestTheRefreshersOwnLostAnswerAfterSettledFailuresIsRetriedFromThirtySecond
 	eventually(t, "the retry to be answered and stored", func() bool { return e.rawPending() == "" && e.session().LastResult == "ok" })
 	if srv.isRevoked() || !reflect.DeepEqual(srv.presented(), []string{"rt-1", "rt-1"}) {
 		t.Fatalf("monoes.me was presented %v (revoked %t), want the lost grant and its retry, inside the window", srv.presented(), srv.isRevoked())
+	}
+}
+
+// After a drop has completed (no refresh token, unconfirmed, no marker) the refresher has
+// nothing to try until a sign-in, and it backs off as it does after any failed attempt: a pass
+// at 0, 30, 90, 210 and 450 s in ten minutes, not one at every wake-up, each taking the session
+// lock and reading the session and the refresh token. Each records nothing.
+func TestTheRefresherBacksOffAfterACompletedDrop(t *testing.T) {
+	e := newEnv(t)
+	sess := e.signIn(2*time.Hour, time.Hour) // in grace: every pass of the refresher is due
+	sess.LastResult = "unconfirmed"
+	e.save(sess)
+	if err := e.store.DeleteRefresh(); err != nil {
+		t.Fatal(err)
+	}
+	cs := newCountingStore(account.OpenStore(e.dir, e.seal))
+	g := account.NewGuard(account.GuardOptions{Store: cs, Refresher: e.ref, Now: e.f.Clock.Now, Poll: loopPoll})
+	t.Cleanup(g.Close)
+	g.StartRefresher(context.Background())
+	for i := 0; i < 120; i++ { // ten minutes, five seconds at a time
+		time.Sleep(10 * time.Millisecond) // two wake-ups of the refresher at each instant
+		e.f.Clock.Advance(5 * time.Second)
+	}
+	quiet()
+	if n := cs.calls("LoadRefresh"); n < 4 || n > 6 {
+		t.Fatalf("%d passes read the refresh token in ten minutes, want the five of the backoff (30 s doubling to 5 min)", n)
+	}
+	if n := cs.calls("Lock"); n > 17 {
+		t.Fatalf("%d locks in ten minutes, want at most the five passes and one high-water write a minute", n)
+	}
+	if got := e.session(); got.LastResult != "unconfirmed" || !got.LastAttempt.Equal(sess.LastAttempt) || e.ref.calls.Load() != 0 {
+		t.Fatalf("stored session = %s with %d network refreshes, want unconfirmed, the last attempt as it was, and none", describe(got), e.ref.calls.Load())
 	}
 }

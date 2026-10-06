@@ -164,7 +164,9 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 			// A drop took the refresh token and recorded why (A24). There is nothing to
 			// present, and a key store problem recorded over that reason would have the
 			// grace say the wrong thing, and its end say expired instead of unconfirmed.
-			return st, outcomeSkipped, nil
+			// Nothing is recorded; the attempt counts as a failed one, so that the
+			// refresher backs off until a sign-in instead of trying at every wake-up.
+			return st, outcomeFailed, nil
 		case pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed):
 			// A token that must never be presented again and that cannot be read: it goes
 			// unread (os.Remove needs no key store). Recording the key store problem instead
