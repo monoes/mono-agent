@@ -64,8 +64,8 @@ func (g *Guard) runLoop(ctx context.Context) {
 		// the refresh that resets it (see elapsed). So does the verdict of a clock that
 		// went back: the loop that holds keeps the high-water mark current, so a clock
 		// corrected after that lies before the mark and is locked, and one refresh,
-		// which the corrected clock and monoes.me agree on, repairs it; nothing else
-		// would before the clock came round to the mark again.
+		// which the corrected clock and monoes.me agree on, repairs it; nothing in
+		// this process would before the clock came round to the mark again.
 		held := holdUntil.After(now) && !heldAt.After(now) && st.Reason != ReasonClockRollback
 		// A notBefore further away than the longest backoff means the clock went back.
 		if !held && (!notBefore.After(now) || notBefore.Sub(now) > backoffMax) {

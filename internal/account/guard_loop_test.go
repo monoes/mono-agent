@@ -188,7 +188,7 @@ func TestTheRefresherNoticesARefusalFromAnotherProcess(t *testing.T) {
 	g.OnRefused(func(st account.Status) { got <- st })
 	g.StartRefresher(context.Background())
 	settle()
-	e.save(&account.Session{V: 1, Host: account.HostURL, User: &account.User{ID: "user-1"}, State: "refused"})
+	e.storeRefusal() // under the lock, as another process must: the loop's first pass writes the stale mark under it
 	e.f.Clock.Advance(loopPoll)
 	select {
 	case <-got:
