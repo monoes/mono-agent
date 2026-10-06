@@ -333,16 +333,25 @@ func bumpHW(s *Session, now time.Time) {
 	}
 }
 
-// touchHW persists the high-water mark (spec §4.5): only when a session exists,
-// the package is not dormant, the stored mark is a minute stale, and this guard
-// has not tried in the last minute. It never waits long for the lock and never
-// reports a failure: a missed write is made up at the next call.
+// touchHW persists the high-water mark (spec §4.5): only when the package is not
+// dormant, the stored mark is a minute stale, and this guard has not tried in the
+// last minute. A refused session has no mark worth writing. A machine that has no
+// session at all keeps the record too, from the enforcement date on (A25): the date
+// is judged on max(now, hw) and hw lives only in session.json, so without a file a
+// clock set back to before the date would un-enforce the gate for a machine that was
+// refused, or never signed in. It never waits long for the lock and never reports a
+// failure: a missed write is made up at the next call.
 func (g *Guard) touchHW(now time.Time) {
 	if dormant() {
 		return
 	}
 	sess, _ := g.cached()
-	if sess == nil || sess.State == stateRefused || !now.After(sess.HW) || now.Sub(sess.HW) < hwInterval {
+	switch {
+	case sess == nil:
+		if !Enforced(now, time.Time{}) { // a date is set and the clock has reached it
+			return
+		}
+	case sess.State == stateRefused || !now.After(sess.HW) || now.Sub(sess.HW) < hwInterval:
 		return
 	}
 	g.mu.Lock()
@@ -362,7 +371,13 @@ func (g *Guard) touchHW(now time.Time) {
 	}
 	defer unlock()
 	fresh, err := g.store.Load()
-	if err != nil || fresh == nil {
+	if err != nil {
+		return
+	}
+	if fresh == nil {
+		if sess == nil { // not a session that vanished under a cached one: that file is not this guard's to bring back
+			g.keepRecord(now)
+		}
 		return
 	}
 	if fresh.State == stateRefused {
@@ -387,6 +402,17 @@ func (g *Guard) touchHW(now time.Time) {
 		return
 	}
 	g.adopt(&next)
+}
+
+// keepRecord saves the session with no token that a machine which never signed in
+// leaves (A25): a host and a mark, the record that a logout leaves, and nothing else.
+// The caller holds the lock and has found no session. A failure is not reported.
+func (g *Guard) keepRecord(now time.Time) {
+	record := &Session{V: sessionVersion, Host: HostURL, HW: now}
+	if g.store.Save(record) != nil {
+		return
+	}
+	g.adopt(record)
 }
 
 // adoptUnlessOlder takes fresh, a session just read under the file lock, in as the

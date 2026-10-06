@@ -331,7 +331,9 @@ func TestALockThatCannotBeTakenInTimeIsAnAdvisoryError(t *testing.T) {
 	}
 }
 
-func TestTheHighWaterMarkIsWrittenAtMostOnceAMinuteAndOnlyWithASession(t *testing.T) {
+// With no session at all nothing is written before the enforcement date or while dormant; from
+// the date on the first pass writes the clock-guard record (A25, guard_hwrecord_test.go).
+func TestTheHighWaterMarkIsWrittenAtMostOnceAMinuteAndWithNoSessionOnlyFromTheDate(t *testing.T) {
 	ctx := context.Background()
 	mtime := func(e *env) time.Time {
 		fi, err := os.Stat(filepath.Join(e.dir, "session.json"))
@@ -347,13 +349,14 @@ func TestTheHighWaterMarkIsWrittenAtMostOnceAMinuteAndOnlyWithASession(t *testin
 		}
 	}
 
-	t.Run("no session, nothing written", func(t *testing.T) {
+	t.Run("no session before the date, nothing written", func(t *testing.T) {
 		e := newEnv(t)
+		account.SetEnforceFromForTest(t, e.f.Clock.Now().Add(time.Hour)) // the date this test relies on: still ahead
 		if _, err := e.g.EnsureFresh(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(e.dir); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("EnsureFresh created %s with no session (stat err %v)", e.dir, err)
+			t.Fatalf("EnsureFresh created %s with no session before the date (stat err %v)", e.dir, err)
 		}
 	})
 	t.Run("a stale mark is written, then not again within the minute", func(t *testing.T) {

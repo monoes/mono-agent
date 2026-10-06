@@ -3,7 +3,6 @@ package account_test
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -160,9 +159,10 @@ func TestATokenlessSessionCallsNoOneAndItsMarkFollowsTheClock(t *testing.T) {
 	}
 }
 
-// A session with no token that is refused, or no session at all, has no mark worth
-// writing: the guard writes nothing and calls no one.
-func TestATokenlessSessionThatIsRefusedOrMissingWritesNothing(t *testing.T) {
+// A session with no token that is refused has no mark worth writing: the guard
+// writes nothing and calls no one. (A machine with no session at all keeps the record
+// once the enforcement date has been reached, A25: guard_hwrecord_test.go.)
+func TestARefusedTokenlessSessionWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	for _, ep := range entryPoints {
 		t.Run(ep.name+"/refused", func(t *testing.T) {
@@ -184,17 +184,6 @@ func TestATokenlessSessionThatIsRefusedOrMissingWritesNothing(t *testing.T) {
 			}
 			if !mustMtime(t, e.store).Equal(old) || !e.session().HW.Equal(start) {
 				t.Fatalf("the refused session was written: mark %v, want %v untouched", e.session().HW, start)
-			}
-		})
-		t.Run(ep.name+"/missing", func(t *testing.T) {
-			e := newEnv(t)
-			e.f.Clock.Advance(2 * time.Hour)
-			st, err := ep.call(e.g, ctx)
-			if err != nil || st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn || e.ref.calls.Load() != 0 {
-				t.Fatalf("%s = %s, %v with %d network refreshes, want locked/not_logged_in and none", ep.name, describeStatus(st), err, e.ref.calls.Load())
-			}
-			if _, err := os.Stat(e.dir); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("%s created %s with no session (stat err %v)", ep.name, e.dir, err)
 			}
 		})
 	}
