@@ -160,11 +160,14 @@ func TestTaskBoardJSONHasTheFiveColumnsTheCountsAndNoArchive(t *testing.T) {
 	}
 }
 
+// The profile is asked for by its name and the hint under the cut column names it by its id:
+// the hint is a command to paste, and the id is what a command can rely on.
 func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 	db := newTaskTestDB(t)
+	addTaskProfile(t, db, "work-id", "Work")
 	rows := make([]taskSeed, 0, 55)
 	for i := 1; i <= 55; i++ {
-		rows = append(rows, taskSeed{title: fmt.Sprintf("done %02d", i), status: "done"})
+		rows = append(rows, taskSeed{profile: "work-id", title: fmt.Sprintf("done %02d", i), status: "done"})
 	}
 	seedTaskRows(t, db, rows...)
 	for _, c := range []struct {
@@ -172,9 +175,9 @@ func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 		shown int
 		more  string // the line that says what was left out, "" for none
 	}{
-		{[]string{"board"}, 50, "  ... 5 more (task list --status done)"},
-		{[]string{"board", "--done-limit", "3"}, 3, "  ... 52 more (task list --status done)"},
-		{[]string{"board", "--done-limit", "54"}, 54, "  ... 1 more (task list --status done)"},
+		{[]string{"board"}, 50, "  ... 5 more (monoagentcli --profile work-id task list --status done)"},
+		{[]string{"board", "--done-limit", "3"}, 3, "  ... 52 more (monoagentcli --profile work-id task list --status done)"},
+		{[]string{"board", "--done-limit", "54"}, 54, "  ... 1 more (monoagentcli --profile work-id task list --status done)"},
 		{[]string{"board", "--done-limit", "55"}, 55, ""},
 		{[]string{"board", "--done-limit", "0"}, 55, ""},
 	} {
@@ -182,11 +185,11 @@ func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 			Counts map[string]int        `json:"counts"`
 			Tasks  map[string][]taskJSON `json:"tasks"`
 		}
-		mustTaskJSON(t, db, "default", &board, "", c.args...)
+		mustTaskJSON(t, db, "Work", &board, "", c.args...)
 		if got := len(board.Tasks["done"]); got != c.shown || board.Counts["done"] != 55 {
 			t.Errorf("task %s: %d Done cards, counted %d; want %d shown of 55", strings.Join(c.args, " "), got, board.Counts["done"], c.shown)
 		}
-		text, _, err := runTask(t, db, "default", false, "", c.args...)
+		text, _, err := runTask(t, db, "Work", false, "", c.args...)
 		after := text[strings.Index(text, "DONE (55)")+len("DONE (55)"):]
 		if err != nil || !strings.Contains(text, "DONE (55)") || strings.Count(after, "\n  #") != c.shown {
 			t.Errorf("task %s as text: %v, %d Done lines, want the heading DONE (55) and %d lines", strings.Join(c.args, " "), err, strings.Count(after, "\n  #"), c.shown)
@@ -209,7 +212,7 @@ func TestTaskBoardCutsTheDoneColumnButCountsEveryCard(t *testing.T) {
 	var board struct {
 		Tasks map[string][]taskJSON `json:"tasks"`
 	}
-	mustTaskJSON(t, db, "default", &board, "", "board")
+	mustTaskJSON(t, db, "Work", &board, "", "board")
 	if done := board.Tasks["done"]; len(done) != 50 || done[0].Title != "done 01" || done[49].Title != "done 50" {
 		t.Errorf("the cut keeps the top of the column: %d cards, not done 01 to done 50", len(done))
 	}

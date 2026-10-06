@@ -111,7 +111,9 @@ func TestTaskBoardIsRefusedToAnAgent(t *testing.T) {
 				t.Errorf("the error does not carry the code operator_only: %v", err)
 			}
 			msg, _ := doc["error"].(string)
-			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "task list --status inbox"} {
+			// The command it suggests names a profile like every command a printer suggests; which one is
+			// not known here, because the refusal comes before the database is opened.
+			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "monoagentcli --profile <id> task list --status inbox"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the refusal %q does not say %q", msg, want)
 				}

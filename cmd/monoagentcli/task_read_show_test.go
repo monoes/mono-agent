@@ -20,6 +20,7 @@ import (
 var (
 	_ func(io.Writer, tasks.Profile, tasks.Task, []tasks.Event) = printTask
 	_ func(io.Writer, string)                                   = printNotes
+	_ func(tasks.Profile, string) string                        = taskCommand
 	_ func(tasks.Task) string                                   = heldNote
 	_ func(string, int) string                                  = taskCut
 	_ func(time.Time, time.Time) string                         = taskAge
@@ -74,7 +75,7 @@ History:
       Looking at it. Second line
   %s  agent:claude-code#a3f9 comment
       %s
-(full text: task show %d --json)
+(full text: monoagentcli --profile work-id task show %d --json)
 `, id, until.In(zone).Format("15:04"), created.In(zone).Format("2006-01-02 15:04"), untrustedNotice, notesEnd, historyNotice,
 		stamp(0), stamp(30), stamp(35), stamp(40), stamp(50), strings.Repeat("x", 199)+ellipsis, id)
 	if out != want {

@@ -134,6 +134,7 @@ func TestTaskShowWarnsAboutNotesInTheHistory(t *testing.T) {
 // whole in the JSON, and the history says so once, at its end, when it cut any note.
 func TestTaskShowSaysOnceWhereTheFullTextOfCutNotesIs(t *testing.T) {
 	db := newTaskTestDB(t)
+	addTaskProfile(t, db, "work-id", "Work") // asked for by its name below: the command names its id
 	at := time.Date(2026, 10, 5, 9, 30, 0, 0, time.UTC)
 	for _, c := range []struct {
 		name  string
@@ -150,15 +151,15 @@ func TestTaskShowSaysOnceWhereTheFullTextOfCutNotesIs(t *testing.T) {
 		{"200 characters with line breaks", []string{strings.Repeat("a\n", 100)}, false},
 		{"202 characters with line breaks", []string{strings.Repeat("a\n", 101)}, true},
 	} {
-		id := seedTaskRows(t, db, taskSeed{title: c.name, created: at})[0]
+		id := seedTaskRows(t, db, taskSeed{profile: "work-id", title: c.name, created: at})[0]
 		for i, note := range c.notes {
 			seedTaskEvent(t, db, id, at.Add(time.Duration(i)*time.Minute), "bot", "comment", "", "", note)
 		}
-		out, _, err := runTask(t, db, "default", false, "", "show", strconv.FormatInt(id, 10))
+		out, _, err := runTask(t, db, "Work", false, "", "show", strconv.FormatInt(id, 10))
 		if err != nil {
 			t.Fatal(err)
 		}
-		footer := fmt.Sprintf("(full text: task show %d --json)", id)
+		footer := fmt.Sprintf("(full text: monoagentcli --profile work-id task show %d --json)", id)
 		want := 0
 		if c.cut {
 			want = 1

@@ -52,6 +52,15 @@ func printNotes(w io.Writer, notes string) {
 	fmt.Fprintln(w, notesEnd)
 }
 
+// taskCommand writes a command that a printer suggests, to be pasted: it names the
+// profile it is for, by its id, because the active profile can change under a caller
+// (the app switches it) and an agent passes --profile on every call (spec 17.8). words
+// are what follows task: taskCommand(p, "show 7 --json"). Every command a printer
+// suggests is written with it, so that none leaves the profile out.
+func taskCommand(p tasks.Profile, words string) string {
+	return "monoagentcli --profile " + p.ID + " task " + words
+}
+
 // taskCut shortens s to at most n characters, ending in an ellipsis. With no room
 // (n below 1) it gives nothing.
 func taskCut(s string, n int) string {
@@ -159,7 +168,8 @@ func printTaskTable(w io.Writer, p tasks.Profile, ts []tasks.Task, more string) 
 	}
 	_ = tw.Flush()
 	if more != "" {
-		fmt.Fprintf(w, "... %s more (--limit shows more, up to %d)\n", more, tasks.MaxListLimit)
+		fmt.Fprintf(w, "... %s more (--limit shows more, up to %d: %s)\n", more, tasks.MaxListLimit,
+			taskCommand(p, fmt.Sprintf("list --limit %d", tasks.MaxListLimit)))
 	}
 }
 
@@ -177,7 +187,7 @@ func printBoard(w io.Writer, b tasks.Board) {
 		// A column the board cut (Done, by --done-limit) says how many cards it left out and
 		// which status lists them.
 		if n := countFor(b.Counts, st) - len(b.Tasks[st]); n > 0 {
-			fmt.Fprintf(w, "  ... %d more (task list --status %s)\n", n, st)
+			fmt.Fprintf(w, "  ... %d more (%s)\n", n, taskCommand(b.Profile, "list --status "+string(st)))
 		}
 	}
 }
@@ -224,7 +234,7 @@ func printTask(w io.Writer, p tasks.Profile, t tasks.Task, events []tasks.Event)
 		}
 	}
 	if cut {
-		fmt.Fprintf(w, "(full text: task show %d --json)\n", t.ID)
+		fmt.Fprintf(w, "(full text: %s)\n", taskCommand(p, fmt.Sprintf("show %d --json", t.ID)))
 	}
 }
 
@@ -286,7 +296,9 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 			// and the store's Board takes no actor: the board is the operator's, and an
 			// agent is refused before the database is opened.
 			if _, err := callerFor(flagAs(cmd)).operator("show the board"); err != nil {
-				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (task list --status inbox if you really need the Inbox)", err)
+				// No profile id is known before the database is opened: the command names a placeholder.
+				inbox := taskCommand(tasks.Profile{ID: "<id>"}, "list --status inbox")
+				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (%s if you really need the Inbox)", err, inbox)
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {
 				b, err := store.Board(ctx, p.ID, doneLimit)
@@ -311,7 +323,7 @@ func newTaskShowCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Show one task with its history",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return errInvalidInput("task show takes one task id (write task show 42 or #42), got %d arguments", len(args))
+				return errInvalidInput("task show takes one task id, written 42 or #42 (got %d arguments)", len(args))
 			}
 			id, err := parseTaskID(args[0])
 			if err != nil {
