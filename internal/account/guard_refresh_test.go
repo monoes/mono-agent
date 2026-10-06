@@ -87,7 +87,7 @@ func TestEveryFailureThatIsNotInvalidGrantKeepsTheGrace(t *testing.T) {
 		want  account.Reason
 	}{
 		{"no network", func(r *fakeRefresher) { r.err = transient(account.ReasonUnreachable) }, account.ReasonUnreachable},
-		{"a 5xx answer", func(r *fakeRefresher) { r.err = transient(account.ReasonServerError) }, account.ReasonServerError},
+		{"a 5xx answer, whose outcome is unknown", func(r *fakeRefresher) { r.err = lostAnswer(account.ReasonServerError) }, account.ReasonServerError},
 		{"an error of no known type", func(r *fakeRefresher) { r.err = errors.New("boom") }, account.ReasonUnreachable},
 		{"a transient error with an odd reason", func(r *fakeRefresher) { r.err = transient(account.ReasonInvalid) }, account.ReasonUnreachable},
 		{"a success with no tokens in it", func(r *fakeRefresher) { r.empty = true }, account.ReasonServerError},

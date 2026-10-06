@@ -195,10 +195,12 @@ func TestAnAnswerThatDoesNotVerifyClearsTheMarker(t *testing.T) {
 	}
 }
 
-// A failure that is settled leaves no doubt: the request never left this machine,
-// or monoes.me answered with an HTTP status, so the token was not consumed. The
-// marker this attempt wrote is taken back and the token is presented again later,
-// under the normal negative cache.
+// A failure that is settled leaves no doubt: the request was never written, or
+// monoes.me answered a complete 4xx that is not invalid_grant, so the token was not
+// consumed. The marker this attempt wrote is taken back and the token is presented
+// again later, under the normal negative cache. The guard trusts the flag as the
+// Refresher reports it: a 5xx is never settled (a gateway's 504 can come after a
+// rotation), and B1b's transport is what keeps it so.
 func TestASettledFailureTakesBackTheMarkerItWrote(t *testing.T) {
 	cases := []struct {
 		name string
@@ -206,7 +208,7 @@ func TestASettledFailureTakesBackTheMarkerItWrote(t *testing.T) {
 		want account.Reason
 	}{
 		{"a DNS failure", &account.TransientError{Reason: account.ReasonUnreachable, Settled: true, Err: errors.New("lookup monoes.me: no such host")}, account.ReasonUnreachable},
-		{"an HTTP 503", &account.TransientError{Reason: account.ReasonServerError, Settled: true, Err: errors.New("HTTP 503")}, account.ReasonServerError},
+		{"an HTTP 429", &account.TransientError{Reason: account.ReasonServerError, Settled: true, Err: errors.New("HTTP 429 Too Many Requests")}, account.ReasonServerError},
 		{"a settled failure that another error wraps", errWrapping(&account.TransientError{Reason: account.ReasonUnreachable, Settled: true, Err: errors.New("dial")}), account.ReasonUnreachable},
 	}
 	for _, ep := range entryPoints {

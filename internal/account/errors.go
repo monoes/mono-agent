@@ -80,15 +80,19 @@ func (e *RefusedError) Error() string {
 // OAuth error, a 4xx or 5xx answer. It is not a decision about the account, so
 // the grace applies.
 //
-// Settled says whether the outcome of the grant is KNOWN: true when the request
-// never left this machine (DNS, dial, TLS, or a cancellation before the request
-// was written) or monoes.me answered with an HTTP status, so the refresh token
-// was not consumed by an answer that nobody saw. The zero value means UNKNOWN:
-// the request may have been processed, and monoes.me may have rotated the refresh
-// token while the answer was lost. It is the fail-safe default, so a Refresher
-// that does not set it, like any error that is not a *TransientError, is read as
-// one whose outcome is unknown, and the guard then never presents that token
-// again after the reuse window (A24).
+// Settled says whether the outcome of the grant is KNOWN, that is, whether
+// monoes.me certainly did not rotate the refresh token. It is true only when the
+// request was never written (DNS, dial, TLS, a cancellation before the write, the
+// guard's own refusal to send) or when monoes.me answered a complete 4xx response
+// other than invalid_grant (a rate limit, a malformed request: nothing was
+// processed). Everything else is UNKNOWN and leaves it false: every 5xx (a
+// gateway's 502, 504 or 524, or a 500 raised after the rotation was committed, can
+// come after a rotation that really happened), every failure after the request was
+// written, a body cut short under any status, and a 2xx whose body cannot be used.
+// The zero value is the fail-safe default, so a Refresher that does not set it,
+// like any error that is not a *TransientError, is read as one whose outcome is
+// unknown, and the guard then never presents that token again after the reuse
+// window (A24).
 type TransientError struct {
 	Reason  Reason // ReasonUnreachable or ReasonServerError
 	Settled bool

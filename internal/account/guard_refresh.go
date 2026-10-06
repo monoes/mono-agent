@@ -240,10 +240,12 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 			result = ReasonServerError
 		}
 		if transient.Settled && stamped {
-			// Nothing was consumed: the request never left this machine, or monoes.me
-			// answered with an HTTP status. The marker this attempt wrote says nothing
-			// then and is taken back. A marker that an earlier attempt left stays as it
-			// is: that grant may have been answered, and this one says nothing about it.
+			// Nothing was consumed: the request was never written, or monoes.me answered
+			// a complete 4xx that is not invalid_grant (the flag is trusted as the
+			// Refresher reports it; a 5xx is never settled). The marker this attempt wrote
+			// says nothing then and is taken back. A marker that an earlier attempt left
+			// stays as it is: that grant may have been answered, and this one says nothing
+			// about it.
 			sess = withoutPending(sess)
 		}
 	}

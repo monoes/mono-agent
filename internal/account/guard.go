@@ -25,14 +25,15 @@ type TokenSet struct{ AccessToken, RefreshToken string }
 // to its answer or to that deadline.
 //
 // A *TransientError says whether the outcome of the grant is known (Settled): true
-// only when the request never left this machine or monoes.me answered with an HTTP
-// status, so that the refresh token cannot have been consumed by an answer nobody
-// saw. Anything else, a *TransientError that does not say included, is an outcome
-// that is unknown, and the guard then treats the refresh token as one that monoes.me
-// may have rotated: it keeps a marker (Session.PendingSince), presents the token
-// again at once for pendingRetryWindow, while monoes.me repeats its answer, and drops
-// it after that, so that this machine signs in again and the other installs of the
-// account are not revoked (A24).
+// only when the request was never written or monoes.me answered a complete 4xx that
+// is not invalid_grant, so that the refresh token cannot have been consumed. Every
+// 5xx, every failure after the request was written, a body cut short and a 2xx that
+// cannot be used are unknown, and so is a *TransientError that does not say: the
+// guard trusts the flag as it is reported, and treats the refresh token of an
+// unknown outcome as one that monoes.me may have rotated: it keeps a marker
+// (Session.PendingSince), presents the token again at once for pendingRetryWindow,
+// while monoes.me repeats its answer, and drops it after that, so that this machine
+// signs in again and the other installs of the account are not revoked (A24).
 //
 // Two rules the guard relies on. On any error, return a nil *TokenSet: a set
 // returned beside an error is ignored, so a rotated refresh token in it is lost.

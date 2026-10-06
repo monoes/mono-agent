@@ -26,12 +26,13 @@ import (
 type fate int
 
 const (
-	arrives   fate = iota // monoes.me processes the request and the answer comes back
-	lost                  // monoes.me processes the request and the answer never arrives: an outcome that is unknown
-	unsent                // the request never leaves this machine (DNS, dial): settled, monoes.me is not reached
-	status503             // monoes.me answers HTTP 503 without processing the request: settled
-	plain                 // monoes.me processes the request and the client gets an error that is not a *TransientError
-	opaque                // monoes.me processes the request and its answer holds a new refresh token and an access token this build cannot verify
+	arrives    fate = iota // monoes.me processes the request and the answer comes back
+	lost                   // monoes.me processes the request and the answer never arrives: an outcome that is unknown
+	unsent                 // the request never leaves this machine (DNS, dial): settled, monoes.me is not reached
+	status429              // monoes.me answers a complete HTTP 429 (a rate limit) and processes nothing: settled
+	plain                  // monoes.me processes the request and the client gets an error that is not a *TransientError
+	opaque                 // monoes.me processes the request and its answer holds a new refresh token and an access token this build cannot verify
+	gateway504             // monoes.me processes the request and a gateway answers HTTP 504 in its place: an outcome that is unknown
 )
 
 // flakyNet is the network between a guard and the windowServer. Each grant takes the
@@ -67,8 +68,8 @@ func (n *flakyNet) Refresh(ctx context.Context, rt string) (*account.TokenSet, e
 	switch f {
 	case unsent:
 		return nil, &account.TransientError{Reason: account.ReasonUnreachable, Settled: true, Err: errors.New("dial tcp: lookup monoes.me: no such host")}
-	case status503:
-		return nil, &account.TransientError{Reason: account.ReasonServerError, Settled: true, Err: errors.New("the token endpoint answered HTTP 503")}
+	case status429:
+		return nil, &account.TransientError{Reason: account.ReasonServerError, Settled: true, Err: errors.New("the token endpoint answered HTTP 429 Too Many Requests")}
 	}
 	ts, err := n.srv.Refresh(ctx, rt)
 	switch f {
@@ -76,6 +77,8 @@ func (n *flakyNet) Refresh(ctx context.Context, rt string) (*account.TokenSet, e
 		return nil, lostAnswer(account.ReasonUnreachable)
 	case plain:
 		return nil, errors.New("read tcp: connection reset by peer")
+	case gateway504:
+		return nil, &account.TransientError{Reason: account.ReasonServerError, Err: errors.New("the gateway answered HTTP 504 Gateway Timeout")}
 	case opaque:
 		if err == nil {
 			return &account.TokenSet{AccessToken: "opaque-0123456789", RefreshToken: ts.RefreshToken}, nil
@@ -267,7 +270,7 @@ func TestASettledFailureLeavesTheTokenToBePresentedLaterWheneverThatIs(t *testin
 		name string
 		f    fate
 		last string
-	}{{"a request that never left", unsent, "unreachable"}, {"an HTTP 503", status503, "server_error"}} {
+	}{{"a request that never left", unsent, "unreachable"}, {"an HTTP 429", status429, "server_error"}} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newLostRig(t)
 			r.net.then(c.f)
@@ -294,6 +297,51 @@ func TestASettledFailureLeavesTheTokenToBePresentedLaterWheneverThatIs(t *testin
 			}
 		})
 	}
+}
+
+// A 5xx is never a known outcome: a gateway that gives up (a 502, 504 or 524), or a 500
+// raised after the commit, can come after monoes.me really rotated the token. The
+// Refresher reports it unsettled, and the guard treats it as a lost answer: the marker
+// stays, the retry inside the window gets monoes.me's answer again, and after the window
+// the token is dropped, never presented. (The guard trusts the flag as reported: a
+// transport that called such an answer settled would have the marker taken back.)
+func TestAGatewayErrorAfterTheRotationIsAnUnknownOutcome(t *testing.T) {
+	gatewayError := func(t *testing.T) *lostRig {
+		t.Helper()
+		r := newLostRig(t)
+		r.net.then(gateway504)
+		if st, err := r.command(); err != nil || st.State != account.StateOK {
+			t.Fatalf("the command that met the gateway = %s/%q, %v, want ok: the token has four minutes left", st.State, st.Reason, err)
+		}
+		if !r.srv.isCurrent("rt-rotated-1") {
+			t.Fatal("monoes.me did not rotate: this test cannot tell a gateway error after the rotation from one before it")
+		}
+		if sess := r.e.session(); !sess.PendingSince.Equal(r.t0) || sess.LastResult != "server_error" {
+			t.Fatalf("stored session = %s, want the marker of the send kept and server_error recorded", describe(sess))
+		}
+		if rt, _ := r.e.store.LoadRefresh(); rt != "rt-1" {
+			t.Fatalf("refresh.enc holds %q, want the token the marker is about", rt)
+		}
+		return r
+	}
+	t.Run("the retry inside the window recovers", func(t *testing.T) {
+		r := gatewayError(t)
+		r.e.f.Clock.Advance(time.Minute)
+		if st, err := r.command(); err != nil || st.State != account.StateOK || r.srv.isRevoked() {
+			t.Fatalf("the retry = %s/%q, %v (revoked %t), want ok", st.State, st.Reason, err, r.srv.isRevoked())
+		}
+		if rt, _ := r.e.store.LoadRefresh(); rt != "rt-rotated-1" || r.e.rawPending() != "" {
+			t.Fatalf("refresh.enc holds %q with pending %q, want the rotated token that the repeated answer brought and no marker", rt, r.e.rawPending())
+		}
+	})
+	t.Run("after the window the token is dropped, not presented", func(t *testing.T) {
+		r := gatewayError(t)
+		r.e.f.Clock.Advance(10 * time.Minute)
+		st, err := r.command()
+		if err != nil || st.Reason != account.ReasonUnconfirmed || r.net.grants() != 1 || !r.refreshFileGone() || r.srv.isRevoked() {
+			t.Fatalf("the command ten minutes later = %s/%q, %v with %d grants (token gone %t, revoked %t), want grace/unconfirmed and the dead token never presented", st.State, st.Reason, err, r.net.grants(), r.refreshFileGone(), r.srv.isRevoked())
+		}
+	})
 }
 
 // (e): a failure that is not a *TransientError at all is an outcome that is unknown:
