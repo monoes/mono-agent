@@ -89,7 +89,7 @@ Anchors marked † come from the read-only explorers' reports of the same day; t
 
 | Status | Meaning |
 |---|---|
-| `inbox` | Captured or suggested; the operator has not read it. Agents never see it unless they ask for it by name, and `next` never returns it. |
+| `inbox` | Captured or suggested; the operator has not read it. Agents never see it unless they ask for it by name (`list --status inbox`) or by id (`show ID` and `task_get` read a task whatever its column), and `next` never returns it. |
 | `ready` | Approved by the operator. An agent may claim it. The order of the column is the priority: `next` takes the top. |
 | `in_progress` | Claimed by an agent (with a lease), or being worked on by the operator (no claim). |
 | `review` | An agent finished, or asked a question: waiting for the operator. |
@@ -159,9 +159,9 @@ One row per change, written in the same transaction as the change. Kinds: `creat
 
 ### 4.6 Order, limits, cleaning
 
-- Position: integers with gaps of 1024; a move between two neighbours takes the midpoint; with no room left the column is renumbered in the same transaction. A task new to a column goes to the top of Inbox, Review and Done (newest first) and to the bottom of Ready and In progress (a queue). `move` takes `--before ID`, `--after ID`, `--top`, `--bottom`.
-- Limits: title 200 characters; notes 64 KiB; a comment 8 KiB; URL 2,048 bytes; page title 200; app name 100; actor 64 characters of `[A-Za-z0-9._#@:-]`; client id 64 of `[A-Za-z0-9_-]`; 500 events per task before comments are refused (§4.4); 2,000 non-archived tasks per profile; 20 agent-created tasks per hour per profile.
-- Cleaning: invalid UTF-8 is replaced, control characters other than newline and tab are removed, and so are the hidden ones (Unicode tag characters, bidi controls, the byte order mark), line ends become `\n`, a title's whitespace is collapsed; notes over the limit are cut and end with `[truncated: N characters in the original]`, the notice counted in the limit, so cutting a text that was already cut changes nothing. A URL must parse, be `http` or `https`, and loses its user-info; a URL whose text holds a control or hidden character or invalid UTF-8 anywhere is refused too (a query string is kept as typed, so the raw text is checked); a refused URL is stored empty.
+- Position: integers with gaps of 1024; a move between two neighbours takes the midpoint; with no room left the column is renumbered in the same transaction. A task new to a column goes to the top of Inbox, Review and Done (newest first) and to the bottom of Ready and In progress (a queue). `move` takes `--before ID`, `--after ID`, `--top`, `--bottom` (an id is a positive number); at most one of them. A move to the column the task is already in, with no place named, changes nothing: no event, no revision bump (the default end belongs to a task that is new to a column); with a place it reorders. `approve ID... --top` keeps the order given: the first id ends on top. A position that would leave the 64-bit range (only a hand-edited row gets there) is refused with a plain error, never wrapped.
+- Limits: title 200 characters; notes 64 KiB; a comment 8 KiB; URL 2,048 bytes; page title 200; app name 100; actor 64 characters of `[A-Za-z0-9._#@:-]`; client id 64 of `[A-Za-z0-9_-]`; 500 events per task before comments are refused and 2,000 before a claim is refused (§4.4); 2,000 non-archived tasks per profile (a task coming back from the archive counts, so unarchiving is no way round the cap); 20 agent-created tasks per hour per profile.
+- Cleaning: invalid UTF-8 is replaced, control characters other than newline and tab are removed, and so are the hidden ones (Unicode tag characters, bidi overrides, embeddings and isolates, the byte order mark; the marks U+200E, U+200F and U+061C and the zero-width joiners U+200C and U+200D are kept, because Persian, Arabic, Hebrew and emoji text uses them), line ends become `\n`, a title's whitespace is collapsed; notes over the limit are cut and end with `[truncated: N characters in the original]`, the notice counted in the limit, so cutting a text that was already cut changes nothing. A URL must parse, be `http` or `https`, and loses its user-info; a URL whose text holds a control or hidden character or invalid UTF-8 anywhere is refused too (a query string is kept as typed, so the raw text is checked); a refused URL is stored empty.
 - Title from text (D29): with text and no title, the title is the first non-empty line, collapsed and cut at 120 characters with `…`; the notes are the whole text when it has more lines or more characters than the title, else empty. Notes and text given together are refused (`invalid_input`: give notes or text, not both), so no words are dropped silently. A page capture's title is the page title, else the URL, and its notes are empty.
 
 ## 5. Rules
@@ -177,7 +177,8 @@ One row per change, written in the same transaction as the change. Kinds: `creat
 | comment | any task | only on a task it claims | no |
 | finish (In progress to Review) | no | the claimant only | no |
 | release (In progress to Ready) | no | the claimant only | no |
-| list, get, next | yes | Ready, In progress and Review by default; Inbox, Done and archived only when named; `next` never reads Inbox | no |
+| list, get, next | yes | Ready, In progress and Review by default; Inbox, Done and archived only when named (`get` by id reads any column); `next` never reads Inbox | no |
+| board | yes | no (the whole-board read shows the Inbox; an agent uses `list`) | no |
 
 A refusal names its code: `operator_only`, `not_ready`, `claimed` (with who and until when), `not_claimant`, `limit`, `invalid_input`, `not_found`.
 
@@ -187,7 +188,7 @@ The Ready gate is the first check of `add`: a caller that is not the operator an
 
 - `claim ID`: in one `BEGIN IMMEDIATE` transaction, a conditional UPDATE sets `status = 'in_progress'`, `claimed_by`, `claim_until`, `updated_at` where the task is Ready, or In progress with a stale claim, or In progress and already claimed under the same name (which renews); `RowsAffected` 0 is followed by a read to give the right refusal. A `claimed` or `reclaimed` event is written in the same transaction.
 - `next --claim`: picks and claims in that one transaction: the Ready tasks of the profile, lowest position first, then its stale In progress tasks, oldest lease first. `next` without `--claim` only reads: two agents that peek may see the same task, and the second claim is refused (`claimed`). An agent that wants only some of the Ready tasks lists them and claims by id.
-- Lease: 30 minutes by default, `--lease` up to 24 hours. A renewal, by the claimant's `comment` or by claiming again under the same name, sets `claim_until` to the later of its current value and now plus the lease (30 minutes for a comment): it never shortens a lease. `finish` and `release` clear it.
+- Lease: 30 minutes by default, `--lease` up to 24 hours. A renewal, by the claimant's `comment` or by claiming again under the same name, sets `claim_until` to the later of its current value and now plus the lease (30 minutes for a comment): it never shortens a lease, and the UPDATE itself takes the later of the two, not only the code that read the row. `finish` and `release` clear it. Times are kept to the second: a lease is rounded up to the next whole second, so a short one is never over in the second it began in; the 24-hour cap comes after the rounding and wins over it, so the stored end is never more than 24 hours after the second the claim began in. The peek (`next` without `--claim`) is for a person or an agent; a capture may not use it.
 - Stale claims stay where they are until someone takes them or the operator sends them back to Ready: nothing sweeps in the background. The app shows a stale claim in amber.
 - The name is not authenticated. Two agents that choose the same name are one claimant.
 
@@ -197,7 +198,7 @@ The Ready gate is the first check of `add`: a caller that is not the operator an
 
 ### 5.4 Revision
 
-Every write transaction ends by `INSERT INTO task_board_rev ... ON CONFLICT (profile_id) DO UPDATE SET rev = rev + 1`. `Rev` is a primary-key read; `Counts` (Inbox and Review) is read only after the revision moves.
+Every write transaction ends by `INSERT INTO task_board_rev ... ON CONFLICT (profile_id) DO UPDATE SET rev = rev + 1`. `Rev` is a primary-key read; `Counts` (Inbox and Review) is read only after the revision moves. So a count that moves with the clock alone, the stale count, is as of that revision: a lease that runs out is no write and moves nothing; a reader derives a card's staleness from `claim.until` at render time. `Rev` and `Counts` do not check that the profile exists (resolve it with `Profile` first); `Board` does.
 
 ## 6. The package (the contract the phases build on)
 
@@ -205,7 +206,7 @@ Every write transaction ends by `INSERT INTO task_board_rev ... ON CONFLICT (pro
 
 - `Status`, `Actor{Kind: Human or Agent or Capture, Name}`, `Task`, `Event`, `Filter`, `AddInput`, `Counts`, the limits as constants, the errors `ErrNotFound`, `ErrInvalid`, `ErrOperatorOnly`, `ErrNotReady`, `ErrClaimed` (a type carrying who and until), `ErrNotClaimant`, `ErrLimit`.
 - `NewStore(*sql.DB) *Store` with an injectable clock. Every method takes the profile id, which must name a profile, and an `Actor`: `Add` (returns the task and whether it was created), `List`, `Board`, `Get`, `Edit`, `Move`, `Approve`, `Archive`, `Unarchive`, `Next`, `Claim`, `Comment`, `Finish`, `Release`, `Rev`, `Counts`.
-- `Watch` (poll `Rev` every two seconds, call back with the revision and the counts when it moves), used by the app.
+- `Watch(ctx, profileID, interval, fn) error` (poll `Rev` every two seconds, or every `interval`, and call back with the revision and the counts at once and then whenever the revision moves), used by the app. Each poll checks the profile, reads the revision and the counts in one snapshot, and calls `fn` after it ended. It returns nil when `ctx` ends, `invalid_input` at once for a profile that does not exist, and an error wrapping `not_found` when the profile is deleted while it watches; a failing poll (busy, locked) is skipped and tried again at the next tick. `fn` may be called once just as `ctx` ends, so a caller drops a late call by profile id, and cancels the watcher before it closes the database.
 
 The CLI, MCP, the daemon's `task.add` and the app's bindings are thin callers of this package. Rules are written once, here.
 
@@ -219,7 +220,7 @@ monoagentcli task board [--done-limit N]
 monoagentcli task show ID
 monoagentcli task edit ID [--title T] [--notes TEXT]
 monoagentcli task move ID STATUS [--before ID | --after ID | --top | --bottom]
-monoagentcli task approve ID... [--top]   # Inbox to Ready, at the bottom of Ready
+monoagentcli task approve ID... [--top]   # Inbox to Ready, at the bottom of Ready (--top: the group on top, in the order given)
 monoagentcli task archive ID... | --status done
 monoagentcli task unarchive ID...
 monoagentcli task next [--claim --as NAME [--lease DUR]]
@@ -231,12 +232,12 @@ monoagentcli task digest
 ```
 
 - Every command acts on one profile (§4.5): the global `--profile`, else the active profile. An unknown profile is exit 3.
-- `board` is the app's one read: `--json` gives `{profile, rev, counts, tasks: {inbox, ready, in_progress, review, done}}` with Done cut to `--done-limit` (default 50) and `rev` the board revision; in text it prints the columns. `list` shows every status but archived to the operator and `ready,in_progress,review` to an agent, unless `--status` names others.
+- `board` is the operator's whole-board read (the app reads the same document in process, §10): `--json` gives `{profile, rev, counts, tasks: {inbox, ready, in_progress, review, done}}` with Done cut to `--done-limit` (default 50) and `rev` the board revision; in text it prints the columns, and a column cut short says `... N more` with the command that lists the rest. It is operator-only: it shows the Inbox, which an agent reads only by naming it, so an agent caller is refused (exit 3, code `operator_only`, a message pointing to `task list`). `list` shows every status but archived to the operator and `ready,in_progress,review` to an agent, unless `--status` names others; a list cut by `--limit` says `... N more`. Every command a printer suggests carries `--profile ID` and, for an agent, `--as NAME`.
 - A caller that is an agent (a marker or `--as`) is classified as one first: its tasks are `agent` tasks under D14's limit, and `--source os` from it is refused (`invalid_input`), so the flag cannot be used to skip the limit; the OS menu never runs under a marker. Otherwise the source is `os` with `--source os`, else `cli`. `move` takes the five board statuses; archiving is `archive`.
 - Ids are written `42` or `#42`.
 - `add --stdin` reads the text from standard input (read up to 1 MiB, then cleaned and cut); `--source os` is what the OS menu passes; any other source (`chrome`, `agent`) is set by the host that knows it, not by a flag. `--ready` is refused for a capture and for an agent.
 - Agent commands (`claim`, `comment` as an agent, `finish`, `release`, `next --claim`) need `--as NAME` or `MONOAGENT_ACTOR`; there is no default, and the error says how to choose one. A caller with an agent-context marker and no `--as` gets that error, not a guess. `comment` without `--as` and without a marker is the operator's comment.
-- Operator-only commands (`edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse under an agent-context marker or with `--as`: exit 3, code `operator_only`, "run it in your own terminal or in the app".
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse under an agent-context marker, with `--as` (an `--as` that is given but blank counts: it is an agent without a name, never the operator) or with `MONOAGENT_ACTOR`: exit 3, code `operator_only`, "run it in your own terminal or in the app". The refusal comes before the arguments are checked and before the database is opened, so a refused caller learns nothing about the board. An empty value for `--before`, `--after` or `--status` is refused, not ignored. A malformed flag (an unknown flag, a value that is not a number) is the command parser's: exit 1, plain text.
 - `next`: with `--json`, `{"task": {...} or null}` and exit 0 either way; in text, the profile's name, the task with the exact commands to continue (each with `--profile ID`) and its notes labelled "untrusted". `digest` prints nothing when the profile has no Ready task; otherwise one to three lines (the profile's name, the counts, the next task, the command to claim it) and always exits 0, so a session-start hook can call it. It never prints task text longer than the title.
 - Errors: exit 2 not found, 3 invalid input or refused; under `--json`, `{"error": "...", "code": "..."}` on stdout (the group wraps its commands with `withJSONErrors` per subcommand, as automation does).
 - Registered in `root.go` beside the other groups; documented in `ref tasks` (a topic like `ref api`) and as `ref commands` entries from a file of its own.
