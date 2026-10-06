@@ -53,6 +53,9 @@ func reasonLine(r Reason) string {
 		return "This build cannot verify the login. Update it: monoagentcli update"
 	case ReasonInvalid:
 		return "The stored login is not valid. Sign in again."
+	case ReasonUnconfirmed:
+		return "monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. " +
+			"Sign in again on this machine: monoagentcli account login"
 	}
 	return ""
 }

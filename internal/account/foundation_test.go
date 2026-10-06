@@ -137,6 +137,7 @@ func TestLoginRequiredError(t *testing.T) {
 		{ReasonClockSkew, true},
 		{ReasonKeyUnknown, true},
 		{ReasonInvalid, true},
+		{ReasonUnconfirmed, true},
 	} {
 		msg := (&LoginRequiredError{Status: Status{State: StateLocked, Reason: c.reason}}).Error()
 		line, rest, hasRest := strings.Cut(msg, "\n")

@@ -81,12 +81,12 @@ func TestTheLastResultOnlyShapesTheReasonOfAGraceOrAnExpiredToken(t *testing.T) 
 	const hour = time.Hour
 	// Every value last_result can hold, the other reasons (which a grace never
 	// reports) and one nobody has made up yet.
-	lasts := []string{"", "ok", "unreachable", "server_error", "keyring_unavailable", "key_unknown", "refused",
+	lasts := []string{"", "ok", "unreachable", "server_error", "keyring_unavailable", "key_unknown", "unconfirmed", "refused",
 		"not_logged_in", "expired", "clock_rollback", "clock_skew", "invalid", "something new"}
 	same := func(want string) func(string) string { return func(string) string { return want } }
 	inGrace := func(last string) string {
 		switch last {
-		case "unreachable", "server_error", "keyring_unavailable":
+		case "unreachable", "server_error", "keyring_unavailable", "unconfirmed":
 			return "grace/" + last
 		case "key_unknown":
 			return "grace/server_error" // the key is only named once the grace is over
@@ -94,8 +94,8 @@ func TestTheLastResultOnlyShapesTheReasonOfAGraceOrAnExpiredToken(t *testing.T) 
 		return "grace/unreachable"
 	}
 	pastGrace := func(last string) string {
-		if last == "key_unknown" {
-			return "locked/key_unknown"
+		if last == "key_unknown" || last == "unconfirmed" {
+			return "locked/" + last
 		}
 		return "locked/expired"
 	}

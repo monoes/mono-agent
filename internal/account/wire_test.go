@@ -101,6 +101,8 @@ func TestTheRefusalTextOfEveryReasonIsFrozen(t *testing.T) {
 		{account.ReasonUnreachable, first},
 		{account.ReasonServerError, first},
 		{account.ReasonKeyringUnavailable, first},
+		{account.ReasonUnconfirmed, first + "\nmonoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. " +
+			"Sign in again on this machine: monoagentcli account login"},
 	}
 	for _, c := range cases {
 		got := (&account.LoginRequiredError{Status: account.Status{State: account.StateLocked, Reason: c.reason}}).Error()

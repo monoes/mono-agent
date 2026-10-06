@@ -46,7 +46,9 @@ func NewSession(host, accessToken string, user *User, now time.Time) (*Session, 
 // Evaluate is the pure verdict of a stored session at a time: no I/O. It
 // verifies the token, applies the clock guard and the grace rule, and fills
 // Enforced and EnforceFrom from rollout.go. A nil session is
-// locked(not_logged_in); a session marked refused is locked(refused).
+// locked(not_logged_in); a session marked refused is locked(refused). The
+// guard's own bookkeeping of a refresh in flight (PendingSince) never changes a
+// verdict.
 func Evaluate(sess *Session, now time.Time) Status {
 	var rcpt *Receipt
 	var verr *VerifyError
@@ -114,6 +116,10 @@ func judge(sess *Session, rcpt *Receipt, verr *VerifyError, now time.Time) Statu
 		// The last refresh returned a token this build cannot verify: the
 		// server rotated its key (spec §4.7). Say so, not just "expired".
 		return locked(ReasonKeyUnknown)
+	case sess.LastResult == string(ReasonUnconfirmed):
+		// The refresh token was dropped because monoes.me may have rotated it and
+		// the answer never arrived (A24): nothing but a new sign-in repairs this.
+		return locked(ReasonUnconfirmed)
 	}
 	return locked(ReasonExpired)
 }
@@ -123,7 +129,7 @@ func judge(sess *Session, rcpt *Receipt, verr *VerifyError, now time.Time) Statu
 // does not know is reported as server_error until the grace ends.
 func graceReason(lastResult string) Reason {
 	switch r := Reason(lastResult); r {
-	case ReasonUnreachable, ReasonServerError, ReasonKeyringUnavailable:
+	case ReasonUnreachable, ReasonServerError, ReasonKeyringUnavailable, ReasonUnconfirmed:
 		return r
 	case ReasonKeyUnknown:
 		return ReasonServerError
