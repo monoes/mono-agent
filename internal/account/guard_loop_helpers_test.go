@@ -41,17 +41,21 @@ func (s *loopServer) set(fn func(*loopServer)) {
 }
 
 // signIn stores a session as a login would have (see env.signIn) and has the
-// server accept the refresh token that login stored. The server's token and
-// refresh.enc come first and session.json last: a refresher that is already
-// polling and reads the new session at any instant must find what it takes to
-// refresh it (env.signIn alone writes session.json before refresh.enc).
+// server accept the refresh token that login stored. It writes as another process
+// must, under the session lock, so that a write of the refresher that is still
+// going on finishes first. The server's token and refresh.enc come first and
+// session.json last: a refresher that is already polling and reads the new session
+// at any instant must find what it takes to refresh it (env.signIn alone writes
+// session.json before refresh.enc).
 func (s *loopServer) signIn(age, life time.Duration) {
 	s.e.t.Helper()
-	s.set(func(s *loopServer) { s.valid = "rt-1" })
-	if err := s.e.store.SaveRefresh("rt-1"); err != nil {
-		s.e.t.Fatalf("signIn: %v", err)
-	}
-	s.e.signIn(age, life)
+	s.e.underLock(func() {
+		s.set(func(s *loopServer) { s.valid = "rt-1" })
+		if err := s.e.store.SaveRefresh("rt-1"); err != nil {
+			s.e.t.Fatalf("signIn: %v", err)
+		}
+		s.e.signIn(age, life)
+	})
 }
 
 func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account.TokenSet, error) {
@@ -108,6 +112,29 @@ func (e *env) guardOn(ref account.Refresher, poll time.Duration) *account.Guard 
 // refusedSession is what another process writes when monoes.me refused it.
 func refusedSession() *account.Session {
 	return &account.Session{V: 1, Host: account.HostURL, User: &account.User{ID: "user-1"}, State: "refused"}
+}
+
+// underLock runs fn holding the session lock, as another process must when it
+// writes the session (Store: the mutating methods are safe across processes only
+// under Lock). A write of the loop that is still going on, which the loop makes
+// under the same lock, finishes before fn starts, and none starts in the middle
+// of it; 150 ms of quiet is not a barrier against a loop that is slow to write.
+func (e *env) underLock(fn func()) {
+	e.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	unlock, err := e.store.Lock(ctx)
+	if err != nil {
+		e.t.Fatalf("taking the session lock: %v", err)
+	}
+	defer unlock()
+	fn()
+}
+
+// storeRefusal writes the refusal another process leaves when monoes.me refused it.
+func (e *env) storeRefusal() {
+	e.t.Helper()
+	e.underLock(func() { e.save(refusedSession()) })
 }
 
 // waitForCalls waits, in real time, until the server has been called at least n times.

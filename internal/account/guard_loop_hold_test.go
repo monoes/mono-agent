@@ -141,7 +141,7 @@ func TestTheRefresherStillFollowsTheFileWhileItHolds(t *testing.T) {
 	// loop that was still going on would race the test's own write of the session.
 	waitForHW(t, e, e.f.Clock.Now(), "the first pass that holds to write the mark")
 
-	e.save(refusedSession()) // another process was refused
+	e.storeRefusal() // another process was refused
 	e.f.Clock.Advance(loopPoll)
 	select {
 	case st := <-got:

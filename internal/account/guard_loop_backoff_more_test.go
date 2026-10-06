@@ -172,7 +172,7 @@ func TestTheRefresherStillFollowsTheFileWhileItWaitsToRetry(t *testing.T) {
 	waitForCalls(t, srv, 1, "the first attempt") // fails: the refresher waits 30 seconds
 	expectCalls(t, srv, 1, "the failed attempt")
 
-	e.save(refusedSession()) // another process was refused
+	e.storeRefusal() // another process was refused
 	e.f.Clock.Advance(loopPoll)
 	select {
 	case st := <-got:

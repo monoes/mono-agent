@@ -117,7 +117,8 @@ func TestAHoldingRefresherWritesNoMarkWhileDormantOrForARefusedOrAMissingSession
 	t.Run("the package is dormant", func(t *testing.T) {
 		e := holding(t)
 		account.SetEnforceFromForTest(t, time.Time{})
-		old := e.pinSession()
+		var old time.Time
+		e.underLock(func() { old = e.pinSession() })
 		later(t, e)
 		if !mustMtime(t, e.store).Equal(old) {
 			t.Fatal("the loop wrote the high-water mark while the package is dormant")
@@ -125,8 +126,11 @@ func TestAHoldingRefresherWritesNoMarkWhileDormantOrForARefusedOrAMissingSession
 	})
 	t.Run("another process was refused", func(t *testing.T) {
 		e := holding(t)
-		e.save(refusedSession())
-		old := e.pinSession()
+		var old time.Time
+		e.underLock(func() {
+			e.save(refusedSession())
+			old = e.pinSession()
+		})
 		later(t, e)
 		if !mustMtime(t, e.store).Equal(old) {
 			t.Fatal("the loop wrote the high-water mark of a refused session")
@@ -134,9 +138,11 @@ func TestAHoldingRefresherWritesNoMarkWhileDormantOrForARefusedOrAMissingSession
 	})
 	t.Run("the session is gone", func(t *testing.T) {
 		e := holding(t)
-		if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
-			t.Fatal(err)
-		}
+		e.underLock(func() {
+			if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
+				t.Fatal(err)
+			}
+		})
 		later(t, e)
 		if _, err := os.Stat(filepath.Join(e.dir, "session.json")); !os.IsNotExist(err) {
 			t.Fatalf("the loop brought session.json back (stat error %v)", err)
