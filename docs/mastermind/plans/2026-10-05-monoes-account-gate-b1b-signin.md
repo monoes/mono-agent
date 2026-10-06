@@ -5954,7 +5954,7 @@ func describeStatus(st account.Status) string {
 		return "Logged in to monoes.me" + as + "."
 	case account.StateGrace:
 		if st.Reason == account.ReasonUnconfirmed { // monoes.me is not the problem: this machine gave up its saved login (A24)
-			return fmt.Sprintf("Logged in to monoes.me%s until %s, but this machine can no longer renew the login: monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. Log in again on this machine: monoagentcli account login",
+			return fmt.Sprintf("Logged in to monoes.me%s until %s, but this machine can no longer renew the login: monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. Sign in again on this machine: monoagentcli account login",
 				as, st.GraceUntil.Local().Format(time.RFC3339))
 		}
 		return fmt.Sprintf("Logged in to monoes.me%s, but monoes.me could not be reached (%s). This login works offline until %s.",
@@ -5974,7 +5974,7 @@ func describeStatus(st account.Status) string {
 	case account.ReasonInvalid:
 		return "The saved login cannot be verified. Log in again: monoagentcli account login"
 	case account.ReasonUnconfirmed:
-		return "monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. Log in again on this machine: monoagentcli account login"
+		return "monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. Sign in again on this machine: monoagentcli account login"
 	}
 	return "Not logged in to monoes.me. Run: monoagentcli account login"
 }
