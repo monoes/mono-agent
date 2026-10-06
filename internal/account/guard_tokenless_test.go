@@ -3,6 +3,8 @@ package account_test
 import (
 	"context"
 	"errors"
+	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,8 +18,9 @@ import (
 // removed the file would take the mark with it. B1b's logout therefore saves a
 // session with no token that keeps the mark, and these tests pin that B1a's side
 // of it holds: a session with no token still judges the date by its mark, the
-// guard keeps advancing that mark, never calls monoes.me for it and writes
-// nothing for a session that is refused or missing.
+// guard keeps advancing that mark, never calls monoes.me for it, writes nothing
+// for a session that is refused, and for a machine with no session nothing but
+// that same record, from the enforcement date on (A25).
 
 // What a logout leaves: a host and a mark, no token, no refresh token.
 func tokenless(hw time.Time) *account.Session {
@@ -160,11 +163,38 @@ func TestATokenlessSessionCallsNoOneAndItsMarkFollowsTheClock(t *testing.T) {
 }
 
 // A session with no token that is refused has no mark worth writing: the guard
-// writes nothing and calls no one. (A machine with no session at all keeps the record
-// once the enforcement date has been reached, A25: guard_hwrecord_test.go.)
-func TestARefusedTokenlessSessionWritesNothing(t *testing.T) {
+// writes nothing and calls no one. A machine with no session at all calls no one
+// either, and writes nothing before the enforcement date; from the date on its
+// first pass writes the clock-guard record and nothing else (A25, the rest of it in
+// guard_hwrecord_test.go). Each subtest sets the date it relies on.
+func TestATokenlessSessionThatIsRefusedOrMissingWritesNothingButTheRecord(t *testing.T) {
 	ctx := context.Background()
 	for _, ep := range entryPoints {
+		t.Run(ep.name+"/missing, before the date", func(t *testing.T) {
+			e := newEnv(t)
+			e.f.Clock.Advance(2 * time.Hour)
+			account.SetEnforceFromForTest(t, e.f.Clock.Now().Add(time.Hour))
+			st, err := ep.call(e.g, ctx)
+			if err != nil || st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn || st.Enforced || e.ref.calls.Load() != 0 {
+				t.Fatalf("%s = %s, %v with %d network refreshes, want locked/not_logged_in, not enforced, and none", ep.name, describeStatus(st), err, e.ref.calls.Load())
+			}
+			if _, err := os.Stat(e.dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s created %s with no session before the date (stat err %v)", ep.name, e.dir, err)
+			}
+		})
+		t.Run(ep.name+"/missing, from the date on", func(t *testing.T) {
+			e := newEnv(t)
+			e.f.Clock.Advance(2 * time.Hour)
+			account.SetEnforceFromForTest(t, e.f.Clock.Now().Add(-time.Hour))
+			st, err := ep.call(e.g, ctx)
+			if err != nil || st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn || !st.Enforced || e.ref.calls.Load() != 0 {
+				t.Fatalf("%s = %s, %v with %d network refreshes, want locked/not_logged_in, enforced, and none", ep.name, describeStatus(st), err, e.ref.calls.Load())
+			}
+			theRecord(t, e, e.f.Clock.Now())
+			if got, want := dirNames(t, e.dir), []string{"session.json", "session.lock"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s left %v, want %v: the record and the lock, never a refresh token", ep.name, got, want)
+			}
+		})
 		t.Run(ep.name+"/refused", func(t *testing.T) {
 			e := newEnv(t)
 			start := e.f.Clock.Now()
