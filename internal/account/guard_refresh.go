@@ -268,15 +268,30 @@ func (g *Guard) touchHW(now time.Time) {
 	next := *fresh
 	bumpHW(&next, now)
 	if next.HW.Equal(fresh.HW) {
-		g.adopt(fresh)
+		// A peer has raised the mark already: nothing to write, only to take in.
+		g.adoptUnlessOlder(fresh)
 		return
 	}
 	if g.store.Save(&next) != nil {
-		// The mark was not written, but the session read under the lock is the newest
-		// this process has seen (another process may have written it within one
-		// modification-time tick): take it in, as the cases above do.
-		g.adopt(fresh)
+		// The mark was not written. The session read under the lock is as new as the
+		// file, and another process may have written it within one modification-time
+		// tick, so take it in, unless the guard is ahead of the file.
+		g.adoptUnlessOlder(fresh)
 		return
 	}
 	g.adopt(&next)
+}
+
+// adoptUnlessOlder takes fresh, a session just read under the file lock, in as the
+// cached one, unless the guard is ahead of the file. It is ahead when a write of its
+// own failed (applyTokens' save of a refreshed session, say) and only the cache
+// holds that session: the older file must not put it back, or the guard would go
+// back to the old token, find it due and refresh again at every call. LastAttempt
+// orders the writes that change a session (NewSession, recordAttempt and
+// applyRefusal set it); the high-water writes leave it alone, so a file that only
+// has a newer mark is as new as the session it holds.
+func (g *Guard) adoptUnlessOlder(fresh *Session) {
+	if cur, _ := g.cached(); cur == nil || !fresh.LastAttempt.Before(cur.LastAttempt) {
+		g.adopt(fresh)
+	}
 }
