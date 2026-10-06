@@ -62,7 +62,7 @@ export function ValidationIssues({ errors }) {
 export default function DesignerToolbar({
   orgName, validation, pendingUpdateCount, onApplyPending,
   viewMode, onViewMode, liveSource, runs = [], onLiveSource, live,
-  onAddRole, onTidy, edgeStyle, onToggleEdgeStyle, onReload, fullscreen, onToggleFullscreen, onOpenAutomations,
+  onAddRole, onAddSection, onTidy, edgeStyle, onToggleEdgeStyle, onReload, fullscreen, onToggleFullscreen, onOpenAutomations,
 }) {
   const design = viewMode === 'design'
   return (
@@ -123,6 +123,7 @@ export default function DesignerToolbar({
       <div style={{ flex: 1 }} />
       <button onClick={onOpenAutomations} title="Automations in this org" style={toolbarBtnStyle}><Workflow size={11} /> Automations</button>
       {design && <button onClick={onAddRole} title="Define a new role directly (no icon needed)" style={toolbarBtnStyle}>+ Role</button>}
+      {design && onAddSection && <button onClick={onAddSection} title="Group the selected role into a new section" style={toolbarBtnStyle}>+ Section</button>}
       {design && <button onClick={onTidy} title="Tidy layout" style={toolbarBtnStyle}>Tidy</button>}
       {viewMode !== 'matrix' && (
         <button onClick={onToggleEdgeStyle} title="Toggle connector style" style={toolbarBtnStyle}>

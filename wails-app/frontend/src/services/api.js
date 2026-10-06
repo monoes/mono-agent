@@ -218,6 +218,8 @@ export const api = {
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
   getOrgLogs:         (name, run = '') => GoApp.GetOrgLogs(name, run).then(s => JSON.parse(s)).catch(guard('org logs', null)),
   getOrgReport:       (name, all = false, run = '') => GoApp.GetOrgReport(name, all, run).then(s => JSON.parse(s)).catch(guard('org report', null)),
+  getOrgBudget:       (name, run = '') => GoApp.GetOrgBudget(name, run).then(s => JSON.parse(s)).catch(guard('org budget', null)),
+  getOrgEstimate:     (name) => GoApp.GetOrgEstimate(name).then(s => JSON.parse(s)).catch(guard('org estimate', null)),
   getOrgCosts:        (name, run = '') => GoApp.GetOrgCosts(name, run).then(s => JSON.parse(s)).catch(guard('org costs', null)),
   getOrgFlow:         (name, run = '') => GoApp.GetOrgFlow(name, run).then(s => JSON.parse(s)).catch(guard('org flow', null)),
   getOrgQuestions:    (name) => GoApp.GetOrgQuestions(name).then(s => JSON.parse(s)).catch(guard('org questions', null)),
@@ -256,6 +258,15 @@ export const api = {
   promoteRoleToRoot:   (name, roleID) => GoApp.PromoteRoleToRoot(name, roleID).then(s => JSON.parse(s)),
   chooseInstructionsFile: () => GoApp.ChooseInstructionsFile(),
   saveOrgLayout:       (name, layout) => GoApp.SaveOrgLayout(name, JSON.stringify(layout)).then(s => JSON.parse(s)),
+  // Sections (monomind org-runtime §6.7): app_orgs_sections.go. Each call
+  // resolves {ok, rev, org} or {error} (the refusal reason).
+  addOrgSection:       (name, section, spec) => GoApp.AddOrgSection(name, section, JSON.stringify(spec)).then(s => JSON.parse(s)),
+  updateOrgSection:    (name, section, patch) => GoApp.UpdateOrgSection(name, section, JSON.stringify(patch)).then(s => JSON.parse(s)),
+  deleteOrgSection:    (name, section, moveTo = '') => GoApp.DeleteOrgSection(name, section, moveTo).then(s => JSON.parse(s)),
+  assignOrgRole:       (name, roleID, section) => GoApp.AssignOrgRole(name, roleID, section).then(s => JSON.parse(s)),
+  addOrgRoleToSection: (name, section, role) => GoApp.AddOrgRoleToSection(name, section, JSON.stringify(role)).then(s => JSON.parse(s)),
+  addOrgDocumentEdge:  (name, from, to, docType) => GoApp.AddOrgDocumentEdge(name, from, to, docType).then(s => JSON.parse(s)),
+  removeOrgDocumentEdge: (name, from, to, docType) => GoApp.RemoveOrgDocumentEdge(name, from, to, docType).then(s => JSON.parse(s)),
   saveOrgDesign:       (name, doc) => GoApp.SaveOrgDesign(name, JSON.stringify(doc)).then(s => JSON.parse(s)),
   // Full-access roles (#205): grant ('full', only after the confirm dialog)
   // or revoke ('scoped'); a refusal rejects with the CLI's text verbatim.

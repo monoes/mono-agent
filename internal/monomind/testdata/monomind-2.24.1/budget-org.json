@@ -1,0 +1,102 @@
+{
+  "name": "bud",
+  "goal": "Write a one-line note and have it reviewed",
+  "status": "stopped",
+  "schedule": null,
+  "requires": {
+    "sections": 1
+  },
+  "run_config": {
+    "completion": {
+      "mode": "dag"
+    },
+    "budget_tokens": 200000,
+    "budget_usd": 0.15,
+    "memory_namespace": "org:bud"
+  },
+  "sections": {
+    "drafting": {
+      "lead": "writer",
+      "members": [
+        "writer"
+      ],
+      "publishes": [
+        "note"
+      ],
+      "budget": {
+        "usd": 0.05
+      }
+    },
+    "review": {
+      "lead": "checker",
+      "members": [
+        "checker"
+      ],
+      "consumes": [
+        "note"
+      ],
+      "budget": {
+        "usd": 0.04
+      }
+    }
+  },
+  "documents": {
+    "note": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Coordinate"
+      ],
+      "runtime": "grok",
+      "budget_usd": 0.06,
+      "adapter_config": {
+        "model": "grok-4"
+      }
+    },
+    {
+      "id": "writer",
+      "title": "Writer",
+      "type": "specialist",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Write"
+      ],
+      "budget_usd": 0.05,
+      "runtime": "grok",
+      "adapter_config": {
+        "model": "grok-4"
+      }
+    },
+    {
+      "id": "checker",
+      "title": "Checker",
+      "type": "reviewer",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Review"
+      ],
+      "budget_usd": 0.04,
+      "runtime": "grok",
+      "adapter_config": {
+        "model": "grok-4"
+      }
+    }
+  ]
+}
