@@ -78,3 +78,11 @@ func (g *Guard) dropUnconfirmed(cur *Session, now time.Time) (Status, outcome, e
 	}
 	return st, oc, err
 }
+
+// pendingStamp is the marker of the cached session, the zero time when there is none.
+func (g *Guard) pendingStamp() time.Time {
+	if sess, _ := g.cached(); sess != nil {
+		return sess.PendingSince
+	}
+	return time.Time{}
+}
