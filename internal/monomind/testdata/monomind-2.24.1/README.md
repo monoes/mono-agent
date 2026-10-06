@@ -24,6 +24,8 @@ everything else: it routed the messages, ran the real document store
 | `events.ndjson` | `org events sec --run <id>`: the whole bus of the completed run, 57 lines |
 | `doc-events.jsonl`, `doc-snapshot.json`, `doc-notices.jsonl` | the run's document store: `.monomind/orgs/sec/docs/<run>/` (hash-chained event log, state snapshot, delivery notices) |
 | `schedule-audit.jsonl`, `schedule-audit-bus.ndjson` | `.monomind/orgs/sched/schedule-audit.jsonl` and the same line on the run's bus, from `org serve` with `schedule: "1m"` and a run that outlasted its interval |
+| `schedule-audit-refused.jsonl` | `.monomind/orgs/sec/schedule-audit.jsonl` from `org serve` (`schedule: "25s"`, signed org) started with `bwrap` and `socat` off PATH: two `scheduled-start-refused` lines carrying the host-preflight (R6) message. The same run also showed `scheduled-tick-deferred` x3 and four runs with four separate `docs/<run>/` stores. |
+| `schedule-audit-skipped.jsonl` | `.monomind/orgs/sec/schedule-audit.jsonl` from `org serve` (`schedule: "40s"`) where an out-of-band `org run sec --yes` (hosted by the serve daemon, long-running fake runtime) was live when ticks fired: four `scheduled-tick-skipped` lines, plus one `scheduled-tick-deferred` from an earlier scheduler-started run (its catch-up run started within a second of the previous run ending). |
 | `org-sec.json` | the org definition |
 | `fake-codex.py` | the scripted stand-in runtime (not monomind output) |
 
@@ -32,6 +34,7 @@ everything else: it routed the messages, ran the real document store
 | File | What it is |
 |---|---|
 | `events-unknown-kind.ndjson` | `events.ndjson` with two unknown event kinds (`section_status`, `hologram-from-the-future`) and a known event carrying unknown fields spliced in. 2.24.1 emits none of these; it exists so unknown kinds and fields stay non-fatal. |
+| `../../../orgbridge/testdata/documents-synthetic/` | **Synthetic, not monomind output.** The recorded run has no reject, rework or exhausted-cap case, so these are built from monomind 2.24.1's source (`orgrt/documents/store-types.ts`, `state.ts`, `relay.ts`, `rework.ts`, `notice-journal.ts`) and carry the same shapes: `events.jsonl` (a correctly hash-chained store: note-1 rejected once then accepted; note-2 rejected twice = cap of 2 exhausted and frozen; note-3 exhausted then accepted by a root `override`; note-4 pending; one `refused` line), `notices.jsonl` (delivered relay and `rework-exhausted` keys), `org-rework.json` (cap on the consuming section `review`, a `deliverable_files` entry). The panel's bus fixture, `wails-app/frontend/src/components/orgdesigner/__fixtures__/documents-bus.ndjson`, is synthetic too and adds an old `loop` event and an unknown kind. |
 
 ## Not captured
 

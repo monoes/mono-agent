@@ -73,6 +73,8 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgSendCmd(env),
 		newOrgChatCmd(env),
 		newOrgQueuedCmd(env),
+		newOrgDocumentsCmd(env),
+		newOrgScheduleAuditCmd(env),
 		newOrgRenameCmd(env),
 		newOrgDeleteCmd(env),
 		newOrgAutomationRoleCmd(env),
