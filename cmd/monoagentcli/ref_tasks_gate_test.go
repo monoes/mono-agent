@@ -86,20 +86,53 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 	if len(gate) == 0 {
 		t.Fatal("WHO MAY DO WHAT has no sentence with the code operator_only: it must name the commands the gate refuses")
 	}
+	word := func(row string) string { return strings.TrimPrefix(row, "add ") } // `add --ready` is named by its flag
 	gateText, restText := strings.Join(gate, "\n"), strings.Join(rest, "\n")
 	for _, r := range refTaskGate {
-		word := r.row
-		if word == "add --ready" {
-			word = "--ready" // `add` is named in that sentence through the flag
-		}
 		switch {
-		case r.op && !refNames(gateText, word):
+		case r.op && !refNames(gateText, word(r.row)):
 			t.Errorf("the sentence of `ref tasks` that says operator_only does not name `%s`", r.row)
-		case !r.op && r.row != "add" && refNames(gateText, word):
+		case !r.op && r.row != "add" && refNames(gateText, word(r.row)):
 			t.Errorf("the sentence of `ref tasks` that says operator_only names `%s`, which an agent may run", r.row)
 		}
 		if !r.op && !refNames(restText, r.row) {
 			t.Errorf("WHO MAY DO WHAT never names `%s` outside the sentence that says operator_only, so an agent cannot tell that it may run it", r.row)
+		}
+	}
+	// A sentence that lists what agents may run (three of their commands, and no word about the
+	// operator) must not list a command that is the operator's.
+	for _, s := range rest {
+		agentCommands := 0
+		for _, r := range refTaskGate {
+			if !r.op && refNames(s, r.row) {
+				agentCommands++
+			}
+		}
+		if agentCommands < 3 || regexp.MustCompile(`(?i)operator`).MatchString(s) {
+			continue
+		}
+		for _, r := range refTaskGate {
+			if r.op && refNames(s, word(r.row)) {
+				t.Errorf("a sentence of WHO MAY DO WHAT lists what an agent may run and names `%s`, which is the operator's: %q", r.row, strings.Join(strings.Fields(s), " "))
+			}
+		}
+	}
+}
+
+// A digest that fails (here: a profile that does not exist) prints one line on standard error and
+// nothing on standard output, and exits 0, with --json too, so that a session-start hook never
+// breaks on it. The places of `ref tasks` that speak of the documents and of the hook say so.
+func TestRefTasksSaysWhatADigestThatFailsPrints(t *testing.T) {
+	out, errOut, err := runTask(t, newTaskTestDB(t), "no-such-profile", true, "", "digest")
+	if out != "" || errOut == "" || err != nil {
+		t.Fatalf("a digest that fails printed %q on standard output and %q on standard error, and returned %v", out, errOut, err)
+	}
+	for _, heading := range []string{"THE AGENT LOOP", "JSON"} {
+		text := strings.Join(strings.Fields(refSection(heading)), " ")
+		for _, want := range []string{"a digest that fails", "one line on standard error and nothing on standard output"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %s section of `ref tasks` does not say %q", heading, want)
+			}
 		}
 	}
 }
