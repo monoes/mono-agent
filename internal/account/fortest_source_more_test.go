@@ -18,11 +18,15 @@ import (
 // date, InstallForTest swap the guard. Each therefore starts, after t.Helper(), with
 // requireTestBinary(<its own name>), which panics outside a test binary, and nothing
 // runs before it: not a package-level variable, not the lock, not t.Setenv (the
-// environment is a global too). Dropping, renaming or delaying that call cannot be
-// seen from inside a test binary (testing.Testing() is true in every one), so the
-// sources of this package and of accounttest are read as syntax. In accounttest, where
-// requireTestBinary is out of reach, the refusal is a call to an account.*ForTest hook,
-// which refuses by itself.
+// environment is a global too). The very next statement is t.Setenv(testStateEnv, "1"),
+// the marker that makes the testing package panic when the test also calls t.Parallel
+// (see parallel_more_test.go): placed after the hook's first write, the panic would come
+// after a global had changed and before t.Cleanup could undo it. A hook that does not
+// need the marker carries it anyway, loudly on purpose. Dropping, renaming or delaying
+// the refusal cannot be seen from inside a test binary (testing.Testing() is true in
+// every one), so the sources of this package and of accounttest are read as syntax. In
+// accounttest, where requireTestBinary is out of reach, the refusal is a call to an
+// account.*ForTest hook, which refuses by itself and sets the marker for it.
 //
 // That the hooks call requireTestBinary proves nothing if its body can change: with
 // mustBeTestBinary(true, name) in place of mustBeTestBinary(testing.Testing(), name)
@@ -181,7 +185,8 @@ func describeStmts(list []ast.Stmt) string {
 }
 
 // hookProblem says what is wrong with the start of a hook, or "" when its first
-// statement, after t.Helper(), is the call that makes it refuse to run outside a test binary.
+// statement, after t.Helper(), is the call that makes it refuse to run outside a test
+// binary and, in this package, the next one is the marker.
 func hookProblem(fd *ast.FuncDecl, viaAccount bool) string {
 	want := fmt.Sprintf("must start, after t.Helper(), with requireTestBinary(%q), and nothing may run before it", fd.Name.Name)
 	if viaAccount {
@@ -191,9 +196,18 @@ func hookProblem(fd *ast.FuncDecl, viaAccount bool) string {
 	if names := paramNames(fd); len(names) > 0 {
 		param = names[0]
 	}
-	for _, st := range fd.Body.List {
+	marker := param + `.Setenv(testStateEnv, "1")`
+	list := fd.Body.List
+	for i, st := range list {
 		if refuses(st, fd.Name.Name, viaAccount) {
-			return ""
+			if viaAccount || (param != "" && i+1 < len(list) && exprOf(list[i+1]) == marker) {
+				return ""
+			}
+			next := "nothing"
+			if i+1 < len(list) {
+				next = strings.Trim(describeStmts(list[i+1:i+2]), "[]")
+			}
+			return fmt.Sprintf("must set the marker, %s, right after it refuses and before it writes anything, so that a test that mixes it with t.Parallel panics before any global has changed; what follows the refusal is %s", marker, next)
 		}
 		if param != "" && exprOf(st) == param+".Helper()" {
 			continue
