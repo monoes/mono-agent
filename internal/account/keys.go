@@ -35,7 +35,15 @@ func TrustedKeys() []Key {
 	if keysOverridden {
 		return cloneKeys(keysOverride)
 	}
-	return append(cloneKeys(pinnedKeys), extraKeys()...)
+	return mergeKeys(pinnedKeys, extraKeys())
+}
+
+// mergeKeys is the pinned keys followed by the extra ones, every key a copy: the
+// result is the caller's to change, and the development key of a devaccount
+// build is not. It takes both sets as arguments so that a test can give it extra
+// keys, which a default build has none of.
+func mergeKeys(pinned, extra []Key) []Key {
+	return append(cloneKeys(pinned), cloneKeys(extra)...)
 }
 
 // lookupKey finds a trusted key by kid.
