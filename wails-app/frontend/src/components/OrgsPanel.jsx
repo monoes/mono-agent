@@ -16,6 +16,7 @@ import AutonomyBar from './orgs/AutonomyBar.jsx'
 import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
 import DecisionsFeed from './orgs/DecisionsFeed.jsx'
 import DocumentsPanel from './orgdesigner/DocumentsPanel.jsx'
+import ScheduleAuditPanel from './orgdesigner/ScheduleAuditPanel.jsx'
 import GroupView from './orgs/GroupView.jsx'
 import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
@@ -1009,6 +1010,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 {tab === 'group' && isHolding && (
                   <GroupView holding={selected} onOpenOrg={(name) => selectOrg(name)} />
                 )}
+
+                {tab === 'logs' && <ScheduleAuditPanel orgName={selected} live={selectedRun === 'live'} />}
 
                 {!tabLoading && tab === 'logs' && (
                   itemsOf(data.logs).length === 0
