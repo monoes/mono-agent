@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -225,7 +226,7 @@ func TestTheDropRemovesTheDeadTokenBeforeItWritesAnything(t *testing.T) {
 		t.Fatalf("refresh.enc was still on disk when the session was saved: %v", ws.sawRefreshOnSave)
 	}
 	if saved, err := r.store.Load(); err != nil || saved.LastResult != string(ReasonUnconfirmed) || !saved.PendingSince.IsZero() || !saved.LastAttempt.Equal(r.clock.Now()) {
-		t.Fatalf("stored session = %+v (%v), want unconfirmed at %v with no marker", saved, err, r.clock.Now())
+		t.Fatalf("stored session = %s (%v), want unconfirmed at %v with no marker", sessionFacts(saved), err, r.clock.Now())
 	}
 }
 
@@ -250,7 +251,7 @@ func TestADropThatCannotRemoveTheTokenKeepsTheMarkerAndNeverPresentsIt(t *testin
 		}
 		saved, err := r.store.Load()
 		if err != nil || !saved.PendingSince.Equal(stamp) || saved.LastResult != string(ReasonUnconfirmed) {
-			t.Fatalf("pass %d: stored session = %+v (%v), want the marker kept (%v) so that the token is dropped again", pass, saved, err, stamp)
+			t.Fatalf("pass %d: stored session = %s (%v), want the marker kept (%v) so that the token is dropped again", pass, sessionFacts(saved), err, stamp)
 		}
 	}
 	if rt, _ := r.store.LoadRefresh(); rt != "rt-1" {
@@ -268,7 +269,7 @@ func TestADropThatCannotRemoveTheTokenKeepsTheMarkerAndNeverPresentsIt(t *testin
 		t.Fatalf("refresh.enc still holds %q", rt)
 	}
 	if saved, err := r.store.Load(); err != nil || !saved.PendingSince.IsZero() {
-		t.Fatalf("stored session = %+v (%v), want the marker cleared once the token is gone", saved, err)
+		t.Fatalf("stored session = %s (%v), want the marker cleared once the token is gone", sessionFacts(saved), err)
 	}
 }
 
@@ -305,7 +306,7 @@ func TestADropWhoseRecordCannotBeSavedStillRemovesTheToken(t *testing.T) {
 		t.Fatalf("the other process = %s/%q, %s, %v with %d network refreshes, want grace/unconfirmed, failed, no error and none", st.State, st.Reason, outcomeNames[got], err, r.srv.calls.Load())
 	}
 	if saved, err := r.store.Load(); err != nil || saved.LastResult != string(ReasonUnconfirmed) || !saved.PendingSince.IsZero() || !saved.LastAttempt.Equal(r.clock.Now()) {
-		t.Fatalf("stored session = %+v (%v), want the drop finished: unconfirmed at %v and no marker", saved, err, r.clock.Now())
+		t.Fatalf("stored session = %s (%v), want the drop finished: unconfirmed at %v and no marker", sessionFacts(saved), err, r.clock.Now())
 	}
 }
 
@@ -319,4 +320,14 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// sessionFacts is what these tests read in a stored session, without its token: a test never
+// prints a token.
+func sessionFacts(s *Session) string {
+	if s == nil {
+		return "<no session>"
+	}
+	return fmt.Sprintf("last=%q attempt=%v pending=%v hw=%v state=%q token-set=%t",
+		s.LastResult, s.LastAttempt, s.PendingSince, s.HW, s.State, s.AccessToken != "")
 }

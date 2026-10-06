@@ -206,8 +206,9 @@ func TestAHealthySessionIsJudgedFromTheCacheWithoutTouchingTheDisk(t *testing.T)
 	}
 }
 
-// A session.json that cannot be read under the lock says nothing about the
-// account: the guard keeps what it has, reports the failure and tries nothing.
+// A session.json that cannot be read under the lock stops the refresh: it keeps
+// what the guard has, reports the failure and tries nothing. (The verdict on such
+// a file is the next poll's: TestAnUnusableSessionFileLocksALongRunningGuardAtItsNextPoll.)
 func TestAFileThatCannotBeReadUnderTheLockLeavesTheCacheAlone(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour) // due

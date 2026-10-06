@@ -380,7 +380,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantKeepsTheOldTokenAndTheMarkerAndRec
 		t.Fatalf("refresh.enc holds %q (%v), want the old token: the marker covers it and a retry inside the window needs it", rt, err)
 	}
 	if sess, err := r.store.Load(); err != nil || sess.LastResult != string(ReasonKeyringUnavailable) || !sess.PendingSince.Equal(start) {
-		t.Fatalf("stored session = %+v (%v), want the attempt recorded as keyring_unavailable and the marker of this attempt, %v", sess, err, start)
+		t.Fatalf("stored session = %s (%v), want the attempt recorded as keyring_unavailable and the marker of this attempt, %v", sessionFacts(sess), err, start)
 	}
 	// The Seal that was given up on writes nothing when the key store answers. Two
 	// calls reached the key store: the Open that answered, and the Seal.
@@ -424,7 +424,7 @@ func TestASaveRefreshThatTimedOutIsRetriedInsideTheWindowAndTheAnswerIsStored(t 
 		t.Fatalf("refresh.enc holds %q (%v), want the rotated token that the repeated answer brought", rt, err)
 	}
 	if sess, err := r.store.Load(); err != nil || sess.LastResult != resultOK || !sess.PendingSince.IsZero() {
-		t.Fatalf("stored session = %+v (%v), want ok and no marker", sess, err)
+		t.Fatalf("stored session = %s (%v), want ok and no marker", sessionFacts(sess), err)
 	}
 }
 
