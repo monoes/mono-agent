@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
 // ErrEstimateUnavailable means the pre-run estimate cannot be read safely.
@@ -63,17 +65,34 @@ func ParseCostEstimate(out string) (*CostEstimate, bool) {
 // a negative budget, so monomind prints it and aborts "before any tokens are
 // spent". Two cases would start a run instead and are refused first: a live
 // `org serve` daemon (monomind hands the request to it before the estimate)
-// and an unsigned or changed org (monomind refuses, with no estimate).
+// and an unsigned or changed org (monomind refuses, with no estimate). It
+// also refuses a monomind older than KnownGoodMonomindVersion and an org that
+// fails `org validate`. Note `org run` may run reconcileStaleRun first, which
+// can rewrite the org's runtime.json (a dead "running" record becomes
+// stopped) even though no session starts.
 func OrgCostEstimate(ctx context.Context, projectRoot, name string) (*CostEstimate, error) {
-	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") {
+	if !orgdesign.ValidOrgName(name) {
 		return nil, fmt.Errorf("invalid org name %q", name)
 	}
-	if _, live := ReadServeHeartbeat(projectRoot); live {
+	if ServeMaybeLive(projectRoot) {
 		return nil, fmt.Errorf("%w: org serve is running and would take the request as a real run", ErrEstimateUnavailable)
 	}
-	bin, err := EnsureIn(ctx, projectRoot)
+	bin, err := findIn(projectRoot)
 	if err != nil {
 		return nil, err
+	}
+	vi, err := Handshake(ctx, bin)
+	if err != nil {
+		return nil, err
+	}
+	if BelowKnownGood(vi.Version) {
+		return nil, fmt.Errorf("%w: monomind %s is older than %s; its `org run` may start a real run instead of aborting at the estimate, so it is not called — update it: npm install -g @monoes/monomindcli@latest",
+			ErrEstimateUnavailable, vi.Version, KnownGoodMonomindVersion)
+	}
+	// An invalid org makes `org run` skip the estimate and carry on into a
+	// real start, so the definition must validate first.
+	if _, err := OrgValidate(ctx, projectRoot, name); err != nil {
+		return nil, fmt.Errorf("%w: org %s does not validate: %v", ErrEstimateUnavailable, name, firstLine(err.Error()))
 	}
 	if err := checkOrgSigned(ctx, projectRoot, name); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEstimateUnavailable, err)

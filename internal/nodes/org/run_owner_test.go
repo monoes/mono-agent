@@ -102,3 +102,21 @@ func TestMonomindOwnsScheduleNeedsScheduleServeAndScheduleTrigger(t *testing.T) 
 		})
 	}
 }
+
+// monomind hands work to a serve whose heartbeat is up to 3 minutes old while
+// its pid lives, so every heartbeat age with a live pid owns the schedule.
+func TestMonomindOwnsScheduleAnyLiveHeartbeatAge(t *testing.T) {
+	for _, age := range []time.Duration{30 * time.Second, 90 * time.Second, 170 * time.Second, 10 * time.Minute} {
+		t.Run(age.String(), func(t *testing.T) {
+			ctx, root := scheduledOrgRoot(t, `"1m"`, false)
+			hb, _ := json.Marshal(map[string]interface{}{"pid": os.Getpid(), "updatedAt": time.Now().Add(-age).UTC().Format(time.RFC3339Nano), "running": []string{}})
+			if err := os.WriteFile(filepath.Join(root, ".monomind", "serve-heartbeat.json"), hb, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx = workflow.WithTrigger(ctx, "trigger.schedule", nil)
+			if !monomindOwnsSchedule(ctx, root, "sec") {
+				t.Fatal("a live serve pid owns the schedule at any heartbeat age")
+			}
+		})
+	}
+}

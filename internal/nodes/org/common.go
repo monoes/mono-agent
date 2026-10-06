@@ -137,8 +137,9 @@ func monomindOwnsSchedule(ctx context.Context, root, org string) bool {
 	if err != nil || !hasSchedule(doc.Schedule) {
 		return false
 	}
-	_, live := monomind.ReadServeHeartbeat(root)
-	return live
+	// monomind hands work to a serve whose heartbeat is up to 3 minutes old
+	// while its pid lives, so any live pid counts: a gap here double-fires.
+	return monomind.ServeMaybeLive(root)
 }
 
 // hasSchedule: monomind's schedule is a string or a number; null, "" and 0 mean none.

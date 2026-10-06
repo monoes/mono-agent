@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -40,6 +41,7 @@ func estimateFake(t *testing.T, body string) string {
 	root := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "monomind")
 	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then cat '" + goldenPath("version.json") + "'; exit 0; fi\n" +
+		"if [ \"$1 $2\" = \"org validate\" ]; then echo ok; exit 0; fi\n" +
 		"echo \"$@\" > '" + filepath.Join(root, "argv") + "'\n" + body
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -94,5 +96,76 @@ func TestParseCostEstimate_FromRealRunStdout(t *testing.T) {
 	}
 	if strings.Contains(est.Text, "org bud running") {
 		t.Errorf("the block ends at the total, got:\n%s", est.Text)
+	}
+}
+
+// monomind 2.24.x hands `org run` to a serve daemon whose heartbeat is up to
+// 3 minutes old while its pid lives, before it prints the estimate, so the
+// estimate must be refused for any age with a live pid.
+func TestOrgCostEstimate_RefusesAnyLiveServeHeartbeatAge(t *testing.T) {
+	dead := 0
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err == nil {
+		dead = cmd.Process.Pid
+	}
+	cases := []struct {
+		name    string
+		age     time.Duration
+		pid     int
+		refused bool
+	}{
+		{"30s", 30 * time.Second, os.Getpid(), true},
+		{"90s", 90 * time.Second, os.Getpid(), true},
+		{"170s", 170 * time.Second, os.Getpid(), true},
+		{"10min", 10 * time.Minute, os.Getpid(), true},
+		{"dead pid", 30 * time.Second, dead, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := estimateFake(t, "cat '"+goldenPath("run-estimate-abort.txt")+"'; exit 1\n")
+			hb := `{"pid":` + strconv.Itoa(c.pid) + `,"updatedAt":"` + time.Now().Add(-c.age).UTC().Format(time.RFC3339) + `"}`
+			if err := os.MkdirAll(filepath.Join(root, ".monomind"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ".monomind", "serve-heartbeat.json"), []byte(hb), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := OrgCostEstimate(context.Background(), root, "sec")
+			if c.refused != errors.Is(err, ErrEstimateUnavailable) {
+				t.Fatalf("refused=%v want %v (err=%v)", errors.Is(err, ErrEstimateUnavailable), c.refused, err)
+			}
+			_, ran := os.Stat(filepath.Join(root, "argv"))
+			if c.refused && ran == nil {
+				t.Error("org run must not be called")
+			}
+		})
+	}
+}
+
+// Below KnownGoodMonomindVersion, and when the org does not validate, `org run`
+// is never called: either could start a real run instead of aborting.
+func TestOrgCostEstimate_GatesVersionAndValidate(t *testing.T) {
+	cases := []struct{ name, version, validate string }{
+		{"old monomind", "2.20.0", "exit 0"},
+		{"invalid org", "2.24.1", "echo 'invalid: bad role'; exit 1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			bin := filepath.Join(t.TempDir(), "monomind")
+			script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then sed 's/2\\.24\\.1/" + c.version + "/' '" + goldenPath("version.json") + "'; exit 0; fi\n" +
+				"if [ \"$1 $2\" = \"org validate\" ]; then " + c.validate + "; fi\n" +
+				"echo \"$@\" > '" + filepath.Join(root, "argv") + "'\ncat '" + goldenPath("run-estimate-abort.txt") + "'; exit 1\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(EnvOverride, bin)
+			if _, err := OrgCostEstimate(context.Background(), root, "sec"); !errors.Is(err, ErrEstimateUnavailable) {
+				t.Fatalf("want unavailable, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "argv")); err == nil {
+				t.Error("org run must not be called")
+			}
+		})
 	}
 }

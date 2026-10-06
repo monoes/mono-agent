@@ -210,8 +210,10 @@ func newOrgEstimateCmd(root func() string) *cobra.Command {
 		Short: "Show monomind's pre-run cost estimate, with its \"stale rates\" note, without starting a run",
 		Long: "monomind prints the estimate only at the start of `org run`. This reads it with " +
 			"`org run --yes --budget-usd=-1`, which aborts before any session starts, and refuses " +
-			"first when an `org serve` daemon is live or the org is unsigned (both would not give " +
-			"an estimate, or would start a real run). The text is monomind's, verbatim.",
+			"first when an `org serve` daemon is live (any heartbeat age with a live pid), the org is " +
+			"unsigned or fails `org validate`, or monomind is older than the tested version (each would " +
+			"give no estimate or start a real run). `org run` may reconcile a stale run first, which can " +
+			"rewrite the org's runtime.json. The text is monomind's, verbatim.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			est, err := monomind.OrgCostEstimate(cmd.Context(), root(), args[0])
