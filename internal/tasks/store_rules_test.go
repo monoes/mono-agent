@@ -52,6 +52,40 @@ func TestAddToReadyRefusesEveryActorButTheOperator(t *testing.T) {
 	}
 }
 
+// Who is asking decides before what is asked: a request for Ready from anyone but the operator is
+// refused as that, whatever the text, the title, the notes or the source say, and nothing is stored.
+// The operator's own empty text is still an invalid task.
+func TestTheReadyGateComesBeforeAnyCheckOfTheTask(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	asks := []AddInput{
+		{Ready: true},                                  // no words at all
+		{Ready: true, Text: " \n\t "},                  // white space only
+		{Ready: true, Text: "\x1b\x00"},                // controls only
+		{Ready: true, Text: "buy milk"},                // good words
+		{Ready: true, Notes: "notes need a title"},     // notes alone
+		{Ready: true, Notes: "n", Text: "t"},           // notes and text together
+		{Ready: true, Title: "t", SourceKind: "bogus"}, // a source nobody may use
+		{Ready: true, Title: "t", ClientID: "bad id!"}, // a malformed client id
+	}
+	for _, a := range []Actor{bot("b"), bot(""), {Kind: Capture, Name: SourceChrome}, {Kind: Capture}} {
+		for _, in := range asks {
+			if _, _, err := s.Add(bg, "default", in, a); !errors.Is(err, ErrOperatorOnly) {
+				t.Errorf("%+v asking for Ready with %#v: %v, want ErrOperatorOnly", a, in, err)
+			}
+		}
+	}
+	for _, table := range []string{"tasks", "task_events", "task_board_rev"} {
+		if n := countWhere(t, db, table, "1 = 1"); n != 0 {
+			t.Errorf("%d rows in %s after the refused requests", n, table)
+		}
+	}
+	for _, text := range []string{"", " \n\t "} {
+		if _, _, err := s.Add(bg, "default", AddInput{Ready: true, Text: text}, human); !errors.Is(err, ErrInvalid) || errors.Is(err, ErrOperatorOnly) {
+			t.Errorf("the operator asking for Ready with text %q: %v, want ErrInvalid", text, err)
+		}
+	}
+}
+
 // A capture's Name is a surface: empty, exactly "chrome" or exactly "os". It is what the events say
 // about who acted, so a capture may not put a name of its own on the audit trail, and a surface files
 // only its own source.

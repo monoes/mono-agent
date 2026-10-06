@@ -327,15 +327,18 @@ func (s *Store) checkAddLimits(ctx context.Context, x dbx, profileID, kind strin
 // asks). With a ClientID it is idempotent: a second Add with the same key
 // returns the task that exists and created is false.
 func (s *Store) Add(ctx context.Context, profileID string, in AddInput, actor Actor) (Task, bool, error) {
+	// Who is asking decides before what is asked: this gate comes first, so that a
+	// request for Ready from anyone but the operator is refused as that whatever the
+	// text, the title or the source say.
+	if in.Ready && actor.Kind != Human {
+		return Task{}, false, operatorOnly("add a task straight to Ready")
+	}
 	title, notes, err := deriveTitleNotes(in.Title, in.Notes, in.Text)
 	if err != nil {
 		return Task{}, false, err
 	}
 	status := StatusInbox
 	if in.Ready {
-		if actor.Kind != Human {
-			return Task{}, false, operatorOnly("add a task straight to Ready")
-		}
 		status = StatusReady
 	}
 	kind, err := sourceKindFor(actor, in.SourceKind)
