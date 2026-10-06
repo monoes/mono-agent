@@ -181,3 +181,54 @@ func TestWithNothingInDoubtTheLastAttemptFollowsTheClockBack(t *testing.T) {
 		t.Fatalf("%d calls, want 2: the negative cache counts from the attempt on the clock that went back", n)
 	}
 }
+
+// The high-water write is the one write of a pass that finds nothing to try, and it reads the
+// session again under the lock and changes its mark alone. Over a session in doubt it keeps the
+// marker, the last attempt and the result as they are. (On a clock that reads before the last
+// attempt it writes nothing at all: every write of an attempt has raised the mark to within a
+// minute of it, and the mark is written only once it is a minute stale.)
+
+// While the refresher backs off from its own lost answer, it keeps the mark current.
+func TestAHighWaterWriteWhileTheRefresherBacksOffKeepsTheMarker(t *testing.T) {
+	e, srv, net, g := loopMachine(t, 2*time.Hour) // in grace: every pass is due
+	net.then(lost, lost)
+	t0 := e.f.Clock.Now()
+	g.StartRefresher(context.Background())
+	waitForGrants(t, net, 1, "the first attempt")
+	expectGrants(t, net, 1, "the first lost answer")
+	e.f.Clock.Advance(31 * time.Second)
+	waitForGrants(t, net, 2, "the retry")
+	expectGrants(t, net, 2, "the retry, lost again") // the next attempt is at +91 s
+	before := e.session()
+	e.f.Clock.Advance(59 * time.Second) // +90 s: the mark (t0) is a minute and a half stale
+	waitForHW(t, e, t0.Add(90*time.Second), "the high-water write while the refresher backs off")
+	after := e.session()
+	if !after.PendingSince.Equal(t0) || !after.LastAttempt.Equal(before.LastAttempt) || after.LastResult != before.LastResult {
+		t.Fatalf("stored session = %s, was %s: the high-water write changed more than the mark", describe(after), describe(before))
+	}
+	if net.grants() != 2 || srv.isRevoked() {
+		t.Fatalf("%d grants (revoked %t), want the two of before", net.grants(), srv.isRevoked())
+	}
+}
+
+// A pass that finds nothing due over a session that a drop left unconfirmed, with its access
+// token still good, keeps the mark current and nothing else.
+func TestAHighWaterWriteKeepsUnconfirmedAndTheLastAttempt(t *testing.T) {
+	e, srv, net := strayMarker(t, 241*time.Second) // the access token has 50 minutes left
+	r := &lostRig{e: e, srv: srv, net: net, t0: e.f.Clock.Now()}
+	if st, err := r.command(); err != nil || st.State != account.StateOK {
+		t.Fatalf("the drop = %s/%q, %v, want ok on the access token that is left", st.State, st.Reason, err)
+	}
+	before := r.e.session()
+	r.e.f.Clock.Advance(2 * time.Minute)
+	if st, err := r.command(); err != nil || st.State != account.StateOK {
+		t.Fatalf("the pass = %s/%q, %v, want ok", st.State, st.Reason, err)
+	}
+	after := r.e.session()
+	if !after.HW.Equal(r.e.f.Clock.Now()) {
+		t.Fatalf("hw = %v, want %v: the pass was meant to write the mark", after.HW, r.e.f.Clock.Now())
+	}
+	if after.LastResult != "unconfirmed" || !after.LastAttempt.Equal(before.LastAttempt) || !after.PendingSince.IsZero() || r.net.grants() != 0 {
+		t.Fatalf("stored session = %s, was %s, with %d grants: the high-water write changed more than the mark", describe(after), describe(before), r.net.grants())
+	}
+}
