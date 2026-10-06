@@ -23,6 +23,7 @@ import { Badge, Chip } from './orgs/ui.jsx'
 import FullAccessSummary from './orgs/FullAccessSummary.jsx'
 import OrgSignatureBanner, { isSignatureRefusal, requestSignatureRefresh } from './orgs/OrgSignatureBanner.jsx'
 import OrgToolActivity from './orgs/OrgToolActivity.jsx'
+import SectionBudgetPanel from './orgs/SectionBudgetPanel.jsx'
 import { isToolActivity } from './orgs/orgToolActivity.js'
 
 // Fold button shown atop the expanded org-list panel — mirrors
@@ -935,6 +936,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                           outcome={runsList.find(r => r.live)?.summary?.outcome}
                           finalMessage={extractFinalMessage(events, runsList.find(r => r.live)?.summary?.outcome)}
                         />
+                        <SectionBudgetPanel orgName={selected} live />
                         <details>
                           <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Raw status</summary>
                           <Card><KVBlock obj={data.overview} /></Card>
@@ -963,6 +965,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                             outcome={runDetail.report?.outcome}
                             finalMessage={extractFinalMessage(runDetail.logs, runDetail.report?.outcome)}
                           />
+                          <SectionBudgetPanel orgName={selected} run={selectedRun} />
                           <details>
                             <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Raw report</summary>
                             <Card><KVBlock obj={runDetail.report} /></Card>

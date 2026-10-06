@@ -235,6 +235,8 @@ export function GetOrgApprovals(arg1:string):Promise<string>;
 
 export function GetOrgAutonomy(arg1:string):Promise<string>;
 
+export function GetOrgBudget(arg1:string,arg2:string):Promise<string>;
+
 export function GetOrgChatHistory(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
@@ -242,6 +244,8 @@ export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
 export function GetOrgDecisions(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgDesign(arg1:string):Promise<string>;
+
+export function GetOrgEstimate(arg1:string):Promise<string>;
 
 export function GetOrgFlow(arg1:string,arg2:string):Promise<string>;
 

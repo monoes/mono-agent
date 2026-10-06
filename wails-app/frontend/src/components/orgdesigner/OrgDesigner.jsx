@@ -57,6 +57,8 @@ import OrgSignatureBanner from '../orgs/OrgSignatureBanner.jsx'
 import { isAutomationNode } from './RoleNode.jsx'
 import useOrgAutomations from './useOrgAutomations.js'
 import useOrgActivity from './useOrgActivity.js'
+import useOrgBudget from './useOrgBudget.js'
+import { bySection, roleBudgets } from './budgetModel.js'
 
 const EDGE_STYLE_KEY = 'od-edge-style'
 const PALETTE_PANEL_OPEN_KEY = 'od-palette-panel-open'
@@ -559,6 +561,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   useEffect(() => { setLiveSource('live'); setViewMode('design') }, [orgName])
 
   const activity = useOrgActivity({ orgName, nodes, enabled: viewMode === 'live', source: liveSource })
+  const budget = useOrgBudget({ orgName, enabled: viewMode === 'live' && sec.on, run: liveSource === 'live' ? '' : liveSource, live: liveSource === 'live' })
   const engineOffline = automationData.daemonRunning === false
 
   // ── Icon picker ─────────────────────────────────────────────────────────
@@ -733,6 +736,9 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               onAddDocEdge={sec.openAddEdge}
               onRemoveDocEdge={sec.removeEdge}
               sectionIssues={sec.issues}
+              sectionBudgets={isLive ? bySection(budget.report) : {}}
+              roleCaps={isLive ? roleBudgets(budget.report) : {}}
+              staleRates={isLive ? budget.estimate?.stale_rates || '' : ''}
             />
           )}
         </div>
@@ -746,6 +752,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               {sec.selected ? (
                 <SectionInspector
                   section={sec.selected}
+                  budget={isLive ? bySection(budget.report)[sec.selected.name] : null}
                   nodes={nodes}
                   sections={sec.list}
                   edges={documentEdges(sec.list)}

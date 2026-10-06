@@ -218,6 +218,8 @@ export const api = {
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
   getOrgLogs:         (name, run = '') => GoApp.GetOrgLogs(name, run).then(s => JSON.parse(s)).catch(guard('org logs', null)),
   getOrgReport:       (name, all = false, run = '') => GoApp.GetOrgReport(name, all, run).then(s => JSON.parse(s)).catch(guard('org report', null)),
+  getOrgBudget:       (name, run = '') => GoApp.GetOrgBudget(name, run).then(s => JSON.parse(s)).catch(guard('org budget', null)),
+  getOrgEstimate:     (name) => GoApp.GetOrgEstimate(name).then(s => JSON.parse(s)).catch(guard('org estimate', null)),
   getOrgCosts:        (name, run = '') => GoApp.GetOrgCosts(name, run).then(s => JSON.parse(s)).catch(guard('org costs', null)),
   getOrgFlow:         (name, run = '') => GoApp.GetOrgFlow(name, run).then(s => JSON.parse(s)).catch(guard('org flow', null)),
   getOrgQuestions:    (name) => GoApp.GetOrgQuestions(name).then(s => JSON.parse(s)).catch(guard('org questions', null)),
