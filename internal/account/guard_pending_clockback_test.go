@@ -58,8 +58,8 @@ func TestAClockThatReadsBeforeTheLastAttemptDropsTheTokenInsideTheWindow(t *test
 			if !r.refreshFileGone() || r.e.rawPending() != "" {
 				t.Fatalf("refresh token gone %t, pending %q, want the token dropped and no marker", r.refreshFileGone(), r.e.rawPending())
 			}
-			if sess := r.e.session(); sess.LastResult != "unconfirmed" || !sess.LastAttempt.Equal(r.t0.Add(c.at)) {
-				t.Fatalf("stored session = %s, want unconfirmed at +%v", describe(sess), c.at)
+			if sess := r.e.session(); sess.LastResult != "unconfirmed" || !sess.LastAttempt.Equal(r.t0.Add(210*time.Second)) {
+				t.Fatalf("stored session = %s, want unconfirmed with the last attempt kept at +210 s: it never moves back with the clock while a token is in doubt", describe(sess))
 			}
 			if r.srv.isRevoked() || count(r.srv.presented(), "rt-1") != 4 {
 				t.Fatalf("monoes.me was presented %v (revoked %t), want rt-1 four times and never again", r.srv.presented(), r.srv.isRevoked())

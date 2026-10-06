@@ -335,10 +335,15 @@ func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Stat
 }
 
 // recordAttempt stores the result of a failed attempt: the negative cache, and
-// the reason a session in grace shows.
+// the reason a session in grace shows. While the session it writes has a marker or
+// is unconfirmed, LastAttempt is also the evidence that the clock went back
+// (pendingExpired), so it never moves back with the clock then (A24).
 func (g *Guard) recordAttempt(cur *Session, now time.Time, result string) (Status, outcome, error) {
 	next := *cur
-	next.LastAttempt, next.LastResult = now, result
+	next.LastResult = result
+	if inDoubt := !next.PendingSince.IsZero() || result == string(ReasonUnconfirmed); !inDoubt || now.After(next.LastAttempt) {
+		next.LastAttempt = now
+	}
 	bumpHW(&next, now)
 	err := g.store.Save(&next)
 	g.adopt(&next)
