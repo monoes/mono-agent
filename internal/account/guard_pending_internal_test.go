@@ -132,6 +132,34 @@ func TestPendingExpiredJudgesTheAgeOfTheMarker(t *testing.T) {
 	}
 }
 
+// The last attempt the session records is written from this machine's clock too, so a
+// clock that reads before it has gone back, and a marker's age read on it cannot be
+// trusted, however young it looks. Only for a marker: with no grant in doubt it is no
+// reason to drop anything.
+func TestPendingExpiredTakesAClockBeforeTheLastAttemptForAClockThatWentBack(t *testing.T) {
+	now := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
+	stamp := now.Add(-100 * time.Second) // well inside the window
+	cases := []struct {
+		name  string
+		stamp time.Time
+		last  time.Time
+		want  bool
+	}{
+		{"no last attempt", stamp, time.Time{}, false},
+		{"a last attempt at the stamp", stamp, stamp, false},
+		{"a last attempt 50 s ago", stamp, now.Add(-50 * time.Second), false},
+		{"a last attempt at this very instant", stamp, now, false},
+		{"a last attempt a nanosecond ahead of the clock", stamp, now.Add(time.Nanosecond), true},
+		{"a last attempt 110 s ahead of the clock", stamp, now.Add(110 * time.Second), true},
+		{"no marker, a last attempt an hour ahead of the clock", time.Time{}, now.Add(time.Hour), false},
+	}
+	for _, c := range cases {
+		if got := pendingExpired(&Session{PendingSince: c.stamp, LastAttempt: c.last}, now); got != c.want {
+			t.Errorf("%s: pendingExpired = %t, want %t", c.name, got, c.want)
+		}
+	}
+}
+
 // orderStore records the writes of a pass in order and fails the ones a test names.
 type orderStore struct {
 	Store

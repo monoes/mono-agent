@@ -13,6 +13,15 @@ import "time"
 // rule out outside the window: inside pendingRetryWindow the retry is immediate and
 // monoes.me answers it again with the same answer, after it the token is dropped
 // and this machine signs in again. One install pays, never all of them.
+//
+// The age of a marker is read on this machine's clock, so a clock set back can make
+// it look younger than it is. A clock that reads before the marker, or before the
+// last attempt the session records (always written from this clock), has gone back,
+// and the token is dropped then too. One residual is accepted: no stored data can
+// detect a clock stepped back by less than the time since the last recorded attempt
+// when no pass ran between the stamp and the step (a machine with no daemon), and
+// closing it would need a boot-time or monotonic clock in the marker, which is out
+// of scope.
 
 // markPending writes the marker of a grant that is about to be sent, under the
 // lock, and takes the session in. The stamp is written only when there is none: the
@@ -44,14 +53,17 @@ func withoutPending(cur *Session) *Session {
 
 // pendingExpired reports whether the grant that left cur's marker is out of reach
 // of monoes.me's reuse window: the marker is older than pendingRetryWindow, or it
-// lies after now, which means that the clock went back since it was written and its
-// age cannot be told. Exactly pendingRetryWindow is still a retry.
+// or the session's last attempt lies after now, which means that the clock went
+// back since they were written and the marker's age cannot be told. Exactly
+// pendingRetryWindow is still a retry, and so is a pass at the very instant of the
+// last attempt. now must be read after the session, under the lock: another
+// process may have recorded an attempt while this one waited for it.
 func pendingExpired(cur *Session, now time.Time) bool {
 	if cur.PendingSince.IsZero() {
 		return false
 	}
 	age := now.Sub(cur.PendingSince)
-	return age < 0 || age > pendingRetryWindow
+	return age < 0 || age > pendingRetryWindow || now.Before(cur.LastAttempt)
 }
 
 // dropUnconfirmed gives up the refresh token that the marker is about: monoes.me may
