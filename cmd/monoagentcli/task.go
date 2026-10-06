@@ -264,7 +264,8 @@ adding idempotent (the same key adds nothing a second time).`,
 			actor := caller.actor
 			if source == tasks.SourceOS {
 				if caller.isAgent() {
-					return errInvalidInput("--source os is what the macOS menu passes, not an AI agent: an agent's tasks are agent tasks")
+					// The first words are the store's own: the macOS menu reads them through the CLI.
+					return errInvalidInput(`source "os" is for captures: an agent's tasks are agent tasks, and --source os is what the macOS menu passes`)
 				}
 				if ready {
 					return operatorOnlyError("--source os is a capture, and a capture goes to the Inbox, where you approve it: leave out --ready")
@@ -302,7 +303,7 @@ adding idempotent (the same key adds nothing a second time).`,
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read the task's text from standard input (without a title, its first line is the title); cannot be combined with --notes")
 	cmd.Flags().StringVar(&notes, "notes", "", "Notes (with a title); cannot be combined with --stdin")
 	cmd.Flags().BoolVar(&ready, "ready", false, "Add straight to Ready (for you, not for agents)")
-	cmd.Flags().StringVar(&source, "source", "cli", "Where the task comes from: cli, or os for the macOS menu")
+	cmd.Flags().StringVar(&source, "source", "cli", "Where the task comes from: cli, app (the desktop app) or os (the macOS menu); an AI agent's tasks are always agent tasks")
 	cmd.Flags().StringVar(&link, "url", "", "The page the task came from")
 	cmd.Flags().StringVar(&sourceTitle, "source-title", "", "The title of that page")
 	cmd.Flags().StringVar(&app, "app", "", "The application the text was selected in")

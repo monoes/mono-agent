@@ -98,15 +98,17 @@ func TestTaskAddRefusalsComeBeforeTheDatabaseIsOpened(t *testing.T) {
 		t.Fatalf("the control, an add that needs the database: exit %d (%v), want the plain error 1", exitCode(err), err)
 	}
 	for _, c := range []struct {
-		code string
-		args []string
+		code   string
+		phrase string // words the error must also hold: the macOS phase reads this one through the CLI
+		args   []string
 	}{
-		{"operator_only", []string{"add", "x", "--as", "bot", "--ready"}},
-		{"operator_only", []string{"add", "--stdin", "--source", "os", "--ready"}},
-		{"invalid_input", []string{"add", "x", "--as", "bot", "--source", "os"}},
+		{"operator_only", "", []string{"add", "x", "--as", "bot", "--ready"}},
+		{"operator_only", "", []string{"add", "--stdin", "--source", "os", "--ready"}},
+		{"invalid_input", `source "os" is for captures`, []string{"add", "x", "--as", "bot", "--source", "os"}},
 	} {
-		if doc := failedTaskJSON(t, db, "default", 3, c.args...); doc["code"] != c.code {
-			t.Errorf("task %s: %v", strings.Join(c.args, " "), doc)
+		doc := failedTaskJSON(t, db, "default", 3, c.args...)
+		if msg, _ := doc["error"].(string); doc["code"] != c.code || !strings.Contains(msg, c.phrase) {
+			t.Errorf("task %s: %v, want code %s and the words %q", strings.Join(c.args, " "), doc, c.code, c.phrase)
 		}
 	}
 }

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/monoes/mono-agent/internal/orgsign"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -387,19 +389,25 @@ func TestTaskIDsAndColumnLabels(t *testing.T) {
 	if _, err := parseTaskIDs([]string{"1", "x"}); exitCode(err) != 3 {
 		t.Errorf("parseTaskIDs with a bad id: %v, want exit 3", err)
 	}
-	// A bad argument is repeated in the message only in part: a huge one must not
-	// make a huge message, and a cut must not split a character (2 bytes each in
-	// the second argument: %q shows half of one as a \x escape).
-	for _, in := range []string{strings.Repeat("9", 10<<10), strings.Repeat("\xc3\xa9", 5<<10)} {
-		_, one := parseTaskID(in)
-		_, many := parseTaskIDs([]string{"1", in})
+	// A bad argument is repeated in the message only in part: whole up to 64 runes,
+	// and beyond that its first 63 runes and an ellipsis, 64 runes exactly. A cut
+	// never splits a character (the last argument has 2 bytes each: %q would show
+	// half of one as a \x escape, and the comparison would fail).
+	ellipsis := "\U00002026"
+	for _, c := range []struct{ in, want string }{
+		{strings.Repeat("9", 64), strings.Repeat("9", 64)},
+		{strings.Repeat("9", 65), strings.Repeat("9", 63) + ellipsis},
+		{strings.Repeat("9", 10<<10), strings.Repeat("9", 63) + ellipsis},
+		{strings.Repeat("\xc3\xa9", 5<<10), strings.Repeat("\xc3\xa9", 63) + ellipsis},
+	} {
+		_, one := parseTaskID(c.in)
+		_, many := parseTaskIDs([]string{"1", c.in})
 		for _, err := range []error{one, many} {
-			msg := ""
-			if err != nil {
-				msg = err.Error()
-			}
-			if exitCode(err) != 3 || len(msg) > 200 || strings.Contains(msg, `\x`) || !strings.Contains(msg, "is not a task id") {
-				t.Errorf("a %d-byte argument: exit %d, a %d-byte message starting %q", len(in), exitCode(err), len(msg), msg[:min(len(msg), 60)])
+			quoted, _, _ := strings.Cut(errText(err), " is not a task id")
+			got, uerr := strconv.Unquote(quoted)
+			if exitCode(err) != 3 || uerr != nil || got != c.want {
+				t.Errorf("a %d-byte argument: exit %d, the message repeats %d runes (unquote: %v), want %d runes: %.100q",
+					len(c.in), exitCode(err), utf8.RuneCountInString(got), uerr, utf8.RuneCountInString(c.want), errText(err))
 			}
 		}
 	}
