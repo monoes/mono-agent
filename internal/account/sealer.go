@@ -32,9 +32,25 @@ const (
 
 // keyringSealer seals under the account key of internal/secrets. kek is
 // secrets.AccountKEK with the interactive choice bound in; it is a field so a
-// test can stand in for the key store.
+// test can stand in for the key store. mayPrompt marks the sign-in's sealer: it
+// may wait for a person, so the store does not bound its calls (callKeyStore).
 type keyringSealer struct {
-	kek func(create bool) (key []byte, found bool, err error)
+	kek       func(create bool) (key []byte, found bool, err error)
+	mayPrompt bool
+}
+
+// promptingSealer is implemented by a sealer that may wait for a person: one
+// that asks for a passphrase on the terminal or shows an unlock dialog. The store
+// does not put keyStoreTimeout on the calls of such a sealer.
+type promptingSealer interface{ prompts() bool }
+
+func (s keyringSealer) prompts() bool { return s.mayPrompt }
+
+// isPrompting reports whether s may wait for a person. A sealer that does not say
+// so, the memory sealer and a test double included, does not.
+func isPrompting(s Sealer) bool {
+	p, ok := s.(promptingSealer)
+	return ok && p.prompts()
 }
 
 // NewKeyringSealer is the production sealer for implicit use: it never prompts
@@ -48,9 +64,13 @@ func NewKeyringSealer() Sealer {
 
 // NewInteractiveKeyringSealer is NewKeyringSealer for an explicit command that
 // owns the terminal (the sign-in): it may ask for the file keyring's
-// passphrase, exactly as the vault does.
+// passphrase, exactly as the vault does. Unlike every other sealer, the store
+// does not put keyStoreTimeout on its calls: a person types the passphrase and
+// its confirmation, or answers the unlock dialog, and that takes as long as it
+// takes. The command owns the terminal, and it is the only one that holds
+// session.lock while it waits; a refresh of another process just waits behind it.
 func NewInteractiveKeyringSealer() Sealer {
-	return keyringSealer{kek: func(create bool) ([]byte, bool, error) { return secrets.AccountKEK(create, true) }}
+	return keyringSealer{kek: func(create bool) ([]byte, bool, error) { return secrets.AccountKEK(create, true) }, mayPrompt: true}
 }
 
 func (s keyringSealer) Seal(plain []byte) ([]byte, error) {

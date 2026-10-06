@@ -38,7 +38,9 @@ type Store interface {
 // the refresh token, and the OS key stores wait without bound for a locked
 // keychain or an unlock prompt nobody answers: one waiting key store would hold
 // the lock against every process of the machine, stop every refresh and every
-// sign-in, and keep Close and Ctrl-C waiting. A var so that a test can shorten it.
+// sign-in, and keep Close and Ctrl-C waiting. The interactive sealer of the
+// sign-in, which waits for a person, is exempt (callKeyStore). A var so that a
+// test can shorten it.
 var keyStoreTimeout = 10 * time.Second
 
 // keyStoreResult is what one call into the key store answered.
@@ -47,16 +49,25 @@ type keyStoreResult struct {
 	err  error
 }
 
-// callKeyStore runs fn, one call into the key store, and waits for its result for
-// at most keyStoreTimeout. When the wait ends first it returns an error that is
-// ErrKeyringUnavailable: the key store is not usable now, which is no decision
-// about the account, so the guard keeps the session's grace. The call itself
-// cannot be cancelled: it goes on in its goroutine until the key store answers,
-// and then ends, because the channel is buffered and its result is dropped. Only
-// the call runs there: what the caller does with a result, writing refresh.enc,
-// happens on the caller's goroutine and only for a result that came in time, so a
-// call that was given up on can never write anything.
-func callKeyStore(fn func() ([]byte, error)) ([]byte, error) {
+// callKeyStore runs fn, one call into the key store through sealer s, and waits
+// for its result for at most keyStoreTimeout. When the wait ends first it returns
+// an error that is ErrKeyringUnavailable: the key store is not usable now, which
+// is no decision about the account, so the guard keeps the session's grace. The
+// call itself cannot be cancelled: it goes on in its goroutine until the key
+// store answers, and then ends, because the channel is buffered and its result is
+// dropped. Only the call runs there: what the caller does with a result, writing
+// refresh.enc, happens on the caller's goroutine and only for a result that came
+// in time, so a call that was given up on can never write anything.
+//
+// A sealer that may wait for a person (the interactive keyring sealer, see
+// isPrompting) is not bounded: fn runs on the caller's goroutine and is waited
+// for. A person types the passphrase and answers the unlock dialog, which takes
+// as long as it takes; the explicit sign-in owns the terminal, and the lock is
+// held by that command alone, so another process's refresh only waits behind it.
+func callKeyStore(s Sealer, fn func() ([]byte, error)) ([]byte, error) {
+	if isPrompting(s) {
+		return fn()
+	}
 	timeout := keyStoreTimeout
 	done := make(chan keyStoreResult, 1)
 	go func() {
@@ -173,7 +184,7 @@ func (s *fileStore) LoadRefresh() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("account: reading %s: %w", refreshFile, err)
 	}
-	plain, err := callKeyStore(func() ([]byte, error) { return s.sealer.Open(sealed) })
+	plain, err := callKeyStore(s.sealer, func() ([]byte, error) { return s.sealer.Open(sealed) })
 	if err != nil {
 		return "", err
 	}
@@ -190,7 +201,7 @@ func (s *fileStore) SaveRefresh(token string) error {
 	if token == "" {
 		return errors.New("account: empty refresh token")
 	}
-	sealed, err := callKeyStore(func() ([]byte, error) { return s.sealer.Seal([]byte(token)) })
+	sealed, err := callKeyStore(s.sealer, func() ([]byte, error) { return s.sealer.Seal([]byte(token)) })
 	if err != nil {
 		return err
 	}
