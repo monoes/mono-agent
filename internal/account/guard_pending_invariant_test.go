@@ -1,6 +1,7 @@
 package account_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -151,5 +152,32 @@ func TestOnlyASignInLeavesUnconfirmed(t *testing.T) {
 				t.Fatalf("monoes.me was presented the new token %d times (revoked %t), want once", got, r.srv.isRevoked())
 			}
 		})
+	}
+}
+
+// The rule is for a session in doubt only. With nothing in doubt a failure recorded on a clock
+// that went back is the attempt the negative cache counts from, as it always was.
+func TestWithNothingInDoubtTheLastAttemptFollowsTheClockBack(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.signIn(2*time.Hour, time.Hour) // in grace: due
+	e.ref.set(func(r *fakeRefresher) { r.err = transient(account.ReasonUnreachable) })
+	if _, err := e.g.EnsureFresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	back := e.session().LastAttempt.Add(-10 * time.Minute)
+	e.f.Clock.Set(back)
+	if _, err := e.newGuard(0).EnsureFresh(ctx); err != nil { // due: a stored time after the clock holds nothing off
+		t.Fatal(err)
+	}
+	if sess := e.session(); !sess.LastAttempt.Equal(back) || e.rawPending() != "" || e.ref.calls.Load() != 2 {
+		t.Fatalf("stored session = %s after %d calls, want the second attempt recorded on the clock that went back, %v, and no marker", describe(sess), e.ref.calls.Load(), back)
+	}
+	e.f.Clock.Advance(10 * time.Second)
+	if _, err := e.newGuard(0).EnsureFresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.ref.calls.Load(); n != 2 {
+		t.Fatalf("%d calls, want 2: the negative cache counts from the attempt on the clock that went back", n)
 	}
 }
