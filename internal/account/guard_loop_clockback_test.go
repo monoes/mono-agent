@@ -67,6 +67,26 @@ func (m *steppedMachine) retryAt(t *testing.T, at time.Duration, grants int) {
 	waitForGrants(t, m.net, grants, "the retry at +"+at.String())
 }
 
+// markAt waits until the refresher has written the high-water mark at +at: it has read the clock
+// there.
+func (m *steppedMachine) markAt(t *testing.T, at time.Duration) {
+	t.Helper()
+	eventually(t, "the high-water write at +"+at.String(), func() bool {
+		sess, err := m.store.Load()
+		return err == nil && sess != nil && sess.HW.Equal(m.m0.Add(at))
+	})
+}
+
+// droppedSoon waits until the refresher has dropped the token, as it must at its first pass after
+// the clock went back.
+func (m *steppedMachine) droppedSoon(t *testing.T, otherwise string) {
+	t.Helper()
+	eventually(t, "the refresher to drop the token at its first pass after the clock went back ("+otherwise+")", func() bool {
+		sess, err := m.store.Load()
+		return err == nil && sess != nil && sess.LastResult == "unconfirmed"
+	})
+}
+
 func (m *steppedMachine) session(t *testing.T) *account.Session {
 	t.Helper()
 	sess, err := m.store.Load()
@@ -92,8 +112,8 @@ func (m *steppedMachine) dropped(t *testing.T, times int) {
 }
 
 // The finding of the second adversarial round: the refresher alone, no other process. Its answer
-// is lost at +0 and again at +30 and +90 s; at +100 s the clock is set back 120 s. Its next retry
-// was due at +210 s by the clock, real +330 s, past monoes.me's window.
+// is lost at +0 and again at its retries at +31 and +92 s; at +100 s the clock is set back 120 s.
+// Its next retry was due at +212 s by the clock, real +332 s, past monoes.me's window.
 func TestTheRefresherAloneDropsTheTokenWhenTheClockGoesBackBetweenItsRetries(t *testing.T) {
 	m := newSteppedMachine(t, lost, lost, lost) // a fourth grant would reach monoes.me
 	m.retryAt(t, 31*time.Second, 2)
@@ -101,7 +121,7 @@ func TestTheRefresherAloneDropsTheTokenWhenTheClockGoesBackBetweenItsRetries(t *
 	m.both(8 * time.Second)         // +100 s
 	quiet()                         // the refresher reads +100 s
 	m.machine.Advance(-120 * time.Second)
-	quiet()
+	m.droppedSoon(t, "it would present the token at its retry, real +332 s")
 	m.both(232 * time.Second) // the machine reads +212 s, the next retry; monoes.me +332 s
 	quiet()
 	m.dropped(t, 3)
@@ -119,7 +139,7 @@ func TestARefresherDropsTheTokenAtAClockSetBackBeforeACommandComesAfterIt(t *tes
 	m.both(37 * time.Second) // +250 s
 	quiet()
 	m.machine.Advance(-80 * time.Second) // the machine reads +170 s
-	quiet()
+	m.droppedSoon(t, "a command once the clock has come past +213 s would present it")
 	m.both(time.Minute) // the machine reads +230 s, monoes.me +310 s
 	cli := account.NewGuard(account.GuardOptions{Store: account.OpenStore(m.dir, m.seal), Refresher: m.srv, Now: m.machine.Now})
 	t.Cleanup(cli.Close)
@@ -135,9 +155,9 @@ func TestARefresherTakesAStepBackBeyondTheToleranceForAClockSetBack(t *testing.T
 	m := newSteppedMachine(t, lost, lost)
 	m.retryAt(t, 31*time.Second, 2) // the next retry is due at +91 s
 	m.both(29 * time.Second)        // +60 s
-	quiet()
+	m.markAt(t, 60*time.Second)
 	m.machine.Advance(-30 * time.Second)
-	eventually(t, "the drop at the refresher's next pass", func() bool { return m.session(t).LastResult == "unconfirmed" })
+	m.droppedSoon(t, "a step back of 30 s is more than the tolerance")
 	quiet()
 	m.dropped(t, 2)
 }
@@ -148,7 +168,7 @@ func TestARefresherIgnoresAStepBackWithinTheTolerance(t *testing.T) {
 	m := newSteppedMachine(t, lost, lost)
 	m.retryAt(t, 31*time.Second, 2) // the next retry is due at +91 s
 	m.both(29 * time.Second)        // +60 s
-	quiet()
+	m.markAt(t, 60*time.Second)
 	before := m.session(t)
 	m.machine.Advance(-5 * time.Second) // the machine reads +55 s
 	quiet()
@@ -185,7 +205,7 @@ func TestARefresherWithNoMarkerWaitsOutItsBackoffAfterAClockSetBack(t *testing.T
 	m := newSteppedMachine(t, unsent, unsent) // settled failures: no marker
 	m.retryAt(t, 31*time.Second, 2)           // the next attempt is due at +91 s
 	m.both(29 * time.Second)                  // +60 s
-	quiet()
+	m.markAt(t, 60*time.Second)
 	before := m.session(t)
 	m.machine.Advance(-30 * time.Second)
 	quiet()
