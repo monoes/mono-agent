@@ -32,21 +32,23 @@
 
 1. **The variable is read only in a file compiled under `-tags devaccount`** (spec A12, index §3.6, with the lead's constraints): a `devaccount` file reads it; the default build has a stub with no `os.Getenv`; a test pins that a default build ignores it; B5a's release guard keeps the tag out of releases. It only sets a date: a value that is not an RFC 3339 time, and the zero time (which would switch the gate off), stop the process at start. A past date forces enforcement, a future one a warn period. Set it for the process under test only: exported in the shell that runs `go test -tags devaccount ./internal/account/`, it moves the date those tests start from, and B1a's `TestEnforcedBuildPinsAKey` fails while no key is pinned.
 2. **The smoke ages the token, not the clock.** The 24-hour expiry is reached by rewriting `session.json` with a token issued 24 hours and a minute ago, signed with the development key under the `kid` read from the real token the sign-in produced. The same rewrite expires a token at once and ends a CLI process's one-minute negative cache (it writes `last_attempt` that old too, so the next command tries to refresh; spec A8), so a scenario never waits for a short-lived token. Only the block scenario, which depends on a daemon's refresher, uses short-lived tokens. The guard's own tests (B1a) inject the clock.
-3. **The fake monoes.me has a switch in front of its own handler** (`edge`): it can drop connections, answer a refresh grant with `invalid_grant`, a 500, `invalid_client`, `invalid_target`, a page that is not JSON, or a token signed by a key nothing pins, and it counts the refresh grants that reach it, so that a test shows the attempt was made. The rig depends on nothing of the fake but the OAuth wire shapes. The package is not run with `-race`: `httptest` documents changes to `Config` as valid only before `Start`.
+3. **The fake monoes.me has a switch in front of its own handler** (`edge`): it can drop connections, answer a refresh grant with `invalid_grant`, a 500, `invalid_client`, `invalid_target`, a page that is not JSON, or a token signed by a key nothing pins, or hold an answer back after the fake has already acted on it (Task 3b), and it counts the refresh grants that reach it, so that a test shows the attempt was made. The rig depends on nothing of the fake but the OAuth wire shapes. The package is not run with `-race`: `httptest` documents changes to `Config` as valid only before `Start`.
 4. **Doors are probed without a credential.** Signed in, the door's own check answers a request that carries no bearer, key or endpoint; locked, the gate answers first. The same request tells the two states apart and needs no token or vault (the wire shapes are B3b's).
 5. **A serving command starts locked** (spec A1): `daemon`, `httpapi`, `mcp` and `extension serve` start with no session, log the command to run and refuse at the doors; no scenario expects one of them to exit 4. Gated one-shot commands, `org serve` among them, do.
 6. **The account object has four keys**, `{state, reason, valid_until, enforced}` (A4), on the heartbeat, `GET /health` and the bridge's `ping`, and the smoke asserts all four: `enforced` tells a warn-period `locked` (nothing refused) from a real lock.
 7. **Not here.** The desktop's Go side starts no gate-site code in-process (B4's `TestDesktopGoSideCallsNoGatedFunction`) and runs every execution through the CLI, which the entry points exercise; the release guard and the date are B5a's; the first-run adoption of an older library login merges with R, so its real-binary check is B5a's dry run against production.
+8. **The A20 to A23 scenarios use what the rig already has** (Task 3b). The interrupt is a held answer (`modeHold`: the fake rotates the token at once, the edge answers `holdAnswer` later) and a signal sent to the real process meanwhile. The fake keeps no reuse window and punishes every repeat, which is stricter than monoes.me, so no scenario waits for the 300 seconds but the pending A24 one. A blocked key store is the rig's file keyring with its passphrase file replaced, for one process, by a named pipe that nobody writes to: it needs no hook in a release or a development build. A real binary has no clock, so the clock-set-back scenario moves the date and the stored high-water mark instead.
 
 ## Review Focus
 
-The five failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
+The six failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
 
 1. **A process type that never installed a guard fails closed for signed-in users.** In a test binary `Require` fails open without a guard (D24), so every unit test passes. Pinned by `TestEveryEntryPointWorksSignedIn` (Task 5): one operation through `workflow run`, `daemon`, `httpapi`, `mcp`, an `mcp --grant` child, `extension serve`, `org serve` and `chat`.
 2. **A door stays open while locked, or stays shut after a sign-in.** Pinned by `TestEveryDoorRefusesWhenLockedAndOpensWhenSignedIn` (Task 4): the HTTP API, `/v1`, the org receiver, the webhook server, the bridge and MCP, in both states, in a daemon that started locked.
 3. **A failure that is not a refusal locks someone, or a block does not stop the work.** Pinned by `TestAnswersThatAreNotARefusalKeepTheGrace`, `TestUnreachableIsGraceUntilTwentyFourHours`, `TestBlockedAccountLocksAndCancelsWorkInFlight` and `TestAnUnknownSigningKeyIsTheRunUpdateCase` (Task 3).
 4. **The warn period locks something or corrupts a `--json` consumer's stdout.** Pinned by `TestNothingLocksBeforeTheDateAndEverySurfaceWarns` (Task 2), and by `TestNoSessionAfterTheDateIsRefusedAndNothingIsWritten` for the refusal that follows it.
 5. **The development variable relaxes a build that ships.** Pinned by `TestDefaultBuildIgnoresTheEnforceOverride` (Task 1), with B5a's release guard that keeps the tag out of releases.
+6. **An abandoned refresh, a logout and a key store that never answers cost an account or a machine.** A command interrupted while monoes.me answers must still store the new refresh token (spec A20), a logout must keep the clock-guard record (A23), and a key store that waits for ever must not hold the session lock against the other processes (A22). Pinned by `TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount`, `TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack` and `TestABlockedKeyStoreDoesNotHoldUpAnotherProcess` (Task 3b); `TestAKilledRefreshNeverEndsTheAccountPendingA24` waits for the owner's decision on A24.
 
 ---
 
@@ -247,7 +249,7 @@ git commit -m "test(account): a devaccount-only variable moves the enforcement d
 
 ### Task 2: The rig, the locked machine and the warn period
 
-The smoke is the one place the whole feature runs as shipped. It exists because in a test binary `account.Require` fails open without a guard (D24), so a process that forgot to install one passes every unit test and would fail closed for signed-in users in production. A failure in Tasks 2 to 5 is a defect of the phase that owns the behaviour (named in the message): fix it there, with a unit test in that package, never by loosening the smoke.
+The smoke is the one place the whole feature runs as shipped. It exists because in a test binary `account.Require` fails open without a guard (D24), so a process that forgot to install one passes every unit test and would fail closed for signed-in users in production. A failure in Tasks 2 to 5, Task 3b included, is a defect of the phase that owns the behaviour (named in the message): fix it there, with a unit test in that package, never by loosening the smoke.
 
 **Files:**
 - Create: `internal/accountsmoke/doc.go`, `internal/accountsmoke/rig_test.go`, `internal/accountsmoke/account_test.go`, `internal/accountsmoke/clients_test.go`, `internal/accountsmoke/locked_test.go`, `internal/accountsmoke/warn_test.go`
@@ -286,6 +288,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -370,7 +373,13 @@ const (
 	modeInvalidTarget        // ... answered invalid_target
 	modeGarbage              // ... answered 200 with a page that is not JSON
 	modeUnknownKey           // ... answered 200 with a token signed by a key no build pins
+	modeHold                 // ... reaches the fake at once, which rotates the token, and is answered holdAnswer later
 )
+
+// holdAnswer is how long modeHold keeps back the answer to a refresh grant that the fake has already
+// acted on: time for a test to interrupt the caller while the refresh token is rotated and the answer
+// is still on its way.
+const holdAnswer = 6 * time.Second
 
 // What a refresh-token grant is answered with, per mode. Only invalid_grant is monoes.me refusing
 // the account (D27); every other answer is trouble on the way, and keeps the grace.
@@ -412,6 +421,17 @@ func newEdge(fake *libraryfake.Server) *edge {
 			if c, _, err := w.(http.Hijacker).Hijack(); err == nil {
 				c.Close()
 			}
+			return
+		}
+		if mode == modeHold && refresh {
+			rec := httptest.NewRecorder()
+			inner.ServeHTTP(rec, r) // monoes.me rotates the refresh token now...
+			time.Sleep(holdAnswer)  // ...and the caller hears of it later
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
 			return
 		}
 		if mode == modeUnknownKey && refresh {
@@ -562,12 +582,15 @@ type proc struct {
 	err  error
 }
 
-func (r *rig) start(args ...string) *proc {
+func (r *rig) start(args ...string) *proc { return r.startWith(nil, args...) }
+
+// startWith is start with more environment for this one process: a later value replaces an earlier one.
+func (r *rig) startWith(extra []string, args ...string) *proc {
 	r.t.Helper()
 	log, err := os.Create(filepath.Join(r.dir, args[0]+".log"))
 	must(r.t, err)
 	cmd := exec.Command(r.bin, args...)
-	cmd.Env, cmd.Dir, cmd.Stdout, cmd.Stderr = r.env(), r.dir, log, log
+	cmd.Env, cmd.Dir, cmd.Stdout, cmd.Stderr = r.env(extra...), r.dir, log, log
 	must(r.t, cmd.Start())
 	p := &proc{cmd: cmd, done: make(chan struct{})}
 	go func() { p.err = cmd.Wait(); close(p.done) }()
@@ -1389,6 +1412,228 @@ git add internal/accountsmoke/gate_test.go
 git commit -m "test(account): real-binary smoke of grace, expiry, trouble that is not a refusal, an unknown key and a block" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 3b: What the second security review found: an interrupted refresh, a logout, a blocked key store
+
+The review of B1a and of these plans found three losses that no scenario above would notice. A refresh the caller abandons while monoes.me is answering ends every install of the account (spec A20). A logout that deletes `session.json` lets an account that monoes.me has blocked out from under the clock guard (A23). A key store that waits for ever holds the machine's session lock against every other process (A22). Each has its fix and its unit tests in an earlier phase; this task proves them in the real processes. A failure names the phase that owns the behaviour (B1a's guard and store, B1b's logout, B2's `run()`): fix it there with a unit test, never by loosening the smoke.
+
+**Files:**
+- Create: `internal/accountsmoke/security_test.go`
+
+**Interfaces:**
+- Consumes: Task 2's rig and its helpers (`newRig`, `rig.edge.set(mode)` with `modeHold` and `modePass`, `rig.edge.refreshes()`, `rig.fake.Replays`, `rig.start`, `rig.startWith`, `proc`, `rig.backdate`, `rig.signIn`, `rig.status`, `rig.run`, `rig.assertLocked`, `rig.waitFor`, `rig.refreshFile`, `rig.read`, `rig.enforce`, `past`, `accountStatus`, `mustExit`, `mustJSON`) and B1a's `account.OpenStore`, `account.Session`, `Store.Lock`, `Store.Load` and `Store.Save`.
+- Produces: `TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount` (A20: Ctrl-C and SIGTERM during a refresh), `TestAKilledRefreshNeverEndsTheAccountPendingA24` (skipped until the owner adopts A24), `TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack` (A23) and `TestABlockedKeyStoreDoesNotHoldUpAnotherProcess` (A22), and the rig helpers `accountDir`, `session`, `setMark` and `lockHeld`. The fake monoes.me keeps no reuse window: monoes.me answers a repeat of a refresh token within 300 seconds of its rotation with the answer it gave first, the fake punishes every repeat (`invalid_grant`, every token of the account revoked, `Replays` counted). That is stricter, so a scenario that passes here never relies on the forgiveness, and a dead token presented at any later time fails here without a wait. The only wait is the A24 test's, because what A24 changes is a decision taken after the window.
+
+- [ ] **Step 1: Write the scenarios.** `internal/accountsmoke/security_test.go`:
+
+```go
+//go:build devaccount && !windows
+
+package accountsmoke
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/account"
+)
+
+// reuseWindow is how long monoes.me answers a repeated refresh token with the answer it gave the first
+// time (plan A, Task 3: refreshTokenReuseInterval). The fake monoes.me keeps no window: it punishes every
+// repeat, which is stricter, so a scenario that passes here never relies on that forgiveness.
+const reuseWindow = 300 * time.Second
+
+// accountDir is where the rig's HOME keeps the session.
+func (r *rig) accountDir() string { return filepath.Join(r.home, ".monoagent", "account") }
+
+// session is the stored session, nil when there is none.
+func (r *rig) session() *account.Session {
+	r.t.Helper()
+	sess, err := account.OpenStore(r.accountDir(), account.NewMemorySealer()).Load()
+	must(r.t, err)
+	return sess
+}
+
+// setMark rewrites the high-water mark of the stored session: the highest time the machine has seen.
+func (r *rig) setMark(at time.Time) {
+	r.t.Helper()
+	st := account.OpenStore(r.accountDir(), account.NewMemorySealer())
+	unlock, err := st.Lock(context.Background())
+	must(r.t, err)
+	defer unlock()
+	sess, err := st.Load()
+	must(r.t, err)
+	if sess == nil {
+		r.t.Fatal("no session to move the mark of")
+	}
+	sess.HW = at
+	must(r.t, st.Save(sess))
+}
+
+// lockHeld says whether a process holds the machine's session lock right now.
+func (r *rig) lockHeld() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	unlock, err := account.OpenStore(r.accountDir(), account.NewMemorySealer()).Lock(ctx)
+	if err == nil {
+		unlock()
+	}
+	return err != nil
+}
+
+// A20: a refresh grant, once sent, is always completed and stored. monoes.me rotates the refresh token
+// when it answers, and the answer is the only copy of the new one: a command that gives up while the
+// answer is on its way leaves the dead token on disk, and the next refresh would end every install of
+// the account (spec A7). Here the answer is held back (modeHold) and the command is interrupted while it
+// is on its way. The command finishes the grant before it ends, so the next refresh presents the new
+// token and nothing is revoked. The fake monoes.me punishes every repeat of a spent token (see
+// reuseWindow), so a dead token presented at any later time fails here, and the scenario needs no wait.
+func TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		sig  os.Signal
+	}{{"Ctrl-C", syscall.SIGINT}, {"SIGTERM", syscall.SIGTERM}} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, rigOptions{enforce: past})
+			r.signIn()
+			r.backdate(2 * time.Hour) // the access token expired an hour ago: the next command asks for another
+			r.edge.set(modeHold)      // monoes.me rotates the refresh token at once and answers a few seconds later
+			p := r.start("account", "status", "--json")
+			r.waitFor("the refresh grant to reach monoes.me", 30*time.Second, func() bool { return r.edge.refreshes() == 1 })
+			must(t, p.cmd.Process.Signal(c.sig)) // while the answer is on its way
+			r.waitFor("the interrupted command to end", 40*time.Second, func() bool { return !p.alive() })
+
+			r.edge.set(modePass)
+			r.backdate(2 * time.Hour) // what the interrupted command stored is aged too: the next command asks again
+			st, code := r.status()
+			if st.State != "ok" || code != 0 || r.fake.Replays != 0 || r.edge.refreshes() != 2 {
+				t.Fatalf("the refresh after the interruption: exit %d, state %q, reason %q, %d refreshes, %d replays: the interrupted grant was not completed and stored",
+					code, st.State, st.Reason, r.edge.refreshes(), r.fake.Replays)
+			}
+		})
+	}
+}
+
+// A24 (proposed in spec section 13, an owner decision, so this waits for it): the case A20 cannot close.
+// A command that is killed (SIGKILL, a crash, a power cut) while monoes.me is answering cannot finish
+// the grant: the refresh token is rotated and the new one is lost with the process. Without the
+// write-ahead marker of A24 the next refresh presents the dead token, and once monoes.me's reuse
+// window has passed that ends every install of the account (A7). With it the next attempt knows a grant
+// may have been lost, and drops this machine's refresh token instead of presenting it: one install asks
+// for a sign-in, the account and the other installs are untouched. Run today it fails at the last check,
+// and that failure is the limitation A20 leaves.
+func TestAKilledRefreshNeverEndsTheAccountPendingA24(t *testing.T) {
+	t.Skip("pending A24 (spec section 13, an owner decision): the write-ahead marker for a refresh that was killed mid-call")
+	r := newRig(t, rigOptions{enforce: past})
+	r.signIn()
+	r.backdate(2 * time.Hour)
+	r.edge.set(modeHold)
+	p := r.start("account", "status", "--json")
+	r.waitFor("the refresh grant to reach monoes.me", 30*time.Second, func() bool { return r.edge.refreshes() == 1 })
+	must(t, p.cmd.Process.Kill()) // nothing can finish the grant, and the answer is lost with the process
+	<-p.done
+
+	r.edge.set(modePass)
+	time.Sleep(reuseWindow + 10*time.Second) // monoes.me no longer answers a repeat of the dead token
+	r.backdate(2 * time.Hour)
+	if st, _ := r.status(); r.fake.Replays != 0 || st.Reason == "refused" {
+		t.Fatalf("the refresh after the kill presented the dead token: %d replays, reason %q: every install of the account is locked", r.fake.Replays, st.Reason)
+	}
+	r.signIn() // this machine signs in again
+}
+
+// A23, and spec 4.5: the high-water mark is what makes setting the clock back worthless, and it lives in
+// session.json, so logging out, an open command, must not erase it. A real binary has no clock to set,
+// so the test moves the date and the mark instead: the mark says the machine ran after the date, and the
+// date is ahead of the real clock, which is what a clock set back looks like to the guard.
+func TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack(t *testing.T) {
+	r := newRig(t, rigOptions{enforce: past})
+	r.signIn()
+	mustExit(t, r.run("workflow", "list"), 0) // the machine runs, after the date
+	mustExit(t, r.run("account", "logout"), 0)
+	if sess := r.session(); sess == nil || sess.AccessToken != "" || sess.HW.IsZero() {
+		t.Fatal("logging out must leave the clock-guard record: a session with no token and a high-water mark")
+	}
+	if _, err := os.Stat(r.refreshFile()); !os.IsNotExist(err) {
+		t.Fatalf("logging out deletes the refresh token: %v", err)
+	}
+
+	date := time.Now().Add(24 * time.Hour).Truncate(time.Second) // the clock is now before this date
+	r.setMark(date.Add(time.Hour))                               // and the machine has seen a time after it
+	r.enforce = date
+	r.assertLocked(r.run("--json", "workflow", "list"), "not_logged_in", true)
+	if st, code := r.status(); st.State != "locked" || st.Reason != "not_logged_in" || !st.Enforced || code != 4 {
+		t.Fatalf("account status with the clock set back: exit %d, state %q, reason %q, enforced %v, want locked(not_logged_in), enforced", code, st.State, st.Reason, st.Enforced)
+	}
+
+	// The same date and clock on a machine with no record are a warn period, and nothing is refused: the
+	// case spec 4.8 accepts (a clock set back before the first check), and what logging out used to make of
+	// a machine that had been checked many times.
+	mustExit(t, newRig(t, rigOptions{enforce: date}).run("workflow", "list"), 0)
+}
+
+// A22: a key store that waits for ever (a locked keychain, an unlock dialog nobody answers) must not hold
+// the machine's session lock, and with it every other process's refresh, for ever. A refresh reads the
+// refresh token, and so calls the key store, while it holds the lock; every such call is bounded to 10
+// seconds and a timeout is keyring_unavailable (grace). The key store here is the rig's file keyring
+// (MONOAGENT_ALLOW_FILE_KEYRING, which the quiet read of the key honors on every OS), and its passphrase
+// file is a named pipe that nobody writes to for the one process that is given that path: opening it
+// blocks, as an unanswered unlock dialog would.
+func TestABlockedKeyStoreDoesNotHoldUpAnotherProcess(t *testing.T) {
+	r := newRig(t, rigOptions{enforce: past})
+	r.signIn()
+	r.backdate(2 * time.Hour) // the access token expired an hour ago: both commands below are due for a refresh
+	pipe := filepath.Join(r.dir, "passphrase.pipe")
+	must(t, syscall.Mkfifo(pipe, 0o600))
+
+	stuck := r.startWith([]string{"MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=" + pipe}, "account", "status", "--json")
+	r.waitFor("the blocked command to hold the session lock or to end", 20*time.Second, func() bool { return !stuck.alive() || r.lockHeld() })
+	if !stuck.alive() {
+		t.Skip("the key store answered without reading the passphrase file, so the pipe blocks nothing here")
+	}
+	began := time.Now()
+	res := r.run("account", "status", "--json") // another process, whose key store answers
+	waited := time.Since(began)
+	var doc accountStatus
+	mustJSON(t, res.stdout, &doc)
+	if waited > 20*time.Second || res.code != 0 || (doc.State != "ok" && doc.State != "grace") {
+		t.Fatalf("another process behind a blocked key store: waited %v, exit %d, state %q: its wait must stay bounded (about 10 seconds) and account status must still answer",
+			waited, res.code, doc.State)
+	}
+	r.waitFor("the blocked command to give up", 20*time.Second, func() bool { return !stuck.alive() })
+	if stuck.err != nil || !strings.Contains(r.read("account.log"), "keyring_unavailable") {
+		t.Fatalf("the blocked command must end by itself, in grace with reason keyring_unavailable: %v\n%s", stuck.err, r.read("account.log"))
+	}
+
+	// Nothing was lost: with the key store answering, the next refresh works.
+	r.backdate(2 * time.Hour)
+	if st, code := r.status(); st.State != "ok" || code != 0 {
+		t.Fatalf("after the key store answered again: exit %d, state %q, reason %q", code, st.State, st.Reason)
+	}
+}
+```
+
+- [ ] **Step 2: Run them.**
+
+```
+go vet -tags devaccount ./internal/accountsmoke/
+go test -tags devaccount ./internal/accountsmoke/ -run '^(TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount|TestAKilledRefreshNeverEndsTheAccountPendingA24|TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack|TestABlockedKeyStoreDoesNotHoldUpAnotherProcess)$' -count=1 -timeout 15m -v
+```
+Expected: no vet output; the interrupted test with its two subtests, the logout test and the key-store test `--- PASS`, about half a minute together after the first build of the CLI (one to two minutes the first time), and the A24 test `--- SKIP`. The interrupted test ends with the account `ok`, two refresh grants at monoes.me and no replay; the key-store test shows the second process answering `grace` or `ok` within about ten seconds. If the key-store test reports `--- SKIP`, the key store answered without reading the passphrase file (an OS keychain entry for the account's key exists on this machine) and nothing was proven: run it on a machine without one, as CI's runner is.
+
+- [ ] **Step 3: Prove they can fail.** Each test failed against the behaviour it guards when this plan was written. In `internal/account/guard_refresh.go` (B1a), replace `context.WithoutCancel(ctx)` in the call that bounds the grant with `ctx`, and run the interrupted test: expect FAIL in both subtests with `state "locked", reason "refused", 2 refreshes, 1 replays` (the interrupted command lost the answer, and the next refresh presented the dead token). In `internal/account/logout.go` (B1b) make `clockRecord` return nil, and run the logout test: expect FAIL at the first check, `logging out must leave the clock-guard record`. In `internal/account/store.go` (B1a) raise `keyStoreTimeout` from ten seconds to ten minutes, and run the key-store test: expect FAIL with `waited 25s` (the second process gave up on the lock). Restore each file with `git checkout -- <file>` and run the four tests again: PASS and SKIP. Unskipped, the A24 test fails at its last check (`1 replays`, reason `refused`) after the five-minute wait: that is the limitation, and it is what A24 would change.
+
+- [ ] **Step 4: Commit.**
+
+```
+git add internal/accountsmoke/security_test.go
+git commit -m "test(account): real-binary smoke of an interrupted refresh, a logout with the clock set back and a blocked key store" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
 ### Task 4: Every door, locked and signed in
 
 Acceptance 1 says every door refuses a locked machine. B3b proves each door in-process; this proves them in the real processes, in a daemon that started locked (a serving command, spec A1) and then signed in, without a restart.
@@ -1720,9 +1965,9 @@ go test -tags devaccount ./internal/accountsmoke/ -count=1 -timeout 25m -v
 go build ./... && go vet ./... && gofmt -l .
 go test ./internal/account/... ./internal/accountsmoke/ -count=1
 ```
-Expected: no output from the vets and `gofmt`; `ok` for `internal/account` with the tag (under `-race`, as every Linux job of CI is; the smoke package is the one that is not, decision 3), then the eight tests of `internal/accountsmoke` (named in the table below) `--- PASS`, about eight minutes after the first build of the CLI (one to two minutes), well inside CI's 25-minute limit; the default-build run ends `ok` for `internal/account` (with `TestDefaultBuildIgnoresTheEnforceOverride`) and `[no test files]` for `internal/accountsmoke`. Run it on the owner's Mac as well as in CI: every CI job runs on Linux, and the package builds everywhere but Windows.
+Expected: no output from the vets and `gofmt`; `ok` for `internal/account` with the tag (under `-race`, as every Linux job of CI is; the smoke package is the one that is not, decision 3), then the twelve tests of `internal/accountsmoke` (named in the table below and in Task 3b) `--- PASS`, except the one that waits for A24, which `--- SKIP`s, about eight minutes after the first build of the CLI (one to two minutes), well inside CI's 25-minute limit; the default-build run ends `ok` for `internal/account` (with `TestDefaultBuildIgnoresTheEnforceOverride`) and `[no test files]` for `internal/accountsmoke`. Run it on the owner's Mac as well as in CI: every CI job runs on Linux, and the package builds everywhere but Windows.
 
-- [ ] **Step 2: Check what this merge ships.** `git diff --stat origin/master...HEAD` lists the CI file, six files `internal/account/rollout_override*.go` (three of them tests) and nine files in `internal/accountsmoke/`, and nothing else. `grep -n 'os.Getenv' internal/account/rollout_override.go internal/account/rollout_override_default.go` prints nothing: only the `devaccount` file reads the environment. `grep -n devaccount .github/workflows/release.yml` prints nothing: this plan adds no step to the release workflow, and B5a's guard keeps the tag out of every artifact.
+- [ ] **Step 2: Check what this merge ships.** `git diff --stat origin/master...HEAD` lists the CI file, six files `internal/account/rollout_override*.go` (three of them tests) and ten files in `internal/accountsmoke/`, and nothing else. `grep -n 'os.Getenv' internal/account/rollout_override.go internal/account/rollout_override_default.go` prints nothing: only the `devaccount` file reads the environment. `grep -n devaccount .github/workflows/release.yml` prints nothing: this plan adds no step to the release workflow, and B5a's guard keeps the tag out of every artifact.
 
 - [ ] **Step 3: Know what a red result means.** A failure names a door, an entry point or a state, and the owner of that behaviour is in the message: B1b (sign-in, `account status`), B2 (the gate at the command line, the doctor row), B3a (runners, the daemon and its heartbeat), B3b (doors: the bridge and its `ping` among them). The fix is made in that phase's package with a unit test of its own and the smoke is run again; the smoke is never loosened to pass. If the CLI cannot be built with the tag, or `TestMain` cannot start the fake, nothing ran: fix the build first.
 
@@ -1738,7 +1983,7 @@ Expected: no output from the vets and `gofmt`; `ok` for `internal/account` with 
 | 4. Before the date nothing locks, and once a date is set every surface warns | `TestNothingLocksBeforeTheDateAndEverySurfaceWarns` (Task 2): with a date two days ahead and no session, a command succeeds, the warning appears once on stderr and never on stdout, `account status` says `locked`/`not_logged_in` with `enforced` false, the doctor row warns, the heartbeat says so, and the daemon runs work. The dormant half (a date of zero until R) is B5a's `TestEnforcedFlipsAtTheDate` and its suite run. |
 | 5. A release binary built with the `devaccount` tag cannot ship | B5a's guard. Here `TestDefaultBuildIgnoresTheEnforceOverride` (Task 1) pins that a default build, the one every release is, ignores `MONOAGENT_DEV_ENFORCE_FROM` whatever it holds. |
 
-Other spec items: §11's signed-in path through every process type and entry point is `TestEveryEntryPointWorksSignedIn` (Task 5); A12 is Task 1; D24 is the tag the whole package is built with; D27 is `TestAnswersThatAreNotARefusalKeepTheGrace`; A1 (a serving command starts locked and a launcher does not) is Task 4's daemon and Task 2's `org serve`; A4 (the four-key account object) is asserted on the heartbeat, `/health` and the bridge's `ping` by `accountReport.is`; A8 (the one-minute negative cache) is why `rig.backdate` writes `last_attempt`; A9 is `TestAnUnknownSigningKeyIsTheRunUpdateCase`.
+Other spec items: §11's signed-in path through every process type and entry point is `TestEveryEntryPointWorksSignedIn` (Task 5); A12 is Task 1; D24 is the tag the whole package is built with; D27 is `TestAnswersThatAreNotARefusalKeepTheGrace`; A1 (a serving command starts locked and a launcher does not) is Task 4's daemon and Task 2's `org serve`; A4 (the four-key account object) is asserted on the heartbeat, `/health` and the bridge's `ping` by `accountReport.is`; A8 (the one-minute negative cache) is why `rig.backdate` writes `last_attempt`; A9 is `TestAnUnknownSigningKeyIsTheRunUpdateCase`; A20, A22 and A23 are `TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount`, `TestABlockedKeyStoreDoesNotHoldUpAnotherProcess` and `TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack` (Task 3b); A24, proposed, is `TestAKilledRefreshNeverEndsTheAccountPendingA24`, skipped until the owner decides.
 
 ## Notes for other plans
 
