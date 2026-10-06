@@ -32,8 +32,8 @@ func opsClaim(t *testing.T, db *sql.DB, id int64) (by, until string) {
 }
 
 // opsHeld is an In progress card that `by` holds until `lease` from now: the operator's Move puts
-// it in the column, and the claim columns are written as a claim writes them (Task 6 has the
-// real thing).
+// it in the column, and the two claim columns are written the way a claim writes them (the
+// operator cannot claim, so a test has no verb that does).
 func opsHeld(t *testing.T, s *Store, db *sql.DB, c *clock, title, by string, lease time.Duration) Task {
 	t.Helper()
 	task := mustAdd(t, s, "default", title, true)

@@ -170,6 +170,32 @@ func TestPlaceTakesTheMidpointAndAnEndTakesOneGap(t *testing.T) {
 	}
 }
 
+// The card that is moved is no neighbour of itself: the top card put on top and the bottom card put
+// at the bottom stay where they are.
+func TestPlaceDoesNotCountTheCardItself(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	a := mustAdd(t, s, "default", "a", true) // 1024
+	b := mustAdd(t, s, "default", "b", true) // 2048
+	c := mustAdd(t, s, "default", "c", true) // 3072
+	for _, k := range []struct {
+		name string
+		id   int64
+		p    Placement
+		want int64
+	}{
+		{"the top card to the top", a.ID, Placement{Top: true}, 1024},
+		{"the bottom card to the bottom", c.ID, Placement{Bottom: true}, 3072},
+		{"the bottom card to the default end of Ready", c.ID, Placement{}, 3072},
+		{"the middle card to the top", b.ID, Placement{Top: true}, 0},
+		{"that card, now the top one, to the bottom", b.ID, Placement{Bottom: true}, 4096},
+	} {
+		got, err := s.Move(bg, "default", k.id, StatusReady, k.p, human)
+		if err != nil || got.Position != k.want {
+			t.Errorf("%s: position %d, err %v, want %d", k.name, got.Position, err, k.want)
+		}
+	}
+}
+
 // No placement means the default end of the column the card goes to, in every column.
 func TestPlaceWithNoPlacementGoesToTheDefaultEndOfEachColumn(t *testing.T) {
 	for _, k := range []struct {

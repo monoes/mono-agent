@@ -169,8 +169,9 @@ func TestMoveRefusals(t *testing.T) {
 	}
 }
 
-// The brief's property test, with its seed printed when it fails. (A model of the columns that is
-// compared with the board after every move is in ops_place_test.go.)
+// Whatever the order of the moves, every column stays in strict order and no card is lost. The seed
+// is fixed and in every failure message. (ops_place_test.go compares the columns with a model of
+// them after every move, positions included.)
 func TestAnyOrderOfMovesKeepsATotalOrder(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	var all []Task

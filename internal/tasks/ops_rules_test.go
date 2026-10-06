@@ -141,37 +141,44 @@ func TestEveryVerbWritesTheChangeTheEventsAndTheRevisionOrNone(t *testing.T) {
 		return ids
 	}
 	scenarios := []struct {
-		name   string
-		events int // the events the call writes
-		prep   func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error
+		name     string
+		events   int  // the events the call writes
+		released bool // one of them is a released event
+		prep     func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error
 	}{
-		{"Edit", 1, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"Edit", 1, false, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			id, title := mustAdd(t, s, "default", "a", false).ID, "b"
 			return func() error { _, err := s.Edit(bg, "default", id, Edit{Title: &title}, human); return err }
 		}},
-		{"Move of a held card", 2, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"Move of a held card", 2, true, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			id := opsHeld(t, s, db, c, "held", "bob", time.Hour).ID
 			return func() error { _, err := s.Move(bg, "default", id, StatusReview, Placement{}, human); return err }
 		}},
-		{"Approve of three", 3, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"Approve of three", 3, false, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			ids := three(t, s, false)
 			return func() error { _, err := s.Approve(bg, "default", ids, false, human); return err }
 		}},
-		{"Archive of three", 3, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"Archive of three", 3, false, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			ids := three(t, s, false)
 			return func() error { _, err := s.Archive(bg, "default", ids, human); return err }
 		}},
-		{"ArchiveStatus of three", 3, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"ArchiveStatus of three", 3, false, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			three(t, s, false)
 			return func() error { _, err := s.ArchiveStatus(bg, "default", StatusInbox, human); return err }
 		}},
-		{"Unarchive of three", 3, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
+		{"Unarchive of three", 3, false, func(t *testing.T, s *Store, db *sql.DB, c *clock) func() error {
 			ids := three(t, s, true)
 			return func() error { _, err := s.Unarchive(bg, "default", ids, human); return err }
 		}},
 	}
 	for _, sc := range scenarios {
-		for _, fail := range []string{"the first event", "the last event", "the revision"} {
+		failures := []string{"the first event", "the last event", "the revision"}
+		if sc.released {
+			// refusing the released event alone: the move's own event after it would fail too, and hide a
+			// released event whose failure was not passed on
+			failures = append(failures, "the released event")
+		}
+		for _, fail := range failures {
 			t.Run(sc.name+", refusing "+fail, func(t *testing.T) {
 				s, db, c := newTestStore(t)
 				call := sc.prep(t, s, db, c)
@@ -187,6 +194,8 @@ func TestEveryVerbWritesTheChangeTheEventsAndTheRevisionOrNone(t *testing.T) {
 				case "the last event":
 					// AFTER: a BEFORE INSERT trigger does not know the id the row is going to get
 					stmts = []string{fmt.Sprintf(`CREATE TRIGGER refuse AFTER INSERT ON task_events WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`, maxEvent+sc.events)}
+				case "the released event":
+					stmts = []string{`CREATE TRIGGER refuse BEFORE INSERT ON task_events WHEN NEW.kind = 'released' BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`}
 				default:
 					stmts = []string{
 						`CREATE TRIGGER refuse BEFORE INSERT ON task_board_rev BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`,
