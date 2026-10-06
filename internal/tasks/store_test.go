@@ -39,8 +39,8 @@ func TestAddReadyIsForTheOperatorOnly(t *testing.T) {
 		t.Fatalf("operator with Ready: %+v, %v", task, err)
 	}
 	for _, a := range []Actor{bot("b"), {Kind: Capture, Name: SourceOS}} {
-		// With a source the actor may use, and with one it may not: the gate
-		// itself refuses, whatever else the task asks for.
+		// The gate refuses first, whether or not the source asked for is one the
+		// actor may use: an agent may not ask for os, a capture may.
 		for _, source := range []string{"", SourceOS} {
 			if _, _, err := s.Add(bg, "default", AddInput{Title: "go", Ready: true, SourceKind: source}, a); !errors.Is(err, ErrOperatorOnly) {
 				t.Errorf("%+v adding to Ready with source %q: %v, want ErrOperatorOnly", a, source, err)
@@ -107,7 +107,7 @@ func TestAddRefusesTextThatCleansToNothing(t *testing.T) {
 		{},
 	} {
 		if _, _, err := s.Add(bg, "default", in, human); !errors.Is(err, ErrInvalid) {
-			t.Errorf("%+v: err %v, want ErrInvalid", in, err)
+			t.Errorf("%#v: err %v, want ErrInvalid", in, err) // %#v quotes the input: no raw escape byte reaches the terminal
 		}
 	}
 	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
