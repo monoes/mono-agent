@@ -44,6 +44,8 @@
 - Ruling (lead, after P1 made `task board` operator-only): reads in process, writes through the CLI. `TaskBoard` calls `Store.Board(ctx, profileID, doneLimit)` (it takes no actor: the read is the operator's) and returns the `tasks.Board` document `task board --json` prints; every action (add, edit, move, approve, archive, unarchive, comment) still runs the CLI - the CLI now refuses `task board` to an agent-driven caller (the whole board would hand an agent every unreviewed Inbox card, spec §4.1), yet the tab started from an agent's shell must still show its board read-only (§17.3), and the actions keep the CLI's guard, which refuses them there. A deviation from D21 (bindings shell out); Task 12 amends D21 - cost if wrong: one read to put back on the CLI.
 - Ruling: the app adds tasks with `--source app` - P1's `sourceKindFor` accepts `app` from the operator, and P1's `--source` help will name it (the lead passed this on to P1), although spec §7 documents only `cli|os` for the flag - cost if wrong: app-made cards show "Terminal".
 - Ruling: `TaskPulse()` reads the revision and the counts in process, as the watcher does, for the badge's first value - the watcher's first `tasks:changed` fires during startup before anything listens, and P2's `summary --section tasks` may not be merged when P3 is - a read in process, as amended D21 has every read (the "reads in process" Ruling) - cost: none.
+- Ruling: when the profile a watcher was started on is not there, the watcher writes one warning to the app's log and ends, and does not start over. P1's `Watch` returns an error then (ErrInvalid at once for a profile that never existed, an error wrapping ErrNotFound for one deleted while watched); a restart would only get the same error at once, and the next `SwitchProfile` or start begins a new watcher (neither the CLI nor the app can delete a profile yet) - cost if wrong: after a deleted active profile the badge keeps its last value until the next switch.
+- Ruling: `TaskPulse` resolves the profile with `Store.Profile` before it reads, because `Rev` and `Counts` read an unknown profile as revision 0 and no cards, a board that never existed; a profile that is not there answers `{}`, as any failed read does, and the sidebar ignores `{}` - cost: one more primary-key read when the sidebar mounts.
 - Ruling: when the app was started from an agent's shell (`TaskAgentShell()` names the inherited marker, or `MONOAGENT_ACTOR`), the board is read-only and a banner says to open MonoAgent from the Dock or Finder; a CLI `operator_only` refusal still reverts and toasts the CLI's message plus that hint - the CLI refuses the app's actions in three different ways there (`operator_only`; `invalid_input` for `add --source app`; "name yourself with --as" for `comment`), so acting first would explain only one (spec §10 Errors, §17.3). Accepted by the lead; Task 12 amends §10 and §17.3 - cost if wrong: re-enable the controls.
 - Ruling (lead, review F6): one-click approval only for a card whose whole text shows. A card with notes, or whose title the card clamps to two lines, shows a notes marker and never goes from Inbox to Ready in one gesture: its Approve button reads "Read and approve", and it, `A`, Shift+Right and a drop on Ready all open the drawer instead (a dropped card slides back, and the drawer says why), where the person approves with the text in front of them (spec D6: Ready is where agents act on the text). The drawer's own Approve and "Move to" stay. Task 12 amends §10 - cost if wrong: one more click.
 - Ruling: dark only (confirmed by the lead); every colour comes from the `:root` variables through board tokens declared once at the top of `tasks.css`, plus the amber `#f59e0b` the app already uses for "stale" in Documents - the app has no light theme (spec D20, §3) - cost if wrong: redefine the tokens.
@@ -56,6 +58,7 @@
 - Ruling: the app does not save notes over 30,000 characters (they travel on the command line, which Windows caps near 32,767): the bindings (`TaskAdd`, `TaskEdit`) refuse them and point to `monoagentcli task` in a terminal - cost: such notes are saved in a terminal.
 - Ruling: archiving from the drawer offers Undo (`task unarchive`) in the board's own activity toasts; those toasts (another actor's moves, the archive) are neutral and local to the page, because the app's `Toasts` render every message as a red failure - cost: one small component.
 - Ruling: empty-state copy for In progress, Review and Done (the spec gives Inbox and Ready only) - cost: copy.
+- Ruling: the drawer's history words a `released` event "Claim ended" (Spanish "Toma terminada"), not "Released to Ready": the store writes `released` when an agent gives a task back, which goes to Ready, and also when the operator moves or archives a card an agent holds, ahead of the move's own event and with the card's destination as its to_status (any column, or `archived`, which the drawer shows as the raw word in both languages), so the line can promise no destination; the note under it carries the detail. The activity note "released" keeps its wording, since the operator's own actions are never noted - cost if wrong: an agent's own release reads less exactly.
 - Ruling: a `tasks:changed` that arrives while a mutation is pending, the tab is inactive or the window hidden only marks the board dirty and the read follows; a read asked for by tab activation shows no activity toast; at most three toasts per read; never for the operator's own actions (`last_event.actor == "you"`) - cost if wrong: fewer toasts.
 - Ruling: the screenshots the spec wants in the PR are taken with Playwright against `vite preview` with `window.go` mocked, saved outside the repo and listed for the lead to attach (Task 13) - committing PNGs bloats the repo - cost: none.
 - Ruling: `ref tasks` and the CLI do not change in this phase; the desktop tab is documented in AGENTS.md (both places the app is described), the changelog and spec §10 - `ref tasks` documents the CLI, which P3 does not touch - cost: none.
@@ -72,7 +75,7 @@ Failure modes the spec implies and no happy-path test would catch; each has a te
 4. A refetch must not undo an optimistic move, a failed confirming read must not drop it, and the operator's own move must not toast. (Task 5: "keeps a move until the read that includes it", "keeps a confirmed move when the confirming read fails", "toasts what an agent did, never the operator's own move")
 5. The badge before the tab was ever opened, and after the window reloads on a profile switch: the first `tasks:changed` was emitted before anything listened, and until `startup` has chosen the profile the app answers for `default`. (Task 2: `TestTaskPulseReadsTheActiveBoard`; Task 11: the two Sidebar badge tests: an older revision of the same profile never overwrites a newer one, the badge asks only once `IsReady` is true, and another profile's value replaces it)
 
-Close runners-up, also pinned: the app started from an agent's shell is read-only up front and still shows its board, although the CLI refuses `task board` there (Task 1: `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker`; Task 10c); `/`, `N` and `A` stay quiet while the page is hidden or a field has the focus (Task 10c); untrusted notes render as markdown without images or unsafe links (Task 9); the Done pulse lasts through the confirming read (Task 10a); a drop below the cut Done column's last card stays visible (Task 8).
+Close runners-up, also pinned: the app started from an agent's shell is read-only up front and still shows its board, although the CLI refuses `task board` there (Task 1: `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker`; Task 10c); `/`, `N` and `A` stay quiet while the page is hidden or a field has the focus (Task 10c); untrusted notes render as markdown without images or unsafe links (Task 9); the Done pulse lasts through the confirming read (Task 10a); a drop below the cut Done column's last card stays visible (Task 8); a profile that is not there ends the board watcher with one warning in the app's log, and `TaskPulse` answers `{}` for it (Task 2).
 
 ## The board at a glance (what the code below builds)
 
@@ -112,7 +115,7 @@ Tasks: 0 contract and setup; 1 bindings; 2 watcher and pulse; 3 JS bindings and 
 **Files:** none change. `npm ci` creates `wails-app/frontend/node_modules` and the build creates `wails-app/frontend/dist`, both ignored by git.
 
 **Interfaces:**
-- Consumes (P1, `internal/tasks`): `NewStore(*sql.DB) *Store`; `(*Store).Watch(ctx, profileID string, interval time.Duration, fn func(Change))`; `Change{Rev int64; Counts Counts}`; `Counts{Inbox, Ready, InProgress, Review, Done, Stale int}`; `(*Store).Rev(ctx, profileID) (int64, error)`; `(*Store).Counts(ctx, profileID) (Counts, error)`; `(*Store).Board(ctx context.Context, profileID string, doneLimit int) (Board, error)` with `Board{Profile, Rev, Counts, Tasks map[Status][]Task}` (JSON `profile`, `rev`, `counts`, `tasks`; a column with no card is `[]`); `(*Store).Add(ctx, profileID string, in AddInput, actor Actor) (Task, bool, error)`; `Actor{Kind, Name}` with `Human`; `AddInput{Title string, ...}`. From `internal/orgsign`: `AgentContextMarker() string`, `AgentContextMarkers() []string`.
+- Consumes (P1, `internal/tasks`): `NewStore(*sql.DB) *Store`; `(*Store).Watch(ctx, profileID string, interval time.Duration, fn func(Change)) error` (it blocks, so the app runs it in a goroutine; it returns nil when `ctx` ends, an ErrInvalid error at once for a profile that does not exist, and an error that wraps ErrNotFound when the profile is deleted while it is watched); `Change{Rev int64; Counts Counts}`; `Counts{Inbox, Ready, InProgress, Review, Done, Stale int}`; `(*Store).Profile(ctx, profileID string) (Profile, error)` (ErrInvalid for an unknown profile); `(*Store).Rev(ctx, profileID) (int64, error)` and `(*Store).Counts(ctx, profileID) (Counts, error)` (neither checks the profile: an unknown one reads revision 0 and no cards); `(*Store).Board(ctx context.Context, profileID string, doneLimit int) (Board, error)` with `Board{Profile, Rev, Counts, Tasks map[Status][]Task}` (JSON `profile`, `rev`, `counts`, `tasks`; a column with no card is `[]`); `(*Store).Add(ctx, profileID string, in AddInput, actor Actor) (Task, bool, error)`; `Actor{Kind, Name}` with `Human`; `AddInput{Title string, ...}`. From `internal/orgsign`: `AgentContextMarker() string`, `AgentContextMarkers() []string`.
 - Consumes (P1 CLI, as the app calls it): `task board --done-limit N` (operator-only; the app reads the same document in process, Task 1), `task show ID`, `task add [--source app] [--ready] [--notes=TEXT] [--stdin] -- TITLE`, `task edit ID [--title=T] [--notes=N]`, `task move ID STATUS [--before ID|--after ID|--top|--bottom]`, `task approve ID... [--top]`, `task archive ID...`, `task unarchive ID...`, `task comment ID -- TEXT`; JSON documents `{"profile","task"}`, `{"profile","tasks"}`, `{"profile","task","events"}`, `{"profile","created","task"}`, and the board `{"profile","rev","counts","tasks":{"inbox":[],"ready":[],"in_progress":[],"review":[],"done":[]}}`; a task is `{id, profile_id, title, notes, status, position, source:{kind,url,title,app}, claim:{by,until,stale}|null, last_event:{actor,kind,at}|null, created_at, updated_at}`; an event is `{id, at, actor, kind, from_status, to_status, note}`; the operator's actor label is `"you"`; errors are `{"error","code"}` on stdout with exit 2 or 3.
 - Produces: nothing. If anything below differs from this plan, spec section 6 wins: stop and tell the lead which line differed and what the code says.
 
@@ -123,7 +126,7 @@ Expected: `feat/tasks-board-gui`; the second exits 0; `internal/tasks` lists `cl
 
 - [ ] **Step 2: The package's names**
 
-Run each: `go doc ./internal/tasks Store.Watch`, `go doc ./internal/tasks Change`, `go doc ./internal/tasks Store.Rev`, `go doc ./internal/tasks Store.Counts`, `go doc ./internal/tasks Store.Board`, `go doc ./internal/tasks Board`, `go doc ./internal/tasks Counts`, `go doc ./internal/tasks Store.Add`, `go doc ./internal/tasks NewStore`, `go doc ./internal/tasks Actor`, `go doc ./internal/orgsign AgentContextMarker`, `go doc ./internal/orgsign AgentContextMarkers`, then `grep -n 'reservedNames' internal/tasks/store.go`.
+Run each: `go doc ./internal/tasks Store.Watch`, `go doc ./internal/tasks Store.Profile`, `go doc ./internal/tasks Change`, `go doc ./internal/tasks Store.Rev`, `go doc ./internal/tasks Store.Counts`, `go doc ./internal/tasks Store.Board`, `go doc ./internal/tasks Board`, `go doc ./internal/tasks Counts`, `go doc ./internal/tasks Store.Add`, `go doc ./internal/tasks NewStore`, `go doc ./internal/tasks Actor`, `go doc ./internal/orgsign AgentContextMarker`, `go doc ./internal/orgsign AgentContextMarkers`, then `grep -n 'reservedNames' internal/tasks/store.go`.
 Expected: the signatures in the Interfaces block above, word for word; `reservedNames` lists `you`, `agent`, `capture`, chrome and os (no agent can call itself `you`, so an event by `you` is always the operator's, which Tasks 4b and 9 rely on).
 
 - [ ] **Step 3: The frontend's packages and a first build**
@@ -759,12 +762,12 @@ git commit -m "feat(tasks): desktop bindings for the task board, through the CLI
 - Test: `wails-app/app_tasks_watch_test.go`
 
 **Interfaces:**
-- Consumes: `tasks.NewStore`, `(*Store).Watch`, `(*Store).Rev`, `(*Store).Counts`, `(*Store).Add`, `tasks.Change`, `tasks.AddInput`, `tasks.Actor`, `tasks.Human` (Task 0 confirmed them); `folderEventFunc` (`func(name string, data map[string]interface{})`) and `(*App).emitFolderEvent` (emits once the Wails runtime is up) from `app_documents_watch.go`; test helpers `eventRecorder` (with `emit` and `snapshot()`) and `waitEvents(t, rec, n)` from `app_documents_watch_test.go` (`!windows`), `newTestApp(t)`, and Task 1's `addTestTask(t, a, profileID, title)` (`app_tasks_test.go`).
+- Consumes: `tasks.NewStore`, `(*Store).Watch`, `(*Store).Profile`, `(*Store).Rev`, `(*Store).Counts`, `(*Store).Add`, `tasks.Change`, `tasks.AddInput`, `tasks.Actor`, `tasks.Human` (Task 0 confirmed them); `folderEventFunc` (`func(name string, data map[string]interface{})`) and `(*App).emitFolderEvent` (emits once the Wails runtime is up) from `app_documents_watch.go`; `(*App).emitLog(source, level, message string)` (adds the entry to the app's log, and emits it once the Wails runtime is up) and `(*App).GetLogs() []LogEntry` from `app.go`; test helpers `eventRecorder` (with `emit` and `snapshot()`) and `waitEvents(t, rec, n)` from `app_documents_watch_test.go` (`!windows`), `newTestApp(t)`, and Task 1's `addTestTask(t, a, profileID, title)` (`app_tasks_test.go`).
 - Produces:
   - `(*App).restartTaskWatcher()`, `(*App).stopTaskWatcher()`
-  - `(*App).startTaskWatcher(profileID string, interval time.Duration, emit folderEventFunc) (stop func())`: `stop` returns only once the watcher's goroutine has ended, so nothing of the old profile is emitted after a restart.
+  - `(*App).startTaskWatcher(profileID string, interval time.Duration, emit folderEventFunc) (stop func())`: `stop` returns only once the watcher's goroutine has ended, so nothing of the old profile is emitted after a restart. When `Watch` returns an error (the profile is not there: it never was, or it was deleted while watched) the goroutine writes one warning to the app's log and ends; it does not start over.
   - `taskPulseData(profileID string, c tasks.Change) map[string]interface{}`: `{"profile_id", "rev" (int64), "inbox" (int), "review" (int)}`, the `tasks:changed` payload.
-  - `(*App).TaskPulse() map[string]interface{}`: the same document for the active profile, read now; `{}` without a database.
+  - `(*App).TaskPulse() map[string]interface{}`: the same document for the active profile, read now; `{}` without a database, for a profile that is not there, or on a failed read.
   - `App` fields `taskWatchMu sync.Mutex`, `taskWatchStop func()`, `taskWatchProfile string` (the profile being watched, `""` when none).
 
 - [ ] **Step 1: Write the failing tests**
@@ -777,9 +780,25 @@ Create `wails-app/app_tasks_watch_test.go`:
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+// waitTaskWarning waits until the app's log holds a warning that contains want.
+func waitTaskWarning(t *testing.T, a *App, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range a.GetLogs() {
+			if e.Level == "WARN" && strings.Contains(e.Message, want) {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no warning holding %q in the log: %+v", want, a.GetLogs())
+}
 
 // The watcher reports the board once at the start and after each write,
 // with the Inbox and Review counts the sidebar badge shows.
@@ -840,6 +859,38 @@ func TestTaskWatcherWatchesItsOwnProfile(t *testing.T) {
 	}
 }
 
+// A watcher on a profile that does not exist ends at once and says so in the
+// app's log: Watch returns an error for it (ErrInvalid), where a watcher that
+// went on would report revision 0 and an empty board for ever. It emits
+// nothing and does not start over, so a profile that appears later is not
+// watched until the next restart. A profile deleted while it is watched ends
+// Watch the same way, with an error that wraps ErrNotFound (P1's
+// TestWatchEndsWhenItsProfileIsDeleted pins that); the branch here is the same.
+func TestTaskWatcherEndsWithAWarningForAProfileThatDoesNotExist(t *testing.T) {
+	a := newTestApp(t)
+	rec := &eventRecorder{}
+	stop := a.startTaskWatcher("nobody", 10*time.Millisecond, rec.emit)
+	waitTaskWarning(t, a, `unknown profile "nobody"`)
+	if _, err := a.db.Exec(`INSERT INTO profiles (id, name) VALUES ('nobody', 'Nobody')`); err != nil {
+		t.Fatal(err)
+	}
+	addTestTask(t, a, "nobody", "after the watcher ended")
+	time.Sleep(100 * time.Millisecond)
+	if names, _ := rec.snapshot(); len(names) != 0 {
+		t.Fatalf("a watcher that had ended reported: %v", names)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop did not return for a watcher that had ended")
+	}
+}
+
 // TaskPulse answers what the watcher would emit, read now: the badge asks
 // once when it mounts, because the first event fired before it listened.
 func TestTaskPulseReadsTheActiveBoard(t *testing.T) {
@@ -856,6 +907,13 @@ func TestTaskPulseReadsTheActiveBoard(t *testing.T) {
 	a.setActiveProfileID("work")
 	if got := a.TaskPulse(); got["profile_id"] != "work" || got["inbox"] != 0 {
 		t.Fatalf("for the active profile, which has no task: %+v", got)
+	}
+	// A profile that is not there has no board: {}, as for any failed read, not
+	// revision 0 with no cards, which the badge would take for a real, empty
+	// board (Rev and Counts do not check the profile; Profile does).
+	a.setActiveProfileID("nobody")
+	if got := a.TaskPulse(); got == nil || len(got) != 0 {
+		t.Fatalf("for a profile that does not exist: %#v, want an empty map", got)
 	}
 	a.db = nil
 	if got := a.TaskPulse(); got == nil || len(got) != 0 {
@@ -933,6 +991,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/tasks"
@@ -975,19 +1034,26 @@ func (a *App) stopTaskWatcher() {
 // store's two seconds) and emits tasks:changed at the start and at each move.
 // stop returns only once the watcher's goroutine has ended, and a report
 // that races the stop is dropped, so no event of the old profile follows a
-// restart.
+// restart. Watch returns an error only for a profile that is not there (it
+// never was, or it was deleted while watched): the watcher then writes one
+// warning to the app's log and ends. It does not start over, since the
+// profile would still be missing; the next SwitchProfile or start begins a
+// new one.
 func (a *App) startTaskWatcher(profileID string, interval time.Duration, emit folderEventFunc) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	store := tasks.NewStore(a.db)
 	go func() {
 		defer close(done)
-		store.Watch(ctx, profileID, interval, func(c tasks.Change) {
+		err := store.Watch(ctx, profileID, interval, func(c tasks.Change) {
 			if ctx.Err() != nil {
 				return
 			}
 			emit("tasks:changed", taskPulseData(profileID, c))
 		})
+		if err != nil {
+			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: task board watcher stopped: %v", profileID, err))
+		}
 	}()
 	return func() {
 		cancel()
@@ -1008,8 +1074,8 @@ func taskPulseData(profileID string, c tasks.Change) map[string]interface{} {
 // TaskPulse is the active profile's board revision with its Inbox and Review
 // counts, read now in process the way the watcher reads them. The sidebar
 // asks once when it mounts: the watcher's first tasks:changed fires during
-// startup, before any page listens. {} without a database or on a failed
-// read.
+// startup, before any page listens. {} without a database, for a profile
+// that is not there, or on a failed read.
 func (a *App) TaskPulse() map[string]interface{} {
 	if a.db == nil {
 		return map[string]interface{}{}
@@ -1020,6 +1086,11 @@ func (a *App) TaskPulse() map[string]interface{} {
 	}
 	profileID := a.getActiveProfileID()
 	store := tasks.NewStore(a.db)
+	// Rev and Counts do not check the profile: an unknown one reads revision 0
+	// and no cards, a board that never existed. Resolve it first, as Watch does.
+	if _, err := store.Profile(ctx, profileID); err != nil {
+		return map[string]interface{}{}
+	}
 	rev, err := store.Rev(ctx, profileID)
 	if err != nil {
 		return map[string]interface{}{}
@@ -1101,7 +1172,7 @@ to
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `gofmt -l wails-app/*.go` (not the whole folder: `frontend/node_modules` holds Go files of its own) then `go -C wails-app vet .` then `go -C wails-app test -run 'TestTaskWatcher|TestTaskPulse|TestRestartAndStopTaskWatcher|TestDocumentWatcher' -count=1 .`
-Expected: nothing from `gofmt` (if it lists `app.go`, run `gofmt -w` on it: the struct block realigns), vet clean, PASS (six new tests and the three document watcher tests).
+Expected: nothing from `gofmt` (if it lists `app.go`, run `gofmt -w` on it: the struct block realigns), vet clean, PASS (seven new tests and the three document watcher tests).
 Then, because the watcher's goroutine and its stop are this phase's only concurrency (spec §14 asks for `-race` on what a phase touches): `go -C wails-app test -race -run 'TestTask|TestRestartAndStopTaskWatcher' -count=1 .` — expected: PASS with no race report.
 
 - [ ] **Step 6: Check that the rules are pinned**
@@ -1109,6 +1180,8 @@ Then, because the watcher's goroutine and its stop are this phase's only concurr
 Each change must make the named test FAIL, then undo it:
 1. In `startTaskWatcher`'s stop function, delete `<-done` → `TestTaskWatcherStopWaitsForAReportInFlight`.
 2. In `restartTaskWatcher`, `profileID := a.getActiveProfileID()` becomes `profileID := "default"` → `TestRestartAndStopTaskWatcher`.
+3. In `TaskPulse`, delete the `store.Profile` check → `TestTaskPulseReadsTheActiveBoard` (a profile that is not there answers a zero board).
+4. In `startTaskWatcher`'s goroutine, `if err != nil` becomes `if err == nil` → `TestTaskWatcherEndsWithAWarningForAProfileThatDoesNotExist` (no warning reaches the log).
 
 No test reaches the three call sites (`startup`, `SwitchProfile`, `shutdown`): the reviewer checks those lines by reading. Without the `SwitchProfile` one, the badge and the board stop following the board after a profile switch.
 
@@ -1283,7 +1356,7 @@ export const tasksApi = {
   archive:   (ids) => run(() => GoApp.TaskArchive(ids)),
   unarchive: (ids) => run(() => GoApp.TaskUnarchive(ids)),
   comment:   (id, text) => run(() => GoApp.TaskComment(id, text)),
-  // {profile_id, rev, inbox, review}, or {} before the database is open.
+  // {profile_id, rev, inbox, review}, or {} before the database is open or for a profile that is not there.
   pulse:     () => run(() => GoApp.TaskPulse()),
   // The agent-context marker the app inherited, or '' (a plain string, not JSON).
   agentShell: () => Promise.resolve().then(() => GoApp.TaskAgentShell()).then(m => m || '').catch(() => ''),
@@ -2581,7 +2654,7 @@ to
       "comment": "Comment",
       "question": "Question",
       "result": "Result",
-      "released": "Released to Ready",
+      "released": "Claim ended",
       "archived": "Archived",
       "unarchived": "Restored",
       "other": "Changed"
@@ -2759,7 +2832,7 @@ to
       "comment": "Comentario",
       "question": "Pregunta",
       "result": "Resultado",
-      "released": "Devuelta a Aprobadas",
+      "released": "Toma terminada",
       "archived": "Archivada",
       "unarchived": "Restaurada",
       "other": "Cambiada"
@@ -4329,6 +4402,24 @@ describe('Drawer', () => {
     expect(tasksApi.show).toHaveBeenCalledWith(12)
   })
 
+  // The store writes a released event whenever a claim ends: an agent's own
+  // release (the card goes to Ready) and also the operator's move or archive of
+  // a card an agent holds, with the card's destination as its to_status. So
+  // the line names the claim that ended and never a column.
+  it('words a released event by the claim that ended, not by a column', async () => {
+    tasksApi.show.mockResolvedValue({ profile: {}, task: task(), events: [...EVENTS,
+      { id: 3, at: '2026-10-06T08:40:00Z', actor: 'you', kind: 'released', from_status: 'in_progress', to_status: 'done', note: 'the claim of claude-code#a3f9 ended: the operator moved the card' },
+      { id: 4, at: '2026-10-06T08:40:00Z', actor: 'you', kind: 'moved', from_status: 'in_progress', to_status: 'done', note: '' },
+    ] })
+    setup()
+    await waitFor(() => expect(document.querySelectorAll('.tb-event')).toHaveLength(4))
+    const released = document.querySelector('.tb-event[data-kind="released"]')
+    expect(released).toHaveTextContent('Claim ended')
+    expect(released).not.toHaveTextContent('Ready')
+    expect(released).toHaveTextContent('the operator moved the card')
+    expect(document.querySelector('.tb-event[data-kind="moved"]')).toHaveTextContent('Moved from In progress to Done')
+  })
+
   it('saves the title on Enter and the notes on Cmd+Enter, then asks for a new read', async () => {
     const { onChanged } = setup()
     const titleBox = screen.getByLabelText('Title')
@@ -4741,7 +4832,7 @@ Insert immediately above the line `/* Motion */`:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `npm --prefix wails-app/frontend test -- src/pages/tasks/Drawer.render.test.jsx src/locales/tasksKeys.test.js`
-Expected: PASS (nine drawer tests; the keys test now scans `Drawer.jsx` too).
+Expected: PASS (ten drawer tests; the keys test now scans `Drawer.jsx` too).
 
 - [ ] **Step 6: Check that the rules are pinned**
 
@@ -4751,6 +4842,7 @@ Each change must make the named test FAIL, then undo it:
 3. In `save`, call `onChanged()` before the `if (res?.error)` check → "says why an edit was refused and keeps the text".
 4. Drop `maxLength={200}`, then (separately) the title's `&& !e.nativeEvent.isComposing` → "saves the title on Enter and the notes on Cmd+Enter …".
 5. Drop `&& !document.querySelector('[aria-modal="true"]')` → "leaves Escape to a modal dialog above it".
+6. In `en.json`, put `"released": "Released to Ready"` back → "words a released event by the claim that ended, not by a column".
 
 - [ ] **Step 7: Commit**
 
