@@ -14,19 +14,25 @@ import (
 )
 
 // failingSaveStore is a Store whose Save can be made to fail, as a full disk or a
-// directory that has gone read-only does, and that counts the attempts.
+// directory that has gone read-only does, and that counts the attempts. onSave, if
+// set, runs first in every Save, as something another goroutine did meanwhile.
 type failingSaveStore struct {
 	account.Store
-	mu    sync.Mutex
-	fail  bool
-	tries int
+	mu     sync.Mutex
+	fail   bool
+	tries  int
+	onSave func()
 }
 
 func (s *failingSaveStore) Save(sess *account.Session) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.tries++
-	if s.fail {
+	fail, onSave := s.fail, s.onSave
+	s.mu.Unlock()
+	if onSave != nil {
+		onSave()
+	}
+	if fail {
 		return errors.New("simulated: the disk is full")
 	}
 	return s.Store.Save(sess)
@@ -212,5 +218,51 @@ func TestAMarkAnotherProcessWroteOnTheSessionThisProcessHoldsIsTakenIn(t *testin
 	e.f.Clock.Set(now.Add(-6 * time.Minute))
 	if st := e.g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonClockRollback {
 		t.Fatalf("Status after a 6 minute set-back = %s/%q, want locked/clock_rollback: the peer's mark was not taken in", st.State, st.Reason)
+	}
+}
+
+// touchHW looks at the guard's cache twice: when it starts, and when it decides
+// whether to take in what it read under the lock. A poll in another goroutine can
+// find session.json gone in between and empty the cache, and the second look must
+// not dereference it. Here the poll runs inside the failing write of the mark, which
+// is where the two looks are apart; the hook makes the other goroutine's moves
+// deterministic: no thread and no wait. What the guard answers afterwards is not
+// what this test is about, only that it answers.
+func TestAHighWaterWriteThatFindsTheCacheEmptiedByAPollDoesNotCrash(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(10*time.Minute, time.Hour) // healthy; its mark is ten minutes old, so touchHW will try
+	fs := &failingSaveStore{Store: account.OpenStore(e.dir, e.seal)}
+	g := e.guardOver(fs, 0)
+	if st := g.Status(); st.State != account.StateOK {
+		t.Fatalf("Status = %s/%q, want ok", st.State, st.Reason)
+	}
+	emptied := false
+	fs.fail = true
+	fs.onSave = func() {
+		if err := os.Remove(filepath.Join(e.dir, "session.json")); err != nil {
+			t.Error(err)
+			return
+		}
+		e.f.Clock.Advance(account.PollInterval) // the other goroutine's poll is due
+		if st := g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn {
+			t.Errorf("the other goroutine's Status = %s/%q, want locked/not_logged_in: its poll did not find the file gone", st.State, st.Reason)
+			return
+		}
+		emptied = true
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("EnsureFresh panicked: %v", r)
+			}
+		}()
+		if _, err := g.EnsureFresh(context.Background()); err != nil {
+			t.Fatalf("EnsureFresh = %v: a high-water write that fails is not reported", err)
+		}
+		g.Status()
+	}()
+	if !emptied || fs.attempts() != 1 {
+		t.Fatalf("the cache was emptied: %t, writes of the mark: %d, want true and 1: this test cannot tell otherwise", emptied, fs.attempts())
 	}
 }
