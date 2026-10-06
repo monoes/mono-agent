@@ -165,6 +165,13 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 			// present, and a key store problem recorded over that reason would have the
 			// grace say the wrong thing, and its end say expired instead of unconfirmed.
 			return st, outcomeSkipped, nil
+		case pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed):
+			// A token that must never be presented again and that cannot be read: it goes
+			// unread (os.Remove needs no key store). Recording the key store problem instead
+			// would overwrite what keeps it from being presented, unconfirmed or the last
+			// attempt that a clock gone back is measured against, and the next pass, with
+			// the key store back, would present it (A24).
+			return g.dropUnconfirmed(sess, now)
 		}
 		// Unreadable: the key store is unavailable or does not answer in time, or
 		// the file is gone or does not open. Not a decision about the account, so
