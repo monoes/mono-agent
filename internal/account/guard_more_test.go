@@ -253,19 +253,29 @@ func TestTheTokenIsVerifiedWhenTheSessionIsLoadedNotAtEveryStatus(t *testing.T) 
 	}
 }
 
-func TestAReadThatFailsNeverChangesAWorkingVerdict(t *testing.T) {
+// A read that fails on the disk (permission denied, an I/O error) says nothing about
+// what session.json holds: the guard keeps the session that worked. (A file whose
+// content cannot be used is another matter: guard_invalid_test.go.)
+func TestAReadThatFailsOnTheDiskNeverChangesAWorkingVerdict(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(10*time.Minute, time.Hour)
-	before := e.g.Status()
-	e.corrupt()
+	cs := newCountingStore(account.OpenStore(e.dir, e.seal))
+	g := e.guardOver(cs, 0)
+	before := g.Status()
+	cs.failLoad(errors.New("simulated: input/output error"))
+	e.touch() // the file changed: the next poll reads it, and the read fails
 	e.f.Clock.Advance(account.PollInterval)
-	if after := e.g.Status(); !reflect.DeepEqual(after, before) {
+	if after := g.Status(); !reflect.DeepEqual(after, before) {
 		t.Fatalf("a file that cannot be read changed the verdict: %s, was %s", describeStatus(after), describeStatus(before))
 	}
+	if n := cs.calls("Load"); n != 2 {
+		t.Fatalf("%d reads, want the first one and the one that failed", n)
+	}
+	cs.failLoad(nil)
 	sess := e.signIn(time.Minute, time.Hour)
 	e.f.Clock.Advance(account.PollInterval)
-	if st := e.g.Status(); st.State != account.StateOK || !st.IssuedAt.Equal(sess.HW) {
-		t.Fatalf("after signing in over the unreadable file: %s, want ok and the new session", describeStatus(st))
+	if st := g.Status(); st.State != account.StateOK || !st.IssuedAt.Equal(sess.HW) {
+		t.Fatalf("after signing in once the disk reads again: %s, want ok and the new session", describeStatus(st))
 	}
 }
 

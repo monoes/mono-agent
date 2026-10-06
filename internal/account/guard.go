@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -227,10 +228,17 @@ func (g *Guard) reload(force bool) {
 	defer g.mu.Unlock()
 	g.loaded = true
 	if lerr != nil {
-		// A read that fails now must not downgrade a session that worked: keep
-		// what is cached and retry at the next poll. With nothing cached, loadErr
-		// makes the verdict locked(invalid).
+		// A read that fails on the disk (permission denied, an I/O error) says nothing
+		// about the file and must not downgrade a session that worked: keep what is
+		// cached and retry at the next poll. A file that is there and cannot be used is
+		// what every process reads now, and a new one judges it locked(invalid): so does
+		// this guard, at once, rather than keep a session that the file no longer holds
+		// (a refusal written over it, say) until its grace ends. With nothing cached,
+		// loadErr makes the verdict locked(invalid).
 		g.loadErr = lerr
+		if errors.Is(lerr, errSessionInvalid) {
+			g.setSessionLocked(nil)
+		}
 		return
 	}
 	g.loadErr = nil

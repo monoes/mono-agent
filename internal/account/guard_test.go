@@ -140,14 +140,16 @@ func TestACorruptSessionFileIsLockedInvalidAndASignInRepairsIt(t *testing.T) {
 	if st := e.g.Status(); st.State != account.StateOK {
 		t.Fatalf("after a sign-in over the corrupt file: %s/%q", st.State, st.Reason)
 	}
-	// A file that later cannot be read must not downgrade a session that works.
+	// A file that later turns corrupt is judged at the next poll as every new process
+	// judges it, whatever this guard had cached (a read that fails on the disk keeps the
+	// session that works: TestAReadThatFailsOnTheDiskNeverChangesAWorkingVerdict).
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	e.touch()
 	e.f.Clock.Advance(account.PollInterval)
-	if st := e.g.Status(); st.State != account.StateOK {
-		t.Fatalf("a corrupt file replaced a working session: %s/%q", st.State, st.Reason)
+	if st := e.g.Status(); st.State != account.StateLocked || st.Reason != account.ReasonInvalid {
+		t.Fatalf("a corrupt file over a working session: Status = %s/%q, want locked/invalid", st.State, st.Reason)
 	}
 }
 

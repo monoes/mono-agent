@@ -95,8 +95,8 @@ func TestStatusIsTheVerdictOfTheStoredSessionAndRequireFollowsIt(t *testing.T) {
 	}
 }
 
-// A session the guard keeps through reads that fail is still judged by the
-// clock: it goes from ok to grace, and from grace to locked(expired), on
+// A session the guard keeps through reads that fail on the disk is still judged
+// by the clock: it goes from ok to grace, and from grace to locked(expired), on
 // schedule, with the file unreadable and no poll succeeding. Keeping a session
 // through a bad read must not freeze its verdict.
 func TestASessionKeptThroughFailingReadsStillExpiresOnSchedule(t *testing.T) {
@@ -108,7 +108,8 @@ func TestASessionKeptThroughFailingReadsStillExpiresOnSchedule(t *testing.T) {
 	if st := g.Status(); st.State != account.StateOK {
 		t.Fatalf("Status = %s, want ok", describeStatus(st))
 	}
-	e.corrupt() // from now on every read fails
+	cs.failLoad(errors.New("simulated: input/output error")) // from now on every read fails
+	e.touch()                                                // and the file changed, so the next poll reads it
 	steps := []struct {
 		at     time.Duration
 		state  account.State

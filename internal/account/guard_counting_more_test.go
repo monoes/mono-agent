@@ -21,7 +21,16 @@ type countingStore struct {
 	mu        sync.Mutex
 	counts    map[string]int
 	mtimeErr  error  // Mtime fails with it while it is set
+	loadErr   error  // Load fails with it while it is set, as a disk that cannot be read does (failLoad)
 	afterLoad func() // runs once Load has read the file, before it returns
+}
+
+// failLoad makes every Load fail with err, an error that says nothing about what
+// session.json holds (permission denied, an I/O error), until it is called with nil.
+func (s *countingStore) failLoad(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loadErr = err
 }
 
 func newCountingStore(s account.Store) *countingStore {
@@ -53,6 +62,12 @@ func (s *countingStore) Mtime() (time.Time, error) {
 
 func (s *countingStore) Load() (*account.Session, error) {
 	s.count("Load")
+	s.mu.Lock()
+	lerr := s.loadErr
+	s.mu.Unlock()
+	if lerr != nil {
+		return nil, lerr
+	}
 	sess, err := s.Store.Load()
 	s.mu.Lock()
 	after := s.afterLoad
