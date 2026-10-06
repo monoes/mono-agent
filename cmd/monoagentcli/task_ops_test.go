@@ -79,11 +79,9 @@ func TestTheOperatorWorksTheWholeBoard(t *testing.T) {
 	var one struct {
 		Task taskJSON `json:"task"`
 	}
-	var many struct {
-		Tasks []taskJSON `json:"tasks"`
-	}
+	var many manyJSON
 	mustTaskJSON(t, db, "default", &many, "", "approve", n)
-	if len(many.Tasks) != 1 || many.Tasks[0].Status != "ready" {
+	if len(many.Tasks) != 1 || many.first().Status != "ready" {
 		t.Fatalf("approve: %+v", many.Tasks)
 	}
 	mustTaskJSON(t, db, "default", &one, "", "move", n, "in_progress")
@@ -99,11 +97,11 @@ func TestTheOperatorWorksTheWholeBoard(t *testing.T) {
 		t.Fatalf("edit: %+v", one.Task)
 	}
 	mustTaskJSON(t, db, "default", &many, "", "archive", n)
-	if many.Tasks[0].Status != "archived" {
+	if many.first().Status != "archived" {
 		t.Fatalf("archive: %+v", many.Tasks)
 	}
 	mustTaskJSON(t, db, "default", &many, "", "unarchive", n)
-	if many.Tasks[0].Status != "done" {
+	if many.first().Status != "done" {
 		t.Fatalf("unarchive restores the column: %+v", many.Tasks)
 	}
 	text, _, err := runTask(t, db, "default", false, "", "approve", "99999")

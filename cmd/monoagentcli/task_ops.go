@@ -23,7 +23,7 @@ func writeOneTask(cfg *globalConfig, cmd *cobra.Command, p tasks.Profile, t task
 	if cfg.JSONOutput {
 		return writeJSONTo(cmd.OutOrStdout(), map[string]any{"profile": p, "task": t})
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Profile: %s\n", p.Name)
+	printProfileLine(cmd.OutOrStdout(), p)
 	printTaskLine(cmd.OutOrStdout(), verb, t)
 	return nil
 }
@@ -34,7 +34,7 @@ func writeTasks(cfg *globalConfig, cmd *cobra.Command, p tasks.Profile, ts []tas
 	if cfg.JSONOutput {
 		return writeJSONTo(cmd.OutOrStdout(), map[string]any{"profile": p, "tasks": ts})
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Profile: %s\n", p.Name)
+	printProfileLine(cmd.OutOrStdout(), p)
 	for _, t := range ts {
 		printTaskLine(cmd.OutOrStdout(), verb, t)
 	}
@@ -92,8 +92,9 @@ func newTaskMoveCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Move a task to a column, and to a place in it (you only)",
 		Long: `STATUS is inbox, ready, in_progress, review or done (archive has its own command).
 Without a place the task goes to the column's default: the top of inbox, review
-and done, the bottom of ready and in_progress. The top of Ready is what an AI
-agent takes next. Moving a task out of in_progress ends an agent's claim.`,
+and done, the bottom of ready and in_progress. A task already in that column stays
+where it is unless you give a place. The top of Ready is what an AI agent takes
+next. Moving a task out of in_progress ends an agent's claim.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			actor, err := callerFor(flagAs(cmd)).operator("move a task")
 			if err != nil {
@@ -206,7 +207,8 @@ func newTaskArchiveCmd(cfg *globalConfig) *cobra.Command {
 					if n == 1 {
 						noun = "task"
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "Profile: %s\nArchived %d %s from %s.\n", p.Name, n, noun, columnLabel(st))
+					printProfileLine(cmd.OutOrStdout(), p)
+					fmt.Fprintf(cmd.OutOrStdout(), "Archived %d %s from %s.\n", n, noun, columnLabel(st))
 					return nil
 				})
 			}

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The refusal of an agent comes first: before the arguments are read and before the
@@ -66,6 +68,10 @@ func TestOperatorCommandsRefuseTheWrongArgumentsWithoutOpeningTheDatabase(t *tes
 		{"approve", "1", "x"},
 		{"unarchive", "0"},
 		{"archive", "0"},
+		// A place that names no card is a mistake in the arguments too, and an agent that
+		// makes it is refused as an agent first: the guard comes before the flags are read.
+		{"move", "1", "ready", "--before", "0"},
+		{"move", "1", "ready", "--after", ""},
 	} {
 		doc := failedTaskJSON(t, db, "default", 3, args...)
 		if doc["code"] != "invalid_input" {
@@ -74,6 +80,40 @@ func TestOperatorCommandsRefuseTheWrongArgumentsWithoutOpeningTheDatabase(t *tes
 		agent := failedTaskJSON(t, db, "default", 3, append(slices.Clone(args), "--as", "bot")...)
 		if agent["code"] != "operator_only" {
 			t.Errorf("task %s --as bot: %v, want operator_only before the arguments are read", strings.Join(args, " "), agent)
+		}
+	}
+}
+
+// What the caller sent is repeated in a refusal only in part: a huge argument must not make
+// a huge message, and the cut never splits a character (the second value is 2-byte
+// characters). One row for each way a command takes an argument: a task id, a status, a
+// place (--before, --after), the ids of approve, archive and unarchive, and --status.
+func TestOperatorCommandsRepeatOnlyAShortStretchOfWhatTheyRefuse(t *testing.T) {
+	db := newTaskTestDB(t)
+	for _, huge := range []string{strings.Repeat("x", 10000), strings.Repeat("\xc3\xa9", 10000)} {
+		for _, args := range [][]string{
+			{"edit", huge, "--title", "x"},
+			{"move", huge, "ready"},
+			{"move", "1", huge},
+			{"move", "1", "ready", "--before", huge},
+			{"move", "1", "ready", "--after", huge},
+			{"approve", huge},
+			{"approve", "1", huge},
+			{"archive", huge},
+			{"archive", "1", huge},
+			{"archive", "--status", huge},
+			{"unarchive", huge},
+			{"unarchive", "1", huge},
+		} {
+			out, _, err := runTask(t, db, "default", true, "", args...)
+			var doc map[string]any
+			if exitCode(err) != 3 || json.Unmarshal([]byte(out), &doc) != nil {
+				t.Fatalf("task %s <%d bytes>: exit %d (%v), %.80q", args[0], len(huge), exitCode(err), err, out)
+			}
+			msg, _ := doc["error"].(string)
+			if doc["code"] != "invalid_input" || len(msg) == 0 || len(err.Error()) >= 300 || len(out) > 400 || !utf8.ValidString(msg) {
+				t.Errorf("task %s <%d bytes>: a refusal of %d bytes (document %d), code %v: %.120q", args[0], len(huge), len(err.Error()), len(out), doc["code"], msg)
+			}
 		}
 	}
 }

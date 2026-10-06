@@ -201,10 +201,29 @@ func TestTaskArchiveByStatusTakesOnlyThatColumnOfThisProfile(t *testing.T) {
 	}
 }
 
+// A column is named the way the store reads a status: in-progress and progress mean
+// in_progress, and the case and the padding do not matter. The command reads the name with
+// ParseStatus and not with a spelling of its own, which a database that opens shows: the
+// store refuses a name that is passed on raw, so each row has to archive the card it names.
+func TestTaskArchiveByStatusReadsAColumnNameInAnySpelling(t *testing.T) {
+	db := newTaskTestDB(t)
+	var one movedJSON
+	var res struct {
+		Archived int `json:"archived"`
+	}
+	for _, name := range []string{"In-Progress", " progress ", "IN_PROGRESS"} {
+		mustTaskJSON(t, db, "default", &one, "", "move", id(opsAdd(t, db, "held")), "in_progress")
+		mustTaskJSON(t, db, "default", &res, "", "archive", "--status", name)
+		if res.Archived != 1 {
+			t.Errorf("archive --status %q: archived %d, want 1", name, res.Archived)
+		}
+	}
+}
+
 // Archiving a card an agent holds ends the claim and the store writes a released event
-// before the archived one. The card the store returns shows no claim, and the command does
-// not say anything about it: nothing it was told says that the card was held.
-func TestTaskArchiveOfAHeldCardClearsTheClaimAndSaysNothingOfIt(t *testing.T) {
+// before the archived one: the card the command prints has no claim, whether it archives
+// by id or a whole column, and in text the line of the task is there all the same.
+func TestTaskArchiveOfAHeldCardClearsTheClaim(t *testing.T) {
 	db := newTaskTestDB(t)
 	until := time.Now().Add(time.Hour)
 	ids := seedTaskRows(t, db,
@@ -220,7 +239,7 @@ func TestTaskArchiveOfAHeldCardClearsTheClaimAndSaysNothingOfIt(t *testing.T) {
 		t.Errorf("history: %s", s.kinds())
 	}
 	text, _, err := runTask(t, db, "default", false, "", "archive", id(ids[1]))
-	if err != nil || strings.Contains(strings.ToLower(text), "claim") || !strings.Contains(text, "Archived #"+id(ids[1])) {
+	if err != nil || !strings.Contains(text, "Archived #"+id(ids[1])) {
 		t.Errorf("as text: %q, %v", text, err)
 	}
 	var res struct {

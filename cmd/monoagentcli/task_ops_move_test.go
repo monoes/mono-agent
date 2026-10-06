@@ -60,6 +60,36 @@ func TestTaskMoveToTheColumnItIsInIsANoOpUnlessAPlaceIsGiven(t *testing.T) {
 			t.Errorf("%v: events %q, revision %d (was %d): a place is a reorder, one moved event and one revision", place.flags, shown.kinds(), opsRev(t, db), rev)
 		}
 	}
+
+	// The help says what the command does: a card already in the column stays where it is
+	// unless a place is given (it does not go to the column's default end).
+	move, _, err := newTaskCmd(&globalConfig{}).Find([]string{"move"})
+	if err != nil || !strings.Contains(strings.Join(strings.Fields(move.Long), " "), "A task already in that column stays where it is unless you give a place.") {
+		t.Errorf("the help of move does not say that a task already in the column stays where it is: %v", err)
+	}
+}
+
+// A column is named the way the store reads a status, whatever the case and the padding, and
+// in-progress or progress mean in_progress: the command reads the name with ParseStatus and
+// not with a spelling of its own. On a database that opens, a name the command passed on
+// raw would be refused by the store, so each row shows the card in the column it names.
+func TestTaskMoveReadsAColumnNameInAnySpelling(t *testing.T) {
+	db := newTaskTestDB(t)
+	n := opsAdd(t, db, "x")
+	var one movedJSON
+	for _, c := range []struct{ name, want string }{
+		{"in-progress", "in_progress"},
+		{"READY", "ready"},
+		{" progress ", "in_progress"},
+		{" Review", "review"},
+		{" In-Progress ", "in_progress"},
+		{"DONE", "done"},
+	} {
+		mustTaskJSON(t, db, "default", &one, "", "move", id(n), c.name)
+		if one.Task.Status != c.want {
+			t.Errorf("move %q: the card is in %q, want %q", c.name, one.Task.Status, c.want)
+		}
+	}
 }
 
 // A place that names no card is refused, and never read as no place at all: the zero id is
