@@ -174,7 +174,7 @@ func spelled(wrap string) (out []string) {
 	}
 	for _, r := range []account.Reason{account.ReasonNotLoggedIn, account.ReasonExpired, account.ReasonRefused, account.ReasonClockRollback,
 		account.ReasonClockSkew, account.ReasonKeyUnknown, account.ReasonInvalid, account.ReasonUnreachable, account.ReasonServerError,
-		account.ReasonKeyringUnavailable} {
+		account.ReasonKeyringUnavailable, account.ReasonUnconfirmed} {
 		out = append(out, wrap+string(r)+wrap)
 	}
 	return out
@@ -832,11 +832,16 @@ install.
 | `state` | Meaning | `reason` |
 |---|---|---|
 | `ok` | verified and not expired | empty |
-| `grace` | verified and expired, within 24 hours of its issue time: work continues | why it was not refreshed: `unreachable`, `server_error`, `keyring_unavailable` |
-| `locked` | work is refused | `not_logged_in`, `expired` (24 hours without a refresh), `refused` (monoes.me answered `invalid_grant`: the account is blocked, the sign-in was revoked, or an already-used refresh token was presented, as from a copied session; work in flight is cancelled), `clock_rollback`, `clock_skew`, `key_unknown` (run `update`), `invalid` |
+| `grace` | verified and expired, within 24 hours of its issue time: work continues | why it was not refreshed: `unreachable`, `server_error`, `keyring_unavailable`, `unconfirmed` (a refresh whose answer never arrived: this machine stopped using its saved sign-in) |
+| `locked` | work is refused | `not_logged_in`, `expired` (24 hours without a refresh), `refused` (monoes.me answered `invalid_grant`: the account is blocked, the sign-in was revoked, or an already-used refresh token was presented, as from a copied session; work in flight is cancelled), `clock_rollback`, `clock_skew`, `key_unknown` (run `update`), `unconfirmed` (the grace of an unconfirmed machine is over: sign in again on it), `invalid` |
 
 Only an `invalid_grant` answer to a refresh is a refusal; every other failure counts
-as unreachable, so the 24-hour grace applies. A blocked account is locked at the next
+as unreachable, so the 24-hour grace applies. A refresh whose answer may have been lost
+(the request went out and nothing readable came back, as when the process is killed) is
+retried at once for 240 seconds; after that this machine deletes its refresh token
+instead of presenting it again, which would end every install of the account, and says
+`unconfirmed`. The account and the other machines are not affected, and one
+`account login` on this machine ends it. A blocked account is locked at the next
 refresh, within about an hour. A build before the enforcement release is dormant
 (nothing locks, warns or calls monoes.me); from the release that sets the date until
 `enforce_from`, gated commands run and print `A monoes.me login will be required from
@@ -1363,17 +1368,25 @@ STATES AND REASONS
   ok       a verified sign-in that has not expired
   grace    verified and expired, but inside 24 hours of its issue time: work continues.
            reason says why it was not refreshed: unreachable (no network, a timeout),
-           server_error (monoes.me answered with an error) or keyring_unavailable (the
-           key store holding the refresh token could not be opened)
+           server_error (monoes.me answered with an error), keyring_unavailable (the
+           key store holding the refresh token could not be opened) or unconfirmed (a
+           refresh whose answer never arrived: this machine stopped using its saved
+           sign-in; run 'monoagentcli account login')
   locked   work is refused. reason: not_logged_in; expired (24 hours without a refresh);
            refused (monoes.me answered invalid_grant: the account is blocked, the sign-in
            was revoked, or an already-used refresh token was presented, as from a copied
            session; work in flight is cancelled); clock_rollback (the clock went back; a fresh sign-in resets it);
            clock_skew (this clock is over 5 minutes behind monoes.me's); key_unknown (run
-           'monoagentcli update'); invalid (the stored sign-in does not verify)
+           'monoagentcli update'); unconfirmed (as in grace, once the 24 hours are over: sign
+           in again on this machine); invalid (the stored sign-in does not verify)
   Only an invalid_grant answer to a refresh is a refusal. Everything else (no network,
   a timeout, any 4xx or 5xx, any other OAuth error) counts as unreachable, so the
-  24-hour grace applies. A blocked account is locked at the next refresh, within an hour.
+  24-hour grace applies. A refresh whose answer may have been lost (the request went
+  out and nothing readable came back, as when the process is killed) is retried at once
+  for 240 seconds; after that this machine deletes its refresh token instead of
+  presenting it again, which would end every install of the account. The account and the
+  other machines are not affected. A blocked account is locked at the next refresh,
+  within an hour.
 
 PHASES
   dormant   a build before the enforcement release: nothing locks, warns or contacts
