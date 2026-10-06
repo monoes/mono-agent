@@ -482,6 +482,10 @@ export function GetOrgDesign(arg1) {
   return window['go']['main']['App']['GetOrgDesign'](arg1);
 }
 
+export function GetOrgEstimate(arg1) {
+  return window['go']['main']['App']['GetOrgEstimate'](arg1);
+}
+
 export function GetOrgFlow(arg1, arg2) {
   return window['go']['main']['App']['GetOrgFlow'](arg1, arg2);
 }

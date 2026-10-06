@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import OrgDesigner from './OrgDesigner.jsx'
 import { api } from '../../services/api.js'
+import budgetReport from './__fixtures__/org-budget-recorded.json'
 
 vi.mock('../../services/api.js', () => ({
   api: new Proxy({}, { get: (t, k) => (t[k] ??= vi.fn()) }),
@@ -147,5 +148,27 @@ describe('Org Designer sections', () => {
     fireEvent.mouseUp(document, { clientX: 690, clientY: 230 })
     expect(await screen.findByText(/cannot message each other directly/)).toBeInTheDocument()
     expect(api.setOrgRoleReportsTo).toHaveBeenCalledWith('duo', 'a2', 'b1')
+  })
+
+  it('live view: section spend, soft-closure, role caps on role nodes and the stale-rates note', async () => {
+    const stale = '⚠ stale rates: no live provider pricing lookup — hardcoded table (edit ~/.monomind/rates.json to override)'
+    // the recorded report names drafting/review and writer/checker (+ lead); map it onto this org's
+    // alpha/beta and roles a1/b1/boss. review is shown as at its recorded warning ($0.034 of $0.04).
+    const warn = { ...budgetReport, sections: budgetReport.sections.map(s => (s.name === 'review'
+      ? { ...s, spent_usd: 0.034, remaining_usd: 0.006, fraction: 0.85, state: 'warn', soft_closed: false, roles: s.roles.map(r => ({ ...r, spent_usd: 0.034, fraction: 0.85, state: 'warn' })) } : s)) }
+    const report = JSON.parse(JSON.stringify(warn).replaceAll('drafting', 'alpha').replaceAll('review', 'beta')
+      .replaceAll('"writer"', '"a1"').replaceAll('"checker"', '"b1"').replaceAll('"lead"', '"boss"'))
+    api.getOrgBudget.mockResolvedValue(report)
+    api.getOrgEstimate.mockResolvedValue({ text: `Cost estimate\n  ${stale}\n  Total estimate:  ~$1.80`, stale_rates: stale })
+    await open()
+    fireEvent.click(screen.getByRole('tab', { name: /Live/ }))
+    await waitFor(() => expect(screen.getByTestId('section-budget-alpha')).toHaveTextContent('$0.07 / $0.05'))
+    expect(screen.getByTestId('section-budget-badge-alpha')).toHaveTextContent('soft-closed')
+    expect(screen.getByTestId('section-budget-badge-beta')).toHaveTextContent('$0.01 left')
+    expect(screen.getByTestId('role-cap-a1')).toHaveTextContent('$0.07/$0.05')
+    expect(screen.getByTestId('role-cap-b1')).toHaveAttribute('title', expect.stringContaining('near its cap'))
+    await waitFor(() => expect(screen.getByTestId('section-stale-rates-alpha')).toBeInTheDocument())
+    expect(screen.getByTestId('role-cap-boss')).toHaveTextContent('$0.02/$0.06')
+    expect(api.getOrgBudget).toHaveBeenCalledWith('duo', '')
   })
 })

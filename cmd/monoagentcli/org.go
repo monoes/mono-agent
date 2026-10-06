@@ -44,6 +44,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgReportCmd(root),
 		newOrgCostsCmd(root),
 		newOrgBudgetCmd(root),
+		newOrgEstimateCmd(root),
 		newOrgFlowCmd(root),
 		newOrgQuestionsCmd(root),
 		newOrgApprovalsCmd(root),
@@ -198,6 +199,29 @@ func newOrgCostsCmd(root func() string) *cobra.Command {
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: most recent run)")
 	return c
+}
+
+func newOrgEstimateCmd(root func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "estimate <name>",
+		Short: "Show monomind's pre-run cost estimate, with its \"stale rates\" note, without starting a run",
+		Long: "monomind prints the estimate only at the start of `org run`. This reads it with " +
+			"`org run --yes --budget-usd=-1`, which aborts before any session starts, and refuses " +
+			"first when an `org serve` daemon is live or the org is unsigned (both would not give " +
+			"an estimate, or would start a real run). The text is monomind's, verbatim.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			est, err := monomind.OrgCostEstimate(cmd.Context(), root(), args[0])
+			if err != nil {
+				return err
+			}
+			out, err := json.Marshal(est)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(out)
+		},
+	}
 }
 
 func newOrgBudgetCmd(root func() string) *cobra.Command {

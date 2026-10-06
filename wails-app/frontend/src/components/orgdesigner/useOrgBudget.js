@@ -10,12 +10,13 @@ const REFRESH_MS = 800
 export default function useOrgBudget({ orgName, enabled, run = '', live = false }) {
   const [report, setReport] = useState(null)
   const [error, setError] = useState('')
+  const [estimate, setEstimate] = useState(null)
 
   useEffect(() => {
     if (!enabled || !orgName) { setReport(null); setError(''); return undefined }
     let cancelled = false
     let timer = null
-    const load = () => api.getOrgBudget(orgName, run).then(res => {
+    const load = () => Promise.resolve(api.getOrgBudget(orgName, run)).then(res => {
       if (cancelled) return
       if (!res || res.error) { setError(res?.error || ''); setReport(null) } else { setError(''); setReport(res) }
     })
@@ -33,5 +34,14 @@ export default function useOrgBudget({ orgName, enabled, run = '', live = false 
     return () => { cancelled = true; clearTimeout(timer); off() }
   }, [orgName, enabled, run, live])
 
-  return { report, error }
+  // monomind's pre-run estimate (with its "stale rates" note) is read once per
+  // org; it is unavailable (no note shown) when the CLI cannot read it safely.
+  useEffect(() => {
+    if (!enabled || !orgName) { setEstimate(null); return undefined }
+    let cancelled = false
+    Promise.resolve(api.getOrgEstimate(orgName)).then(res => { if (!cancelled) setEstimate(res && !res.error && res.text ? res : null) })
+    return () => { cancelled = true }
+  }, [orgName, enabled])
+
+  return { report, error, estimate }
 }

@@ -33,7 +33,7 @@ function Row({ title, b, children }) {
   )
 }
 
-export function SectionBudgetView({ report }) {
+export function SectionBudgetView({ report, estimate }) {
   if (!report || report.error || !report.sections?.length) return null
   const allocated = report.sections.some(s => s.allocation_usd != null) || report.total.allocation_usd != null
   if (!allocated) return null
@@ -62,6 +62,9 @@ export function SectionBudgetView({ report }) {
         </Row>
       ))}
       {report.reserve?.allocation_usd != null && <Row title="root reserve" b={report.reserve} />}
+      {estimate?.stale_rates && (
+        <div data-testid="stale-rates" title={estimate.text} style={{ ...mutedText, color: '#eab308' }}>{estimate.stale_rates}</div>
+      )}
       <div data-testid="budget-total" style={{ ...mutedText, display: 'flex', gap: 8, alignItems: 'center' }}>
         <span>org total {budgetLine(report.total)}</span>
         <span>{report.total_tokens} tokens</span>
@@ -74,6 +77,6 @@ export function SectionBudgetView({ report }) {
 
 // Fetches the report for a run ('' = the current one) and follows a live run.
 export default function SectionBudgetPanel({ orgName, run = '', live = false }) {
-  const { report } = useOrgBudget({ orgName, enabled: true, run, live })
-  return <SectionBudgetView report={report} />
+  const { report, estimate } = useOrgBudget({ orgName, enabled: true, run, live })
+  return <SectionBudgetView report={report} estimate={estimate} />
 }

@@ -167,6 +167,12 @@ func (a *App) GetOrgBudget(name, run string) string {
 	return a.runOrgCLI("budget", name)
 }
 
+// GetOrgEstimate is monomind's pre-run cost estimate with its "stale rates"
+// note (`monoagentcli org estimate`); an error payload when unavailable.
+func (a *App) GetOrgEstimate(name string) string {
+	return a.runOrgCLI("estimate", name)
+}
+
 func (a *App) GetOrgFlow(name, run string) string {
 	if run != "" {
 		return a.runOrgCLI("flow", name, "--run", run)

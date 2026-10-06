@@ -129,6 +129,7 @@ import RoleNode from './RoleNode'
 import { roleActivity, RECENT_EDGE_MS } from './orgActivity.js'
 import { declaresFull } from './fullAccess.jsx'
 import { sectionRects, documentEdges } from './sectionsGraph.js'
+import { roleBadge } from './budgetModel.js'
 import { SectionBoxes, SectionEdges, useSectionDrags } from './SectionLayer.jsx'
 
 /** Curved message edge between two card centres, bowed so A→B and B→A separate. */
@@ -191,6 +192,8 @@ export default function OrgCanvas({
   onRemoveDocEdge,
   sectionIssues = [],
   sectionBudgets = {}, // section name -> org budget report entry (live view only)
+  roleCaps = {}, // role id -> org budget role entry (live view only)
+  staleRates = '', // monomind's own "stale rates" line, verbatim
 }) {
   const wrapperRef = useRef(null)
   const [measured, setMeasured] = useState({ width: 0, height: 0 })
@@ -522,7 +525,7 @@ export default function OrgCanvas({
             }}>
               {sections.length > 0 && (
                 <SectionBoxes
-                  rects={rects} sections={sections} selectedName={selectedSection} readOnly={readOnly} budgets={sectionBudgets}
+                  rects={rects} sections={sections} selectedName={selectedSection} readOnly={readOnly} budgets={sectionBudgets} staleRates={staleRates}
                   hoverEdgeTarget={secDrag.pending?.target}
                   onSelect={onSelectSection} onStartMove={secDrag.startMove} onStartEdge={secDrag.startEdge}
                 />
@@ -538,6 +541,13 @@ export default function OrgCanvas({
                       position: 'absolute', top: -9, right: 8, zIndex: 3, fontFamily: 'var(--font-mono)', fontSize: 8.5, letterSpacing: 0.6,
                       padding: '1px 6px', borderRadius: 8, background: 'var(--yellow, #eab308)', color: '#1a1a1a', pointerEvents: 'none',
                     }}>LEAD</span>
+                  )}
+                  {roleBadge(roleCaps[node.id]) && (
+                    <span data-testid={`role-cap-${node.id}`} title={roleBadge(roleCaps[node.id]).title} style={{
+                      position: 'absolute', top: -9, left: 8, zIndex: 3, fontFamily: 'var(--font-mono)', fontSize: 8.5, letterSpacing: 0.3,
+                      padding: '1px 6px', borderRadius: 8, border: `1px solid ${roleBadge(roleCaps[node.id]).color}`, background: 'var(--bg-card, #0b1220)',
+                      color: roleBadge(roleCaps[node.id]).color, pointerEvents: 'none',
+                    }}>{roleBadge(roleCaps[node.id]).text}</span>
                   )}
                   <RoleNode
                     node={node}

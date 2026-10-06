@@ -47,3 +47,24 @@ export function budgetTitle(b) {
   if (b.cost_unknown) parts.push('a usage event reported no cost: spend is a lower bound')
   return parts.join(' · ')
 }
+
+// {roleId: RoleBudget} across sections and the root reserve, only roles with a cap.
+export function roleBudgets(report) {
+  if (!report || report.error) return {}
+  const scopes = [...(report.sections || []), ...(report.reserve ? [report.reserve] : [])]
+  const out = {}
+  for (const sc of scopes) for (const r of sc.roles || []) if (r.cap_usd != null) out[r.id] = r
+  return out
+}
+
+// Badge for a role node: spend against its own cap; warn from 80%.
+export function roleBadge(r) {
+  if (!r || r.cap_usd == null) return null
+  const color = BUDGET_COLORS[r.state] || BUDGET_COLORS.ok
+  const pct = r.fraction != null ? ` (${Math.round(r.fraction * 100)}%)` : ''
+  const note = r.state === 'closed' ? ' · at its cap' : r.state === 'warn' ? ' · near its cap' : ''
+  return {
+    text: `${usd(r.spent_usd)}/${usd(r.cap_usd)}`, color, state: r.state,
+    title: `${r.id}: ${usd(r.spent_usd)} of its ${usd(r.cap_usd)} cap${pct}${note}${r.cost_unknown ? ' · a usage event reported no cost: lower bound' : ''}`,
+  }
+}

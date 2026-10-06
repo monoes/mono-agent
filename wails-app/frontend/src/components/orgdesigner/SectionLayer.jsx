@@ -12,7 +12,7 @@ import { Link2 } from 'lucide-react'
 import { sectionEdgePath, SECTION_HEADER } from './sectionsGraph.js'
 import { budgetLine, budgetBadge, budgetTitle } from './budgetModel.js'
 
-export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget, budgets = {} }) {
+export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect, onStartMove, onStartEdge, hoverEdgeTarget, budgets = {}, staleRates = '' }) {
   return rects.map(r => {
     const s = sections.find(x => x.name === r.name)
     const selected = selectedName === r.name
@@ -43,9 +43,10 @@ export function SectionBoxes({ rects, sections, selectedName, readOnly, onSelect
           {s && <span style={{ color: 'var(--text-muted)' }}>lead: {s.leadId || '—'}</span>}
           {live
             ? (
-              <span data-testid={`section-budget-${r.name}`} title={budgetTitle(live)} style={{ color: badge?.color || 'var(--text-muted)' }}>
+              <span data-testid={`section-budget-${r.name}`} title={`${budgetTitle(live)}${staleRates ? ` · ${staleRates}` : ''}`} style={{ color: badge?.color || 'var(--text-muted)' }}>
                 {budgetLine(live)}
                 {badge && <strong data-testid={`section-budget-badge-${r.name}`}> · {badge.label}</strong>}
+                {staleRates && <em data-testid={`section-stale-rates-${r.name}`} style={{ opacity: 0.8 }}> · stale rates</em>}
               </span>
             )
             : s?.budgetUsd != null && <span style={{ color: 'var(--text-muted)' }}>${s.budgetUsd}</span>}
