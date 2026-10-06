@@ -23,7 +23,7 @@ From the index §2, the lines that bind this plan, verbatim.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
 - Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
 
-B5d is the license half of B5b (the lead's split), so its Tasks 3 and 4 keep B5b's right to edit those files, after R's documents have merged. Task 4 edits `release.yml` and must leave B5a's `release-guard` job, and the `needs` that names it, as they are.
+B5d is the license half of B5b (the lead's split), so its Tasks 3 and 4 keep B5b's right to edit those files, after R's documents have merged. Task 4 edits `release.yml` and must leave B5a's `release-guard` job, the `needs` that names it, and the `--options runtime` signatures and their checks (B5a's Task 5b), as they are.
 
 ## Review Focus
 
@@ -40,7 +40,7 @@ B5d is the license half of B5b (the lead's split), so its Tasks 3 and 4 keep B5b
 - **Tasks 1 and 2 stand alone.** They change nothing a user can see and can land at any time as `chore(license)` commits (every merge to master releases; a `chore` commit is a patch release). Task 2's `NOTICE` is a prerequisite of Task 4, whose release workflow copies it.
 - **Tasks 3 and 4 are independent of each other** (the owner may change the license without closing the source, or the reverse) and each waits for its gate step.
 - **Owner inputs.** Task 3: `LICENSE.new` (the license text), `LICENSE_NAME`, `LICENSE_BADGE`, `COPYRIGHT_LINE`, `LICENSE_SUMMARY`, `CONTRIBUTION_TERMS`. Task 4: `RELEASES_REPO`, `SOURCE_REPO`, `RELEASES_BRANCH`, the choice between repointing and swapping names, and a token stored as the secret `RELEASES_REPO_TOKEN`. Task 1 also needs the owner's e-mail addresses confirmed.
-- **Line numbers.** An edit names the lines its file has before that task's first edit to it, in the tree after R's documents (the documentation plan) have merged; For a file that another plan also edits (`release.yml` gets B5a's `release-guard` job, `update.go` B5a's daemon restart, `internal/httpapi/openapi.yaml` B3b's account answers) the numbers are those at `3cc58601`, which those plans move, and these edits do not touch what they add. An earlier edit in the same file moves the later ones too, so find each edit by its quoted text, or apply a file's edits from the last to the first.
+- **Line numbers.** An edit names the lines its file has before that task's first edit to it, in the tree after R's documents (the documentation plan) have merged; For a file that another plan also edits (`release.yml` gets B5a's `release-guard` job and its hardened-runtime signing, `update.go` B5a's daemon restart, `internal/httpapi/openapi.yaml` B3b's account answers) the numbers are those at `3cc58601`, which those plans move, and these edits do not touch what they add. An earlier edit in the same file moves the later ones too, so find each edit by its quoted text, or apply a file's edits from the last to the first.
 - `<scratchpad>` below is the session's scratchpad directory.
 
 ---

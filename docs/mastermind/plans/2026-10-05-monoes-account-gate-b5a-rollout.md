@@ -4,11 +4,11 @@
 
 **Goal:** Release R: the production signing key is pinned and the enforcement date is set, an older library login is adopted into the machine session on the first run, a daemon that predates the release is restarted or flagged, the project's own CI, scripts and tests survive the date, and a binary built with the `devaccount` tag cannot ship.
 
-**Architecture:** B5a pins the production key, then changes one line of `internal/account` (the date). Around that: the root command makes the one try to adopt an older library login (B1b provides the adoption and leaves the call to this plan); `update` restarts a daemon that runs old code and the `services.daemon` doctor row flags one; the service definitions give a stopping daemon time to finish a refresh; `scripts/check-release-tags.sh` gates `release.yml`; the real-binary consumers in the repository are audited (spike S4), adapted, and the day the date arrives is rehearsed. It adds no gate code: the gates are B1 to B4's, and the real-binary smoke that proves them is B5c's, merged before R.
+**Architecture:** B5a pins the production key, then changes one line of `internal/account` (the date). Around that: the root command makes the one try to adopt an older library login (B1b provides the adoption and leaves the call to this plan); `update` restarts a daemon that runs old code and the `services.daemon` doctor row flags one; the service definitions give a stopping daemon time to finish a refresh; `scripts/check-release-tags.sh` gates `release.yml`, which also signs every macOS binary with the hardened runtime; the real-binary consumers in the repository are audited (spike S4), adapted, and the day the date arrives is rehearsed. It adds no gate code: the gates are B1 to B4's, and the real-binary smoke that proves them is B5c's, merged before R.
 
 **Tech Stack:** Go 1.26, cobra, bash, GitHub Actions, `go version -m`.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §4.8, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Global Constraints
 
@@ -41,10 +41,11 @@
 9. **Adoption is wired here, once** (Task 6). B1b provides `library.AdoptIntoAccount` and leaves the call to this plan; the function removes an older login from the vault once monoes.me has given a verdict, and also when the exchange went out and its answer never arrived or arrived and could not be stored here (spec A24, A24(d): monoes.me may have rotated the token, and presenting it again after the 300-second reuse window would end every login of the account: spike S2, spec A7), and keeps one only when the failure cannot have spent it (nothing was sent, or monoes.me answered with an error status). A retry at every command would make an implicit call before every command of an offline machine, so the wiring claims one try per database before it makes it, in the root command's `PersistentPreRun`: gated and serving commands only, after the CLI gate. Once the exchange is sent it is completed even if the command's context is cancelled meanwhile (spec A20, implemented in B1b's `exchangeOlder`): a Ctrl-C at the first command after the update neither loses the answer nor leaves a spent refresh token in the vault.
 10. **One declaration each in files that other phases own** (index §3.1 and the cmd package): `pinnedKeys` in `keys.go` (B1a: "B5a pins the first key"), the initializer of `enforceFrom` in `rollout.go` (B1a), the `PersistentPreRun` of `root.go` (B1b adds its own line to `AddCommand`). `CONTRIBUTING.md` is B5b's and is not touched.
 11. **The service definitions allow a stopping daemon at least 35 seconds** (Task 4b). The guard's `Close` waits for a refresh grant in flight and then for the key-store write of its answer, about 20 seconds and 30 at the worst, and launchd's default `ExitTimeOut` is 20: a kill inside that window loses the answer (spec A24). One constant, `stopGrace`, sets launchd's `ExitTimeOut` to 35; systemd's `TimeoutStopSec` is written as 90, its own default, so as not to shorten the drain of the runs in flight; on Windows a scheduled task has no stop time, the constant only sets the wait of `Restart`, and a restart inside a refresh remains the A24 case.
+12. **Every macOS binary carries the hardened runtime** (Task 5b). Without it dyld honours `DYLD_INSERT_LIBRARIES`, and a ten-line interposer gives one process a clock of its own (spec §4.8). The signature stays ad hoc: a Developer ID and notarization are a separate decision. No entitlement is added unless the smoke test of a signed build shows one is needed, and never one that lets dyld read `DYLD_` variables again. The task touches nothing of the gate and may merge alone before R.
 
 ## Review Focus
 
-The six failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
+The seven failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
 
 1. **A daemon that predates R keeps running ungated for months**, warning nobody, or the update that fixes that interrupts a run or restarts a daemon it cannot see into. Pinned by `TestCheckDaemonFlagsAStaleVersion` (Task 3), `TestDaemonAfterUpdate` (its `an execution in flight`, `saved API settings that cannot be used` and `what cannot be told` rows), `TestRestartBlockersReadTheDaemonsRowsAndTheSavedSettings` and `TestUpdateWhenAlreadyCurrentRestartsAStaleDaemon` (Task 4). The first-update gap is a stated limit.
 2. **A try is repeated at every command**, which makes an implicit call before every command of an offline machine and, were the older login kept after an exchange whose answer was lost, would present a refresh token that monoes.me may have spent and end every login of the account on every machine (B1b drops that login instead: A24); or adoption is never wired and every user who is logged in to the library has to sign in again. Pinned by `TestAdoptFirstRunTriesOnce` and `TestTheRootCommandAdoptsBeforeAGatedCommandRuns` (Task 6).
@@ -52,6 +53,7 @@ The six failure modes the spec implies that no phase's tests exercise from outsi
 4. **The date arrives and the project's own CI, scripts and tests lock themselves out**: a `doctor-smoke` that counts the account row as an unhealthy core, a desktop test that spawns a gated CLI, a maintainer's e2e script. Pinned by the rehearsal of Task 7: every suite and `scripts/doctor-smoke.sh` run with the date in the past, compared with the committed tree.
 5. **A binary built with the `devaccount` tag ships**: it trusts a development key anyone can sign with. Pinned by `scripts/check-release-tags-test.sh` (the guard against binaries built with and without the tag, loose and inside the archives the release ships), run by the CI job `release-guard-test`, and by the `release-guard` job that runs the guard on every artifact before the approval gate (Task 5).
 6. **A daemon that its service manager kills in the middle of a refresh** loses the answer of a grant that monoes.me has already rotated: the next attempt is the A24 case, and this machine signs in again (the account survives). launchd's default stop time, 20 seconds, is shorter than the guard's worst case of 30, and a Windows scheduled task has no stop time to set. Pinned by `TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite`, `TestThePlistGivesTheDaemonTimeToFinishARefresh` and `TestTheUnitGivesTheDaemonTimeToFinishARefresh` (Task 4b).
+7. **A macOS release lets dyld load a library into the CLI**, and one process judges the gate on a clock of its own without the system clock changing (spec §4.8); or the hardened runtime breaks a feature of the app. Pinned by the build's checks (the runtime flag on every macOS binary, and no dyld output under `DYLD_PRINT_LIBRARIES`) and by the smoke test of a signed release (Task 5b).
 
 ---
 
@@ -1381,6 +1383,201 @@ git add scripts/check-release-tags.sh scripts/check-release-tags-test.sh .github
 git commit -m "ci(release): fail a release whose binaries carry the devaccount tag" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 5b: The macOS binaries carry the hardened runtime
+
+Spec §4.8 (the third security review). `release.yml` signs the two macOS CLI assets ad hoc without the hardened runtime (lines 162-163, `codesign --force --sign -`), and the CLI that line 217 copies into `MonoAgent.app` keeps only Go's linker signature, as does the app's own executable. Without the hardened runtime dyld honours `DYLD_INSERT_LIBRARIES` and every other `DYLD_` variable, so a ten-line `clock_gettime` interposer gives one process a clock of its own without touching the system clock: the review made a release binary with no record on disk judge `enforced: false` that way, and the same binary signed with `codesign --force --options runtime --sign -` ignored the variable and refused. This task signs every macOS binary of the release with the hardened runtime, the bundled CLI before the app whose signature seals it, and fails the build when a signature lacks the runtime flag or when dyld still reads a `DYLD_` variable. It touches nothing of the gate, so it may merge on its own before R (Step 5 needs a release that carries it), and it lands no later than R: from R's date an unhardened macOS release is the per-process clock of spec §4.8. The Linux binaries are static Go, with no dyld to interpose, and the Linux and Windows builds do not change.
+
+**Files:**
+- Modify: `.github/workflows/release.yml` (job `build-cli-macos`: the step `Build CLI for macOS (native)`, lines 162-163, and a new step after it; job `build-macos-arm64`: the step `Bundle CLI into .app and zip`, lines 214-219)
+
+**Interfaces:**
+- Consumes: `codesign --force --options runtime --sign -` (ad hoc, the hardened runtime, no entitlements); `codesign -dv <file>`, which prints on stderr `CodeDirectory v=… flags=0x10002(adhoc,runtime) …` for such a signature, `flags=0x2(adhoc)` for today's CLI assets and `flags=0x20002(adhoc,linker-signed)` for Go's linker signature, and for an app bundle the flags of its main executable; `codesign --verify --strict [--deep]`; dyld's `DYLD_PRINT_LIBRARIES=1`, which prints one `dyld[<pid>]: …` line per loaded image while dyld honours `DYLD_` variables and none under the hardened runtime. `macos-latest` is an arm64 runner.
+- Produces: hardened signatures on `monoagentcli-darwin-amd64` and `monoagentcli-darwin-arm64`, and on `MonoAgent.app` and its `Contents/MacOS/monoagentcli` inside `MonoAgent-darwin-arm64.zip`; the step `Check the hardened runtime (macOS CLI)`; a failing build when any of them lacks the flag.
+
+- [ ] **Step 1: Prove the check on a Mac first.** It must fail today's signatures, pass a hardened binary and a bundle signed inside out, and survive the zip and unzip of the release and of `update --app` (`internal/appupdate`'s `installMacOS` unzips the bundle and swaps it whole). Save as `<scratchpad>/hardened-runtime-check.sh` and run `bash <scratchpad>/hardened-runtime-check.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Proves the hardened-runtime check of release.yml (B5a Task 5b) on a Mac: it passes binaries and an
+# app bundle signed with --options runtime, and fails today's signatures. A stand-in for the real
+# assets: two tiny Go programs in a bundle laid out like MonoAgent.app.
+set -euo pipefail
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+
+printf 'module example.com/hr\n\ngo 1.26.0\n' > "$dir/go.mod"
+printf 'package main\n\nfunc main() {}\n' > "$dir/main.go"
+(cd "$dir" && CGO_ENABLED=0 go build -o linker .)
+
+# The check of the workflow, as one function: the runtime flag, then dyld ignoring DYLD_ variables.
+check() {
+  local f="$1" run="${2:-}"
+  codesign --verify --strict "$f"
+  if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+    echo "not hardened: ${f#"$dir"/}"; return 1
+  fi
+  if [ -n "$run" ] && [ "$(DYLD_PRINT_LIBRARIES=1 "$run" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+    echo "dyld honours DYLD_ variables: ${run#"$dir"/}"; return 1
+  fi
+  echo "hardened: ${f#"$dir"/}"
+}
+
+# Loose binaries: Go's linker signature, today's ad hoc signature, and the hardened runtime.
+cp "$dir/linker" "$dir/adhoc"
+cp "$dir/linker" "$dir/hardened"
+codesign --force --sign - "$dir/adhoc"
+codesign --force --options runtime --sign - "$dir/hardened"
+for f in linker adhoc hardened; do
+  printf '%s: %s, dyld lines %s\n' "$f" "$(codesign -dv "$dir/$f" 2>&1 | grep -o 'flags=0x[0-9a-f]*([^)]*)')" \
+    "$(DYLD_PRINT_LIBRARIES=1 "$dir/$f" 2>&1 | grep -c '^dyld\[' || true)"
+done
+check "$dir/linker" "$dir/linker" && exit 1
+check "$dir/adhoc" "$dir/adhoc" && exit 1
+check "$dir/hardened" "$dir/hardened"
+
+# A bundle laid out like MonoAgent.app, signed inside out as the workflow does, then zipped and
+# unzipped as the release and `update --app` do.
+APP="$dir/build/MonoAgent.app"
+mkdir -p "$APP/Contents/MacOS"
+cat > "$APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>monoagent-ui</string>
+<key>CFBundleIdentifier</key><string>com.example.monoagent-standin</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+PLIST
+cp "$dir/linker" "$APP/Contents/MacOS/monoagent-ui"
+cp "$dir/linker" "$APP/Contents/MacOS/monoagentcli"
+codesign --force --options runtime --sign - "$APP/Contents/MacOS/monoagentcli"
+codesign --force --options runtime --sign - "$APP"
+codesign --verify --strict --deep "$APP"
+check "$APP"
+check "$APP/Contents/MacOS/monoagentcli" "$APP/Contents/MacOS/monoagentcli"
+(cd "$dir/build" && zip -qr "$dir/app.zip" MonoAgent.app)
+mkdir "$dir/unzipped"
+unzip -q "$dir/app.zip" -d "$dir/unzipped"
+codesign --verify --strict --deep "$dir/unzipped/MonoAgent.app"
+check "$dir/unzipped/MonoAgent.app"
+check "$dir/unzipped/MonoAgent.app/Contents/MacOS/monoagentcli" "$dir/unzipped/MonoAgent.app/Contents/MacOS/monoagentcli"
+
+# The CLI copied in after the app was signed, as release.yml does today: the seal no longer
+# matches, and a CLI with only the linker signature is not hardened.
+cp "$dir/linker" "$APP/Contents/MacOS/monoagentcli"
+codesign --verify --strict --deep "$APP" 2>/dev/null && { echo "a bundle whose CLI changed after signing verified"; exit 1; }
+check "$APP/Contents/MacOS/monoagentcli" "$APP/Contents/MacOS/monoagentcli" && exit 1
+echo "hardened-runtime check: ok"
+```
+
+Expected on stdout (the dyld counts vary with the macOS release; `codesign` also prints two `replacing existing signature` lines on stderr):
+
+```
+linker: flags=0x20002(adhoc,linker-signed), dyld lines 81
+adhoc: flags=0x2(adhoc), dyld lines 81
+hardened: flags=0x10002(adhoc,runtime), dyld lines 0
+not hardened: linker
+not hardened: adhoc
+hardened: hardened
+hardened: build/MonoAgent.app
+hardened: build/MonoAgent.app/Contents/MacOS/monoagentcli
+hardened: unzipped/MonoAgent.app
+hardened: unzipped/MonoAgent.app/Contents/MacOS/monoagentcli
+not hardened: build/MonoAgent.app/Contents/MacOS/monoagentcli
+hardened-runtime check: ok
+```
+
+The checks count with `grep -c` and never use `grep -q` in a pipe: `grep -q` stops reading at its first match, `codesign` then dies of SIGPIPE, and under `pipefail` (this script, or a step given `shell: bash`) the pipe fails on a hardened binary. The first draft of this script failed that way.
+
+- [ ] **Step 2: Sign the CLI assets with the hardened runtime, and check them.** Replace `.github/workflows/release.yml` lines 162-163, which read:
+
+```
+          codesign --force --sign - dist/monoagentcli-darwin-amd64
+          codesign --force --sign - dist/monoagentcli-darwin-arm64
+```
+
+with the lines below. The second half is a new step, so it ends the `run:` block of `Build CLI for macOS (native)`; the blank line 164 and the `actions/upload-artifact` step after it stay as they are:
+
+```yaml
+          # The hardened runtime (spec §4.8): without it dyld honours DYLD_INSERT_LIBRARIES, and a
+          # library loaded that way can give the process a clock of its own.
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-amd64
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-arm64
+
+      - name: Check the hardened runtime (macOS CLI)
+        run: |
+          for f in dist/monoagentcli-darwin-amd64 dist/monoagentcli-darwin-arm64; do
+            codesign --verify --strict "$f"
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          # The binary of this runner's architecture runs here: dyld must ignore DYLD_ variables.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; *) arch=arm64 ;; esac
+          if [ "$(DYLD_PRINT_LIBRARIES=1 "dist/monoagentcli-darwin-${arch}" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for monoagentcli-darwin-${arch}"; exit 1
+          fi
+```
+
+`--help` runs no command: cobra answers it before any hook.
+
+- [ ] **Step 3: Sign the bundled CLI, then the app.** Replace `.github/workflows/release.yml` lines 214-219 (line numbers before Step 2's edit; after it they are 230-235), which read:
+
+```
+      - name: Bundle CLI into .app and zip
+        run: |
+          APP="wails-app/build/bin/MonoAgent.app"
+          cp wails-app/monoagentcli "${APP}/Contents/MacOS/monoagentcli"
+          mkdir -p dist
+          (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
+```
+
+with:
+
+```yaml
+      - name: Bundle CLI into .app and zip
+        run: |
+          APP="wails-app/build/bin/MonoAgent.app"
+          cp wails-app/monoagentcli "${APP}/Contents/MacOS/monoagentcli"
+          # The hardened runtime (spec §4.8), inside out: the CLI first, then the app, whose signature
+          # seals the CLI's. No entitlements: a WKWebView app needs none. Never add
+          # allow-dyld-environment-variables or disable-library-validation: they reopen this.
+          codesign --force --options runtime --sign - "${APP}/Contents/MacOS/monoagentcli"
+          codesign --force --options runtime --sign - "${APP}"
+          codesign --verify --strict --deep "${APP}"
+          for f in "${APP}" "${APP}/Contents/MacOS/monoagentcli"; do
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          if [ "$(DYLD_PRINT_LIBRARIES=1 "${APP}/Contents/MacOS/monoagentcli" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for the CLI inside MonoAgent.app"; exit 1
+          fi
+          mkdir -p dist
+          (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
+```
+
+The step keeps its name; no other plan names it (the release guard of Task 5 names jobs, and reads the zip by its file name).
+
+- [ ] **Step 4: Validate the workflow.** It parses, the new step sits after the build, and both `run:` blocks are valid shell:
+
+```
+python3 -c "import yaml; j=yaml.safe_load(open('.github/workflows/release.yml'))['jobs']; print([s.get('name') for s in j['build-cli-macos']['steps']]); print([s.get('name') for s in j['build-macos-arm64']['steps']]); open('/tmp/task5b-check.sh','w').write(j['build-cli-macos']['steps'][3]['run']); open('/tmp/task5b-bundle.sh','w').write(j['build-macos-arm64']['steps'][7]['run'])"
+bash -n /tmp/task5b-check.sh && bash -n /tmp/task5b-bundle.sh && echo "shell ok"
+grep -n 'codesign --force' .github/workflows/release.yml
+```
+
+Expected: `[None, None, 'Build CLI for macOS (native)', 'Check the hardened runtime (macOS CLI)', None]`, then `[None, None, None, 'Install Wails CLI', 'Install frontend dependencies', 'Build CLI (bundled, arm64)', 'Build Wails app (arm64)', 'Bundle CLI into .app and zip', None]`, `shell ok`, and four `codesign --force` lines (164, 165, 237, 238), each with `--options runtime`. When this was written, the two `run:` blocks taken out of a copy of the edited file were run with `bash -e`, as GitHub runs them, on stand-ins built from a tiny Go program: the check passed two hardened assets and failed with `::error::dist/monoagentcli-darwin-amd64 is not signed with the hardened runtime` once that asset was signed as today; the bundle step signed, verified and zipped, and the unzipped app verified with both signatures `flags=0x10002(adhoc,runtime)`.
+
+- [ ] **Step 5: Smoke-test a signed build once, on a Mac.** The hardened runtime can need an entitlement for something a program does at run time. A WKWebView (Wails) app and a Go CLI normally need none, and the tree uses no Apple Events, JIT or capture device (`grep -rl -e osascript -e NSAppleScript -e AppleEvent -e AVCapture cmd internal wails-app/*.go` prints nothing at `f4441a2a`), but only a run proves it. Take the first release that carries this task (hence merging it alone, before R): download `MonoAgent-darwin-arm64.zip` and `monoagentcli-darwin-arm64`, open the app (Gatekeeper asks as it does today for an app that is not notarized) and check that it opens and shows its pages, that a workflow runs from the app and from the CLI, that the extension bridge connects (`monoagentcli extension status` with the extension loaded), and that `update --app` run by the release before it installs this one and the app starts again. Then the point of the task: `DYLD_PRINT_LIBRARIES=1 ./monoagentcli-darwin-arm64 --help 2>&1 | grep -c '^dyld\['` prints `0`. If a feature breaks, add the one entitlement it needs, in an entitlements file passed with `--entitlements` to the `codesign` line of the binary that needs it, and name it in the commit. Never drop `--options runtime`, and never add `com.apple.security.cs.allow-dyld-environment-variables` or `com.apple.security.cs.disable-library-validation`: they reopen exactly this (the build's `DYLD_PRINT_LIBRARIES` check fails on the first).
+
+- [ ] **Step 6: Commit.**
+
+```
+git add .github/workflows/release.yml
+git commit -m "ci(release): sign the macOS binaries with the hardened runtime" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
 ### Task 6: The first run of R adopts an older library login
 
 Spec §8 step 3 and D23: a library login that already exists, on any profile, is exchanged for the machine session on the first run of R, so that nobody who is logged in to the library has to sign in again. B1b provides `library.AdoptIntoAccount` and proves what it does (`internal/library/adopt.go`: a no-op while dormant and when somebody has signed in, never a refusal, a spent refresh token written back; a session with no token that was not refused, the clock-guard record of A25, is nobody's login) and leaves the call to this plan; nothing else calls it, so without this task adoption never happens. The danger is the one plan A's spike S2 records (spec A7): monoes.me answers a spent refresh token with `invalid_grant` and then ends every refresh token of the account, on every machine. `AdoptIntoAccount` removes an older login from the vault once monoes.me has given a verdict, and also when the exchange went out and its answer never arrived (A24: the token may be spent), and keeps one only when the failure cannot have spent it (nothing was sent, or monoes.me answered with an error status); a caller that retried at every command would make an implicit call before every command of an offline machine: the wiring makes one try per database, ever, claimed before it is made (B1b's Task 9 assumes exactly this).
@@ -1853,19 +2050,20 @@ monoagentcli library status
 
 - [ ] **Step 5: CI is green on the branch**, in particular `test`, `test-nosocial`, `wails`, `doctor-smoke`, `release-guard-test` and B5c's `account-smoke`; and B5c's real-binary smoke has passed on this tree on at least one machine (its plan names the command). B5c merged before this plan and **must pass before R**: it is what proves the warn period, a block, an outage, the 24 hours, every door and every entry point with the real binary, and this plan has no test of those.
 
-- [ ] **Step 6: One push, with the documentation.** R is this plan's commits and the commits of `b5b-docs` (claims, `ref`, CHANGELOG naming the date) in one pull request, because `release.yml` takes the release notes from `CHANGELOG.md` at the commit it tags, and D26 puts the documentation no later than the first phase that calls monoes.me implicitly. This plan alone must not be pushed. B5d (the license) is independent and not part of R.
+- [ ] **Step 6: One push, with the documentation.** R is this plan's commits and the commits of `b5b-docs` (claims, `ref`, CHANGELOG naming the date) in one pull request, because `release.yml` takes the release notes from `CHANGELOG.md` at the commit it tags, and D26 puts the documentation no later than the first phase that calls monoes.me implicitly. This plan alone must not be pushed; the one exception is Task 5b, which changes only the signing and may have merged on its own before R. B5d (the license) is independent and not part of R.
 
-- [ ] **Step 7: The release workflow cannot ship the tag.** `grep -n 'devaccount' .github/workflows/release.yml` prints only the lines of the `release-guard` job (B5c adds nothing to `release.yml`); `grep -n -e 'go build' -e 'wails build' .github/workflows/release.yml | grep -c devaccount` prints `0`.
+- [ ] **Step 7: The release workflow cannot ship the tag.** `grep -n 'devaccount' .github/workflows/release.yml` prints only the lines of the `release-guard` job (B5c adds nothing to `release.yml`); `grep -n -e 'go build' -e 'wails build' .github/workflows/release.yml | grep -c devaccount` prints `0`. Every macOS signature carries the hardened runtime: `grep -n 'codesign --force' .github/workflows/release.yml` prints four lines, each with `--options runtime` (Task 5b), and Task 5b's smoke test of a signed release has been done.
 
 - [ ] **Step 8: Releasing.** The `release` job waits for the owner's approval in its environment: approve only with `release-guard` green. After publication, check the real assets once more and try the update path on the owner's own machine:
 
 ```
 gh release download <tag> -R monoes/mono-agent -D "${TMPDIR:-/tmp}/r-assets"
 bash scripts/check-release-tags.sh --min 11 "${TMPDIR:-/tmp}/r-assets"
+codesign -dv "${TMPDIR:-/tmp}/r-assets/monoagentcli-darwin-arm64" 2>&1 | grep -o 'flags=0x[0-9a-f]*([^)]*)'
 monoagentcli update
 monoagentcli doctor --check services.daemon
 ```
-Expected: `none carries the devaccount tag` (the checksum file and the extension zip hold no Go binary and are skipped); `update` prints the update line and, when a daemon is running, the sentence of Task 4 (restarted, or why not); the doctor row is `ok`, or `warn` naming the old version when the update could not restart the daemon (the first update to R is made by the pre-R binary).
+Expected: `none carries the devaccount tag` (the checksum file and the extension zip hold no Go binary and are skipped); `flags=0x10002(adhoc,runtime)` (Task 5b; `codesign` is macOS's, so run this on a Mac); `update` prints the update line and, when a daemon is running, the sentence of Task 4 (restarted, or why not); the doctor row is `ok`, or `warn` naming the old version when the update could not restart the daemon (the first update to R is made by the pre-R binary).
 
 ## Acceptance coverage
 
@@ -1879,7 +2077,7 @@ The real-binary smoke is B5c's (spec A12), so the end-to-end proof of items 1 to
 | 4. Before the date nothing locks, and once a date is set every surface warns | `TestEnforcedFlipsAtTheDate` and `TestTheClockGuardCannotPostponeTheDate` (Task 2), the whole suite run with the date set (Task 2 Step 5), the rehearsal with the date in the past (Task 7 Step 5), and B5c's warn-period scenario (the stderr line once and never on stdout, `account status`, the doctor row, the heartbeat, work runs). |
 | 5. A release binary built with the `devaccount` tag cannot ship | `scripts/check-release-tags-test.sh` (tagged and untagged, loose, in a tarball, in a zip, `--min`), run by the CI job `release-guard-test`; the `release-guard` job on every artifact before the approval gate (Task 5); Task 8 Steps 7 and 8. |
 
-Other spec items: §8 and D9 (release R, the date, the limits, the warn period) are Tasks 1, 2, 7 and 8; D28 and §8 step 5 (the daemon restart and its doctor flag) are Tasks 3 and 4, and A24's stop time for a daemon is Task 4b; §8 step 3 and D23 (an older library login adopted on the first run, once) are Task 6; §9 and D11 (developers, CI, the release guard) are Tasks 5 and 7; D22 (dormant until R) is Task 2's suite run and Task 8 Step 1; §11's release guard is Task 5 (the rest of §11, the real-binary smoke and the signed-in path through every entry point, is B5c's).
+Other spec items: §8 and D9 (release R, the date, the limits, the warn period) are Tasks 1, 2, 7 and 8; D28 and §8 step 5 (the daemon restart and its doctor flag) are Tasks 3 and 4, and A24's stop time for a daemon is Task 4b; §8 step 3 and D23 (an older library login adopted on the first run, once) are Task 6; §9 and D11 (developers, CI, the release guard) are Tasks 5 and 7; §4.8's per-process clock on macOS (the hardened runtime) is Task 5b; D22 (dormant until R) is Task 2's suite run and Task 8 Step 1; §11's release guard is Task 5 (the rest of §11, the real-binary smoke and the signed-in path through every entry point, is B5c's).
 
 ## Contract change requests
 
