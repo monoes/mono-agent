@@ -1,0 +1,4 @@
+{"t":"delivered","key":"r:3:producer","at":"2026-10-05T19:00:20.000Z","receipt":"delivered to writer"}
+{"t":"delivered","key":"r:9:producer","at":"2026-10-05T19:00:50.000Z","receipt":"delivered to writer"}
+{"t":"delivered","key":"r:12:producer","at":"2026-10-05T19:01:20.000Z","receipt":"delivered to writer"}
+{"t":"delivered","key":"x:note-2|review|2@12:lead","at":"2026-10-05T19:01:21.000Z","receipt":"delivered to lead"}

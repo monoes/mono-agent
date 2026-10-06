@@ -268,6 +268,11 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 				// org run prints a signature refusal on stdout.
 				msg = strings.TrimSpace(msg + "\n" + stdout.String())
 			}
+			// ...and a host (R6) or daemon-lock (R1) refusal too, leaving only
+			// "[ERROR] org start failed" on stderr.
+			if r := asStartRefusal(name, stdout.String()+"\n"+msg); r != nil {
+				return nil, r
+			}
 			return nil, asSignatureRefusal(name, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg))
 		}
 		trimmed := bytes.TrimSpace(stdout.Bytes())
@@ -289,6 +294,9 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 // here kills it: OrgStop (`monomind org stop`) ends it cooperatively, the
 // same on every platform, so startDetached keeps it out of our jobs.
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
+	if !orgdesign.ValidOrgName(name) {
+		return fmt.Errorf("invalid org name %q", name)
+	}
 	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err
@@ -302,12 +310,31 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	}
 	cmd := Command(bin, args...)
 	inRoot(cmd, projectRoot)
-	cmd, err = startDetached(cmd)
+	// A start monomind refuses (R6/R1) exits at once and says why on its
+	// output; keep that (boundedly) to report it instead of a start nobody
+	// sees fail.
+	capture, err := newStartCapture()
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	if err := capture.startDrain(ctx, bin, projectRoot); err != nil {
+		capture.close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("start org output capture: %w", err)
+	}
+	cmd.Stdout, cmd.Stderr = capture.stream, capture.stream
+	began := time.Now()
+	cmd, err = startDetached(cmd)
+	// Only monomind keeps the write end, so its exit ends the drainer.
+	capture.stream.Close()
+	if err != nil {
+		capture.finishDrain()
+		capture.close()
+		return fmt.Errorf("start monomind org run %s: %w", name, err)
+	}
+	return watchStart(ctx, cmd, name, capture, func() bool { return runStarted(projectRoot, name, began) })
 }
 
 // OrgStatus returns one org's status, or every org's status when name=="".

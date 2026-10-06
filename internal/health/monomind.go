@@ -254,7 +254,13 @@ func checkMonomindHandshake(ctx context.Context, env *Env) Result {
 		offerUpdate(env, &res)
 		return res
 	}
-	return Result{Status: StatusOK, Summary: fmt.Sprintf("v%s (protocol v%d, need >= %s)", vi.Version, vi.V, monomind.MinMonomindVersion)}
+	res := Result{Status: StatusOK, Summary: fmt.Sprintf("v%s (protocol v%d, need >= %s)", vi.Version, vi.V, monomind.MinMonomindVersion)}
+	if adv := monomind.KnownGoodAdvisory(vi.Version); adv != "" {
+		// Usable, but older than what mono-agent is tested with.
+		res.Status, res.Detail = StatusWarn, adv
+		offerUpdate(env, &res)
+	}
+	return res
 }
 
 func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
