@@ -139,7 +139,9 @@ const taskCols = `id, profile_id, title, notes, status, position, source_kind, s
 
 type rowScanner interface{ Scan(dest ...any) error }
 
-// scanTask reads a row of taskCols. A claim is stale when its lease has run out.
+// scanTask reads a row of taskCols. A claim is stale when its task is in progress
+// and its lease has run out (spec 4.2); a claim left on a task in another column
+// is shown, and is not stale.
 func (s *Store) scanTask(row rowScanner) (Task, error) {
 	var t Task
 	var status, claimedBy, until, created, updated string
@@ -160,7 +162,7 @@ func (s *Store) scanTask(row rowScanner) (Task, error) {
 		if err != nil {
 			return Task{}, err
 		}
-		t.Claim = &Claim{By: claimedBy, Until: u, Stale: !u.After(s.now())}
+		t.Claim = &Claim{By: claimedBy, Until: u, Stale: t.Status == StatusInProgress && !u.After(s.now())}
 	}
 	return t, nil
 }

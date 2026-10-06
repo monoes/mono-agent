@@ -191,7 +191,8 @@ type Board struct {
 	Tasks   map[Status][]Task `json:"tasks"`
 }
 
-// Filter narrows List. No statuses means the caller's default (see List).
+// Filter narrows List. No statuses means the default of the caller and a Limit
+// that is not above 0 means the default limit: List says what both are.
 type Filter struct {
 	Statuses  []Status
 	Source    string

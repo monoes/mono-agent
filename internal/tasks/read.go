@@ -11,7 +11,8 @@ import (
 // statusOrder sorts a query by column, in board order.
 const statusOrder = `CASE status WHEN 'inbox' THEN 0 WHEN 'ready' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'done' THEN 4 ELSE 5 END`
 
-// Rev is the profile's board revision: 0 until its first write. It is one
+// Rev is the profile's board revision: 0 until its first write. The profile is
+// not checked (an unknown one reads 0): resolve it with Profile first. It is one
 // primary-key read, so it needs no snapshot.
 func (s *Store) Rev(ctx context.Context, profileID string) (int64, error) {
 	return s.revOf(ctx, s.db, profileID)
@@ -30,7 +31,8 @@ func (s *Store) revOf(ctx context.Context, x dbx, profileID string) (int64, erro
 }
 
 // Counts returns the profile's cards per column and its stale claims, read in
-// one snapshot.
+// one snapshot. The profile is not checked (an unknown one has no cards):
+// resolve it with Profile first.
 func (s *Store) Counts(ctx context.Context, profileID string) (Counts, error) {
 	var c Counts
 	err := s.snapshot(ctx, func(x dbx) error {
@@ -110,7 +112,10 @@ func (s *Store) queryTasks(ctx context.Context, x dbx, q string, args ...any) ([
 	return out, nil
 }
 
-// Get returns a task of the profile with its events, oldest first.
+// Get returns a task of the profile with its events, oldest first. It takes no
+// actor: a task is read by its id, in any column. The profile is not checked: a
+// task that is not in the profile and an unknown profile are both ErrNotFound, so
+// resolve the profile with Profile first.
 func (s *Store) Get(ctx context.Context, profileID string, id int64) (Task, []Event, error) {
 	var t Task
 	events := []Event{}
@@ -156,8 +161,21 @@ func defaultStatuses(actor Actor) []Status {
 	return BoardStatuses
 }
 
-// List returns the profile's tasks, by column and then by position.
+// List returns the profile's tasks by column, then position, then id, at most
+// f.Limit of them (500 when it is not above 0, never more than 2,000), from the
+// statuses named or, when none is, the five columns for the operator and ready,
+// in_progress and review for an agent. A capture may not read and an actor that
+// was never set is refused, before the filter is looked at. The profile is not
+// checked (an unknown one lists nothing): resolve it with Profile first.
 func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Actor) ([]Task, error) {
+	// Who is asking comes before what is asked, as in Add.
+	switch actor.Kind {
+	case Human, Agent:
+	case Capture:
+		return nil, operatorOnly("list tasks")
+	default:
+		return nil, invalid("unknown actor")
+	}
 	// The names are parsed and the parsed statuses are queried: "progress" and
 	// "In-Progress" are accepted as in_progress, so they must find it. A status
 	// named twice is asked for once, which keeps the query to six slots however
@@ -218,6 +236,9 @@ func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Acto
 
 // Board returns the whole board in one snapshot: the revision, the counts and
 // the five columns. The Done column is cut to doneLimit cards when it is above 0.
+// It checks the profile (an unknown one is ErrInvalid) and takes no actor: it is
+// the operator's whole-board read, so a surface that serves agents must not offer
+// it to them (the CLI refuses it for an agent caller).
 func (s *Store) Board(ctx context.Context, profileID string, doneLimit int) (Board, error) {
 	b := Board{Tasks: map[Status][]Task{}}
 	err := s.snapshot(ctx, func(x dbx) error {

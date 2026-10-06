@@ -3,7 +3,9 @@ package tasks
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -100,6 +102,55 @@ func TestOnlyAHeldInProgressTaskOfTheProfileIsStale(t *testing.T) {
 	}
 }
 
+// Spec 4.2 defines a stale claim as an in-progress one. A claim left on a task in another column
+// (nothing in the store leaves one there) stays visible but is not stale, so that the flag of the
+// card agrees with the count and the filter, which carry the status, in every read that shows a card.
+func TestAClaimPastItsLeaseIsStaleOnlyOnAnInProgressTask(t *testing.T) {
+	s, db, c := newTestStore(t)
+	past := c.t.Add(-time.Hour).Format(timeFmt)
+	ids := map[int64]string{}
+	for _, st := range []string{"inbox", "ready", "in_progress", "review", "done", "archived"} {
+		id := seedRow(t, db, "default", st)
+		if _, err := db.Exec(`UPDATE tasks SET claimed_by = 'bot', claim_until = ? WHERE id = ?`, past, id); err != nil {
+			t.Fatal(err)
+		}
+		ids[id] = st
+	}
+	check := func(read string, task Task) {
+		t.Helper()
+		st := ids[task.ID]
+		if task.Claim == nil || task.Claim.Stale != (st == "in_progress") {
+			t.Errorf("%s: the claim past its lease of a task in %s is %+v, want it shown, and stale only in progress", read, st, task.Claim)
+		}
+	}
+	for id := range ids {
+		got, _, err := s.Get(bg, "default", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("get", got)
+	}
+	all, err := s.List(bg, "default", Filter{Statuses: []Status{StatusInbox, StatusReady, StatusInProgress, StatusReview, StatusDone, StatusArchived}}, human)
+	if err != nil || len(all) != len(ids) {
+		t.Fatalf("list: %d tasks (err %v), want %d", len(all), err, len(ids))
+	}
+	for _, task := range all {
+		check("list", task)
+	}
+	b, err := s.Board(bg, "default", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range b.Tasks {
+		for _, task := range column {
+			check("board", task)
+		}
+	}
+	if b.Counts.Stale != 1 {
+		t.Errorf("the board counts %d stale claims, want the one in progress", b.Counts.Stale)
+	}
+}
+
 func TestCountsHaveAFieldPerColumnAndSkipTheArchive(t *testing.T) {
 	s, db, _ := newTestStore(t)
 	for i, st := range []string{"inbox", "ready", "in_progress", "review", "done", "archived"} {
@@ -190,6 +241,39 @@ func TestListStopsAtTheLimitItIsGiven(t *testing.T) {
 	}
 }
 
+// Who is asking is checked before what is asked, as Add does it: a capture has no read access (spec
+// 5.1) and an actor that was never set is no actor. The filter is wrong in two ways in half of the
+// calls, so that a refusal that came from the filter would show in the error.
+func TestListRefusesAnActorThatMayNotReadBeforeLookingAtTheFilter(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	seedRow(t, db, "default", "ready")
+	wrong := Filter{Statuses: []Status{"bogus"}, Source: "pigeon"}
+	for _, k := range []struct {
+		name  string
+		actor Actor
+		want  error
+		says  string
+	}{
+		{"a chrome capture", Actor{Kind: Capture, Name: SourceChrome}, ErrOperatorOnly, "list tasks"},
+		{"an os capture", Actor{Kind: Capture, Name: SourceOS}, ErrOperatorOnly, "list tasks"},
+		{"a capture with no name", Actor{Kind: Capture}, ErrOperatorOnly, "list tasks"},
+		{"the zero actor", Actor{}, ErrInvalid, "unknown actor"},
+		{"an actor of a kind that does not exist", Actor{Kind: 99, Name: "x"}, ErrInvalid, "unknown actor"},
+	} {
+		for _, f := range []Filter{{}, wrong} {
+			ts, err := s.List(bg, "default", f, k.actor)
+			if !errors.Is(err, k.want) || !strings.Contains(err.Error(), k.says) || ts != nil {
+				t.Errorf("%s with filter %+v: %v, %v, want no tasks and an error that is %v and says %q", k.name, f, ts, err, k.want, k.says)
+			}
+		}
+	}
+	for _, a := range []Actor{human, bot("b")} {
+		if ts, err := s.List(bg, "default", Filter{}, a); err != nil || len(ts) != 1 {
+			t.Errorf("actor %+v: %d tasks (err %v), want the one ready task", a, len(ts), err)
+		}
+	}
+}
+
 // ParseStatus accepts "progress" and "In-Progress" as in_progress: a name that is accepted must find it.
 func TestListFindsTheStatusesItAcceptsByAnyName(t *testing.T) {
 	s, db, _ := newTestStore(t)
@@ -204,8 +288,8 @@ func TestListFindsTheStatusesItAcceptsByAnyName(t *testing.T) {
 	if named[0] != "Progress" || named[1] != " READY\n" {
 		t.Errorf("the caller's statuses became %q", named)
 	}
-	if _, err := s.List(bg, "default", Filter{Statuses: []Status{"in-progress", "bogus"}}, human); err == nil {
-		t.Error("a bogus status among good ones was accepted")
+	if _, err := s.List(bg, "default", Filter{Statuses: []Status{"in-progress", "bogus"}}, human); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a bogus status among good ones: %v, want ErrInvalid", err)
 	}
 }
 
