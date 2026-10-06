@@ -5,6 +5,11 @@ import "time"
 // Session is the stored session, the JSON of session.json (spec §4.6). It
 // holds a token that expires within the hour and no secret that needs the
 // keychain: the refresh token lives in refresh.enc.
+//
+// Every writer round-trips the struct: it reads the session, changes a copy and
+// saves it, so a build that does not know a field drops it at its next write. A
+// field that carries security state (PendingSince) therefore ships with its first
+// writer, and any later such field must bump V or be preserved on rewrite.
 type Session struct {
 	V            int       `json:"v"`
 	Host         string    `json:"host"`
