@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -32,11 +33,17 @@ func newTaskTestDB(t *testing.T) string {
 // runTask runs `task <args>` and returns what it printed.
 func runTask(t *testing.T, dbPath, profile string, jsonOut bool, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return runTaskIn(t, dbPath, profile, jsonOut, strings.NewReader(stdin), args...)
+}
+
+// runTaskIn is runTask with a standard input of any kind.
+func runTaskIn(t *testing.T, dbPath, profile string, jsonOut bool, stdin io.Reader, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	cmd := newTaskCmd(&globalConfig{DBPath: dbPath, ProfileID: profile, JSONOutput: jsonOut})
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
-	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetIn(stdin)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	err = cmd.Execute()
@@ -50,8 +57,10 @@ type taskJSON struct {
 	Notes  string `json:"notes"`
 	Status string `json:"status"`
 	Source struct {
-		Kind string `json:"kind"`
-		URL  string `json:"url"`
+		Kind  string `json:"kind"`
+		URL   string `json:"url"`
+		Title string `json:"title"`
+		App   string `json:"app"`
 	} `json:"source"`
 	Claim *struct {
 		By string `json:"by"`
@@ -120,6 +129,9 @@ func TestTaskAddFromStandardInputDerivesTheTitle(t *testing.T) {
 	if added.Task.Source.URL != "https://example.com/mail" {
 		t.Errorf("url %q: the user-info must be dropped", added.Task.Source.URL)
 	}
+	if added.Task.Source.Title != "Mail" || added.Task.Source.App != "" {
+		t.Errorf("--source-title: title %q, app %q", added.Task.Source.Title, added.Task.Source.App)
+	}
 	if doc := failedTaskJSON(t, db, "default", 3, "add", "--stdin"); doc["code"] != "invalid_input" {
 		t.Errorf("empty standard input: %v", doc)
 	}
@@ -170,6 +182,9 @@ func TestTaskAddFromTheOSMenuIsACapture(t *testing.T) {
 	mustTaskJSON(t, db, "default", &added, "selected text", "add", "--stdin", "--source", "os", "--app", "Safari")
 	if added.Task.Source.Kind != "os" || added.Task.Status != "inbox" {
 		t.Errorf("os capture: %+v", added.Task)
+	}
+	if added.Task.Source.App != "Safari" || added.Task.Source.Title != "" {
+		t.Errorf("--app: app %q, title %q", added.Task.Source.App, added.Task.Source.Title)
 	}
 	if doc := failedTaskJSON(t, db, "default", 3, "add", "--stdin", "--source", "os", "--ready"); doc["code"] != "operator_only" {
 		t.Errorf("a capture cannot go straight to Ready: %v", doc)
@@ -371,6 +386,22 @@ func TestTaskIDsAndColumnLabels(t *testing.T) {
 	}
 	if _, err := parseTaskIDs([]string{"1", "x"}); exitCode(err) != 3 {
 		t.Errorf("parseTaskIDs with a bad id: %v, want exit 3", err)
+	}
+	// A bad argument is repeated in the message only in part: a huge one must not
+	// make a huge message, and a cut must not split a character (2 bytes each in
+	// the second argument: %q shows half of one as a \x escape).
+	for _, in := range []string{strings.Repeat("9", 10<<10), strings.Repeat("\xc3\xa9", 5<<10)} {
+		_, one := parseTaskID(in)
+		_, many := parseTaskIDs([]string{"1", in})
+		for _, err := range []error{one, many} {
+			msg := ""
+			if err != nil {
+				msg = err.Error()
+			}
+			if exitCode(err) != 3 || len(msg) > 200 || strings.Contains(msg, `\x`) || !strings.Contains(msg, "is not a task id") {
+				t.Errorf("a %d-byte argument: exit %d, a %d-byte message starting %q", len(in), exitCode(err), len(msg), msg[:min(len(msg), 60)])
+			}
+		}
 	}
 	for st, want := range map[tasks.Status]string{
 		tasks.StatusInbox: "Inbox", tasks.StatusReady: "Ready", tasks.StatusInProgress: "In progress",
