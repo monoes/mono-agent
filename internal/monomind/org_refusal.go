@@ -2,6 +2,7 @@ package monomind
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/daemonhb"
 )
 
 // Kinds of start refusal (monomind 2.24: GA rows R6 and R1).
@@ -95,8 +98,9 @@ func startRefusal(org, text string, err error) error {
 // startWatch is how long a detached start is watched. monomind refuses a
 // start (R6/R1) within a fraction of a second (0.18s measured), before any
 // session exists; a refusal after that is in the org's own logs. It is paid
-// by every successful start, so it stays short.
-var startWatch = time.Second
+// only as the fallback when monomind's "running" record does not appear
+// (watchStart returns as soon as it does).
+var startWatch = 3 * time.Second
 
 // captureTail is how much of a failed start's output is kept for its error.
 const captureTail = 4096
@@ -150,53 +154,95 @@ func (c *startCapture) close() {
 	}
 }
 
-// watchStart reaps cmd (started, writing to cap) and watches it for
-// startWatch. An early exit with an error is returned: monomind's own
-// refusal (OrgStartRefusal) when its output holds one, else the exit error
-// with the output's tail — never nil. A process still running after the
-// window is left to the caller's status polling, and is drained meanwhile.
-// A cancelled ctx stops the start (the child's process group is killed).
-func watchStart(ctx context.Context, cmd *exec.Cmd, org string, cap *startCapture) error {
+// watchStart reaps cmd (started, writing to cap) and watches it until
+// started() reports monomind's own evidence that the run is up (polled
+// every startPoll), or startWatch passes. An early exit with an error is
+// returned: monomind's own refusal (OrgStartRefusal) when its output holds
+// one, the signature refusal, else the exit error with the output's tail;
+// never nil. A process still running when the watch ends is left to the
+// caller's status polling, and its output is kept from piling up. A
+// cancelled ctx stops the start (the child's process group is killed).
+func watchStart(ctx context.Context, cmd *exec.Cmd, org string, cap *startCapture, started func() bool) error {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	timer := time.NewTimer(startWatch)
 	defer timer.Stop()
-	select {
-	case err := <-done:
-		defer cap.close()
-		if err == nil {
-			return nil
-		}
-		out := cap.tail()
-		if r := asStartRefusal(org, out); r != nil {
-			return r
-		}
-		if out == "" {
-			out = err.Error()
-		}
-		if reason := signatureRefusalReason(out); reason != "" {
-			return asSignatureRefusal(org, fmt.Errorf("monomind org run %s: %s", org, out))
-		}
-		return fmt.Errorf("monomind org run %s exited at start (%v): %s", org, err, out)
-	case <-ctx.Done():
-		killProcessGroup(cmd, cmd.Process.Pid)
-		<-done
-		cap.close()
-		return ctx.Err()
-	case <-timer.C:
-	}
-	go func() {
-		defer cap.close()
-		tick := time.NewTicker(time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tick.C:
-				_ = cap.f.Truncate(0)
+	poll := time.NewTicker(startPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case err := <-done:
+			defer cap.close()
+			return startExit(org, err, cap.tail())
+		case <-ctx.Done():
+			killProcessGroup(cmd, cmd.Process.Pid)
+			<-done
+			cap.close()
+			return ctx.Err()
+		case <-poll.C:
+			if started == nil || !started() {
+				continue
 			}
+		case <-timer.C:
 		}
-	}()
-	return nil
+		go keepSmall(cap, done)
+		return nil
+	}
+}
+
+// startPoll is how often the run's record is looked at during the watch.
+const startPoll = 25 * time.Millisecond
+
+// startExit is the error of a start that ended on its own with err.
+func startExit(org string, err error, out string) error {
+	if err == nil {
+		return nil
+	}
+	if r := asStartRefusal(org, out); r != nil {
+		return r
+	}
+	if out == "" {
+		out = err.Error()
+	}
+	if signatureRefusalReason(out) != "" {
+		return asSignatureRefusal(org, fmt.Errorf("monomind org run %s: %s", org, out))
+	}
+	return fmt.Errorf("monomind org run %s exited at start (%v): %s", org, err, out)
+}
+
+// keepSmall truncates the capture once a second until the child is gone,
+// then closes it.
+func keepSmall(cap *startCapture, done <-chan error) {
+	defer cap.close()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-tick.C:
+			_ = cap.f.Truncate(0)
+		}
+	}
+}
+
+// runStarted is monomind's evidence that a run of org began after since:
+// <root>/.monomind/orgs/<org>/runtime.json says "running", was updated
+// since then, and names a live pid (monomind 2.24.1 writes it within about
+// a tenth of a second of starting, before the first role turn).
+func runStarted(root, org string, since time.Time) bool {
+	b, err := os.ReadFile(filepath.Join(root, ".monomind", "orgs", org, "runtime.json"))
+	if err != nil {
+		return false
+	}
+	var rt struct {
+		Status  string    `json:"status"`
+		PID     int       `json:"pid"`
+		Updated time.Time `json:"updated"`
+	}
+	if json.Unmarshal(b, &rt) != nil || rt.Status != "running" || rt.PID <= 0 {
+		return false
+	}
+	// Millisecond stamps: allow the clock's rounding.
+	return !rt.Updated.Before(since.Add(-time.Second)) && daemonhb.ProcessAlive(rt.PID)
 }

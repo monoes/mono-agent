@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,66 @@ func TestOrgRunStartLeavesNoTempFiles(t *testing.T) {
 	}
 	if l := left(); len(l) != 0 {
 		t.Fatalf("left while running: %v", l)
+	}
+}
+
+// A start returns as soon as monomind records the run as running (its
+// runtime.json: status running, this child's own pid), not after the whole
+// watch window.
+func TestOrgRunStartReturnsOnRunningEvidence(t *testing.T) {
+	setWatch(t, 20*time.Second)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".monomind", "orgs", "sec")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := filepath.Join(dir, "runtime.json")
+	body := "sleep 0.2\n" +
+		`printf '{"status":"running","run":"r1","pid":%s,"updated":"%s"}' $$ "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > '` + rt + "'\nsleep 30"
+	fakeOrgMonomind(t, body)
+	begin := time.Now()
+	if err := OrgRunStart(context.Background(), root, "sec", ""); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(begin); d > 3*time.Second {
+		t.Fatalf("waited %v for a run that was recorded running within 0.2s", d)
+	}
+}
+
+// A leftover runtime.json from an earlier run (running, a dead pid, an old
+// timestamp) is not evidence that this start worked.
+func TestOrgRunStartIgnoresStaleRunningRecord(t *testing.T) {
+	setWatch(t, 800*time.Millisecond)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".monomind", "orgs", "sec")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"status":"running","run":"old","pid":` + strconv.Itoa(os.Getpid()) + `,"updated":"2020-01-01T00:00:00.000Z"}`
+	if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fakeOrgMonomind(t, "sleep 30")
+	begin := time.Now()
+	if err := OrgRunStart(context.Background(), root, "sec", ""); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(begin); d < 700*time.Millisecond {
+		t.Fatalf("a stale record counted as started after %v", d)
+	}
+}
+
+// Captured from monomind v2.24.1 inside a real role sandbox (bwrap, fake
+// codex runtime) after the role unset MONOMIND_ORG_ROLE and its siblings:
+// no marker, yet monomind refuses, naming the protected directory.
+const protectedDirRefusal = "org sign: the operator-credential directory (/home/monoes/scratch/ma25/home10/.monomind/orgrt-operator) is protected from org roles (an empty tmpfs is mounted over it in this sandbox): only the operator signs org definitions and holds the signing key. Nothing was written. Ask the operator to run `monomind org sign <org>` in their own terminal, or use a pre-signed org (`monomind org sign <org> --check` reports the state)."
+
+func TestProtectedDirRefusalPassesThroughVerbatim(t *testing.T) {
+	root := fakeOrgMonomind(t, sh(protectedDirRefusal)+"echo '[ERROR] "+protectedDirRefusal+"'\nexit 1")
+	if rv, err := OrgSignReview(context.Background(), root, "acme"); err == nil || !strings.Contains(err.Error(), protectedDirRefusal) {
+		t.Fatalf("review = %+v, %v: want the protected-directory refusal as the error", rv, err)
+	}
+	if _, err := OrgSign(context.Background(), root, "acme", ""); err == nil || !strings.Contains(err.Error(), protectedDirRefusal) {
+		t.Fatalf("sign: %v", err)
 	}
 }

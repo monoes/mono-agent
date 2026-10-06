@@ -151,11 +151,17 @@ func (t *signTool) enforcesHash(ctx context.Context, root string) bool {
 	return t.has(CapOrgSignExpectHash) && strings.Contains(t.orgSignHelp(ctx, root), "--expect-hash")
 }
 
-// roleSignRefusalMark is in monomind's refusal of `org sign` from an org
-// role or agent-exec process (v2.24.1: "Refusing: MONOMIND_ORG_ROLE is
-// set — this is an org role or agent-exec process. Only the operator signs
-// org definitions; run this yourself in a terminal.").
-const roleSignRefusalMark = "Only the operator signs org definitions"
+// roleSignRefusalRe matches monomind's refusal of `org sign` from an org
+// role, in both wordings observed in v2.24.1:
+//   - marker set: "Refusing: MONOMIND_ORG_ROLE is set — this is an org role
+//     or agent-exec process. Only the operator signs org definitions; run
+//     this yourself in a terminal."
+//   - marker gone (a role unset it), inside the role sandbox: "org sign: the
+//     operator-credential directory (<dir>) is protected from org roles (an
+//     empty tmpfs is mounted over it in this sandbox): only the operator
+//     signs org definitions and holds the signing key. Nothing was written.
+//     Ask the operator ..."
+var roleSignRefusalRe = regexp.MustCompile(`(?i)only the operator signs org definitions`)
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
@@ -233,7 +239,7 @@ func orgSignReviewText(ctx context.Context, bin, projectRoot, name string) (stri
 	cmd := CommandContext(cctx, bin, "org", "sign", name)
 	inRoot(cmd, projectRoot)
 	out, runErr := cmd.CombinedOutput()
-	if refusal := ansiRe.ReplaceAllString(string(out), ""); runErr != nil && strings.Contains(refusal, roleSignRefusalMark) {
+	if refusal := ansiRe.ReplaceAllString(string(out), ""); runErr != nil && roleSignRefusalRe.MatchString(refusal) {
 		// An org role asked: monomind's refusal is the answer, verbatim, not a review.
 		return "", fmt.Errorf("monomind org sign %s: %s", name, strings.TrimSpace(refusal))
 	}

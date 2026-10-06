@@ -315,12 +315,13 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
 	cmd.Stdout, cmd.Stderr = capture.f, capture.f
+	began := time.Now()
 	cmd, err = startDetached(cmd)
 	if err != nil {
 		capture.close()
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	return watchStart(ctx, cmd, name, capture)
+	return watchStart(ctx, cmd, name, capture, func() bool { return runStarted(projectRoot, name, began) })
 }
 
 // OrgStatus returns one org's status, or every org's status when name=="".
