@@ -110,6 +110,7 @@ const (
 	MaxNameLen          = 64
 	MaxClientIDLen      = 64
 	MaxEventsPerTask    = 500
+	MaxEventsToClaim    = 2000
 	MaxOpenTasks        = 2000
 	AgentTasksPerHour   = 20
 	DefaultListLimit    = 500
