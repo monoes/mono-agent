@@ -209,6 +209,7 @@ func (d *Doc) DeleteSection(name, moveTo string) error {
 	if len(out) > 0 && len(roster) > 0 {
 		for _, id := range roster {
 			d.joinSection(moveTo, id)
+			d.reportToLead(id, moveTo)
 		}
 	}
 	return nil

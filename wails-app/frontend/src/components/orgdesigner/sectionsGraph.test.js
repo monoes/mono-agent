@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { NODE_W, NODE_H } from './orgGraph.js'
 import {
   parseSections, sectionsEnabled, sectionOfRole, sectionRects, dropMembership, documentEdges,
-  sectionErrors, layOutSections, sectionEdgePath, freeSectionName, placeNewRole, sectionAtPoint,
+  sectionErrors, layOutSections, sectionEdgePath, freeSectionName, placeNewRole, sectionAtPoint, freeSlotIn,
 } from './sectionsGraph.js'
 
 const wire = {
@@ -128,5 +128,28 @@ describe('misc', () => {
     expect(placeNewRole({ list, nodes, anchorId: 'boss', selectedSection: 'beta' })).toEqual({ section: 'beta', parent: 'b1' })
     expect(placeNewRole({ list, nodes, anchorId: 'boss' })).toBeNull()
     expect(placeNewRole({ list: [list[0]], nodes, anchorId: 'boss' })).toEqual({ section: 'alpha', parent: 'a1' })
+  })
+})
+
+describe('freeSlotIn', () => {
+  const box = { name: 'beta', x: 572, y: 140, w: 300, h: 300 }
+  const clash = (a, b) => Math.abs(a.x - b.x) < NODE_W && Math.abs(a.y - b.y) < NODE_H
+  it('keeps the preferred spot when it is free and inside', () => {
+    expect(freeSlotIn([node('b1', 'boss', 600, 200)], box, 'x', { x: 600, y: 340 })).toEqual({ x: 600, y: 340 })
+  })
+  it('moves off an occupied spot to a free slot that overlaps nothing', () => {
+    const others = [node('b1', 'boss', 600, 200), node('b2', 'b1', 600, 340)]
+    const p = freeSlotIn(others, box, 'x', { x: 610, y: 210 })
+    expect(others.some(n => clash(p, n))).toBe(false)
+  })
+  it('ignores the role being moved', () => {
+    expect(freeSlotIn([node('a2', 'a1', 600, 200)], box, 'a2', { x: 600, y: 200 })).toEqual({ x: 600, y: 200 })
+  })
+  it('opens a new row below a full container', () => {
+    const full = []
+    for (let x = 0; x < 3; x++) for (let y = 0; y < 3; y++) full.push(node(`n${x}${y}`, 'boss', box.x + 28 + x * 216, box.y + 60 + y * 128))
+    const p = freeSlotIn(full, box, 'x', null)
+    expect(p.y).toBeGreaterThan(box.y + box.h - 100)
+    expect(full.some(n => clash(p, n))).toBe(false)
   })
 })

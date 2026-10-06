@@ -194,3 +194,38 @@ export function placeNewRole({ list, nodes, anchorId, pointRect, selectedSection
   const parent = anchor && sectionOfRole(list, anchor.id) === section ? anchor.id : s.leadId
   return { section, parent }
 }
+
+const overlaps = (a, b, m) =>
+  a.x < b.x + NODE_W + m && b.x < a.x + NODE_W + m && a.y < b.y + NODE_H + m && b.y < a.y + NODE_H + m
+
+/**
+ * A spot for a role joining the container `rect` that overlaps no other
+ * node: `prefer` if it is free and inside, else the first free grid slot
+ * inside the container, else a new row just below it (the container then
+ * grows to hold it). `excludeId` is the role being moved.
+ */
+export function freeSlotIn(nodes, rect, excludeId, prefer) {
+  const others = (nodes || []).filter(n => n.id !== excludeId && typeof n.x === 'number' && typeof n.y === 'number')
+  const free = (p) => !others.some(n => overlaps(p, n, GAP_X / 2))
+  const inside = (p) => p.x >= rect.x + SECTION_PAD && p.x + NODE_W <= rect.x + rect.w - SECTION_PAD
+    && p.y >= rect.y + SECTION_HEADER + SECTION_PAD && p.y + NODE_H <= rect.y + rect.h - SECTION_PAD
+  if (prefer && inside(prefer) && free(prefer)) return { x: prefer.x, y: prefer.y }
+  const stepX = NODE_W + GAP_X, stepY = NODE_H + GAP_Y
+  const x0 = rect.x + SECTION_PAD, y0 = rect.y + SECTION_HEADER + SECTION_PAD
+  const cols = Math.max(1, Math.floor((rect.w - 2 * SECTION_PAD + GAP_X) / stepX))
+  const rows = Math.max(1, Math.floor((rect.h - SECTION_HEADER - 2 * SECTION_PAD + GAP_Y) / stepY))
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const p = { x: x0 + c * stepX, y: y0 + r * stepY }
+      if (free(p)) return p
+    }
+  }
+  let y = y0 + rows * stepY
+  for (;;) {
+    for (let c = 0; c < cols; c++) {
+      const p = { x: x0 + c * stepX, y }
+      if (free(p)) return p
+    }
+    y += stepY
+  }
+}

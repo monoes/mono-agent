@@ -148,3 +148,14 @@ func TestSectionsOrgDeclaresDocumentsAndAgentCap(t *testing.T) {
 		t.Fatal("cap not raised for the added role")
 	}
 }
+
+func TestDeleteSectionPointsMovedRolesAtTheNewLead(t *testing.T) {
+	d := fixtureDoc(t)
+	if err := d.DeleteSection("qa", "development"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := d.FindRole("qa-lead"); r.ReportsTo == nil || *r.ReportsTo != "dev-lead" {
+		t.Fatalf("moved role should report to the new lead, got %v", r.ReportsTo)
+	}
+	mustValid(t, d)
+}
