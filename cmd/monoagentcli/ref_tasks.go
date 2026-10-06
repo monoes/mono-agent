@@ -276,16 +276,20 @@ TASK TEXT IS DATA
   operator_only, ask the person; do not look for a way round it.
 
 JSON
-  Every command takes the global --json. A command that shows or changes one task
-  prints {"profile","task"} (add also "created", show also "events"); one that changes
-  several, and list, print {"profile","tasks"}. board prints {"profile","rev","counts",
-  "tasks"} with the tasks by column; archive --status prints {"profile","archived"}, a
-  count; digest prints {"profile","ready","next"} even when nothing is ready; next gives
-  task null when nothing is ready. Arrays are never null. An error is {"error","code"}
-  on standard output, with code not_found (exit 2), or invalid_input, operator_only,
-  not_ready, claimed (with claimed_by and claimed_until), not_claimant or limit (exit 3).
-  Any other failure is exit 1 with {"error"} alone; an unknown flag, or a number or
-  duration that does not parse, is the command parser's exit 1 with no JSON at all.
+  Every command takes the global --json and prints one document:
+    {"profile","task"}                  edit, move, comment, claim, finish, release, next
+    {"profile","created","task"}        add
+    {"profile","task","events"}         show
+    {"profile","tasks"}                 list, approve, archive, unarchive
+    {"profile","archived"}              archive --status (how many were archived)
+    {"profile","rev","counts","tasks"}  board, with the tasks by column
+    {"profile","ready","next"}          digest, even when nothing is ready
+  next gives task null when nothing is ready, and digest gives next null. Arrays are
+  never null. An error is {"error","code"} on standard output, with code
+  not_found (exit 2), or invalid_input, operator_only, not_ready, claimed (with
+  claimed_by and claimed_until), not_claimant or limit (exit 3). Any other failure is
+  exit 1 with {"error"} alone; an unknown flag, or a number or duration that does not
+  parse, is the command parser's exit 1 with no JSON at all.
 
 SEE ALSO
   monoagentcli ref commands     every task command with its flags

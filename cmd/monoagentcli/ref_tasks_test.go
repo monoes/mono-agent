@@ -238,6 +238,48 @@ func TestRefTasksKeepsItsAnchorHeadings(t *testing.T) {
 	}
 }
 
+// refSection is what `ref tasks` says under one of its anchor headings, up to the next one.
+func refSection(heading string) string {
+	lines := strings.Split(refTasksText, "\n")
+	start := slices.Index(lines, heading)
+	if start < 0 {
+		return ""
+	}
+	end := len(lines)
+	if i := slices.Index(refTasksAnchors, heading); i >= 0 && i+1 < len(refTasksAnchors) {
+		if next := slices.Index(lines, refTasksAnchors[i+1]); next > start {
+			end = next
+		}
+	}
+	return strings.Join(lines[start+1:end], "\n")
+}
+
+// refTasksDocs is every text about the board: the topic and the `ref commands` entries.
+func refTasksDocs() string {
+	var b strings.Builder
+	b.WriteString(refTasksText)
+	for _, d := range refTaskEntries() {
+		b.WriteString("\n" + d.Short + "\n" + d.Usage + "\n" + d.Flags + "\n" + strings.Join(d.Examples, "\n"))
+	}
+	return b.String()
+}
+
+// refStates checks the statements of one number in the texts against the code: the
+// pattern has one group, the number as written, and every statement of it must be want.
+// A number that is no longer stated anywhere fails too.
+func refStates(t *testing.T, what, pattern, want string) {
+	t.Helper()
+	found := regexp.MustCompile(pattern).FindAllStringSubmatch(refTasksDocs(), -1)
+	if len(found) == 0 {
+		t.Errorf("no text states %s (%s), which is %s in the code", what, pattern, want)
+	}
+	for _, m := range found {
+		if m[1] != want {
+			t.Errorf("a text says %q for %s, which is %s in the code", m[0], what, want)
+		}
+	}
+}
+
 // thousands writes n the way the texts do: 2,000.
 func thousands(n int) string {
 	if n < 1000 {
@@ -247,22 +289,16 @@ func thousands(n int) string {
 }
 
 func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
-	for _, want := range []string{
-		thousands(tasks.MaxOpenTasks) + " open tasks",
-		fmt.Sprintf("%d tasks an hour", tasks.AgentTasksPerHour),
-		fmt.Sprintf("A title is %d characters", tasks.MaxTitleRunes),
-		fmt.Sprintf("notes are %d KiB", tasks.MaxNotesBytes>>10),
-		fmt.Sprintf("note %d KiB", tasks.MaxCommentBytes>>10),
-		fmt.Sprintf("%d events takes no more comments", tasks.MaxEventsPerTask),
-		fmt.Sprintf("%s events no more claims", thousands(tasks.MaxEventsToClaim)),
-		fmt.Sprintf("%d minutes", int(tasks.DefaultLease.Minutes())),
-		fmt.Sprintf("%d hours", int(tasks.MaxLease.Hours())),
-		fmt.Sprintf("at most %d MiB", maxStdinBytes>>20),
-	} {
-		if !strings.Contains(refTasksText, want) {
-			t.Errorf("`ref tasks` does not say %q, which is what the code enforces", want)
-		}
-	}
+	refStates(t, "a profile's open tasks", `([\d,]+) open tasks`, thousands(tasks.MaxOpenTasks))
+	refStates(t, "the tasks an agent may add an hour", `(\d+) tasks an hour`, fmt.Sprint(tasks.AgentTasksPerHour))
+	refStates(t, "a title", `title is (\d+) characters`, fmt.Sprint(tasks.MaxTitleRunes))
+	refStates(t, "notes", `notes are (\d+) KiB`, fmt.Sprint(tasks.MaxNotesBytes>>10))
+	refStates(t, "a comment", `note (\d+) KiB`, fmt.Sprint(tasks.MaxCommentBytes>>10))
+	refStates(t, "the events that stop comments", `(\d+) events takes no more comments`, fmt.Sprint(tasks.MaxEventsPerTask))
+	refStates(t, "the events that stop claims", `([\d,]+) events no more claims`, thousands(tasks.MaxEventsToClaim))
+	refStates(t, "a lease", `(\d+) minutes`, fmt.Sprint(int(tasks.DefaultLease.Minutes())))
+	refStates(t, "the longest lease", `(\d+) hours`, fmt.Sprint(int(tasks.MaxLease.Hours())))
+	refStates(t, "what --stdin reads", `at most (\d+) MiB`, fmt.Sprint(maxStdinBytes>>20))
 	// The defaults the flags declare: a flag that is renamed or re-defaulted shows up here.
 	defaultOf := func(command, flag string) string {
 		sub := refTaskSub(command)
@@ -287,6 +323,10 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 }
 
 func TestRefTasksNamesEveryErrorCodeTheCLIAnswers(t *testing.T) {
+	jsonText := refSection("JSON")
+	if jsonText == "" {
+		t.Fatal("`ref tasks` has no JSON section")
+	}
 	for _, c := range []struct {
 		err  error
 		exit int
@@ -305,26 +345,27 @@ func TestRefTasksNamesEveryErrorCodeTheCLIAnswers(t *testing.T) {
 			t.Fatalf("the CLI gives %v no code", c.err)
 		}
 		code, _ := fields.JSONErrorFields()["code"].(string)
-		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(code) + `\b`).MatchString(refTasksText) {
-			t.Errorf("`ref tasks` does not name the error code %q", code)
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(code) + `\b`).MatchString(jsonText) {
+			t.Errorf("the JSON section of `ref tasks` does not name the error code %q", code)
 		}
 		if got := exitCodeFor(err); got != c.exit {
 			t.Errorf("%q is exit %d, but the test (and the text) say %d", code, got, c.exit)
 		}
 	}
 	for _, want := range []string{"not_found (exit 2)", "limit (exit 3)"} {
-		if !strings.Contains(refTasksText, want) {
-			t.Errorf("`ref tasks` does not say %q", want)
+		if !strings.Contains(jsonText, want) {
+			t.Errorf("the JSON section of `ref tasks` does not say %q", want)
 		}
 	}
 }
 
 func TestRefTasksStatesTheNameRulesOfTheStore(t *testing.T) {
-	if want := fmt.Sprintf("1 to %d characters of letters, digits and ._#@:-", tasks.MaxNameLen); !strings.Contains(refTasksText, want) {
-		t.Errorf("`ref tasks` does not say %q", want)
-	}
-	if want := "the labels you, agent, capture, chrome and os are reserved"; !strings.Contains(refTasksText, want) {
-		t.Errorf("`ref tasks` does not say %q", want)
+	who := refSection("WHO MAY DO WHAT")
+	refStates(t, "the length of an agent's name", `1 to (\d+) characters of letters`, fmt.Sprint(tasks.MaxNameLen))
+	for _, want := range []string{"characters of letters, digits and ._#@:-", "the labels you, agent, capture, chrome and os are reserved"} {
+		if !strings.Contains(who, want) {
+			t.Errorf("the WHO MAY DO WHAT section of `ref tasks` does not say %q", want)
+		}
 	}
 	for _, label := range []string{"you", "agent", "capture", "chrome", "os"} {
 		if tasks.CheckAgentName(label) == nil || tasks.CheckAgentName(strings.ToUpper(label)) == nil {
@@ -338,6 +379,111 @@ func TestRefTasksStatesTheNameRulesOfTheStore(t *testing.T) {
 	}
 	if tasks.CheckAgentName(strings.Repeat("a", tasks.MaxNameLen)) != nil || tasks.CheckAgentName(strings.Repeat("a", tasks.MaxNameLen+1)) == nil {
 		t.Errorf("the text says a name is up to %d characters: the store disagrees", tasks.MaxNameLen)
+	}
+}
+
+func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
+	who := refSection("WHO MAY DO WHAT")
+	operator := regexp.MustCompile(`The\s+operator\s+may\s+([^.]*)\.`).FindStringSubmatch(who)
+	agent := regexp.MustCompile(`An\s+AI\s+agent\s+may\s+([^.]*)\.`).FindStringSubmatch(who)
+	if operator == nil || agent == nil {
+		t.Fatal("WHO MAY DO WHAT has lost its sentences 'The operator may ...' and 'An AI agent may ...'")
+	}
+	db := newTaskTestDB(t)
+	// The code an agent's call is refused with, "" when it is not refused.
+	refusal := func(args ...string) string {
+		out, _, err := runTask(t, db, "default", true, "", append(args, "--as", "bot")...)
+		if err == nil {
+			return ""
+		}
+		var doc struct {
+			Code string `json:"code"`
+		}
+		_ = json.Unmarshal([]byte(out), &doc)
+		return doc.Code
+	}
+	for _, c := range [][]string{{"board"}, {"edit", "1", "--title", "x"}, {"move", "1", "ready"}, {"approve", "1"}, {"archive", "1"}, {"unarchive", "1"}, {"add", "x", "--ready"}} {
+		if got := refusal(c...); got != "operator_only" {
+			t.Errorf("`task %s` run by an agent answers %q, but `ref tasks` gives it to the operator", c[0], got)
+		}
+		if !strings.Contains(operator[1], c[0]) {
+			t.Errorf("the operator's sentence of `ref tasks` does not name %q", c[0])
+		}
+		if c[0] != "add" && strings.Contains(agent[1], c[0]) {
+			t.Errorf("the agent's sentence of `ref tasks` names %q, which an agent may not run", c[0])
+		}
+	}
+	for _, c := range [][]string{{"list"}, {"show", "1"}, {"next"}, {"add", "x"}, {"claim", "1"}, {"comment", "1", "x"}, {"finish", "1", "--result", "x"}, {"release", "1"}} {
+		if got := refusal(c...); got == "operator_only" {
+			t.Errorf("`task %s` run by an agent is refused as operator_only, but `ref tasks` gives it to agents", c[0])
+		}
+		if !strings.Contains(agent[1], c[0]) {
+			t.Errorf("the agent's sentence of `ref tasks` does not name %q", c[0])
+		}
+	}
+}
+
+func TestRefTasksJSONSectionShowsTheDocumentsTheCommandsPrint(t *testing.T) {
+	jsonText := refSection("JSON")
+	db := newTaskTestDB(t)
+	// Each step is a call, the document the text says it prints, and the word the text names the
+	// call by. The steps are in order: a task is added, approved, claimed, finished, given back,
+	// archived and restored, so that every call has something to work on.
+	for _, step := range []struct {
+		doc, word string
+		args      []string
+	}{
+		{`{"profile","created","task"}`, "add", []string{"add", "write the docs"}},
+		{`{"profile","tasks"}`, "approve", []string{"approve", "1"}},
+		{`{"profile","task"}`, "next", []string{"next", "--as", "bot"}},
+		{`{"profile","task"}`, "next", []string{"next", "--claim", "--as", "bot"}},
+		{`{"profile","task"}`, "comment", []string{"comment", "1", "halfway", "--as", "bot"}},
+		{`{"profile","task","events"}`, "show", []string{"show", "1"}},
+		{`{"profile","tasks"}`, "list", []string{"list"}},
+		{`{"profile","rev","counts","tasks"}`, "board", []string{"board"}},
+		{`{"profile","task"}`, "finish", []string{"finish", "1", "--result", "done", "--as", "bot"}},
+		{`{"profile","task"}`, "move", []string{"move", "1", "ready"}},
+		{`{"profile","task"}`, "claim", []string{"claim", "1", "--as", "bot"}},
+		{`{"profile","task"}`, "release", []string{"release", "1", "--as", "bot"}},
+		{`{"profile","task"}`, "edit", []string{"edit", "1", "--title", "write the docs well"}},
+		{`{"profile","tasks"}`, "archive", []string{"archive", "1"}},
+		{`{"profile","tasks"}`, "unarchive", []string{"unarchive", "1"}},
+		{`{"profile","archived"}`, "archive --status", []string{"archive", "--status", "ready"}},
+		{`{"profile","ready","next"}`, "digest", []string{"digest"}},
+	} {
+		out, _, err := runTask(t, db, "default", true, "", step.args...)
+		if err != nil {
+			t.Fatalf("task %s: %v\n%s", strings.Join(step.args, " "), err, out)
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("task %s: %v\n%s", strings.Join(step.args, " "), err, out)
+		}
+		var got []string
+		for k := range doc {
+			got = append(got, k)
+		}
+		var want []string
+		for _, m := range regexp.MustCompile(`"([a-z_]+)"`).FindAllStringSubmatch(step.doc, -1) {
+			want = append(want, m[1])
+		}
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("task %s prints a document with the keys %v, but the test (and `ref tasks`) say %s", strings.Join(step.args, " "), got, step.doc)
+		}
+		stated := false
+		for _, line := range strings.Split(jsonText, "\n") {
+			stated = stated || strings.Contains(line, step.doc) && strings.Contains(line, step.word)
+		}
+		if !stated {
+			t.Errorf("the JSON section of `ref tasks` has no line that gives %s for %q", step.doc, step.word)
+		}
+	}
+	// The last step found nothing ready: the document says so with null, as the text does.
+	out, _, _ := runTask(t, db, "default", true, "", "next", "--as", "bot")
+	if !regexp.MustCompile(`"task":\s*null`).MatchString(out) || !strings.Contains(jsonText, "task null when nothing is ready") {
+		t.Errorf("`task next` with nothing ready prints %s, and the JSON section must say `task null when nothing is ready`", out)
 	}
 }
 
@@ -365,7 +511,7 @@ func TestRefTasksIsPrintedAndListed(t *testing.T) {
 	}
 	listing := captureStdout(t, func() {
 		ref := newRefCmd()
-		ref.SetArgs(nil)
+		ref.SetArgs([]string{}) // nil would make cobra read the test binary's own flags
 		if err := ref.Execute(); err != nil {
 			t.Fatalf("ref: %v", err)
 		}
