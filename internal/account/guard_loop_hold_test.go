@@ -137,6 +137,9 @@ func TestTheRefresherStillFollowsTheFileWhileItHolds(t *testing.T) {
 	g.StartRefresher(context.Background())
 	waitForCalls(t, srv, 1, "the first refresh")
 	expectCalls(t, srv, 1, "the hold")
+	// The first pass that holds writes the stale mark. Wait for it: a write of the
+	// loop that was still going on would race the test's own write of the session.
+	waitForHW(t, e, e.f.Clock.Now(), "the first pass that holds to write the mark")
 
 	e.save(refusedSession()) // another process was refused
 	e.f.Clock.Advance(loopPoll)

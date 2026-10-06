@@ -120,6 +120,7 @@ func TestARefresherWithoutARefresherOnlyFollowsTheFile(t *testing.T) {
 	got := make(chan account.Status, 4)
 	g.OnRefused(func(st account.Status) { got <- st })
 	g.StartRefresher(context.Background())
+	waitForHW(t, e, e.f.Clock.Now(), "the first pass to write the stale mark") // what the loop does, and all it does
 	quiet()
 	if after := e.session(); after.LastResult != "ok" || !after.LastAttempt.Equal(before.LastAttempt) {
 		t.Fatalf("LastResult = %q, LastAttempt = %v: a guard with no Refresher attempted something", after.LastResult, after.LastAttempt)
@@ -183,7 +184,7 @@ func TestAnOnRefusedCallbackMayCloseTheGuard(t *testing.T) {
 		closed <- struct{}{}
 	})
 	g.StartRefresher(context.Background())
-	quiet()
+	waitForHW(t, e, e.f.Clock.Now(), "the first pass to write the stale mark") // a write of the loop must not race the test's
 	e.save(refusedSession())
 	e.f.Clock.Advance(loopPoll)
 	select {
