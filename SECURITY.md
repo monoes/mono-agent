@@ -436,6 +436,55 @@ server emits no CORS headers at all, so cross-origin browser requests are
 blocked outright — see [Runtime environment variables in
 AGENTS.md](AGENTS.md#runtime-environment-variables).
 
+## Task board
+
+`monoagentcli task` keeps a task board per profile (tables `tasks`,
+`task_events` and `task_board_rev`; a profile's board is deleted with
+it). Task text can come from outside: the title and notes of a task
+added from a web page or another app are untrusted data, and an AI agent
+that works a task acts on them. The defences:
+
+- **A gate before an agent sees a task.** Everything captured, or
+  created by an agent, lands in the Inbox, which agents do not see
+  unless they name it. Only the operator approves a task into Ready,
+  where agents may claim it (an agent's `release` can put back into
+  Ready only a task it holds), and only the operator moves one to Done.
+  An agent's `finish` goes to Review. An agent cannot edit a task's
+  text, so what the operator approved is what it reads.
+- **The operator-only commands refuse an agent-driven caller:** `board`
+  (it shows the Inbox), `edit`, `move`, `approve`, `archive`,
+  `unarchive` and `add --ready`. A caller is agent-driven when an
+  agent-context environment variable is set (the markers org signing
+  already uses, `CLAUDECODE` among them), or `--as` is given, or
+  `MONOAGENT_ACTOR` is set. This stops an agent acting by accident or on
+  injected text; it does not stop one that deliberately unsets its
+  environment, as with org signing. Its cost: nothing can be approved
+  from inside an agent's own shell, so the user approves in a terminal
+  of their own.
+- **Limits that stop a loop from flooding the board:** 20 tasks an hour
+  created by agents per profile, 2,000 open tasks per profile (a task
+  that comes back from the archive counts), and caps on the size of
+  titles (200 characters), notes (64 KiB) and comments (8 KiB) and on a
+  task's history (a task with 500 events takes no more comments, one
+  with 2,000 no more claims).
+- **Text is cleaned on the way in:** invalid UTF-8 is replaced, control
+  characters (a terminal escape sequence cannot reach the user's
+  terminal) and hidden characters (Unicode tag characters, bidi
+  overrides, embeddings and isolates, the byte order mark) are removed.
+  Only http and https links are kept, with their user-info removed; a
+  link that holds a control or hidden character is dropped, not
+  rewritten. Other invisible characters (zero-width spaces, variation
+  selectors, the left-to-right and right-to-left marks) are not
+  removed: treat task text as untrusted whatever it looks like. The CLI
+  prints a task's notes indented, between a notice that they are
+  untrusted and a closing line.
+- **Claims are cooperative.** The name given with `--as` is a label, not
+  a credential: two agents that choose the same name are one claimant.
+  The labels `you`, `agent`, `capture`, `chrome` and `os` are reserved,
+  in any case, so an agent's events never read as the operator's or a
+  capture's.
+- **No HTTP route and no new port.** The task board does not listen on the network.
+
 ## OpenAI-compatible API surface
 
 `monoagentcli httpapi` and `monoagentcli daemon` serve `GET /v1/models`,
