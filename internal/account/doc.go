@@ -34,6 +34,9 @@
 //	verify.go           strict EdDSA verification of an access token
 //	sealer.go           the sealer of the refresh token, under the OS keyring key
 //	store.go            the session on disk: atomic writes and the cross-process lock
+//	readfile.go         reads a file of the store: a regular file of at most 64 KiB
+//	readfile_unix.go    opens it without waiting for a FIFO's writer (O_NONBLOCK)
+//	readfile_windows.go opens it on Windows
 //	lock_unix.go        the file lock on Unix (flock)
 //	lock_windows.go     the file lock on Windows (LockFileEx)
 //	syncdir_unix.go     flushes a directory after a rename or a remove

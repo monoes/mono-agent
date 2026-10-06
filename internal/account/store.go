@@ -20,11 +20,12 @@ const (
 )
 
 // errSessionInvalid is in every Load failure that means session.json is there and
-// cannot be used as it is: it does not parse, or it is of a version this build
-// does not read. A failure to open or to read the file (permission denied, an I/O
-// error) is not: it says nothing about what the file holds, so a caller can tell
-// a file that is unusable from a disk that failed. errors.Is finds it; the message
-// stays the failure's own.
+// cannot be used as it is: it does not parse, it is of a version this build does
+// not read, it is not a regular file, or it is larger than the store reads
+// (readStoreFile). A failure to open or to read the file (permission denied, an
+// I/O error) is not: it says nothing about what the file holds, so a caller can
+// tell a file that is unusable from a disk that failed. errors.Is finds it; the
+// message stays the failure's own.
 var errSessionInvalid = errors.New("account: " + sessionFile + " is not valid")
 
 // invalidSession marks a Load failure as errSessionInvalid and keeps its message.
@@ -190,12 +191,14 @@ func (s *fileStore) Load() (*Session, error) {
 	if s.err != nil {
 		return nil, nil
 	}
-	data, err := os.ReadFile(s.path(sessionFile))
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readStoreFile(s.path(sessionFile))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("account: reading %s: %w", sessionFile, err)
+	case errors.Is(err, errNotRegular), errors.Is(err, errTooLarge):
+		return nil, invalidSession{err}
+	case err != nil:
+		return nil, err
 	}
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
@@ -246,12 +249,12 @@ func (s *fileStore) LoadRefresh() (string, error) {
 	if s.err != nil {
 		return "", nil
 	}
-	sealed, err := os.ReadFile(s.path(refreshFile))
+	sealed, err := readStoreFile(s.path(refreshFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("account: reading %s: %w", refreshFile, err)
+		return "", err
 	}
 	plain, err := callKeyStore(s.limit, s.sealer, func() ([]byte, error) { return s.sealer.Open(sealed) })
 	if err != nil {

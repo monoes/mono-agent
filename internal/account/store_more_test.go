@@ -209,7 +209,8 @@ func TestAnIOErrorIsNeverAnsweredAsNone(t *testing.T) {
 		t.Errorf("a session %v or a refresh token %v came out of a directory that is a file", sess != nil, rt != "")
 	}
 
-	// session.json and refresh.enc that are directories cannot be read either.
+	// session.json and refresh.enc that are directories are refused too: they are
+	// not regular files (readStoreFile).
 	dir := filepath.Join(root, "real")
 	for _, name := range []string{"session.json", "refresh.enc"} {
 		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {

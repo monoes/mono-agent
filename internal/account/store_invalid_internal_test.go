@@ -79,6 +79,8 @@ func TestLoadMarksAnUnusableSessionFileButNotAFailedRead(t *testing.T) {
 	}{
 		{"not JSON", func(p string) error { return os.WriteFile(p, []byte("{"), 0o600) }, fmt.Sprintf("account: session.json is not valid: %v", jsonErr)},
 		{"another version", func(p string) error { return os.WriteFile(p, []byte(`{"v":2}`), 0o600) }, "account: session.json has version 2, this build reads version 1"},
+		{"a directory", func(p string) error { return os.Mkdir(p, 0o700) }, "account: session.json is not a regular file"},
+		{"larger than 64 KiB", func(p string) error { return os.WriteFile(p, paddedSession(t, maxStoreFile+1), 0o600) }, "account: session.json is larger than 64 KiB"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
