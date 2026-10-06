@@ -44,6 +44,7 @@ Failure modes that no task's main tests would otherwise exercise and that bite a
 3. **A button that cannot work must not be offered.** The update installs by running the CLI, so with no CLI the gate's "Update MonoAgent" is a dead end, even once the app has heard of a release. Pinned in Task 6 (`offers no update for a missing CLI, whatever release is known`).
 4. **A hiccup in `account status` unmounts a working app and its unsaved state; a stream of refused calls spawns a CLI each.** One retry for a transient failure, none for a stable one, and a gap between focus and `login_required` checks. Pinned in Task 5 (retry and gap tests).
 5. **Signing in from the gate must reach the account bindings, and two names must not run two logins.** Pinned in Task 6 (the gate's sign-in calls `AccountLogin`) and Task 1 (`TestLoginBindingsReportUnderTheirOwnEventName`, and the existing `TestLibraryLoginCancel`, which now runs through the alias: one slot and one cancel for both names).
+6. **A computer that dropped its saved sign-in is not an outage, and a reason this app has never heard of is not a blank screen (spec A24).** After a refresh whose answer never arrived the guard drops the refresh token: the grace banner for `unconfirmed` says that this computer can no longer renew its sign-in, until when it still works, and offers the sign-in; the gate for `locked(unconfirmed)` offers it too; and a reason the app does not know falls back to generic words in the gate and in the banner. Pinned in Task 6 (`says that this computer can no longer renew its sign-in, and offers to sign in again`, the `unconfirmed` row of `says why for each reason`, and `uses generic words for a reason this app does not know`).
 
 ## Decisions this plan adds
 
@@ -1505,7 +1506,8 @@ describe('the account gate over the app', () => {
 
   it('says why for each reason, and offers the update where signing in again would not help', async () => {
     const cases = { expired: ['Your sign-in has expired', true], refused: ['monoes.me ended this sign-in', true],
-      clock_skew: ["This computer's clock looks wrong", true], key_unknown: ['This version cannot verify your sign-in', false] }
+      clock_skew: ["This computer's clock looks wrong", true], key_unknown: ['This version cannot verify your sign-in', false],
+      unconfirmed: ['This computer stopped using its saved sign-in', true] }
     for (const [reason, [title, canSignIn]] of Object.entries(cases)) {
       answer(doc({ state: 'locked', reason }))
       const { unmount } = setup()
@@ -1557,6 +1559,42 @@ describe('the account gate over the app', () => {
     answer(doc({ state: 'grace', reason: 'keyring_unavailable', grace_until: '2026-10-06T08:41:00Z' }))
     setup()
     expect(await screen.findByRole('status')).toHaveTextContent(/cannot open the key store.*\(41 minutes left\)/)
+  })
+
+  // A24: this computer dropped its saved sign-in because a refresh may have reached monoes.me without its answer
+  // arriving. monoes.me is not the problem and "offline" is not the fix: the banner says that the sign-in cannot
+  // be renewed, until when it works, and offers to sign in again, which makes the machine whole.
+  it('says that this computer can no longer renew its sign-in, and offers to sign in again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-06T08:00:00Z'))
+    const graceUntil = '2026-10-06T21:20:00Z' // 13 h 20 min away
+    answer(doc({ state: 'grace', reason: 'unconfirmed', grace_until: graceUntil }))
+    setup()
+    const banner = await screen.findByRole('status')
+    const when = new Date(graceUntil).toLocaleString('en', WHEN)
+    expect(banner).toHaveTextContent(`monoes.me may have received a refresh whose answer never arrived, so this computer can no longer renew its sign-in. It works until ${when} (13 hours left); sign in again before then.`)
+    expect(banner).not.toHaveTextContent('unreachable')
+
+    answer(doc())
+    fireEvent.click(within(banner).getByRole('button', { name: 'Sign in' }))
+    fireEvent.click(signIn(within(await screen.findByRole('dialog'))))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByTestId('shell')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  // A newer monoagentcli may report a reason this app does not know: the gate and the banner fall back to
+  // generic words and never to a blank or a raw key, and a locked machine can always sign in.
+  it('uses generic words for a reason this app does not know', async () => {
+    answer(doc({ state: 'locked', reason: 'from_the_future' }))
+    const first = setup()
+    const region = within(await gateRegion('Your sign-in could not be verified'))
+    expect(signIn(region)).toBeInTheDocument()
+    first.unmount()
+
+    answer(doc({ state: 'grace', reason: 'from_the_future', grace_until: '2026-10-06T21:20:00Z' }))
+    setup()
+    expect(await screen.findByRole('status')).toHaveTextContent('monoes.me is unreachable.')
   })
 })
 
@@ -1742,6 +1780,10 @@ with:
         "title": "This version cannot verify your sign-in",
         "body": "monoes.me signs logins with a newer key than this version of MonoAgent knows. Update MonoAgent, then sign in again."
       },
+      "unconfirmed": {
+        "title": "This computer stopped using its saved sign-in",
+        "body": "monoes.me may have received a refresh whose answer never arrived, so this computer stopped using its saved sign-in to protect your other installs. Sign in again on this computer."
+      },
       "invalid": {
         "title": "Your sign-in could not be verified",
         "body": "The saved sign-in is damaged or was not issued for MonoAgent. Sign in again."
@@ -1773,6 +1815,7 @@ with:
       "unreachable": "monoes.me is unreachable.",
       "serverError": "monoes.me is not answering properly.",
       "keyringUnavailable": "MonoAgent cannot open the key store to refresh your sign-in.",
+      "unconfirmed": "monoes.me may have received a refresh whose answer never arrived, so this computer can no longer renew its sign-in. It works until {{when}} ({{left}}); sign in again before then.",
       "keepsWorking": "Your sign-in keeps working offline until {{when}} ({{left}})."
     },
     "time": {
@@ -1829,6 +1872,10 @@ with:
         "title": "Esta versión no puede verificar tu sesión",
         "body": "monoes.me firma las sesiones con una clave más nueva que la que conoce esta versión de MonoAgent. Actualiza MonoAgent y vuelve a iniciar sesión."
       },
+      "unconfirmed": {
+        "title": "Este equipo dejó de usar su sesión guardada",
+        "body": "Es posible que monoes.me recibiera una renovación cuya respuesta nunca llegó, así que este equipo dejó de usar su sesión guardada para proteger tus otras instalaciones. Vuelve a iniciar sesión en este equipo."
+      },
       "invalid": {
         "title": "No se pudo verificar tu sesión",
         "body": "La sesión guardada está dañada o no se emitió para MonoAgent. Vuelve a iniciar sesión."
@@ -1860,6 +1907,7 @@ with:
       "unreachable": "No se puede conectar con monoes.me.",
       "serverError": "monoes.me no responde como debe.",
       "keyringUnavailable": "MonoAgent no puede abrir el almacén de claves para renovar tu sesión.",
+      "unconfirmed": "Es posible que monoes.me recibiera una renovación cuya respuesta nunca llegó, así que este equipo ya no puede renovar su sesión. Funciona hasta el {{when}} ({{left}}); vuelve a iniciar sesión antes.",
       "keepsWorking": "Tu sesión sigue funcionando sin conexión hasta el {{when}} ({{left}})."
     },
     "time": {
@@ -1907,6 +1955,8 @@ const REASONS = {
   clock_rollback: CLOCK,
   clock_skew: CLOCK,
   key_unknown: { title: 'account.gate.keyUnknown.title', body: 'account.gate.keyUnknown.body', update: true },
+  // This computer dropped its saved sign-in because a refresh may have been lost (A24): signing in again here is the way out.
+  unconfirmed: { title: 'account.gate.unconfirmed.title', body: 'account.gate.unconfirmed.body', signIn: true },
   // Also the words for a reason this app does not know (a newer monoagentcli may report one).
   invalid: { title: 'account.gate.invalid.title', body: 'account.gate.invalid.body', signIn: true },
 }
@@ -1992,9 +2042,11 @@ export default function AccountGate({ gate, view, update }) {
 ```jsx
 // The two notices the app wears while the machine's monoes.me sign-in still
 // allows work (spec §6.5): GraceBanner when monoes.me cannot be reached and the
-// saved sign-in carries on offline (dismissible, for that grace window), and
-// WarnBanner before the enforcement date for a machine with no usable sign-in
-// (with a way to sign in now). Keys are written out in full for the key scan.
+// saved sign-in carries on offline (dismissible, for that grace window; when this
+// computer dropped its saved sign-in because a refresh may have been lost, A24, it
+// says so and offers to sign in again), and WarnBanner before the enforcement
+// date for a machine with no usable sign-in (with a way to sign in now). Keys are
+// written out in full for the key scan.
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Clock, X, LogIn } from 'lucide-react'
@@ -2012,25 +2064,34 @@ const GRACE_WHY = {
 }
 const SIGNED_OUT = { logged_in: false }
 
-export function GraceBanner({ status }) {
+export function GraceBanner({ status, onSignedIn }) {
   const { t, i18n } = useTranslation()
   const [dismissedFor, setDismissedFor] = useState('')
+  const [open, setOpen] = useState(false)
   if (!status.grace_until || dismissedFor === status.grace_until) return null
 
   const until = new Date(status.grace_until)
   const minutes = Math.max(1, Math.round((until.getTime() - Date.now()) / 60000))
   const left = minutes >= 60 ? t('account.time.hours', { count: Math.floor(minutes / 60) }) : t('account.time.minutes', { count: minutes })
+  const when = until.toLocaleString(i18n.language, { dateStyle: 'medium', timeStyle: 'short' })
+  // A computer that dropped its saved sign-in cannot renew it, and signing in again is the only fix.
+  const dropped = status.reason === 'unconfirmed'
   return (
-    <div role="status" style={{ ...bar, background: 'rgba(234, 179, 8, 0.08)' }}>
-      <Clock size={13} aria-hidden="true" style={{ color: 'var(--yellow)', flexShrink: 0 }} />
-      <span style={{ flex: 1 }}>
-        {t(GRACE_WHY[status.reason] ?? 'account.grace.unreachable')}{' '}
-        {t('account.grace.keepsWorking', { when: until.toLocaleString(i18n.language, { dateStyle: 'medium', timeStyle: 'short' }), left })}
-      </span>
-      <button className="btn btn-ghost btn-icon" aria-label={t('account.banner.dismiss')} onClick={() => setDismissedFor(status.grace_until)}>
-        <X size={13} />
-      </button>
-    </div>
+    <>
+      <div role="status" style={{ ...bar, background: 'rgba(234, 179, 8, 0.08)' }}>
+        <Clock size={13} aria-hidden="true" style={{ color: 'var(--yellow)', flexShrink: 0 }} />
+        <span style={{ flex: 1 }}>
+          {dropped
+            ? t('account.grace.unconfirmed', { when, left })
+            : <>{t(GRACE_WHY[status.reason] ?? 'account.grace.unreachable')} {t('account.grace.keepsWorking', { when, left })}</>}
+        </span>
+        {dropped && <button className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>{t('account.warn.signIn')}</button>}
+        <button className="btn btn-ghost btn-icon" aria-label={t('account.banner.dismiss')} onClick={() => setDismissedFor(status.grace_until)}>
+          <X size={13} />
+        </button>
+      </div>
+      {open && <SignInDialog onClose={() => setOpen(false)} onSignedIn={onSignedIn} />}
+    </>
   )
 }
 
@@ -2104,14 +2165,14 @@ export default function AccountShell({ gate, renderShell }) {
   if (view.locked) return <AccountGate gate={gate} view={view} update={update} />
   return renderShell(
     <>
-      {view.grace && <GraceBanner status={view.status} />}
+      {view.grace && <GraceBanner status={view.status} onSignedIn={() => gate.check('manual')} />}
       {view.warn && <WarnBanner enforceFrom={view.enforceFrom} onSignedIn={() => gate.check('manual')} />}
     </>,
   )
 }
 ```
 
-- [ ] **Step 8: Run the tests.** `npx vitest run --maxWorkers=3 src/components/account src/locales/accountKeys.test.js`. Expected: `Test Files  2 passed (2)`, `Tests  21 passed (21)`. Then the suites that share what changed: `npx vitest run --maxWorkers=3 src/components/library src/doctrine.test.js src/selectStyle.test.js` passes unchanged (the library dialog and its tests keep the default service).
+- [ ] **Step 8: Run the tests.** `npx vitest run --maxWorkers=3 src/components/account src/locales/accountKeys.test.js`. Expected: `Test Files  2 passed (2)`, `Tests  23 passed (23)`. Then the suites that share what changed: `npx vitest run --maxWorkers=3 src/components/library src/doctrine.test.js src/selectStyle.test.js` passes unchanged (the library dialog and its tests keep the default service).
 
 - [ ] **Step 9: Commit:**
 
