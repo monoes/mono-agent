@@ -63,6 +63,9 @@ func reasonLine(r Reason) string {
 type RefusedError struct{ Description string }
 
 func (e *RefusedError) Error() string {
+	if e == nil {
+		return ""
+	}
 	if e.Description == "" {
 		return "account: monoes.me refused the refresh token (invalid_grant)"
 	}
@@ -78,10 +81,18 @@ type TransientError struct {
 }
 
 func (e *TransientError) Error() string {
+	if e == nil {
+		return ""
+	}
 	if e.Err == nil {
 		return fmt.Sprintf("account: refresh failed (%s)", e.Reason)
 	}
 	return fmt.Sprintf("account: refresh failed (%s): %v", e.Reason, e.Err)
 }
 
-func (e *TransientError) Unwrap() error { return e.Err }
+func (e *TransientError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}

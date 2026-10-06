@@ -135,7 +135,7 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	var transient *TransientError
 	result := ReasonUnreachable // D27: every failure that is not invalid_grant is "unreachable" unless it says server_error
 	switch {
-	case errors.As(err, &refused):
+	case errors.As(err, &refused) && refused != nil:
 		return g.applyRefusal(sess, now, refused)
 	case err != nil && ctx.Err() != nil:
 		return g.Status(), outcomeSkipped, ctx.Err() // the caller gave up; that says nothing about the account
