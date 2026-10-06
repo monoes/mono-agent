@@ -5204,7 +5204,7 @@ git commit -m "feat(tasks): the operator's commands: edit, move, approve, archiv
 - Test: `cmd/monoagentcli/task_agent_test.go`
 
 **Interfaces:**
-- Consumes: Task 8's `callerFor`, `taskCaller.agent()`, `flagAs`, `withTasks`, `taskErr`, `parseTaskID`, `columnLabel`; Task 9's `printTask`, `taskCut`, `heldNote`, `untrustedNotice`; Task 10's `writeOneTask`; `Store.Next`, `Claim`, `Comment`, `Finish`, `Release`, `Counts`; `tasks.Outcome`.
+- Consumes: Task 8's `callerFor`, `taskCaller.agent()`, `flagAs`, `withTasks`, `taskErr`, `parseTaskID`, `columnLabel`; Task 9's `printNotes(w, notes)` (the one way to print a task's notes: the untrusted notice, the notes indented, an end line), `taskCut`, `heldNote`, `leaseEnd`, `taskCommand(p, as, words)`, `untrustedNotice` (`printTask` now takes `(w, p, as, t, events)`: Task 11 does not call it); Task 10's `writeOneTask`; `Store.Next`, `Claim`, `Comment`, `Finish`, `Release`, `Counts`; `tasks.Outcome`.
 - Produces: `newTaskNextCmd`, `newTaskClaimCmd`, `newTaskCommentCmd`, `newTaskFinishCmd`, `newTaskReleaseCmd`, `newTaskDigestCmd`; the printers `printNext`, `printClaimed`, `continueHelp`.
 - Behaviour: `next` without `--claim` only looks and works for anyone; `next --claim`, `claim`, `finish`, `release` need an agent with a name (`--as`, or `MONOAGENT_ACTOR`); `comment` is an agent's when the caller is an agent (needs the name) and the operator's otherwise. Every command an agent is told to run next carries `--profile ID`, because the active profile can change under a running session. `digest` prints nothing when the profile has no Ready task and always exits 0.
 - JSON: `next` and `claim` are `{"profile", "task"}` (`task` is `null` when there is nothing to do); `digest` is `{"profile", "ready", "next": {"id","title"} or null}`.
@@ -5461,9 +5461,7 @@ func printClaimed(w io.Writer, p tasks.Profile, t tasks.Task, name string) {
 	if t.Source.URL != "" {
 		fmt.Fprintf(w, "Link: %s\n", t.Source.URL)
 	}
-	if t.Notes != "" {
-		fmt.Fprintf(w, "\n%s\n%s\n", untrustedNotice, t.Notes)
-	}
+	printNotes(w, t.Notes) // Task 9's helper: the notice, the notes indented, an end line
 	continueHelp(w, p, t, name)
 }
 
@@ -5473,9 +5471,7 @@ func printNext(w io.Writer, p tasks.Profile, t tasks.Task) {
 	if t.Source.URL != "" {
 		fmt.Fprintf(w, "Link: %s\n", t.Source.URL)
 	}
-	if t.Notes != "" {
-		fmt.Fprintf(w, "\n%s\n%s\n", untrustedNotice, t.Notes)
-	}
+	printNotes(w, t.Notes) // Task 9's helper: the notice, the notes indented, an end line
 	cli := "monoagentcli --profile " + p.ID + " task"
 	fmt.Fprintf(w, "\nTake it:\n  %s next --claim --as <your-name>\n  %s claim %d --as <your-name>\n", cli, cli, t.ID)
 }
