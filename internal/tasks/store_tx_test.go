@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,6 +76,30 @@ func TestACancelAfterTheWorkStillCommits(t *testing.T) {
 		t.Errorf("%d rows kept, want 1", n)
 	}
 	mustAdd(t, s, "default", "after", false) // and the connection is free
+}
+
+// COMMIT is where a deferred foreign key is checked, so a row for an unknown profile, with the check
+// deferred, is a way to make it fail. The failure must reach the caller and nothing is kept: a task
+// that was not stored must not be reported as stored, and the connection must not go back to the
+// pool inside the transaction.
+func TestAFailingCommitIsReportedAndRolledBack(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	err := s.tx(bg, func(x dbx) error {
+		if _, err := x.ExecContext(bg, `PRAGMA defer_foreign_keys = ON`); err != nil {
+			return err
+		}
+		_, err := x.ExecContext(bg, `INSERT INTO tasks (profile_id, title, position, created_at, updated_at) VALUES ('no-such-profile', 'x', 1, ?, ?)`, rowTime, rowTime)
+		return err // the INSERT goes through: the check waits for the COMMIT
+	})
+	if err == nil || !strings.Contains(err.Error(), "commit") || !strings.Contains(err.Error(), "FOREIGN KEY") {
+		t.Fatalf("tx: %v, want the failed commit reported (this test needs foreign keys enforced)", err)
+	}
+	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
+		t.Errorf("%d rows left after the failed commit", n)
+	}
+	for i := 0; i < 3; i++ { // the pool hands out every connection it has: none is left inside the transaction
+		mustAdd(t, s, "default", "after", false)
+	}
 }
 
 func TestSnapshotReadsOneStateAndEndsItsTransaction(t *testing.T) {
