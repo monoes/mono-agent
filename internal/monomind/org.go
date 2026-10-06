@@ -317,10 +317,20 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	cmd.Stdout, cmd.Stderr = capture.f, capture.f
+	if err := capture.startDrain(ctx, bin, projectRoot); err != nil {
+		capture.close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("start org output capture: %w", err)
+	}
+	cmd.Stdout, cmd.Stderr = capture.stream, capture.stream
 	began := time.Now()
 	cmd, err = startDetached(cmd)
+	// Only monomind keeps the write end, so its exit ends the drainer.
+	capture.stream.Close()
 	if err != nil {
+		capture.finishDrain()
 		capture.close()
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}

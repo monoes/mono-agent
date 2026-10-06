@@ -106,13 +106,18 @@ var startWatch = 3 * time.Second
 const captureTail = 4096
 
 // startCapture is a bounded, nameless capture of a detached child's output.
-// It must be a file, not a pipe: the child outlives this process, and a
-// pipe would break under it (SIGPIPE/EPIPE) when we exit. The file is
+// The stream drainer keeps this file bounded even after the launcher exits.
+// The capture must be a file, not a pipe: the child outlives this process, and a
+// pipe to this process would break under it (SIGPIPE/EPIPE) when we exit. The file is
 // unlinked at once, so no path is left behind; the child writes in append
-// mode and we truncate it while we are alive, so it does not accumulate.
+// mode; the detached drainer truncates it on every chunk, so it does not accumulate.
 type startCapture struct {
-	f    *os.File
-	left string // path still to remove (a platform that can't unlink an open file)
+	stream   *os.File
+	drainer  *exec.Cmd
+	drained  chan struct{}
+	drainErr error
+	f        *os.File
+	left     string // path still to remove (a platform that can't unlink an open file)
 }
 
 func newStartCapture() (*startCapture, error) {
@@ -169,14 +174,26 @@ func watchStart(ctx context.Context, cmd *exec.Cmd, org string, cap *startCaptur
 	defer timer.Stop()
 	poll := time.NewTicker(startPoll)
 	defer poll.Stop()
+	drained := cap.drained
 	for {
 		select {
+		case <-drained:
+			drained = nil
+			if cap.drainErr != nil {
+				killProcessGroup(cmd, cmd.Process.Pid)
+				<-done
+				cap.close()
+				return fmt.Errorf("org output capture failed: %w", cap.drainErr)
+			}
+			continue
 		case err := <-done:
+			cap.finishDrain()
 			defer cap.close()
 			return startExit(org, err, cap.tail())
 		case <-ctx.Done():
 			killProcessGroup(cmd, cmd.Process.Pid)
 			<-done
+			cap.finishDrain()
 			cap.close()
 			return ctx.Err()
 		case <-poll.C:
@@ -185,7 +202,18 @@ func watchStart(ctx context.Context, cmd *exec.Cmd, org string, cap *startCaptur
 			}
 		case <-timer.C:
 		}
-		go keepSmall(cap, done)
+		go func() {
+			select {
+			case <-done:
+			case <-cap.drained:
+				if cap.drainErr != nil {
+					killProcessGroup(cmd, cmd.Process.Pid)
+				}
+				<-done
+			}
+			cap.finishDrain()
+			cap.close()
+		}()
 		return nil
 	}
 }
@@ -208,22 +236,6 @@ func startExit(org string, err error, out string) error {
 		return asSignatureRefusal(org, fmt.Errorf("monomind org run %s: %s", org, out))
 	}
 	return fmt.Errorf("monomind org run %s exited at start (%v): %s", org, err, out)
-}
-
-// keepSmall truncates the capture once a second until the child is gone,
-// then closes it.
-func keepSmall(cap *startCapture, done <-chan error) {
-	defer cap.close()
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-tick.C:
-			_ = cap.f.Truncate(0)
-		}
-	}
 }
 
 // runStarted is monomind's evidence that a run of org began after since:
