@@ -189,8 +189,27 @@ func TestWatchPollsEveryTwoSecondsWithoutAnInterval(t *testing.T) {
 	}
 }
 
+// A poll that finds the revision where it was reads no counts (spec 5.4): the app polls for as long as it
+// runs, and a poll should be a primary-key read. The clock is asked for by the read of the counts, so the
+// calls to it count the polls that read them.
+func TestWatchReadsTheCountsOnlyWhenTheRevisionMoves(t *testing.T) {
+	s, _, c := newTestStore(t)
+	var asked atomic.Int32
+	s.now = func() time.Time { asked.Add(1); return c.t }
+	w := startWatch(t, s, "default", 5*time.Millisecond, nil)
+	waitChange(t, w.changes)
+	atStart := asked.Load()
+	if atStart == 0 {
+		t.Fatal("the report at the start did not ask the clock: this test no longer sees the counts being read")
+	}
+	noChange(t, w, 150*time.Millisecond) // some thirty polls find nothing new
+	if n := asked.Load() - atStart; n != 0 {
+		t.Errorf("the counts were read %d times while the revision stood still", n)
+	}
+}
+
 // The callback runs after the poll has ended, with no connection held: it may read the board, which is what
-// the app does with a report, however small the pool is.
+// the app does with a report.
 func TestWatchCallsBackWithNoConnectionHeld(t *testing.T) {
 	s, db, _ := newTestStore(t)
 	inUse := make(chan int, 8)
