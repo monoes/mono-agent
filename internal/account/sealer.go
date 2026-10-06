@@ -43,8 +43,8 @@ type keyringSealer struct {
 // promptingSealer is implemented by a sealer that may wait for a person: one
 // that asks for a passphrase on the terminal or shows an unlock dialog. The store
 // does not put keyStoreTimeout on the calls of such a sealer. The method is
-// unexported, so only a sealer of this package can say so: a wrapper of one does
-// not, and is bounded like any other.
+// unexported, so only a sealer of this package can say so: a wrapper from another
+// package does not, and is bounded like any other.
 type promptingSealer interface{ prompts() bool }
 
 func (s keyringSealer) prompts() bool { return s.mayPrompt }
