@@ -271,7 +271,12 @@ func (g *Guard) touchHW(now time.Time) {
 		g.adopt(fresh)
 		return
 	}
-	if g.store.Save(&next) == nil {
-		g.adopt(&next)
+	if g.store.Save(&next) != nil {
+		// The mark was not written, but the session read under the lock is the newest
+		// this process has seen (another process may have written it within one
+		// modification-time tick): take it in, as the cases above do.
+		g.adopt(fresh)
+		return
 	}
+	g.adopt(&next)
 }
