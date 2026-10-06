@@ -9,10 +9,11 @@ import (
 )
 
 // ErrKeyringUnavailable means the key that seals the refresh token cannot be
-// used: the key store cannot be opened or does not answer in time
-// (keyStoreTimeout), the key is missing, or it does not open the stored token.
-// The session stays usable until its grace ends, and `account status` reports
-// keyring_unavailable so it is not mistaken for a network problem.
+// used: the key store cannot be opened, does not answer in time
+// (keyStoreTimeout) or still waits for an earlier call, the key is missing, or it
+// does not open the stored token. The session stays usable until its grace ends,
+// and `account status` reports keyring_unavailable so it is not mistaken for a
+// network problem.
 var ErrKeyringUnavailable = errors.New("account: key store unavailable")
 
 // Sealer seals the refresh token under a key from the OS keyring or the

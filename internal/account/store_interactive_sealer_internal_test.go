@@ -113,10 +113,10 @@ func TestTheQuietKeyringSealersCallsStillTimeOut(t *testing.T) {
 	}
 	kek := newTestKEK(make(chan struct{}))
 	t.Cleanup(kek.release)
-	st := OpenStore(dir, keyringSealer{kek: kek.get})
+	loads, saves := ownLimit(OpenStore(dir, keyringSealer{kek: kek.get})), ownLimit(OpenStore(dir, keyringSealer{kek: kek.get}))
 	var loadErr, saveErr error
-	timed(t, "LoadRefresh", func() { _, loadErr = st.LoadRefresh() })
-	timed(t, "SaveRefresh", func() { saveErr = st.SaveRefresh("rt-2") })
+	timed(t, "LoadRefresh", func() { _, loadErr = loads.LoadRefresh() })
+	timed(t, "SaveRefresh", func() { saveErr = saves.SaveRefresh("rt-2") })
 	for name, err := range map[string]error{"LoadRefresh": loadErr, "SaveRefresh": saveErr} {
 		if !errors.Is(err, ErrKeyringUnavailable) || !strings.Contains(err.Error(), "did not answer within") {
 			t.Errorf("%s = %v, want the key store timeout", name, err)

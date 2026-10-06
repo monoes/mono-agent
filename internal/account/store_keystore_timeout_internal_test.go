@@ -136,6 +136,14 @@ func storeWithToken(t *testing.T, inner Sealer, rt string) (Store, string) {
 	return OpenStore(dir, inner), dir
 }
 
+// ownLimit gives the store a limit of its own on the key store calls that stay
+// parked, as if it were another process: what one test or one store leaves
+// parked must not refuse the calls of the next.
+func ownLimit(st Store) Store {
+	st.(*fileStore).limit = &keyStoreLimit{}
+	return st
+}
+
 func TestTheKeyStoreTimeoutIsTenSeconds(t *testing.T) {
 	if keyStoreTimeout != 10*time.Second {
 		t.Fatalf("keyStoreTimeout = %v, want 10 s: long enough for a keychain prompt, short enough that a refresh does not hold session.lock for a minute", keyStoreTimeout)
@@ -148,7 +156,7 @@ func TestLoadRefreshGivesUpOnAKeyStoreThatDoesNotAnswer(t *testing.T) {
 	_, dir := storeWithToken(t, inner, "rt-1")
 	waiting := &gatedSealer{inner: inner, holdOpen: make(chan struct{})}
 	t.Cleanup(waiting.release)
-	st := OpenStore(dir, waiting)
+	st := ownLimit(OpenStore(dir, waiting))
 
 	var token string
 	var err error
@@ -175,7 +183,7 @@ func TestSaveRefreshGivesUpOnAKeyStoreThatDoesNotAnswerAndWritesNothing(t *testi
 	_, dir := storeWithToken(t, inner, "rt-1") // the token that is about to be rotated away
 	waiting := &gatedSealer{inner: inner, holdSeal: make(chan struct{})}
 	t.Cleanup(waiting.release)
-	st := OpenStore(dir, waiting)
+	st := ownLimit(OpenStore(dir, waiting))
 	before := snapshotDir(t, dir)
 
 	var err error
@@ -211,14 +219,14 @@ func TestSaveRefreshThatTimesOutLeavesNoFileWhereThereWasNone(t *testing.T) {
 	waiting := &gatedSealer{inner: NewMemorySealer(), holdSeal: make(chan struct{})}
 	t.Cleanup(waiting.release)
 	dir := filepath.Join(t.TempDir(), "account")
-	st := OpenStore(dir, waiting)
+	st := ownLimit(OpenStore(dir, waiting))
 	var err error
 	timed(t, "SaveRefresh", func() { err = st.SaveRefresh("rt-1") })
 	if !errors.Is(err, ErrKeyringUnavailable) {
 		t.Fatalf("SaveRefresh = %v, want an error that is ErrKeyringUnavailable", err)
 	}
 	waiting.release()
-	if !waitUntil(func() bool { return waiting.ended.Load() == 1 }) {
+	if !waitUntil(func() bool { return waiting.ended.Load() == 1 && goroutinesIn("callKeyStore") == 0 }) {
 		t.Fatal("the abandoned Seal did not end")
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -281,37 +289,6 @@ type errSealer struct{ err error }
 func (s errSealer) Seal([]byte) ([]byte, error) { return nil, s.err }
 func (s errSealer) Open([]byte) ([]byte, error) { return nil, s.err }
 
-// A call that was given up on keeps running until the key store answers, and then
-// it must end: with nobody waiting for its result, it still must not block on
-// handing it over. A goroutine per unanswered call that never ends would leak
-// for as long as the process runs.
-func TestAbandonedKeyStoreCallsEndOnceTheKeyStoreAnswers(t *testing.T) {
-	setKeyStoreTimeout(t, 20*time.Millisecond)
-	inner := NewMemorySealer()
-	_, dir := storeWithToken(t, inner, "rt-1")
-	waiting := &gatedSealer{inner: inner, holdOpen: make(chan struct{}), holdSeal: make(chan struct{})}
-	t.Cleanup(waiting.release)
-	st := OpenStore(dir, waiting)
-
-	const rounds = 6
-	for range rounds {
-		var loadErr, saveErr error
-		timed(t, "LoadRefresh", func() { _, loadErr = st.LoadRefresh() })
-		timed(t, "SaveRefresh", func() { saveErr = st.SaveRefresh("rt-2") })
-		if !errors.Is(loadErr, ErrKeyringUnavailable) || !errors.Is(saveErr, ErrKeyringUnavailable) {
-			t.Fatalf("LoadRefresh = %v, SaveRefresh = %v, want ErrKeyringUnavailable from both", loadErr, saveErr)
-		}
-	}
-	// Control: the abandoned calls are alive, and this test sees them.
-	if got := goroutinesIn("callKeyStore"); got != 2*rounds {
-		t.Fatalf("%d goroutines in the key store call while it waits, want %d: this test cannot tell a leak from none", got, 2*rounds)
-	}
-	waiting.release()
-	if !waitUntil(func() bool { return goroutinesIn("callKeyStore") == 0 }) {
-		t.Fatalf("%d of %d abandoned calls are still alive 3 s after the key store answered: they cannot hand over a result nobody waits for", goroutinesIn("callKeyStore"), 2*rounds)
-	}
-}
-
 // A refresh whose key store never answers lets go of session.lock when the
 // timeout ends, so that the other processes' refreshes go through while it is
 // still waiting. Without the bound one waiting key store held the lock against
@@ -323,9 +300,9 @@ func TestAKeyStoreThatWaitsForeverDoesNotHoldTheSessionLockPastItsTimeout(t *tes
 	setKeyStoreTimeout(t, 300*time.Millisecond)
 	waiting := &gatedSealer{inner: r.seal, holdOpen: make(chan struct{})}
 	t.Cleanup(waiting.release)
-	a := NewGuard(GuardOptions{Store: OpenStore(r.dir, waiting), Refresher: r.srv, Now: r.clock.Now})
+	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(a.Close)
-	b := NewGuard(GuardOptions{Store: OpenStore(r.dir, r.seal), Refresher: r.srv, Now: r.clock.Now})
+	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now}) // another process: its own limit
 	t.Cleanup(b.Close)
 
 	// Process A is due, takes the lock and reads refresh.enc: the key store waits.
@@ -385,7 +362,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	setKeyStoreTimeout(t, 300*time.Millisecond)
 	waiting := &gatedSealer{inner: r.seal, holdSeal: make(chan struct{})}
 	t.Cleanup(waiting.release)
-	a := NewGuard(GuardOptions{Store: OpenStore(r.dir, waiting), Refresher: r.srv, Now: r.clock.Now})
+	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(a.Close)
 
 	var st Status
@@ -404,7 +381,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 		t.Fatalf("stored session = %+v (%v), want the attempt recorded as keyring_unavailable", sess, err)
 	}
 	// No later attempt, by this process or by another, presents the dead token.
-	b := NewGuard(GuardOptions{Store: OpenStore(r.dir, r.seal), Refresher: r.srv, Now: r.clock.Now})
+	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(b.Close)
 	for range 3 {
 		r.clock.Advance(2 * time.Minute)
@@ -417,10 +394,13 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	if n := r.srv.calls.Load(); n != 1 {
 		t.Fatalf("%d network refreshes: the dead refresh token was presented again", n)
 	}
-	// The Seal that was given up on writes nothing when the key store answers.
+	// The Seal that was given up on writes nothing when the key store answers. Two
+	// calls reached the key store: the Open that answered, and the Seal.
 	waiting.release()
-	if !waitUntil(func() bool { return waiting.ended.Load() == 1 }) {
-		t.Fatal("the abandoned Seal did not end")
+	if !waitUntil(func() bool {
+		return waiting.began.Load() == 2 && waiting.ended.Load() == 2 && goroutinesIn("callKeyStore") == 0
+	}) {
+		t.Fatalf("the abandoned Seal did not end (%d calls began, %d ended, %d goroutines left)", waiting.began.Load(), waiting.ended.Load(), goroutinesIn("callKeyStore"))
 	}
 	if _, err := os.Stat(filepath.Join(r.dir, refreshFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the Seal that was given up on wrote refresh.enc (stat err %v)", err)
