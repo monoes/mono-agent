@@ -45,11 +45,15 @@ func InstallForTest(t testing.TB, g *Guard) {
 
 // Require is the gate every layer calls. It uses the installed guard. With none
 // installed it fails closed: the process is judged as not logged in, so once the
-// gate is enforced it returns *LoginRequiredError. Two exceptions: while the
-// package is dormant, or before the enforcement date, nothing locks (spec D22),
-// so it returns nil; and inside a test binary (testing.Testing) it returns nil
-// unless StrictForTest is active, so unit tests that never install a guard keep
-// working (spec D24).
+// gate is enforced it returns *LoginRequiredError. That judgment is made on the
+// clock alone: the clock-guard record is read only through a guard, so a clock
+// set back before the enforcement date un-enforces a gate that is reached with
+// no guard, whatever the record on disk says. The command's main therefore
+// installs a guard in every process before any gate site runs (B2 writes that
+// call and pins it with a test). Two exceptions: while the package is dormant,
+// or before the enforcement date, nothing locks (spec D22), so it returns nil;
+// and inside a test binary (testing.Testing) it returns nil unless StrictForTest
+// is active, so unit tests that never install a guard keep working (spec D24).
 func Require(ctx context.Context) error {
 	if g := Current(); g != nil {
 		return g.Require(ctx)
