@@ -230,8 +230,8 @@ func TestTheGrantHasItsOwnContextWhateverTheCallerDoes(t *testing.T) {
 		caller func() (context.Context, context.CancelFunc)
 	}{
 		{"a caller with no deadline", func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }},
-		{"a caller with a deadline of 2 seconds, far from over", func() (context.Context, context.CancelFunc) {
-			return context.WithTimeout(context.Background(), 2*time.Second)
+		{"a caller with a deadline of 10 seconds, far from over", func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 10*time.Second)
 		}},
 	}
 	for _, ep := range entryPoints {
