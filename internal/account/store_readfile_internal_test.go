@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 )
@@ -75,6 +76,40 @@ func TestTheStoreReadsAtMost64KiBOfEitherFile(t *testing.T) {
 	}
 	if n := sealer.opens.Load() - opens; n != 0 {
 		t.Errorf("a refresh.enc that is too large reached the key store %d times", n)
+	}
+}
+
+// The cap bounds what is read, not only what is kept: a large regular file is
+// refused after 64 KiB and one byte, not read whole first. The files are sparse,
+// so the test writes almost nothing to the disk.
+func TestTheStoreStopsReadingAtTheCap(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{sessionFile, refreshFile} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(filepath.Join(dir, name), 64<<20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := OpenStore(dir, NewMemorySealer())
+	for _, c := range []struct {
+		file string
+		read func() error
+	}{
+		{sessionFile, func() error { _, err := st.Load(); return err }},
+		{refreshFile, func() error { _, err := st.LoadRefresh(); return err }},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		err := c.read()
+		runtime.ReadMemStats(&after)
+		if !errors.Is(err, errTooLarge) {
+			t.Errorf("a %s of 64 MiB: %v, want the too-large refusal", c.file, err)
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > 4<<20 {
+			t.Errorf("refusing a %s of 64 MiB allocated %d bytes: it was read past the cap", c.file, n)
+		}
 	}
 }
 
