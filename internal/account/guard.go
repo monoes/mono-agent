@@ -7,7 +7,11 @@ import (
 	"time"
 )
 
-// TokenSet is what a refresh-token grant returns.
+// TokenSet is what a refresh-token grant returns. monoes.me rotates the refresh
+// token on every use: RefreshToken is the token it rotated to, one equal to the
+// token presented says it was not rotated, and an empty one is read as an outcome
+// that is unknown (A24), so a Refresher must leave it empty when the answer named
+// none, never fill in the token it presented.
 type TokenSet struct{ AccessToken, RefreshToken string }
 
 // Refresher performs the OAuth refresh-token grant with resource=Audience. It

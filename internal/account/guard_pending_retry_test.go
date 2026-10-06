@@ -26,13 +26,14 @@ import (
 type fate int
 
 const (
-	arrives    fate = iota // monoes.me processes the request and the answer comes back
-	lost                   // monoes.me processes the request and the answer never arrives: an outcome that is unknown
-	unsent                 // the request never leaves this machine (DNS, dial): settled, monoes.me is not reached
-	status429              // monoes.me answers a complete HTTP 429 (a rate limit) and processes nothing: settled
-	plain                  // monoes.me processes the request and the client gets an error that is not a *TransientError
-	opaque                 // monoes.me processes the request and its answer holds a new refresh token and an access token this build cannot verify
-	gateway504             // monoes.me processes the request and a gateway answers HTTP 504 in its place: an outcome that is unknown
+	arrives        fate = iota // monoes.me processes the request and the answer comes back
+	lost                       // monoes.me processes the request and the answer never arrives: an outcome that is unknown
+	unsent                     // the request never leaves this machine (DNS, dial): settled, monoes.me is not reached
+	status429                  // monoes.me answers a complete HTTP 429 (a rate limit) and processes nothing: settled
+	plain                      // monoes.me processes the request and the client gets an error that is not a *TransientError
+	opaque                     // monoes.me processes the request and its answer holds a new refresh token and an access token this build cannot verify
+	gateway504                 // monoes.me processes the request and a gateway answers HTTP 504 in its place: an outcome that is unknown
+	noRefreshToken             // monoes.me processes the request and its answer arrives without the rotated refresh token
 )
 
 // flakyNet is the network between a guard and the windowServer. Each grant takes the
@@ -79,6 +80,10 @@ func (n *flakyNet) Refresh(ctx context.Context, rt string) (*account.TokenSet, e
 		return nil, errors.New("read tcp: connection reset by peer")
 	case gateway504:
 		return nil, &account.TransientError{Reason: account.ReasonServerError, Err: errors.New("the gateway answered HTTP 504 Gateway Timeout")}
+	case noRefreshToken:
+		if err == nil {
+			return &account.TokenSet{AccessToken: ts.AccessToken}, nil
+		}
 	case opaque:
 		if err == nil {
 			return &account.TokenSet{AccessToken: "opaque-0123456789", RefreshToken: ts.RefreshToken}, nil

@@ -39,13 +39,22 @@ func TestARefreshKeepsTheUserAndTheHostOfTheSession(t *testing.T) {
 	}
 }
 
-// A server that does not rotate the refresh token leaves the working one where
-// it is. Here the key store cannot seal, so a write of it would fail and then
-// delete the good one.
+// monoes.me rotates the refresh token on every use. An answer that names the very token
+// that was presented says it was not rotated: a definitive answer, the session is stored and
+// the token stays where it is. An answer that names NO refresh token cannot mean that: it
+// says nothing about the one that was presented, which may be rotated, so its outcome is
+// unknown (A24): nothing of it is stored, the marker and the old token stay, and the attempt
+// is a server error (the retry inside the window gets the same answer; after it the token is
+// dropped). Either way the key store, which cannot seal here, is not asked to.
 func TestAServerThatAnswersWithoutANewRefreshTokenKeepsTheOldOne(t *testing.T) {
-	cases := []struct{ name, answer string }{
-		{"no refresh token in the answer", ""},
-		{"the same refresh token in the answer", "rt-1"},
+	cases := []struct {
+		name, answer string
+		state        account.State
+		reason       account.Reason
+		marker       bool
+	}{
+		{"no refresh token in the answer: an outcome that is unknown", "", account.StateGrace, account.ReasonServerError, true},
+		{"the same refresh token in the answer: not rotated", "rt-1", account.StateOK, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -58,14 +67,17 @@ func TestAServerThatAnswersWithoutANewRefreshTokenKeepsTheOldOne(t *testing.T) {
 			g := account.NewGuard(account.GuardOptions{Store: fs, Refresher: fixed, Now: e.f.Clock.Now})
 			t.Cleanup(g.Close)
 			st, err := g.EnsureFresh(context.Background())
-			if err != nil || st.State != account.StateOK {
-				t.Fatalf("EnsureFresh = %s/%q, %v, want ok", st.State, st.Reason, err)
+			if err != nil || st.State != c.state || st.Reason != c.reason {
+				t.Fatalf("EnsureFresh = %s/%q, %v, want %s/%q", st.State, st.Reason, err, c.state, c.reason)
 			}
 			if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save"}) {
-				t.Fatalf("writes = %v, want the marker and the session only: a refresh token that did not change is not written", got)
+				t.Fatalf("writes = %v, want the marker and then the session or the record of the attempt: a refresh token that did not change is not written", got)
 			}
 			if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
-				t.Fatal("the refresh token the server did not change was lost")
+				t.Fatal("the refresh token the answer did not replace was lost")
+			}
+			if got := e.rawPending() != ""; got != c.marker {
+				t.Fatalf("a marker on disk: %t, want %t (stored session %s)", got, c.marker, describe(e.session()))
 			}
 		})
 	}

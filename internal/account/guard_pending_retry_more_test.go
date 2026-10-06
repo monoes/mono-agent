@@ -328,3 +328,46 @@ func TestADormantEnsureFreshNeitherRetriesNorDropsButRefreshDoes(t *testing.T) {
 		}
 	})
 }
+
+// monoes.me rotates the refresh token on every use, so an answer that names none cannot mean
+// that the one presented still holds: it may be rotated, and its successor is lost. That is an
+// outcome that is unknown, whatever access token comes with it: the marker stays, the retry
+// inside the window gets monoes.me's whole answer, and after the window the token is dropped
+// instead of being presented when the access token that came with the answer runs out.
+func TestAnAnswerWithoutARefreshTokenIsAnUnknownOutcome(t *testing.T) {
+	stripped := func(t *testing.T) *lostRig {
+		t.Helper()
+		r := newLostRig(t)
+		r.net.then(noRefreshToken)
+		if _, err := r.command(); err != nil {
+			t.Fatal(err)
+		}
+		if !r.srv.isCurrent("rt-rotated-1") {
+			t.Fatal("monoes.me did not rotate: the test cannot tell")
+		}
+		if sess := r.e.session(); !sess.PendingSince.Equal(r.t0) || sess.LastResult != "server_error" {
+			t.Errorf("stored session = %s, want the marker kept and server_error recorded", describe(sess))
+		}
+		return r
+	}
+	t.Run("the retry inside the window recovers", func(t *testing.T) {
+		r := stripped(t)
+		r.e.f.Clock.Advance(time.Minute)
+		if st, err := r.command(); err != nil || st.State != account.StateOK || r.srv.isRevoked() {
+			t.Fatalf("the retry = %s/%q, %v (revoked %t), want ok", st.State, st.Reason, err, r.srv.isRevoked())
+		}
+		if rt, _ := r.e.store.LoadRefresh(); rt != "rt-rotated-1" || r.e.rawPending() != "" {
+			t.Fatalf("refresh.enc holds %q with pending %q, want the rotated token and no marker", rt, r.e.rawPending())
+		}
+	})
+	t.Run("after the window the token is never presented", func(t *testing.T) {
+		r := stripped(t)
+		r.e.f.Clock.Advance(56 * time.Minute) // the access token of the answer has run down: due by the CLI's margin
+		if _, err := r.command(); err != nil {
+			t.Fatal(err)
+		}
+		if got := count(r.srv.presented(), "rt-1"); got != 1 || r.srv.isRevoked() {
+			t.Fatalf("monoes.me was presented rt-1 %d times (revoked %t), want once: the token whose successor was lost is never presented again", got, r.srv.isRevoked())
+		}
+	})
+}

@@ -291,21 +291,25 @@ func isTypedNil(err error) bool {
 // and a pass after the window drops it: one needless sign-in after a failed write,
 // accepted.
 func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *TokenSet) (Status, outcome, error) {
+	if ts.RefreshToken == "" {
+		// monoes.me rotates the refresh token on every use, so an answer that names none
+		// cannot mean that the one presented still holds: it may be rotated, and its
+		// successor is lost. The outcome is unknown, whatever access token came with it:
+		// nothing of it is stored, and the marker and the old token stay (A24).
+		return g.recordAttempt(cur, now, string(ReasonServerError))
+	}
 	next, verr := NewSession(cur.Host, ts.AccessToken, cur.User, now)
-	if ts.RefreshToken != "" && ts.RefreshToken != oldRefresh {
+	if ts.RefreshToken != oldRefresh {
 		if err := g.store.SaveRefresh(ts.RefreshToken); err != nil {
 			st, oc, _ := g.recordAttempt(cur, now, string(ReasonKeyringUnavailable))
 			return st, oc, err
 		}
 	}
 	if verr != nil {
-		if ts.RefreshToken != "" {
-			// An answer that says which refresh token to hold (the new one is saved, or
-			// the old one is confirmed) is a definitive one, whatever its access token is
-			// worth: nothing is in doubt any more. An answer with neither token tells
-			// nothing about the one that was presented, as one with no token set does.
-			cur = withoutPending(cur)
-		}
+		// An answer that says which refresh token to hold (the new one is saved, or the
+		// old one is confirmed) is a definitive one, whatever its access token is worth:
+		// nothing is in doubt any more.
+		cur = withoutPending(cur)
 		// A token this build cannot verify is never stored: a bad monoes.me
 		// deploy (an opaque token, a wrong audience) must not log every online
 		// install out. A kid it does not know is remembered, so that when the
