@@ -2,7 +2,8 @@
 
 package account
 
-// syncDir does nothing on Windows, so the power-cut window that it closes on Unix
-// stays open there: os.Rename passes MOVEFILE_REPLACE_EXISTING only, and the
-// rename is not written through (MOVEFILE_WRITE_THROUGH would do it).
+// syncDir does nothing on Windows, which has no directory flush. A write closes
+// the power-cut window another way there: its rename is written through
+// (replaceFile, MOVEFILE_WRITE_THROUGH). A remove (DeleteRefresh) is not: that
+// window stays open on Windows.
 func syncDir(string) {}
