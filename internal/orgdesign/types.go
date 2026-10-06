@@ -38,6 +38,12 @@ type Doc struct {
 	Federation  *Federation     `json:"federation,omitempty"`
 	Autonomy    *Autonomy       `json:"autonomy,omitempty"`
 
+	// Sections surface (types_sections.go; monomind 2.24, org-runtime §6.7).
+	// All optional. `sections: {}` and `documents: {}` round-trip as written.
+	Requires  *Requires   `json:"requires,omitempty"`
+	Sections  SectionSet  `json:"sections,omitzero"`
+	Documents DocumentSet `json:"documents,omitzero"`
+
 	// Extra holds every top-level key not modeled above, verbatim, so a
 	// save never drops something monomind or a hand edit put there (e.g.
 	// `fence`).
@@ -49,6 +55,9 @@ type Doc struct {
 	// exactly those bytes, so a Doc read before an outside edit, or never
 	// read from the file at all, can't carry that edit into a signature.
 	loadedSHA string
+	// loadedRaw is those same bytes: Save lays the file out like them
+	// (preserve.go), so an edit rewrites only what it changed.
+	loadedRaw []byte
 }
 
 // LoadedSHA is the sha256 of the file bytes d was loaded from or last saved
@@ -62,7 +71,7 @@ var docKnownKeys = map[string]bool{
 	"name": true, "goal": true, "status": true, "schedule": true,
 	"run_config": true, "roles": true, "runtime": true,
 	"kind": true, "automations": true, "children": true, "federation": true,
-	"autonomy": true,
+	"autonomy": true, "requires": true, "sections": true, "documents": true,
 }
 
 // RoleUI is the org designer canvas's own per-role state — never read or
@@ -113,15 +122,31 @@ var roleKnownKeys = map[string]bool{
 // Extra so it round-trips on the next Save.
 func (d *Doc) UnmarshalJSON(data []byte) error {
 	type alias Doc
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	// A sections-surface key of a shape the typed model cannot hold stays in
+	// Extra verbatim: monomind's validator reports it, a load must not fail.
 	extra := make(map[string]json.RawMessage, len(raw))
+	if bad := malformedSectionKeys(raw); len(bad) > 0 {
+		clean := make(map[string]json.RawMessage, len(raw))
+		for k, v := range raw {
+			clean[k] = v
+		}
+		for _, k := range bad {
+			extra[k] = raw[k]
+			delete(clean, k)
+		}
+		var err error
+		if data, err = json.Marshal(clean); err != nil {
+			return err
+		}
+	}
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
 	for k, v := range raw {
 		if !docKnownKeys[k] {
 			extra[k] = v
