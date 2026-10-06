@@ -35,6 +35,7 @@ Failure modes the spec implies that a person using the software would meet and t
 3. An argument spelling that cobra runs but the gate lets through: a value flag swallowing `--help` or a command name, `--help=false`, `--`, an alias, an unknown flag. Pinned by `TestGateNeverDowngradesWhatCobraWouldRun` (Task 2).
 4. Something written to HOME before the gate says no, or by an open command: the first-run marker, the database, account files on a fresh HOME. Pinned by `TestRunRefusesGatedCommandsWhenLocked` and `TestRunCreatesNothingForOpenCommands` (Task 4).
 5. A script that reads stdout: under `--json` the refusal is exactly one JSON document and no gate text reaches stdout; while enforcement is dormant the gate says nothing and the doctor row neither warns nor fails. Pinned by `TestRunRefusalIsOneJSONDocumentUnderJSON`, `TestRunLetsGatedCommandsRunWhenAllowed` and `TestGateAnnouncesGraceAndWarning` (Tasks 3 and 4), and `TestMonoesAccountCheck` (Task 5).
+6. A Ctrl-C that cannot end the process. The guard never abandons a refresh grant it has sent (A20), so a shutdown can wait up to the grant timeout (20 seconds) for monoes.me's answer, and `signal.NotifyContext` keeps swallowing the signals until it is stopped. `run()` therefore lets go of the signals before it releases the guard, so a second Ctrl-C ends a shutdown that waits in the guard's `Close`; while a command is still inside the gate's own refresh (`gateStatus`) the signals stay caught, the wait is bounded, and `gateStatus` says so. Pinned by `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` (Task 4).
 
 ---
 
@@ -762,7 +763,7 @@ git commit -m "docs(account): spike S5, how root.Find resolves the target" -m "C
 ```go
 func newGateRefusal(st account.Status) error                          // exit 4, login_required fields, account.LoginRequiredError's text
 func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *account.Guard, stderr io.Writer) error
-func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil
+func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil; may wait up to the grant timeout after a Ctrl-C
 func announce(w io.Writer, st account.Status)                         // the grace line, the warn-period line
 // exitCodeFor: any *account.LoginRequiredError, wrapped or not, is exit 4
 ```
@@ -1004,6 +1005,11 @@ func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *acc
 	return nil
 }
 
+// gateStatus renews the session when that is due and reads the verdict. EnsureFresh may block for
+// up to the guard's grant timeout (20 seconds) after a Ctrl-C while a refresh grant is in flight:
+// the guard never abandons a grant it has sent (A20), because the answer holds the only copy of
+// the refresh token that replaces the one monoes.me has already rotated. The signals stay caught
+// until the command ends, so a second Ctrl-C does not shorten the wait; only SIGKILL does.
 func gateStatus(ctx context.Context, g *account.Guard) account.Status {
 	if g == nil {
 		return account.CurrentStatus()
@@ -1080,6 +1086,7 @@ func cancelsOnRefusal(class string) bool                           // only gated
 var cancelWhenRefused = func(g *account.Guard, cancel context.CancelFunc)   // seam; B3a's request for spec §6.4
 var afterFunc = time.AfterFunc                                     // seams: a test sees the timer armed and fired
 var startRefresher = func(ctx context.Context, g *account.Guard) { g.StartRefresher(ctx) }
+var notifyContext = signal.NotifyContext                           // seam: a test sees when the signals are let go
 func armLateRefresher(ctx context.Context, g *account.Guard) (disarm func())
 ```
 
@@ -1359,6 +1366,38 @@ func TestRunFailsClosedWhenNoGuardCanBeBuilt(t *testing.T) {
 	}
 }
 
+// The signals are let go before the guard is released. Releasing the guard (its Close) waits for a
+// refresh grant that monoes.me is still answering, up to the guard's call timeout, because a grant that
+// was sent is never abandoned (A20); signal.NotifyContext keeps catching the signals until its stop
+// function runs, so with the guard released first a second Ctrl-C during that wait would be swallowed
+// and only SIGKILL would end the process. The guard run built is still installed when the signals are
+// let go, and is gone after.
+func TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard(t *testing.T) {
+	account.InstallForTest(t, nil)
+	freshHome(t)
+	g := account.NewGuard(account.GuardOptions{Store: account.OpenStore(t.TempDir(), account.NewMemorySealer())})
+	prevGuard := newDefaultGuard
+	newDefaultGuard = func() (*account.Guard, error) { return g, nil }
+	t.Cleanup(func() { newDefaultGuard = prevGuard })
+	var guardWhenLetGo *account.Guard
+	prevNotify := notifyContext
+	notifyContext = func(parent context.Context, sigs ...os.Signal) (context.Context, context.CancelFunc) {
+		ctx, stop := prevNotify(parent, sigs...)
+		return ctx, func() { guardWhenLetGo = account.Current(); stop() }
+	}
+	t.Cleanup(func() { notifyContext = prevNotify })
+
+	if code, _, _ := runMain(t, "completion", "bash"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if guardWhenLetGo != g {
+		t.Error("the signals were let go after the guard was released: a second Ctrl-C during Close would be swallowed")
+	}
+	if account.Current() != nil {
+		t.Error("run left the guard it built installed")
+	}
+}
+
 // A nil slice must not make cobra read the test binary's own arguments, and
 // an ordinary command error keeps its exit code and its place.
 func TestRunKeepsCobrasOwnBehaviour(t *testing.T) {
@@ -1377,10 +1416,10 @@ func TestRunKeepsCobrasOwnBehaviour(t *testing.T) {
 - [ ] **Step 2: Run it and see it fail.**
 
 ```bash
-go test ./cmd/monoagentcli/ -run '^(TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunKeepsCobrasOwnBehaviour)$' -count=1
+go test ./cmd/monoagentcli/ -run '^(TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard|TestRunKeepsCobrasOwnBehaviour)$' -count=1
 ```
 
-Expected: FAIL, build errors such as `undefined: run`, `undefined: afterFunc`, `undefined: startRefresher` and `undefined: cancelWhenRefused`, ending `[build failed]`.
+Expected: FAIL, build errors such as `undefined: run`, `undefined: afterFunc`, `undefined: startRefresher`, `undefined: cancelWhenRefused` and `undefined: notifyContext`, ending `[build failed]`.
 
 - [ ] **Step 3: Implement `run`.** In `cmd/monoagentcli/main.go` add `"github.com/monoes/mono-agent/internal/account"` to the imports (before `internal/i18n`), then replace the whole existing `func main() {…}` (lines 65-92) with:
 
@@ -1415,9 +1454,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// docs/i18n.md.
 	i18n.SetLocale(i18n.Detect(args))
 
+	// The guard is built before the signals are caught, so that the signals are let go before the guard
+	// is released: deferred calls run last in, first out. release (the guard's Close) waits for a
+	// refresh grant that monoes.me is still answering, up to the guard's call timeout, because a grant
+	// that was sent is never abandoned (A20), and signal.NotifyContext keeps catching the signals
+	// until its stop function runs. With the guard released first, a second Ctrl-C during that wait
+	// would be swallowed and only SIGKILL would end the process.
+	g, release := processGuard()
+	defer release()
+
 	// SIGHUP too: a CLI whose terminal or parent goes away must cancel, so
 	// commands end what they started (monoes/mono-agent#235).
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, cancel := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
 	root := newRootCmd()
@@ -1426,8 +1474,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	applyClassification(root)
 
-	g, release := processGuard()
-	defer release()
 	if g != nil {
 		defer armLateRefresher(ctx, g)()
 	}
@@ -1535,6 +1581,9 @@ var (
 	startRefresher = func(ctx context.Context, g *account.Guard) { g.StartRefresher(ctx) }
 )
 
+// notifyContext is signal.NotifyContext; a test swaps it to see when run lets go of the signals.
+var notifyContext = signal.NotifyContext
+
 // armLateRefresher starts g's background refresher once the process has run
 // for account.LateRefresher, so a long `workflow run` or `chat` keeps its
 // login fresh (spec §6.4). The serving commands start it at once in their own
@@ -1572,12 +1621,13 @@ git commit -m "feat(cli): run() gates every command before cobra runs it" -m "Co
   - Delete `applyClassification(root)`: `TestOpenCommandsStayOpenWhenLocked` FAILS (every command is gated, `doctor` included).
   - Delete `defer armLateRefresher(ctx, g)()`: `TestRunArmsTheLateRefresher` FAILS.
   - Delete `cancelWhenRefused(g, cancel)`: `TestRunGivesOnlyGatedCommandsTheCancel` FAILS.
+  - Move `g, release := processGuard()` and `defer release()` below `defer cancel()` (the guard released before the signals are let go): `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` FAILS.
   - In `cancelsOnRefusal`, replace `class == classGated` with `class != classOpen`: `TestOnlyGatedCommandsAreCancelledOnRefusal` FAILS (a refused daemon would cancel itself).
 
 - [ ] **Step 8: Run the gate tests under the race detector.**
 
 ```bash
-go test -race ./cmd/monoagentcli/ -count=1 -timeout 15m -run '^(TestEveryCommandIsClassified|TestGateMatchesTheClassOfEveryCommandAndAlias|TestFindResolvesTheTargetForEveryInvocationForm|TestGateNeverDowngradesWhatCobraWouldRun|TestRefusalTextPerReason|TestAnyLoginRequiredErrorExitsFour|TestGateWhenLocked|TestGateRefreshesBeforeGatedCommandsOnly|TestGateAnnouncesGraceAndWarning|TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunKeepsCobrasOwnBehaviour)$'
+go test -race ./cmd/monoagentcli/ -count=1 -timeout 15m -run '^(TestEveryCommandIsClassified|TestGateMatchesTheClassOfEveryCommandAndAlias|TestFindResolvesTheTargetForEveryInvocationForm|TestGateNeverDowngradesWhatCobraWouldRun|TestRefusalTextPerReason|TestAnyLoginRequiredErrorExitsFour|TestGateWhenLocked|TestGateRefreshesBeforeGatedCommandsOnly|TestGateAnnouncesGraceAndWarning|TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard|TestRunKeepsCobrasOwnBehaviour)$'
 ```
 
 Expected: `ok  	github.com/monoes/mono-agent/cmd/monoagentcli	<n>s` and no `DATA RACE`.
