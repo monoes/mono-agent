@@ -3,7 +3,7 @@
 // preflight, eval gate, daemon lock), a tick that yielded to a live run, and
 // ticks held for one catch-up run. Renders nothing when there are none. An
 // event this build does not know is shown under its own name, never dropped.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, onOrgEvent } from '../../services/api.js'
 import { Chip, mutedText, sectionLabel } from '../orgs/ui.jsx'
 
@@ -24,13 +24,22 @@ export function normalizeAudit(res) {
 
 export default function ScheduleAuditPanel({ orgName, live = false }) {
   const [entries, setEntries] = useState([])
+  const request = useRef(0)
   const load = useCallback(async () => {
     if (!orgName) return
+    const mine = ++request.current
     const list = normalizeAudit(await api.getOrgScheduleAudit(orgName))
-    if (list) setEntries(list)
+    if (mine === request.current && list) setEntries(list)
   }, [orgName])
 
-  useEffect(() => { setEntries([]); load() }, [load])
+  useEffect(() => {
+    setEntries([])
+    load()
+    // A refused start writes the audit file without creating a run bus.
+    // Keep the visible org audit current even when no run is selected.
+    const timer = setInterval(load, 5000)
+    return () => { clearInterval(timer); request.current++ }
+  }, [load])
   useEffect(() => {
     if (!live || !orgName) return undefined
     return onOrgEvent((p) => {

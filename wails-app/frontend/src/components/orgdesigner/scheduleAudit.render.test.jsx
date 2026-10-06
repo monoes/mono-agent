@@ -28,7 +28,7 @@ const view = {
   ],
 }
 beforeEach(() => { vi.clearAllMocks(); busListener = null; api.getOrgScheduleAudit.mockResolvedValue(view) })
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('ScheduleAuditPanel', () => {
   it('lists refused, skipped and coalesced ticks with their reasons, and an unknown event by name', async () => {
@@ -48,6 +48,31 @@ describe('ScheduleAuditPanel', () => {
     const r = render(<ScheduleAuditPanel orgName="sched" />)
     await waitFor(() => expect(api.getOrgScheduleAudit).toHaveBeenCalledTimes(2))
     expect(r.container).toBeEmptyDOMElement()
+  })
+
+  it('reloads refused ticks without a run bus and stops polling when closed', async () => {
+    vi.useFakeTimers()
+    api.getOrgScheduleAudit.mockResolvedValue({ entries: [] })
+    const { unmount } = render(<ScheduleAuditPanel orgName="sched" />)
+    await act(async () => {})
+    api.getOrgScheduleAudit.mockResolvedValue(view)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText(/preflight: host runtime/)).toBeInTheDocument()
+    expect(api.getOrgScheduleAudit).toHaveBeenCalledTimes(2)
+    unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(api.getOrgScheduleAudit).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores a response from the previously selected org', async () => {
+    let finishOld
+    api.getOrgScheduleAudit.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    const { rerender } = render(<ScheduleAuditPanel orgName="old" />)
+    api.getOrgScheduleAudit.mockResolvedValue({ entries: [] })
+    rerender(<ScheduleAuditPanel orgName="new" />)
+    await act(async () => {})
+    await act(async () => { finishOld(view) })
+    expect(screen.queryByText(/preflight: host runtime/)).not.toBeInTheDocument()
   })
 
   it('reloads when a live scheduled-* audit event arrives, and ignores other events', async () => {
