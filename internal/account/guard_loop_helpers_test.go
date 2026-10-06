@@ -16,7 +16,9 @@ import (
 // only the newest refresh token and rotates it on every use, so a refresh made
 // twice shows as a refusal and a lockout, not only as a count of two. Its tokens
 // live for life and carry an iat that lags the guard's clock by lag: a local
-// clock that runs ahead of monoes.me.
+// clock that runs ahead of monoes.me. The iat is stamped when the request
+// arrives, before the call is counted, so a test that moves the clock as soon as
+// it sees the count cannot change the token of a call that is still in flight.
 type loopServer struct {
 	e     *env
 	calls atomic.Int32
@@ -47,6 +49,7 @@ func (s *loopServer) signIn(age, life time.Duration) {
 }
 
 func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account.TokenSet, error) {
+	arrived := s.e.f.Clock.Now()
 	s.calls.Add(1)
 	s.mu.Lock()
 	takes, err := s.takes, s.err
@@ -68,7 +71,7 @@ func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account
 	}
 	s.seq++
 	s.valid = fmt.Sprintf("rt-%d", s.seq+1)
-	access := s.e.f.Token(accounttest.TokenOptions{IssuedAt: s.e.f.Clock.Now().Add(-s.lag), Lifetime: life})
+	access := s.e.f.Token(accounttest.TokenOptions{IssuedAt: arrived.Add(-s.lag), Lifetime: life})
 	return &account.TokenSet{AccessToken: access, RefreshToken: s.valid}, nil
 }
 

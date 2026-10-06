@@ -50,13 +50,14 @@ func TestTheRefresherKeepsItsScheduleOnACorrectClock(t *testing.T) {
 	g.StartRefresher(context.Background())
 
 	waitForCalls(t, srv, 1, "the first refresh")
+	expectCalls(t, srv, 1, "the first refresh, and no more")
 	for n := int32(2); n <= 4; n++ {
 		e.f.Clock.Advance(30*time.Minute - time.Second)
 		expectCalls(t, srv, n-1, "a second before the half-life of the last token")
 		e.f.Clock.Advance(time.Second) // the half-life, to the second
 		waitForCalls(t, srv, n, "the refresh at the half-life")
+		expectCalls(t, srv, n, "once per half-life")
 	}
-	expectCalls(t, srv, 4, "after the last refresh")
 }
 
 func TestAClockSetBackEndsTheHoldSoTheRefresherCanRepairIt(t *testing.T) {
