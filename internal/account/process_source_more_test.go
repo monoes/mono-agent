@@ -34,7 +34,11 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	require := bodyOf(t, file, "Require")
+	decls := funcsNamed([]source{{"process.go", file}}, "Require")
+	if len(decls) != 1 || len(paramNames(decls[0])) != 1 {
+		t.Fatal("process.go must declare exactly one Require, taking exactly its context")
+	}
+	require, ctx := decls[0].Body, paramNames(decls[0])[0]
 
 	returns := 0
 	ast.Inspect(require, func(n ast.Node) bool {
@@ -49,8 +53,8 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	}
 
 	stmts := require.List
-	if len(stmts) < 2 || !isGuardBranch(stmts[0]) {
-		t.Fatalf("Require must start with `if g := Current(); g != nil { return g.Require(ctx) }`; found %s", describeStmts(stmts))
+	if len(stmts) < 2 || !isGuardBranch(stmts[0], ctx) {
+		t.Fatalf("Require must start with `if <g> := Current(); <g> != nil { return <g>.Require(%s) }`; found %s", ctx, describeStmts(stmts))
 	}
 	var call *ast.CallExpr
 	if last, ok := stmts[len(stmts)-1].(*ast.ReturnStmt); ok && len(last.Results) == 1 {
@@ -91,18 +95,23 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	}
 }
 
-// isGuardBranch reports whether st is exactly `if g := Current(); g != nil { return g.Require(ctx) }`.
-func isGuardBranch(st ast.Stmt) bool {
+// isGuardBranch reports whether st is exactly `if <g> := Current(); <g> != nil { return <g>.Require(<ctx>) }`,
+// with whatever names Require gives the guard variable and its context parameter.
+func isGuardBranch(st ast.Stmt, ctx string) bool {
 	ifs, ok := st.(*ast.IfStmt)
-	if !ok || ifs.Else != nil || ifs.Init == nil || types.ExprString(ifs.Cond) != "g != nil" || len(ifs.Body.List) != 1 {
+	if !ok || ifs.Else != nil || ifs.Init == nil || len(ifs.Body.List) != 1 {
 		return false
 	}
 	init, ok := ifs.Init.(*ast.AssignStmt)
-	if !ok || defineOf(init) != "g := Current()" {
+	if !ok || init.Tok != token.DEFINE || len(init.Lhs) != 1 || len(init.Rhs) != 1 || types.ExprString(init.Rhs[0]) != "Current()" {
+		return false
+	}
+	g := types.ExprString(init.Lhs[0])
+	if types.ExprString(ifs.Cond) != g+" != nil" {
 		return false
 	}
 	ret, ok := ifs.Body.List[0].(*ast.ReturnStmt)
-	return ok && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == "g.Require(ctx)"
+	return ok && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == g+".Require("+ctx+")"
 }
 
 // defineOf is the source of the short variable declaration that st is (`x := y`), or "".
@@ -112,18 +121,6 @@ func defineOf(st ast.Stmt) string {
 		return ""
 	}
 	return types.ExprString(as.Lhs[0]) + " := " + types.ExprString(as.Rhs[0])
-}
-
-// bodyOf is the body of the function that file declares under name.
-func bodyOf(t *testing.T, file *ast.File, name string) *ast.BlockStmt {
-	t.Helper()
-	for _, d := range file.Decls {
-		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == name && fd.Body != nil {
-			return fd.Body
-		}
-	}
-	t.Fatalf("process.go declares no function %s", name)
-	return nil
 }
 
 // exprOf is the source of the expression that st is made of, or "" when st is not an expression statement.
