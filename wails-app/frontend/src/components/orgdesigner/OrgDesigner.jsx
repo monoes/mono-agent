@@ -162,7 +162,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     setOrgMeta(designMeta(res))
     revRef.current = res.rev ?? null
     let hydrated = await hydrateWithIcons(roles || [])
-    hydrated = layOutMissingPositions(hydrated, meta.sections)
+    hydrated = layOutMissingPositions(hydrated, res.org.sections)
     setNodes(hydrated)
     if (!keepSelection) setSelectedId(null)
     setLoading(false)
@@ -219,7 +219,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
           _isNew: false,
         }
       })
-      return layOutMissingPositions(next, meta.sections)
+      return layOutMissingPositions(next, payload.org.sections)
     })
   }, [])
 
@@ -257,7 +257,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
         return layOutMissingPositions(incoming.map(n => {
           const old = prevById.get(n.id)
           return old ? { ...n, x: old.x, y: old.y } : n
-        }), meta.sections)
+        }), res.org.sections)
       })
     }
   }, [])
@@ -623,7 +623,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       <DesignerToolbar
         orgName={orgName}
         schedule={orgMeta?.schedule}
-        sectionsOrg={!!orgMeta?.sections}
+        sectionsOrg={sectionsOrgEnabled(orgMeta)}
         onSetSchedule={handleSetSchedule}
         validation={validation}
         pendingUpdateCount={pendingUpdateCount}
