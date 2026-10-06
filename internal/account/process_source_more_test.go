@@ -1,6 +1,7 @@
 package account_test
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -30,11 +31,7 @@ import (
 // once the gate is enforced) is B5c's smoke. The source is read as syntax, so
 // formatting and comments change nothing; the shape of the statements does.
 func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "process.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decls := funcsNamed([]source{{"process.go", file}}, "Require")
+	decls := funcsNamed(parseProcess(t), "Require")
 	if len(decls) != 1 || len(paramNames(decls[0])) != 1 {
 		t.Fatal("process.go must declare exactly one Require, taking exactly its context")
 	}
@@ -93,6 +90,116 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	if asked != 1 {
 		t.Errorf("Require calls testing.Testing() %d times, want once, as the first argument of requireNoGuard", asked)
 	}
+}
+
+// parseProcess is process.go as syntax, as the one source it is (the pins below read it).
+func parseProcess(t *testing.T) []source {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "process.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []source{{"process.go", file}}
+}
+
+// The other half of the no-guard path. Whatever Require hands it, requireNoGuard does
+// nothing but what the matrix test pins, and noGuardStatus nothing but judge the process
+// as not logged in at the moment it is given. Anything else in either passes every test
+// and changes what a release binary does when no guard is installed: `if !flag.Parsed()
+// { return nil }`, an offset or a constant clock behind a condition that only a test
+// binary meets (flag.Parsed() is true in every one, so the condition is never the one a
+// release binary meets), or another way out.
+//
+// requireNoGuard is exactly: `if <isTest> && !<strict> { return nil }`, then
+// `if st := noGuardStatus(<now>); !st.Allowed() { return &LoginRequiredError{Status: st} }`,
+// then `return nil`; noGuardStatus is exactly `return judge(nil, nil, nil, <now>)`. The
+// parameter names, and the name of st, are read from the source; formatting and comments
+// change nothing.
+func TestRequireNoGuardAndNoGuardStatusAreNothingButTheVerdict(t *testing.T) {
+	sources := parseProcess(t)
+	for _, problem := range []string{requireNoGuardProblem(sources), noGuardStatusProblem(sources)} {
+		if problem != "" {
+			t.Error(problem)
+		}
+	}
+}
+
+func requireNoGuardProblem(sources []source) string {
+	decls := funcsNamed(sources, "requireNoGuard")
+	if len(decls) != 1 || len(paramNames(decls[0])) != 3 {
+		return "process.go must declare exactly one requireNoGuard(isTest, strict bool, now time.Time) error (renamed or moved? update this test)"
+	}
+	names := paramNames(decls[0])
+	isTest, strict, now := names[0], names[1], names[2]
+	body := decls[0].Body.List
+	ok := len(body) == 3 && isEarlyNil(body[0], isTest+" && !"+strict) && isRefusal(body[1], now) && isReturnNil(body[2])
+	if !ok {
+		return fmt.Sprintf("requireNoGuard must be exactly `if %s && !%s { return nil }`, then `if st := noGuardStatus(%s); !st.Allowed() { return &LoginRequiredError{Status: st} }`, then `return nil`: "+
+			"anything else, such as `if !flag.Parsed() { return nil }`, an offset or a constant clock, or another way out, can change what a release binary does and no test binary can see it; found %s",
+			isTest, strict, now, describeStmts(body))
+	}
+	return ""
+}
+
+func noGuardStatusProblem(sources []source) string {
+	decls := funcsNamed(sources, "noGuardStatus")
+	if len(decls) != 1 || len(paramNames(decls[0])) != 1 {
+		return "process.go must declare exactly one noGuardStatus(now time.Time) Status (renamed or moved? update this test)"
+	}
+	now := paramNames(decls[0])[0]
+	body := decls[0].Body.List
+	ok := len(body) == 1
+	if ok {
+		ret, isRet := body[0].(*ast.ReturnStmt)
+		ok = isRet && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == "judge(nil, nil, nil, "+now+")"
+	}
+	if !ok {
+		return fmt.Sprintf("noGuardStatus must be exactly `return judge(nil, nil, nil, %s)`: anything else (an offset or a constant clock, a status returned early) can change what a release binary reports and refuses and no test binary can see it; found %s",
+			now, describeStmts(body))
+	}
+	return ""
+}
+
+// isEarlyNil reports whether st is exactly `if <cond> { return nil }`.
+func isEarlyNil(st ast.Stmt, cond string) bool {
+	ifs, ok := st.(*ast.IfStmt)
+	return ok && ifs.Init == nil && ifs.Else == nil && types.ExprString(ifs.Cond) == cond && len(ifs.Body.List) == 1 && isReturnNil(ifs.Body.List[0])
+}
+
+// isRefusal reports whether st is exactly `if <v> := noGuardStatus(<now>); !<v>.Allowed() { return &LoginRequiredError{Status: <v>} }`.
+func isRefusal(st ast.Stmt, now string) bool {
+	ifs, ok := st.(*ast.IfStmt)
+	if !ok || ifs.Else != nil || ifs.Init == nil || len(ifs.Body.List) != 1 {
+		return false
+	}
+	init, ok := ifs.Init.(*ast.AssignStmt)
+	if !ok || init.Tok != token.DEFINE || len(init.Lhs) != 1 || len(init.Rhs) != 1 || types.ExprString(init.Rhs[0]) != "noGuardStatus("+now+")" {
+		return false
+	}
+	v := types.ExprString(init.Lhs[0])
+	ret, ok := ifs.Body.List[0].(*ast.ReturnStmt)
+	return types.ExprString(ifs.Cond) == "!"+v+".Allowed()" && ok && len(ret.Results) == 1 && isRefusalOf(ret.Results[0], v)
+}
+
+// isRefusalOf reports whether e is exactly `&LoginRequiredError{Status: <v>}` (types.ExprString elides
+// the elements of a composite literal, so the literal is read as syntax).
+func isRefusalOf(e ast.Expr, v string) bool {
+	u, ok := e.(*ast.UnaryExpr)
+	if !ok || u.Op != token.AND {
+		return false
+	}
+	lit, ok := u.X.(*ast.CompositeLit)
+	if !ok || types.ExprString(lit.Type) != "LoginRequiredError" || len(lit.Elts) != 1 {
+		return false
+	}
+	kv, ok := lit.Elts[0].(*ast.KeyValueExpr)
+	return ok && types.ExprString(kv.Key) == "Status" && types.ExprString(kv.Value) == v
+}
+
+// isReturnNil reports whether st is exactly `return nil`.
+func isReturnNil(st ast.Stmt) bool {
+	ret, ok := st.(*ast.ReturnStmt)
+	return ok && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == "nil"
 }
 
 // isGuardBranch reports whether st is exactly `if <g> := Current(); <g> != nil { return <g>.Require(<ctx>) }`,

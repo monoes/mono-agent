@@ -164,7 +164,11 @@ func describeStmts(list []ast.Stmt) string {
 		case *ast.ExprStmt:
 			parts = append(parts, types.ExprString(st.X))
 		case *ast.IfStmt:
-			d := "if " + types.ExprString(st.Cond) + " {...}"
+			d := "if "
+			if st.Init != nil {
+				d += strings.Trim(describeStmts([]ast.Stmt{st.Init}), "[]") + "; "
+			}
+			d += types.ExprString(st.Cond) + " {...}"
 			if st.Else != nil {
 				d += " else {...}"
 			}
@@ -176,7 +180,11 @@ func describeStmts(list []ast.Stmt) string {
 				parts = append(parts, "an assignment")
 			}
 		case *ast.ReturnStmt:
-			parts = append(parts, "a return")
+			var results []string
+			for _, r := range st.Results {
+				results = append(results, types.ExprString(r))
+			}
+			parts = append(parts, strings.TrimSpace("return "+strings.Join(results, ", ")))
 		default:
 			parts = append(parts, "a "+strings.TrimSuffix(strings.TrimPrefix(fmt.Sprintf("%T", st), "*ast."), "Stmt")+" statement")
 		}
