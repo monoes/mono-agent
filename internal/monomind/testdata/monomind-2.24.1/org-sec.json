@@ -1,0 +1,91 @@
+{
+  "name": "sec",
+  "goal": "Write a one-line note and have it reviewed",
+  "status": "stopped",
+  "schedule": null,
+  "requires": {
+    "sections": 1
+  },
+  "run_config": {
+    "completion": {
+      "mode": "dag"
+    },
+    "budget_tokens": 200000,
+    "memory_namespace": "org:sec"
+  },
+  "sections": {
+    "drafting": {
+      "members": [
+        "writer"
+      ],
+      "publishes": [
+        "note"
+      ],
+      "max_rework_rounds": 2
+    },
+    "review": {
+      "members": [
+        "checker"
+      ],
+      "consumes": [
+        "note"
+      ]
+    }
+  },
+  "documents": {
+    "note": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Coordinate"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "runtime": "codex"
+    },
+    {
+      "id": "writer",
+      "title": "Writer",
+      "type": "specialist",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Write the note"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "runtime": "codex"
+    },
+    {
+      "id": "checker",
+      "title": "Checker",
+      "type": "reviewer",
+      "reports_to": "lead",
+      "responsibilities": [
+        "Review the note"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "runtime": "codex"
+    }
+  ]
+}

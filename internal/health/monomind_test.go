@@ -84,9 +84,18 @@ func TestMonomindHandshakeAndCapabilities(t *testing.T) {
 
 	vi := &monomind.VersionInfo{V: 1, Version: "2.16.0", Capabilities: []string{monomind.CapOrgToolProviders}}
 	env.MonomindHandshake = func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }
-	if res := checkMonomindHandshake(ctx, env); res.Status != StatusOK {
+	// Older than the version mono-agent is tested with: usable, so a
+	// warning that says what degrades and offers the update, not a failure.
+	if res := checkMonomindHandshake(ctx, env); res.Status != StatusWarn || res.FixID != FixMonomindInstall ||
+		!strings.Contains(res.Detail, monomind.KnownGoodMonomindVersion) {
+		t.Errorf("older than known-good: %+v", res)
+	}
+	current := &monomind.VersionInfo{V: 1, Version: monomind.KnownGoodMonomindVersion}
+	env.MonomindHandshake = func(context.Context) (*monomind.VersionInfo, error) { return current, nil }
+	if res := checkMonomindHandshake(ctx, env); res.Status != StatusOK || res.Detail != "" {
 		t.Errorf("good: %+v", res)
 	}
+	env.MonomindHandshake = func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }
 	res := checkMonomindCapabilities(ctx, env)
 	if res.Status != StatusWarn || res.FixID != FixMonomindInstall || !strings.Contains(res.Detail, monomind.CapOrgFederation) {
 		t.Errorf("missing caps: %+v", res)
