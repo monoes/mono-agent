@@ -36,6 +36,15 @@ const (
 // the high-water mark current. The returned Status is always usable; the error
 // is advisory (the lock could not be taken in time, the context ended, a write
 // failed) and a caller must not fail a command because of it.
+//
+// ctx ends only what has not been sent yet: the wait for the in-process slot
+// and for the lock, and the read of the refresh token. A caller whose context
+// has ended by then starts nothing and gets the context's error. Once the
+// refresh request is sent it is not cancelled by ctx, since monoes.me rotates
+// the refresh token as it answers and the answer must be stored: EnsureFresh
+// then returns only after the answer is stored, which can take up to
+// refreshCallTimeout (20 s) and the write of the new refresh token after ctx
+// has ended. A process must not exit before it returns.
 func (g *Guard) EnsureFresh(ctx context.Context) (Status, error) {
 	if dormant() {
 		return g.Status(), nil
@@ -45,7 +54,9 @@ func (g *Guard) EnsureFresh(ctx context.Context) (Status, error) {
 }
 
 // Refresh is EnsureFresh that also runs while dormant: an explicit `account
-// status` refreshes when due even before the enforcement date.
+// status` refreshes when due even before the enforcement date. It ends as
+// EnsureFresh does: a request that was sent runs to its answer, whatever ctx
+// does, and Refresh returns after the answer is stored.
 func (g *Guard) Refresh(ctx context.Context) (Status, error) {
 	st, _, err := g.refreshIfDue(ctx, modeCLI)
 	return st, err
@@ -95,6 +106,12 @@ func (g *Guard) refreshIfDue(ctx context.Context, mode refreshMode) (Status, out
 	return g.refreshUnderLock(ctx, mode)
 }
 
+// refreshUnderLock is the part of a refresh that holds the cross-process lock:
+// it reads the session again, and if it is still due it reads the refresh token,
+// sends the grant and stores what came back. ctx matters until the request is
+// sent (the lock wait, the two checks below); the request itself runs on a
+// context of its own, so that a request monoes.me may have answered is never
+// abandoned and its answer is always stored.
 func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status, outcome, error) {
 	lctx, cancel := context.WithTimeout(ctx, lockWaitTimeout)
 	unlock, err := g.store.Lock(lctx)
@@ -127,7 +144,22 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		// does not open. Not a decision about the account, so the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
 	}
-	cctx, cancel := context.WithTimeout(ctx, refreshCallTimeout)
+	if err := ctx.Err(); err != nil {
+		// The last place where giving up sends nothing: reading the refresh token
+		// can take a while (a key store that prompts), and from the call on the
+		// context is no longer the caller's.
+		return st, outcomeSkipped, err
+	}
+	// The grant gets a context of its own, not the caller's: Ctrl-C, SIGTERM, a
+	// deadline or the guard closing must not abandon a request monoes.me may
+	// already have answered. It rotates the refresh token as it answers, so the
+	// one on disk is dead from then on, and presenting it after the reuse window
+	// is taken for theft: monoes.me ends every refresh token of the account. A
+	// request abandoned mid-call leaves exactly that token on disk. So a request
+	// that was sent runs to its answer, or to refreshCallTimeout, and what it got
+	// is stored whatever the caller does. WithoutCancel also drops the caller's
+	// deadline: the timeout below is the only one.
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshCallTimeout)
 	ts, err := g.refresher.Refresh(cctx, refreshToken)
 	cancel()
 
@@ -137,8 +169,6 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	switch {
 	case errors.As(err, &refused) && refused != nil:
 		return g.applyRefusal(sess, now, refused)
-	case err != nil && ctx.Err() != nil:
-		return g.Status(), outcomeSkipped, ctx.Err() // the caller gave up; that says nothing about the account
 	case err == nil && ts != nil:
 		// Even a token set with no usable access token: by answering, the server has
 		// rotated the refresh token, so applyTokens must keep the new one. An access

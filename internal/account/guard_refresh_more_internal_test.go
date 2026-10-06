@@ -278,9 +278,8 @@ func TestRefreshIfDueSaysWhatItDid(t *testing.T) {
 	}
 }
 
-// A pass that could not start, or whose caller gave up, is skipped, with the
-// reason as an advisory error.
-func TestRefreshIfDueSkipsWhatItCannotStartOrFinish(t *testing.T) {
+// A pass that could not start is skipped, with the reason as an advisory error.
+func TestRefreshIfDueSkipsWhatItCannotStart(t *testing.T) {
 	skipped := func(t *testing.T, r *rig, ctx context.Context, mode refreshMode, wantErr error, wantCalls int32) {
 		t.Helper()
 		st, got, err := r.g.refreshIfDue(ctx, mode)
@@ -310,22 +309,31 @@ func TestRefreshIfDueSkipsWhatItCannotStartOrFinish(t *testing.T) {
 		cancel()
 		skipped(t, r, ctx, modeCLI, context.Canceled, 0)
 	})
-	t.Run("the caller gave up during the call", func(t *testing.T) {
+}
+
+// A caller that gives up during the call does not end the pass differently from
+// how it would have ended: the call is not cancelled by it, so a failure is the
+// call's failure, recorded as any other, and an answer is an answer.
+func TestARefreshPassWhoseCallerGivesUpDuringTheCallEndsAsItWouldHave(t *testing.T) {
+	t.Run("a failure is recorded like any other", func(t *testing.T) {
 		r := newRig(t)
 		r.signIn(2 * time.Hour)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		r.srv.after, r.srv.err = cancel, errors.New("interrupted")
-		skipped(t, r, ctx, modeCLI, context.Canceled, 1)
+		_, got, err := r.g.refreshIfDue(ctx, modeCLI)
+		if got != outcomeFailed || err != nil || r.srv.calls.Load() != 1 {
+			t.Fatalf("refreshIfDue = %s, %v with %d network refreshes, want failed, no error and one", outcomeNames[got], err, r.srv.calls.Load())
+		}
 		sess, err := r.store.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if sess.LastResult != resultOK {
-			t.Fatalf("a refresh that ended with its caller recorded %q, want nothing", sess.LastResult)
+		if sess.LastResult != string(ReasonUnreachable) || !sess.LastAttempt.Equal(r.clock.Now()) {
+			t.Fatalf("the failure was recorded as %q at %v, want %q at %v", sess.LastResult, sess.LastAttempt, ReasonUnreachable, r.clock.Now())
 		}
 	})
-	t.Run("the caller gave up as the answer arrived: the answer is kept", func(t *testing.T) {
+	t.Run("an answer that arrives as the caller gives up is kept", func(t *testing.T) {
 		r := newRig(t)
 		r.signIn(2 * time.Hour)
 		ctx, cancel := context.WithCancel(context.Background())

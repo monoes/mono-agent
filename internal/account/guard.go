@@ -14,6 +14,15 @@ type TokenSet struct{ AccessToken, RefreshToken string }
 // and *TransientError for every other failure. B1b implements it; a Guard
 // without one never refreshes.
 //
+// The guard calls Refresh with a context that is NOT cancelled when the caller
+// of EnsureFresh or Refresh gives up (Ctrl-C, a signal, a deadline, the guard
+// closing), and whose deadline is refreshCallTimeout (20 s) from the call. The
+// server rotates the refresh token as it answers, so a request that is dropped
+// after it was sent loses the new token and leaves a dead one on disk, which
+// the server takes for theft the next time it is presented. A Refresher must
+// therefore not rely on its caller's cancellation, and must let its request run
+// to its answer or to that deadline.
+//
 // Two rules the guard relies on. On any error, return a nil *TokenSet: a set
 // returned beside an error is ignored, so a rotated refresh token in it is lost.
 // And never return a typed-nil error, a nil *RefusedError or *TransientError
@@ -37,7 +46,7 @@ type GuardOptions struct {
 const (
 	hwInterval         = time.Minute                        // hw is written at most this often
 	hwLockWait         = 2 * time.Second                    // a high-water write never waits longer for the lock
-	refreshCallTimeout = 20 * time.Second                   // backstop on one Refresher call
+	refreshCallTimeout = 20 * time.Second                   // the bound on one Refresher call, whatever the caller does
 	lockWaitTimeout    = refreshCallTimeout + 5*time.Second // a waiter outlasts the holder's refresh
 	backoffMin         = 30 * time.Second                   // the refresher's first retry
 	backoffMax         = 5 * time.Minute                    // and its ceiling
@@ -238,8 +247,11 @@ func (g *Guard) cached() (*Session, *Receipt) {
 	return g.sess, g.rcpt
 }
 
-// Close stops the refresher, if one runs, and waits for it. It is safe to call
-// twice, and a closed guard still answers Status and Require.
+// Close stops the refresher, if one runs, and waits for it. A refresh request
+// the refresher has already sent is not abandoned: the answer must be stored, so
+// Close waits for it, up to refreshCallTimeout (20 s) and the write of the new
+// refresh token. It is safe to call twice, and a closed guard still answers
+// Status and Require.
 func (g *Guard) Close() {
 	g.mu.Lock()
 	g.closed = true

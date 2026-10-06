@@ -250,7 +250,8 @@ func TestACallerThatHasGivenUpTouchesNeitherTheDiskNorTheServer(t *testing.T) {
 }
 
 // A caller that gives up just as it gets the lock starts no refresh: it
-// returns its context's error, calls nothing and writes nothing.
+// returns its context's error, reads no refresh token (the key store may prompt
+// for it), calls nothing and writes nothing.
 func TestACallerThatGivesUpWhileItWaitsForTheLockStartsNoRefresh(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour) // due
@@ -264,6 +265,9 @@ func TestACallerThatGivesUpWhileItWaitsForTheLockStartsNoRefresh(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || st.State != account.StateGrace || e.ref.calls.Load() != 0 {
 		t.Fatalf("EnsureFresh = %s/%q, %v with %d network refreshes, want grace, context.Canceled and none", st.State, st.Reason, err, e.ref.calls.Load())
 	}
+	if n := spy.calls("LoadRefresh"); n != 0 {
+		t.Fatalf("%d reads of the refresh token by a caller that had given up, want none", n)
+	}
 	if after := describe(e.session()); after != before {
 		t.Fatalf("an ended context changed the session: %s, was %s", after, before)
 	}
@@ -273,13 +277,15 @@ func TestACallerThatGivesUpWhileItWaitsForTheLockStartsNoRefresh(t *testing.T) {
 }
 
 // A caller that waits behind a refresh already running in this process gives up
-// with its own context; and a refresh that ends because its caller gave up
-// records nothing, since that says nothing about the account.
+// with its own context, since it has sent nothing. The caller of the refresh
+// that is running does not end it by giving up: the request is on its way, the
+// server has rotated or will rotate the refresh token, and the answer is stored
+// before that caller's call returns.
 func TestACallerBehindARunningRefreshGivesUpWithItsContext(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour) // due
-	before := describe(e.session())
-	e.ref.set(func(r *fakeRefresher) { r.block = true }) // the first call hangs until its context ends
+	release := make(chan struct{})
+	e.ref.set(func(r *fakeRefresher) { r.hold = release }) // the first call waits until the test lets the server answer
 	first, cancelFirst := context.WithCancel(context.Background())
 	defer cancelFirst()
 	running := make(chan callResult, 1)
@@ -308,17 +314,23 @@ func TestACallerBehindARunningRefreshGivesUpWithItsContext(t *testing.T) {
 	cancelFirst()
 	select {
 	case r := <-running:
-		if !errors.Is(r.err, context.Canceled) || r.st.State != account.StateGrace {
-			t.Fatalf("the refresh whose caller gave up: %s/%q, %v, want grace and context.Canceled", r.st.State, r.st.Reason, r.err)
+		t.Fatalf("the refresh whose caller gave up returned (%s/%q, %v) before the server answered: a grant that was sent is not abandoned", r.st.State, r.st.Reason, r.err)
+	case <-time.After(150 * time.Millisecond): // the call goes on, whatever its caller does
+	}
+	close(release) // the server answers
+	select {
+	case r := <-running:
+		if r.err != nil || r.st.State != account.StateOK {
+			t.Fatalf("the refresh whose caller gave up: %s/%q, %v, want ok: the answer arrived and is stored", r.st.State, r.st.Reason, r.err)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("the refresh did not end with its context")
+		t.Fatal("the refresh did not return once the server had answered")
 	}
-	if after := describe(e.session()); after != before {
-		t.Fatalf("a refresh that ended with its caller changed the session: %s, was %s", after, before)
+	if rt, _ := e.store.LoadRefresh(); rt != "rt-2" {
+		t.Fatalf("refresh.enc holds %q, want the rotated token rt-2: the answer was lost with the caller", rt)
 	}
-	if rt, _ := e.store.LoadRefresh(); rt != "rt-1" {
-		t.Fatal("a refresh that ended with its caller changed the refresh token")
+	if sess := e.session(); sess.LastResult != "ok" || !sess.LastAttempt.Equal(e.f.Clock.Now()) {
+		t.Fatalf("stored session = %s, want the refresh recorded", describe(sess))
 	}
 }
 
