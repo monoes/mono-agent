@@ -172,10 +172,10 @@ func TestTheRefusalIsForTheEndThatHasNoRoomAndExactToTheGap(t *testing.T) {
 	}
 }
 
-// Between two cards the position is the midpoint of theirs, and the difference of two positions that are
-// far apart does not wrap into a small number: the column is renumbered when no integer is left, and
-// is left alone when there is plenty.
-func TestTheMidpointOfTwoFarApartCardsDoesNotWrap(t *testing.T) {
+// Between two cards the position is the midpoint of theirs. Neither the difference of two positions that
+// are far apart nor the sum of two that are both near a limit wraps into a wrong number: the column is
+// renumbered when no integer is left, and is left alone when there is plenty.
+func TestTheMidpointOfCardsAtTheLimitsDoesNotWrap(t *testing.T) {
 	for _, k := range []struct {
 		name    string
 		lo, hi  int64
@@ -184,6 +184,8 @@ func TestTheMidpointOfTwoFarApartCardsDoesNotWrap(t *testing.T) {
 		{"the two extremes", math.MinInt64, math.MaxInt64, []int64{1024, 2048, 3072}},
 		{"a span of exactly 2^63", -1 << 62, 1 << 62, []int64{1024, 2048, 3072}},
 		{"zero and the largest position", 0, math.MaxInt64, []int64{0, math.MaxInt64 / 2, math.MaxInt64}},
+		{"two positions near the top, whose sum would wrap", math.MaxInt64 - 5000, math.MaxInt64 - 1000, []int64{math.MaxInt64 - 5000, math.MaxInt64 - 3000, math.MaxInt64 - 1000}},
+		{"two positions near the bottom, whose sum would wrap", math.MinInt64 + 1000, math.MinInt64 + 5000, []int64{math.MinInt64 + 1000, math.MinInt64 + 3000, math.MinInt64 + 5000}},
 	} {
 		t.Run(k.name, func(t *testing.T) {
 			s, db, _ := newTestStore(t)
