@@ -89,6 +89,41 @@ describe('Org Designer sections', () => {
     await waitFor(() => expect(api.assignOrgRole).toHaveBeenCalledWith('duo', 'a2', 'beta'))
   })
 
+  it('keeps the server parent after moving a role onto an occupied section slot', async () => {
+    const org = {
+      ...ORG.org,
+      roles: ORG.org.roles.map(r => r.id === 'a2' ? { ...r, reports_to: 'b1' } : r),
+      sections: { alpha: { ...ORG.org.sections.alpha, members: ['a1'] }, beta: { ...ORG.org.sections.beta, members: ['b1', 'a2'] } },
+    }
+    api.assignOrgRole.mockResolvedValue({ ok: true, rev: 'r3', org })
+    await open()
+    drag('a2', 600, -120)
+    await waitFor(() => expect(screen.getByTestId('role-section')).toHaveValue('beta'))
+    const parent = screen.getByText('Reports to').parentElement.querySelector('select')
+    await waitFor(() => expect(parent).toHaveValue('b1'))
+    expect(document.querySelector('[data-od-node-id="a2"]').style.top).not.toBe('220px')
+  })
+
+  it('keeps the server parents while placing roles from a deleted section', async () => {
+    const org = {
+      ...ORG.org,
+      roles: ORG.org.roles.map(r => ['a1', 'a2'].includes(r.id) ? { ...r, reports_to: 'b1' } : r),
+      sections: { beta: { ...ORG.org.sections.beta, members: ['b1', 'a1', 'a2'] } },
+    }
+    api.deleteOrgSection.mockResolvedValue({ ok: true, rev: 'r3', org })
+    await open()
+    fireEvent.mouseDown(screen.getByTestId('section-header-alpha'), { button: 0 })
+    fireEvent.mouseUp(document)
+    fireEvent.click(await screen.findByTestId('section-delete'))
+    await waitFor(() => expect(screen.queryByTestId('section-alpha')).toBeNull())
+    const card = document.querySelector('[data-od-node-id="a2"]')
+    fireEvent.mouseDown(within(card).getByText('A2'), { button: 0 })
+    fireEvent.mouseUp(document)
+    const parent = screen.getByText('Reports to').parentElement.querySelector('select')
+    expect(parent).toHaveValue('b1')
+    expect(card.style.left).toBe('600px')
+  })
+
   it('refuses a role dropped outside every section: reason inline, nothing saved to membership, role snaps back', async () => {
     await open()
     drag('a2', 2900, 2700)

@@ -252,13 +252,16 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       const { roles } = res.org
       setOrgMeta(designMeta(res))
       const incoming = await hydrateWithIcons(roles || [])
-      setNodes(prev => {
-        const prevById = new Map(prev.map(n => [n.id, n]))
-        return layOutMissingPositions(incoming.map(n => {
-          const old = prevById.get(n.id)
-          return old ? { ...n, x: old.x, y: old.y } : n
-        }), res.org.sections)
-      })
+      const prevById = new Map(nodesRef.current.map(n => [n.id, n]))
+      const next = layOutMissingPositions(incoming.map(n => {
+        const old = prevById.get(n.id)
+        return old ? { ...n, x: old.x, y: old.y } : n
+      }), res.org.sections)
+      // Section drag/delete handlers place roles after awaiting this refresh.
+      // React may batch the render until those handlers finish, so publish
+      // the new semantics to the ref before their layout-only changes.
+      nodesRef.current = next
+      setNodes(next)
     }
   }, [])
 
