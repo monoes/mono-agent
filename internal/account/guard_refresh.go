@@ -37,15 +37,15 @@ const (
 // is advisory (the lock could not be taken in time, the context ended, a write
 // failed) and a caller must not fail a command because of it.
 //
-// ctx ends only what has not been sent yet: the wait for the in-process slot
-// and for the lock, and the read of the refresh token. A caller whose context
-// has ended by then starts nothing and gets the context's error. Once the
-// refresh request is sent it is not cancelled by ctx, since monoes.me rotates
-// the refresh token as it answers and the answer must be stored: EnsureFresh
-// then returns only after the answer is stored, which can take up to
-// refreshCallTimeout (20 s) after ctx has ended, and then the write of the new
-// refresh token to the key store, which the store gives up on after
-// keyStoreTimeout (10 s). A process must not exit before it returns.
+// ctx ends the waits that come before anything is sent: the wait for the
+// in-process slot and for the lock. A caller whose context has ended before the
+// request is sent, even while the refresh token is being read, sends nothing and
+// gets the context's error. Once the refresh request is sent it is not cancelled
+// by ctx, since monoes.me rotates the refresh token as it answers and the answer
+// must be stored: EnsureFresh then returns only after the answer is stored,
+// which can take up to refreshCallTimeout (20 s) after ctx has ended, and then
+// the write of the new refresh token to the key store, which the store gives up
+// on after keyStoreTimeout (10 s). A process must not exit before it returns.
 func (g *Guard) EnsureFresh(ctx context.Context) (Status, error) {
 	if dormant() {
 		return g.Status(), nil
