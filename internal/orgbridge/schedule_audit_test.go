@@ -39,8 +39,8 @@ func TestReadScheduleAuditRecorded2241Line(t *testing.T) {
 	}
 }
 
-// Source-derived (orgrt/scheduled-run.ts): the refused and skipped events.
-// Unknown events, junk and a torn last line never fail the read.
+// Synthetic lines (not monomind output): an unknown event, junk and a torn
+// last line never fail the read.
 func TestReadScheduleAuditToleratesUnknownAndDamagedLines(t *testing.T) {
 	root := writeAudit(t, strings.Join([]string{
 		`{"ts":1000,"event":"scheduled-start-refused","msg":"preflight: no runtime"}`,
@@ -100,5 +100,29 @@ func TestReadScheduleAuditRecordedPreflightRefusal(t *testing.T) {
 	}
 	if len(v.Entries) != 2 || v.Entries[0].Kind != ScheduleRefused || !strings.Contains(v.Entries[0].Msg, "cannot start on this host") {
 		t.Fatalf("got %+v", v)
+	}
+}
+
+// Recorded from monomind 2.24.1: a tick landing on a run started out of band
+// (`org run` while serve is live) yields (skipped), and a tick landing on a
+// run the scheduler itself started is held for one catch-up run (coalesced).
+func TestReadScheduleAuditRecordedSkippedAndCoalesced(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "monomind", "testdata", "monomind-2.24.1", "schedule-audit-skipped.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := ReadScheduleAudit(writeAudit(t, string(b)), "sched")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range v.Entries {
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, ","); got != "skipped,skipped,skipped,skipped,coalesced" {
+		t.Fatalf("got %s", got)
+	}
+	if v.Entries[0].Event != "scheduled-tick-skipped" || !strings.Contains(v.Entries[0].Msg, "is already live") {
+		t.Fatalf("got %+v", v.Entries[0])
 	}
 }

@@ -229,10 +229,6 @@ export function GetOrgDecisions(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgDocuments(arg1:string,arg2:string):Promise<string>;
 
-export function GetOrgScheduleAudit(arg1:string):Promise<string>;
-
-export function SetOrgSchedule(arg1:string,arg2:string):Promise<string>;
-
 export function GetOrgDesign(arg1:string):Promise<string>;
 
 export function GetOrgFlow(arg1:string,arg2:string):Promise<string>;
@@ -246,6 +242,8 @@ export function GetOrgMemoryStats(arg1:string):Promise<string>;
 export function GetOrgQuestions(arg1:string):Promise<string>;
 
 export function GetOrgReport(arg1:string,arg2:boolean,arg3:string):Promise<string>;
+
+export function GetOrgScheduleAudit(arg1:string):Promise<string>;
 
 export function GetOrgStatus(arg1:string):Promise<string>;
 
@@ -546,6 +544,8 @@ export function SetOrgAutonomy(arg1:string,arg2:string):Promise<string>;
 export function SetOrgGrant(arg1:string,arg2:string):Promise<string>;
 
 export function SetOrgRoleReportsTo(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function SetOrgSchedule(arg1:string,arg2:string):Promise<string>;
 
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 

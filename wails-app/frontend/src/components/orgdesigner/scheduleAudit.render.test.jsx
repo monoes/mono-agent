@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Schedule audit list (#342) and the designer's schedule control. The audit
 // entries are the Go view of monomind 2.24.1's recorded line plus two
-// source-derived ones (refused, skipped; scheduled-run.ts) and an unknown event.
+// a synthetic unknown event; the recorded refusal and skipped views follow.
 import React from 'react'
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
@@ -14,6 +14,7 @@ vi.mock('../../services/api.js', () => ({
 }))
 import { api } from '../../services/api.js'
 import recorded from './__fixtures__/schedule-audit-view.json'
+import recordedSkipped from './__fixtures__/schedule-audit-skipped-view.json'
 import ScheduleAuditPanel from './ScheduleAuditPanel.jsx'
 import ScheduleControl, { FRESH_RUN_NOTE, SECTIONS_NOTE } from './ScheduleControl.jsx'
 
@@ -67,6 +68,16 @@ describe('ScheduleAuditPanel on recorded output', () => {
     render(<ScheduleAuditPanel orgName="sec" />)
     expect((await screen.findAllByText('refused')).length).toBe(2)
     expect(screen.getAllByText(/cannot start on this host: the authority mask \(bubblewrap\) is unavailable/).length).toBe(2)
+  })
+})
+
+describe('ScheduleAuditPanel on a recorded skipped tick', () => {
+  it('shows ticks that yielded to a live run and the one held for a catch-up run', async () => {
+    api.getOrgScheduleAudit.mockResolvedValue(recordedSkipped)
+    render(<ScheduleAuditPanel orgName="sec" />)
+    expect((await screen.findAllByText('skipped')).length).toBe(4)
+    expect(screen.getAllByText('a run of "sec" is already live — this tick yields').length).toBe(4)
+    expect(screen.getByText('coalesced')).toBeInTheDocument()
   })
 })
 
