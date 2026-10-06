@@ -244,6 +244,11 @@ func TestArchiveStatusArchivesOneColumnInTheOrderItIsIn(t *testing.T) {
 	if err != nil || !sameIDs(idsOf(ts), done) {
 		t.Errorf("the archive lists %v (%v), want the column's order %v", idsOf(ts), err, done)
 	}
+	for i, task := range ts {
+		if want := int64(i+1) * 1024; task.Position != want {
+			t.Errorf("archived card %d is at %d, want %d: one gap below the one before", i, task.Position, want)
+		}
+	}
 	for _, id := range done {
 		if ev := opsEvents(t, s, id); ev[len(ev)-1] != "archived|you|done>archived|" {
 			t.Errorf("events of #%d: %v", id, ev)
@@ -257,6 +262,31 @@ func TestArchiveStatusArchivesOneColumnInTheOrderItIsIn(t *testing.T) {
 		if dumpBoard(t, db) != before {
 			t.Errorf("ArchiveStatus(%q) changed the database", st)
 		}
+	}
+}
+
+// A card goes to the bottom of the archive without the archive being read: one gap below its last
+// card, the first gap when it is empty. The archive of another profile and the other columns of the
+// profile do not count.
+func TestArchiveGoesOneGapBelowTheLastArchivedCardOfTheProfile(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	other := addProfile(t, db, "p2")
+	seedAt(t, db, other, "archived", 9_000_000) // another profile's archive
+	seedAt(t, db, "default", "done", 8_000_000) // another column of this profile
+	a, b := mustAdd(t, s, "default", "a", false), mustAdd(t, s, "default", "b", false)
+	got, err := s.Archive(bg, "default", []int64{a.ID, b.ID}, human)
+	if err != nil || got[0].Position != 1024 || got[1].Position != 2048 {
+		t.Fatalf("an empty archive: %+v, %v, want 1024 and 2048", got, err)
+	}
+	seedAt(t, db, "default", "archived", 5000)
+	c := mustAdd(t, s, "default", "c", false)
+	if got, err := s.Archive(bg, "default", []int64{c.ID}, human); err != nil || got[0].Position != 6024 {
+		t.Errorf("below an archived card at 5000: %+v, %v, want 6024", got, err)
+	}
+	seedAt(t, db, "default", "archived", -3000) // the last card is the highest, not the newest
+	d := mustAdd(t, s, "default", "d", false)
+	if got, err := s.Archive(bg, "default", []int64{d.ID}, human); err != nil || got[0].Position != 7048 {
+		t.Errorf("below the highest archived card: %+v, %v, want 7048", got, err)
 	}
 }
 

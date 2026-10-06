@@ -96,6 +96,25 @@ func (s *Store) columnOf(ctx context.Context, x dbx, profileID string, st Status
 	return ids, pos, nil
 }
 
+// archiveEnd is the position one gap below the last card of the archive. The archive
+// is the one column that has no limit, and edgePosition, which asks for the first and
+// the last position together, reads all of it: this asks for the last only, which the
+// index answers at once, so that archiving a column does not read the whole archive
+// again for each card. The card being archived is not in the archive yet, so no card
+// is left out.
+func (s *Store) archiveEnd(ctx context.Context, x dbx, profileID string) (int64, error) {
+	var hi sql.NullInt64
+	err := x.QueryRowContext(ctx,
+		`SELECT MAX(position) FROM tasks WHERE profile_id = ? AND status = ?`, profileID, string(StatusArchived)).Scan(&hi)
+	if err != nil {
+		return 0, fmt.Errorf("tasks: reading the archive: %w", err)
+	}
+	if !hi.Valid {
+		return positionGap, nil
+	}
+	return hi.Int64 + positionGap, nil
+}
+
 // placeIn returns the position that puts card id where p says in column `to`
 // (the card itself does not count). The top, the bottom and no placement need
 // only the end of the column. A card put before or after another takes the
@@ -106,6 +125,9 @@ func (s *Store) placeIn(ctx context.Context, x dbx, profileID string, id int64, 
 		return 0, invalid("use only one of before, after, top and bottom")
 	}
 	if p.Before == 0 && p.After == 0 {
+		if to == StatusArchived && !p.Top {
+			return s.archiveEnd(ctx, x, profileID)
+		}
 		return s.edgePosition(ctx, x, profileID, to, p.Top || (!p.Bottom && atTop(to)), id)
 	}
 	ref := p.Before
