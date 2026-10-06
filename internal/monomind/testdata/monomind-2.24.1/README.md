@@ -32,6 +32,7 @@ everything else: it routed the messages, ran the real document store
 | File | What it is |
 |---|---|
 | `events-unknown-kind.ndjson` | `events.ndjson` with two unknown event kinds (`section_status`, `hologram-from-the-future`) and a known event carrying unknown fields spliced in. 2.24.1 emits none of these; it exists so unknown kinds and fields stay non-fatal. |
+| `../../../orgbridge/testdata/documents-synthetic/` | **Synthetic, not monomind output.** The recorded run has no reject, rework or exhausted-cap case, so these are built from monomind 2.24.1's source (`orgrt/documents/store-types.ts`, `state.ts`, `relay.ts`, `rework.ts`, `notice-journal.ts`) and carry the same shapes: `events.jsonl` (a correctly hash-chained store: note-1 rejected once then accepted; note-2 rejected twice = cap of 2 exhausted and frozen; note-3 exhausted then accepted by a root `override`; note-4 pending; one `refused` line), `notices.jsonl` (delivered relay and `rework-exhausted` keys), `org-rework.json` (cap on the consuming section `review`, a `deliverable_files` entry). The panel's bus fixture, `wails-app/frontend/src/components/orgdesigner/__fixtures__/documents-bus.ndjson`, is synthetic too and adds an old `loop` event and an unknown kind. |
 
 ## Not captured
 

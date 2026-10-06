@@ -1,0 +1,6 @@
+{"id":"run-syn-1","ts":1791226000001,"org":"rework","run":"run-syn","type":"tool","from":"writer","tool":"org_doc_publish","decision":"allow","data":{"input":{"type":"note","body":{"text":"v1"}}}}
+{"id":"run-syn-2","ts":1791226000002,"org":"rework","run":"run-syn","type":"message","from":"org-docs","to":"checker","subject":"document ready: note-1 v1","msg":"writer published version 1 of document \"note-1\"."}
+{"id":"run-syn-3","ts":1791226000003,"org":"rework","run":"run-syn","type":"message","from":"org-docs","to":"writer","subject":"document rejected: note-1 v1","msg":"checker (review) rejected version 1 of document \"note-1\". This is rework round 1 of 2 for this document from review."}
+{"id":"run-syn-4","ts":1791226000004,"org":"rework","run":"run-syn","type":"message","from":"org-docs","to":"lead","subject":"rework exhausted: note-2 (review)","msg":"The review cycle of document \"note-2\" is spent: review has rejected 2 versions of it, which is its cap of 2 rework rounds."}
+{"id":"run-syn-5","ts":1791226000005,"org":"rework","run":"run-syn","type":"loop","from":"lead","loop":"review-cycle","round":2,"msg":"an old loops event"}
+{"id":"run-syn-6","ts":1791226000006,"org":"rework","run":"run-syn","type":"hologram-from-the-future","payload":{"x":1}}

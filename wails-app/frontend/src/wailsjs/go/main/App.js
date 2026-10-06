@@ -446,6 +446,10 @@ export function GetOrgDecisions(arg1, arg2) {
   return window['go']['main']['App']['GetOrgDecisions'](arg1, arg2);
 }
 
+export function GetOrgDocuments(arg1, arg2) {
+  return window['go']['main']['App']['GetOrgDocuments'](arg1, arg2);
+}
+
 export function GetOrgDesign(arg1) {
   return window['go']['main']['App']['GetOrgDesign'](arg1);
 }

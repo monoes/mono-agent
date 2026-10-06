@@ -224,6 +224,7 @@ export const api = {
   getOrgApprovals:    (name) => GoApp.GetOrgApprovals(name).then(s => JSON.parse(s)).catch(guard('org approvals', null)),
   getOrgGates:        (name) => GoApp.GetOrgGates(name).then(s => JSON.parse(s)).catch(guard('org gates', null)),
   getOrgDecisions:    (name, run = '') => GoApp.GetOrgDecisions(name, run).then(s => JSON.parse(s)).catch(guard('org decisions', null)),
+  getOrgDocuments:    (name, run = '') => GoApp.GetOrgDocuments(name, run).then(s => JSON.parse(s)).catch(guard('org documents', null)),
   getOrgMemoryStats:  (name) => GoApp.GetOrgMemoryStats(name).then(s => JSON.parse(s)).catch(guard('org memory stats', null)),
   answerOrgQuestion:  (name, questionID, answer) => GoApp.AnswerOrgQuestion(name, questionID, answer).then(s => JSON.parse(s)),
   approveOrgAction:   (name, role, action) => GoApp.ApproveOrgAction(name, role, action).then(s => JSON.parse(s)),
