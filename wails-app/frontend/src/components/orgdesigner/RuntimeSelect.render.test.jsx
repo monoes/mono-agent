@@ -4,7 +4,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import RuntimeSelect from './RuntimeSelect.jsx'
-import { sectionsOrgEnabled, runtimeChoice, pickerRuntimes } from './sectionsRuntimes.js'
+import { sectionsOrgEnabled, designMeta, runtimeChoice, pickerRuntimes, resetSectionsRuntimePolicyCache } from './sectionsRuntimes.js'
 
 const policy = {
   source: 'monomind',
@@ -16,7 +16,7 @@ const policy = {
 }
 const orgSectionsRuntimes = vi.fn()
 vi.mock('../../services/api.js', () => ({ api: { orgSectionsRuntimes: (...a) => orgSectionsRuntimes(...a) } }))
-afterEach(() => { cleanup(); orgSectionsRuntimes.mockReset() })
+afterEach(() => { cleanup(); orgSectionsRuntimes.mockReset(); resetSectionsRuntimePolicyCache() })
 
 const BASE = ['claude', 'qwen', 'codex']
 
@@ -67,12 +67,34 @@ describe('RuntimeSelect in a sections org', () => {
   })
 })
 
+describe('policy cache', () => {
+  it('asks the CLI once for several pickers, and again after a failure', async () => {
+    orgSectionsRuntimes.mockResolvedValue(policy)
+    const first = render(<RuntimeSelect value="" options={BASE} sectionsOrg onChange={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('option', { name: /kilo/i })).toBeInTheDocument())
+    first.unmount()
+    render(<RuntimeSelect value="" options={BASE} sectionsOrg onChange={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('option', { name: /kilo/i })).toBeInTheDocument())
+    expect(orgSectionsRuntimes).toHaveBeenCalledTimes(1)
+  })
+  it('does not keep a failed answer', async () => {
+    orgSectionsRuntimes.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(policy)
+    const first = render(<RuntimeSelect value="" options={BASE} sectionsOrg onChange={() => {}} />)
+    await waitFor(() => expect(orgSectionsRuntimes).toHaveBeenCalledTimes(1))
+    await new Promise(r => setTimeout(r, 0))
+    first.unmount()
+    render(<RuntimeSelect value="" options={BASE} sectionsOrg onChange={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('option', { name: /kilo/i })).toBeInTheDocument())
+    expect(orgSectionsRuntimes).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('sections helpers', () => {
-  it('sectionsOrgEnabled needs a section with content', () => {
+  it('sectionsOrgEnabled follows the flag Go sends, not the sections JSON', () => {
     expect(sectionsOrgEnabled(null)).toBe(false)
-    expect(sectionsOrgEnabled({ sections: {} })).toBe(false)
-    expect(sectionsOrgEnabled({ sections: { a: {} } })).toBe(false)
-    expect(sectionsOrgEnabled({ sections: { a: { lead: 'x' } } })).toBe(true)
+    expect(sectionsOrgEnabled(designMeta({ org: { roles: [], sections: { a: { lead: 'x' } } } }))).toBe(false)
+    expect(sectionsOrgEnabled(designMeta({ org: { roles: [] }, sections_enabled: true }))).toBe(true)
+    expect(designMeta({ org: { name: 'n', roles: [1] }, sections_enabled: false })).toEqual({ name: 'n', sectionsEnabled: false })
   })
   it('runtimeChoice and pickerRuntimes', () => {
     expect(runtimeChoice(policy, 'kilo').status).toBe('refused')

@@ -5,13 +5,14 @@ import { api } from '../../services/api.js'
 // from `monoagentcli org sections-runtimes`, i.e. monomind's isolation
 // registry as `org validate` reports it; nothing is hardcoded here.
 
-// sectionsOrgEnabled mirrors orgdesign.Doc.SectionsEnabled: a section with
-// something in it. `sections: {}` or an empty entry leave the org a plain one.
-export function sectionsOrgEnabled(meta) {
-  const s = meta?.sections
-  if (!s || typeof s !== 'object') return false
-  return Object.values(s).some(v => v && typeof v === 'object' && Object.keys(v).length > 0)
+// sectionsOrgEnabled: whether the org is a sections org is decided in Go
+// (Doc.SectionsEnabled) and arrives as sections_enabled next to the org doc;
+// designMeta folds it into the meta OrgDesigner keeps.
+export const designMeta = (res) => {
+  const { roles, ...meta } = res.org
+  return { ...meta, sectionsEnabled: res.sections_enabled === true }
 }
+export const sectionsOrgEnabled = (meta) => meta?.sectionsEnabled === true
 
 // runtimeChoice says how the picker treats a runtime: 'refused' (disabled,
 // with monomind's reason), 'unverified' (allowed, with a warning) or 'ok'.
@@ -27,6 +28,18 @@ export function pickerRuntimes(base, policy) {
   return [...base, ...extra]
 }
 
+// The policy only changes with monomind, so it is asked once per session;
+// a failed ask is not kept.
+let cached = null
+export function resetSectionsRuntimePolicyCache() { cached = null }
+function loadPolicy() {
+  if (!cached) {
+    cached = Promise.resolve().then(() => api.orgSectionsRuntimes())
+    cached.catch(() => { cached = null })
+  }
+  return cached
+}
+
 // useSectionsRuntimePolicy loads the policy while enabled; null until then
 // (and when the CLI cannot say, in which case nothing is blocked and
 // `org validate` still reports a refused runtime).
@@ -35,7 +48,7 @@ export function useSectionsRuntimePolicy(enabled) {
   useEffect(() => {
     if (!enabled) { setPolicy(null); return undefined }
     let alive = true
-    Promise.resolve().then(() => api.orgSectionsRuntimes())
+    loadPolicy()
       .then(p => { if (alive) setPolicy(p) })
       .catch(() => { if (alive) setPolicy(null) })
     return () => { alive = false }

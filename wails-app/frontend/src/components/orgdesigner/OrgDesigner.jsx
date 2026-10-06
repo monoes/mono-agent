@@ -33,7 +33,7 @@
 // Design / Live / Grants switches the centre between the editable canvas,
 // the same canvas recoloured from the org's bus (U15), and the grants matrix.
 
-import { sectionsOrgEnabled } from './sectionsRuntimes.js'
+import { designMeta, sectionsOrgEnabled } from './sectionsRuntimes.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, Search, SlidersHorizontal, ChevronLeft, ChevronRight, Workflow } from 'lucide-react'
 import { api, onOrgDesignUpdated, notify } from '../../services/api.js'
@@ -152,8 +152,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     if (!keepSelection) setLoading(true)
     const res = await api.getOrgDesign(orgName)
     if (!res || !res.org) { setOrgMeta(null); setNodes([]); setLoading(false); return }
-    const { roles, ...meta } = res.org
-    setOrgMeta(meta)
+    const { roles } = res.org
+    setOrgMeta(designMeta(res))
     revRef.current = res.rev ?? null
     let hydrated = await hydrateWithIcons(roles || [])
     hydrated = layOutMissingPositions(hydrated)
@@ -187,8 +187,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       setNodes([])
       return
     }
-    const { roles, ...meta } = payload.org
-    setOrgMeta(meta)
+    const { roles } = payload.org
+    setOrgMeta(designMeta(payload))
 
     const incoming = await hydrateWithIcons(roles || [])
     const now = Date.now()
@@ -244,8 +244,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     if (!res) return
     if (res.rev != null) revRef.current = res.rev
     if (res.org) {
-      const { roles, ...meta } = res.org
-      setOrgMeta(meta)
+      const { roles } = res.org
+      setOrgMeta(designMeta(res))
       const incoming = await hydrateWithIcons(roles || [])
       setNodes(prev => {
         const prevById = new Map(prev.map(n => [n.id, n]))
