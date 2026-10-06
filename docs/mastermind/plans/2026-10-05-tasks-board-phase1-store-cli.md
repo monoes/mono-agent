@@ -300,9 +300,9 @@ func TestCleanText(t *testing.T) {
 		{"tab and newline stay", "a\tb\nc", "a\tb\nc"},
 		{"other controls", "a\x00b\x07c\x7fd", "abcd"},
 		{"unicode tag characters", "visible\U000E0049\U000E0067hidden", "visiblehidden"},
-		{"bidi overrides", "a‮b⁦c", "abc"},
-		{"byte order mark", "﻿text", "text"},
-		{"invalid utf-8", "a\xffb", "a�b"},
+		{"bidi overrides", "a\u202eb\u2066c", "abc"},
+		{"byte order mark", "\ufefftext", "text"},
+		{"invalid utf-8", "a\xffb", "a\ufffdb"},
 		{"trimmed", "  \n text \t\n", "text"},
 		{"only controls and space", "\x00\x1b \t\n", ""},
 	}
@@ -320,7 +320,7 @@ func TestCleanText(t *testing.T) {
 }
 
 func TestCutRunesNeverSplitsACharacter(t *testing.T) {
-	for _, s := range []string{"héllo wörld, this is long", strings.Repeat("👨‍👩‍👧", 40), strings.Repeat("日本語", 30)} {
+	for _, s := range []string{"héllo wörld, this is long", strings.Repeat("\U0001F468\u200d\U0001F469\u200d\U0001F467", 40), strings.Repeat("日本語", 30)} {
 		got := cutRunes(s, 10)
 		if !utf8.ValidString(got) || utf8.RuneCountInString(got) > 10 || !strings.HasSuffix(got, "…") {
 			t.Errorf("cutRunes(%q, 10) = %q", s, got)
@@ -765,7 +765,7 @@ func hidden(r rune) bool {
 // hidden characters are dropped (an escape byte would otherwise reach a
 // terminal), and the ends are trimmed.
 func cleanText(s string) string {
-	s = strings.ToValidUTF8(s, "�")
+	s = strings.ToValidUTF8(s, "\ufffd")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	s = strings.Map(func(r rune) rune {
@@ -1071,7 +1071,7 @@ func TestAddRefusesTextThatCleansToNothing(t *testing.T) {
 	for _, in := range []AddInput{
 		{Text: " \x1b\x00 \t\n"},
 		{Title: "\x07 \x1b"},
-		{Text: "\U000E0049‮"},
+		{Text: "\U000E0049\u202e"},
 		{},
 	} {
 		if _, _, err := s.Add(bg, "default", in, human); !errors.Is(err, ErrInvalid) {
