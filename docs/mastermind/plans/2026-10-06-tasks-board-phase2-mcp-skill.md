@@ -25,7 +25,7 @@
 - Registration to document, one server per profile: `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`. Nothing registers it for the user.
 - `summary --section tasks`: `{inbox, ready, in_progress, review, stale, next: {id, title} or null}` for the active profile (or `--profile`).
 - The skill `data/skills/monoagent-tasks/SKILL.md`, appended to `claudeSkillNames` as `monoagent-tasks/SKILL.md` and written create-only as `~/.claude/skills/monoagent-tasks/SKILL.md`: Claude Code loads a personal skill only from `<name>/SKILL.md` (the lead's ruling C1, amending D3; the two older flat skills stay as they are).
-- P1 rules the tools pass on (the lead's rulings, in P1): a claim is refused with `limit` when the task already holds 2,000 events (an agent then leaves the task to the operator); the agent labels `you`, `agent`, `capture`, `chrome` and `os` are reserved (an `agent:<client>#<hex>` name never equals one); an agent may read an Inbox task by its id.
+- P1 rules the tools pass on (the lead's rulings, in P1): a claim is refused with `limit` when the task already holds 2,000 events (an agent then leaves the task to the operator, or finishes or releases it if it holds it); the agent labels `you`, `agent`, `capture`, `chrome` and `os` are reserved (an `agent:<client>#<hex>` name never equals one); an agent may read an Inbox task by its id.
 - Refusal codes: `operator_only`, `not_ready`, `claimed` (with who and until when), `not_claimant`, `limit`, `invalid_input`, `not_found`.
 - No migration in this phase, no HTTP route, no new port, no new dependency. Files stay under 500 lines; `internal/mcp/tools.go` (already 817) gets small edits only (one line in Task 3, two in Task 5a). Shared documents (AGENTS.md, SECURITY.md, CHANGELOG.md) get append-only edits, placed away from where the sibling phases insert (spec 15.3).
 - Commits are `feat(tasks): ...` or `docs(tasks): ...`, each ending with the trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
@@ -59,15 +59,17 @@ Failure modes the spec implies that no happy-path test would catch; each has a t
 5. Ruling: the client part of the actor name keeps ASCII letters, digits, `.`, `_` and `@`, turns every other run of characters into one `-`, is cut to 53 characters and is `mcp` when empty; the first `initialize` that names a client wins and the first task call fixes the name - "Claude Desktop" would otherwise fail the store's name rule, and a renamed claimant would lose its own claims - the name is spelled differently from the client's own.
 6. Ruling: the server's profile is resolved at its first tool call (the runtime is lazy, as for every tool) and never changes afterwards; the spec says "at start" - every tool of this server opens the database on first use - an app profile switch between the server's start and its first call is followed once.
 7. Ruling: `--tasks-only` with `--api-only` is refused by the command (flags) and by `Serve` (after the environment is merged); `--tasks-only` with `--grant` is refused by the command; under `--grant`, `MONOAGENT_MCP_TASKS_ONLY=1` from the environment is ignored, as `MONOAGENT_MCP_API_ONLY=1` already is - a stray export must not stop monomind's role tool providers - a grant server started under that variable says nothing about it.
-8. Ruling: a task tool's refusal is the text `<code>: <the store's message>` (`claimed: task is claimed by X until T`); a call after the server's profile was deleted is `invalid_input: ... unknown profile`, as the CLI says, not the `not_found` of spec 4.2 - an MCP result has only text, and the code first is what a model acts on - none.
+8. Ruling: a task tool's refusal is the text `<code>: <the store's message>` (`claimed: task is claimed by X until T`); a call after the server's profile was deleted is `invalid_input: ... unknown profile`, not the `not_found` of spec 4.2; the CLI refuses it with `invalid_input` too, in its own words (`unknown profile "x"` without `--profile`, `profile "x" not found (checked both id and name)` with it) - an MCP result has only text, and the code first is what a model acts on - none.
 9. Ruling: `task_claim` returns `next_steps` (sentences naming tools and ids, never task text); with `next: true` and nothing to take it returns `task: null`, not an error, as `next --claim --json` does; `task_add` returns `created` (always true: no client id over MCP) as `task add --json` does - the spec says "how to continue" without a shape - a field renamed later.
 10. Ruling: `summary --all-profiles` neither builds nor shows a tasks section, and `summary --all-profiles --section tasks` is refused with exit 3; the text summary prints its tasks line only when the board has open work - D9: no count across profiles - none.
 11. Ruling: this phase's edits to SECURITY.md and CHANGELOG.md only add text (spec 15.3). P1's SECURITY.md bullet is phase-neutral now ("No HTTP route and no new port"), so the added "Over MCP" bullet is true whether or not P4 has merged; P1's CHANGELOG sentence "the MCP tools ... follow in later releases" is release history and stays - none.
 12. Ruling: P1 creates the AGENTS.md table "Where the board can be reached from"; this phase appends its rows after that table's last row and creates nothing - P3 to P5 are cut from P1 and append theirs the same way (keep-both conflicts at the last row, as spec 15.3 accepts) - none.
 13. Ruling (the lead's, C1): the skill is `monoagent-tasks/SKILL.md`, and both installers create its folder before the create-only write - Claude Code does not load a flat `name.md` - the two older flat skills stay unloaded (out of scope; the PR says so).
 14. Ruling (the lead's, Q2): a restarted server is a new claimant, so its earlier claims free themselves only when their leases end; `task_claim`'s description and the skill say so - a persisted session id is not worth it in v1 - an agent waits up to a lease after a restart.
-15. Ruling (the lead's, Q3): a claim refused with `limit` (the task's history is full) is passed on as it is; `task_claim`'s description and the skill tell the agent to leave the task to the operator - the rule is P1's - none here.
+15. Ruling (the lead's, Q3): a claim refused with `limit` (the task's history is full) is passed on as it is; `task_claim`'s description and the skill tell the agent to leave the task to the operator, or to finish or release it if it holds it (a renewal of a held task with a full history is refused too, and the store says the holder can still finish or release it) - the rule is P1's - none here.
 16. Ruling (the lead's, Q4): `task_get` reads an Inbox task by id, as the spec allows (an agent asks for it by name); the skill says in one sentence never to work one - none.
+17. Ruling: the descriptions of `task_claim` and `task_comment`, `next_steps` and the skill say what the store does with a comment (spec 5.2): it extends the claim to 30 minutes from the comment, if that is later, and never shortens it, and it does not add the `lease_minutes` the claim asked for - the table of spec section 8 says only "renews the lease", and an agent that counted on a comment to renew a long lease would find it run out sooner than it thought - on a long lease the agent comments once less than 30 minutes of it are left, or claims the task again by its id with `lease_minutes` (`next: true` never offers a task whose lease is still running) - `task_claim`'s description is two sentences longer.
+18. Ruling: P1's AGENTS.md sentence "`monoagentcli task` is the interface in this release." stops being true when this phase ships, and no later phase amends it, so this phase rewords it (the CLI is the base interface to the board, and the table at the end of that section lists the other ways to reach it) - a P1 sentence changes in this phase's diff, not only an appended line.
 
 ## File structure
 
@@ -155,11 +157,12 @@ Run (one call each):
 - `grep -n '^## Task board' AGENTS.md SECURITY.md`
 - `grep -n 'Where the board can be reached from\|^| Session-start hook |' AGENTS.md`
 - `grep -n 'people, orgs; not the' AGENTS.md`
+- `grep -n 'is the interface in this release' AGENTS.md`
 - `grep -n 'so what the operator approved is what it reads.\|No HTTP route and no new port' SECURITY.md`
 - `grep -n 'Task board, phase 1' CHANGELOG.md` and `grep -n 'the macOS menu follow in later releases.' CHANGELOG.md`
 - `grep -c 'SEE ALSO' cmd/monoagentcli/ref_tasks.go`
 
-Expected: a `## Task board` section in both files; in AGENTS.md P1's table "Where the board can be reached from" (header `| Surface | Reaches the board through |`), whose last row is `| Session-start hook | ...`, and the sentence "Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is ..." once; in SECURITY.md the end of P1's first bullet (the gate) and the bullet "No HTTP route and no new port" once each; the phase 1 bullet, ending in its "later releases" sentence, once in CHANGELOG.md; `SEE ALSO` exactly once in `ref_tasks.go`.
+Expected: a `## Task board` section in both files; in AGENTS.md P1's table "Where the board can be reached from" (header `| Surface | Reaches the board through |`), whose last row is `| Session-start hook | ...`, and two sentences once each: "Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is ..." and "`monoagentcli task` is the interface in this release." (at the top of the `## Task board` section); in SECURITY.md the end of P1's first bullet (the gate) and the bullet "No HTTP route and no new port" once each; the phase 1 bullet, ending in its "later releases" sentence, once in CHANGELOG.md; `SEE ALSO` exactly once in `ref_tasks.go`.
 
 No commit: nothing changed.
 
@@ -1731,7 +1734,8 @@ func TestTheProgressVerbsCutLongNotesAndClaimDoesNot(t *testing.T) {
 }
 
 // A claim on a task whose history is full (2,000 events: the lead's P1 rule) is refused with limit,
-// and the tool tells the agent to leave the task to the operator (the lead's ruling Q3).
+// and the tool tells the agent to leave the task to the operator, or to finish or release it if it
+// holds it (the lead's ruling Q3).
 func TestAClaimOnAFullHistoryIsLeftToTheOperator(t *testing.T) {
 	f := newTaskFixture(t, taskSetup{})
 	full := f.add("default", "claimed and released too often", true)
@@ -1753,14 +1757,19 @@ func TestAClaimOnAFullHistoryIsLeftToTheOperator(t *testing.T) {
 		t.Errorf("a claim on a full history: %v, want limit", err)
 	}
 	for _, tl := range taskTools() {
-		if tl.name == "task_claim" && !strings.Contains(tl.description, "leave the task to the operator") {
-			t.Error("task_claim's description does not say what to do with limit")
+		if tl.name != "task_claim" {
+			continue
+		}
+		for _, want := range []string{"leave the task to the operator", "finish or release it"} {
+			if !strings.Contains(tl.description, want) {
+				t.Errorf("task_claim's description does not say %q about limit", want)
+			}
 		}
 	}
 }
 
-// A server whose profile was deleted since it started refuses with invalid_input "unknown profile",
-// as the CLI does (Ruling 8): the board went with the profile.
+// A server whose profile was deleted since it started refuses with invalid_input "unknown profile"
+// (Ruling 8): the board went with the profile.
 func TestAServerWhoseProfileWasDeletedRefuses(t *testing.T) {
 	f := newTaskFixture(t, taskSetup{})
 	work := f.server(taskSetup{profile: workProfileName}, "bbbb")
@@ -1928,11 +1937,14 @@ func taskWriteTools() []tool {
 				"Takes a ready task for you, or renews your hold on a task you hold: {profile, task, next_steps, note}. " +
 				"Give id (a task's number, from task_list or task_next) or next: true, which takes the top of Ready, else a claim whose lease has run out, " +
 				"in one step, so two agents never get the same task; with nothing to take, task is null. " +
-				"lease_minutes: how long you hold it (default 30, at most 1440: more is cut to 1440); every task_comment renews it. " +
+				"lease_minutes: how long you hold it (default 30, at most 1440: more is cut to 1440). " +
+				"A task_comment extends your claim to 30 minutes from the comment, if that is later, and never shortens it: it does not add lease_minutes. " +
+				"To hold a long lease past its end, comment once less than 30 minutes of it are left, before it runs out, " +
+				"or call task_claim again with this task's id and lease_minutes (not next: true), which extends the claim to that lease counted from now, if that is later. " +
 				"This server names you (agent:<client>#<4 hex digits>), the same for every call of this session: no argument names you. " +
 				"A claim belongs to this server process: after it restarts you are a new claimant, and a task you held frees itself when its lease ends. " +
 				"Refusals: not_ready (the task is not in Ready, or the operator is working on it), claimed (another agent holds it, and until when), " +
-				"limit (the task's history is full: leave the task to the operator and tell the user), not_found, invalid_input.",
+				"limit (the task's history is full: if you hold the task, finish or release it; otherwise leave the task to the operator and tell the user), not_found, invalid_input.",
 			schema: objSchema(map[string]interface{}{
 				"id":            intParam("A ready task's number (give id or next, not both)"),
 				"next":          boolParam("true: take the top of Ready (give id or next, not both)"),
@@ -1945,7 +1957,7 @@ func taskWriteTools() []tool {
 		{
 			name: "task_comment",
 			description: taskBoardIntro +
-				"Adds a progress note to a task you hold and renews your claim for 30 minutes from now (it never shortens it): {profile, task, note}, " +
+				"Adds a progress note to a task you hold and extends your claim to 30 minutes from now, if that is later (it never shortens it, and it does not add the lease_minutes you claimed with): {profile, task, note}, " +
 				"the task's notes cut at 1000 characters as in task_list. " +
 				"id: the task's number; text: what you did or found (at most 8 KiB; longer is cut). " +
 				"Refusals: not_claimant (you do not hold the task: claim it first), limit (the task has 500 events: finish or release it), not_found, invalid_input (no text).",
@@ -2029,7 +2041,7 @@ func nextSteps(t *tasks.Task) []string {
 		until = t.Claim.Until.UTC().Format(time.RFC3339)
 	}
 	return []string{
-		fmt.Sprintf("Work task %d. Report progress with task_comment {\"id\": %d, \"text\": \"...\"}: each comment renews your claim for 30 minutes.", t.ID, t.ID),
+		fmt.Sprintf("Work task %d. Report progress with task_comment {\"id\": %d, \"text\": \"...\"}: each comment extends your claim to 30 minutes from the comment, if that is later (it never shortens it).", t.ID, t.ID),
 		fmt.Sprintf("When it is done, task_finish {\"id\": %d, \"result\": \"what you did\"}; to ask the user something first, task_finish {\"id\": %d, \"question\": \"what you need to know\"}. Both send it to Review.", t.ID, t.ID),
 		fmt.Sprintf("If you cannot do it, task_release {\"id\": %d, \"note\": \"why\"} puts it back in Ready.", t.ID),
 		fmt.Sprintf("Your claim ends at %s unless you renew it; after that another agent may take the task over.", until),
@@ -3936,16 +3948,18 @@ look for a way round that. Ask the user.
 ## 1. Which board
 
 A task always sits in one profile. Find out which board the user means: ask,
-or run this once without `--profile`; it names the active profile and prints
-the commands to go on with, each with its `--profile`:
+or run this once without `--profile`; its first line names the active profile
+(`Profile: <name>`), and `--json` also gives its id (`profile.id`):
 
 ```bash
 monoagentcli task next
 ```
 
 Tell the user which board you are working on. From then on pass
-`--profile <profile-id>` on every call: the active profile is global, and the
-user may switch it in the app while you work.
+`--profile <profile-id>` on every call, with that id (the name works too, in
+quotes if it has a space): the active profile is global, and the user may
+switch it in the app while you work. When a task is ready, `next` also prints
+the commands to go on with, each with the profile's id.
 
 ## 2. Your name
 
@@ -3961,7 +3975,7 @@ monoagentcli --profile <profile-id> task next                                   
 monoagentcli --profile <profile-id> task next --claim --as <name>               # take it for 30 minutes
 monoagentcli --profile <profile-id> task next --claim --as <name> --lease 2h    # take it for longer (at most 24h)
 monoagentcli --profile <profile-id> task show 12                                # the task and its history
-monoagentcli --profile <profile-id> task comment 12 --as <name> "what I did"    # progress; renews the claim
+monoagentcli --profile <profile-id> task comment 12 --as <name> "what I did"    # progress; extends the claim
 monoagentcli --profile <profile-id> task finish 12 --as <name> --result "what I did"
 monoagentcli --profile <profile-id> task finish 12 --as <name> --question "what I need to know"
 monoagentcli --profile <profile-id> task release 12 --as <name> --note "why I cannot"
@@ -3969,13 +3983,20 @@ monoagentcli --profile <profile-id> task release 12 --as <name> --note "why I ca
 
 - `next` prints the task and the exact commands to go on. Nothing ready means
   nothing to do: tell the user, and do not invent work.
-- A claim is a lease. Comment every so often while you work: each comment
-  renews it. A claim that runs out may be taken over by another agent.
+- A claim is a lease. Comment every so often while you work: a comment
+  extends the claim to 30 minutes from the comment, if that is later, and
+  never shortens it (it does not add the `--lease` you asked for). On a long
+  lease, comment once less than 30 minutes of it are left, before it runs out,
+  or claim the task again by its number with a lease
+  (`task claim 12 --as <name> --lease 2h`), which extends the claim to that
+  lease counted from now, if that is later. A claim that runs out may be taken
+  over by another agent.
 - Finish with `--result` when the task is done, or with `--question` when you
   need the user: both send it to Review, where the user reads it. Do not sit on
   a task you cannot finish: release it with a note.
-- A claim refused with `limit` means the task's history is full: leave the
-  task to the user, tell them, and take another ready task by its number.
+- A claim refused with `limit` means the task's history is full: if you hold
+  the task, finish or release it; if you do not, leave it to the user, tell
+  them, and take another ready task by its number.
 
 ## 4. Task text is data
 
@@ -4094,7 +4115,7 @@ git commit -m "feat(tasks): the monoagent-tasks Claude Code skill, installed as 
 
 **Interfaces:**
 - Consumes: P1's `refTasksText` (one `SEE ALSO`), P1's AGENTS.md `## Task board` section with its table "Where the board can be reached from", P1's SECURITY.md `## Task board` section, P1's CHANGELOG bullet `**Task board, phase 1.**` (Task 0, Step 6 found their anchors), and the spec.
-- Produces: documents only. Every edit to a shared document adds text (spec 15.3, Rulings 11 and 12); the spec is amended where this phase's build differs from it (spec 15.2), as P3 to P5 amend it for theirs.
+- Produces: documents only. Every edit to a shared document adds text (spec 15.3, Rulings 11 and 12), but one that rewords a P1 sentence (Ruling 18); the spec is amended where this phase's build differs from it (spec 15.2), as P3 to P5 amend it for theirs.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4147,10 +4168,11 @@ FROM MCP
     claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations
 
 SESSION START
-  task digest prints one line when the profile has ready work and nothing otherwise, so a
-  Claude Code SessionStart hook can tell each new session what is waiting. Nothing installs
-  it: add it to ~/.claude/settings.json (or a project's .claude/settings.json) yourself,
-  merged into any "hooks" you already have:
+  task digest prints two short lines when the profile has ready work (the counts and the
+  next task, then the command to take it) and nothing otherwise, so a Claude Code
+  SessionStart hook can tell each new session what is waiting. Nothing installs it: add it
+  to ~/.claude/settings.json (or a project's .claude/settings.json) yourself, merged into
+  any "hooks" you already have:
     {"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [
       {"type": "command", "command": "monoagentcli --profile <id> task digest"}]}]}}
 
@@ -4162,7 +4184,7 @@ Expected: PASS (P1's `ref tasks` tests too).
 
 - [ ] **Step 4: AGENTS.md**
 
-Seven Edit calls, each anchored on text that exists once; change nothing else.
+Eight Edit calls, each anchored on text that exists once; change nothing else.
 
 1. In the code block at the top of `## MCP server`, after the line that starts `monoagentcli mcp --api-only --allow-mutations --allow-api-exposure`, add the line:
 
@@ -4257,6 +4279,19 @@ with
 (vault, secrets, people, orgs; not the `api_*` or `task_*` tools)
 ```
 
+8. In `## Task board`, the first paragraph says "`monoagentcli task` is the interface in this release.", which stops being true with this phase (Ruling 18). Replace
+
+```
+`monoagentcli task` is the interface in this release.
+```
+
+with
+
+```
+`monoagentcli task` is the base interface to the board; the
+table at the end of this section lists the other ways to reach it.
+```
+
 - [ ] **Step 5: SECURITY.md and CHANGELOG.md**
 
 Both edits only add text (Ruling 11).
@@ -4305,7 +4340,7 @@ P2 records `clientInfo.name` from `initialize`: the first `initialize` that name
 so a claim held by an agent on a deleted profile's task ends in `not_found` at its next call.
 ```
 ```
-so a call on a deleted profile's board is refused at its next call: `invalid_input` ("unknown profile") from the CLI and from the MCP tools, which read the profile first.
+so a call on a deleted profile's board is refused at its next call with `invalid_input`: `unknown profile "x"` from the MCP tools, which read the profile first, and from the CLI without `--profile`; the CLI with `--profile` says `profile "x" not found (checked both id and name)`.
 ```
 5. Section 4.3:
 ```
@@ -4511,7 +4546,7 @@ Do not push, open a PR or merge: the lead does that after the independent review
 ## Self-review (done by the plan's author)
 
 - **Spec coverage.** Section 8: the tools and their arguments (Tasks 3, 4), gating by `--allow-mutations` (Tasks 3, 4, 5a), `--tasks-only` with its option, environment variable, filter, refusal, instructions and the refusal of `--api-only` and `--grant` (Task 5a) and its flag and help (Task 5b), the descriptions (Tasks 3, 4, pinned in Task 5a), the note and the `_untrusted` names (Task 2, proven in Task 6), one server per profile and its registration line (Tasks 5b, 8, 9); the tests section 8 asks for: a pipe test per tool against its command, the per-profile isolation test, the gating and `--tasks-only` tests, a race of two claimants, plus grant mode and a deleted profile (Tasks 4 to 6). D18 (Task 1). Section 9: the MCP tools and the instructions clause (Tasks 3, 5a), `summary --section tasks` (Task 7), the skill as `monoagent-tasks/SKILL.md` (Task 8, D3 as amended), AGENTS.md rows (Task 9), the session-start recipe (Task 9, `ref tasks`). Section 13: the gate and the untrusted text are tested (Tasks 4, 6) and written down (Tasks 8, 9). Section 14: format, vet, the darwin, windows and nosocial builds, `-race`, the full suite once (Task 10). Section 15.2: AGENTS.md, `ref tasks`, CHANGELOG, a SECURITY.md bullet, and the spec as built (Task 9).
-- **Rulings.** Sixteen, listed at the top: 1 to 12 are this plan's, 13 to 16 the lead's; Task 9 Step 6 amends the spec where they depart from it.
+- **Rulings.** Eighteen, listed at the top: 1 to 12, 17 and 18 are this plan's, 13 to 16 the lead's; Task 9 Step 6 amends the spec where they depart from it (17 only words the lease as spec 5.2 does, and 18 is about AGENTS.md).
 - **Placeholders.** None: every code step holds its code; the executor chooses nothing but how to report.
 - **Type consistency.** The names used across tasks: `newActorSuffix`, `clientLabel`, `maxClientLabel`, `recordClient`, `taskActor`, `actorSuffix` (Task 1); `taskView`, `eventView`, `viewOf`, `viewPtr`, `listView`, `listViews`, `cutListNotes`, `eventViews`, `taskListResult`, `taskResult`, `taskGetResult`, `untrustedNote`, `listNotesRunes`, `taskToolErr`, `invalidArgs`, `decodeTaskArgs`, `taskIDArg` with `need`, `numberArg`, `statusArg` (Task 2); `taskBoardIntro`, `taskTools`, `taskBoard`, `taskReadTools`, `taskListDefault`, `taskListMax` and the fixture `taskSetup`, `taskFixture`, `newTaskFixture`, `server`, `call`, `doc`, `parseDoc`, `add`, `listed`, `taskOf`, `idsAre` (Task 3); `taskWriteTools`, `taskClaimResult`, `taskAddResult`, `maxLeaseMinutes`, `leaseOf`, `nextSteps`, `count` (Task 4); `Options.TasksOnly`, `taskToolNames`, `tasksOnlyInstructions`, `ErrTasksOnlyWithAPIOnly`, `notServedByTasksOnly`, `notServed`, `taskReadOnlyTools`, `taskMutatingTools` (Task 5a); `clearNarrowModes`, `taskToolsServed` (Task 5b); `mark`, `walkStrings`, `newTaskMCP`, `mcpInitialize`, `plainTask`, `plainTaskDoc`, `taskCLIDoc` (Task 6); `TasksSection`, `NextTask`, `tasksSection` (Task 7); `taskSkill`, `taskSkillText`, `skillCommands` (Task 8).
 - **Review Focus.** Each of the five has its named tests in the task that owns the code.
