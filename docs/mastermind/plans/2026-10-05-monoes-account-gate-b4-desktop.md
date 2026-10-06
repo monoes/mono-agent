@@ -93,9 +93,11 @@ import (
 )
 
 const (
-	acctOK     = `{"v":1,"state":"ok","reason":"","plan":"free","enforce_from":"2026-10-26T00:00:00Z","enforced":false}`
-	acctGrace  = `{"v":1,"state":"grace","reason":"unreachable","plan":"free","grace_until":"2026-10-06T22:00:00Z","enforced":true}`
-	acctLocked = `{"v":1,"state":"locked","reason":"not_logged_in","plan":"free","enforced":true}`
+	acctOK          = `{"v":1,"state":"ok","reason":"","plan":"free","enforce_from":"2026-10-26T00:00:00Z","enforced":false}`
+	acctGrace       = `{"v":1,"state":"grace","reason":"unreachable","plan":"free","grace_until":"2026-10-06T22:00:00Z","enforced":true}`
+	acctLocked      = `{"v":1,"state":"locked","reason":"not_logged_in","plan":"free","enforced":true}`
+	acctUnconfirmed = `{"v":1,"state":"grace","reason":"unconfirmed","plan":"free","grace_until":"2026-10-06T22:00:00Z","enforced":true}`
+	acctNewReason   = `{"v":1,"state":"locked","reason":"from_the_future","plan":"free","enforced":true}`
 )
 
 // enforceFrom gives this build an enforcement date, as release R does (B5a).
@@ -134,12 +136,17 @@ func TestAccountBindingsShellOut(t *testing.T) {
 
 // What the page is told about one `account status` run: the document whatever
 // its state, at exit 0 or 4 (`locked` exits 4, which the other bindings' error
-// path would have turned into a plain message), else a coded failure.
+// path would have turned into a plain message), else a coded failure. Only the
+// schema and the state are checked: a reason, one a newer monoagentcli reports or
+// one added since (unconfirmed, A24), passes through, and the page has words for
+// every reason, known or not.
 func TestAccountStatusAnswers(t *testing.T) {
 	tests := []struct{ name, script, want, code, errHas string }{ // want: the document, or "" for a failure
 		{"signed in", `echo '` + acctOK + `'`, acctOK, "", ""},
 		{"grace", `echo '` + acctGrace + `'`, acctGrace, "", ""},
 		{"locked exits 4 with its document", `echo '` + acctLocked + `'; exit 4`, acctLocked, "", ""},
+		{"grace after a refresh whose answer never arrived (A24)", `echo '` + acctUnconfirmed + `'`, acctUnconfirmed, "", ""},
+		{"locked for a reason it has not heard of", `echo '` + acctNewReason + `'; exit 4`, acctNewReason, "", ""},
 		{"a state it has not heard of", `echo '{"v":1,"state":"paused"}'`, "", accountCauseTooOld, "does not understand"},
 		{"a newer schema", `echo '{"v":2,"state":"ok"}'`, "", accountCauseTooOld, "does not understand"},
 		{"a CLI without the command", `echo 'Error: unknown command "account"' >&2; exit 1`, "", accountCauseTooOld, "no `account` command"},
