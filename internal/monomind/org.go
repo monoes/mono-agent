@@ -294,6 +294,9 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 // here kills it: OrgStop (`monomind org stop`) ends it cooperatively, the
 // same on every platform, so startDetached keeps it out of our jobs.
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
+	if !orgdesign.ValidOrgName(name) {
+		return fmt.Errorf("invalid org name %q", name)
+	}
 	bin, err := EnsureIn(ctx, projectRoot)
 	if err != nil {
 		return err

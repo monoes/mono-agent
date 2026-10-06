@@ -169,3 +169,11 @@ func TestOrgCostEstimate_GatesVersionAndValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestOrgRunStart_RejectsInvalidOrgName(t *testing.T) {
+	for _, name := range []string{"../x", "a/b", "", ".hidden"} {
+		if err := OrgRunStart(context.Background(), t.TempDir(), name, ""); err == nil || !strings.Contains(err.Error(), "invalid org name") {
+			t.Errorf("name %q: err = %v, want invalid org name", name, err)
+		}
+	}
+}
