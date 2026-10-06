@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/account/accounttest"
 )
 
 // A clock that went back since the last attempt this machine recorded (A24). The age of a
@@ -172,4 +173,46 @@ func TestTheRefresherDropsTheTokenWhenTheClockGoesBackBeforeItsLastAttempt(t *te
 	if rt, _ := e.store.LoadRefresh(); rt != "" || e.rawPending() != "" {
 		t.Fatalf("refresh.enc holds %q with pending %q, want the token dropped and no marker", rt, e.rawPending())
 	}
+}
+
+// suspendedInTheTokenRead is a process that is suspended (a lid closed, Ctrl-Z, a paused VM)
+// while the key store hands it the refresh token: the clock runs on meanwhile.
+type suspendedInTheTokenRead struct {
+	account.Store
+	clock *accounttest.Clock
+	for_  time.Duration
+}
+
+func (s suspendedInTheTokenRead) LoadRefresh() (string, error) {
+	rt, err := s.Store.LoadRefresh()
+	s.clock.Advance(s.for_)
+	return rt, err
+}
+
+// Reading the refresh token can take up to keyStoreTimeout, and any time at all when the
+// process is suspended meanwhile, and the grant goes out after it. The marker is judged on
+// the clock read after the token, the clock of the send: a retry judged at +200 s whose
+// process slept 120 s in the key store would reach monoes.me at +320 s, past its window.
+func TestTheMarkerIsJudgedOnTheClockOfTheSendNotOfTheSessionRead(t *testing.T) {
+	t.Run("a process suspended past the window drops the token", func(t *testing.T) {
+		r := newLostRig(t)
+		r.loseTheFirstAnswer(t)
+		r.e.f.Clock.Advance(200 * time.Second) // a command at +200 s, inside the window
+		st, err := r.passWith(suspendedInTheTokenRead{Store: account.OpenStore(r.e.dir, r.e.seal), clock: r.e.f.Clock, for_: 120 * time.Second})
+		if err != nil || r.net.grants() != 1 || r.srv.isRevoked() {
+			t.Fatalf("the command = %s/%q, %v with %d grants (revoked %t), want the token not presented at +320 s", st.State, st.Reason, err, r.net.grants(), r.srv.isRevoked())
+		}
+		if sess := r.e.session(); sess.LastResult != "unconfirmed" || !r.refreshFileGone() || !sess.LastAttempt.Equal(r.t0.Add(320*time.Second)) {
+			t.Fatalf("stored session = %s (token gone %t), want the token dropped and the attempt recorded at +320 s", describe(sess), r.refreshFileGone())
+		}
+	})
+	t.Run("a process suspended inside the window retries", func(t *testing.T) {
+		r := newLostRig(t)
+		r.loseTheFirstAnswer(t)
+		r.e.f.Clock.Advance(60 * time.Second)
+		st, err := r.passWith(suspendedInTheTokenRead{Store: account.OpenStore(r.e.dir, r.e.seal), clock: r.e.f.Clock, for_: 30 * time.Second})
+		if err != nil || st.State != account.StateOK || r.net.grants() != 2 || r.srv.isRevoked() || r.e.rawPending() != "" {
+			t.Fatalf("the command = %s/%q, %v with %d grants (revoked %t, pending %q), want ok after the retry at +90 s", st.State, st.Reason, err, r.net.grants(), r.srv.isRevoked(), r.e.rawPending())
+		}
+	})
 }

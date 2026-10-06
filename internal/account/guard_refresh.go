@@ -126,7 +126,10 @@ func (g *Guard) refreshIfDue(ctx context.Context, mode refreshMode) (Status, out
 // sends the grant and stores what came back. ctx matters until the request is
 // sent (the lock wait, the two checks below); the request itself runs on a
 // context of its own, so that a request monoes.me may have answered is never
-// abandoned and its answer is always stored.
+// abandoned and its answer is always stored. The clock is read after the session
+// under the lock and again once the refresh token has been read, just before the
+// send: the age of a marker, the stamp, the drop and the record of the grant use
+// that second reading.
 func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status, outcome, error) {
 	lctx, cancel := context.WithTimeout(ctx, lockWaitTimeout)
 	unlock, err := g.store.Lock(lctx)
@@ -181,6 +184,12 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		// the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
 	}
+	// The read of the token can take up to keyStoreTimeout, and any time at all when the
+	// process is suspended meanwhile (a lid closed, Ctrl-Z): what follows, the age of the
+	// marker, the stamp and the record of the attempt, uses the clock of the send, read
+	// now, not the one read with the session (A24). A read that failed above presents
+	// nothing, so its earlier reading can only put a drop off to the next pass.
+	now = g.now()
 	if pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed) {
 		// The grant that left the marker is out of reach of monoes.me's reuse window, or
 		// the clock went back and its age cannot be told: the token is not presented. Nor

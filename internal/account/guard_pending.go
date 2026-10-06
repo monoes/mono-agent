@@ -21,10 +21,15 @@ import "time"
 // detect a clock stepped back by less than the time since the last recorded attempt
 // when no pass ran between the stamp and the step (a machine with no daemon), and
 // closing it would need a boot-time or monotonic clock in the marker, which is out
-// of scope. Nor can the marker tell a refusal whose record could not be saved from a
-// lost answer: the refresh token stays for the next process to learn the refusal
-// again (A21), but one that comes after the window drops it instead, and this
-// machine shows grace and then locked(unconfirmed) where it would have shown
+// of scope. The age is judged on the clock read after the refresh token, just before
+// the send; a process suspended inside the Refresher after that, before the request
+// is written (discovery, dial, TLS), is not covered: closing that needs the deadline
+// of the send handed to the transport (a later hardening of B1b's Refresher).
+//
+// Nor can the marker tell a refusal whose record could not be saved from a lost
+// answer: the refresh token stays for the next process to learn the refusal again
+// (A21), but one that comes after the window drops it instead, and this machine
+// shows grace and then locked(unconfirmed) where it would have shown
 // locked(refused). That is accepted: nothing is presented and both end locked.
 
 // markPending writes the marker of a grant that is about to be sent, under the
@@ -60,8 +65,10 @@ func withoutPending(cur *Session) *Session {
 // or the session's last attempt lies after now, which means that the clock went
 // back since they were written and the marker's age cannot be told. Exactly
 // pendingRetryWindow is still a retry, and so is a pass at the very instant of the
-// last attempt. now must be read after the session, under the lock: another
-// process may have recorded an attempt while this one waited for it.
+// last attempt. now must be read after the session under the lock, since another
+// process may have recorded an attempt while this one waited for it, and after the
+// refresh token, just before the send, since that read may take as long as a
+// suspended process sleeps.
 func pendingExpired(cur *Session, now time.Time) bool {
 	if cur.PendingSince.IsZero() {
 		return false
