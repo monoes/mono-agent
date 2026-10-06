@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
-- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `EnsureFresh`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear only on a login or a refresh. The high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
+- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, and neither does a guard pass (`EnsureFresh`, `Refresh`, the background refresher) while the gate is dormant or its date is still ahead, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear on a login or a refresh and, from the enforcement date on (A25), on the first guard pass of a machine that has no session: that pass creates the directory, `session.lock` and a session with no token (`{v, host, hw}`, never `refresh.enc`), the clock-guard record of a machine that never signed in. So a gated command that is refused on an empty HOME leaves exactly `account/session.lock` and `account/session.json` once the date has been reached, and nothing before it. Otherwise the high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
 - Process globals (`enforceFrom`, the trusted keys, the installed guard, the strict flag) are guarded by a `sync.RWMutex` and read only through accessors. The `*ForTest` hooks and `accounttest.Install` are for tests that do not call `t.Parallel()`; CI's Linux jobs run `-race`.
 - A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
 - Open commands (D6): `version`, `help`, `completion`, cobra's hidden `__complete` and `__completeNoDesc`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), `library login`, `library logout`, `library status`. Everything else is gated, except the serving commands:
@@ -35,7 +35,7 @@ Failure modes the spec implies that a person using the software would meet and t
 3. An argument spelling that cobra runs but the gate lets through: a value flag swallowing `--help` or a command name, `--help=false`, `--`, an alias, an unknown flag. Pinned by `TestGateNeverDowngradesWhatCobraWouldRun` (Task 2).
 4. Something written to HOME before the gate says no, or by an open command: the first-run marker, the database, account files on a fresh HOME. From the enforcement date a refusal writes exactly one thing, the clock-guard record of a machine that never signed in (A25): `account/session.lock` and `account/session.json`, a session with no token and a high-water mark equal to the clock, so a clock set back before the date does not un-enforce the gate; before the date and for an open command nothing is written. Pinned by `TestRunRefusesGatedCommandsWhenLocked`, `TestRunRefusesAgainWhenTheClockIsSetBackBeforeTheDate` and `TestRunCreatesNothingForOpenCommands` (Task 4).
 5. A script that reads stdout: under `--json` the refusal is exactly one JSON document and no gate text reaches stdout; while enforcement is dormant the gate says nothing and the doctor row neither warns nor fails. Pinned by `TestRunRefusalIsOneJSONDocumentUnderJSON`, `TestRunLetsGatedCommandsRunWhenAllowed` and `TestGateAnnouncesGraceAndWarning` (Tasks 3 and 4), and `TestMonoesAccountCheck` (Task 5).
-6. A Ctrl-C that cannot end the process. The guard never abandons a refresh grant it has sent (A20), so a shutdown can wait up to the grant timeout (20 seconds) for monoes.me's answer, and `signal.NotifyContext` keeps swallowing the signals until it is stopped. `run()` therefore lets go of the signals before it releases the guard, so a second Ctrl-C ends a shutdown that waits in the guard's `Close`; while a command is still inside the gate's own refresh (`gateStatus`) the signals stay caught, the wait is bounded, and `gateStatus` says so. Pinned by `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` (Task 4).
+6. A Ctrl-C that cannot end the process. The guard never abandons a refresh grant it has sent (A20), so a shutdown can wait for monoes.me's answer and then for the key-store write of the new refresh token (the grant, then the write: about 20 seconds, 30 at the worst), and `signal.NotifyContext` keeps swallowing the signals until it is stopped. `run()` therefore lets go of the signals before it releases the guard, so a second Ctrl-C ends a shutdown that waits in the guard's `Close`; while a command is still inside the gate's own refresh (`gateStatus`) the signals stay caught, the wait is bounded, and `gateStatus` says so. Pinned by `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` (Task 4).
 
 ---
 
@@ -764,7 +764,7 @@ git commit -m "docs(account): spike S5, how root.Find resolves the target" -m "C
 ```go
 func newGateRefusal(st account.Status) error                          // exit 4, login_required fields, account.LoginRequiredError's text
 func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *account.Guard, stderr io.Writer) error
-func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil; may wait up to the grant timeout after a Ctrl-C
+func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil; may wait for the grant, then the key-store write, after a Ctrl-C
 func announce(w io.Writer, st account.Status)                         // the grace line, the warn-period line
 // exitCodeFor: any *account.LoginRequiredError, wrapped or not, is exit 4
 ```
@@ -1039,11 +1039,12 @@ func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *acc
 	return nil
 }
 
-// gateStatus renews the session when that is due and reads the verdict. EnsureFresh may block for
-// up to the guard's grant timeout (20 seconds) after a Ctrl-C while a refresh grant is in flight:
-// the guard never abandons a grant it has sent (A20), because the answer holds the only copy of
-// the refresh token that replaces the one monoes.me has already rotated. The signals stay caught
-// until the command ends, so a second Ctrl-C does not shorten the wait; only SIGKILL does.
+// gateStatus renews the session when that is due and reads the verdict. EnsureFresh may block after
+// a Ctrl-C while a refresh grant is in flight, for the grant and then for the key-store write of the
+// new refresh token (about 20 seconds, 30 at the worst): the guard never abandons a grant it has
+// sent (A20), because the answer holds the only copy of the refresh token that replaces the one
+// monoes.me has already rotated. The signals stay caught until the command ends, so a second
+// Ctrl-C does not shorten the wait; only SIGKILL does.
 func gateStatus(ctx context.Context, g *account.Guard) account.Status {
 	if g == nil {
 		return account.CurrentStatus()
