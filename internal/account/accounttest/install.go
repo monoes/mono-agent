@@ -22,7 +22,9 @@ const (
 // throwaway key, trusts that key, sets the enforcement date for the mode,
 // installs the guard as the process guard with the test-binary exception
 // switched off (strict), and restores all of it when the test ends. It returns
-// the guard. A test that uses it must not call t.Parallel().
+// the guard. A test builds at most one fixture (here, with InstallWithFixture or
+// with New): the trusted key is process-global, so a second one replaces the
+// first one's key. And it must not call t.Parallel().
 func Install(t testing.TB, m Mode) *account.Guard {
 	t.Helper()
 	g, _ := InstallWithFixture(t, m)
@@ -30,7 +32,8 @@ func Install(t testing.TB, m Mode) *account.Guard {
 }
 
 // InstallWithFixture is Install that also returns the Fixture, for a test that
-// needs the key to mint another token or the Clock to move time.
+// needs the key to mint another token or the Clock to move time. The same two
+// rules hold: at most one fixture per test, and no t.Parallel().
 func InstallWithFixture(t testing.TB, m Mode) (*account.Guard, *Fixture) {
 	t.Helper()
 	f := New(t)

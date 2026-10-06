@@ -290,16 +290,17 @@ func TestInstallModesAsTheClockMoves(t *testing.T) {
 		f.Clock.Set(st.GraceUntil)
 		expectStatus(t, g, account.StateLocked, account.ReasonExpired)
 	})
-	t.Run("the locked modes stay locked", func(t *testing.T) {
-		for _, c := range []struct {
-			mode   Mode
-			reason account.Reason
-		}{{LockedNoLogin, account.ReasonNotLoggedIn}, {LockedRefused, account.ReasonRefused}} {
+	for _, c := range []struct {
+		name   string
+		mode   Mode
+		reason account.Reason
+	}{{"LockedNoLogin", LockedNoLogin, account.ReasonNotLoggedIn}, {"LockedRefused", LockedRefused, account.ReasonRefused}} {
+		t.Run(c.name+" stays locked", func(t *testing.T) {
 			g, f := InstallWithFixture(t, c.mode)
 			f.Clock.Advance(48 * time.Hour)
 			expectStatus(t, g, account.StateLocked, c.reason)
-		}
-	})
+		})
+	}
 	t.Run("Dormant allows everything whenever it is", func(t *testing.T) {
 		g, f := InstallWithFixture(t, Dormant)
 		for _, step := range []time.Duration{0, 48 * time.Hour, -96 * time.Hour} {
