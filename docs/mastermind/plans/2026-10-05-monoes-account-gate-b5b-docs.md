@@ -520,8 +520,13 @@ prompt; `refresh.enc` (0600), the refresh token sealed with AES-256-GCM under a
 key from the OS keyring or, where there is none and `MONOAGENT_ALLOW_FILE_KEYRING=1`
 is set, the file keyring (see above), read only by a refresh; and `session.lock`
 (0600), which keeps two processes from refreshing at once. `account logout`
-deletes the token and the refresh token. The token is verified on your machine
-against public keys built into the binary: there is no network call per command.
+deletes the token and the refresh token and leaves a `session.json` that holds no
+token, only the highest time this machine has seen. A machine that has never signed
+in gets the same record, and `session.lock`, from the first command that is refused
+once the enforcement date has been reached. The record is what stops setting the
+clock back before that date from switching the requirement off. The token is
+verified on your machine against public keys built into the binary: there is no
+network call per command.
 
 The key that seals the refresh token is an item of its own in that key store (in
 the OS keychain, under the vault's service name `monoagent-vault`). In a file
