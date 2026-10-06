@@ -198,8 +198,9 @@ type Filter struct {
 	Limit     int
 }
 
-// AddInput is a new task. Title and Text are alternatives: with no Title the
-// first line of Text is the title (spec 4.6).
+// AddInput is a new task. A Title may come with Notes or with Text (which then
+// becomes the notes); Text alone gives the task its title from its first line.
+// Notes and Text together are refused (spec 4.6).
 type AddInput struct {
 	Title       string
 	Notes       string // only with a Title
