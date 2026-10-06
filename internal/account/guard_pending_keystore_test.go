@@ -173,3 +173,35 @@ func TestAKeyStoreFailureOnAClockThatWentBackNeverPresentsTheToken(t *testing.T)
 	}
 	r.neverPresentedAgain(t, 4)
 }
+
+// The clock that judges a key store failure is read after the session, under the lock: another
+// process may have recorded an attempt while this one waited for it, and a reading from before
+// the wait would lie before that attempt and look like a clock gone back, dropping a token that a
+// retry still recovers.
+func TestAKeyStoreFailureAfterAnotherProcessRecordedAnAttemptIsNoClockGoingBack(t *testing.T) {
+	r := newLostRig(t)
+	r.loseTheFirstAnswer(t)
+	r.e.f.Clock.Advance(50 * time.Second)
+	spy := r.e.spy()
+	var once sync.Once
+	spy.afterLock = func() {
+		once.Do(func() {
+			// Meanwhile another process retried at +55 s and lost the answer again, and the
+			// clock moved on to +60 s.
+			sess := r.e.session()
+			sess.LastAttempt, sess.LastResult = r.t0.Add(55*time.Second), "unreachable"
+			r.e.save(sess)
+			r.e.f.Clock.Set(r.t0.Add(60 * time.Second))
+		})
+	}
+	if _, err := r.passWith(&keyStoreDown{Store: spy, down: true}); err != nil {
+		t.Fatalf("the pass whose key store does not answer: %v", err)
+	}
+	if sess := r.e.session(); sess.LastResult != "keyring_unavailable" || !sess.PendingSince.Equal(r.t0) || r.refreshFileGone() {
+		t.Fatalf("stored session = %s (token gone %t), want keyring_unavailable, the marker and the token kept for a retry", describe(sess), r.refreshFileGone())
+	}
+	r.e.f.Clock.Advance(10 * time.Second)
+	if st, err := r.command(); err != nil || st.State != account.StateOK || r.srv.isRevoked() {
+		t.Fatalf("the retry with the key store back = %s/%q, %v (revoked %t), want ok", st.State, st.Reason, err, r.srv.isRevoked())
+	}
+}

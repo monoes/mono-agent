@@ -73,6 +73,9 @@ func TestAnAnswerWithARefreshTokenAndNoAccessToken(t *testing.T) {
 		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save"}) {
 			t.Fatalf("writes = %v, want the marker and the attempt only: a refresh token that did not change is not written", got)
 		}
+		if got := e.rawPending(); got != "" {
+			t.Fatalf("session.json carries pending_since %s: an answer that names the token presented says it was not rotated", got)
+		}
 		fs.failSaveRefresh = false // the key store works again: the next attempt rotates the token and writes the new one
 		e.f.Clock.Advance(time.Minute)
 		if st, err := g.EnsureFresh(ctx); err != nil || st.State != account.StateOK {
