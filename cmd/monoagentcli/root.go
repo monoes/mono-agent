@@ -107,6 +107,7 @@ func newRootCmd() *cobra.Command {
 		newAutomationCmd(cfg),
 		newRecordCmd(cfg),
 		newImageCmd(cfg),
+		newPublicationCmd(cfg),
 		newLibraryCmd(cfg),
 	)
 

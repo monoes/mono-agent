@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Publication history:** profile-scoped local records of posts, comments, replies and other content published by agents and workflows, with CLI `publication list|get|register|stats`, MCP tools and a desktop Publication page. Supported publishing operations register successful results automatically, preserving content and source identifiers while excluding private messages and drafts. Custom publishers register after success through the CLI, MCP or a `publication.register` workflow node. History starts with installation; existing external publications are not fetched.
+
 ## [0.107.0] - 2026-10-06
 
 ### Added

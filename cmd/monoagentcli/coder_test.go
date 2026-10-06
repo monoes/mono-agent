@@ -225,8 +225,20 @@ func TestCoderConversationFolders(t *testing.T) {
 		Exists        bool   `json:"exists"`
 	}
 	decodeChatJSON(t, out, &list)
-	if len(list) != 2 || !list[0].Exists || list[0].Path != real {
-		t.Errorf("workspace list = %+v", list)
+	if len(list) != 2 {
+		t.Fatalf("workspace list = %+v", list)
+	}
+	found := false
+	for _, workspace := range list {
+		if !workspace.Exists {
+			t.Errorf("missing workspace: %+v", workspace)
+		}
+		if workspace.Path == real && workspace.Conversations == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("workspace list missing picked folder with both conversations: %+v", list)
 	}
 }
 
@@ -356,7 +368,11 @@ func TestCoderRootIsOneSharedFolder(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
 	_, argsLog := writeCoderMonomind(t, "")
 	withCoderCaps(t, monomind.CoderCapabilities...)
-	root := filepath.Join(t.TempDir(), "coder root")
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "coder root")
 	setCoderSettings(t, dbPath, coderSettings{Enabled: true, WorkspaceRoot: root})
 
 	out, code := runCoderCLI(t, dbPath, "workspace", "root")
