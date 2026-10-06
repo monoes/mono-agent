@@ -41,11 +41,17 @@ func (s *loopServer) set(fn func(*loopServer)) {
 }
 
 // signIn stores a session as a login would have (see env.signIn) and has the
-// server accept the refresh token that login stored.
+// server accept the refresh token that login stored. The server's token and
+// refresh.enc come first and session.json last: a refresher that is already
+// polling and reads the new session at any instant must find what it takes to
+// refresh it (env.signIn alone writes session.json before refresh.enc).
 func (s *loopServer) signIn(age, life time.Duration) {
 	s.e.t.Helper()
-	s.e.signIn(age, life)
 	s.set(func(s *loopServer) { s.valid = "rt-1" })
+	if err := s.e.store.SaveRefresh("rt-1"); err != nil {
+		s.e.t.Fatalf("signIn: %v", err)
+	}
+	s.e.signIn(age, life)
 }
 
 func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account.TokenSet, error) {
