@@ -19,6 +19,19 @@ const (
 	lockFile    = "session.lock"
 )
 
+// errSessionInvalid is in every Load failure that means session.json is there and
+// cannot be used as it is: it does not parse, or it is of a version this build
+// does not read. A failure to open or to read the file (permission denied, an I/O
+// error) is not: it says nothing about what the file holds, so a caller can tell
+// a file that is unusable from a disk that failed. errors.Is finds it; the message
+// stays the failure's own.
+var errSessionInvalid = errors.New("account: " + sessionFile + " is not valid")
+
+// invalidSession marks a Load failure as errSessionInvalid and keeps its message.
+type invalidSession struct{ error }
+
+func (e invalidSession) Unwrap() []error { return []error{e.error, errSessionInvalid} }
+
 // Store is the on-disk session. Nothing creates a file or a directory until a
 // write: every read of a missing session answers "none". The mutating methods
 // (Save, SaveRefresh, DeleteRefresh) are safe across processes only under Lock,
@@ -186,10 +199,10 @@ func (s *fileStore) Load() (*Session, error) {
 	}
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, fmt.Errorf("account: %s is not valid: %w", sessionFile, err)
+		return nil, invalidSession{fmt.Errorf("account: %s is not valid: %w", sessionFile, err)}
 	}
 	if sess.V != sessionVersion {
-		return nil, fmt.Errorf("account: %s has version %d, this build reads version %d", sessionFile, sess.V, sessionVersion)
+		return nil, invalidSession{fmt.Errorf("account: %s has version %d, this build reads version %d", sessionFile, sess.V, sessionVersion)}
 	}
 	return &sess, nil
 }
