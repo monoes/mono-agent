@@ -4151,7 +4151,7 @@ D21 and D22. The library client reads with the machine session when there is one
 - Test: `internal/library/session_test.go`
 
 **Interfaces:**
-- Consumes: `account.Guard.Refresh`, `Guard.Status`, `account.Store.Load`, `account.StateLocked` (B1a); the fake and `account.Client.Login` (Tasks 3 and 5) in the tests.
+- Consumes: `account.Guard.Refresh`, `Guard.Status`, `account.Store.Load`, `account.StateLocked` (B1a); `account.GrantSettled` (Task 4); the fake and `account.Client.Login` (Tasks 3 and 5) in the tests.
 - Produces:
 
 ```go
