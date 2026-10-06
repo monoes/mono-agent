@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -204,70 +205,120 @@ func TestAWorkloadAtOnceLeavesAHistoryThatExplainsEveryTask(t *testing.T) {
 		t.Errorf("revision %d, want %d: one for every write that went through", claimsRev(t, s), want)
 	}
 
-	rows, err := db.Query(`SELECT id, status, claimed_by FROM tasks ORDER BY id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	type row struct {
-		id         int64
-		status, by string
-	}
-	var all []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.status, &r.by); err != nil {
-			t.Fatal(err)
-		}
-		all = append(all, r)
-	}
-	rows.Close()
-	claims := 0
-	for _, r := range all {
-		state, holder := "", ""
-		_, events, err := s.Get(bg, "default", r.id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i, e := range events {
-			if e.ToStatus != "" {
-				if e.FromStatus != "" && e.FromStatus != state {
-					t.Errorf("task #%d, event %d (%s): from %s while the task was in %q", r.id, i, e.Kind, e.FromStatus, state)
-				}
-				state = e.ToStatus
-			}
-			switch e.Kind {
-			case "claimed":
-				claims++
-				switch {
-				case e.Note == "renewed" && holder != e.Actor:
-					t.Errorf("task #%d, event %d: %s renewed a claim held by %q", r.id, i, e.Actor, holder)
-				case e.Note != "renewed" && holder != "":
-					t.Errorf("task #%d, event %d: %s claimed a task held by %q", r.id, i, e.Actor, holder)
-				case e.Note != "renewed" && e.FromStatus != "ready":
-					t.Errorf("task #%d, event %d: a claim from %q", r.id, i, e.FromStatus)
-				}
-				holder = e.Actor
-			case "reclaimed":
-				if holder == "" || holder == e.Actor {
-					t.Errorf("task #%d, event %d: %s took over a claim held by %q", r.id, i, e.Actor, holder)
-				}
-				holder = e.Actor
-			case "comment":
-				if e.Actor != "you" && holder != e.Actor {
-					t.Errorf("task #%d, event %d: %s commented on a task held by %q", r.id, i, e.Actor, holder)
-				}
-			case "result", "question", "released":
-				if holder != e.Actor {
-					t.Errorf("task #%d, event %d: %s handed back a task held by %q", r.id, i, e.Actor, holder)
-				}
-				holder = ""
-			}
-		}
-		if state != r.status || holder != r.by {
-			t.Errorf("task #%d: its history says %q held by %q, the row says %q held by %q", r.id, state, holder, r.status, r.by)
-		}
-	}
-	if claims == 0 {
+	if claimsExplainEveryTask(t, s, db) == 0 {
 		t.Error("no claim was made")
+	}
+}
+
+// Agents claim a card while the operator moves, archives or approves it. Each of these is a write
+// transaction that takes the lock first, so every call goes entirely before or entirely after every
+// other, and the card ends as one of the orders leaves it: archived whether or not an agent had it
+// first, say, or taken by the agent that was quick enough once approved. What the test holds the store
+// to, round after round with the calls started together, is all or nothing: every call either goes
+// through or is refused by a rule (never by an error of the store), a card the operator took out of the
+// queue is taken by at most one agent, the revision counts the calls that went through and no others,
+// and the history of every card, replayed, gives the row that it left.
+func TestClaimsAtOnceWithTheOperatorsMoveArchiveOrApprovalLeaveTheCardAsAnOrderWould(t *testing.T) {
+	const agents, callers, rounds = 3, 2, 12
+	for _, op := range []struct {
+		name  string
+		inbox bool     // the card starts in Inbox, otherwise in Ready
+		once  bool     // the card does not come back to Ready, so at most one claim can go through
+		wins  int      // how many of the operator's calls go through, of the callers that make them at once
+		ends  []Status // where the card may end
+		call  func(s *Store, id int64) error
+	}{
+		{"Move to the top of Review", false, true, callers, []Status{StatusReview}, func(s *Store, id int64) error {
+			_, err := s.Move(bg, "default", id, StatusReview, Placement{Top: true}, human)
+			return err
+		}},
+		{"Move to the top of Ready", false, false, callers, []Status{StatusReady, StatusInProgress}, func(s *Store, id int64) error {
+			_, err := s.Move(bg, "default", id, StatusReady, Placement{Top: true}, human)
+			return err
+		}},
+		{"Archive", false, true, 1, []Status{StatusArchived}, func(s *Store, id int64) error {
+			_, err := s.Archive(bg, "default", []int64{id}, human)
+			return err
+		}},
+		{"Approve", true, true, 1, []Status{StatusReady, StatusInProgress}, func(s *Store, id int64) error {
+			_, err := s.Approve(bg, "default", []int64{id}, false, human)
+			return err
+		}},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			s, db, _ := newTestStore(t)
+			claimed, done := 0, 0
+			ended := map[Status]int{}
+			for round := 0; round < rounds; round++ {
+				id := mustAdd(t, s, "default", fmt.Sprintf("card %d", round), !op.inbox).ID
+				claimErrs, callErrs := make([]error, agents), make([]error, callers)
+				start := make(chan struct{})
+				var parked, wg sync.WaitGroup
+				launch := func(delay time.Duration, call func()) {
+					parked.Add(1)
+					wg.Go(func() {
+						parked.Done()
+						<-start
+						time.Sleep(delay)
+						call()
+					})
+				}
+				for i := range claimErrs {
+					launch(0, func() { _, claimErrs[i] = s.Claim(bg, "default", id, bot(fmt.Sprintf("agent-%d", i)), 0) })
+				}
+				for i := range callErrs { // the operator's calls come a little later in some rounds, so that either order is seen
+					launch(time.Duration(round%5)*400*time.Microsecond, func() { callErrs[i] = op.call(s, id) })
+				}
+				parked.Wait()
+				close(start)
+				wg.Wait()
+
+				through := 0
+				for _, err := range callErrs {
+					switch {
+					case err == nil:
+						through++
+					case op.wins == callers || !errors.Is(err, ErrInvalid):
+						t.Errorf("round %d: a call of the operator failed with %v, want it to go through or to be refused as a second one", round, err)
+					}
+				}
+				if through != op.wins {
+					t.Errorf("round %d: %d of the operator's %d calls went through, want %d", round, through, callers, op.wins)
+				}
+				took := 0
+				for _, err := range claimErrs {
+					switch {
+					case err == nil:
+						took++
+					case !errors.Is(err, ErrClaimed) && !errors.Is(err, ErrNotReady):
+						t.Errorf("round %d: a claim failed with %v, want it to go through or to be refused by a rule", round, err)
+					}
+				}
+				if op.once && took > 1 {
+					t.Errorf("round %d: %d agents took a card that does not come back to Ready", round, took)
+				}
+				claimed, done = claimed+took, done+through
+
+				card, _, err := s.Get(bg, "default", id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Contains(op.ends, card.Status) {
+					t.Errorf("round %d: the card ended in %s, want one of %v", round, card.Status, op.ends)
+				}
+				if card.Status != StatusInProgress && card.Claim != nil {
+					t.Errorf("round %d: the card ended in %s with the claim %+v", round, card.Status, card.Claim)
+				}
+				ended[card.Status]++
+			}
+			if n := countWhere(t, db, "task_events", "kind IN ('claimed', 'reclaimed')"); n != claimed {
+				t.Errorf("%d claim events, want %d: one for each claim that went through", n, claimed)
+			}
+			if want := int64(rounds + claimed + done); claimsRev(t, s) != want {
+				t.Errorf("revision %d, want %d: one for each card added, claim and call of the operator that went through", claimsRev(t, s), want)
+			}
+			claimsExplainEveryTask(t, s, db)
+			t.Logf("%d claims and %d calls of the operator went through; the cards ended %v", claimed, done, ended)
+		})
 	}
 }

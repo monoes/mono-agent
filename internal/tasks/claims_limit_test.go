@@ -137,6 +137,55 @@ func TestNextTakesATaskWithOneEventToSpare(t *testing.T) {
 	}
 }
 
+// The cap is as exact for a stale claim as it is for a Ready task, in the query that finds one: with one
+// event to spare it is taken, and its takeover is the 2,000th event; with 2,000 it is passed over, and
+// nothing is left to take. A peek offers what next --claim would take, on both sides.
+func TestNextTakesAStaleClaimWithOneEventToSpareAndPassesOverOneWithNone(t *testing.T) {
+	for _, c := range []struct {
+		events int
+		taken  bool
+	}{{MaxEventsToClaim - 1, true}, {MaxEventsToClaim, false}} {
+		for _, claim := range []bool{false, true} {
+			t.Run(strconv.Itoa(c.events)+" events, claim "+strconv.FormatBool(claim), func(t *testing.T) {
+				s, db, clk := newTestStore(t)
+				task := mustAdd(t, s, "default", "abandoned", true)
+				claimsClaim(t, s, task.ID, "one", 0)
+				clk.advance(DefaultLease) // the lease ends now
+				claimsSeedEvents(t, db, task.ID, c.events)
+				before := dumpBoard(t, db)
+				got, err := s.Next(bg, "default", bot("two"), claim, 0)
+				if err != nil {
+					t.Fatalf("next (claim %v): %v", claim, err)
+				}
+				if !c.taken {
+					if got != nil {
+						t.Errorf("next (claim %v): %+v, want the stale claim passed over", claim, got)
+					}
+					if after := dumpBoard(t, db); after != before {
+						t.Errorf("next changed the database:\nbefore:\n%s\nafter:\n%s", before, after)
+					}
+					return
+				}
+				if got == nil || got.ID != task.ID || got.Claim == nil {
+					t.Fatalf("next (claim %v): %+v, want the stale claim", claim, got)
+				}
+				if !claim {
+					if got.Claim.By != "one" || !got.Claim.Stale {
+						t.Errorf("a peek: %+v, want the stale claim of one as it is", got.Claim)
+					}
+					return
+				}
+				if got.Claim.By != "two" || got.LastEvent == nil || got.LastEvent.Kind != "reclaimed" {
+					t.Errorf("next --claim: %+v, %+v, want the takeover by two", got.Claim, got.LastEvent)
+				}
+				if n := countWhere(t, db, "task_events", "task_id = ?", task.ID); n != MaxEventsToClaim {
+					t.Errorf("%d events, want %d: the takeover is the last one that fits", n, MaxEventsToClaim)
+				}
+			})
+		}
+	}
+}
+
 // Stale claims are passed over too, and the next one is taken.
 func TestNextPassesOverAStaleClaimThatHoldsTwoThousandEvents(t *testing.T) {
 	s, db, clk := newTestStore(t)

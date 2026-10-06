@@ -153,7 +153,7 @@ func TestAPeekIsReadInOneSnapshot(t *testing.T) {
 	calls := 0
 	s.now = func() time.Time {
 		calls++
-		if calls == 1 { // the peek has found no Ready task and asks for the time to look for a stale claim
+		if calls == 1 { // the peek has read the profile, which opens its snapshot, and asks for the time
 			if _, err := db.Exec(`UPDATE tasks SET status = 'review', claimed_by = '', claim_until = '' WHERE id = ?`, task.ID); err != nil {
 				t.Error(err)
 			}
@@ -173,6 +173,35 @@ func TestAPeekIsReadInOneSnapshot(t *testing.T) {
 	s.now = clk.now
 	if got, err := s.Next(bg, "default", bot("two"), false, 0); err != nil || got == nil || got.Title != "new" {
 		t.Errorf("the next peek: %+v, %v, want the task that was approved", got, err)
+	}
+}
+
+// next --claim reads the clock once, so the instant at which a claim is found stale is the one at which it
+// is taken: the lease ends at 12:30:00, the first reading of the clock is that second, and every reading
+// after it is a second earlier than the one before, as a wall clock that is set back would show. A claim
+// that read the clock again would find the task stale and then refuse it as one that is held.
+func TestNextClaimTakesWhatItFoundStaleWhateverTheClockDoesNext(t *testing.T) {
+	s, db, clk := newTestStore(t)
+	task := mustAdd(t, s, "default", "abandoned", true)
+	claimsClaim(t, s, task.ID, "one", 0)
+	end := clk.t.Add(DefaultLease)
+	reads := 0
+	s.now = func() time.Time {
+		reads++
+		return end.Add(-time.Duration(reads-1) * time.Second)
+	}
+	got, err := s.Next(bg, "default", bot("two"), true, 0)
+	if reads < 2 {
+		t.Fatalf("the clock was read %d times: the test no longer tells one reading from several", reads)
+	}
+	if err != nil || got == nil || got.ID != task.ID || got.Claim == nil || got.Claim.By != "two" {
+		t.Fatalf("next --claim: %+v, %v, want the task that was found stale taken by two", got, err)
+	}
+	if got.LastEvent == nil || got.LastEvent.Kind != "reclaimed" || got.LastEvent.Actor != "two" {
+		t.Errorf("last event: %+v", got.LastEvent)
+	}
+	if _, until := opsClaim(t, db, task.ID); until != end.Add(DefaultLease).Format(timeFmt) {
+		t.Errorf("the new lease is stored as ending %q, want half an hour after the instant that was read first, %q", until, end.Add(DefaultLease).Format(timeFmt))
 	}
 }
 

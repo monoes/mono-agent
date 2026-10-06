@@ -54,7 +54,9 @@ func TestLaterKeepsTheLaterOfTwoTimes(t *testing.T) {
 
 // A time is stored to the second, so a lease ends on a whole second: the one after the end it was
 // asked for. A stored lease is never shorter than the one asked for, and one that is asked for is
-// never over already (a lease of a millisecond would otherwise end at the second it began in).
+// never over already (a lease of a millisecond would otherwise end at the second it began in). The
+// rounding up stops at the cap (R11): the end is never more than MaxLease after the whole second the
+// lease began in, which is what the claim is stamped with.
 func TestALeaseEndsOnTheWholeSecondAfterTheEndItWasAskedFor(t *testing.T) {
 	whole := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	half := whole.Add(500 * time.Millisecond)
@@ -73,6 +75,13 @@ func TestALeaseEndsOnTheWholeSecondAfterTheEndItWasAskedFor(t *testing.T) {
 		{"half a second from half a second", half, 500 * time.Millisecond, whole.Add(time.Second)},
 		{"a millisecond from half a second", half, time.Millisecond, whole.Add(time.Second)},
 		{"half an hour from half a second, in another zone", half.In(zone), 30 * time.Minute, whole.Add(30*time.Minute + time.Second)},
+		{"the longest lease from a whole second", whole, MaxLease, whole.Add(MaxLease)},
+		{"the longest lease from half a second: the cap wins over the rounding up", half, MaxLease, whole.Add(MaxLease)},
+		{"the longest lease from half a second, in another zone", half.In(zone), MaxLease, whole.Add(MaxLease)},
+		{"a lease a second short of the longest, from half a second: the rounding up lands on the cap", half, MaxLease - time.Second, whole.Add(MaxLease)},
+		{"a lease two seconds short of the longest, from half a second: under the cap", half, MaxLease - 2*time.Second, whole.Add(MaxLease - time.Second)},
+		{"a lease longer than the longest, from half a second", half, 2 * MaxLease, whole.Add(MaxLease)},
+		{"a nanosecond from half a second", half, 1, whole.Add(time.Second)},
 	} {
 		got := leaseEnd(c.now, c.d)
 		if !got.Equal(c.want) || got.Nanosecond() != 0 {

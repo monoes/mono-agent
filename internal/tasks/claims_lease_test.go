@@ -83,6 +83,58 @@ func TestALeaseIsNeverShorterThanAskedForAndACommentRenewsToo(t *testing.T) {
 	}
 }
 
+// The 24 hours cap what is stored (R11): a lease is rounded up to a whole second so that a short one is
+// never over at birth, but it never ends later than MaxLease after the whole second the claim is stamped
+// with, which is the start that is stored. On a clock with a fraction of a second (every real one)
+// rounding the longest lease up would make it a second longer than the cap. The clock stands half way
+// through a second here, and each lease is taken by id and by next --claim.
+func TestARoundedUpLeaseNeverEndsLaterThanTheCapAllows(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		lease time.Duration
+		end   string // where the lease is stored as ending, for a claim at 12:00:00.5 on 2026-10-05
+	}{
+		{"the longest lease", MaxLease, "2026-10-06T12:00:00Z"},
+		{"two days", 48 * time.Hour, "2026-10-06T12:00:00Z"},
+		{"the longest duration", time.Duration(math.MaxInt64), "2026-10-06T12:00:00Z"},
+		{"a second short of the longest", MaxLease - time.Second, "2026-10-06T12:00:00Z"},
+		{"two seconds short of the longest", MaxLease - 2*time.Second, "2026-10-06T11:59:59Z"},
+		{"none", 0, "2026-10-05T12:30:01Z"},
+		{"a negative lease", -time.Hour, "2026-10-05T12:30:01Z"},
+		{"the most negative duration", time.Duration(math.MinInt64), "2026-10-05T12:30:01Z"},
+		{"a nanosecond", 1, "2026-10-05T12:00:01Z"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, db, clk := newTestStore(t)
+			clk.t = clk.t.Add(500 * time.Millisecond)
+			byID, byNext := mustAdd(t, s, "default", "by id", true), mustAdd(t, s, "default", "by next", true)
+			got, err := s.Claim(bg, "default", byID.ID, bot("one"), c.lease)
+			if err != nil || got.Claim == nil {
+				t.Fatalf("claim: %+v, %v", got, err)
+			}
+			next, err := s.Next(bg, "default", bot("two"), true, c.lease)
+			if err != nil || next == nil || next.ID != byNext.ID || next.Claim == nil {
+				t.Fatalf("next --claim: %+v, %v", next, err)
+			}
+			for what, task := range map[string]Task{"claim": got, "next --claim": *next} {
+				if _, until := opsClaim(t, db, task.ID); until != c.end {
+					t.Errorf("%s: the lease is stored as ending %q, want %q", what, until, c.end)
+				}
+				if end := task.Claim.Until.UTC().Format(timeFmt); end != c.end || task.Claim.Stale {
+					t.Errorf("%s: the task says the lease ends %q and is stale %v, want %q and a lease that is not over", what, end, task.Claim.Stale, c.end)
+				}
+			}
+			// asked for, a lease is never over at birth, whatever it was asked for: nobody takes the task
+			if _, err := s.Claim(bg, "default", byID.ID, bot("three"), 0); !errors.Is(err, ErrClaimed) {
+				t.Errorf("a claim of the task right after: %v, want ErrClaimed", err)
+			}
+			if cn, err := s.Counts(bg, "default"); err != nil || cn.Stale != 0 {
+				t.Errorf("stale claims %d (err %v), want 0", cn.Stale, err)
+			}
+		})
+	}
+}
+
 // A lease that ends exactly now has ended (spec 4.2): the other agent's claim and next --claim take the
 // task at that second, and not a second before. Each of them states the comparison on its own.
 func TestALeaseThatEndsExactlyNowHasEnded(t *testing.T) {

@@ -35,9 +35,9 @@ func (m *meddler) ExecContext(ctx context.Context, q string, args ...any) (sql.R
 }
 
 // claimMeddled runs a claim of the task by an agent through a meddler, whose changes are statements
-// with the id of the task as their one argument. It returns the row and the number of events of the task
-// as they are inside the transaction when the claim is done, and what the claim says. The transaction is
-// undone afterwards.
+// with the id of the task as their one argument. It returns the row (profile, status, holder and end of
+// the lease, separated by bars) and the number of events of the task as they are inside the transaction
+// when the claim is done, and what the claim says. The transaction is undone afterwards.
 func claimMeddled(t *testing.T, s *Store, id int64, by, before, after string) (row string, events int, err error) {
 	t.Helper()
 	run := func(q string) func(x dbx) {
@@ -52,8 +52,8 @@ func claimMeddled(t *testing.T, s *Store, id int64, by, before, after string) (r
 	}
 	txErr := s.tx(bg, func(x dbx) error {
 		m := &meddler{dbx: x, before: run(before), after: run(after)}
-		_, err = s.claimTx(bg, m, "default", id, bot(by), 0)
-		if e := x.QueryRowContext(bg, `SELECT profile_id || '|' || status || '|' || claimed_by FROM tasks WHERE id = ?`, id).Scan(&row); e != nil {
+		_, err = s.claimTx(bg, m, "default", id, bot(by), s.now().UTC(), 0)
+		if e := x.QueryRowContext(bg, `SELECT profile_id || '|' || status || '|' || claimed_by || '|' || claim_until FROM tasks WHERE id = ?`, id).Scan(&row); e != nil {
 			t.Error(e)
 		}
 		if e := x.QueryRowContext(bg, `SELECT COUNT(*) FROM task_events WHERE task_id = ?`, id).Scan(&events); e != nil {
@@ -71,39 +71,43 @@ func claimMeddled(t *testing.T, s *Store, id int64, by, before, after string) (r
 // or already held under the name, in the profile the claim is for; the UPDATE decides that (spec 5.2).
 // The claim reads the task before, for what to write, and again when the UPDATE takes nothing, to say
 // why, so a task that changed in between is refused for what it has become. Where what the claim read
-// and what the UPDATE did do not agree, it says so, and the transaction keeps nothing.
+// and what the UPDATE did do not agree on whether the task is taken, it says so, and the transaction
+// keeps nothing. Where they agree on that and the task is the holder's own, the UPDATE alone decides the
+// lease too: a renewal never shortens it, whatever the claim read.
 func TestTheUpdateOfAClaimDecidesWhatItTakes(t *testing.T) {
 	notASentinel := func(err error) bool {
 		return err != nil && !errors.Is(err, ErrNotReady) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrClaimed) && !errors.Is(err, ErrLimit)
 	}
 	for _, c := range []struct {
 		name          string
-		heldByOther   bool   // when the claim reads it, "other" holds the task for another hour
+		held          string // when the claim reads it, this agent holds the task for another hour (none: it is Ready)
 		before, after string // changes made to the task, each with its id as the one argument
 		want          func(err error) bool
 		row           string // the row, in the transaction, afterwards
 		events        int
 	}{
-		{"moved to another profile after it was read", false, `UPDATE tasks SET profile_id = 'p2' WHERE id = ?`, "",
-			func(err error) bool { return errors.Is(err, ErrNotFound) }, "p2|ready|", 1},
-		{"moved to Review after it was read", false, `UPDATE tasks SET status = 'review' WHERE id = ?`, "",
-			func(err error) bool { return errors.Is(err, ErrNotReady) }, "default|review|", 1},
-		{"taken by another agent after it was read", false, `UPDATE tasks SET status = 'in_progress', claimed_by = 'other', claim_until = '2026-10-05T13:00:00Z' WHERE id = ?`, "",
+		{"moved to another profile after it was read", "", `UPDATE tasks SET profile_id = 'p2' WHERE id = ?`, "",
+			func(err error) bool { return errors.Is(err, ErrNotFound) }, "p2|ready||", 1},
+		{"moved to Review after it was read", "", `UPDATE tasks SET status = 'review' WHERE id = ?`, "",
+			func(err error) bool { return errors.Is(err, ErrNotReady) }, "default|review||", 1},
+		{"taken by another agent after it was read", "", `UPDATE tasks SET status = 'in_progress', claimed_by = 'other', claim_until = '2026-10-05T13:00:00Z' WHERE id = ?`, "",
 			func(err error) bool {
 				var ce *ClaimedError
 				return errors.Is(err, ErrClaimed) && errors.As(err, &ce) && ce.By == "other"
-			}, "default|in_progress|other", 1},
-		{"changed and changed back, so that there is nothing to refuse", false, `UPDATE tasks SET status = 'review' WHERE id = ?`, `UPDATE tasks SET status = 'ready' WHERE id = ?`,
-			func(err error) bool { return notASentinel(err) && strings.Contains(err.Error(), "not taken") }, "default|ready|", 1},
-		{"a lease that runs out after it was read", true, `UPDATE tasks SET claim_until = '2026-10-05T11:00:00Z' WHERE id = ?`, "",
-			func(err error) bool { return notASentinel(err) && strings.Contains(err.Error(), "refuse") }, "default|in_progress|one", 2},
+			}, "default|in_progress|other|2026-10-05T13:00:00Z", 1},
+		{"changed and changed back, so that there is nothing to refuse", "", `UPDATE tasks SET status = 'review' WHERE id = ?`, `UPDATE tasks SET status = 'ready' WHERE id = ?`,
+			func(err error) bool { return notASentinel(err) && strings.Contains(err.Error(), "not taken") }, "default|ready||", 1},
+		{"a lease that runs out after it was read", "other", `UPDATE tasks SET claim_until = '2026-10-05T11:00:00Z' WHERE id = ?`, "",
+			func(err error) bool { return notASentinel(err) && strings.Contains(err.Error(), "refuse") }, "default|in_progress|one|2026-10-05T12:30:00Z", 2},
+		{"a renewal whose lease was made longer after it was read keeps the longer end", "one", `UPDATE tasks SET claim_until = '2026-10-05T17:00:00Z' WHERE id = ?`, "",
+			func(err error) bool { return err == nil }, "default|in_progress|one|2026-10-05T17:00:00Z", 3},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, db, _ := newTestStore(t)
 			addProfile(t, db, "p2")
 			id := mustAdd(t, s, "default", "contested", true).ID
-			if c.heldByOther {
-				claimsClaim(t, s, id, "other", time.Hour)
+			if c.held != "" {
+				claimsClaim(t, s, id, c.held, time.Hour)
 			}
 			row, events, err := claimMeddled(t, s, id, "one", c.before, c.after)
 			if !c.want(err) {
@@ -143,5 +147,62 @@ func TestAClaimTakesTheTaskNamedAndNoOther(t *testing.T) {
 	held("three", "", "one", "", "")
 	if n := countWhere(t, db, "tasks", "status = 'ready'"); n != 3 {
 		t.Errorf("%d tasks are Ready, want 3", n)
+	}
+}
+
+// Only a renewal by the holder keeps the later of two lease ends. Any other claim, a takeover of a stale
+// claim or a claim of a Ready task, ends exactly one lease after now, whatever lease the row still holds:
+// the one the claim it takes over had, or the stray one that a Ready row may carry, ending far off, under
+// another name or under the claimant's own.
+func TestAClaimThatIsNoRenewalEndsExactlyOneLeaseAfterNow(t *testing.T) {
+	const lease = 2 * time.Hour
+	for _, c := range []struct {
+		name string
+		prep func(t *testing.T, s *Store, db *sql.DB, clk *clock) int64 // makes the task and returns its id
+	}{
+		{"a takeover of a stale claim", func(t *testing.T, s *Store, db *sql.DB, clk *clock) int64 {
+			id := mustAdd(t, s, "default", "abandoned", true).ID
+			claimsClaim(t, s, id, "one", 10*time.Minute)
+			clk.advance(20 * time.Minute)
+			return id
+		}},
+		{"a Ready task with nothing left on it", func(t *testing.T, s *Store, db *sql.DB, clk *clock) int64 {
+			return mustAdd(t, s, "default", "plain", true).ID
+		}},
+		{"a Ready task with a claim of another name left on it, ending far off", func(t *testing.T, s *Store, db *sql.DB, clk *clock) int64 {
+			id := mustAdd(t, s, "default", "stray", true).ID
+			claimsStray(t, db, id, "ghost", clk.t.Add(10*time.Hour))
+			return id
+		}},
+		{"a Ready task with a claim of the claimant's own name left on it, ending far off", func(t *testing.T, s *Store, db *sql.DB, clk *clock) int64 {
+			id := mustAdd(t, s, "default", "stray", true).ID
+			claimsStray(t, db, id, "two", clk.t.Add(10*time.Hour))
+			return id
+		}},
+	} {
+		for _, via := range []string{"claim", "next --claim"} {
+			t.Run(c.name+", by "+via, func(t *testing.T) {
+				s, db, clk := newTestStore(t)
+				id := c.prep(t, s, db, clk)
+				var got *Task
+				var err error
+				if via == "claim" {
+					var task Task
+					task, err = s.Claim(bg, "default", id, bot("two"), lease)
+					got = &task
+				} else {
+					got, err = s.Next(bg, "default", bot("two"), true, lease)
+				}
+				if err != nil || got == nil || got.ID != id || got.Claim == nil || got.Claim.By != "two" {
+					t.Fatalf("%s: %+v, %v, want the task taken by two", via, got, err)
+				}
+				if want := clk.t.Add(lease).Format(timeFmt); got.Claim.Until.UTC().Format(timeFmt) != want {
+					t.Errorf("the task says the lease ends %v, want %s", got.Claim.Until, want)
+				}
+				if _, until := opsClaim(t, db, id); until != clk.t.Add(lease).Format(timeFmt) {
+					t.Errorf("the lease is stored as ending %q, want one lease after now, %q", until, clk.t.Add(lease).Format(timeFmt))
+				}
+			})
+		}
 	}
 }

@@ -27,11 +27,16 @@ func clampLease(d time.Duration) time.Duration {
 
 // leaseEnd is when a lease of d that begins at now ends, as a stored time. A time is kept to the second,
 // so the end is rounded up to the next whole second: a lease is never shorter than the one asked for,
-// and a short one is not over at the second it began in, where anybody could take the task at once.
+// and a short one is not over at the second it began in, where anybody could take the task at once. The
+// cap comes after the rounding and wins over it: a claim is stamped with the whole second it began in, so
+// the end is never more than MaxLease after that second, and the longest lease is not made a second longer.
 func leaseEnd(now time.Time, d time.Duration) time.Time {
 	end := now.Add(d)
 	if end.Nanosecond() != 0 {
 		end = end.Truncate(time.Second).Add(time.Second)
+	}
+	if last := now.Truncate(time.Second).Add(MaxLease); end.After(last) {
+		end = last
 	}
 	return end
 }
@@ -57,10 +62,10 @@ func needName(a Actor) error {
 	return checkAgentName(a.Name)
 }
 
-// pickNext is the id of the task Next would take: the top of Ready, else the stale claim whose lease ended
-// first. A task that holds MaxEventsToClaim events is passed over, because a claim of it is refused:
-// offered, it would stay at the head of the queue and block every task behind it. 0 means there is none.
-func (s *Store) pickNext(ctx context.Context, x dbx, profileID string) (int64, error) {
+// pickNext is the id of the task Next would take at now (UTC): the top of Ready, else the stale claim whose
+// lease ended first. A task that holds MaxEventsToClaim events is passed over, because a claim of it is
+// refused: offered, it would stay at the head of the queue and block every task behind it. 0 means there is none.
+func (s *Store) pickNext(ctx context.Context, x dbx, profileID string, now time.Time) (int64, error) {
 	var id int64
 	err := x.QueryRowContext(ctx,
 		`SELECT id FROM tasks WHERE profile_id = ? AND status = 'ready'
@@ -75,7 +80,7 @@ func (s *Store) pickNext(ctx context.Context, x dbx, profileID string) (int64, e
 	err = x.QueryRowContext(ctx,
 		`SELECT id FROM tasks WHERE profile_id = ? AND status = 'in_progress' AND claimed_by <> '' AND claim_until <= ?
 		   AND (SELECT COUNT(*) FROM task_events WHERE task_id = tasks.id) < ?
-		 ORDER BY claim_until, id LIMIT 1`, profileID, s.stamp(), MaxEventsToClaim).Scan(&id)
+		 ORDER BY claim_until, id LIMIT 1`, profileID, now.Format(timeFmt), MaxEventsToClaim).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -88,7 +93,9 @@ func (s *Store) pickNext(ctx context.Context, x dbx, profileID string) (int64, e
 // Next returns the task an agent should work next. Without claim it only looks, in one snapshot (two
 // agents that look may see the same task), for the operator and for any agent, named or not; a capture
 // may not read the board. With claim it picks and claims in one write transaction, so two agents never
-// get the same one, and it needs an agent with a name. A look offers what a claim would take. A nil
+// get the same one, and it needs an agent with a name. A look offers what a claim would take. The clock is
+// read once, inside the transaction, and that instant both picks the task and claims it: a clock that is
+// set back between two readings must not make a task that was found stale a task that is held. A nil
 // task and a nil error mean there is nothing to do.
 func (s *Store) Next(ctx context.Context, profileID string, actor Actor, claim bool, lease time.Duration) (*Task, error) {
 	if !claim {
@@ -104,7 +111,7 @@ func (s *Store) Next(ctx context.Context, profileID string, actor Actor, claim b
 			if _, err := s.profileOf(ctx, x, profileID); err != nil {
 				return err
 			}
-			id, err := s.pickNext(ctx, x, profileID)
+			id, err := s.pickNext(ctx, x, profileID, s.now().UTC())
 			if err != nil || id == 0 {
 				return err
 			}
@@ -128,11 +135,12 @@ func (s *Store) Next(ctx context.Context, profileID string, actor Actor, claim b
 		if _, err := s.profileOf(ctx, x, profileID); err != nil {
 			return err
 		}
-		id, err := s.pickNext(ctx, x, profileID)
+		now := s.now().UTC()
+		id, err := s.pickNext(ctx, x, profileID, now)
 		if err != nil || id == 0 {
 			return err
 		}
-		t, err := s.claimTx(ctx, x, profileID, id, actor, lease)
+		t, err := s.claimTx(ctx, x, profileID, id, actor, now, lease)
 		if err != nil {
 			return err
 		}
@@ -159,7 +167,7 @@ func (s *Store) Claim(ctx context.Context, profileID string, id int64, actor Act
 		if _, err := s.profileOf(ctx, x, profileID); err != nil {
 			return err
 		}
-		t, err := s.claimTx(ctx, x, profileID, id, actor, lease)
+		t, err := s.claimTx(ctx, x, profileID, id, actor, s.now().UTC(), lease)
 		if err != nil {
 			return err
 		}
@@ -195,38 +203,44 @@ func claimOf(cur Task, name string, now time.Time) (kind, note string, refused e
 	return "", "", &ClaimedError{By: cur.Claim.By, Until: cur.Claim.Until}
 }
 
-// claimTx claims task id in the caller's write transaction. One conditional UPDATE decides: it takes the
-// task only when it is Ready, or In progress with a lease that has ended or under the same name, and has
-// fewer than MaxEventsToClaim events; and only a task of the profile. The task is read first for what the
-// UPDATE writes (the place in the column, the lease that a renewal never shortens) and for the event, and
-// read again when the UPDATE takes nothing, to say why. If the two do not agree, the UPDATE took what the
-// rules refuse or refused what they allow, and the error undoes the transaction.
-func (s *Store) claimTx(ctx context.Context, x dbx, profileID string, id int64, actor Actor, lease time.Duration) (Task, error) {
+// claimTx claims task id at now (UTC) in the caller's write transaction. One conditional UPDATE decides
+// whether the task is taken: only when it is Ready, or In progress with a lease that has ended or under the
+// same name, with fewer than MaxEventsToClaim events, and of the profile. It decides the lease too: a
+// renewal by the same name keeps the later of the end it holds and the new one, and any other claim sets
+// the new end, so no read can make the UPDATE shorten a lease or lengthen a new one. What it does not
+// decide is read first: the place in the column (the bottom of In progress for a Ready card, else the
+// card's own) and the event, whose kind and from status are those of the row as read. That the row is the
+// one the UPDATE then sees is the write lock's doing: BEGIN IMMEDIATE takes it before the read, so no other
+// connection changes the task between the two. The task is read again when the UPDATE takes nothing, to say
+// why. The cross-check of the two catches only a disagreement over whether a take is allowed (the UPDATE
+// took what the rules refuse, took several rows, or refused what they allow), and the error undoes the
+// transaction; it would not notice one over which of the three ways of taking applies.
+func (s *Store) claimTx(ctx context.Context, x dbx, profileID string, id int64, actor Actor, now time.Time, lease time.Duration) (Task, error) {
 	cur, err := s.getTx(ctx, x, profileID, id)
 	if err != nil {
 		return Task{}, err
 	}
-	now := s.now().UTC()
 	stamp := now.Format(timeFmt)
 	name := actor.Label()
 	kind, note, refused := claimOf(cur, name, now)
-	until, pos := leaseEnd(now, clampLease(lease)), cur.Position
-	switch {
-	case cur.Status == StatusReady:
+	end, pos := leaseEnd(now, clampLease(lease)).Format(timeFmt), cur.Position
+	if cur.Status == StatusReady {
 		if pos, err = s.edgePosition(ctx, x, profileID, StatusInProgress, false, id); err != nil {
 			return Task{}, err
 		}
-	case note == noteRenewed:
-		until = later(cur.Claim.Until, until)
 	}
-	// The UPDATE is made whatever the read says: it, and not the read, decides what is taken.
+	// The UPDATE is made whatever the read says: it, and not the read, decides whether the task is taken and
+	// for how long. The row's own end counts only for a renewal: a lease left on a Ready row or held by the
+	// claim that is taken over lengthens nothing.
 	res, err := x.ExecContext(ctx,
-		`UPDATE tasks SET status = 'in_progress', claimed_by = ?, claim_until = ?, position = ?, updated_at = ?
+		`UPDATE tasks SET status = 'in_progress', claimed_by = ?,
+		        claim_until = CASE WHEN status = 'in_progress' AND claimed_by = ? THEN max(claim_until, ?) ELSE ? END,
+		        position = ?, updated_at = ?
 		 WHERE id = ? AND profile_id = ?
 		   AND (status = 'ready'
 		        OR (status = 'in_progress' AND claimed_by <> '' AND (claimed_by = ? OR claim_until <= ?)))
 		   AND (SELECT COUNT(*) FROM task_events WHERE task_id = tasks.id) < ?`,
-		name, until.Format(timeFmt), pos, stamp, id, profileID, name, stamp, MaxEventsToClaim)
+		name, name, end, end, pos, stamp, id, profileID, name, stamp, MaxEventsToClaim)
 	if err != nil {
 		return Task{}, fmt.Errorf("tasks: claiming #%d: %w", id, err)
 	}

@@ -142,39 +142,39 @@ func TestWhatIsWrittenIsCleanedAndCut(t *testing.T) {
 }
 
 // Spec 5.4: one revision for each write transaction (not one for each event), none for a call that was
-// refused or had nothing to do.
+// refused or had nothing to do. A call that is refused ends in the refusal the rules name for it.
 func TestEveryAgentVerbMovesTheRevisionOnceAndARefusalNotAtAll(t *testing.T) {
 	s, _, clk := newTestStore(t)
 	ready := []int64{mustAdd(t, s, "default", "a", true).ID, mustAdd(t, s, "default", "b", true).ID, mustAdd(t, s, "default", "c", true).ID, mustAdd(t, s, "default", "d", true).ID}
 	a, b, c, d := ready[0], ready[1], ready[2], ready[3]
 	for _, k := range []struct {
-		name  string
-		want  int64 // how far the revision moves
-		fails bool
-		prep  func() // what the case needs first, which is not measured
-		call  func() error
+		name    string
+		want    int64  // how far the revision moves
+		refused error  // the refusal the call ends in, nil for a call that goes through
+		prep    func() // what the case needs first, which is not measured
+		call    func() error
 	}{
-		{"a claim", 1, false, nil, func() error { _, err := s.Claim(bg, "default", a, bot("one"), 0); return err }},
-		{"a renewal", 1, false, nil, func() error { _, err := s.Claim(bg, "default", a, bot("one"), time.Hour); return err }},
-		{"a refused claim", 0, true, nil, func() error { _, err := s.Claim(bg, "default", a, bot("two"), 0); return err }},
-		{"next --claim", 1, false, nil, func() error { _, err := s.Next(bg, "default", bot("one"), true, 0); return err }},
-		{"a peek", 0, false, nil, func() error { _, err := s.Next(bg, "default", bot("one"), false, 0); return err }},
-		{"a comment by the holder", 1, false, nil, func() error { _, err := s.Comment(bg, "default", a, "x", bot("one")); return err }},
-		{"a comment by the operator", 1, false, nil, func() error { _, err := s.Comment(bg, "default", a, "x", human); return err }},
-		{"a comment by another agent", 0, true, nil, func() error { _, err := s.Comment(bg, "default", a, "x", bot("two")); return err }},
-		{"an empty comment", 0, true, nil, func() error { _, err := s.Comment(bg, "default", a, " ", bot("one")); return err }},
-		{"a finish", 1, false, nil, func() error { _, err := s.Finish(bg, "default", a, Outcome{Result: "r"}, bot("one")); return err }},
-		{"a finish of a task that is in review", 0, true, nil, func() error {
+		{"a claim", 1, nil, nil, func() error { _, err := s.Claim(bg, "default", a, bot("one"), 0); return err }},
+		{"a renewal", 1, nil, nil, func() error { _, err := s.Claim(bg, "default", a, bot("one"), time.Hour); return err }},
+		{"a refused claim", 0, ErrClaimed, nil, func() error { _, err := s.Claim(bg, "default", a, bot("two"), 0); return err }},
+		{"next --claim", 1, nil, nil, func() error { _, err := s.Next(bg, "default", bot("one"), true, 0); return err }},
+		{"a peek", 0, nil, nil, func() error { _, err := s.Next(bg, "default", bot("one"), false, 0); return err }},
+		{"a comment by the holder", 1, nil, nil, func() error { _, err := s.Comment(bg, "default", a, "x", bot("one")); return err }},
+		{"a comment by the operator", 1, nil, nil, func() error { _, err := s.Comment(bg, "default", a, "x", human); return err }},
+		{"a comment by another agent", 0, ErrNotClaimant, nil, func() error { _, err := s.Comment(bg, "default", a, "x", bot("two")); return err }},
+		{"an empty comment", 0, ErrInvalid, nil, func() error { _, err := s.Comment(bg, "default", a, " ", bot("one")); return err }},
+		{"a finish", 1, nil, nil, func() error { _, err := s.Finish(bg, "default", a, Outcome{Result: "r"}, bot("one")); return err }},
+		{"a finish of a task that is in review", 0, ErrNotClaimant, nil, func() error {
 			_, err := s.Finish(bg, "default", a, Outcome{Result: "r"}, bot("one"))
 			return err
 		}},
-		{"a finish with both a result and a question", 0, true, nil, func() error {
+		{"a finish with both a result and a question", 0, ErrInvalid, nil, func() error {
 			_, err := s.Finish(bg, "default", b, Outcome{Result: "r", Question: "q"}, bot("one"))
 			return err
 		}},
-		{"a release", 1, false, nil, func() error { _, err := s.Release(bg, "default", b, "no", bot("one")); return err }},
-		{"a release by another agent", 0, true, nil, func() error { _, err := s.Release(bg, "default", b, "no", bot("two")); return err }},
-		{"next --claim with nothing to take", 0, false, func() { // the Ready column is empty
+		{"a release", 1, nil, nil, func() error { _, err := s.Release(bg, "default", b, "no", bot("one")); return err }},
+		{"a release by another agent", 0, ErrNotClaimant, nil, func() error { _, err := s.Release(bg, "default", b, "no", bot("two")); return err }},
+		{"next --claim with nothing to take", 0, nil, func() { // the Ready column is empty
 			for _, id := range []int64{b, c, d} {
 				claimsClaim(t, s, id, "three", 0)
 			}
@@ -185,7 +185,7 @@ func TestEveryAgentVerbMovesTheRevisionOnceAndARefusalNotAtAll(t *testing.T) {
 			}
 			return err
 		}},
-		{"a takeover by next --claim", 1, false, func() { clk.advance(2 * time.Hour) }, func() error {
+		{"a takeover by next --claim", 1, nil, func() { clk.advance(2 * time.Hour) }, func() error {
 			got, err := s.Next(bg, "default", bot("four"), true, 0)
 			if err == nil && (got == nil || got.LastEvent == nil || got.LastEvent.Kind != "reclaimed") {
 				return errors.New("next took nothing, or did not take a stale claim")
@@ -201,8 +201,8 @@ func TestEveryAgentVerbMovesTheRevisionOnceAndARefusalNotAtAll(t *testing.T) {
 		if got := claimsRev(t, s) - before; got != k.want {
 			t.Errorf("%s: the revision moved by %d (err %v), want %d", k.name, got, err, k.want)
 		}
-		if (err != nil) != k.fails {
-			t.Errorf("%s: err %v, want a failure: %v", k.name, err, k.fails)
+		if k.refused == nil && err != nil || k.refused != nil && !errors.Is(err, k.refused) {
+			t.Errorf("%s: err %v, want %v", k.name, err, k.refused)
 		}
 	}
 }
