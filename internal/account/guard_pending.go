@@ -1,6 +1,9 @@
 package account
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // A refresh grant whose answer is lost (A24). monoes.me rotates the refresh token
 // as it answers, and takes a token that was rotated away and is presented again
@@ -18,13 +21,17 @@ import "time"
 // it look younger than it is. A clock that reads before the marker, or before the
 // last attempt the session records (always written from this clock), has gone back,
 // and the token is dropped then too. What the drop cannot see, an accepted
-// residual: a clock stepped back by about a minute or more, on a machine where
-// nothing runs between the last recorded evidence and the step (no daemon: a
-// CLI-only machine), so that the clock then reads inside the stamp's window although
-// more than 300 s have passed; closing that needs a boot-time or monotonic reference
-// in the marker (out of scope). With a daemon running the evidence is refreshed
-// every minute (its high-water write raises the last attempt while a marker is
-// pending) and the step is seen at its next pass.
+// residual: on a machine where no refresher runs (a CLI-only machine), a clock
+// stepped back by about a minute or more after the last recorded evidence, so that
+// it then reads inside the stamp's window although more than 300 s have passed;
+// closing that needs a boot-time or monotonic reference in the marker (out of
+// scope). A running refresher sees a step back of more than clockBackTolerance at
+// its next pass: it compares each reading of the clock with the previous one,
+// raises the last attempt to the earlier reading (keepLastAttempt) and passes at
+// once, which drops the token; its high-water write also keeps the evidence on disk
+// at most a minute old for the commands of other processes. What it leaves is a
+// command within one poll of the step, before that pass, and a step smaller than the
+// tolerance, both inside the 60 s between pendingRetryWindow and monoes.me's window.
 //
 // The age is judged on the clock read after the refresh token, just before the send;
 // a process suspended inside the Refresher after that, before the request is written
@@ -113,6 +120,29 @@ func (g *Guard) dropUnconfirmed(cur *Session, now time.Time) (Status, outcome, e
 		err = removed
 	}
 	return st, oc, err
+}
+
+// keepLastAttempt raises the last attempt of a session that still has a marker to at,
+// a reading of the clock that the refresher took before the clock went back (A24):
+// pendingExpired then finds the clock before it and drops the token. It takes the lock,
+// reads the session again, only ever raises, and never reports a failure.
+func (g *Guard) keepLastAttempt(at time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), hwLockWait)
+	defer cancel()
+	unlock, err := g.store.Lock(ctx)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	fresh, err := g.store.Load()
+	if err != nil || fresh == nil || fresh.PendingSince.IsZero() || !at.After(fresh.LastAttempt) {
+		return
+	}
+	next := *fresh
+	next.LastAttempt = at
+	if g.store.Save(&next) == nil {
+		g.adopt(&next)
+	}
 }
 
 // pendingStamp is the marker of the cached session, the zero time when there is none.

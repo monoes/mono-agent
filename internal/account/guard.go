@@ -73,6 +73,11 @@ const (
 	// for theft after that; 240 s leaves room for the call's own duration and for
 	// clocks that do not run at the same rate.
 	pendingRetryWindow = 240 * time.Second
+	// A reading of the clock that the refresher finds earlier than its previous one by
+	// more than this, while a marker is pending, is a clock set back (A24). A smaller step
+	// back, the size of an NTP correction, is ignored: it lies inside the 60 s between
+	// pendingRetryWindow and monoes.me's reuse window.
+	clockBackTolerance = 10 * time.Second
 )
 
 // Guard turns the stored session into a cached verdict. NewGuard does no I/O;

@@ -40,7 +40,11 @@ func (g *Guard) StartRefresher(ctx context.Context) {
 
 // runLoop wakes every poll and judges everything by the guard's clock, so a
 // test that moves the clock controls it exactly. It keeps running with no
-// session, so a sign-in from another process is picked up by itself.
+// session, so a sign-in from another process is picked up by itself. A clock
+// that reads more than clockBackTolerance before the previous pass, while a marker
+// is pending, is taken for a clock set back: the evidence of the marker is raised
+// to the previous reading and the pass is made at once, so that a token whose age
+// can no longer be told is dropped, not presented after its window (A24).
 func (g *Guard) runLoop(ctx context.Context) {
 	ticker := time.NewTicker(g.poll)
 	defer ticker.Stop()
@@ -56,6 +60,7 @@ func (g *Guard) runLoop(ctx context.Context) {
 	// follows on the schedule below (A24). A marker with any other stamp was left by
 	// another process.
 	var ownPending time.Time
+	var prevNow time.Time // the clock of the previous pass
 	for ctx.Err() == nil {
 		st := g.Status() // follows the file and fires OnRefused, whatever the pass does next
 		// The time of the pass is read after the verdict: a clock set back between the
@@ -83,6 +88,17 @@ func (g *Guard) runLoop(ctx context.Context) {
 		if pending.IsZero() {
 			ownPending = time.Time{}
 		}
+		// The backoff runs on this clock, so after a step back the next retry of a marker
+		// comes as much later as the step, and no pass looks at the marker meanwhile. A
+		// clock that reads more than clockBackTolerance before the previous pass, with a
+		// marker pending, went back: the session's last attempt is raised to the previous
+		// reading, the evidence pendingExpired reads, and the pass is made at once, so that
+		// it drops the token while the clock is still behind that evidence.
+		if !pending.IsZero() && !prevNow.IsZero() && now.Before(prevNow.Add(-clockBackTolerance)) {
+			g.keepLastAttempt(prevNow)
+			notBefore = time.Time{}
+		}
+		prevNow = now
 		foreign := !pending.IsZero() && !pending.Equal(ownPending)
 		held := holdUntil.After(now) && !heldAt.After(now) && st.Reason != ReasonClockRollback && pending.IsZero()
 		wait := notBefore.Sub(now)

@@ -222,8 +222,9 @@ func TestTheRefresherDropsATokenItCouldNotConfirmAndTheGraceKeepsSayingWhy(t *te
 
 // A stamp that the loop once wrote itself is not remembered for ever: when its marker is gone, a
 // marker of another process that happens to carry the very same stamp is a foreign one again, and
-// it is not left to the backoff of the loop's own failures. The same stamp takes the same instant,
-// which a clock set back to it gives.
+// it is not left to the backoff of the loop's own failures. The same stamp takes the same instant:
+// the other process's session is written here with it, on a clock that goes on forward (a clock set
+// back to that instant would be a step back, which the refresher takes for a clock gone back).
 func TestAForeignMarkerWithTheStampOfAnEarlierOwnMarkerIsStillForeign(t *testing.T) {
 	ctx := context.Background()
 	e, srv, net, g := loopMachine(t, 2*time.Hour) // in grace: the first pass is due
@@ -257,8 +258,7 @@ func TestAForeignMarkerWithTheStampOfAnEarlierOwnMarkerIsStillForeign(t *testing
 		t.Fatalf("%d grants with pending %q, want two and no marker", net.grants(), e.rawPending())
 	}
 
-	// Another process then loses an answer, on a clock set back to the very instant of the loop's
-	// first send, so that its marker carries the stamp the loop once wrote.
+	// Another process then loses an answer, and its session carries the stamp the loop once wrote.
 	e.underLock(func() {
 		rt, err := e.store.LoadRefresh()
 		if err != nil {
@@ -268,10 +268,10 @@ func TestAForeignMarkerWithTheStampOfAnEarlierOwnMarkerIsStillForeign(t *testing
 			t.Fatalf("monoes.me refused the other process: %v", err)
 		}
 		sess := e.session()
-		sess.PendingSince, sess.LastAttempt, sess.LastResult = stamp, stamp, "unreachable"
+		sess.PendingSince, sess.LastAttempt, sess.LastResult = stamp, e.f.Clock.Now(), "unreachable"
 		e.save(sess)
 	})
-	e.f.Clock.Set(stamp)
+	e.f.Clock.Advance(time.Second) // the loop's next poll reads it; its own next attempt is 58 s away
 	waitForGrants(t, net, 3, "the retry of the marker the other process left, at once and not after the loop's backoff of 60 s")
 	eventually(t, "the retry to be answered and stored", func() bool { return e.rawPending() == "" && e.session().LastResult == "ok" })
 	if srv.isRevoked() {
