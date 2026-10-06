@@ -47,7 +47,7 @@
 //	guard.go            the Guard and its options, the Refresher and TokenSet it uses, the cached verdict,
 //	                    Status, Require, OnRefused and Close, and the timings
 //	guard_refresh.go    the refresh algorithm (EnsureFresh, Refresh, what each answer does to the session)
-//	                    and the high-water mark and clock-guard record (touchHW, keepRecord)
+//	guard_hw.go         the high-water mark and the clock-guard record (touchHW, keepRecord)
 //	guard_pending.go    a grant whose answer may be lost: its marker, its age and the drop of the token
 //	guard_loop.go       the background refresher: StartRefresher and its loop
 //	process.go          the process-wide guard: Install, InstallForTest, Current, Require, CurrentStatus
