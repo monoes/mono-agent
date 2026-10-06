@@ -158,29 +158,45 @@ func TestOnlyASignInLeavesUnconfirmed(t *testing.T) {
 }
 
 // The rule is for a session in doubt only. With nothing in doubt a failure recorded on a clock
-// that went back is the attempt the negative cache counts from, as it always was.
+// that went back is the attempt the negative cache counts from, as it always was: one that fails
+// at monoes.me (a fresh stamp starts its evidence at the clock, markPending) and one whose key
+// store does not answer (no stamp is written then: recordAttempt alone decides).
 func TestWithNothingInDoubtTheLastAttemptFollowsTheClockBack(t *testing.T) {
 	ctx := context.Background()
-	e := newEnv(t)
-	e.signIn(2*time.Hour, time.Hour) // in grace: due
-	e.ref.set(func(r *fakeRefresher) { r.err = transient(account.ReasonUnreachable) })
-	if _, err := e.g.EnsureFresh(ctx); err != nil {
-		t.Fatal(err)
-	}
-	back := e.session().LastAttempt.Add(-10 * time.Minute)
-	e.f.Clock.Set(back)
-	if _, err := e.newGuard(0).EnsureFresh(ctx); err != nil { // due: a stored time after the clock holds nothing off
-		t.Fatal(err)
-	}
-	if sess := e.session(); !sess.LastAttempt.Equal(back) || e.rawPending() != "" || e.ref.calls.Load() != 2 {
-		t.Fatalf("stored session = %s after %d calls, want the second attempt recorded on the clock that went back, %v, and no marker", describe(sess), e.ref.calls.Load(), back)
-	}
-	e.f.Clock.Advance(10 * time.Second)
-	if _, err := e.newGuard(0).EnsureFresh(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if n := e.ref.calls.Load(); n != 2 {
-		t.Fatalf("%d calls, want 2: the negative cache counts from the attempt on the clock that went back", n)
+	for _, c := range []struct {
+		name string
+		pass func(e *env) *account.Guard
+	}{
+		{"an attempt that fails settled", func(e *env) *account.Guard { return e.newGuard(0) }},
+		{"a key store that does not answer", func(e *env) *account.Guard {
+			return e.guardWith(e.ref, &keyStoreDown{Store: account.OpenStore(e.dir, e.seal), down: true})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.signIn(2*time.Hour, time.Hour) // in grace: due
+			e.ref.set(func(r *fakeRefresher) { r.err = transient(account.ReasonUnreachable) })
+			if _, err := e.g.EnsureFresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			calls := e.ref.calls.Load()
+			back := e.session().LastAttempt.Add(-10 * time.Minute)
+			e.f.Clock.Set(back)
+			if _, err := c.pass(e).EnsureFresh(ctx); err != nil { // due: a stored time after the clock holds nothing off
+				t.Fatal(err)
+			}
+			if sess := e.session(); !sess.LastAttempt.Equal(back) || e.rawPending() != "" {
+				t.Fatalf("stored session = %s, want the second attempt recorded on the clock that went back, %v, and no marker", describe(sess), back)
+			}
+			calls = e.ref.calls.Load()
+			e.f.Clock.Advance(10 * time.Second)
+			if _, err := e.newGuard(0).EnsureFresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if n := e.ref.calls.Load(); n != calls {
+				t.Fatalf("%d calls, want %d: the negative cache counts from the attempt on the clock that went back", n, calls)
+			}
+		})
 	}
 }
 
