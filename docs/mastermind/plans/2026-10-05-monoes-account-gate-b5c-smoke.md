@@ -48,7 +48,7 @@ The six failure modes the spec implies that no phase's tests exercise from outsi
 3. **A failure that is not a refusal locks someone, or a block does not stop the work.** Pinned by `TestAnswersThatAreNotARefusalKeepTheGrace`, `TestUnreachableIsGraceUntilTwentyFourHours`, `TestBlockedAccountLocksAndCancelsWorkInFlight` and `TestAnUnknownSigningKeyIsTheRunUpdateCase` (Task 3).
 4. **The warn period locks something or corrupts a `--json` consumer's stdout.** Pinned by `TestNothingLocksBeforeTheDateAndEverySurfaceWarns` (Task 2), which also checks that nothing is written to the account folder before the date, and by `TestNoSessionAfterTheDateIsRefusedAndNothingIsWritten` for the refusal that follows it, which leaves exactly the clock-guard record of a machine that never signed in (A25) and nothing else.
 5. **The development variable relaxes a build that ships.** Pinned by `TestDefaultBuildIgnoresTheEnforceOverride` (Task 1), with B5a's release guard that keeps the tag out of releases.
-6. **An abandoned or killed refresh, a logout or a refusal with the clock set back, and a key store that never answers cost an account or a machine.** A command interrupted while monoes.me answers must still store the new refresh token (spec A20); one that is killed leaves a dead token, which the guard must retry at once inside monoes.me's reuse window and never present after it, so that one install signs in again and the account is not ended (A24); a logout must keep the clock-guard record (A23) and a refusal must leave one on a machine that never signed in (A25), so that setting the clock back before the date un-enforces nobody; and a key store that waits for ever must not hold the session lock against the other processes (A22). Pinned by `TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount`, `TestAKilledRefreshIsRetriedAtOnceInsideMonoesMesWindow`, `TestAKilledRefreshIsNeverPresentedAgainAfterTheWindow`, `TestARefusedMachineStaysEnforcedWhenItsClockIsSetBack`, `TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack` and `TestABlockedKeyStoreDoesNotHoldUpAnotherProcess` (Task 3b).
+6. **An abandoned or killed refresh, a logout or a refusal with the clock set back, and a key store that never answers cost an account or a machine.** A command interrupted while monoes.me answers must still store the new refresh token (spec A20); one that is killed leaves a dead token, which the guard must retry at once inside monoes.me's reuse window and never present after it, so that one install signs in again and the account is not ended (A24); a logout must keep the clock-guard record (A23) and a refusal must leave one on a machine that never signed in (A25), so that setting the clock back before the date un-enforces nobody who leaves the account folder alone (spec §4.8); and a key store that waits for ever must not hold the session lock against the other processes (A22). Pinned by `TestAnInterruptedRefreshIsCompletedAndNeverEndsTheAccount`, `TestAKilledRefreshIsRetriedAtOnceInsideMonoesMesWindow`, `TestAKilledRefreshIsNeverPresentedAgainAfterTheWindow`, `TestARefusedMachineStaysEnforcedWhenItsClockIsSetBack`, `TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack` and `TestABlockedKeyStoreDoesNotHoldUpAnotherProcess` (Task 3b).
 
 ---
 
@@ -1747,8 +1747,8 @@ func TestAKilledRefreshIsNeverPresentedAgainAfterTheWindow(t *testing.T) {
 }
 
 // A25, and spec 4.5: a machine that is refused after the date keeps the clock-guard record from that
-// moment, so setting its clock back before the date does not un-enforce it. It never signed in, and it
-// still needs to.
+// moment, so setting its clock back before the date does not un-enforce it while the record is left in
+// place (spec 4.8). It never signed in, and it still needs to.
 func TestARefusedMachineStaysEnforcedWhenItsClockIsSetBack(t *testing.T) {
 	r := newRig(t, rigOptions{enforce: past})
 	r.assertLocked(r.run("workflow", "list"), "not_logged_in", false) // the machine runs after the date: the refusal leaves the record
@@ -1758,10 +1758,10 @@ func TestARefusedMachineStaysEnforcedWhenItsClockIsSetBack(t *testing.T) {
 	r.assertStillEnforcedWithTheClockSetBack()
 }
 
-// A23, and spec 4.5: the high-water mark is what makes setting the clock back worthless, and it lives in
-// session.json, so logging out, an open command, must not erase it. The mark says the machine ran after
-// the date, and the date is then put ahead of the real clock, which is what a clock set back looks like to
-// the guard.
+// A23, and spec 4.5: the high-water mark is what makes setting the clock back worthless to a user who
+// leaves the account folder alone (spec 4.8), and it lives in session.json, so logging out, an open
+// command, must not erase it. The mark says the machine ran after the date, and the date is then put
+// ahead of the real clock, which is what a clock set back looks like to the guard.
 func TestLoggingOutDoesNotUnlockAMachineWhoseClockIsSetBack(t *testing.T) {
 	r := newRig(t, rigOptions{enforce: past})
 	r.signIn()
