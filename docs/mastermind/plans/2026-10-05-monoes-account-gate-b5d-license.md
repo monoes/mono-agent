@@ -845,7 +845,7 @@ with:
 - [ ] **Step 8: Edit the documents that name the repository.**
 
 - `SECURITY.md` line 11: replace `  https://github.com/monoes/mono-agent/security/advisories/new` with `  https://github.com/<RELEASES_REPO>/security/advisories/new`.
-- Replace `SECURITY.md` lines 317-332, which read:
+- Replace `SECURITY.md` lines 323-338, which read:
 
 ````
 Every release publishes `SHA256SUMS.txt` alongside the binaries, and the
