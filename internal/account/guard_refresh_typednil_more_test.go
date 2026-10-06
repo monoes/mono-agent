@@ -19,6 +19,7 @@ func TestATypedNilRefreshErrorIsAnOrdinaryFailureAndNeverARefusal(t *testing.T) 
 		err  error
 	}{
 		{"a nil *RefusedError", (*account.RefusedError)(nil)},
+		{"a nil *TransientError", (*account.TransientError)(nil)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)

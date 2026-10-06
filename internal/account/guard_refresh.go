@@ -146,7 +146,7 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		return g.applyTokens(sess, now, refreshToken, ts)
 	case err == nil:
 		result = ReasonServerError // an answer with nothing in it is the server's fault
-	case errors.As(err, &transient) && transient.Reason == ReasonServerError:
+	case errors.As(err, &transient) && transient != nil && transient.Reason == ReasonServerError:
 		result = ReasonServerError
 	}
 	return g.recordAttempt(sess, now, string(result))
