@@ -246,7 +246,8 @@ func TestADropThatCannotRemoveTheTokenKeepsTheMarkerAndNeverPresentsIt(t *testin
 
 // A record that cannot be saved still drops the token: the dead one must not be presented
 // whether or not the reason can be written down. The pass reports the error, and the next
-// process, which finds no token and the old marker, reads it as a key store problem.
+// process, which finds no token and the old marker, finishes the drop: it records what the
+// drop would have, with no call (rule 1d).
 func TestADropWhoseRecordCannotBeSavedStillRemovesTheToken(t *testing.T) {
 	r := newRig(t)
 	sess := r.signIn(2 * time.Hour)
@@ -271,8 +272,12 @@ func TestADropWhoseRecordCannotBeSavedStillRemovesTheToken(t *testing.T) {
 	other := NewGuard(GuardOptions{Store: OpenStore(r.dir, r.seal), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(other.Close)
 	r.clock.Advance(2 * time.Minute)
-	if st, _, err := other.refreshIfDue(context.Background(), modeCLI); err != nil || st.State != StateGrace || st.Reason != ReasonKeyringUnavailable || r.srv.calls.Load() != 0 {
-		t.Fatalf("the other process = %s/%q, %v with %d network refreshes, want grace/keyring_unavailable and none", st.State, st.Reason, err, r.srv.calls.Load())
+	st, got, err = other.refreshIfDue(context.Background(), modeCLI)
+	if err != nil || got != outcomeFailed || st.State != StateGrace || st.Reason != ReasonUnconfirmed || r.srv.calls.Load() != 0 {
+		t.Fatalf("the other process = %s/%q, %s, %v with %d network refreshes, want grace/unconfirmed, failed, no error and none", st.State, st.Reason, outcomeNames[got], err, r.srv.calls.Load())
+	}
+	if saved, err := r.store.Load(); err != nil || saved.LastResult != string(ReasonUnconfirmed) || !saved.PendingSince.IsZero() || !saved.LastAttempt.Equal(r.clock.Now()) {
+		t.Fatalf("stored session = %+v (%v), want the drop finished: unconfirmed at %v and no marker", saved, err, r.clock.Now())
 	}
 }
 

@@ -152,7 +152,13 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	}
 	refreshToken, err := g.store.LoadRefresh()
 	if err != nil || refreshToken == "" {
-		if err == nil && sess.LastResult == string(ReasonUnconfirmed) {
+		switch {
+		case err == nil && !sess.PendingSince.IsZero():
+			// No token beside a marker: a drop that stopped after it took the token out (a
+			// crash, a record that could not be saved). It is finished here, with the
+			// record it would have written, and nothing is sent (A24).
+			return g.recordAttempt(withoutPending(sess), now, string(ReasonUnconfirmed))
+		case err == nil && sess.LastResult == string(ReasonUnconfirmed):
 			// A drop took the refresh token and recorded why (A24). There is nothing to
 			// present, and a key store problem recorded over that reason would have the
 			// grace say the wrong thing, and its end say expired instead of unconfirmed.

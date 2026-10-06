@@ -63,9 +63,9 @@ func pendingExpired(cur *Session, now time.Time) bool {
 //
 // The dead token goes FIRST (os.Remove needs no key store), whether or not the record
 // of why can be saved: a process that stops between the two steps then leaves a missing
-// token and the old marker, which the next pass reads as a key store problem, and never
-// a token that nothing marks. If the token cannot be removed the marker stays, so that
-// the next pass drops it again and never presents it.
+// token and the old marker, a drop that the next pass finishes, and never a token that
+// nothing marks. If the token cannot be removed the marker stays, so that the next pass
+// drops it again and never presents it.
 func (g *Guard) dropUnconfirmed(cur *Session, now time.Time) (Status, outcome, error) {
 	removed := g.store.DeleteRefresh()
 	next := cur
