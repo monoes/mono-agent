@@ -150,8 +150,17 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	if err := ctx.Err(); err != nil {
 		// The last place where giving up sends nothing: reading the refresh token
 		// can take a while (a key store that prompts), and from the call on the
-		// context is no longer the caller's.
+		// context is no longer the caller's. It stays before the marker below: a
+		// marker left for a grant that was never sent would have the next attempt
+		// drop a token that was never presented.
 		return st, outcomeSkipped, err
+	}
+	// Write down that a grant is about to go out (A24), so that a process that dies
+	// or an answer that is lost leaves the evidence beside the token that may now
+	// be dead. A grant whose outcome cannot be recorded is not sent.
+	sess, stamped, err := g.markPending(sess, now)
+	if err != nil {
+		return g.Status(), outcomeFailed, err
 	}
 	// The grant gets a context of its own, not the caller's: Ctrl-C, SIGTERM, a
 	// deadline or the guard closing must not abandon a request monoes.me may
@@ -185,9 +194,20 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		return g.applyTokens(sess, now, refreshToken, ts)
 	case err == nil:
 		result = ReasonServerError // an answer with nothing in it is the server's fault
-	case errors.As(err, &transient) && transient != nil && transient.Reason == ReasonServerError:
-		result = ReasonServerError
+	case errors.As(err, &transient) && transient != nil:
+		if transient.Reason == ReasonServerError {
+			result = ReasonServerError
+		}
+		if transient.Settled && stamped {
+			// Nothing was consumed: the request never left this machine, or monoes.me
+			// answered with an HTTP status. The marker this attempt wrote says nothing
+			// then and is taken back. A marker that an earlier attempt left stays as it
+			// is: that grant may have been answered, and this one says nothing about it.
+			sess = withoutPending(sess)
+		}
 	}
+	// Any other failure keeps the marker: the request may have been processed, so
+	// the refresh token may be dead and the answer is not held.
 	return g.recordAttempt(sess, now, string(result))
 }
 
@@ -206,18 +226,29 @@ func isTypedNil(err error) bool {
 // account, which locks every install of it. Hence the order and the cleanup.
 // The new refresh token is saved before the session, even when the access token
 // that came with it is not usable, so a crash in between leaves a working pair.
-// If it cannot be saved, the dead one is removed from disk (os.Remove needs no
-// key store) so that no later process presents it.
+// If it cannot be saved, the answer is treated as a lost one (A24): the old token,
+// which monoes.me has rotated away, stays on disk with the marker that says so, and
+// the attempt is recorded as a key store failure. Within the retry window the next
+// attempt presents it again and monoes.me repeats its answer, which can be stored
+// then; after it the token is dropped without being presented. Deleting it here
+// would only be the same drop without the retry, and a delete that fails would leave
+// a dead token with nothing to say so.
 func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *TokenSet) (Status, outcome, error) {
 	next, verr := NewSession(cur.Host, ts.AccessToken, cur.User, now)
 	if ts.RefreshToken != "" && ts.RefreshToken != oldRefresh {
 		if err := g.store.SaveRefresh(ts.RefreshToken); err != nil {
-			_ = g.store.DeleteRefresh() // best effort: the token on disk is dead
 			st, oc, _ := g.recordAttempt(cur, now, string(ReasonKeyringUnavailable))
 			return st, oc, err
 		}
 	}
 	if verr != nil {
+		if ts.RefreshToken != "" {
+			// An answer that says which refresh token to hold (the new one is saved, or
+			// the old one is confirmed) is a definitive one, whatever its access token is
+			// worth: nothing is in doubt any more. An answer with neither token tells
+			// nothing about the one that was presented, as one with no token set does.
+			cur = withoutPending(cur)
+		}
 		// A token this build cannot verify is never stored: a bad monoes.me
 		// deploy (an opaque token, a wrong audience) must not log every online
 		// install out. A kid it does not know is remembered, so that when the
@@ -238,6 +269,10 @@ func (g *Guard) applyTokens(cur *Session, now time.Time, oldRefresh string, ts *
 // marked refused (keeping the user for the message) until a new sign-in.
 func (g *Guard) applyRefusal(cur *Session, now time.Time, r *RefusedError) (Status, outcome, error) {
 	next := *cur
+	next.PendingSince = time.Time{} // the answer is in: monoes.me refused the token, nothing is in doubt
+	if now.After(next.HW) {
+		next.HW = now // a refused session keeps the enforcement evidence: a clock set back must not un-enforce the date
+	}
 	next.State = stateRefused
 	next.Reason = r.Description
 	if len(next.Reason) > 200 {

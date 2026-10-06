@@ -471,6 +471,7 @@ type failingStore struct {
 	writes          []string // "SaveRefresh", "Save", "DeleteRefresh", in call order
 	failSaveRefresh bool
 	failSave        bool
+	okSaves         int // the first okSaves Saves go through although failSave is set: the marker of a grant, before the write that is meant to fail
 }
 
 func (s *failingStore) note(name string) {
@@ -495,7 +496,14 @@ func (s *failingStore) SaveRefresh(token string) error {
 
 func (s *failingStore) Save(sess *account.Session) error {
 	s.note("Save")
-	if s.failSave {
+	s.mu.Lock()
+	fail := s.failSave
+	if fail && s.okSaves > 0 {
+		s.okSaves--
+		fail = false
+	}
+	s.mu.Unlock()
+	if fail {
 		return errors.New("simulated: disk full")
 	}
 	return s.Store.Save(sess)
@@ -506,14 +514,17 @@ func (s *failingStore) DeleteRefresh() error {
 	return s.Store.DeleteRefresh()
 }
 
-// monoes.me treats a rotated-away refresh token that is presented again as
-// theft and revokes every refresh token of the account. So when the new one
-// cannot be written, the dead one on disk must go, and no later attempt may
-// present it.
-func TestAFailedWriteOfTheRotatedRefreshTokenRemovesTheDeadOne(t *testing.T) {
+// monoes.me treats a rotated-away refresh token that is presented again after its
+// reuse window as theft and revokes every refresh token of the account. When the new
+// one cannot be written the answer is treated as a lost one (A24, ruling d): the old
+// token stays on disk with the marker that says it may be dead, so that a retry
+// inside the window, which monoes.me answers again, can store it. It is not deleted:
+// the marker covers it.
+func TestAFailedWriteOfTheRotatedRefreshTokenKeepsTheOldOneAndTheMarker(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	e.signIn(2*time.Hour, time.Hour) // due; refresh.enc holds the token the server will rotate
+	start := e.f.Clock.Now()
 	fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSaveRefresh: true}
 	g := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
 	t.Cleanup(g.Close)
@@ -522,23 +533,14 @@ func TestAFailedWriteOfTheRotatedRefreshTokenRemovesTheDeadOne(t *testing.T) {
 	if !errors.Is(err, account.ErrKeyringUnavailable) || e.ref.calls.Load() != 1 {
 		t.Fatalf("EnsureFresh = %v with %d calls, want the write error and one call", err, e.ref.calls.Load())
 	}
-	if _, err := os.Stat(filepath.Join(e.dir, "refresh.enc")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the dead refresh token is still on disk (stat err %v)", err)
+	if rt, err := e.store.LoadRefresh(); err != nil || rt != "rt-1" {
+		t.Fatalf("refresh.enc holds %q (%v), want the old token: the marker covers it and the retry needs it", rt, err)
 	}
 	if st.State != account.StateGrace || st.Reason != account.ReasonKeyringUnavailable {
 		t.Fatalf("Status = %s/%q, want grace/keyring_unavailable", st.State, st.Reason)
 	}
-	other := e.newGuard(0) // and so does every other process
-	for i := 0; i < 3; i++ {
-		e.f.Clock.Advance(2 * time.Minute)
-		for _, guard := range []*account.Guard{g, other} {
-			if st, _ := guard.EnsureFresh(ctx); st.State != account.StateGrace || st.Reason == account.ReasonRefused {
-				t.Fatalf("Status = %s/%q, want grace and never refused", st.State, st.Reason)
-			}
-		}
-	}
-	if n := e.ref.calls.Load(); n != 1 {
-		t.Fatalf("%d calls: the dead refresh token was presented to the server again", n)
+	if got := e.pendingOn(); !got.Equal(start) {
+		t.Fatalf("pending_since = %v, want %v: the answer was received but not stored, which is a lost answer", got, start)
 	}
 }
 
@@ -553,14 +555,14 @@ func TestTheRefreshTokenIsWrittenBeforeTheSession(t *testing.T) {
 		if _, err := g.EnsureFresh(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if got := fs.order(); !reflect.DeepEqual(got, []string{"SaveRefresh", "Save"}) {
-			t.Fatalf("writes = %v, want the refresh token before the session", got)
+		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "SaveRefresh", "Save"}) {
+			t.Fatalf("writes = %v, want the marker, then the refresh token, then the session", got)
 		}
 	})
 	t.Run("a session that cannot be written still leaves the new refresh token usable", func(t *testing.T) {
 		e := newEnv(t)
 		e.signIn(2*time.Hour, time.Hour)
-		fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true}
+		fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSave: true, okSaves: 1} // the marker is written, the session is not
 		g := account.NewGuard(account.GuardOptions{Store: fs, Refresher: e.ref, Now: e.f.Clock.Now})
 		t.Cleanup(g.Close)
 		if _, err := g.EnsureFresh(ctx); err == nil {

@@ -113,6 +113,19 @@ func (e *env) newGuard(poll time.Duration) *account.Guard {
 	return g
 }
 
+// guardWith is a guard that refreshes through ref, on the fixture clock, over the
+// env's session, or over store when one is given.
+func (e *env) guardWith(ref account.Refresher, store ...account.Store) *account.Guard {
+	e.t.Helper()
+	var st account.Store = account.OpenStore(e.dir, e.seal)
+	if len(store) > 0 {
+		st = store[0]
+	}
+	g := account.NewGuard(account.GuardOptions{Store: st, Refresher: ref, Now: e.f.Clock.Now})
+	e.t.Cleanup(g.Close)
+	return g
+}
+
 // signIn stores a session as a login would have: a token issued age ago for
 // life, hw at its iat, and the refresh token the fake server accepts.
 func (e *env) signIn(age, life time.Duration) *account.Session {

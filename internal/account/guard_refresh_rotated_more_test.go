@@ -3,8 +3,6 @@ package account_test
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -69,8 +67,8 @@ func TestAnAnswerWithARefreshTokenAndNoAccessToken(t *testing.T) {
 		if err != nil || st.State != account.StateGrace || st.Reason != account.ReasonServerError {
 			t.Fatalf("EnsureFresh = %s/%q, %v, want grace/server_error", st.State, st.Reason, err)
 		}
-		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save"}) {
-			t.Fatalf("writes = %v, want the attempt only: a refresh token that did not change is not written", got)
+		if got := fs.order(); !reflect.DeepEqual(got, []string{"Save", "Save"}) {
+			t.Fatalf("writes = %v, want the marker and the attempt only: a refresh token that did not change is not written", got)
 		}
 		fs.failSaveRefresh = false // the key store works again: the next attempt rotates the token and writes the new one
 		e.f.Clock.Advance(time.Minute)
@@ -78,9 +76,10 @@ func TestAnAnswerWithARefreshTokenAndNoAccessToken(t *testing.T) {
 			t.Fatalf("the next attempt = %s/%q, %v, want ok with the token that was never rotated", st.State, st.Reason, err)
 		}
 	})
-	t.Run("a new refresh token that cannot be written removes the dead one", func(t *testing.T) {
+	t.Run("a new refresh token that cannot be written keeps the old one and the marker", func(t *testing.T) {
 		e := newEnv(t)
 		e.signIn(2*time.Hour, time.Hour)
+		start := e.f.Clock.Now()
 		fs := &failingStore{Store: account.OpenStore(e.dir, e.seal), failSaveRefresh: true}
 		answers := 0
 		g := e.answeringFirstWith(fs, &account.TokenSet{RefreshToken: "rt-2"}, true, &answers)
@@ -88,17 +87,13 @@ func TestAnAnswerWithARefreshTokenAndNoAccessToken(t *testing.T) {
 		if !errors.Is(err, account.ErrKeyringUnavailable) || st.State != account.StateGrace || st.Reason != account.ReasonKeyringUnavailable {
 			t.Fatalf("EnsureFresh = %s/%q, %v, want grace/keyring_unavailable and the write error", st.State, st.Reason, err)
 		}
-		if _, err := os.Stat(filepath.Join(e.dir, "refresh.enc")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("the dead refresh token is still on disk (stat err %v)", err)
+		// The answer was received but its refresh token was not stored: a lost answer
+		// (A24, ruling d). The old token stays, with the marker that says it may be dead.
+		if rt, err := e.store.LoadRefresh(); err != nil || rt != "rt-1" {
+			t.Fatalf("refresh.enc holds %q (%v), want the old token: the marker covers it and a retry inside the window needs it", rt, err)
 		}
-		for i := 0; i < 3; i++ {
-			e.f.Clock.Advance(2 * time.Minute)
-			if st, _ := g.EnsureFresh(ctx); st.State != account.StateGrace || st.Reason == account.ReasonRefused {
-				t.Fatalf("Status = %s/%q, want grace and never refused", st.State, st.Reason)
-			}
-		}
-		if answers != 1 || e.ref.calls.Load() != 0 {
-			t.Fatalf("%d answers and %d network refreshes after the first: the dead refresh token was presented again", answers, e.ref.calls.Load())
+		if got := e.pendingOn(); !got.Equal(start) {
+			t.Fatalf("pending_since = %v, want %v", got, start)
 		}
 	})
 }

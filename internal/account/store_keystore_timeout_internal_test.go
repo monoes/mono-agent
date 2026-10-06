@@ -352,11 +352,12 @@ func TestAKeyStoreThatWaitsForeverDoesNotHoldTheSessionLockPastItsTimeout(t *tes
 }
 
 // The write of the new refresh token is the second key store call of a refresh,
-// made after monoes.me has rotated the old one. When it times out the dead token
-// is removed from disk (os.Remove needs no key store), so that no later process
-// presents it, and the attempt is recorded as a key store failure: the session
-// keeps its grace, and the account is not revoked.
-func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFailure(t *testing.T) {
+// made after monoes.me has rotated the old one. When it times out the answer is
+// treated as a lost one (A24, ruling d): the old token stays on disk with the
+// marker that says it may be dead, so that a retry inside the window, which
+// monoes.me answers again, can store the answer, and the attempt is recorded as a
+// key store failure: the session keeps its grace.
+func TestASaveRefreshThatTimesOutAfterTheGrantKeepsTheOldTokenAndTheMarkerAndRecordsTheFailure(t *testing.T) {
 	r := newRig(t)
 	r.signIn(2 * time.Hour) // due
 	setKeyStoreTimeout(t, 300*time.Millisecond)
@@ -364,6 +365,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	t.Cleanup(waiting.release)
 	a := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, waiting)), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(a.Close)
+	start := r.clock.Now()
 
 	var st Status
 	var err error
@@ -374,25 +376,11 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	if !errors.Is(err, ErrKeyringUnavailable) || st.State != StateGrace || st.Reason != ReasonKeyringUnavailable {
 		t.Fatalf("EnsureFresh = %s/%q, %v, want grace/keyring_unavailable and an error that is ErrKeyringUnavailable", st.State, st.Reason, err)
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, refreshFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the dead refresh token is still on disk (stat err %v)", err)
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "rt-1" {
+		t.Fatalf("refresh.enc holds %q (%v), want the old token: the marker covers it and a retry inside the window needs it", rt, err)
 	}
-	if sess, err := r.store.Load(); err != nil || sess.LastResult != string(ReasonKeyringUnavailable) {
-		t.Fatalf("stored session = %+v (%v), want the attempt recorded as keyring_unavailable", sess, err)
-	}
-	// No later attempt, by this process or by another, presents the dead token.
-	b := NewGuard(GuardOptions{Store: ownLimit(OpenStore(r.dir, r.seal)), Refresher: r.srv, Now: r.clock.Now})
-	t.Cleanup(b.Close)
-	for range 3 {
-		r.clock.Advance(2 * time.Minute)
-		for _, g := range []*Guard{a, b} {
-			if st, _ := g.EnsureFresh(context.Background()); st.State != StateGrace || st.Reason == ReasonRefused {
-				t.Fatalf("Status = %s/%q, want grace and never refused", st.State, st.Reason)
-			}
-		}
-	}
-	if n := r.srv.calls.Load(); n != 1 {
-		t.Fatalf("%d network refreshes: the dead refresh token was presented again", n)
+	if sess, err := r.store.Load(); err != nil || sess.LastResult != string(ReasonKeyringUnavailable) || !sess.PendingSince.Equal(start) {
+		t.Fatalf("stored session = %+v (%v), want the attempt recorded as keyring_unavailable and the marker of this attempt, %v", sess, err, start)
 	}
 	// The Seal that was given up on writes nothing when the key store answers. Two
 	// calls reached the key store: the Open that answered, and the Seal.
@@ -402,7 +390,7 @@ func TestASaveRefreshThatTimesOutAfterTheGrantRemovesTheDeadTokenAndRecordsTheFa
 	}) {
 		t.Fatalf("the abandoned Seal did not end (%d calls began, %d ended, %d goroutines left)", waiting.began.Load(), waiting.ended.Load(), goroutinesIn("callKeyStore"))
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, refreshFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the Seal that was given up on wrote refresh.enc (stat err %v)", err)
+	if rt, err := r.store.LoadRefresh(); err != nil || rt != "rt-1" {
+		t.Fatalf("after the Seal that was given up on ended, refresh.enc holds %q (%v), want the old token: that Seal must never write", rt, err)
 	}
 }

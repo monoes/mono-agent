@@ -26,8 +26,8 @@ func describe(s *account.Session) string {
 	if s == nil {
 		return "<no session>"
 	}
-	return fmt.Sprintf("v=%d host=%q user=%v plan=%q hw=%v attempt=%v last=%q state=%q reason=%q token-set=%t",
-		s.V, s.Host, s.User, s.Plan, s.HW, s.LastAttempt, s.LastResult, s.State, s.Reason, s.AccessToken != "")
+	return fmt.Sprintf("v=%d host=%q user=%v plan=%q hw=%v attempt=%v pending=%v last=%q state=%q reason=%q token-set=%t",
+		s.V, s.Host, s.User, s.Plan, s.HW, s.LastAttempt, s.PendingSince, s.LastResult, s.State, s.Reason, s.AccessToken != "")
 }
 
 func (brokenSealer) Seal([]byte) ([]byte, error) { return nil, account.ErrKeyringUnavailable }
