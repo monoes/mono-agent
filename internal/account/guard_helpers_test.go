@@ -176,6 +176,17 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // settle gives a goroutine that should NOT act a real moment to do so.
 func settle() { time.Sleep(150 * time.Millisecond) }
 
+// transient is a failure whose outcome is known (A24): the request never left this
+// machine, or monoes.me answered with an HTTP status, so the refresh token was not
+// consumed. The zero value of Settled is "unknown", which the guard answers with a
+// marker, an immediate retry and, after 240 s, a dropped refresh token, so a fake
+// that means a plain outage must say so; lostAnswer is the one that means the other.
 func transient(reason account.Reason) error {
-	return &account.TransientError{Reason: reason, Err: fmt.Errorf("fake network failure")}
+	return &account.TransientError{Reason: reason, Settled: true, Err: fmt.Errorf("fake network failure")}
+}
+
+// lostAnswer is a failure whose outcome is unknown: the request was written and
+// nothing readable came back, so monoes.me may have rotated the refresh token.
+func lostAnswer(reason account.Reason) error {
+	return &account.TransientError{Reason: reason, Err: fmt.Errorf("fake connection reset after the request was written")}
 }

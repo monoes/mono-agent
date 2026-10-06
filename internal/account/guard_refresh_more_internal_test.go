@@ -234,7 +234,7 @@ func TestRefreshIfDueSaysWhatItDid(t *testing.T) {
 	}{
 		{name: "a healthy token, the CLI rule", mode: modeCLI, age: 10 * time.Minute, want: outcomeSkipped},
 		{name: "under five minutes left", mode: modeCLI, age: 56 * time.Minute, want: outcomeRefreshed, wantCalls: 1},
-		{name: "the server cannot be reached", mode: modeCLI, age: 2 * time.Hour, serverErr: &TransientError{Reason: ReasonUnreachable, Err: errors.New("no route")}, want: outcomeFailed, wantCalls: 1},
+		{name: "the server cannot be reached", mode: modeCLI, age: 2 * time.Hour, serverErr: &TransientError{Reason: ReasonUnreachable, Settled: true, Err: errors.New("no route")}, want: outcomeFailed, wantCalls: 1},
 		{name: "invalid_grant", mode: modeCLI, age: 2 * time.Hour, serverErr: &RefusedError{Description: "revoked"}, want: outcomeRefused, wantCalls: 1},
 		{name: "no refresh token on disk", mode: modeCLI, age: 2 * time.Hour, noRefresh: true, want: outcomeFailed},
 		{name: "a token that does not verify", mode: modeCLI, age: 2 * time.Hour, badToken: "opaque-0123456789", want: outcomeFailed, wantCalls: 1},
