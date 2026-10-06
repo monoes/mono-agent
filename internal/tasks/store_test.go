@@ -90,8 +90,9 @@ func TestSourceKindRules(t *testing.T) {
 
 func TestAddRefusesAnUnknownProfile(t *testing.T) {
 	s, db, _ := newTestStore(t)
-	if _, _, err := s.Add(bg, "no-such-profile", AddInput{Title: "t"}, human); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("unknown profile: %v, want ErrInvalid", err)
+	_, _, err := s.Add(bg, "no-such-profile", AddInput{Title: "t"}, human)
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), `unknown profile "no-such-profile"`) {
+		t.Fatalf("unknown profile: %v, want ErrInvalid saying which profile is unknown", err)
 	}
 	if n := countWhere(t, db, "tasks", "1 = 1"); n != 0 {
 		t.Errorf("%d tasks were written", n)

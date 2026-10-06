@@ -49,7 +49,9 @@ func (s *Store) tx(ctx context.Context, fn func(x dbx) error) error {
 	if err := fn(conn); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	// The work is done: a context that ends now must not turn a commit that goes through into an
+	// error (the caller would be told that a task which was stored failed), so COMMIT ignores ctx.
+	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
 		return fmt.Errorf("tasks: commit: %w", err)
 	}
 	committed = true
@@ -79,7 +81,7 @@ func (s *Store) profileOf(ctx context.Context, x dbx, profileID string) (Profile
 	var p Profile
 	err := x.QueryRowContext(ctx, `SELECT id, name FROM profiles WHERE id = ?`, profileID).Scan(&p.ID, &p.Name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Profile{}, invalid("unknown profile %q", profileID)
+		return Profile{}, invalid("unknown profile %q", echo(profileID))
 	}
 	if err != nil {
 		return Profile{}, fmt.Errorf("tasks: reading the profile: %w", err)
@@ -146,10 +148,18 @@ func (s *Store) scanTask(row rowScanner) (Task, error) {
 		return Task{}, err
 	}
 	t.Status = Status(status)
-	t.CreatedAt, _ = time.Parse(timeFmt, created)
-	t.UpdatedAt, _ = time.Parse(timeFmt, updated)
+	var err error
+	if t.CreatedAt, err = storedTime("created_at", created); err != nil {
+		return Task{}, err
+	}
+	if t.UpdatedAt, err = storedTime("updated_at", updated); err != nil {
+		return Task{}, err
+	}
 	if claimedBy != "" {
-		u, _ := time.Parse(timeFmt, until)
+		u, err := storedTime("claim_until", until)
+		if err != nil {
+			return Task{}, err
+		}
 		t.Claim = &Claim{By: claimedBy, Until: u, Stale: !u.After(s.now())}
 	}
 	return t, nil
@@ -198,30 +208,80 @@ func (s *Store) attachLast(ctx context.Context, x dbx, ts []Task) error {
 		if err := rows.Scan(&id, &le.Actor, &le.Kind, &at); err != nil {
 			return fmt.Errorf("tasks: reading last events: %w", err)
 		}
-		le.At, _ = time.Parse(timeFmt, at)
+		if le.At, err = storedTime("time of a last event", at); err != nil {
+			return fmt.Errorf("tasks: reading last events: %w", err)
+		}
 		ts[index[id]].LastEvent = &le
 	}
 	return rows.Err()
 }
 
+// echoRunes bounds how much of what a caller sent an error message repeats.
+const echoRunes = 64
+
+// echo is s cut for an error message that repeats it: a huge id or source must
+// not make a huge message.
+func echo(s string) string { return cutRunes(s, echoRunes) }
+
+// storedTime reads a time this store wrote. Text that is not one means a writer
+// used another format: that is an error, not the year 1, which would pass for a
+// task from long ago and, in a claim, for a lease long run out.
+func storedTime(what, text string) (time.Time, error) {
+	t, err := time.Parse(timeFmt, text)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("the stored %s is not a time: %w", what, err)
+	}
+	return t, nil
+}
+
+// reservedNames are the labels the store writes for someone other than an agent:
+// the operator's, an unnamed agent's and the capture surfaces'.
+var reservedNames = []string{"you", "agent", "capture", SourceChrome, SourceOS}
+
+// checkAgentName refuses a name an agent may not act under: one outside the
+// alphabet and the length of a name, and one that equals a reserved label in any
+// case (a label is read by eye, and an agent that took one would write events
+// that read as the operator's or a capture's). It is for a name that is there;
+// whether an agent may go without one is the caller's business.
+func checkAgentName(name string) error {
+	if !nameRE.MatchString(name) {
+		return invalid("an agent name is 1-%d characters of letters, digits and . _ # @ : -", MaxNameLen)
+	}
+	for _, r := range reservedNames {
+		if strings.EqualFold(name, r) {
+			return invalid("an agent may not be named %q: you, agent, capture, chrome and os are reserved", name)
+		}
+	}
+	return nil
+}
+
 // sourceKindFor decides the stored source kind. The actor decides what is
 // allowed: an agent's tasks are always agent tasks (it may not call itself a
-// capture, which would skip the hourly limit), a capture names its surface, the
-// operator is cli or app.
+// capture, which would skip the hourly limit), a capture files the source it is
+// named for, the operator is cli or app.
 func sourceKindFor(actor Actor, requested string) (string, error) {
 	switch actor.Kind {
 	case Agent:
 		if requested == "" || requested == SourceCLI || requested == SourceAgent {
 			return SourceAgent, nil
 		}
-		return "", invalid("an agent's tasks are agent tasks: source %q is for captures", requested)
+		return "", invalid("an agent's tasks are agent tasks: source %q is for captures", echo(requested))
 	case Capture:
-		kind := requested
-		if kind == "" {
-			kind = actor.Name
+		// The name is what the events say about who acted, so it is a surface and
+		// not free text, and it decides the source: a capture asking for another
+		// one is refused. A capture with no name must say which surface it is.
+		if actor.Name != "" && actor.Name != SourceChrome && actor.Name != SourceOS {
+			return "", invalid("a capture is named chrome or os, not %q", echo(actor.Name))
+		}
+		kind := actor.Name
+		switch {
+		case kind == "":
+			kind = requested
+		case requested != "" && requested != kind:
+			return "", invalid("the capture %s asked for source %q: a capture files only its own source", kind, echo(requested))
 		}
 		if kind != SourceChrome && kind != SourceOS {
-			return "", invalid("a capture comes from chrome or os, not %q", kind)
+			return "", invalid("a capture comes from chrome or os, not %q", echo(kind))
 		}
 		return kind, nil
 	case Human:
@@ -231,7 +291,7 @@ func sourceKindFor(actor Actor, requested string) (string, error) {
 		case SourceApp:
 			return SourceApp, nil
 		}
-		return "", invalid("source %q is for captures and agents: the operator's tasks come from cli or app", requested)
+		return "", invalid("source %q is for captures and agents: the operator's tasks come from cli or app", echo(requested))
 	}
 	return "", invalid("unknown actor")
 }
@@ -249,10 +309,12 @@ func (s *Store) checkAddLimits(ctx context.Context, x dbx, profileID, kind strin
 	if kind != SourceAgent {
 		return nil
 	}
+	// A task created exactly an hour ago no longer counts, as a lease that ends
+	// exactly now has ended.
 	since := s.now().UTC().Add(-time.Hour).Format(timeFmt)
 	var recent int
 	if err := x.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tasks WHERE profile_id = ? AND source_kind = 'agent' AND created_at >= ?`, profileID, since).Scan(&recent); err != nil {
+		`SELECT COUNT(*) FROM tasks WHERE profile_id = ? AND source_kind = 'agent' AND created_at > ?`, profileID, since).Scan(&recent); err != nil {
 		return fmt.Errorf("tasks: counting agent tasks: %w", err)
 	}
 	if recent >= AgentTasksPerHour {
@@ -280,8 +342,10 @@ func (s *Store) Add(ctx context.Context, profileID string, in AddInput, actor Ac
 	if err != nil {
 		return Task{}, false, err
 	}
-	if actor.Kind == Agent && actor.Name != "" && !nameRE.MatchString(actor.Name) {
-		return Task{}, false, invalid("an agent name is 1-%d characters of letters, digits and . _ # @ : -", MaxNameLen)
+	if actor.Kind == Agent && actor.Name != "" {
+		if err := checkAgentName(actor.Name); err != nil {
+			return Task{}, false, err
+		}
 	}
 	clientID := strings.TrimSpace(in.ClientID)
 	if clientID != "" && !clientIDRE.MatchString(clientID) {

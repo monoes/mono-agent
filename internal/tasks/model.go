@@ -76,8 +76,10 @@ const (
 	Capture
 )
 
-// Actor is who does something to a board. A Capture's Name is its surface
-// ("chrome", "os"); an Agent's Name is the name it holds claims under.
+// Actor is who does something to a board. A Capture's Name is its surface:
+// empty, "chrome" or "os". An Agent's Name is the name it holds claims under; it
+// may not be a label the store writes for others (you, agent, capture, chrome,
+// os), in any case.
 type Actor struct {
 	Kind ActorKind
 	Name string
