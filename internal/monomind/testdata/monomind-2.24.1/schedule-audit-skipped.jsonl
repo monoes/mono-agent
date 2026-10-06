@@ -1,0 +1,5 @@
+{"ts":1791265099875,"event":"scheduled-tick-deferred","msg":"a tick landed while \"sec\" was still running — held for one catch-up run"}
+{"ts":1791265140149,"event":"scheduled-tick-skipped","msg":"a run of \"sec\" is already live — this tick yields"}
+{"ts":1791265180154,"event":"scheduled-tick-skipped","msg":"a run of \"sec\" is already live — this tick yields"}
+{"ts":1791265220155,"event":"scheduled-tick-skipped","msg":"a run of \"sec\" is already live — this tick yields"}
+{"ts":1791265260157,"event":"scheduled-tick-skipped","msg":"a run of \"sec\" is already live — this tick yields"}

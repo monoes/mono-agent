@@ -652,6 +652,7 @@
       "needs": "Needs you",
       "queued": "Queued",
       "decisions": "Decisions",
+      "documents": "Documents",
       "logs": "Logs",
       "costs": "Costs",
       "flow": "Flow",

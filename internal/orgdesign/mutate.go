@@ -183,7 +183,13 @@ type RolePatch struct {
 // — only a caller that explicitly opts in with true gets the taxonomy
 // default. See applyRoleDefaults and NewOrgOptions.RestrictFileWrite.
 func (d *Doc) AddRole(r Role, restrictFileWrite ...bool) (*Role, error) {
-	restrict := len(restrictFileWrite) > 0 && restrictFileWrite[0]
+	return d.addRole(r, "", len(restrictFileWrite) > 0 && restrictFileWrite[0])
+}
+
+// addRole is AddRole and AddRoleToSection (sections_mutate.go): in a sections
+// org the new role joins `section`, else its parent's section, or the add is
+// refused.
+func (d *Doc) addRole(r Role, section string, restrict bool) (*Role, error) {
 	if r.ID == "" {
 		r.ID = UniqueRoleID(d, r.Title)
 	} else if _, idx := d.FindRole(r.ID); idx != -1 {
@@ -201,7 +207,15 @@ func (d *Doc) AddRole(r Role, restrictFileWrite ...bool) (*Role, error) {
 	if r.Type == "boss" && r.ReportsTo != nil {
 		r.Type = "specialist"
 	}
+	home, err := d.sectionForNewRole(&r, section)
+	if err != nil {
+		return nil, err
+	}
 	d.Roles = append(d.Roles, r)
+	d.joinSection(home, r.ID)
+	if home != "" {
+		d.raiseAgentCap()
+	}
 	added, _ := d.FindRole(r.ID)
 	return added, nil
 }
@@ -356,6 +370,9 @@ func (d *Doc) SetReportsTo(childID, newParentID string) error {
 	if idx == -1 {
 		return fmt.Errorf("role not found: %s", childID)
 	}
+	if err := d.checkReparentInSections(child, newParentID); err != nil {
+		return err
+	}
 	if newParentID == "" {
 		if root, ok := d.RootRole(); ok && root.ID != childID {
 			return fmt.Errorf("org already has a root role (%q) — reassign or remove it before making %q the root", root.ID, childID)
@@ -398,6 +415,9 @@ func (d *Doc) PromoteToRoot(newRootID string) error {
 	}
 	if newRoot.ReportsTo == nil {
 		return fmt.Errorf("role %q is already the org root", newRootID)
+	}
+	if d.SectionsEnabled() {
+		return fmt.Errorf("cannot promote %q in a sections org: the root is in no section and the old root would have none — restructure the sections first", newRootID)
 	}
 
 	// path = [newRootID, its parent, its grandparent, ..., the old root's id].
@@ -489,6 +509,11 @@ func (d *Doc) RemoveRole(id string, strategy RemoveStrategy) ([]string, error) {
 		}
 	}
 
+	endSections, err := d.sectionsForRemoval(id, strategy)
+	if err != nil {
+		return nil, err
+	}
+
 	switch strategy {
 	case Reparent:
 		var newParent *string
@@ -503,6 +528,7 @@ func (d *Doc) RemoveRole(id string, strategy RemoveStrategy) ([]string, error) {
 			c.ReportsTo = newParent
 		}
 		d.removeByID(id)
+		endSections()
 		return []string{id}, nil
 
 	case Cascade:
@@ -511,6 +537,7 @@ func (d *Doc) RemoveRole(id string, strategy RemoveStrategy) ([]string, error) {
 		for _, rid := range toRemove {
 			d.removeByID(rid)
 		}
+		endSections()
 		return toRemove, nil
 
 	default:
