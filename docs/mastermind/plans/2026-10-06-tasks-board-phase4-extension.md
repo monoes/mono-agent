@@ -42,11 +42,12 @@
 
 Failure modes the spec implies and no happy-path test would catch; each has a test in the task that owns the code, and each test fails when its rule is removed.
 
-1. A page address carrying user-info (`https://user:secret@host/`) or a session token must never be stored: not in the task's URL, not in a page task's title (which falls back to the address), not in `chrome.storage`. (Task 2 `TestTaskSinkPageTaskIsItsTitleOrItsAddress`; Task 4a "offline, the task waits ..." checks the stored outbox; Task 5 "Add page as task sends the page ...".)
+1. A page address carrying user-info (`https://user:secret@host/`) or a session token must never be stored: not in the task's URL, not in a page task's title (which falls back to the address), not in `chrome.storage`. (Task 2 `TestTaskSinkPageTaskIsItsTitleOrItsAddress` and `TestTaskSinkPageWithAHiddenTitleIsSavedUnderItsAddress`; Task 4a "offline, the task waits ..." checks the stored outbox; Task 5 "Add page as task sends the page ...".)
 2. Text hidden with `display:none` and hidden characters (bidi controls, Unicode tag characters, a terminal escape, invalid UTF-8) must not reach a task. Text hidden by colour, size or position is still selected; the operator gate is the defence for that, and the security text says so. (Task 2 `TestTaskSinkCleansWhatAPageSent`; Task 5 "Add selection as task reads the selection as the reader sees it"; Task 6 browser test "adds the selection as a task, as the reader sees it".)
 3. Two adds a moment apart, two flushes at once, a resend after a lost reply, or a burst of 200 queued tasks: none lost, none sent twice under a new id, never more than one request in flight (the bridge answers a ninth with `busy`), and a storage read that fails wipes nothing. (Task 3 "adds and removals a moment apart all land", "a storage read that fails wipes nothing"; Task 4a "two adds a moment apart both reach MonoAgent, and both say so", "two flushes at once send each task once", "a burst of 200 ...", "busy and internal stop the flush ...".)
 4. A daemon started from an agent's shell inherits `CLAUDECODE`: a Chrome capture must stay a capture (source `chrome`, Inbox, no hourly agent limit). (Task 2 `TestTaskSinkIsAChromeCaptureWhateverTheEnvironment`.)
 5. A task queued for a profile that is deleted before it syncs is refused, dropped from the outbox and reported with its text, never filed into another profile. (Task 2 `TestTaskSinkRefusesAProfileThatIsGone`; Task 4a "a refusal that would repeat drops the task and reports it", "a queued task keeps the profile it was queued under".)
+6. A page whose title is made only of hidden or control characters (a bidi control and BEL, a tag character) is not blank to a white-space test, yet the board cleans it to nothing and refuses it: the page must not be lost for that. It is filed under its address, once however often the request is repeated; with no address it is refused and reported, as is a selection of nothing visible. (Task 2 `TestTaskSinkPageWithAHiddenTitleIsSavedUnderItsAddress`, `TestTaskSinkPageWithAHiddenTitleAndNoAddressIsRefused`, `TestTaskSinkSelectionOfHiddenTextIsRefusedNotNamedByItsPage`.)
 
 ## File structure
 
@@ -79,6 +80,7 @@ Modify:
 - Ruling (the lead, 2026-10-06): the side panel's shared inbox (`""`) is no profile for a task: its Add button is disabled and says "Choose a profile first"; the right-click items, the page panel and the shortcut use the sticky choice through `stickyOrAsk`, as the capture shortcut does, and each toast names the profile used.
 - Ruling: messages are checked as `recorder_wiring.js` checks them: this extension's own pages (by `sender.url`, so the side panel opened as a tab counts) may add a note and read or dismiss the refusals; a tab's content script may only add a selection, and its address is `sender.url` of the top frame, else the tab's - a page cannot pick the profile or read the refusals - none known.
 - Ruling: a page task's title is the page title, else its address without user-info; a selection is read with `getSelection().toString()` in the clicked frame, else the menu's `selectionText`; the shortcut reads the top frame only; without the recorder's sanitizer an address is dropped, not kept raw - visible text only, fail closed - a selection in a frame that refuses scripts loses its line breaks, and one inside a frame is missed by the shortcut.
+- Ruling: the sink names a page task by its address whenever the board refuses the page's title, not only when the title is blank: it files the page under its title and, on `invalid_input` for a page that has an address, asks once more with the address as the title - a page's title is its own script's to write, and one made only of hidden or control characters (a bidi control and BEL, a tag character) is not blank to a white-space test yet cleans to nothing, so the board refuses it and the page would be lost - the sink repeats none of the board's cleaning, which could drift from it; a refusal that is not about the title (a deleted profile) is made twice and the second is the one reported, and a page with no address and no visible title, like a selection of nothing visible, is still refused and reported.
 - Ruling: opening the floating panel (the `mouseup`) and every button on it need `isTrusted === true`; closing it (Escape, a press outside) takes any event - a page's script can then only close the panel; a real click the page baits by moving or covering it is still the person's, and adds only an Inbox task the operator reads - the security text claims no more than that.
 - Ruling: the panel's shell moves to a new content script, `highlight_panel.js`, loaded before `highlight_page.js`; `panel()`, `button()` and `dismiss()` stay as one-line wrappers; the menu and the shortcut live in `task_menu.js` - testable in node, and `highlight_page.js` and `task_bridge.js` stay under 500 lines - two more files.
 - Ruling: the extension says MonoAgent "needs updating" only when the bridge answered `ping` without `task.add` (`ask.js` gains `known()`); an unanswered probe is offline, so a daemon older than the request channel itself looks offline too - `probe()` answers `[]` in both cases - that oldest daemon gets "will sync" instead of "update".
@@ -521,9 +523,9 @@ git commit -m "feat(tasks): task.add on the extension request channel, behind a 
 - Test: `cmd/monoagentcli/extension_tasks_test.go`
 
 **Interfaces:**
-- Consumes: Task 1's `extension.TaskSink`, `extension.CapturedTask`, `extension.TaskAdded`, `extension.TaskKindPage`, `extension.TaskKindSelection`, `extension.TaskKindNote`, `extension.CodeInvalidInput`, `extension.CodeLimit`, `extension.MethodTaskAdd`; existing `extension.RequestError`, `extension.Unavailable`, `extension.CodeUnavailable`, `extension.CodeInternal`; in this package `openProfileDB(path string) (*storage.Database, error)` (refuses a missing file, never creates one), `defaultDBPath`, `newExtensionServer(zerolog.Logger) *extension.Server`; P1's `tasks.NewStore`, `Store.Add`, `Store.Get`, `tasks.AddInput`, `tasks.Actor`, `tasks.Capture`, `tasks.SourceChrome`, `tasks.StatusInbox`, `tasks.Source`, `tasks.ErrInvalid`, `tasks.ErrLimit`, `tasks.MaxOpenTasks`, `tasks.AgentTasksPerHour`; `testdb.Path(t) string` (a migrated database file), `storage.NewDatabase(path)` (opens without migrating).
+- Consumes: Task 1's `extension.TaskSink`, `extension.CapturedTask`, `extension.TaskAdded`, `extension.TaskKindPage`, `extension.TaskKindSelection`, `extension.TaskKindNote`, `extension.CodeInvalidInput`, `extension.CodeLimit`, `extension.MethodTaskAdd`; existing `extension.RequestError`, `extension.Unavailable`, `extension.CodeUnavailable`, `extension.CodeInternal`; in this package `openProfileDB(path string) (*storage.Database, error)` (refuses a missing file, never creates one), `defaultDBPath`, `newExtensionServer(zerolog.Logger) *extension.Server`; P1's `tasks.NewStore`, `tasks.Store`, `Store.Add`, `Store.Get`, `tasks.Task`, `tasks.AddInput`, `tasks.Actor`, `tasks.Capture`, `tasks.SourceChrome`, `tasks.StatusInbox`, `tasks.Source`, `tasks.ErrInvalid`, `tasks.ErrLimit`, `tasks.MaxOpenTasks`, `tasks.AgentTasksPerHour`; `testdb.Path(t) string` (a migrated database file), `storage.NewDatabase(path)` (opens without migrating).
 - Produces: `extensionTaskSink(path string) extension.TaskSink`, installed on every bridge by `newExtensionServer`, so the daemon, `extension serve` and a workflow run all answer `task.add`.
-- Rulings: the actor is always `tasks.Actor{Kind: tasks.Capture, Name: tasks.SourceChrome}` (P1 requires a capture's name to be `chrome` or `os` and to agree with its source), never derived from the environment; a database without the `tasks` table answers `unavailable` and is not migrated; `unavailable` and `internal` carry fixed messages with no path; a page task's title falls back to its address without user-info; the extension sends `text` or a `title`, never notes (P1 refuses notes and text together) (see the Rulings list).
+- Rulings: the actor is always `tasks.Actor{Kind: tasks.Capture, Name: tasks.SourceChrome}` (P1 requires a capture's name to be `chrome` or `os` and to agree with its source), never derived from the environment; a database without the `tasks` table answers `unavailable` and is not migrated; `unavailable` and `internal` carry fixed messages with no path; a page task is named by its title, else by its address without user-info, whenever the board refuses the title (the sink asks the board once more); the extension sends `text` or a `title`, never notes (P1 refuses notes and text together) (see the Rulings list).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -705,6 +707,101 @@ func TestTaskSinkPageTaskIsItsTitleOrItsAddress(t *testing.T) {
 	}
 	if strings.Contains(task.Title+task.Notes+task.Source.URL, "secret") {
 		t.Error("the address's user-info was stored")
+	}
+}
+
+// A page's title is its own script's to write. One made only of characters the
+// board drops (a bidi control and BEL, a tag character, such characters between
+// spaces) is not blank to a white-space test, yet the board cleans it to nothing
+// and refuses a task with no title. The page is still saved, under its address,
+// and once however often the request is sent: the board looks for the client id
+// only after it has accepted the words.
+func TestTaskSinkPageWithAHiddenTitleIsSavedUnderItsAddress(t *testing.T) {
+	path := testdb.Path(t)
+	sink := extensionTaskSink(path)
+	cases := []struct{ name, title, url, want string }{
+		{"a bidi control and BEL", "\U0000202e\x07", "https://example.com/a", "https://example.com/a"},
+		{"a tag character", "\U000E0041", "https://example.com/b", "https://example.com/b"},
+		{"hidden characters between spaces", " \U0000202e \U000E0049\x1b ", "https://u:secret@example.com/c", "https://example.com/c"},
+	}
+	for i, c := range cases {
+		in := sinkInput(extension.TaskKindPage, fmt.Sprintf("t-hidden-%d", i), "", c.url, c.title)
+		got, err := sink.AddCaptured(context.Background(), in)
+		if err != nil || !got.Created {
+			t.Errorf("%s: the page was not saved: %+v, %v", c.name, got, err)
+			continue
+		}
+		task := sinkStored(t, path, got.ID)
+		if task.Title != c.want || task.Notes != "" || task.Source.URL != c.want || task.Source.Title != "" {
+			t.Errorf("%s: title %q, notes %q, source %+v; want the address as the title, no notes and no page title", c.name, task.Title, task.Notes, task.Source)
+		}
+		again, err := sink.AddCaptured(context.Background(), in)
+		if err != nil || again.Created || again.ID != got.ID {
+			t.Errorf("%s: sent again: %+v, %v; want the same task, not created", c.name, again, err)
+		}
+	}
+	if n := sinkRows(t, path); n != len(cases) {
+		t.Errorf("%d tasks, want %d", n, len(cases))
+	}
+}
+
+// What the board leaves of a title is the title: the address names only a page
+// that nothing is left of.
+func TestTaskSinkPageTitleWithSomethingVisibleKeepsIt(t *testing.T) {
+	path := testdb.Path(t)
+	got, err := extensionTaskSink(path).AddCaptured(context.Background(),
+		sinkInput(extension.TaskKindPage, "t-mixed", "", "https://example.com/m", "Bank\U0000202e login\x07"))
+	if err != nil || !got.Created {
+		t.Fatalf("add: %+v, %v", got, err)
+	}
+	if title := sinkStored(t, path, got.ID).Title; title != "Bank login" {
+		t.Errorf("title %q, want the page's own title as the board cleaned it", title)
+	}
+}
+
+// With no address to name it by and nothing visible in its title, a page has
+// nothing to be called: it is refused as invalid_input (the outbox drops it and
+// reports it) and nothing is filed.
+func TestTaskSinkPageWithAHiddenTitleAndNoAddressIsRefused(t *testing.T) {
+	path := testdb.Path(t)
+	for i, address := range []string{"", "/only/a/path", "about:blank"} {
+		_, err := extensionTaskSink(path).AddCaptured(context.Background(),
+			sinkInput(extension.TaskKindPage, fmt.Sprintf("t-bare-%d", i), "", address, "\U0000202e\x07"))
+		if err == nil || sinkCode(t, err) != extension.CodeInvalidInput {
+			t.Errorf("address %q: %v, want invalid_input", address, err)
+		}
+	}
+	if n := sinkRows(t, path); n != 0 {
+		t.Errorf("%d tasks were filed", n)
+	}
+}
+
+// The second try's refusal is the one reported: a page with a hidden title,
+// queued for a profile that has since been deleted, is reported as that.
+func TestTaskSinkPageWithAHiddenTitleForAGoneProfileSaysSo(t *testing.T) {
+	path := testdb.Path(t)
+	in := sinkInput(extension.TaskKindPage, "t-gone-page", "", "https://example.com/g", "\U0000202e\x07")
+	in.ProfileID = "deleted-since"
+	_, err := extensionTaskSink(path).AddCaptured(context.Background(), in)
+	if err == nil || sinkCode(t, err) != extension.CodeInvalidInput || !strings.Contains(err.Error(), "unknown profile") {
+		t.Fatalf("a deleted profile: %v, want invalid_input naming the unknown profile", err)
+	}
+	if n := sinkRows(t, path); n != 0 {
+		t.Errorf("%d tasks were filed", n)
+	}
+}
+
+// Only a page is named by its address: a selection of nothing visible has no
+// words to be a task, whatever page it was taken from.
+func TestTaskSinkSelectionOfHiddenTextIsRefusedNotNamedByItsPage(t *testing.T) {
+	path := testdb.Path(t)
+	_, err := extensionTaskSink(path).AddCaptured(context.Background(),
+		sinkInput(extension.TaskKindSelection, "t-hidden-selection", "\U0000202e\x07", "https://example.com/s", "A page"))
+	if err == nil || sinkCode(t, err) != extension.CodeInvalidInput {
+		t.Fatalf("a selection of hidden characters: %v, want invalid_input", err)
+	}
+	if n := sinkRows(t, path); n != 0 {
+		t.Errorf("%d tasks were filed", n)
 	}
 }
 
@@ -914,7 +1011,7 @@ func (b boardSink) AddCaptured(ctx context.Context, t extension.CapturedTask) (e
 	if tables == 0 {
 		return extension.TaskAdded{}, extension.Unavailable("the monoagent database has no task board yet: run any monoagentcli command once to upgrade it")
 	}
-	task, created, err := tasks.NewStore(db.DB).Add(ctx, t.ProfileID, capturedInput(t), chromeCapture)
+	task, created, err := addCaptured(ctx, tasks.NewStore(db.DB), t)
 	if err != nil {
 		return extension.TaskAdded{}, boardSinkErr(err)
 	}
@@ -922,8 +1019,8 @@ func (b boardSink) AddCaptured(ctx context.Context, t extension.CapturedTask) (e
 }
 
 // capturedInput applies spec 4.6 to each kind: a selection or a note is text
-// whose first line becomes the title; a page is its title, else its address
-// (without user-info), with no notes.
+// whose first line becomes the title; a page is its title, with no notes
+// (addCaptured names a page by its address when the board refuses the title).
 func capturedInput(t extension.CapturedTask) tasks.AddInput {
 	in := tasks.AddInput{
 		SourceKind:  tasks.SourceChrome,
@@ -937,10 +1034,31 @@ func capturedInput(t extension.CapturedTask) tasks.AddInput {
 		return in
 	}
 	in.Title = t.Title
-	if strings.TrimSpace(in.Title) == "" {
-		in.Title = addressOf(t.URL)
-	}
 	return in
+}
+
+// addCaptured files t on the board. A page is named by its title; when the
+// board refuses that title (blank, or nothing visible once the board has
+// cleaned it: a bidi control and BEL are not blank to a white-space test) it is
+// named by its address, asked once more, so that no page is lost for a title
+// its own script wrote. The board alone says what a usable title is: a copy of
+// its cleaning here could drift from it. A page sends no text or notes and the
+// actor and the source are fixed, so a bad title is the only invalid_input a
+// second try can cure; any other (a deleted profile) is refused again, and that
+// second refusal is the one reported. With no address to fall back on, the
+// first refusal is the one reported.
+func addCaptured(ctx context.Context, store *tasks.Store, t extension.CapturedTask) (tasks.Task, bool, error) {
+	in := capturedInput(t)
+	task, created, err := store.Add(ctx, t.ProfileID, in, chromeCapture)
+	if t.Kind != extension.TaskKindPage || !errors.Is(err, tasks.ErrInvalid) {
+		return task, created, err
+	}
+	address := addressOf(t.URL)
+	if address == "" {
+		return task, created, err
+	}
+	in.Title = address
+	return store.Add(ctx, t.ProfileID, in, chromeCapture)
 }
 
 // addressOf is a page address fit to be a title: parsed and without the
@@ -4028,7 +4146,7 @@ In `docs/mastermind/specs/2026-10-05-task-board-design.md`:
 - The outbox drops an entry only on `invalid_input`. `limit` keeps it and the flush goes on; `internal`, `offline`, `busy`, `timeout`, `unavailable` and `unknown_method` keep it and stop the flush. A storage read that fails is never taken for an empty outbox. Refused tasks go to a failures list (the last 20, each with up to 2 KiB of its text) shown under "Add a task" with Dismiss, and count red on the toolbar badge with failed captures; waiting tasks count amber with queued captures. The capture bridge's own "ok" flash and the per-tab "saved" badge can hide that count until the next change, as they do for queued captures.
 - Messages follow `recorder_wiring.js`: this extension's own pages (the side panel, also when opened as a tab) may add a note and read or dismiss the refusals; a tab's content script may only add a selection, whose address is the sending frame's.
 - The floating panel's shell is `chrome-extension/highlight_panel.js`, a content script loaded before `highlight_page.js`. Opening the panel and every button need `isTrusted === true`; closing it (Escape, a press outside) takes any event. A page can still move or cover the panel and bait a real click; that adds an Inbox task only.
-- A page task's title is the page title, else its address without user-info. A selection is read with `getSelection().toString()` in the clicked frame (visible text, line breaks kept), else the menu's `selectionText`; the shortcut reads the top frame only.
+- A page task's title is the page title, else its address without user-info: also when the board finds nothing visible in the page title (the bridge asks again with the address). A selection is read with `getSelection().toString()` in the clicked frame (visible text, line breaks kept), else the menu's `selectionText`; the shortcut reads the top frame only.
 - The extension says MonoAgent "needs updating" only when the bridge answered `ping` without `task.add` (`MonoAsk.known()`). A daemon older than the request channel never answers `ping` and looks offline.
 
 ```
