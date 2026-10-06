@@ -1399,9 +1399,10 @@ func TestUnreachableIsGraceUntilTwentyFourHours(t *testing.T) {
 // D27: only invalid_grant answered to a refresh-token grant is a refusal. A server error, a client
 // or a resource monoes.me does not know, a page that is not JSON: each is trouble on the way, so
 // the machine stays in grace with reason server_error, the refresh token is kept (it may well be
-// good) and nothing is refused. (A24: the page that is not JSON is the one of these whose outcome
-// is unknown, a 200 that holds no token set, so the guard keeps pending_since beside the token and
-// retries at once for 240 seconds; this test stays well inside that.)
+// good) and nothing is refused. (A24: the server error and the page that is not JSON are the two
+// of these whose outcome is unknown, a 5xx that may follow a rotation and a 200 that holds no token
+// set, so the guard keeps pending_since beside the token and retries at once for 240 seconds; this
+// test stays well inside that. The unknown client and resource are complete 4xx answers: settled.)
 func TestAnswersThatAreNotARefusalKeepTheGrace(t *testing.T) {
 	for _, c := range []struct {
 		name string

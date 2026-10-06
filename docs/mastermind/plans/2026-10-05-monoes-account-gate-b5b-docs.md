@@ -842,11 +842,11 @@ install.
 | `locked` | work is refused | `not_logged_in`, `expired` (24 hours without a refresh), `refused` (monoes.me answered `invalid_grant`: the account is blocked, the sign-in was revoked, or an already-used refresh token was presented, as from a copied session; work in flight is cancelled), `clock_rollback`, `clock_skew`, `key_unknown` (run `update`), `unconfirmed` (the grace of an unconfirmed machine is over: sign in again on it), `invalid` |
 
 Only an `invalid_grant` answer to a refresh is a refusal; every other failure counts
-as unreachable, so the 24-hour grace applies. A refresh whose answer may have been lost
-(the request went out and nothing readable came back, as when the process is killed) is
-retried at once for 240 seconds; after that this machine deletes its refresh token
-instead of presenting it again, which would end every install of the account, and says
-`unconfirmed`. The account and the other machines are not affected, and one
+as unreachable, so the 24-hour grace applies. A refresh whose outcome is unknown (the
+request went out and the answer never came, was cut short or was a server error, as when
+the process is killed mid-refresh) is retried at once for 240 seconds; after that this
+machine deletes its refresh token instead of presenting it again, which would end every
+install of the account, and says `unconfirmed`. The account and the other machines are not affected, and one
 `account login` on this machine ends it. A blocked account is locked at the next
 refresh, within about an hour. A build before the enforcement release is dormant
 (nothing locks, warns or calls monoes.me); from the release that sets the date until
@@ -1387,12 +1387,12 @@ STATES AND REASONS
            in again on this machine); invalid (the stored sign-in does not verify)
   Only an invalid_grant answer to a refresh is a refusal. Everything else (no network,
   a timeout, any 4xx or 5xx, any other OAuth error) counts as unreachable, so the
-  24-hour grace applies. A refresh whose answer may have been lost (the request went
-  out and nothing readable came back, as when the process is killed) is retried at once
-  for 240 seconds; after that this machine deletes its refresh token instead of
-  presenting it again, which would end every install of the account. The account and the
-  other machines are not affected. A blocked account is locked at the next refresh,
-  within an hour.
+  24-hour grace applies. A refresh whose outcome is unknown (the request went out and
+  the answer never came, was cut short or was a server error, as when the process is
+  killed mid-refresh) is retried at once for 240 seconds; after that this machine
+  deletes its refresh token instead of presenting it again, which would end every
+  install of the account. The account and the other machines are not affected. A
+  blocked account is locked at the next refresh, within an hour.
 
 PHASES
   dormant   a build before the enforcement release: nothing locks, warns or contacts
