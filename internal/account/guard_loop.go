@@ -50,8 +50,12 @@ func (g *Guard) runLoop(ctx context.Context) {
 	// so without the hold every pass would refresh again.
 	var heldAt, holdUntil time.Time
 	for ctx.Err() == nil {
-		now := g.now()
 		st := g.Status() // follows the file and fires OnRefused, whatever the pass does next
+		// The time of the pass is read after the verdict: a clock set back between the
+		// two readings then leaves now on the later side of the step, where a hold is
+		// counted from; a reading from before it would put the start of a hold after
+		// the clock, and the next pass would refresh again.
+		now := g.now()
 		// A hold made after now means the clock went back, and ends it. A stored time
 		// must never keep a refresh off, or a clock set back could not be repaired by
 		// the refresh that resets it (see elapsed). So does the verdict of a clock that

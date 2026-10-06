@@ -2,6 +2,7 @@ package account_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,4 +99,34 @@ func TestTheRefresherStillHoldsWhenTheClockIsMoreThanTheGraceWindowAhead(t *test
 	e.f.Clock.Advance(2 * time.Second)
 	waitForCalls(t, srv, 2, "the refresh at the half-life")
 	expectCalls(t, srv, 2, "once per half-life")
+}
+
+func TestAClockSteppedBetweenTheLoopsReadingsDoesNotMakeItsHoldStale(t *testing.T) {
+	// The loop reads the clock for its verdict and for its own time, in one pass.
+	// A clock that is set back between the two readings, which this clock does
+	// right after the next reading of the guard, must leave the hold of the refresh
+	// that follows counted from the clock as it stands after the step. A reading
+	// from before the step would put the start of the hold after the clock: a hold
+	// made after now, which ends at once and costs another refresh.
+	e := newEnv(t)
+	srv := newLoopServer(e)
+	srv.set(func(s *loopServer) { s.lag = 61 * time.Minute }) // every token it issues is due again by this clock at once
+	srv.signIn(40*time.Minute, time.Hour)
+	var armed atomic.Bool
+	now := func() time.Time {
+		at := e.f.Clock.Now()
+		if armed.CompareAndSwap(true, false) {
+			e.f.Clock.Advance(-30 * time.Minute) // right after this reading
+		}
+		return at
+	}
+	g := e.guardOnClock(srv, loopPoll, now)
+	g.StartRefresher(context.Background())
+	waitForCalls(t, srv, 1, "the first refresh")
+	expectCalls(t, srv, 1, "the hold")
+	waitForHW(t, e, e.f.Clock.Now(), "the first pass that holds to write the mark") // the mark is at the clock that is about to go back
+
+	armed.Store(true) // the next reading of the guard steps the clock back
+	waitForCalls(t, srv, 2, "the refresh after the clock was set back")
+	expectCalls(t, srv, 2, "the hold the second refresh began")
 }

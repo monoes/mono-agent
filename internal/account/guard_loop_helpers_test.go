@@ -90,8 +90,15 @@ func (s *loopServer) Refresh(ctx context.Context, refreshToken string) (*account
 // return within 5 seconds fails the test instead of hanging the test binary.
 func (e *env) guardOn(ref account.Refresher, poll time.Duration) *account.Guard {
 	e.t.Helper()
+	return e.guardOnClock(ref, poll, e.f.Clock.Now)
+}
+
+// guardOnClock is guardOn on a clock of the test's own, for a test that has to
+// decide what the guard's next reading of the time does.
+func (e *env) guardOnClock(ref account.Refresher, poll time.Duration, now func() time.Time) *account.Guard {
+	e.t.Helper()
 	g := account.NewGuard(account.GuardOptions{
-		Store: account.OpenStore(e.dir, e.seal), Refresher: ref, Now: e.f.Clock.Now, Poll: poll,
+		Store: account.OpenStore(e.dir, e.seal), Refresher: ref, Now: now, Poll: poll,
 	})
 	t := e.t
 	t.Cleanup(func() {
