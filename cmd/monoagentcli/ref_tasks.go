@@ -256,9 +256,9 @@ THE AGENT LOOP
   is not ready, not_ready; a comment, finish or release on one you do not hold,
   not_claimant. After finish --question the task waits in review: task show ID prints
   its history, with any comment the operator added.
-  A SessionStart hook can run: monoagentcli --profile <id> task digest. In text it
-  prints nothing when no task is ready, and it exits 0 whatever goes wrong at run time
-  (an unknown flag is the command parser's exit 1). Nothing installs the hook for you.
+  A SessionStart hook can run monoagentcli --profile <id> task digest; nothing installs it for you.
+  In text, digest prints nothing when no task is ready, and it exits 0 whatever goes
+  wrong at run time (an unknown flag is the command parser's exit 1).
   In text, a task's notes are printed indented, between a notice that they are
   untrusted and the line (end of the notes); the notes in its history carry a caution
   of their own. A column or a list that was cut ends with "... N more" and the command

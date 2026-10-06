@@ -60,44 +60,29 @@ func TestRefTasksNamesTheGateTheLoopAndTheProfile(t *testing.T) {
 	}
 }
 
-// What follows keeps the texts true of the commands as built: a flag that is
-// renamed, a subcommand that is invented, a limit that changes or an anchor
-// that moves fails here instead of being found by an agent that follows the text.
+// What follows holds the texts to the commands as built: a flag that is renamed, a
+// subcommand that is invented, a limit that changes or an anchor that moves fails here,
+// not in an agent that follows the text.
 
 var (
-	// refQuoted is text in double quotes: an example's argument, never a flag.
-	refQuoted = regexp.MustCompile(`"[^"]*"`)
-	// refFlagWord is a --flag written in documentation.
-	refFlagWord = regexp.MustCompile(`(?:^|[\s\[(|=])--([a-z][a-z0-9-]*)`)
-	// refUsageFlag is a flag in the usage text cobra prints for a flag set.
-	refUsageFlag = regexp.MustCompile(`(?m)^\s+(?:-[a-z], )?--([a-z][a-z0-9-]*)`)
-	// refTaskCall is a call of the task group written in documentation: monoagentcli,
-	// the flags before the group (each with its value), task, the subcommand, and
-	// the rest of the line up to a comment.
+	refQuoted    = regexp.MustCompile(`"[^"]*"`)                                  // an example's argument, never a flag
+	refFlagWord  = regexp.MustCompile(`(?:^|[\s\[(|=])--([a-z][a-z0-9-]*)`)       // a --flag written in a text
+	refUsageFlag = regexp.MustCompile(`(?m)^\s+(?:-[a-z], )?--([a-z][a-z0-9-]*)`) // a flag in cobra's usage text
+	// refTaskCall is a call of the task group written in a text: monoagentcli, flags with
+	// their values, task, the subcommand (group 1) and the rest of the line up to a comment (group 2).
 	refTaskCall = regexp.MustCompile(`monoagentcli(?:\s+\[?--[a-z][a-z0-9-]*(?:[ =][^\s\]]+)?\]?)*\s+tasks?\s+([a-z][a-z-]*)([^\n#]*)`)
 )
 
-// refCall is a `monoagentcli ... task NAME REST` found in a text.
-type refCall struct{ name, rest string }
-
-func refCallsIn(text string) []refCall {
-	var calls []refCall
-	for _, m := range refTaskCall.FindAllStringSubmatch(text, -1) {
-		calls = append(calls, refCall{name: m[1], rest: m[2]})
-	}
-	return calls
-}
-
-func refFlagsIn(text string) []string {
-	var flags []string
+// refFlagsIn lists the --flags a text names outside quotes.
+func refFlagsIn(text string) (flags []string) {
 	for _, m := range refFlagWord.FindAllStringSubmatch(refQuoted.ReplaceAllString(text, ""), -1) {
 		flags = append(flags, m[1])
 	}
 	return flags
 }
 
-// refTaskSub finds `task NAME` the way the CLI does, in a root command whose
-// global flags its subcommands inherit; nil for a name that is no subcommand.
+// refTaskSub finds `task NAME` the way the CLI does, in a root command whose global
+// flags its subcommands inherit; nil for a name that is no subcommand.
 func refTaskSub(name string) *cobra.Command {
 	sub, _, err := newRootCmd().Find([]string{"task", name})
 	if err != nil || sub.Name() != name || sub.Parent() == nil || sub.Parent().Name() != "task" {
@@ -109,15 +94,6 @@ func refTaskSub(name string) *cobra.Command {
 // refHasFlag says whether a subcommand declares the flag or inherits it.
 func refHasFlag(sub *cobra.Command, name string) bool {
 	return sub.Flags().Lookup(name) != nil || sub.InheritedFlags().Lookup(name) != nil
-}
-
-// refLocalFlags names the flags a subcommand declares itself.
-func refLocalFlags(sub *cobra.Command) []string {
-	var names []string
-	for _, m := range refUsageFlag.FindAllStringSubmatch(sub.LocalFlags().FlagUsages(), -1) {
-		names = append(names, m[1])
-	}
-	return names
 }
 
 // refTaskEntries are the `ref commands` entries of the task group, by subcommand.
@@ -143,7 +119,7 @@ func TestRefTasksEntriesDescribeTheirOwnCommand(t *testing.T) {
 			t.Errorf("the usage of `task %s` is %q: it does not call that command", name, d.Usage)
 		}
 		for _, ex := range d.Examples {
-			if calls := refCallsIn(ex); len(calls) != 1 || calls[0].name != name {
+			if calls := refTaskCall.FindAllStringSubmatch(ex, -1); len(calls) != 1 || calls[0][1] != name {
 				t.Errorf("the example %q of `task %s` is not a call of that command", ex, name)
 			}
 		}
@@ -168,14 +144,11 @@ func TestRefTasksEntriesUseOnlyFlagsTheCommandHas(t *testing.T) {
 
 func TestRefTasksEntriesNameEveryFlagOfTheirCommand(t *testing.T) {
 	for _, sub := range newTaskCmd(&globalConfig{}).Commands() {
-		d, ok := refTaskEntries()[sub.Name()]
-		if !ok {
-			continue // TestEveryTaskCommandHasAReferenceEntry says so
-		}
+		d := refTaskEntries()[sub.Name()] // no entry at all is TestEveryTaskCommandHasAReferenceEntry's to say
 		documented := append(refFlagsIn(d.Usage), refFlagsIn(d.Flags)...)
-		for _, flag := range refLocalFlags(sub) {
-			if flag != "help" && !slices.Contains(documented, flag) {
-				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", sub.Name(), flag)
+		for _, m := range refUsageFlag.FindAllStringSubmatch(sub.LocalFlags().FlagUsages(), -1) {
+			if m[1] != "help" && !slices.Contains(documented, m[1]) {
+				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", sub.Name(), m[1])
 			}
 		}
 	}
@@ -183,15 +156,15 @@ func TestRefTasksEntriesNameEveryFlagOfTheirCommand(t *testing.T) {
 
 func TestRefTasksSuggestsOnlyCommandsTheCLIHas(t *testing.T) {
 	check := func(where, text string) {
-		for _, c := range refCallsIn(text) {
-			sub := refTaskSub(c.name)
+		for _, m := range refTaskCall.FindAllStringSubmatch(text, -1) {
+			sub := refTaskSub(m[1])
 			if sub == nil {
-				t.Errorf("%s suggests `task %s`, which is no command", where, c.name)
+				t.Errorf("%s suggests `task %s`, which is no command", where, m[1])
 				continue
 			}
-			for _, flag := range refFlagsIn(c.rest) {
+			for _, flag := range refFlagsIn(m[2]) {
 				if !refHasFlag(sub, flag) {
-					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, c.name, flag)
+					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, m[1], flag)
 				}
 			}
 		}
@@ -202,13 +175,12 @@ func TestRefTasksSuggestsOnlyCommandsTheCLIHas(t *testing.T) {
 		}
 	}
 	check("`ref tasks`", refTasksText)
-	// A text that merely names no call at all would pass: the topic shows the loop.
-	if len(refCallsIn(refTasksText)) < 6 {
-		t.Errorf("`ref tasks` shows only %d calls of the task group: the check above read nothing", len(refCallsIn(refTasksText)))
+	if n := len(refTaskCall.FindAllString(refTasksText, -1)); n < 6 { // else the check above read nothing
+		t.Errorf("`ref tasks` shows only %d calls of the task group", n)
 	}
 }
 
-// refTasksAnchors are the headings later phases edit `refTasksText` at, in order.
+// refTasksAnchors are the headings later releases edit `refTasksText` at, in order.
 var refTasksAnchors = []string{"COLUMNS", "WHO MAY DO WHAT", "THE AGENT LOOP", "TASK TEXT IS DATA", "JSON", "SEE ALSO"}
 
 func TestRefTasksKeepsItsAnchorHeadings(t *testing.T) {
@@ -217,14 +189,12 @@ func TestRefTasksKeepsItsAnchorHeadings(t *testing.T) {
 		t.Fatal(err)
 	}
 	for where, text := range map[string]string{"the text": refTasksText, "ref_tasks.go": string(src)} {
-		lines := strings.Split(text, "\n")
-		last := -1
+		lines, last := strings.Split(text, "\n"), -1
 		for _, heading := range refTasksAnchors {
-			at := slices.Index(lines, heading)
-			switch {
+			switch at := slices.Index(lines, heading); {
 			case at < 0:
 				t.Errorf("%s has no line that is just %q at the margin", where, heading)
-			case slices.Index(lines[at+1:], heading) >= 0:
+			case slices.Contains(lines[at+1:], heading):
 				t.Errorf("%s has more than one line that is just %q", where, heading)
 			case at < last:
 				t.Errorf("%s has %q out of order", where, heading)
@@ -238,15 +208,14 @@ func TestRefTasksKeepsItsAnchorHeadings(t *testing.T) {
 	}
 }
 
-// refSection is what `ref tasks` says under one of its anchor headings, up to the next one.
+// refSection is what `ref tasks` says under one of its anchor headings, up to the next.
 func refSection(heading string) string {
 	lines := strings.Split(refTasksText, "\n")
-	start := slices.Index(lines, heading)
+	start, end := slices.Index(lines, heading), len(lines)
 	if start < 0 {
 		return ""
 	}
-	end := len(lines)
-	if i := slices.Index(refTasksAnchors, heading); i >= 0 && i+1 < len(refTasksAnchors) {
+	if i := slices.Index(refTasksAnchors, heading); i+1 < len(refTasksAnchors) {
 		if next := slices.Index(lines, refTasksAnchors[i+1]); next > start {
 			end = next
 		}
@@ -254,22 +223,15 @@ func refSection(heading string) string {
 	return strings.Join(lines[start+1:end], "\n")
 }
 
-// refTasksDocs is every text about the board: the topic and the `ref commands` entries.
-func refTasksDocs() string {
-	var b strings.Builder
-	b.WriteString(refTasksText)
-	for _, d := range refTaskEntries() {
-		b.WriteString("\n" + d.Short + "\n" + d.Usage + "\n" + d.Flags + "\n" + strings.Join(d.Examples, "\n"))
-	}
-	return b.String()
-}
-
-// refStates checks the statements of one number in the texts against the code: the
-// pattern has one group, the number as written, and every statement of it must be want.
-// A number that is no longer stated anywhere fails too.
+// refStates holds every statement of one number in the texts to the code: the pattern
+// has one group, the number as written. A number no text states fails too.
 func refStates(t *testing.T, what, pattern, want string) {
 	t.Helper()
-	found := regexp.MustCompile(pattern).FindAllStringSubmatch(refTasksDocs(), -1)
+	docs := []string{refTasksText}
+	for _, d := range refTaskEntries() {
+		docs = append(docs, d.Short, d.Usage, d.Flags)
+	}
+	found := regexp.MustCompile(pattern).FindAllStringSubmatch(strings.Join(docs, "\n"), -1)
 	if len(found) == 0 {
 		t.Errorf("no text states %s (%s), which is %s in the code", what, pattern, want)
 	}
@@ -280,13 +242,8 @@ func refStates(t *testing.T, what, pattern, want string) {
 	}
 }
 
-// thousands writes n the way the texts do: 2,000.
-func thousands(n int) string {
-	if n < 1000 {
-		return fmt.Sprint(n)
-	}
-	return fmt.Sprintf("%d,%03d", n/1000, n%1000)
-}
+// thousands writes n (at least 1,000) the way the texts do: 2,000.
+func thousands(n int) string { return fmt.Sprintf("%d,%03d", n/1000, n%1000) }
 
 func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 	refStates(t, "a profile's open tasks", `([\d,]+) open tasks`, thousands(tasks.MaxOpenTasks))
@@ -308,7 +265,6 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 		return sub.Flags().Lookup(flag).DefValue
 	}
 	lease := fmt.Sprintf("default %dm, at most %dh", int(tasks.DefaultLease.Minutes()), int(tasks.MaxLease.Hours()))
-	entries := refTaskEntries()
 	for _, c := range []struct{ entry, want string }{
 		{"list", fmt.Sprintf("default %d, at most %s", tasks.DefaultListLimit, thousands(tasks.MaxListLimit))},
 		{"board", "default " + defaultOf("board", "done-limit")},
@@ -316,7 +272,7 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 		{"next", lease},
 		{"claim", lease},
 	} {
-		if !strings.Contains(entries[c.entry].Flags, c.want) {
+		if !strings.Contains(refTaskEntries()[c.entry].Flags, c.want) {
 			t.Errorf("the `ref commands` entry of `task %s` does not say %q", c.entry, c.want)
 		}
 	}
@@ -324,20 +280,12 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 
 func TestRefTasksNamesEveryErrorCodeTheCLIAnswers(t *testing.T) {
 	jsonText := refSection("JSON")
-	if jsonText == "" {
-		t.Fatal("`ref tasks` has no JSON section")
-	}
 	for _, c := range []struct {
 		err  error
 		exit int
 	}{
-		{tasks.ErrNotFound, 2},
-		{tasks.ErrInvalid, 3},
-		{tasks.ErrOperatorOnly, 3},
-		{tasks.ErrNotReady, 3},
-		{&tasks.ClaimedError{By: "someone", Until: time.Now()}, 3},
-		{tasks.ErrNotClaimant, 3},
-		{tasks.ErrLimit, 3},
+		{tasks.ErrNotFound, 2}, {tasks.ErrInvalid, 3}, {tasks.ErrOperatorOnly, 3}, {tasks.ErrNotReady, 3},
+		{&tasks.ClaimedError{By: "someone", Until: time.Now()}, 3}, {tasks.ErrNotClaimant, 3}, {tasks.ErrLimit, 3},
 	} {
 		err := taskErr(fmt.Errorf("%w: a refusal", c.err))
 		fields, ok := err.(jsonErrorFields)
@@ -360,10 +308,9 @@ func TestRefTasksNamesEveryErrorCodeTheCLIAnswers(t *testing.T) {
 }
 
 func TestRefTasksStatesTheNameRulesOfTheStore(t *testing.T) {
-	who := refSection("WHO MAY DO WHAT")
 	refStates(t, "the length of an agent's name", `1 to (\d+) characters of letters`, fmt.Sprint(tasks.MaxNameLen))
 	for _, want := range []string{"characters of letters, digits and ._#@:-", "the labels you, agent, capture, chrome and os are reserved"} {
-		if !strings.Contains(who, want) {
+		if !strings.Contains(refSection("WHO MAY DO WHAT"), want) {
 			t.Errorf("the WHO MAY DO WHAT section of `ref tasks` does not say %q", want)
 		}
 	}
@@ -377,7 +324,7 @@ func TestRefTasksStatesTheNameRulesOfTheStore(t *testing.T) {
 			t.Errorf("the text says %q is a name character, but the store refuses it: %v", c, err)
 		}
 	}
-	if tasks.CheckAgentName(strings.Repeat("a", tasks.MaxNameLen)) != nil || tasks.CheckAgentName(strings.Repeat("a", tasks.MaxNameLen+1)) == nil {
+	if long := strings.Repeat("a", tasks.MaxNameLen); tasks.CheckAgentName(long) != nil || tasks.CheckAgentName(long+"a") == nil {
 		t.Errorf("the text says a name is up to %d characters: the store disagrees", tasks.MaxNameLen)
 	}
 }
@@ -390,16 +337,14 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 		t.Fatal("WHO MAY DO WHAT has lost its sentences 'The operator may ...' and 'An AI agent may ...'")
 	}
 	db := newTaskTestDB(t)
-	// The code an agent's call is refused with, "" when it is not refused.
-	refusal := func(args ...string) string {
+	refusal := func(args ...string) string { // the code an agent's call is refused with, "" if it is not
 		out, _, err := runTask(t, db, "default", true, "", append(args, "--as", "bot")...)
-		if err == nil {
-			return ""
-		}
 		var doc struct {
 			Code string `json:"code"`
 		}
-		_ = json.Unmarshal([]byte(out), &doc)
+		if err != nil {
+			_ = json.Unmarshal([]byte(out), &doc)
+		}
 		return doc.Code
 	}
 	for _, c := range [][]string{{"board"}, {"edit", "1", "--title", "x"}, {"move", "1", "ready"}, {"approve", "1"}, {"archive", "1"}, {"unarchive", "1"}, {"add", "x", "--ready"}} {
@@ -426,9 +371,9 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 func TestRefTasksJSONSectionShowsTheDocumentsTheCommandsPrint(t *testing.T) {
 	jsonText := refSection("JSON")
 	db := newTaskTestDB(t)
-	// Each step is a call, the document the text says it prints, and the word the text names the
-	// call by. The steps are in order: a task is added, approved, claimed, finished, given back,
-	// archived and restored, so that every call has something to work on.
+	// Each step is a call, the document the text says it prints and the word the text names the
+	// call by. The steps are in order, so that every call has a task to work on: it is added,
+	// approved, claimed, finished, moved back, claimed again, released, archived and restored.
 	for _, step := range []struct {
 		doc, word string
 		args      []string
@@ -451,26 +396,23 @@ func TestRefTasksJSONSectionShowsTheDocumentsTheCommandsPrint(t *testing.T) {
 		{`{"profile","archived"}`, "archive --status", []string{"archive", "--status", "ready"}},
 		{`{"profile","ready","next"}`, "digest", []string{"digest"}},
 	} {
+		call := "task " + strings.Join(step.args, " ")
 		out, _, err := runTask(t, db, "default", true, "", step.args...)
-		if err != nil {
-			t.Fatalf("task %s: %v\n%s", strings.Join(step.args, " "), err, out)
-		}
 		var doc map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(out), &doc); err != nil {
-			t.Fatalf("task %s: %v\n%s", strings.Join(step.args, " "), err, out)
+		if err != nil || json.Unmarshal([]byte(out), &doc) != nil {
+			t.Fatalf("%s: %v\n%s", call, err, out)
 		}
-		var got []string
+		var got, want []string
 		for k := range doc {
 			got = append(got, k)
 		}
-		var want []string
 		for _, m := range regexp.MustCompile(`"([a-z_]+)"`).FindAllStringSubmatch(step.doc, -1) {
 			want = append(want, m[1])
 		}
 		slices.Sort(got)
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
-			t.Errorf("task %s prints a document with the keys %v, but the test (and `ref tasks`) say %s", strings.Join(step.args, " "), got, step.doc)
+			t.Errorf("%s prints a document with the keys %v, but the test (and `ref tasks`) say %s", call, got, step.doc)
 		}
 		stated := false
 		for _, line := range strings.Split(jsonText, "\n") {
@@ -480,7 +422,7 @@ func TestRefTasksJSONSectionShowsTheDocumentsTheCommandsPrint(t *testing.T) {
 			t.Errorf("the JSON section of `ref tasks` has no line that gives %s for %q", step.doc, step.word)
 		}
 	}
-	// The last step found nothing ready: the document says so with null, as the text does.
+	// Nothing is ready now: the document says so with null, as the text does.
 	out, _, _ := runTask(t, db, "default", true, "", "next", "--as", "bot")
 	if !regexp.MustCompile(`"task":\s*null`).MatchString(out) || !strings.Contains(jsonText, "task null when nothing is ready") {
 		t.Errorf("`task next` with nothing ready prints %s, and the JSON section must say `task null when nothing is ready`", out)
@@ -499,24 +441,19 @@ func TestRefTasksGivesNoWayRoundTheGate(t *testing.T) {
 }
 
 func TestRefTasksIsPrintedAndListed(t *testing.T) {
-	printed := captureStdout(t, func() {
-		ref := newRefCmd()
-		ref.SetArgs([]string{"tasks"})
-		if err := ref.Execute(); err != nil {
-			t.Fatalf("ref tasks: %v", err)
-		}
-	})
-	if printed != refTasksText {
+	run := func(args ...string) string {
+		return captureStdout(t, func() {
+			ref := newRefCmd()
+			ref.SetArgs(append([]string{}, args...)) // never nil: cobra would read the test binary's own flags
+			if err := ref.Execute(); err != nil {
+				t.Fatalf("ref %v: %v", args, err)
+			}
+		})
+	}
+	if printed := run("tasks"); printed != refTasksText {
 		t.Errorf("`ref tasks` prints %d bytes that are not its text (%d bytes)", len(printed), len(refTasksText))
 	}
-	listing := captureStdout(t, func() {
-		ref := newRefCmd()
-		ref.SetArgs([]string{}) // nil would make cobra read the test binary's own flags
-		if err := ref.Execute(); err != nil {
-			t.Fatalf("ref: %v", err)
-		}
-	})
-	if !regexp.MustCompile(`(?m)^  tasks\s+\S`).MatchString(listing) {
+	if listing := run(); !regexp.MustCompile(`(?m)^  tasks\s+\S`).MatchString(listing) {
 		t.Errorf("`ref` does not list the tasks topic:\n%s", listing)
 	}
 }
@@ -524,11 +461,8 @@ func TestRefTasksIsPrintedAndListed(t *testing.T) {
 func TestRootHelpPointsAgentsAtTheBoardInEveryLocale(t *testing.T) {
 	for _, lang := range []string{"en", "es"} {
 		raw, err := os.ReadFile("../../internal/i18n/locales/" + lang + ".json")
-		if err != nil {
-			t.Fatal(err)
-		}
 		var locale map[string]string
-		if err := json.Unmarshal(raw, &locale); err != nil {
+		if err != nil || json.Unmarshal(raw, &locale) != nil {
 			t.Fatalf("%s.json: %v", lang, err)
 		}
 		if !strings.Contains(locale["root.long"], "monoagentcli ref tasks") {
