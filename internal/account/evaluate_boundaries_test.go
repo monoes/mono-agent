@@ -162,7 +162,8 @@ func TestTheClockNotTheHighWaterMarkDecidesOKGraceAndExpiry(t *testing.T) {
 
 // Status keeps the whole stored user, a copy of it, even when the token names
 // another sub. The plan is the token's, in every state that has a receipt: the
-// token is signed, the stored plan is not.
+// token is signed, the stored plan is not. The stored user is display data in a
+// user-writable file: no gate may decide on Status.User, only on the verdict.
 func TestEvaluateKeepsTheStoredUserAndReportsThePlanOfTheToken(t *testing.T) {
 	f := accounttest.New(t)
 	now := f.Clock.Now()
