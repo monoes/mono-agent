@@ -21,7 +21,10 @@ const (
 
 // Store is the on-disk session. Nothing creates a file or a directory until a
 // write: every read of a missing session answers "none". The mutating methods
-// (Save, SaveRefresh, DeleteRefresh) are safe across processes only under Lock.
+// (Save, SaveRefresh, DeleteRefresh) are safe across processes only under Lock,
+// and LoadRefresh is called under it too: the key store calls of the two are kept
+// to at most one parked at a time only because their callers take turns
+// (keyStoreLimit).
 type Store interface {
 	Load() (*Session, error)                             // nil, nil when there is no session.json
 	Save(*Session) error                                 // atomic, 0600
@@ -58,6 +61,14 @@ type keyStoreResult struct {
 // call parked until someone answers. So while one is parked callKeyStore starts no
 // other bounded call: it fails at once with an error that is ErrKeyringUnavailable,
 // which the guard records as keyring_unavailable as it records a timeout.
+//
+// The limit keeps at most one call parked only because every bounded call is made
+// with session.lock held: the lock is exclusive between the callers of one
+// process too (flock is per open file), so they take turns, and a call that finds
+// one parked is refused. Two callers that start at once without it both pass the
+// check, both time out and both park. So a bounded LoadRefresh or SaveRefresh must
+// be called with the lock held: the guard's refresh does, and so must any other
+// caller of the quiet sealer (a logout, an adoption of an older login).
 type keyStoreLimit struct{ parked atomic.Int32 }
 
 // processKeyStoreLimit is the limit every store of this process shares: they all
@@ -82,13 +93,17 @@ var processKeyStoreLimit = &keyStoreLimit{}
 // A sealer that may wait for a person (the interactive keyring sealer, see
 // isPrompting) is neither bounded nor counted: fn runs on the caller's goroutine
 // and is waited for. A person types the passphrase and answers the unlock dialog,
-// which takes as long as it takes; the explicit sign-in owns the terminal, and the
-// lock is held by that command alone, so another process's refresh only waits
-// behind it.
+// which takes as long as it takes; the explicit sign-in owns the terminal and
+// holds the lock meanwhile, and the refreshes of other processes give up after
+// lockWaitTimeout and record nothing while the prompt is open (see
+// NewInteractiveKeyringSealer).
 func callKeyStore(l *keyStoreLimit, s Sealer, fn func() ([]byte, error)) ([]byte, error) {
 	if isPrompting(s) {
 		return fn()
 	}
+	// The caller holds session.lock, so no other bounded call of this process runs
+	// between this check and the parking below: at most one call is ever parked
+	// (see keyStoreLimit).
 	if l.parked.Load() > 0 {
 		return nil, fmt.Errorf("%w: the key store is still waiting for an earlier request", ErrKeyringUnavailable)
 	}

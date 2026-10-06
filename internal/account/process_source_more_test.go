@@ -23,7 +23,7 @@ import (
 // TestEveryForTestHookRefusesToRunInAReleaseBinary.)
 //
 // Require is exactly: the installed guard's branch, the strict flag read, and the
-// final `return requireNoGuard(testing.Testing(), <the strict flag>, <the time>)`.
+// final `return requireNoGuard(testing.Testing(), <the strict flag>, time.Now())`.
 // The flag is read under globalsMu inline (RLock, :=, RUnlock) or through the
 // isStrict() accessor, which does the same, and the argument is that flag and no
 // other expression. The proof on a real binary (no guard in a release build is locked
@@ -34,7 +34,11 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	require := bodyOf(t, file, "Require")
+	decls := funcsNamed([]source{{"process.go", file}}, "Require")
+	if len(decls) != 1 || len(paramNames(decls[0])) != 1 {
+		t.Fatal("process.go must declare exactly one Require, taking exactly its context")
+	}
+	require, ctx := decls[0].Body, paramNames(decls[0])[0]
 
 	returns := 0
 	ast.Inspect(require, func(n ast.Node) bool {
@@ -49,18 +53,24 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	}
 
 	stmts := require.List
-	if len(stmts) < 2 || !isGuardBranch(stmts[0]) {
-		t.Fatalf("Require must start with `if g := Current(); g != nil { return g.Require(ctx) }`; found %s", describeStmts(stmts))
+	if len(stmts) < 2 || !isGuardBranch(stmts[0], ctx) {
+		t.Fatalf("Require must start with `if <g> := Current(); <g> != nil { return <g>.Require(%s) }`; found %s", ctx, describeStmts(stmts))
 	}
 	var call *ast.CallExpr
 	if last, ok := stmts[len(stmts)-1].(*ast.ReturnStmt); ok && len(last.Results) == 1 {
 		call, _ = last.Results[0].(*ast.CallExpr)
 	}
 	if call == nil || types.ExprString(call.Fun) != "requireNoGuard" || len(call.Args) != 3 {
-		t.Fatal("Require must end with `return requireNoGuard(testing.Testing(), <the strict flag>, <the time>)`")
+		t.Fatal("Require must end with `return requireNoGuard(testing.Testing(), <the strict flag>, time.Now())`")
 	}
 	if got := types.ExprString(call.Args[0]); got != "testing.Testing()" {
 		t.Errorf("Require hands requireNoGuard %s as isTest, want testing.Testing()", got)
+	}
+	// The moment is the real one, as a bare call: an offset behind a condition that only a
+	// test binary meets (flag.Parsed(), say) would leave every test passing and make a
+	// release binary judge another moment than now.
+	if got := types.ExprString(call.Args[2]); got != "time.Now()" {
+		t.Errorf("Require hands requireNoGuard %s as the time, want exactly time.Now()", got)
 	}
 	// Between the two, Require reads the strict flag, in one of three ways, and does nothing else.
 	middle, flag := stmts[1:len(stmts)-1], types.ExprString(call.Args[1])
@@ -85,18 +95,23 @@ func TestRequireHandsRequireNoGuardTheTestBinaryFlags(t *testing.T) {
 	}
 }
 
-// isGuardBranch reports whether st is exactly `if g := Current(); g != nil { return g.Require(ctx) }`.
-func isGuardBranch(st ast.Stmt) bool {
+// isGuardBranch reports whether st is exactly `if <g> := Current(); <g> != nil { return <g>.Require(<ctx>) }`,
+// with whatever names Require gives the guard variable and its context parameter.
+func isGuardBranch(st ast.Stmt, ctx string) bool {
 	ifs, ok := st.(*ast.IfStmt)
-	if !ok || ifs.Else != nil || ifs.Init == nil || types.ExprString(ifs.Cond) != "g != nil" || len(ifs.Body.List) != 1 {
+	if !ok || ifs.Else != nil || ifs.Init == nil || len(ifs.Body.List) != 1 {
 		return false
 	}
 	init, ok := ifs.Init.(*ast.AssignStmt)
-	if !ok || defineOf(init) != "g := Current()" {
+	if !ok || init.Tok != token.DEFINE || len(init.Lhs) != 1 || len(init.Rhs) != 1 || types.ExprString(init.Rhs[0]) != "Current()" {
+		return false
+	}
+	g := types.ExprString(init.Lhs[0])
+	if types.ExprString(ifs.Cond) != g+" != nil" {
 		return false
 	}
 	ret, ok := ifs.Body.List[0].(*ast.ReturnStmt)
-	return ok && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == "g.Require(ctx)"
+	return ok && len(ret.Results) == 1 && types.ExprString(ret.Results[0]) == g+".Require("+ctx+")"
 }
 
 // defineOf is the source of the short variable declaration that st is (`x := y`), or "".
@@ -106,18 +121,6 @@ func defineOf(st ast.Stmt) string {
 		return ""
 	}
 	return types.ExprString(as.Lhs[0]) + " := " + types.ExprString(as.Rhs[0])
-}
-
-// bodyOf is the body of the function that file declares under name.
-func bodyOf(t *testing.T, file *ast.File, name string) *ast.BlockStmt {
-	t.Helper()
-	for _, d := range file.Decls {
-		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == name && fd.Body != nil {
-			return fd.Body
-		}
-	}
-	t.Fatalf("process.go declares no function %s", name)
-	return nil
 }
 
 // exprOf is the source of the expression that st is made of, or "" when st is not an expression statement.

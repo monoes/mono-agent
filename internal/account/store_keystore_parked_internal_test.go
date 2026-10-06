@@ -236,3 +236,44 @@ func TestAGuardRetryingAgainstAKeyStoreThatNeverAnswersStartsOneCallOnly(t *test
 		t.Fatalf("the attempt after the answer = %s/%q, %v with %d network refreshes, want ok after one", st.State, st.Reason, err, r.srv.calls.Load())
 	}
 }
+
+// The parked count must be back at zero once every call has ended, whatever the
+// order in which a call's answer and the caller's timer happen. Every call here
+// waits for the key store about as long as the timeout, so that the two meet and
+// callKeyStore runs each branch of its compare-and-swap: the answer first, the
+// timer first, and the timer firing after the call has returned. In that last
+// branch the caller has raised the count for a call that is no longer running,
+// and must lower it again. A count left above zero refuses every later bounded
+// call of the process for good: on a machine where only the daemon refreshes, no
+// refresh ever again, and locked(expired) a day later. Without the race detector
+// nearly every call takes the last branch; under it, about a quarter to a half do,
+// and about half time out.
+func TestTheParkedCountReturnsToZeroWhenAnAnswerMeetsTheTimer(t *testing.T) {
+	setKeyStoreTimeout(t, time.Millisecond)
+	limit := &keyStoreLimit{}
+	sealer := NewMemorySealer()
+	answered, timedOut := 0, 0
+	for i := range 300 {
+		data, err := callKeyStore(limit, sealer, func() ([]byte, error) {
+			time.Sleep(time.Millisecond) // answers as the timer fires
+			return []byte("k"), nil
+		})
+		switch {
+		case err == nil:
+			answered++
+			if string(data) != "k" {
+				t.Fatalf("call %d returned %q with no error, want the answer that arrived as the timer fired", i, data)
+			}
+		case strings.Contains(err.Error(), "did not answer within"):
+			timedOut++
+		default:
+			t.Fatalf("call %d = %v after %d answered and %d timed out: a call refused while none is parked means the count drifted up", i, err, answered, timedOut)
+		}
+		if !waitUntil(func() bool { return goroutinesIn("callKeyStore") == 0 }) {
+			t.Fatalf("call %d: the key store call did not end", i)
+		}
+		if n := limit.parked.Load(); n != 0 {
+			t.Fatalf("call %d: %d parked after every call has ended, want none (%d answered and %d timed out so far)", i, n, answered, timedOut)
+		}
+	}
+}
