@@ -63,8 +63,8 @@ func TestACapturesNameIsCheckedLikeAnAgentsName(t *testing.T) {
 	} {
 		for _, source := range []string{"", SourceChrome, SourceOS} {
 			_, _, err := s.Add(bg, "default", AddInput{Title: "t", SourceKind: source}, Actor{Kind: Capture, Name: name})
-			if !errors.Is(err, ErrInvalid) {
-				t.Errorf("capture named %.20q (%d bytes) asking for source %q: %v, want ErrInvalid", name, len(name), source, err)
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "named chrome or os") {
+				t.Errorf("capture named %.20q (%d bytes) asking for source %q: %v, want ErrInvalid saying a capture is named chrome or os", name, len(name), source, err)
 			}
 		}
 	}
@@ -155,8 +155,10 @@ func TestErrorsRepeatAtMostSixtyFourRunesOfWhatTheCallerSent(t *testing.T) {
 			t.Errorf("%s: %v, want ErrInvalid", c.name, err)
 			continue
 		}
-		if msg := err.Error(); len(msg) > 400 || strings.Contains(msg, strings.Repeat("x", 100)) {
-			t.Errorf("%s: a message of %d bytes", c.name, len(msg))
+		// 64 runes of it: 63 and an ellipsis
+		msg := err.Error()
+		if len(msg) > 400 || strings.Contains(msg, strings.Repeat("x", 64)) || !strings.Contains(msg, strings.Repeat("x", 63)+"\U00002026") {
+			t.Errorf("%s: a message of %d bytes, want the caller's text cut to 63 runes and an ellipsis", c.name, len(msg))
 		}
 	}
 }
