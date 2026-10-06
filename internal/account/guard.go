@@ -13,6 +13,13 @@ type TokenSet struct{ AccessToken, RefreshToken string }
 // returns *RefusedError only when monoes.me answered invalid_grant (spec D27)
 // and *TransientError for every other failure. B1b implements it; a Guard
 // without one never refreshes.
+//
+// Two rules the guard relies on. On any error, return a nil *TokenSet: a set
+// returned beside an error is ignored, so a rotated refresh token in it is lost.
+// And never return a typed-nil error, a nil *RefusedError or *TransientError
+// stored in an error: the guard reads it as no error at all, so a token set that
+// comes with it is a success and none is a server error, never a refusal. One
+// that another error wraps is not seen through: an ordinary unreachable failure.
 type Refresher interface {
 	Refresh(ctx context.Context, refreshToken string) (*TokenSet, error)
 }
@@ -123,7 +130,15 @@ func (g *Guard) Require(ctx context.Context) error {
 // it does not (the guard looks first). Each call runs on its own goroutine,
 // after the guard's locks are released, so a slow callback blocks nothing and
 // may take locks the caller of Status holds.
+//
+// Normally a callback is called once per refusal. In a rare race, two Status
+// calls that run at once across the moment the refusal begins or ends can reach
+// the guard out of order and call it twice for one refusal, so a callback must
+// be idempotent. A nil fn is ignored.
 func (g *Guard) OnRefused(fn func(Status)) {
+	if fn == nil {
+		return // it would panic on its own goroutine at the first refusal and end the process
+	}
 	g.mu.Lock()
 	g.onRefused = append(g.onRefused, fn)
 	already := g.refusedNoted

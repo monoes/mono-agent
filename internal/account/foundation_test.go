@@ -48,6 +48,8 @@ func TestAllowed(t *testing.T) {
 		{true, StateOK, true},
 		{true, StateGrace, true},
 		{true, StateLocked, false},
+		{true, State(""), false}, // fail closed: once enforced, only ok and grace pass
+		{false, StateGrace, true},
 	}
 	for _, c := range cases {
 		if got := (Status{State: c.state, Enforced: c.enforced}).Allowed(); got != c.want {
@@ -63,8 +65,8 @@ func TestSeamsRestoreWhenTheTestEnds(t *testing.T) {
 		SetEnforceFromForTest(t, at)
 		SetTrustedKeysForTest(t, []Key{{KID: "k1", Public: make(ed25519.PublicKey, ed25519.PublicKeySize)}})
 		StrictForTest(t)
-		if !EnforceDate().Equal(at) || len(TrustedKeys()) != 1 {
-			t.Fatalf("the hooks did not take effect: date %v, keys %d", EnforceDate(), len(TrustedKeys()))
+		if keys := TrustedKeys(); !EnforceDate().Equal(at) || len(keys) != 1 || keys[0].KID != "k1" {
+			t.Fatalf("the hooks did not take effect: date %v, trusted keys %v", EnforceDate(), keys)
 		}
 		globalsMu.RLock()
 		isStrict := strict
@@ -76,8 +78,9 @@ func TestSeamsRestoreWhenTheTestEnds(t *testing.T) {
 	globalsMu.RLock()
 	isStrict := strict
 	globalsMu.RUnlock()
-	if !EnforceDate().Equal(dateBefore) || len(TrustedKeys()) != keysBefore || isStrict {
-		t.Fatalf("a hook leaked out of its test: date %v (was %v), keys %d (was %d), strict %v", EnforceDate(), dateBefore, len(TrustedKeys()), keysBefore, isStrict)
+	_, leaked := lookupKey("k1") // the length alone cannot tell a leaked key from a pinned one once a release pins exactly one
+	if !EnforceDate().Equal(dateBefore) || len(TrustedKeys()) != keysBefore || leaked || isStrict {
+		t.Fatalf("a hook leaked out of its test: date %v (was %v), keys %d (was %d), key k1 still trusted %v, strict %v", EnforceDate(), dateBefore, len(TrustedKeys()), keysBefore, leaked, isStrict)
 	}
 }
 
@@ -100,7 +103,8 @@ func TestTrustedKeysIsACopy(t *testing.T) {
 	if again := TrustedKeys(); again[0].KID != "k1" || again[0].Public[0] != 0 {
 		t.Fatalf("a caller changed the trusted set: %+v", again[0])
 	}
-	if pub[0] != 0 {
+	pub[0] = 7 // the caller changes its slice after the hook: the trusted set must not follow
+	if TrustedKeys()[0].Public[0] != 0 {
 		t.Fatal("SetTrustedKeysForTest kept the caller's slice instead of copying it")
 	}
 }

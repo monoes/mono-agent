@@ -166,7 +166,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 }
 
 // settle gives a goroutine that should NOT act a real moment to do so.
-func settle() { time.Sleep(80 * time.Millisecond) }
+func settle() { time.Sleep(150 * time.Millisecond) }
 
 func transient(reason account.Reason) error {
 	return &account.TransientError{Reason: reason, Err: fmt.Errorf("fake network failure")}

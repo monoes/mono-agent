@@ -156,11 +156,21 @@ func (s *fileStore) DeleteRefresh() error {
 	if s.err != nil {
 		return nil
 	}
-	if err := os.Remove(s.path(refreshFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	err := os.Remove(s.path(refreshFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
+	// Made durable at once: a remove that a power cut undoes brings back a refresh
+	// token that was rotated away, and the next refresh would present it.
+	syncDirFn(s.dir)
 	return nil
 }
+
+// syncDirFn is syncDir, a variable so that a test can see when it is called.
+var syncDirFn = syncDir
 
 // errLockHeld is what tryLock returns while another holder has the lock.
 var errLockHeld = errors.New("account: lock is held")
@@ -208,7 +218,10 @@ func (s *fileStore) Lock(ctx context.Context) (func(), error) {
 
 // writeFileAtomic writes data to path (mode 0600, directory 0700 created on
 // the first write) through a temporary file in the same directory and a rename,
-// so a reader sees the old file or the new one, never half of one.
+// so a reader sees the old file or the new one, never half of one. It then syncs
+// the directory, so that a power cut cannot bring the old file back. A crash
+// between creating the temporary file and the rename leaves a 0600 ".tmp-*" file
+// that nothing reads or removes.
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -234,7 +247,11 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return renameReplacing(tmp.Name(), path)
+	if err := renameReplacing(tmp.Name(), path); err != nil {
+		return err
+	}
+	syncDirFn(dir)
+	return nil
 }
 
 // renameReplacing renames over an existing file. On Windows the rename can

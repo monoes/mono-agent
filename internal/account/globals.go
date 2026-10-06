@@ -12,3 +12,11 @@ var globalsMu sync.RWMutex
 
 // strict turns off the test-binary exception of Require (process.go).
 var strict bool
+
+// isStrict reports the strict flag, read under globalsMu like every other
+// process-wide variable.
+func isStrict() bool {
+	globalsMu.RLock()
+	defer globalsMu.RUnlock()
+	return strict
+}

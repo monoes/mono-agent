@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -130,12 +131,18 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	cctx, cancel := context.WithTimeout(ctx, refreshCallTimeout)
 	ts, err := g.refresher.Refresh(cctx, refreshToken)
 	cancel()
+	if isTypedNil(err) {
+		// A Refresher that returns its error variable unconditionally means "no error"
+		// by a nil one. Read it so: dropping the token set that comes with it would keep
+		// the retired refresh token, and the next call would present it.
+		err = nil
+	}
 
 	var refused *RefusedError
 	var transient *TransientError
 	result := ReasonUnreachable // D27: every failure that is not invalid_grant is "unreachable" unless it says server_error
 	switch {
-	case errors.As(err, &refused):
+	case errors.As(err, &refused) && refused != nil:
 		return g.applyRefusal(sess, now, refused)
 	case err != nil && ctx.Err() != nil:
 		return g.Status(), outcomeSkipped, ctx.Err() // the caller gave up; that says nothing about the account
@@ -146,10 +153,19 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		return g.applyTokens(sess, now, refreshToken, ts)
 	case err == nil:
 		result = ReasonServerError // an answer with nothing in it is the server's fault
-	case errors.As(err, &transient) && transient.Reason == ReasonServerError:
+	case errors.As(err, &transient) && transient != nil && transient.Reason == ReasonServerError:
 		result = ReasonServerError
 	}
 	return g.recordAttempt(sess, now, string(result))
+}
+
+// isTypedNil reports whether err is an error that holds a nil pointer, as
+// `var terr *TransientError; return ts, terr` makes of a success: a non-nil error
+// interface with nothing in it. Only pointers count, and a nil error is not one
+// (its reflect kind is Invalid).
+func isTypedNil(err error) bool {
+	v := reflect.ValueOf(err)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // applyTokens stores a successful refresh. The server rotates the refresh
@@ -268,10 +284,30 @@ func (g *Guard) touchHW(now time.Time) {
 	next := *fresh
 	bumpHW(&next, now)
 	if next.HW.Equal(fresh.HW) {
-		g.adopt(fresh)
+		// A peer has raised the mark already: nothing to write, only to take in.
+		g.adoptUnlessOlder(fresh)
 		return
 	}
-	if g.store.Save(&next) == nil {
-		g.adopt(&next)
+	if g.store.Save(&next) != nil {
+		// The mark was not written. The session read under the lock is as new as the
+		// file, and another process may have written it within one modification-time
+		// tick, so take it in, unless the guard is ahead of the file.
+		g.adoptUnlessOlder(fresh)
+		return
+	}
+	g.adopt(&next)
+}
+
+// adoptUnlessOlder takes fresh, a session just read under the file lock, in as the
+// cached one, unless the guard is ahead of the file. It is ahead when a write of its
+// own failed (applyTokens' save of a refreshed session, say) and only the cache
+// holds that session: the older file must not put it back, or the guard would go
+// back to the old token, find it due and refresh again at every call. LastAttempt
+// orders the writes that change a session (NewSession, recordAttempt and
+// applyRefusal set it); the high-water writes leave it alone, so a file that only
+// has a newer mark is as new as the session it holds.
+func (g *Guard) adoptUnlessOlder(fresh *Session) {
+	if cur, _ := g.cached(); cur == nil || !fresh.LastAttempt.Before(cur.LastAttempt) {
+		g.adopt(fresh)
 	}
 }

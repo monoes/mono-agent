@@ -40,7 +40,7 @@ type Status struct {
 	V           int       `json:"v"` // always 1
 	State       State     `json:"state"`
 	Reason      Reason    `json:"reason"`
-	User        *User     `json:"user,omitempty"`
+	User        *User     `json:"user,omitempty"` // display data from the stored session, not verified (a verified token with no stored user shows its sub); the verified identity is the token's sub
 	Plan        string    `json:"plan"`
 	IssuedAt    time.Time `json:"issued_at,omitzero"`
 	ValidUntil  time.Time `json:"valid_until,omitzero"` // the access token's exp

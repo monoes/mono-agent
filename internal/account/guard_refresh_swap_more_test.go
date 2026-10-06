@@ -65,6 +65,10 @@ func TestARefreshDoesNotCrashWhenAPollSwapsTheCacheAfterTheLock(t *testing.T) {
 	t.Cleanup(g.Close)
 	// While this guard waited for the lock another process left a healthy session;
 	// the guard reads it under the lock, and a poll then swaps the cache once more.
+	// The hook runs once the guard holds the file lock, so the write below rewrites
+	// session.json under it, which only a writer that ignores the lock can do: this
+	// swap after the lock is not an interleaving between processes that honor it.
+	// It is the cache swap that the test is about.
 	spy.afterLock = func() {
 		healthy, err := account.NewSession(account.HostURL, e.f.Token(accounttest.TokenOptions{Lifetime: 2 * time.Hour}), &account.User{ID: "user-1"}, e.f.Clock.Now())
 		if err != nil {

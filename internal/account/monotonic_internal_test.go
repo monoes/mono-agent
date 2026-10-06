@@ -22,10 +22,11 @@ import (
 //
 // time offers no way to build a time.Now() whose wall reading was set back and
 // whose monotonic reading went on, so wallBack edits the wall field of a copy
-// through unsafe. It checks the layout first, and the test skips when the layout
-// is not the one it edits. This file is in package account because judge is not
-// exported, and so it cannot use accounttest, which imports account: the one token
-// it needs is signed here with a throwaway key.
+// through unsafe. It checks the layout first, and the test fails when the layout
+// is not the one it edits: CI runs without -v, so a skip would retire the test
+// unseen. This file is in package account because judge is not exported, and so
+// it cannot use accounttest, which imports account: the one token it needs is
+// signed here with a throwaway key.
 
 // rawTime mirrors time.Time: wall is the hasMonotonic bit (63), 33 bits of seconds
 // (62 to 30) and 30 bits of nanoseconds; ext is the monotonic reading.
@@ -37,28 +38,29 @@ type rawTime struct {
 
 // wallBack returns now with its wall reading moved back by d, a whole number of
 // seconds, and its monotonic reading kept: the value time.Now returns after the
-// system clock was set back by d. It skips the test when time.Time does not have
-// the layout rawTime assumes.
+// system clock was set back by d. It fails the test when time.Time does not have
+// the layout rawTime assumes: a Go release that changed it must not retire the
+// only test that kills the removal of judge's strip without anyone seeing.
 func wallBack(t *testing.T, now time.Time, d time.Duration) time.Time {
 	t.Helper()
 	if d <= 0 || d%time.Second != 0 {
 		t.Fatalf("wallBack(%v): d must be a positive whole number of seconds", d)
 	}
 	const hasReading = " m=" // Time.String ends with the monotonic reading when there is one
-	skip := func(why string) {
-		t.Skip("the layout of time.Time is not the one wallBack edits (" + why + "): update it for this Go version; the monotonic-clock cases are not exercised here")
+	layoutChanged := func(why string) {
+		t.Fatal("the layout of time.Time changed (" + why + "): wallBack edits it through unsafe and must be updated for this Go version; until then the test of the wall-clock verdict does not run")
 	}
 	if unsafe.Sizeof(now) != unsafe.Sizeof(rawTime{}) {
-		skip("a different size")
+		layoutChanged("a different size")
 	}
 	if !strings.Contains(now.String(), hasReading) {
-		skip("time.Now carries no monotonic reading")
+		layoutChanged("time.Now carries no monotonic reading")
 	}
 	secs := int64(d / time.Second)
 	shifted := now
 	(*rawTime)(unsafe.Pointer(&shifted)).wall -= uint64(secs) << 30
 	if now.Unix()-shifted.Unix() != secs || shifted.Nanosecond() != now.Nanosecond() || shifted.Sub(now) != 0 || !strings.Contains(shifted.String(), hasReading) {
-		skip("the shift did not move only the wall seconds")
+		layoutChanged("the shift did not move only the wall seconds")
 	}
 	return shifted
 }
@@ -98,7 +100,7 @@ func mintToken(t *testing.T, iat time.Time) string {
 }
 
 func TestTheVerdictComparesWallClockTimeOnly(t *testing.T) {
-	wallBack(t, time.Now(), time.Second) // skips the whole test when the layout differs
+	wallBack(t, time.Now(), time.Second) // fails the whole test when the layout differs
 	const hour = time.Hour
 
 	// The token expired 29 hours ago by the true time; the clock, set back 29h50m,

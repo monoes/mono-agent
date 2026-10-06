@@ -42,13 +42,13 @@ func IsLoginRequired(err error) bool {
 func reasonLine(r Reason) string {
 	switch r {
 	case ReasonExpired:
-		return "This login expired: monoes.me has not been reachable for 24 hours."
+		return fmt.Sprintf("This login expired: monoes.me has not been reachable for %g hours.", GraceWindow.Hours())
 	case ReasonRefused:
 		return "monoes.me ended this login (the account was blocked or the login was revoked)."
 	case ReasonClockRollback:
 		return "The system clock went back. Fix the clock, then sign in again."
 	case ReasonClockSkew:
-		return "The system clock is more than 5 minutes behind monoes.me. Fix the clock."
+		return fmt.Sprintf("The system clock is more than %g minutes behind monoes.me. Fix the clock.", ClockSkew.Minutes())
 	case ReasonKeyUnknown:
 		return "This build cannot verify the login. Update it: monoagentcli update"
 	case ReasonInvalid:
@@ -63,6 +63,9 @@ func reasonLine(r Reason) string {
 type RefusedError struct{ Description string }
 
 func (e *RefusedError) Error() string {
+	if e == nil {
+		return ""
+	}
 	if e.Description == "" {
 		return "account: monoes.me refused the refresh token (invalid_grant)"
 	}
@@ -78,10 +81,18 @@ type TransientError struct {
 }
 
 func (e *TransientError) Error() string {
+	if e == nil {
+		return ""
+	}
 	if e.Err == nil {
 		return fmt.Sprintf("account: refresh failed (%s)", e.Reason)
 	}
 	return fmt.Sprintf("account: refresh failed (%s): %v", e.Reason, e.Err)
 }
 
-func (e *TransientError) Unwrap() error { return e.Err }
+func (e *TransientError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}

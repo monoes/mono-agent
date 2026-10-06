@@ -140,7 +140,9 @@ func TestSaveWritesAnAtomic0600File(t *testing.T) {
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, "session.json"))
 	if !json.Valid(raw) || !bytes.Contains(raw, []byte("\n  \"host\"")) || raw[len(raw)-1] != '\n' {
-		t.Fatalf("session.json is not indented JSON with a final newline:\n%s", raw)
+		// The content is not printed: it holds the access token (describe's rule).
+		t.Fatalf("session.json is not indented JSON with a final newline (valid JSON: %t, host key indented: %t, final newline: %t, %d bytes)",
+			json.Valid(raw), bytes.Contains(raw, []byte("\n  \"host\"")), bytes.HasSuffix(raw, []byte("\n")), len(raw))
 	}
 	if runtime.GOOS != "windows" {
 		fi, _ := os.Stat(filepath.Join(dir, "session.json"))
