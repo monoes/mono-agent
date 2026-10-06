@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -130,6 +131,12 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 	cctx, cancel := context.WithTimeout(ctx, refreshCallTimeout)
 	ts, err := g.refresher.Refresh(cctx, refreshToken)
 	cancel()
+	if isTypedNil(err) {
+		// A Refresher that returns its error variable unconditionally means "no error"
+		// by a nil one. Read it so: dropping the token set that comes with it would keep
+		// the retired refresh token, and the next call would present it.
+		err = nil
+	}
 
 	var refused *RefusedError
 	var transient *TransientError
@@ -150,6 +157,15 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		result = ReasonServerError
 	}
 	return g.recordAttempt(sess, now, string(result))
+}
+
+// isTypedNil reports whether err is an error that holds a nil pointer, as
+// `var terr *TransientError; return ts, terr` makes of a success: a non-nil error
+// interface with nothing in it. Only pointers count, and a nil error is not one
+// (its reflect kind is Invalid).
+func isTypedNil(err error) bool {
+	v := reflect.ValueOf(err)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // applyTokens stores a successful refresh. The server rotates the refresh

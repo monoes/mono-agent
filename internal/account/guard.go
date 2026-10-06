@@ -17,8 +17,9 @@ type TokenSet struct{ AccessToken, RefreshToken string }
 // Two rules the guard relies on. On any error, return a nil *TokenSet: a set
 // returned beside an error is ignored, so a rotated refresh token in it is lost.
 // And never return a typed-nil error, a nil *RefusedError or *TransientError
-// stored in an error: the guard cannot tell what it meant, so it counts it as an
-// ordinary unreachable failure and never as a refusal.
+// stored in an error: the guard reads it as no error at all, so a token set that
+// comes with it is a success and none is a server error, never a refusal. One
+// that another error wraps is not seen through: an ordinary unreachable failure.
 type Refresher interface {
 	Refresh(ctx context.Context, refreshToken string) (*TokenSet, error)
 }
