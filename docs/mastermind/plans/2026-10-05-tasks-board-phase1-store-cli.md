@@ -120,8 +120,18 @@ func TestATaskNeedsAnExistingProfile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("a task in an unknown profile: err %v, want a foreign key failure", err)
 	}
-	if _, err := db.Exec(`INSERT INTO task_board_rev (profile_id, rev) VALUES ('no-such-profile', 1)`); err == nil {
-		t.Error("a revision row for an unknown profile was accepted")
+	for _, c := range []struct {
+		name    string
+		profile any
+		want    string
+	}{
+		{"a revision row for an unknown profile", "no-such-profile", "FOREIGN KEY"},
+		{"a revision row with no profile", nil, "NOT NULL"}, // SQLite lets a text primary key hold NULL unless it says NOT NULL
+	} {
+		_, err := db.Exec(`INSERT INTO task_board_rev (profile_id, rev) VALUES (?, 1)`, c.profile)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want a %s failure", c.name, err, c.want)
+		}
 	}
 }
 
@@ -249,7 +259,7 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
 -- One counter per profile, bumped by every write transaction, so a watcher
 -- detects a change with a primary key read.
 CREATE TABLE IF NOT EXISTS task_board_rev (
-    profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
     rev        INTEGER NOT NULL
 );
 ```

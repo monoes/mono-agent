@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS task_events (
 );
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
 CREATE TABLE IF NOT EXISTS task_board_rev (
-    profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
     rev        INTEGER NOT NULL
 );
 ```
