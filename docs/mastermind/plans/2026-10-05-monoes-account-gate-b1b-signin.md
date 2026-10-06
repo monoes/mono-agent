@@ -2483,9 +2483,9 @@ import (
 	"github.com/monoes/mono-agent/internal/library/libraryfake"
 )
 
-// tokenless checks what logout leaves of a session (A23): no access token, no refresh token, and the
+// leftByLogout checks what logout leaves of a session (A23): no access token, no refresh token, and the
 // machine's clock-guard record, the high-water mark. It returns that record.
-func tokenless(t *testing.T, store account.Store) *account.Session {
+func leftByLogout(t *testing.T, store account.Store) *account.Session {
 	t.Helper()
 	sess, err := store.Load()
 	if err != nil || sess == nil || sess.AccessToken != "" || sess.State != "" || sess.HW.IsZero() {
@@ -2509,7 +2509,7 @@ func TestLogoutRevokesAndForgetsEvenOffline(t *testing.T) {
 	if _, err := account.NewRefresher(fake.URL).Refresh(context.Background(), rt); !errors.As(err, &refused) {
 		t.Fatalf("the refresh token was not revoked at monoes.me: %v", err)
 	}
-	tokenless(t, store) // the login is gone; the clock-guard record is not
+	leftByLogout(t, store) // the login is gone; the clock-guard record is not
 
 	// Offline: monoes.me is gone, the local state still goes.
 	signInAtFake(t, c)
@@ -2517,7 +2517,7 @@ func TestLogoutRevokesAndForgetsEvenOffline(t *testing.T) {
 	if err := c.Logout(context.Background()); err != nil {
 		t.Fatalf("offline logout: %v", err)
 	}
-	tokenless(t, store)
+	leftByLogout(t, store)
 }
 
 // An unreadable session.json is replaced like any other: its mark is lost with it, so the record
@@ -2531,7 +2531,7 @@ func TestLogoutForgetsAnUnreadableSession(t *testing.T) {
 	if err := account.NewClient("https://monoes.example", store).Logout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	tokenless(t, store)
+	leftByLogout(t, store)
 }
 
 // Spec 4.5 and D5, A23: a clock set back must not postpone the enforcement date, and an account that
@@ -2548,7 +2548,7 @@ func TestLogoutKeepsTheClockGuardRecord(t *testing.T) {
 	if err := c.Logout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	sess := tokenless(t, store)
+	sess := leftByLogout(t, store)
 	if sess.HW.Before(date) {
 		t.Fatalf("the high-water mark %v is older than the date %v that the machine has already seen", sess.HW, date)
 	}
