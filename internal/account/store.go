@@ -25,7 +25,13 @@ const (
 // (readStoreFile). A failure to open or to read the file (permission denied, an
 // I/O error) is not: it says nothing about what the file holds, so a caller can
 // tell a file that is unusable from a disk that failed. errors.Is finds it; the
-// message stays the failure's own.
+// message stays the failure's own. The line is whether the open succeeded: a FIFO,
+// a device or a directory opens and is found not to be a regular file, so that is
+// the file's content; a socket, a link loop (ELOOP), a link to a terminal (ENXIO)
+// or a file that may not be opened fail the open or the read, and are not. Whoever
+// can write the account folder can therefore force an I/O failure at will. A guard
+// that keeps its cached session on one is bounded by that session's own expiry and
+// grace, and a new process judges the same file locked(invalid).
 var errSessionInvalid = errors.New("account: " + sessionFile + " is not valid")
 
 // invalidSession marks a Load failure as errSessionInvalid and keeps its message.
