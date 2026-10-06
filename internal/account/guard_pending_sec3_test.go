@@ -75,8 +75,9 @@ func TestSec3ControlAWritableDirectoryRevokesNothing(t *testing.T) {
 // The account directory loses its write permission after the sign-in (chmod, a restore
 // with the wrong mode): session.lock still opens and refresh.enc still reads, but no
 // file can be created or removed in it. The marker cannot be saved, so no grant is
-// ever sent: nothing is rotated, and nothing can be replayed.
-func TestSec3AnUnwritableDirectoryReplaysTheDeadTokenUntilTheAccountIsRevoked(t *testing.T) {
+// ever sent: nothing is rotated, and nothing can be replayed. (The review's probe of
+// the bug, ...ReplaysTheDeadTokenUntilTheAccountIsRevoked, is this test's scenario.)
+func TestSec3AnUnwritableDirectoryNeverReplaysTheDeadToken(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix directory permissions")
 	}
@@ -110,8 +111,10 @@ func TestSec3AnUnwritableDirectoryReplaysTheDeadTokenUntilTheAccountIsRevoked(t 
 // marker stays, and the retries inside 240 s present rt-1 again, which monoes.me answers
 // from its reuse window, and fail to store it again. After 240 s the token is dropped and
 // the remove fails: it stays on disk and is never presented again, whatever the commands
-// that follow. A sign-in, once the file can be replaced, puts everything right.
-func TestSec3AnUndeletableRefreshFileReplaysTheDeadTokenUntilTheAccountIsRevoked(t *testing.T) {
+// that follow. A sign-in, once the file can be replaced, puts everything right. (The
+// review's probe of the bug, ...ReplaysTheDeadTokenUntilTheAccountIsRevoked, is this
+// test's scenario.)
+func TestSec3AnUndeletableRefreshFileNeverReplaysTheDeadToken(t *testing.T) {
 	f, dir, seal, srv := sec3Machine(t)
 	stuck := &stuckRefreshFile{Store: account.OpenStore(dir, seal), stuck: true}
 	t0 := f.Clock.Now()
