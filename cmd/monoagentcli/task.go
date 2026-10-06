@@ -189,7 +189,7 @@ func (c taskCaller) operator(what string) (tasks.Actor, error) {
 	case c.asBlank:
 		why = "--as is given with no name, which counts as an agent"
 	}
-	return tasks.Actor{}, operatorOnlyError("%s: only the operator can %s; run it in your own terminal or in the app", why, what)
+	return tasks.Actor{}, operatorOnlyError("%s: only the operator can %s; run it in your own terminal", why, what)
 }
 
 // agent returns the agent's actor, which must have a name.

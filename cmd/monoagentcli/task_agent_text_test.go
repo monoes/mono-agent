@@ -405,8 +405,8 @@ func TestTaskAgentCommandsExplainTheirOptionsInTheirHelp(t *testing.T) {
 		{[]string{"finish", "--help"}, []string{"exactly one of --result", "--question", "Review for the operator to read"}, []string{"for you to read"}},
 		{[]string{"release", "--help"}, []string{"--note", "back to Ready"}, nil},
 		{[]string{"comment", "--help"}, []string{"renews its lease"}, nil},
-		{[]string{"digest", "--help"}, []string{"In text, prints nothing when the profile has no ready task", "With --json it always prints its document",
-			"always exits 0 whatever goes wrong at run time"}, []string{"It always exits 0, so"}},
+		{[]string{"digest", "--help"}, []string{"In text, prints nothing when the profile has no ready task", "With --json it prints its document on success, even when nothing is ready",
+			"always exits 0 whatever goes wrong at run time"}, []string{"It always exits 0, so", "it always prints its document"}},
 		{[]string{"--help"}, []string{"(in text, prints nothing when there are none)"}, []string{"(prints nothing when there are none)"}},
 	} {
 		out, errOut, err := runTask(t, db, "default", false, "", c.args...)

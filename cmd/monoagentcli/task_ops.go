@@ -178,7 +178,7 @@ If any task is not in the Inbox, nothing is approved.`,
 func newTaskArchiveCmd(cfg *globalConfig) *cobra.Command {
 	var status string
 	cmd := &cobra.Command{
-		Use:   "archive ID... | --status done",
+		Use:   "archive ID... | --status STATUS",
 		Short: "Hide tasks from the board, keeping them (you only)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			actor, err := callerFor(flagAs(cmd)).operator("archive tasks")

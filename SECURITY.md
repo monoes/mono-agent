@@ -462,11 +462,12 @@ that works a task acts on them. The defences:
   from inside an agent's own shell, so the user approves in a terminal
   of their own.
 - **Limits that stop a loop from flooding the board:** 20 tasks an hour
-  created by agents per profile, 2,000 open tasks per profile (a task
-  that comes back from the archive counts), and caps on the size of
-  titles (200 characters), notes (64 KiB) and comments (8 KiB) and on a
-  task's history (a task with 500 events takes no more comments, one
-  with 2,000 no more claims).
+  created by agents per profile, 2,000 open tasks per profile (every
+  task that is not archived, Done ones included; a task that comes back
+  from the archive counts), and caps on the size of titles (200
+  characters), notes (64 KiB) and comments (8 KiB) and on a task's
+  history (a task with 500 events takes no more comments, one with 2,000
+  events no more claims).
 - **Text is cleaned on the way in:** invalid UTF-8 is replaced, control
   characters (a terminal escape sequence cannot reach the user's
   terminal) and hidden characters (Unicode tag characters, bidi
