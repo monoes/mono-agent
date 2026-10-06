@@ -316,18 +316,20 @@ func TestNewSessionUsesTheClockItIsGiven(t *testing.T) {
 func TestSessionJSON(t *testing.T) {
 	// The file of spec §4.6 with every key set.
 	const stored = `{"v":1,"host":"https://monoes.me","access_token":"t","user":{"id":"u-1","email":"a@b.c","username":"abc"},` +
-		`"plan":"pro","hw":"2026-10-05T12:00:00Z","last_attempt":"2026-10-05T11:59:00Z","last_result":"server_error","state":"refused","reason":"revoked"}`
+		`"plan":"pro","hw":"2026-10-05T12:00:00Z","last_attempt":"2026-10-05T11:59:00Z","pending_since":"2026-10-05T11:58:00Z",` +
+		`"last_result":"server_error","state":"refused","reason":"revoked"}`
 	var sess account.Session
 	if err := json.Unmarshal([]byte(stored), &sess); err != nil {
 		t.Fatal(err)
 	}
 	hw := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	if sess.V != 1 || sess.Host != "https://monoes.me" || sess.AccessToken != "t" || sess.User == nil || *sess.User != (account.User{ID: "u-1", Email: "a@b.c", Username: "abc"}) ||
-		sess.Plan != "pro" || !sess.HW.Equal(hw) || !sess.LastAttempt.Equal(hw.Add(-time.Minute)) || sess.LastResult != "server_error" || sess.State != "refused" || sess.Reason != "revoked" {
-		t.Fatalf("a session.json written as the spec lays it out did not read back: v=%d host=%q user=%v plan=%q hw=%v attempt=%v last=%q state=%q reason=%q",
-			sess.V, sess.Host, sess.User, sess.Plan, sess.HW, sess.LastAttempt, sess.LastResult, sess.State, sess.Reason)
+		sess.Plan != "pro" || !sess.HW.Equal(hw) || !sess.LastAttempt.Equal(hw.Add(-time.Minute)) || !sess.PendingSince.Equal(hw.Add(-2*time.Minute)) ||
+		sess.LastResult != "server_error" || sess.State != "refused" || sess.Reason != "revoked" {
+		t.Fatalf("a session.json written as the spec lays it out did not read back: v=%d host=%q user=%v plan=%q hw=%v attempt=%v pending=%v last=%q state=%q reason=%q",
+			sess.V, sess.Host, sess.User, sess.Plan, sess.HW, sess.LastAttempt, sess.PendingSince, sess.LastResult, sess.State, sess.Reason)
 	}
-	want := []string{"access_token", "host", "hw", "last_attempt", "last_result", "plan", "reason", "state", "user", "v"}
+	want := []string{"access_token", "host", "hw", "last_attempt", "last_result", "pending_since", "plan", "reason", "state", "user", "v"}
 	if got := jsonKeys(t, sess); !reflect.DeepEqual(got, want) {
 		t.Fatalf("session.json keys = %v, want %v", got, want)
 	}

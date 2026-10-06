@@ -6,16 +6,17 @@ import "time"
 // holds a token that expires within the hour and no secret that needs the
 // keychain: the refresh token lives in refresh.enc.
 type Session struct {
-	V           int       `json:"v"`
-	Host        string    `json:"host"`
-	AccessToken string    `json:"access_token"`
-	User        *User     `json:"user,omitempty"`
-	Plan        string    `json:"plan,omitempty"`
-	HW          time.Time `json:"hw,omitzero"`
-	LastAttempt time.Time `json:"last_attempt,omitzero"`
-	LastResult  string    `json:"last_result,omitempty"` // "ok", "unreachable", "server_error", "keyring_unavailable", "key_unknown" or "refused"
-	State       string    `json:"state,omitempty"`       // "" or "refused"
-	Reason      string    `json:"reason,omitempty"`
+	V            int       `json:"v"`
+	Host         string    `json:"host"`
+	AccessToken  string    `json:"access_token"`
+	User         *User     `json:"user,omitempty"`
+	Plan         string    `json:"plan,omitempty"`
+	HW           time.Time `json:"hw,omitzero"`
+	LastAttempt  time.Time `json:"last_attempt,omitzero"`
+	LastResult   string    `json:"last_result,omitempty"` // "ok", "unreachable", "server_error", "keyring_unavailable", "key_unknown", "unconfirmed" or "refused"
+	State        string    `json:"state,omitempty"`       // "" or "refused"
+	Reason       string    `json:"reason,omitempty"`
+	PendingSince time.Time `json:"pending_since,omitzero"` // A24: the guard's clock when a refresh grant was about to be sent; zero when none is in doubt
 }
 
 const (

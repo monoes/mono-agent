@@ -26,6 +26,7 @@ const (
 	ReasonUnreachable        Reason = "unreachable"         // grace: why it was not refreshed
 	ReasonServerError        Reason = "server_error"        // grace
 	ReasonKeyringUnavailable Reason = "keyring_unavailable" // grace
+	ReasonUnconfirmed        Reason = "unconfirmed"         // grace, then locked: a refresh whose answer never arrived (A24)
 )
 
 // User is the account the session belongs to.

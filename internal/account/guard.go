@@ -51,6 +51,12 @@ const (
 	lockWaitTimeout    = refreshCallTimeout + 5*time.Second // a waiter outlasts the holder's network call, not one that is also slow in the key store
 	backoffMin         = 30 * time.Second                   // the refresher's first retry
 	backoffMax         = 5 * time.Minute                    // and its ceiling
+	// A grant whose answer was lost is retried at once for this long after it was
+	// first sent, and its refresh token is dropped after that. monoes.me answers a
+	// refresh token it has rotated away with the same answer for 300 s and takes it
+	// for theft after that; 240 s leaves room for the call's own duration and for
+	// clocks that do not run at the same rate.
+	pendingRetryWindow = 240 * time.Second
 )
 
 // Guard turns the stored session into a cached verdict. NewGuard does no I/O;

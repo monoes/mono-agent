@@ -34,6 +34,7 @@ func TestTheStateAndReasonStringsAreFrozen(t *testing.T) {
 		{"ReasonUnreachable", string(account.ReasonUnreachable), "unreachable"},
 		{"ReasonServerError", string(account.ReasonServerError), "server_error"},
 		{"ReasonKeyringUnavailable", string(account.ReasonKeyringUnavailable), "keyring_unavailable"},
+		{"ReasonUnconfirmed", string(account.ReasonUnconfirmed), "unconfirmed"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -62,6 +63,11 @@ func TestTheStatusJSONIsFrozen(t *testing.T) {
 			`{"v":1,"state":"ok","reason":"","user":{"id":"u1"},"plan":"free","enforced":false}`},
 		{"a locked status", account.Status{V: 1, State: account.StateLocked, Reason: account.ReasonKeyringUnavailable, Enforced: true},
 			`{"v":1,"state":"locked","reason":"keyring_unavailable","plan":"","enforced":true}`},
+		// A refresh whose answer never arrived (A24): a grace reason first, a locked one after it.
+		{"a grace after a refresh whose answer never arrived", account.Status{V: 1, State: account.StateGrace, Reason: account.ReasonUnconfirmed, Enforced: true},
+			`{"v":1,"state":"grace","reason":"unconfirmed","plan":"","enforced":true}`},
+		{"a locked status after it", account.Status{V: 1, State: account.StateLocked, Reason: account.ReasonUnconfirmed, Enforced: true},
+			`{"v":1,"state":"locked","reason":"unconfirmed","plan":"","enforced":true}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -75,9 +75,20 @@ func (e *RefusedError) Error() string {
 // TransientError is any other refresh failure: no network, a timeout, another
 // OAuth error, a 4xx or 5xx answer. It is not a decision about the account, so
 // the grace applies.
+//
+// Settled says whether the outcome of the grant is KNOWN: true when the request
+// never left this machine (DNS, dial, TLS, or a cancellation before the request
+// was written) or monoes.me answered with an HTTP status, so the refresh token
+// was not consumed by an answer that nobody saw. The zero value means UNKNOWN:
+// the request may have been processed, and monoes.me may have rotated the refresh
+// token while the answer was lost. It is the fail-safe default, so a Refresher
+// that does not set it, like any error that is not a *TransientError, is read as
+// one whose outcome is unknown, and the guard then never presents that token
+// again after the reuse window (A24).
 type TransientError struct {
-	Reason Reason // ReasonUnreachable or ReasonServerError
-	Err    error
+	Reason  Reason // ReasonUnreachable or ReasonServerError
+	Settled bool
+	Err     error
 }
 
 func (e *TransientError) Error() string {
