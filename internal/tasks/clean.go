@@ -15,7 +15,7 @@ var (
 )
 
 // hidden reports characters that show nothing but can carry text to a reader:
-// the Unicode tag block (invisible "ASCII smuggling"), bidi overrides and the
+// the Unicode tag block (invisible "ASCII smuggling"), bidi controls and the
 // byte order mark.
 func hidden(r rune) bool {
 	switch {
@@ -59,27 +59,33 @@ func cutRunes(s string, n int) string {
 	return strings.TrimRightFunc(string(r[:n-1]), unicode.IsSpace) + "…"
 }
 
-// cutBytes cuts s (valid UTF-8) to at most max bytes on a character boundary
-// and says how long the original was.
-func cutBytes(s string, max int) string {
-	if len(s) <= max {
+// cutBytes cuts s (valid UTF-8) to at most maxBytes bytes on a character
+// boundary and says how long the original was. The notice counts in the limit,
+// so cutting a text that was already cut changes nothing; only a limit shorter
+// than the notice itself gives more than maxBytes: the notice alone.
+func cutBytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
 		return s
 	}
-	cut := s[:max]
+	notice := fmt.Sprintf("\n[truncated: %d characters in the original]", utf8.RuneCountInString(s))
+	cut := s[:max(maxBytes-len(notice), 0)]
 	for !utf8.ValidString(cut) {
 		cut = cut[:len(cut)-1]
 	}
-	return cut + fmt.Sprintf("\n[truncated: %d characters in the original]", utf8.RuneCountInString(s))
+	return cut + notice
 }
 
 // cleanTitle is a title as stored: one line, at most MaxTitleRunes.
 func cleanTitle(s string) string { return cutRunes(oneLine(s), MaxTitleRunes) }
 
 // deriveTitleNotes turns the three ways a task's words arrive into the stored
-// title and notes (spec 4.6). It refuses words that clean to nothing.
+// title and notes (spec 4.6). It refuses words that clean to nothing, and notes
+// given together with text.
 func deriveTitleNotes(title, notes, text string) (string, string, error) {
 	title, notes, text = cleanTitle(title), cutBytes(cleanText(notes), MaxNotesBytes), cleanText(text)
 	switch {
+	case notes != "" && text != "":
+		return "", "", invalid("give notes or text, not both")
 	case title != "":
 		if notes == "" {
 			notes = cutBytes(text, MaxNotesBytes)

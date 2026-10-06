@@ -13,10 +13,15 @@ func TestCleanText(t *testing.T) {
 		{"escape byte", "red \x1b[31mtext\x1b[0m", "red [31mtext[0m"},
 		{"tab and newline stay", "a\tb\nc", "a\tb\nc"},
 		{"other controls", "a\x00b\x07c\x7fd", "abcd"},
+		{"c1 controls", "a\U0000009b31mb\U0000009dc", "a31mbc"},
 		{"unicode tag characters", "visible\U000E0049\U000E0067hidden", "visiblehidden"},
+		{"range ends", "a\U0000202ab\U00002069c\U000E0000d\U000E007Fe", "abcde"},
+		// The zero-width non-joiner is essential to Persian and the joiner to emoji sequences: never strip them.
+		{"joiners stay", "a\U0000200cb\U0000200dc", "a\U0000200cb\U0000200dc"},
 		{"bidi overrides", "a\u202eb\u2066c", "abc"},
 		{"byte order mark", "\ufefftext", "text"},
 		{"invalid utf-8", "a\xffb", "a\ufffdb"},
+		{"invalid run", "a\xff\xfeb", "a\U0000fffdb"},
 		{"trimmed", "  \n text \t\n", "text"},
 		{"only controls and space", "\x00\x1b \t\n", ""},
 	}
@@ -33,7 +38,7 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
-func TestCutRunesNeverSplitsACharacter(t *testing.T) {
+func TestCutRunesGivesValidUTF8WithinTheLimitEndingInAnEllipsis(t *testing.T) {
 	for _, s := range []string{"héllo wörld, this is long", strings.Repeat("\U0001F468\u200d\U0001F469\u200d\U0001F467", 40), strings.Repeat("日本語", 30)} {
 		got := cutRunes(s, 10)
 		if !utf8.ValidString(got) || utf8.RuneCountInString(got) > 10 || !strings.HasSuffix(got, "…") {
@@ -42,6 +47,43 @@ func TestCutRunesNeverSplitsACharacter(t *testing.T) {
 	}
 	if got := cutRunes("short", 10); got != "short" {
 		t.Errorf("a short string changed: %q", got)
+	}
+}
+
+func TestCutRunesKeepsExactlyTheLimitAndCutsOneRuneMore(t *testing.T) {
+	cases := []struct {
+		name, in string
+		n        int
+		want     string
+	}{
+		{"ten runes", "abcdefghij", 10, "abcdefghij"},
+		{"eleven runes", "abcdefghijk", 10, "abcdefghi…"},
+		{"ten two-byte runes", strings.Repeat("é", 10), 10, strings.Repeat("é", 10)},
+		{"eleven two-byte runes", strings.Repeat("é", 11), 10, strings.Repeat("é", 9) + "…"},
+		{"the space before the ellipsis goes", "hello world", 7, "hello…"},
+	}
+	for _, c := range cases {
+		if got := cutRunes(c.in, c.n); got != c.want {
+			t.Errorf("%s: cutRunes(%q, %d) = %q, want %q", c.name, c.in, c.n, got, c.want)
+		}
+	}
+}
+
+// checkCut asserts what every cut text owes: valid UTF-8, within the limit, and
+// unchanged when it is cut again, also after cleaning, as an edit re-sends it.
+func checkCut(t *testing.T, got string, limit int) {
+	t.Helper()
+	if !utf8.ValidString(got) {
+		t.Error("the cut text is not valid UTF-8")
+	}
+	if len(got) > limit {
+		t.Errorf("the cut text is %d bytes, over the limit of %d", len(got), limit)
+	}
+	if again := cutBytes(got, limit); again != got {
+		t.Errorf("cutting the cut text again changed it: %d bytes became %d", len(got), len(again))
+	}
+	if again := cutBytes(cleanText(got), limit); again != got {
+		t.Errorf("cutting the cleaned cut text again changed it: %d bytes became %d", len(got), len(again))
 	}
 }
 
@@ -58,13 +100,40 @@ func TestCutBytesCutsOnACharacterAndSaysSo(t *testing.T) {
 	if !strings.HasSuffix(got, "71680 characters in the original]") {
 		t.Errorf("the marker must carry the original length: %q", got[i:])
 	}
-	// The leading byte puts the limit three bytes into a four-byte character: the cut must step back to the one before.
-	got = cutBytes("x"+strings.Repeat("\U0001F600", 20000), MaxNotesBytes)
-	if want := "x" + strings.Repeat("\U0001F600", 16383) + "\n[truncated: 20001 characters in the original]"; got != want {
+	checkCut(t, got, MaxNotesBytes)
+	// The notice takes 46 bytes, which leaves 65490 for the text. Three leading bytes put that budget three bytes into a
+	// four-byte character, so the cut has to step back three times.
+	in := "xxx" + strings.Repeat("\U0001F600", 20000)
+	notice := "\n[truncated: 20003 characters in the original]"
+	if utf8.ValidString(in[:MaxNotesBytes-len(notice)]) {
+		t.Fatal("the test input no longer puts the limit inside a character")
+	}
+	got = cutBytes(in, MaxNotesBytes)
+	if want := "xxx" + strings.Repeat("\U0001F600", 16371) + notice; got != want {
 		t.Errorf("a cut inside a four-byte character: %d bytes, valid UTF-8 %v, want %d bytes", len(got), utf8.ValidString(got), len(want))
 	}
+	checkCut(t, got, MaxNotesBytes)
 	if short := cutBytes("fits", MaxNotesBytes); short != "fits" {
 		t.Errorf("a short text changed: %q", short)
+	}
+}
+
+func TestCutBytesKeepsExactlyTheLimitAndCutsOneByteMore(t *testing.T) {
+	at := strings.Repeat("a", 65536)
+	if got := cutBytes(at, MaxNotesBytes); got != at {
+		t.Errorf("a text of exactly 65536 bytes changed (%d bytes now)", len(got))
+	}
+	got := cutBytes(at+"a", MaxNotesBytes)
+	if want := strings.Repeat("a", 65490) + "\n[truncated: 65537 characters in the original]"; got != want {
+		t.Errorf("a text of 65537 bytes: %d bytes, want %d", len(got), len(want))
+	}
+	checkCut(t, got, MaxNotesBytes)
+}
+
+func TestCutBytesWithALimitShorterThanTheNoticeGivesTheNoticeAlone(t *testing.T) {
+	got := cutBytes(strings.Repeat("a", 100), 10)
+	if want := "\n[truncated: 100 characters in the original]"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
@@ -73,7 +142,7 @@ func TestDeriveTitleNotes(t *testing.T) {
 		name                 string
 		title, notes, text   string
 		wantTitle, wantNotes string
-		wantErr              bool
+		wantErr              string // a part of the error message; empty means no error
 	}{
 		{name: "title only", title: "Fix it", wantTitle: "Fix it"},
 		{name: "title and notes", title: "Fix it", notes: "In api.go", wantTitle: "Fix it", wantNotes: "In api.go"},
@@ -81,17 +150,19 @@ func TestDeriveTitleNotes(t *testing.T) {
 		{name: "one line of text is the title", text: "Reply to Sam", wantTitle: "Reply to Sam"},
 		{name: "several lines", text: "Reply to Sam\nabout the invoice", wantTitle: "Reply to Sam", wantNotes: "Reply to Sam\nabout the invoice"},
 		{name: "spaces collapse in the title only", text: "Fix   the\nbug", wantTitle: "Fix the", wantNotes: "Fix   the\nbug"},
-		{name: "nothing", wantErr: true},
-		{name: "only spaces and controls", text: " \x1b\x00\t\n ", wantErr: true},
-		{name: "a title of controls only", title: "\x07 \x1b", wantErr: true},
-		{name: "notes without a title", notes: "orphan", wantErr: true},
+		{name: "nothing", wantErr: "needs a title or some text"},
+		{name: "only spaces and controls", text: " \x1b\x00\t\n ", wantErr: "needs a title or some text"},
+		{name: "a title of controls only", title: "\x07 \x1b", wantErr: "needs a title or some text"},
+		{name: "notes without a title", notes: "orphan", wantErr: "need a title"},
+		{name: "title, notes and text: no words are dropped silently", title: "Fix it", notes: "In api.go", text: "details", wantErr: "not both"},
+		{name: "notes and text without a title", notes: "orphan", text: "stray", wantErr: "not both"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			title, notes, err := deriveTitleNotes(c.title, c.notes, c.text)
-			if c.wantErr {
-				if !errors.Is(err, ErrInvalid) {
-					t.Fatalf("err %v, want ErrInvalid", err)
+			if c.wantErr != "" {
+				if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err %v, want ErrInvalid containing %q", err, c.wantErr)
 				}
 				return
 			}
@@ -116,8 +187,54 @@ func TestADerivedTitleIsCutAtOneHundredTwentyCharacters(t *testing.T) {
 	}
 }
 
+func TestADerivedTitleOfOneHundredTwentyCharactersIsKeptAndOneMoreIsCut(t *testing.T) {
+	at := strings.Repeat("é", 120)
+	title, notes, err := deriveTitleNotes("", "", at)
+	if err != nil || title != at || notes != "" {
+		t.Errorf("a text of 120 characters: got (%d characters, %q, %v), want the text itself as the title and no notes", utf8.RuneCountInString(title), notes, err)
+	}
+	title, notes, err = deriveTitleNotes("", "", at+"é")
+	if want := strings.Repeat("é", 119) + "…"; err != nil || title != want || notes != at+"é" {
+		t.Errorf("a text of 121 characters: got (%q, %d bytes of notes, %v), want title %q and the whole text as the notes", title, len(notes), err, want)
+	}
+}
+
+func TestATitleIsKeptAtTwoHundredCharactersAndCutBeyond(t *testing.T) {
+	at := strings.Repeat("é", 200)
+	if got := cleanTitle(at); got != at {
+		t.Errorf("a title of 200 characters changed: %d characters now", utf8.RuneCountInString(got))
+	}
+	if got, want := cleanTitle(at+"é"), strings.Repeat("é", 199)+"…"; got != want {
+		t.Errorf("a title of 201 characters: %d characters, want %d, ending in an ellipsis", utf8.RuneCountInString(got), utf8.RuneCountInString(want))
+	}
+}
+
+func TestDeriveTitleNotesCutsNotesAndTextAtSixtyFourKiB(t *testing.T) {
+	over := strings.Repeat("a", 64<<10+1)
+	// 65537 bytes of text cut to 65536: the 46-byte notice leaves room for 65490 bytes of it.
+	wantNotes := strings.Repeat("a", 65490) + "\n[truncated: 65537 characters in the original]"
+	cases := []struct{ name, title, notes, text, wantTitle string }{
+		{"notes over the limit", "T", over, "", "T"},
+		{"text over the limit becomes the notes", "T", "", over, "T"},
+		{"text alone over the limit", "", "", over, strings.Repeat("a", 119) + "…"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			title, notes, err := deriveTitleNotes(c.title, c.notes, c.text)
+			if err != nil || title != c.wantTitle || notes != wantNotes {
+				t.Errorf("got (%q, %d bytes of notes, %v), want title %q and %d bytes of notes", title, len(notes), err, c.wantTitle, len(wantNotes))
+			}
+			checkCut(t, notes, MaxNotesBytes)
+		})
+	}
+}
+
 func TestCleanURL(t *testing.T) {
 	long := "https://example.com/" + strings.Repeat("a", MaxURLBytes)
+	multibyte := "https://example.com/" + strings.Repeat("é", 700) // 1,420 bytes as typed, over 2,048 once net/url escapes it
+	if len(multibyte) > MaxURLBytes {
+		t.Fatalf("the test URL is %d bytes as typed: the first length check would refuse it, not the one after escaping", len(multibyte))
+	}
 	cases := []struct{ in, want string }{
 		{"https://example.com/a?b=1#c", "https://example.com/a?b=1#c"},
 		{"  http://example.com  ", "http://example.com"},
@@ -134,6 +251,7 @@ func TestCleanURL(t *testing.T) {
 		{"https://example.com/a\U0000202eb", ""},       // anywhere in the URL: net/url would have percent-encoded this one
 		{"https://example.com/?q=café&lang=日本語", "https://example.com/?q=café&lang=日本語"},
 		{long, ""},
+		{multibyte, ""},
 		{"", ""},
 	}
 	for _, c := range cases {
@@ -156,5 +274,51 @@ func TestNameAndClientIDShapes(t *testing.T) {
 	}
 	if !clientIDRE.MatchString("550e8400-e29b-41d4-a716-446655440000") || clientIDRE.MatchString("a b") || clientIDRE.MatchString("") {
 		t.Error("client id shape")
+	}
+}
+
+func TestParseStatus(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want Status
+	}{
+		{"inbox", StatusInbox},
+		{"ready", StatusReady},
+		{"in_progress", StatusInProgress},
+		{"review", StatusReview},
+		{"done", StatusDone},
+		{"archived", StatusArchived},
+		{"progress", StatusInProgress},
+		{"in-progress", StatusInProgress},
+		{"DONE", StatusDone},
+		{"In-Progress", StatusInProgress},
+		{" \treview\n", StatusReview},
+	} {
+		if got, err := ParseStatus(c.in); err != nil || got != c.want {
+			t.Errorf("ParseStatus(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "bogus"} {
+		if got, err := ParseStatus(bad); !errors.Is(err, ErrInvalid) || got != "" {
+			t.Errorf("ParseStatus(%q) = %q, %v; want ErrInvalid and no status", bad, got, err)
+		}
+	}
+}
+
+func TestActorLabel(t *testing.T) {
+	for _, c := range []struct {
+		actor Actor
+		want  string
+	}{
+		{Actor{Kind: Human}, "you"},
+		{Actor{Kind: Human, Name: "morteza"}, "you"},
+		{Actor{Kind: Agent, Name: "claude-7f3a"}, "claude-7f3a"},
+		{Actor{Kind: Agent}, "agent"},
+		{Actor{Kind: Capture, Name: "chrome"}, "chrome"},
+		{Actor{Kind: Capture}, "capture"},
+	} {
+		if got := c.actor.Label(); got != c.want {
+			t.Errorf("%+v.Label() = %q, want %q", c.actor, got, c.want)
+		}
 	}
 }
