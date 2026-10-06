@@ -18,11 +18,12 @@ const (
 	CheckBridge    = "browser.bridge"
 	CheckPaired    = "browser.paired"
 
-	FixBrowserInstall      = "browser.install"
-	FixExtensionInstall    = "browser.extension.install"
-	FixExtensionPair       = "browser.extension.pair"
-	FixExtensionPermission = "browser.extension.permission"
-	FixBridgeRestart       = "browser.bridge.restart"
+	FixBrowserInstall       = "browser.install"
+	FixExtensionInstall     = "browser.extension.install"
+	FixExtensionPair        = "browser.extension.pair"
+	FixExtensionPermission  = "browser.extension.permission"
+	FixBridgeRestart        = "browser.bridge.restart"
+	FixBridgeServiceRestart = "browser.bridge.service.restart"
 )
 
 var browserFeatures = []string{"crawling", "page capture", "platform logins"}
@@ -41,6 +42,8 @@ func browserChecks() []Check {
 func browserFixes() []Fix {
 	manual := func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }
 	return []Fix{
+		{FixInfo: FixInfo{ID: FixBridgeServiceRestart, Label: "Restart the extension bridge service", Safety: SafetyConfirm,
+			Command: "monoagentcli doctor fix " + FixBridgeServiceRestart}, Apply: fixBridgeServiceRestart},
 		{FixInfo: FixInfo{ID: FixBrowserInstall, Label: "Install a Chromium browser", Safety: SafetyManual,
 			Command: "install Google Chrome, Microsoft Edge, Chromium or Brave"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixExtensionInstall, Label: "Load the MonoAgent extension", Safety: SafetyManual,
@@ -115,7 +118,11 @@ func checkBridge(ctx context.Context, env *Env) Result {
 			FixID:  FixBridgeRestart}
 		// Where no fix is offered, what to do goes in the detail: a result's FixCommand is
 		// shown only with a fix, and is not in the report without one.
-		if runtime.GOOS == "windows" {
+		if b.ServiceUnit != "" && env.RestartBridge != nil {
+			res.FixID = FixBridgeServiceRestart
+			res.Detail = fmt.Sprintf("the bridge runs %s but this CLI is %s — restart its service: systemctl --user restart %s", b.Version, env.Version, b.ServiceUnit)
+			res.FixCommand = "systemctl --user restart " + b.ServiceUnit
+		} else if runtime.GOOS == "windows" {
 			// Windows has no way to signal the daemon, so doctor can't restart it.
 			res.FixID = ""
 			res.Detail += "; doctor can't stop the daemon on Windows, so restart it yourself"
@@ -204,6 +211,41 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 		return fmt.Errorf("the old daemon is stopped, but a new one did not start: %w", err)
 	}
 	return nil
+}
+
+// Re-resolve ownership when clicked: the bridge may have changed since the
+// Settings check. The machine hook only restarts a verified owning service.
+func fixBridgeServiceRestart(ctx context.Context, env *Env, progress func(string)) error {
+	if env.RestartBridge == nil || env.Bridge == nil {
+		return fmt.Errorf("restarting the bridge service is not available here")
+	}
+	b, ok := env.Bridge(ctx)
+	if !ok || b.ServiceUnit == "" {
+		return fmt.Errorf("the bridge is not owned by a restartable user service — restart whatever started it")
+	}
+	if !skewed(b.Version, env.Version) {
+		progress("the bridge already runs the current build")
+		return nil
+	}
+	if err := env.RestartBridge(ctx, progress); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	for {
+		if next, ok := env.Bridge(ctx); ok && next.PID != b.PID {
+			if skewed(next.Version, env.Version) {
+				return fmt.Errorf("the restarted bridge runs %s but this CLI is %s — update the monoagentcli binary used by %s", next.Version, env.Version, b.ServiceUnit)
+			}
+			progress(fmt.Sprintf("bridge running (pid %d, %s)", next.PID, next.Version))
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for the restarted bridge: %w", ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // bridgeDown reports a bridge that isn't running. Starting the daemon

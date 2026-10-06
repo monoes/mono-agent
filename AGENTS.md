@@ -75,6 +75,12 @@ monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":
 monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: fix everything, offer extras, report
 ```
 
+When a bridge version differs from the CLI, `doctor` offers
+`browser.bridge.service.restart` for a systemd user service whose MainPID
+matches the bridge. The fix restarts that service and verifies the new
+bridge version; if the service still uses an older binary, update that
+binary too. Daemon-owned bridges retain `browser.bridge.restart`.
+
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,

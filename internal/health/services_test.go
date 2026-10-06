@@ -369,6 +369,51 @@ func TestBridgeSaysWhoRunsIt(t *testing.T) {
 	}
 }
 
+func TestBridgeRestartFixIsAvailable(t *testing.T) {
+	f, ok := Default().Fix("browser.bridge.service.restart")
+	if !ok {
+		t.Fatal("Settings has no repair action for a bridge owned by a separate service")
+	}
+	if f.Safety != SafetyConfirm || f.Label != "Restart the extension bridge service" {
+		t.Fatalf("unexpected restart action: %+v", f)
+	}
+}
+
+func TestBridgeRestartTargetsServiceAndVerifiesVersion(t *testing.T) {
+	ctx := context.Background()
+	b := BridgeInfo{PID: 7, Version: "v1.0.0", ServiceUnit: "monoagent-bridge.service"}
+	restarts := 0
+	env := &Env{Version: "v1.1.0", Bridge: func(context.Context) (BridgeInfo, bool) { return b, true },
+		RestartBridge: func(context.Context, func(string)) error {
+			restarts++
+			b.PID++
+			b.Version = "v1.1.0"
+			return nil
+		}}
+	res := checkBridge(ctx, env)
+	if res.FixID != FixBridgeServiceRestart || !strings.Contains(res.Detail, "systemctl --user restart monoagent-bridge.service") {
+		t.Fatalf("service mismatch must offer the service repair: %+v", res)
+	}
+	if err := fixBridgeServiceRestart(ctx, env, noop); err != nil || restarts != 1 {
+		t.Fatalf("restart: %v, calls %d", err, restarts)
+	}
+	if err := fixBridgeServiceRestart(ctx, env, noop); err != nil || restarts != 1 {
+		t.Fatalf("already current: %v, calls %d", err, restarts)
+	}
+	b.Version = "v1.0.0"
+	env.RestartBridge = func(context.Context, func(string)) error { restarts++; b.PID++; return nil }
+	if err := fixBridgeServiceRestart(ctx, env, noop); err == nil || !strings.Contains(err.Error(), "update the monoagentcli binary") {
+		t.Fatalf("old service binary must not report success: %v", err)
+	}
+	b.ServiceUnit = ""
+	if res := checkBridge(ctx, env); res.FixID == FixBridgeServiceRestart {
+		t.Fatalf("manual bridge must not offer a service repair: %+v", res)
+	}
+	if err := fixBridgeServiceRestart(ctx, env, noop); err == nil || restarts != 2 {
+		t.Fatalf("changed ownership must refuse restart: %v, calls %d", err, restarts)
+	}
+}
+
 // A unit file systemd doesn't have enabled is not "starts at login", and
 // the row says why.
 func TestAutostartExplainsANotEnabledEntry(t *testing.T) {
