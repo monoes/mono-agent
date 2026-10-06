@@ -309,11 +309,13 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 		}
 	}
 	// A comment does not add the lease that was asked for: it extends the claim to 30 minutes from
-	// the comment, if that is later, and never shortens it. The texts that explain the lease say so,
-	// and no sentence says that a comment renews it.
-	extends := fmt.Sprintf("extends it to %d minutes from the comment", int(tasks.DefaultLease.Minutes()))
+	// the comment, if that is later, and never shortens it, so with a long --lease it changes nothing
+	// until fewer than 30 minutes remain. The texts that explain the lease say so, and no sentence says
+	// that a comment renews it or that one should comment before its last 30 minutes.
+	minutes := int(tasks.DefaultLease.Minutes())
+	extends, fewer := fmt.Sprintf("extends it to %d minutes from the comment", minutes), fmt.Sprintf("fewer than %d minutes", minutes)
 	for where, text := range map[string]string{"THE AGENT LOOP of `ref tasks`": refSection("THE AGENT LOOP"), "AGENTS.md": refDocSection(t, "AGENTS.md")} {
-		for _, want := range []string{extends, "never shortens it"} {
+		for _, want := range []string{extends, "never shortens it", fewer} {
 			if !strings.Contains(strings.Join(strings.Fields(text), " "), want) {
 				t.Errorf("%s does not say %q", where, want)
 			}
@@ -321,8 +323,8 @@ func TestRefTasksStatesTheLimitsAndDefaultsTheCodeHas(t *testing.T) {
 	}
 	for _, text := range refDocTexts(t) {
 		for _, s := range regexp.MustCompile(`\.\s+`).Split(text, -1) {
-			if regexp.MustCompile(`(?i)\brenew`).MatchString(s) && regexp.MustCompile(`(?i)\bcomments?\b`).MatchString(s) {
-				t.Errorf("a text says that a comment renews the lease (it only extends it to %d minutes from the comment): %q", int(tasks.DefaultLease.Minutes()), s)
+			if regexp.MustCompile(`(?i)\brenew|before its last`).MatchString(s) && regexp.MustCompile(`(?i)\bcomments?\b`).MatchString(s) {
+				t.Errorf("a text gives a wrong account of what a comment does to a lease (it extends the claim to %d minutes from the comment, if that is later: it adds nothing while more than that remains, and it does not renew): %q", minutes, s)
 			}
 		}
 	}

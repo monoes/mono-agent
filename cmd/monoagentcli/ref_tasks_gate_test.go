@@ -113,7 +113,7 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 		}
 		for _, r := range refTaskGate {
 			if r.op && refNames(s, word(r.row)) {
-				t.Errorf("a sentence of WHO MAY DO WHAT lists what an agent may run and names `%s`, which is the operator's: %q", r.row, strings.Join(strings.Fields(s), " "))
+				t.Errorf("a sentence of WHO MAY DO WHAT lists what an agent may run and names `%s`, which is the operator's (%q): split the sentence, or say 'operator' in it if it is about the operator", r.row, strings.Join(strings.Fields(s), " "))
 			}
 		}
 	}
