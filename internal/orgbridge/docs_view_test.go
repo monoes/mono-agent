@@ -276,3 +276,25 @@ func TestReadDocEventsRefusesSymlinkAndOversize(t *testing.T) {
 		t.Errorf("oversize: events=%d why=%q", len(evs), why)
 	}
 }
+
+func TestRemovedCapIsNotRecoveredFromHistoricalNotice(t *testing.T) {
+	root := project(t, "rework", "run-syn", filepath.Join(syntheticDir, "events.jsonl"),
+		filepath.Join(syntheticDir, "notices.jsonl"), filepath.Join(syntheticDir, "org-rework.json"))
+	path := filepath.Join(root, ".monomind", "orgs", "rework.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = []byte(strings.ReplaceAll(string(b), `, "max_rework_rounds": 2`, ""))
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ReadDocView(root, "rework", "run-syn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := docByID(t, v, "note-2")
+	if len(v.Caps) != 0 || d.CapHit || d.Frozen || len(d.Threads) != 0 || v.Summary.CapHit != 0 {
+		t.Fatalf("removed cap was recovered from an old notice: caps=%v doc=%+v summary=%+v", v.Caps, d, v.Summary)
+	}
+}

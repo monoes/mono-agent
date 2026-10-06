@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -118,5 +121,34 @@ func TestMonomindOwnsScheduleAnyLiveHeartbeatAge(t *testing.T) {
 				t.Fatal("a live serve pid owns the schedule at any heartbeat age")
 			}
 		})
+	}
+}
+
+func TestOrgRunResumeKeepsWaitingWhenServeStarts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	ctx, _ := scheduledOrgRoot(t, `"1m"`, true)
+	ctx = workflow.WithTrigger(ctx, "trigger.schedule", nil)
+	db := vault.DBFromContext(ctx)
+	if _, err := db.Exec(`CREATE TABLE org_bridge_calls (execution_id TEXT, direction TEXT, org_name TEXT, status TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO org_bridge_calls VALUES ('started-execution', 'workflow_out', 'sec', 'ok')`); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "monomind")
+	script := "#!/bin/sh\n" +
+		`if [ "$1" = "--version" ]; then echo '{"v":1,"version":"2.24.1","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'; exit 0; fi` + "\n" +
+		`echo '{"name":"sec","status":"running"}'` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(monomind.EnvOverride, bin)
+	monomind.ResetCapabilityCache()
+	t.Cleanup(monomind.ResetCapabilityCache)
+	out, err := (&OrgRunNode{}).Execute(ctx, workflow.NodeInput{ExecutionID: "started-execution"}, map[string]interface{}{"org_name": "sec"})
+	if !errors.Is(err, workflow.ErrNodePaused) || len(out) != 0 {
+		t.Fatalf("resumed node must wait on its own live run, got output=%+v err=%v", out, err)
 	}
 }

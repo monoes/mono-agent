@@ -81,14 +81,14 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		return nil, err
 	}
 	root := env.root
-	if monomindOwnsSchedule(ctx, root, orgName) {
+	ledger := orgbridge.NewLedger(env.db)
+	startedHere, _ := ledger.HasCrossing(ctx, input.ExecutionID, orgbridge.DirWorkflowOut, orgName)
+	// A resumed execution must keep waiting on the run it already started.
+	if !startedHere && monomindOwnsSchedule(ctx, root, orgName) {
 		out := copyItemJSON(firstItem(input.Items))
 		out["_org_skipped"] = "monomind org serve already schedules " + orgName + " (one scheduler per org)"
 		return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{{JSON: out}}}}, nil
 	}
-	ledger := orgbridge.NewLedger(env.db)
-	startedHere, _ := ledger.HasCrossing(ctx, input.ExecutionID, orgbridge.DirWorkflowOut, orgName)
-
 	raw, err := monomind.OrgStatus(ctx, root, orgName)
 	if err != nil {
 		return nil, fmt.Errorf("org.run (%s): %w", orgName, monomind.MarkNotSetup(err))

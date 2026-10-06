@@ -150,6 +150,7 @@ type DocInput struct {
 	Events    []DocEvent
 	Integrity string
 	// Caps: max_rework_rounds per consuming section (from the org definition).
+	// Nil means the definition was unavailable; an empty map means it has no caps.
 	Caps map[string]int
 	// Deliverables: the contract's deliverable_files per document type.
 	Deliverables map[string][]string
@@ -172,8 +173,8 @@ func BuildDocView(in DocInput) DocView {
 			caps[k] = v
 		}
 	}
-	for k, v := range capsFromNoticeKeys(in.Delivered) { // definition missing or reloaded: the notice names its cap
-		if _, ok := caps[k]; !ok {
+	if in.Caps == nil { // only recover historical caps when the definition is unavailable
+		for k, v := range capsFromNoticeKeys(in.Delivered) {
 			caps[k] = v
 		}
 	}
