@@ -31,10 +31,12 @@ type gatedSealer struct {
 	holdOpen chan struct{}
 	holdSeal chan struct{}
 	once     sync.Once
-	ended    atomic.Int32 // calls that have left the sealer
+	began    atomic.Int32 // calls that have entered the sealer
+	ended    atomic.Int32 // calls that have left it
 }
 
 func (s *gatedSealer) Open(sealed []byte) ([]byte, error) {
+	s.began.Add(1)
 	defer s.ended.Add(1)
 	if s.holdOpen != nil {
 		<-s.holdOpen
@@ -43,6 +45,7 @@ func (s *gatedSealer) Open(sealed []byte) ([]byte, error) {
 }
 
 func (s *gatedSealer) Seal(plain []byte) ([]byte, error) {
+	s.began.Add(1)
 	defer s.ended.Add(1)
 	if s.holdSeal != nil {
 		<-s.holdSeal
@@ -310,9 +313,10 @@ func TestAbandonedKeyStoreCallsEndOnceTheKeyStoreAnswers(t *testing.T) {
 }
 
 // A refresh whose key store never answers lets go of session.lock when the
-// timeout ends, and the other processes' refreshes go through while it is still
-// waiting. Without the bound one waiting key store held the lock against the
-// whole machine.
+// timeout ends, so that the other processes' refreshes go through while it is
+// still waiting. Without the bound one waiting key store held the lock against
+// the whole machine: every other due command waited for it 25 s and recorded
+// nothing.
 func TestAKeyStoreThatWaitsForeverDoesNotHoldTheSessionLockPastItsTimeout(t *testing.T) {
 	r := newRig(t)
 	r.signIn(2 * time.Hour) // in grace: due for every process
@@ -321,27 +325,52 @@ func TestAKeyStoreThatWaitsForeverDoesNotHoldTheSessionLockPastItsTimeout(t *tes
 	t.Cleanup(waiting.release)
 	a := NewGuard(GuardOptions{Store: OpenStore(r.dir, waiting), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(a.Close)
-
-	// Process A is due and reads refresh.enc: the key store waits.
-	var st Status
-	var err error
-	timed(t, "process A's EnsureFresh", func() { st, err = a.EnsureFresh(context.Background()) })
-	if err != nil || st.State != StateGrace || st.Reason != ReasonKeyringUnavailable || r.srv.calls.Load() != 0 {
-		t.Fatalf("process A = %s/%q, %v with %d network refreshes, want grace/keyring_unavailable and none: it had no token to send", st.State, st.Reason, err, r.srv.calls.Load())
-	}
-	if waiting.ended.Load() != 0 {
-		t.Fatal("the key store call has ended: this test cannot tell whether session.lock was held past the timeout")
-	}
-
-	// The key store is still waiting for A. Process B, an ordinary command,
-	// takes the lock A has let go of; a minute later, past the negative cache that
-	// A's failed attempt set.
-	r.clock.Advance(time.Minute)
 	b := NewGuard(GuardOptions{Store: OpenStore(r.dir, r.seal), Refresher: r.srv, Now: r.clock.Now})
 	t.Cleanup(b.Close)
-	timed(t, "process B's EnsureFresh", func() { st, err = b.EnsureFresh(context.Background()) })
-	if err != nil || st.State != StateOK || r.srv.calls.Load() != 1 {
-		t.Fatalf("process B = %s/%q, %v with %d network refreshes, want ok after one", st.State, st.Reason, err, r.srv.calls.Load())
+
+	// Process A is due, takes the lock and reads refresh.enc: the key store waits.
+	type answer struct {
+		st  Status
+		err error
+	}
+	answers := func(g *Guard) chan answer {
+		ch := make(chan answer, 1)
+		go func() {
+			st, err := g.EnsureFresh(context.Background())
+			ch <- answer{st, err}
+		}()
+		return ch
+	}
+	a1 := answers(a)
+	if !waitUntil(func() bool { return waiting.began.Load() == 1 }) {
+		t.Fatal("process A never reached the key store")
+	}
+
+	// Process B, an ordinary command a minute later (past the negative cache that
+	// A's failed attempt sets), is due and waits for the lock A holds.
+	r.clock.Advance(time.Minute)
+	b1 := answers(b)
+
+	// The timeout lets A go; the key store is still waiting. B then gets the lock
+	// and its refresh goes through.
+	select {
+	case got := <-a1:
+		if got.err != nil || got.st.State != StateGrace || got.st.Reason != ReasonKeyringUnavailable {
+			t.Fatalf("process A = %s/%q, %v, want grace/keyring_unavailable: it had no token to send", got.st.State, got.st.Reason, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("process A did not return within 5 s while the key store waits")
+	}
+	select {
+	case got := <-b1:
+		if got.err != nil || got.st.State != StateOK || r.srv.calls.Load() != 1 {
+			t.Fatalf("process B = %s/%q, %v with %d network refreshes, want ok after one", got.st.State, got.st.Reason, got.err, r.srv.calls.Load())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("process B did not return within 5 s: the lock was held while the key store waits")
+	}
+	if waiting.ended.Load() != 0 {
+		t.Fatal("the key store call has ended: the lock was let go by its answer, not by the timeout")
 	}
 }
 
