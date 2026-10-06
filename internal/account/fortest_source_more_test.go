@@ -182,6 +182,12 @@ func describeStmts(list []ast.Stmt) string {
 				d += " else {...}"
 			}
 			parts = append(parts, d)
+		case *ast.AssignStmt:
+			if len(st.Lhs) == 1 && len(st.Rhs) == 1 {
+				parts = append(parts, types.ExprString(st.Lhs[0])+" "+st.Tok.String()+" "+types.ExprString(st.Rhs[0]))
+			} else {
+				parts = append(parts, "an assignment")
+			}
 		case *ast.ReturnStmt:
 			parts = append(parts, "a return")
 		default:
