@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS task_board_rev (
 );
 ```
 
-`claim_until` is empty when there is no claim, so a stale claim is `status = 'in_progress' AND claimed_by <> '' AND claim_until < now`; the comparison is only meaningful with the first two terms. Times are written in one fixed-width UTC format (`2006-01-02T15:04:05Z`), so text comparison is time comparison. The foreign keys make a task outside a profile impossible and take a board with its profile when the profile is deleted, so a claim held by an agent on a deleted profile's task ends in `not_found` at its next call. No other per-profile table has this key (they use a plain `profile_id`): tasks are the exception on purpose (D9). The store maps a violation to `ErrInvalid` ("unknown profile"). Tests that use a profile other than the bootstrapped `default` insert it first.
+`claim_until` is empty when there is no claim, so a stale claim is `status = 'in_progress' AND claimed_by <> '' AND claim_until <= now` (a lease that ends exactly now has ended); the comparison is only meaningful with the first two terms. Times are written in one fixed-width UTC format (`2006-01-02T15:04:05Z`), so text comparison is time comparison. The foreign keys make a task outside a profile impossible and take a board with its profile when the profile is deleted, so a claim held by an agent on a deleted profile's task ends in `not_found` at its next call. No other per-profile table has this key (they use a plain `profile_id`): tasks are the exception on purpose (D9). The store maps a violation to `ErrInvalid` ("unknown profile"). Tests that use a profile other than the bootstrapped `default` insert it first.
 
 ### 4.3 A task as JSON (CLI, MCP and app)
 
