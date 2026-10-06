@@ -232,9 +232,16 @@ func TestAdoptWaitsForAReloadInProgressSoAnOlderReadCannotOverwriteIt(t *testing
 	if st := g.Status(); st.State != StateLocked || st.Reason != ReasonRefused {
 		t.Errorf("Status = %s/%q at the next poll, want locked/refused", st.State, st.Reason)
 	}
-	time.Sleep(150 * time.Millisecond) // a refusal told a second time is told within moments
-	if n := len(fired); n != 1 {
-		t.Errorf("OnRefused fired %d times for one refusal, want 1", n)
+	// The refusal is told once: the call that must come is waited for (3 s), and
+	// then no second one may come in 150 ms, above the 100 ms floor.
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Error("OnRefused was not called for the refusal")
+	}
+	time.Sleep(150 * time.Millisecond)
+	if n := len(fired); n != 0 {
+		t.Errorf("OnRefused fired %d more times for one refusal, want none", n)
 	}
 }
 
