@@ -27,7 +27,7 @@ type Change struct {
 // one tries again. Rev and Counts do not check the profile, so Watch does: a profile that does not exist is
 // an ErrInvalid, returned before any call, and one that is deleted while it is watched ends Watch with an
 // error that wraps ErrNotFound, and no call. (Stale, the claims past their lease, is the one count that the
-// clock moves without a write: a report has it as of its revision.)
+// clock moves without a write: a lease that runs out is not reported until a write moves the revision.)
 func (s *Store) Watch(ctx context.Context, profileID string, interval time.Duration, fn func(Change)) error {
 	if interval <= 0 {
 		interval = defaultWatchInterval
