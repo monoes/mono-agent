@@ -2,11 +2,49 @@ package account_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/account"
 )
+
+// stuckRefreshFile is a refresh.enc that can be read but neither replaced nor removed
+// while stuck is set (a macOS user-immutable flag, a Windows process that holds it open
+// without FILE_SHARE_DELETE), over a session.json that stays writable.
+type stuckRefreshFile struct {
+	account.Store
+	mu    sync.Mutex
+	stuck bool
+}
+
+func (s *stuckRefreshFile) isStuck() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stuck
+}
+
+func (s *stuckRefreshFile) unstick() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stuck = false
+}
+
+func (s *stuckRefreshFile) SaveRefresh(token string) error {
+	if s.isStuck() {
+		return fmt.Errorf("simulated: replacing refresh.enc: %w", os.ErrPermission)
+	}
+	return s.Store.SaveRefresh(token)
+}
+
+func (s *stuckRefreshFile) DeleteRefresh() error {
+	if s.isStuck() {
+		return fmt.Errorf("simulated: removing refresh.enc: %w", os.ErrPermission)
+	}
+	return s.Store.DeleteRefresh()
+}
 
 // The drop of a refresh token that monoes.me may have rotated (A24) takes the token
 // out first and then writes down why, so a process that stops between the two steps,
@@ -64,5 +102,61 @@ func TestAPassThatFindsTheMarkerAndNoRefreshTokenFinishesTheDrop(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Once a drop has recorded unconfirmed, a refresh token on disk is never presented
+// (ruling 5): it is dropped again. Whatever brought it back, a restore of the file or a
+// delete that did not happen, it is the token that monoes.me may have rotated, and the
+// age of the marker cannot vouch for it any more.
+func TestATokenThatComesBackAfterTheDropIsDroppedAgainNotPresented(t *testing.T) {
+	r := newLostRig(t)
+	r.loseTheFirstAnswer(t)
+	r.e.f.Clock.Advance(241 * time.Second)
+	if st, err := r.command(); err != nil || st.Reason != account.ReasonUnconfirmed || !r.refreshFileGone() {
+		t.Fatalf("the drop = %s/%q, %v (token gone %t), want grace/unconfirmed and the token gone", st.State, st.Reason, err, r.refreshFileGone())
+	}
+	if err := r.e.store.SaveRefresh("rt-1"); err != nil { // a backup brings refresh.enc back
+		t.Fatal(err)
+	}
+	r.e.f.Clock.Advance(2 * time.Minute) // past the negative cache; the access token has run out
+	st, err := r.command()
+	if err != nil || st.State != account.StateGrace || st.Reason != account.ReasonUnconfirmed {
+		t.Fatalf("the pass that finds the token again = %s/%q, %v, want grace/unconfirmed", st.State, st.Reason, err)
+	}
+	if n := r.net.grants(); n != 1 || r.srv.isRevoked() {
+		t.Fatalf("%d grants (revoked %t), want only the lost one: a token that a drop gave up is never presented", n, r.srv.isRevoked())
+	}
+	if !r.refreshFileGone() {
+		t.Fatal("refresh.enc is still on disk: the next pass would face it again")
+	}
+	if sess := r.e.session(); sess.LastResult != "unconfirmed" || !sess.PendingSince.IsZero() || !sess.LastAttempt.Equal(r.e.f.Clock.Now()) {
+		t.Fatalf("stored session = %s, want the drop recorded again at %v with no marker", describe(sess), r.e.f.Clock.Now())
+	}
+}
+
+// A drop that could not remove the token keeps the marker and records unconfirmed. If the
+// clock then goes back into the window, the age of the marker says retry, but the session
+// says the token was given up: it is not presented, it is dropped again.
+func TestADropThatCouldNotRemoveTheTokenIsNotUndoneByAClockSetBackIntoTheWindow(t *testing.T) {
+	r := newLostRig(t)
+	r.loseTheFirstAnswer(t)
+	stuck := &stuckRefreshFile{Store: account.OpenStore(r.e.dir, r.e.seal), stuck: true}
+	r.e.f.Clock.Advance(241 * time.Second)
+	if st, err := r.e.guardWith(r.net, stuck).EnsureFresh(context.Background()); err == nil || st.Reason != account.ReasonUnconfirmed {
+		t.Fatalf("the drop that cannot remove the token = %s/%q, %v, want grace/unconfirmed and the error of the remove", st.State, st.Reason, err)
+	}
+	if sess := r.e.session(); sess.LastResult != "unconfirmed" || !sess.PendingSince.Equal(r.t0) {
+		t.Fatalf("stored session = %s, want unconfirmed with the marker kept", describe(sess))
+	}
+	r.e.f.Clock.Set(r.t0.Add(100 * time.Second)) // the clock goes back: the marker looks 100 s old
+	if _, err := r.command(); err != nil {
+		t.Fatalf("the pass with the clock set back: %v", err)
+	}
+	if got := r.srv.presented(); len(got) != 1 {
+		t.Fatalf("monoes.me was presented %v, want the lost grant only: the token was given up", got)
+	}
+	if !r.refreshFileGone() || r.e.session().LastResult != "unconfirmed" || r.e.rawPending() != "" {
+		t.Fatalf("stored session = %s (token gone %t), want the drop done this time", describe(r.e.session()), r.refreshFileGone())
 	}
 }

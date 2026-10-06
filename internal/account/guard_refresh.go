@@ -169,9 +169,11 @@ func (g *Guard) refreshUnderLock(ctx context.Context, mode refreshMode) (Status,
 		// the grace applies.
 		return g.recordAttempt(sess, now, string(ReasonKeyringUnavailable))
 	}
-	if pendingExpired(sess, now) {
+	if pendingExpired(sess, now) || sess.LastResult == string(ReasonUnconfirmed) {
 		// The grant that left the marker is out of reach of monoes.me's reuse window, or
-		// the clock went back and its age cannot be told: the token is not presented.
+		// the clock went back and its age cannot be told: the token is not presented. Nor
+		// is one that a drop gave up and that is still, or again, on disk (a remove that
+		// failed, a restored file): whatever the age of a marker says, it may be rotated.
 		return g.dropUnconfirmed(sess, now)
 	}
 	if err := ctx.Err(); err != nil {
