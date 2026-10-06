@@ -58,8 +58,12 @@ func dueForRefresh(sess *Session, st Status, rcpt *Receipt, now time.Time, mode 
 	if sess == nil || sess.State == stateRefused || sess.AccessToken == "" {
 		return false
 	}
+	// Both callers read the Status and then the cache, one after the other, and a
+	// poll in another goroutine can swap the cache between the two reads: a token
+	// that stopped verifying in between leaves a session with a token and no
+	// receipt beside a Status that still says ok. Without a receipt it is not ok.
 	switch {
-	case st.State != StateOK:
+	case rcpt == nil || st.State != StateOK:
 	case mode == modeCLI && rcpt.ExpiresAt.Sub(now) < RefreshMargin:
 	case mode == modeBackground && !now.Before(rcpt.IssuedAt.Add(rcpt.ExpiresAt.Sub(rcpt.IssuedAt)/2)):
 	default:

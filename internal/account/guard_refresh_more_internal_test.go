@@ -87,6 +87,9 @@ func TestDueForRefreshDecidesByStateModeAndLastAttempt(t *testing.T) {
 		{"background, ok, 31 minutes in", modeBackground, ok, receipt(31 * time.Minute), never, true},
 		{"background, ok, 40 minutes in", modeBackground, ok, receipt(40 * time.Minute), never, true},
 		{"background, ok, past half, tried 10 seconds ago", modeBackground, ok, receipt(31 * time.Minute), ago(10 * time.Second), true},
+		// The Status and the receipt are read one after the other: a token that stopped verifying in between is not ok.
+		{"cli, a Status of ok taken before the cache was swapped for a token that does not verify", modeCLI, ok, nil, never, true},
+		{"background, the same", modeBackground, ok, nil, never, true},
 		// The two rules are the margin and the half-life, each for its own mode, whatever the lifetime.
 		{"cli, ok, 8-minute token, 2 minutes in: 6 minutes left", modeCLI, ok, shortReceipt(2 * time.Minute), never, false},
 		{"cli, ok, 8-minute token, 3 minutes 30 seconds in: under the margin", modeCLI, ok, shortReceipt(3*time.Minute + 30*time.Second), never, true},
