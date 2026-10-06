@@ -36,19 +36,22 @@ The failure modes this software's users are most likely to meet that the happy-p
 
 1. **A person already logged in to the library must not notice this phase.** `library login` becomes an alias of a machine session they do not have yet, so library reads fall back to the profile's own vault login until a session replaces it, and `library logout` forgets it. Pinned by `TestAnOlderLoginServesReadsUntilASessionExists` (Task 8) and `TestAnOlderLibraryLoginKeepsWorkingAndLogoutForgetsIt` (Task 12).
 2. **monoes.me answers a sign-in or an adoption with something that cannot be a session** (an opaque token, an emailed code answered without a refresh token as the email route does until plan A's Task 7 ships, a refresh grant that ignores `resource`). Nothing is stored and the user is told what to do. A refresh token the exchange spent is replaced by what monoes.me issued, a dead one (`invalid_grant`) is removed, because presenting either again, from an older binary say, ends every refresh token of the account on every machine (plan A, spike S2); so adoption and the library's own refresh of an older login take the same lock. Pinned by `TestLoginAnOpaqueAnswerStoresNothing` and `TestEmailSignInAtAServerThatCannotSignTheSession` (Task 5), `TestAdoptNeverReadsAnAnswerAsARefusal` and `TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock` (Task 6), `TestOlderLoginRefreshWaitsForAnAdoptionAndUsesWhatItLeft` (Task 8), and `TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin`, `TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce`, `TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued` and `TestAdoptDropsADeadLoginAndTriesTheNextProfile` (Task 9).
-3. **monoes.me failing in any way but `invalid_grant`** (a 500 after a bad deploy, `invalid_client`, a malformed body, a dropped connection) locks nobody, and no error text carries a refresh token. Pinned by `TestRefresherOnlyInvalidGrantIsARefusal` (Task 4) and `TestAccountStatusFollowsMonoesMe` (Task 11).
+3. **monoes.me failing in any way but `invalid_grant`** (a 500 after a bad deploy, `invalid_client`, a malformed body, a dropped connection) locks nobody, and no error text carries a refresh token. Pinned by `TestRefresherOnlyInvalidGrantIsARefusal` (Task 4) and `TestAccountStatusFollowsMonoesMe` (Task 11); `TestRefresherNeverReturnsATypedNilError` (Task 4) pins that no failure comes back as an error that holds a nil pointer, which the guard would count as an ordinary failure.
 4. **The session token reaches only the host that issued it,** and a refresh token never travels in the clear: a `MONOES_BASE_URL` pointed elsewhere neither receives the token nor lets `library login` sign in there. Pinned by `TestSessionTokenIsSentOnlyToItsHost` (Task 8), `TestLibraryLoginNeedsTheAccountHost` (Task 12), `TestLogoutNeverRevokesOverPlainHTTP` (Task 6) and `TestRefresherUnreachableAndInsecureHosts` (Task 4).
-5. **A machine with no session stays untouched, and a broken session can always be cleaned.** Status, logout and adoption create nothing when there is nothing to act on, logout forgets an unreadable `session.json` and works offline, and a new sign-in replaces a refused session. Pinned by `TestAccountLoginStatusLogout` (Task 11), `TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin` (Task 9), `TestLogoutWithNothingToForgetLeavesNoFiles`, `TestLogoutForgetsAnUnreadableSession` and `TestLogoutRevokesAndForgetsEvenOffline` (Task 6), and `TestLoginReplacesARefusedSession` (Task 5).
+5. **A machine with no session stays untouched, and a broken session can always be cleaned.** Status, logout and adoption create nothing when there is nothing to act on, logout replaces an unreadable `session.json` by a session with no token (A23) and works offline, and a new sign-in replaces a refused session. Pinned by `TestAccountLoginStatusLogout` (Task 11), `TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin` (Task 9), `TestLogoutWithNothingToForgetLeavesNoFiles`, `TestLogoutNeverRevokesOverPlainHTTP`, `TestLogoutForgetsAnUnreadableSession` and `TestLogoutRevokesAndForgetsEvenOffline` (Task 6), and `TestLoginReplacesARefusedSession` (Task 5).
+6. **A refresh grant the caller abandons mid-call.** monoes.me rotates the refresh token when it answers, and the answer is the only copy of the new one: a Ctrl-C, a SIGTERM or a closing context that aborts the call leaves the dead token on disk, and the next refresh after monoes.me's 300-second reuse window ends every install of the account (spec A20). Every grant this plan sends that rotates a refresh token is therefore completed and stored once it is sent: the adoption exchange, the update of the vault entry it leaves behind, and the library's refresh of a login of its own. Pinned by `TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall` (Task 6), `TestOlderLoginRefreshIsStoredWhenTheCallerGivesUp` (Task 8) and `TestAdoptCompletesWhenTheCallerGivesUp` (Task 9).
+7. **A logout that unlocks a machine.** The high-water mark that makes a clock set back worthless lives in `session.json`. Deleting the file at logout would let an account that monoes.me has blocked sign out (an open command), set the clock before the enforcement date and run again (spec A23). Logout keeps the record, as a session with no token, and revokes the refresh token it reads under the lock, not one that a refresh in another process has rotated since. Pinned by `TestLogoutKeepsTheClockGuardRecord`, `TestASecondLogoutChangesNothing`, `TestLoginAfterLogoutReplacesTheRecord` and `TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock` (Task 6), and `TestAccountLoginStatusLogout` (Task 11).
 
 ## Decisions and assumptions
 
 - **The shared browser sign-in moves into `internal/account`; `internal/library` delegates.** The PKCE flow, the loopback listener and the endpoint discovery pinned to the base host are exported from `internal/account` (`DiscoverEndpoints`, `AuthorizeInBrowser`; standard library only) and `internal/library`'s `LoginPKCE` calls them, so its public login API and its tests stay as they are. A neutral third package was the other option the index allows; it is not used because B1a's `TestImportsOnlyWhatTheImportRuleAllows` lets `internal/account` import only the standard library and `internal/secrets`, and this way that test stays as B1a wrote it. The email-code calls are not shared: they are two small requests, and the library keeps its own.
-- **D21 against D22.** D21 turns the library login commands into aliases of one machine session; D22 says an earlier phase must change nothing a user can see. A user who is logged in to the library today has a vault entry and no session. So the library client reads with the session when there is one for its host and otherwise with the profile's vault login (read, and refreshed as before), `library login` writes only the session, and `library logout` ends the session and also revokes and removes the profile's vault login. `account logout` never opens the database: it revokes and removes the session's refresh token and deletes `session.json`, nothing more; another profile's older login is a chain of its own, so after `account logout` `library status` can still report it (method `pkce` or `email`) until `library logout` is run for that profile or adoption removes it, and no refresh token is presented twice because of that. Release R's adoption (Task 9, wired by B5a) moves vault logins into the session; removing the fallback is a later cleanup.
+- **D21 against D22.** D21 turns the library login commands into aliases of one machine session; D22 says an earlier phase must change nothing a user can see. A user who is logged in to the library today has a vault entry and no session. So the library client reads with the session when there is one for its host and otherwise with the profile's vault login (read, and refreshed as before), `library login` writes only the session, and `library logout` ends the session and also revokes and removes the profile's vault login. `account logout` never opens the database: it revokes and removes the session's refresh token and replaces `session.json` by a session with no token that keeps the machine's clock-guard record (A23), nothing more; another profile's older login is a chain of its own, so after `account logout` `library status` can still report it (method `pkce` or `email`) until `library logout` is run for that profile or adoption removes it, and no refresh token is presented twice because of that. Release R's adoption (Task 9, wired by B5a) moves vault logins into the session; removing the fallback is a later cleanup.
 - **`MONOES_BASE_URL` and the session.** The session belongs to `account.Host()` (`HostURL`, or `MONOES_BASE_URL` in a `devaccount` build only; D24). If the library's base URL differs, the session token is not sent there (index §3.4 item 10), `library login` refuses with a message naming `-tags devaccount`, and `library logout` leaves the session alone and forgets only that host's older login.
 - **Email sign-in follows plan A's Task 7, in either of the two shapes it offers.** monoes.me's `POST /api/auth/agent/claim/verify` returns today an opaque access token and no refresh token, and ignores `resource` (monoes-landing `src/app/api/auth/agent/claim/verify/route.ts`, lines 92 to 112), so it cannot start a gate session. Plan A's Task 7 (a-server.md, "Task 7") makes the route answer a MonoAgent claim that includes `offline_access` with a `refresh_token`, which the client trades at the token endpoint with `resource`; and, when the body carries `resource`, with the token endpoint's own answer, a signed access token and a refresh token, so that the sign-in is one call. This client sends `resource` with the code. If the answer holds a signed token and a refresh token that is the session; if it holds a refresh token beside an opaque token, the refresh token is traded once, with `resource`, for the signed one, and only the traded token is stored. Against today's route (no refresh token) the result is `ErrEmailSessionUnavailable` and nothing is stored. All three outcomes are tested against the fake (its default, `SetEmailTrade(true)` and `SetEmailOpaque(true)`).
 - **A dead or spent refresh token is never presented again (plan A, spike S2).** monoes.me answers a rotated or revoked refresh token with `invalid_grant` and then deletes every MonoAgent refresh token of the account, on every machine, and an older binary would present whatever the vault still holds. So adoption removes the vault copy once its exchange made a session and also when monoes.me answered `invalid_grant` (the token is dead); it writes the rotated tokens back when the exchange succeeded but made no session (an opaque token), and it keeps the login only when monoes.me gave no verdict (no answer, a 500). All of it happens while it holds the account store lock, and it reads the older login only after taking that lock; the library's own refresh of an older login takes the same lock and refreshes what the vault holds then; logout deletes every local copy of the session's refresh token. The fake models the replay (`Server.Replays`) and the tests assert that none happens. Plan A's `refreshTokenReuseInterval: 300` makes a retry inside five minutes of a lost answer safe on the real server; the fake models the strict behavior outside that window, which is the one no client may cause.
 - **Spike S2 does not matter to the code, and B5a's claim does not matter to adoption.** Adoption exchanges an older refresh token through the same Refresher; whichever answer comes (a signed token, an opaque one, `invalid_grant`, a 500) is handled and tested (Tasks 6 and 9). B5a (its Task 6) tries once per database, claiming the try with a settings row before it calls `library.AdoptIntoAccount`, so one call tries every profile that has an older login, in order: a dead login is removed and the next profile is tried, because its login is a chain of its own; a login monoes.me gave no verdict on stays, and the call stops there, so an offline machine pays one connect timeout. That is what B5a's Task 6 assumes (its limits 2 and 6).
-- **The `Store` has no delete.** `Client.Logout` removes the session with `os.Remove(filepath.Join(store.Dir(), "session.json"))` while it holds the store lock, because the frozen `Store` interface cannot delete a session.
+- **Logout keeps the clock-guard record (A23); the `Store` has no delete, and none is needed.** `Client.Logout` reads the session and the refresh token under the store lock, revokes the refresh token it read, deletes `refresh.enc` and, when a session existed, saves through `Store.Save` a session with no token, `{V: 1, Host, HW: max(its mark, now)}`, instead of removing `session.json`. The high-water mark is what keeps `Enforced(now, hw)` true after the clock is set back before the enforcement date, so an open command must not erase it; B1a's `Evaluate` judges such a session `locked(not_logged_in)` with `Enforced` computed from the mark. A machine with nothing stored still writes nothing (a look at the two file names, before the lock, decides), a record that already has no token is left as it is, and an unreadable `session.json` is replaced by a record that starts from now. The next sign-in replaces the record.
+- **A grant, once sent, is completed and stored (A20).** `Client.exchangeOlder` (adoption), the update of the vault entry that `AdoptIntoAccount` makes after it and the library client's refresh of a login of its own run on `context.WithTimeout(context.WithoutCancel(ctx), …)`: a Ctrl-C or a closing context cannot abort them, and each ends by a deadline of its own (`refreshCallTimeout`, the guard's own 20 seconds, for the exchange; 10 seconds for a vault write; `refreshGrantTimeout`, 20 seconds, in the library), so a command interrupted during one waits at most that long. The sign-in's authorization-code exchange needs no such guarantee (a code is single use and rotates nothing), and neither does the emailed code's trade (the emailed refresh token is never stored): an abandoned call leaves no refresh token on disk that could be presented again. `libraryfake.OnToken` (Task 3) lets a test cancel the caller while monoes.me is answering.
 - **Sealing.** Sign-in (`Login`, `VerifyEmailCode`) uses `NewInteractiveKeyringSealer` (B1a's file-keyring-capable sealer, which may ask for the file keyring's passphrase as the vault does); everything else, guards, logout and adoption included, uses `NewKeyringSealer`, which never prompts.
 - **A test seam for the sealer.** `internal/secrets` remembers the account key it first made for the whole process (`getOrCreateKEK`, `internal/secrets/keyring.go:93`), while most `cmd/monoagentcli` tests re-make the mock keyring (`keyring.MockInit()`), so a second sign-in in one test binary seals a refresh token that the re-made keyring can no longer open: the next renewal ends in `keyring_unavailable` and the test passes or fails by its position in the run. `account.SetSealerForTest` (Task 7) gives the default store a sealer of the test's own, and `libFixture` installs a memory sealer (Task 11). A test of another plan that signs in through the default store more than once per test binary should do the same.
 - **Files outside the §3.1 list** that this plan creates or edits, so B2, B3a and B4 know: new files `internal/account/oauth.go`, `logout.go` and `adopt.go`, `internal/library/session.go`, `internal/library/libraryfake/control.go` and `jwt.go`, `cmd/monoagentcli/account.go` and `account_login.go`; and one added line in `cmd/monoagentcli/root.go` (registering `account`). `exitCodeFor`'s mapping of a bare `*account.LoginRequiredError` to exit 4 is B2's (its Task 4) and is not done here.
@@ -638,10 +641,10 @@ git commit -m "refactor(library): sign in through the shared browser sign-in of 
 
 ### Task 3: libraryfake signs JWT access tokens and can fail, block and tell time
 
-Everything after this task is proven against the fake, so it first learns what monoes.me will do (spec §4.1, §4.4, §5; plan A's measured behavior): a signed EdDSA access token exactly when a `resource` is sent, which then sticks to its refresh chain; refresh answers that fail in each way D27 distinguishes; a block that revokes; the replay of a rotated refresh token that ends every token of the account; an emailed code in each shape a route can answer it (signed, to trade, as today); a clock that can be set; a log of the token requests. The existing library tests must keep passing against the changed fake: without a `resource` it behaves as before.
+Everything after this task is proven against the fake, so it first learns what monoes.me will do (spec §4.1, §4.4, §5; plan A's measured behavior): a signed EdDSA access token exactly when a `resource` is sent, which then sticks to its refresh chain; refresh answers that fail in each way D27 distinguishes; a block that revokes; the replay of a rotated refresh token that ends every token of the account; an emailed code in each shape a route can answer it (signed, to trade, as today); a clock that can be set; a log of the token requests; a hook that runs while a token request is in flight, so a test can cancel a caller while monoes.me is answering (A20). The existing library tests must keep passing against the changed fake: without a `resource` it behaves as before.
 
 **Files:**
-- Create: `internal/library/libraryfake/control.go`: the switches, `Block`, `NewGrant`, `LastResource`, `TokenRequests`
+- Create: `internal/library/libraryfake/control.go`: the switches, `Block`, `NewGrant`, `LastResource`, `TokenRequests`, `OnToken`
 - Create: `internal/library/libraryfake/jwt.go`: `TrustKey` and the signer
 - Modify: `internal/library/libraryfake/oauth.go` (replaced whole: lines 1-108 are replaced by the file below)
 - Modify: `internal/library/libraryfake/fake.go` (six small edits: lines 50, 82, 90, 168, 209, 231-233)
@@ -677,6 +680,7 @@ func (s *Server) Block(userID string)     // revokes every token of the user; si
 func (s *Server) Unblock(userID string)
 func (s *Server) LastResource() string    // the resource of the latest token or emailed-code request
 func (s *Server) NewGrant(username string) (access, refresh string) // an older login: opaque access token and a refresh token
+func (s *Server) OnToken(fn func()) // fn runs when a token request arrives, before the fake looks at it; nil removes it
 
 type TokenRequest struct {
 	Form   url.Values  // never print it: it holds codes and refresh tokens
@@ -686,7 +690,7 @@ type TokenRequest struct {
 func (s *Server) TokenRequests() []TokenRequest // every request to the token endpoint, in order (B5b's contract change request)
 // Server.Replays int counts refresh tokens presented after they were rotated or revoked.
 ```
-Behavior: a token request (code, refresh) that carries `resource=account.Audience` is answered with an EdDSA JWT shaped like monoes.me's (header `typ` `at+jwt`, `kid` `accounttest.DevKID`; `iss` `account.Issuer`, `aud` an array holding `account.Audience`, `azp` and `client_id` `monoagent`, `sub`, `scope`, `iat`, `exp` = `AccessTTL` later, `plan` `free`, `jti`); the audience then sticks to the refresh chain; any other `resource` is `invalid_target`; no `resource` on a chain that never had one gives the opaque token as before. An emailed code (`claim/verify`) that asks for `resource=account.Audience` is answered like the token endpoint (a signed access token and a refresh token; plan A, Task 7), another `resource` is `invalid_target`, and a request without one gets an opaque access token and a refresh token (the default); `SetEmailTrade` gives that second shape whatever the request asks, and `SetEmailOpaque` gives the route of today, an opaque access token and no refresh token. Presenting a rotated or revoked refresh token again is `invalid_grant`, counts a replay and revokes every token of that user (spike S2).
+Behavior: a token request (code, refresh) that carries `resource=account.Audience` is answered with an EdDSA JWT shaped like monoes.me's (header `typ` `at+jwt`, `kid` `accounttest.DevKID`; `iss` `account.Issuer`, `aud` an array holding `account.Audience`, `azp` and `client_id` `monoagent`, `sub`, `scope`, `iat`, `exp` = `AccessTTL` later, `plan` `free`, `jti`); the audience then sticks to the refresh chain; any other `resource` is `invalid_target`; no `resource` on a chain that never had one gives the opaque token as before. An emailed code (`claim/verify`) that asks for `resource=account.Audience` is answered like the token endpoint (a signed access token and a refresh token; plan A, Task 7), another `resource` is `invalid_target`, and a request without one gets an opaque access token and a refresh token (the default); `SetEmailTrade` gives that second shape whatever the request asks, and `SetEmailOpaque` gives the route of today, an opaque access token and no refresh token. Presenting a rotated or revoked refresh token again is `invalid_grant`, counts a replay and revokes every token of that user (spike S2). The fake keeps no reuse window: monoes.me answers a repeat within 300 seconds of the rotation with the answer it gave first (plan A, Task 3), this fake punishes every repeat, so a test that passes here never relies on that forgiveness. `OnToken`'s hook runs in the request's own goroutine after the request has reached the fake and before the fake looks at it: a hook that cancels a caller's context makes that caller give up while the token is rotated and the answer is on its way, which is what a Ctrl-C or a SIGTERM during a refresh does.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -700,6 +704,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -812,6 +817,27 @@ func TestReplayingARotatedRefreshTokenRevokesTheAccount(t *testing.T) {
 	}
 }
 
+// OnToken runs when a token request arrives, in the request's own goroutine, and the fake still
+// answers the request afterwards: a test that cancels a caller there sees what the caller does when
+// it gives up while monoes.me is answering. nil removes the hook.
+func TestOnTokenRunsWhenATokenRequestArrivesAndTheFakeStillAnswers(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	libraryfake.TrustKey(t)
+	var calls atomic.Int32
+	fake.OnToken(func() { calls.Add(1) })
+	_, rt := fake.NewGrant("ada")
+	status, body := postToken(t, fake.URL, refresh(rt, account.Audience))
+	if next, _ := body["refresh_token"].(string); status != 200 || next == "" || calls.Load() != 1 {
+		t.Fatalf("HTTP %d, the hook ran %d times, want 200 and once", status, calls.Load())
+	}
+	fake.OnToken(nil)
+	_, other := fake.NewGrant("ada")
+	if status, _ := postToken(t, fake.URL, refresh(other, account.Audience)); status != 200 || calls.Load() != 1 {
+		t.Fatalf("HTTP %d, the removed hook ran again (%d calls)", status, calls.Load())
+	}
+}
+
 func postVerify(t *testing.T, base string, body map[string]string) (int, map[string]any) {
 	t.Helper()
 	b, _ := json.Marshal(body)
@@ -880,7 +906,7 @@ func TestEmailVerifyAnswersLikeTheTokenEndpointWhenTheAudienceIsAsked(t *testing
 go test ./internal/library/libraryfake/ -count=1
 ```
 
-Expected: FAIL, build errors: `fake.NewGrant undefined`, `libraryfake.TrustKey undefined`, `fake.SetClock undefined`, `fake.Block undefined`.
+Expected: FAIL, build errors: `fake.NewGrant undefined`, `libraryfake.TrustKey undefined`, `fake.SetClock undefined`, `fake.Block undefined`, `fake.OnToken undefined`.
 
 The output includes lines like (timings differ):
 
@@ -928,8 +954,9 @@ with:
 	// the account (spike S2), so a client must never cause one.
 	Replays int
 
-	cmu          sync.Mutex // guards clock
+	cmu          sync.Mutex // guards clock and tokenHook
 	clock        func() time.Time
+	tokenHook    func() // runs when a token request arrives (OnToken)
 	blocked      map[string]bool
 	refreshMode  RefreshMode
 	opaque       bool   // a server that ignores resource: access tokens stay opaque
@@ -1067,6 +1094,9 @@ func (s *Server) issue(g *grant) map[string]any {
 func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	f := r.PostForm
+	if hook := s.onToken(); hook != nil {
+		hook() // a test acts here, while the request is in flight and nothing is locked
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastResource = f.Get("resource")
@@ -1219,6 +1249,23 @@ func (s *Server) SetClock(now func() time.Time) {
 	s.cmu.Lock()
 	defer s.cmu.Unlock()
 	s.clock = now
+}
+
+// OnToken registers fn to run when a request to the token endpoint arrives: in that request's own
+// goroutine, before the fake looks at the request, with no lock held, and the fake answers it
+// afterwards. A test cancels a caller's context in it to see what the caller does when it gives up
+// while monoes.me is answering. nil removes the hook.
+func (s *Server) OnToken(fn func()) {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	s.tokenHook = fn
+}
+
+// onToken is the registered hook, read under its lock.
+func (s *Server) onToken() func() {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	return s.tokenHook
 }
 
 // SetRefreshMode picks how refresh_token grants are answered from now on.
@@ -1574,12 +1621,48 @@ func TestRefreshRequestSendsOnlyTheGrantFields(t *testing.T) {
 		t.Fatal("a refresh replayed a token")
 	}
 }
+
+// A Refresher that fails never returns a typed-nil error, an interface that holds a nil
+// *RefusedError or a nil *TransientError: it is not nil to `err != nil`, errors.As finds a nil
+// target in it, and the guard counts it as an ordinary failure. On every error path the token set
+// is nil and the error is not nil and is exactly one of the two types.
+func TestRefresherNeverReturnsATypedNilError(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	_, rt := fake.NewGrant("ada")
+	dead := httptest.NewServer(nil)
+	dead.Close()
+	live := account.NewRefresher(fake.URL)
+	for _, p := range []struct {
+		name string
+		r    account.Refresher
+		mode libraryfake.RefreshMode
+	}{
+		{"invalid_grant", live, libraryfake.RefreshInvalidGrant},
+		{"invalid_client", live, libraryfake.RefreshInvalidClient},
+		{"invalid_target", live, libraryfake.RefreshInvalidTarget},
+		{"http 500", live, libraryfake.RefreshServerError},
+		{"malformed body", live, libraryfake.RefreshMalformed},
+		{"dropped connection", live, libraryfake.RefreshDrop},
+		{"no server", account.NewRefresher(dead.URL), libraryfake.RefreshOK},
+		{"plain http to a remote host", account.NewRefresher("http://monoes.example"), libraryfake.RefreshOK},
+	} {
+		fake.SetRefreshMode(p.mode)
+		ts, err := p.r.Refresh(context.Background(), rt)
+		var refused *account.RefusedError
+		var transient *account.TransientError
+		isRefused, isTransient := errors.As(err, &refused), errors.As(err, &transient)
+		if ts != nil || err == nil || isRefused == isTransient || (isRefused && refused == nil) || (isTransient && transient == nil) {
+			t.Errorf("%s: token set %v, error %T (refusal %v, transient %v)", p.name, ts != nil, err, isRefused, isTransient)
+		}
+	}
+}
 ```
 
 - [ ] **Step 2: Run them and watch them fail.**
 
 ```bash
-go test ./internal/account/ -run '^(TestRefresherSendsTheAudienceAndRotates|TestRefresherOnlyInvalidGrantIsARefusal|TestRefresherUnreachableAndInsecureHosts|TestRefresherKeepsTheRefreshTokenWhenNotRotated|TestRefreshRequestSendsOnlyTheGrantFields)$' -count=1
+go test ./internal/account/ -run '^(TestRefresherSendsTheAudienceAndRotates|TestRefresherOnlyInvalidGrantIsARefusal|TestRefresherUnreachableAndInsecureHosts|TestRefresherKeepsTheRefreshTokenWhenNotRotated|TestRefreshRequestSendsOnlyTheGrantFields|TestRefresherNeverReturnsATypedNilError)$' -count=1
 ```
 
 Expected: FAIL, build error: `undefined: account.NewRefresher`.
@@ -1679,6 +1762,13 @@ func (r *httpRefresher) tokenEndpoint(ctx context.Context) (string, error) {
 	return r.ep.TokenEndpoint, nil
 }
 
+// Refresh sends the grant. The guard calls it with a context that the caller's cancellation does
+// not reach and that ends by a deadline of its own (A20), so a grant that has been sent is always
+// read to its end: the answer holds the only copy of the refresh token that replaces this one. A
+// call is at most two round trips, the endpoint discovery (the first time) and the grant, each
+// bounded by refreshTimeout. On every failure the token set is nil and the error is a non-nil
+// *RefusedError (invalid_grant only) or a non-nil *TransientError, never a typed-nil error, which
+// the guard would count as an ordinary failure (TestRefresherNeverReturnsATypedNilError).
 func (r *httpRefresher) Refresh(ctx context.Context, refreshToken string) (*TokenSet, error) {
 	if err := checkHost(r.host); err != nil {
 		return nil, &TransientError{Reason: ReasonServerError, Err: err}
@@ -1736,7 +1826,7 @@ func oauthCode(code string) string {
 - [ ] **Step 4: Run the tests with the race detector.**
 
 ```bash
-go test ./internal/account/ -run '^(TestRefresherSendsTheAudienceAndRotates|TestRefresherOnlyInvalidGrantIsARefusal|TestRefresherUnreachableAndInsecureHosts|TestRefresherKeepsTheRefreshTokenWhenNotRotated|TestRefreshRequestSendsOnlyTheGrantFields)$' -count=1 -race
+go test ./internal/account/ -run '^(TestRefresherSendsTheAudienceAndRotates|TestRefresherOnlyInvalidGrantIsARefusal|TestRefresherUnreachableAndInsecureHosts|TestRefresherKeepsTheRefreshTokenWhenNotRotated|TestRefreshRequestSendsOnlyTheGrantFields|TestRefresherNeverReturnsATypedNilError)$' -count=1 -race
 ```
 
 Expected: `ok  	github.com/monoes/mono-agent/internal/account`.
@@ -2161,6 +2251,8 @@ func (c *Client) Login(ctx context.Context, o LoginOptions) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	// A code is single use and rotates nothing: a call abandoned here leaves no refresh token on disk
+	// that could be presented again, so this exchange needs no completion guarantee (A20).
 	ts, err := c.exchange(ctx, ep.TokenEndpoint, url.Values{"grant_type": {"authorization_code"}, "code": {res.Code},
 		"redirect_uri": {res.Redirect}, "client_id": {ClientID}, "code_verifier": {res.Verifier}, "resource": {Audience}})
 	if err != nil {
@@ -2222,6 +2314,8 @@ func (c *Client) VerifyEmailCode(ctx context.Context, email, code string) (Statu
 	if ts.RefreshToken == "" {
 		return Status{}, ErrEmailSessionUnavailable
 	}
+	// The trade spends the emailed refresh token, which is never stored: a trade the caller abandons
+	// leaves no refresh token on disk that could be presented again (A20), and a new code starts over.
 	if strings.Count(ts.AccessToken, ".") != 2 { // opaque, not a JWS: the signed one is asked for at the trade
 		if ts, err = NewRefresher(c.Host).Refresh(ctx, ts.RefreshToken); err != nil {
 			return Status{}, fmt.Errorf("account login: trade the emailed code's refresh token: %w", err)
@@ -2341,7 +2435,7 @@ git commit -m "feat(account): browser and emailed-code sign-in that stores the s
 
 ### Task 6: account.Client: logout and adoption of an older refresh token
 
-Logout (spec §7) revokes the refresh token at monoes.me when it can, and deletes the session and the refresh token whatever monoes.me answers. Adoption (D23) exchanges an older library refresh token for a session without ever producing a refusal. Because monoes.me ends every refresh token of an account when a spent one is presented again (plan A, S2), it runs entirely under the store lock: the older login is read, exchanged and updated by callbacks while no other process can read it; and because the exchange spends the older token, the tokens monoes.me issued come back to the caller even when no session could be made, so the older login can be kept alive, and an `invalid_grant` answer comes back as `Dead`, so the caller can remove a token that must never be presented again.
+Logout (spec §7) revokes the refresh token at monoes.me when it can and forgets the login whatever monoes.me answers: it deletes the refresh token and replaces the session by one with no token that keeps the machine's clock-guard record, because the high-water mark is what makes a clock set back worthless and an open command must not erase it (A23); it reads the refresh token it revokes under the store lock, so it never revokes one that another process has rotated since. Adoption (D23) exchanges an older library refresh token for a session without ever producing a refusal. Because monoes.me ends every refresh token of an account when a spent one is presented again (plan A, S2), it runs entirely under the store lock: the older login is read, exchanged and updated by callbacks while no other process can read it; because the exchange spends the older token, the tokens monoes.me issued come back to the caller even when no session could be made, so the older login can be kept alive, and an `invalid_grant` answer comes back as `Dead`, so the caller can remove a token that must never be presented again; and the exchange, once sent, is completed and stored whatever the caller does next (A20).
 
 **Files:**
 - Create: `internal/account/logout.go`
@@ -2350,7 +2444,7 @@ Logout (spec §7) revokes the refresh token at monoes.me when it can, and delete
 - Test: `internal/account/adopt_test.go`
 
 **Interfaces:**
-- Consumes: `Client`, `Client.session`, `Client.commit`, `unusableError` (Task 5); `NewRefresher` (Task 4); B1a's `Store.Lock`, `Store.Load`, `Store.LoadRefresh`, `Store.DeleteRefresh`, `Store.Dir`.
+- Consumes: `Client`, `Client.session`, `Client.commit`, `unusableError` (Task 5); `NewRefresher` (Task 4); `libraryfake.OnToken` (Task 3), in the tests; B1a's `Session`, `Store.Lock`, `Store.Load`, `Store.Save`, `Store.LoadRefresh`, `Store.DeleteRefresh`, `Store.Dir`, and `refreshCallTimeout` (`guard.go`, 20 seconds: the guard's backstop on one Refresher call).
 - Produces:
 
 ```go
@@ -2376,16 +2470,32 @@ Create `internal/account/logout_test.go` with exactly this content:
 package account_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/library/libraryfake"
 )
+
+// tokenless checks what logout leaves of a session (A23): no access token, no refresh token, and the
+// machine's clock-guard record, the high-water mark. It returns that record.
+func tokenless(t *testing.T, store account.Store) *account.Session {
+	t.Helper()
+	sess, err := store.Load()
+	if err != nil || sess == nil || sess.AccessToken != "" || sess.State != "" || sess.HW.IsZero() {
+		t.Fatalf("logout must leave a session with no token and a high-water mark, not %s (%v)", sessionSummary(sess), err)
+	}
+	if rt, _ := store.LoadRefresh(); rt != "" {
+		t.Fatal("refresh token kept")
+	}
+	return sess
+}
 
 func TestLogoutRevokesAndForgetsEvenOffline(t *testing.T) {
 	fake := libraryfake.New()
@@ -2399,12 +2509,7 @@ func TestLogoutRevokesAndForgetsEvenOffline(t *testing.T) {
 	if _, err := account.NewRefresher(fake.URL).Refresh(context.Background(), rt); !errors.As(err, &refused) {
 		t.Fatalf("the refresh token was not revoked at monoes.me: %v", err)
 	}
-	if sess, _ := store.Load(); sess != nil {
-		t.Fatalf("session kept: %s", sessionSummary(sess))
-	}
-	if rt, _ := store.LoadRefresh(); rt != "" {
-		t.Fatal("refresh token kept")
-	}
+	tokenless(t, store) // the login is gone; the clock-guard record is not
 
 	// Offline: monoes.me is gone, the local state still goes.
 	signInAtFake(t, c)
@@ -2412,22 +2517,128 @@ func TestLogoutRevokesAndForgetsEvenOffline(t *testing.T) {
 	if err := c.Logout(context.Background()); err != nil {
 		t.Fatalf("offline logout: %v", err)
 	}
-	if sess, _ := store.Load(); sess != nil {
-		t.Fatalf("session kept after an offline logout: %s", sessionSummary(sess))
-	}
+	tokenless(t, store)
 }
 
+// An unreadable session.json is replaced like any other: its mark is lost with it, so the record
+// starts from now (the file was there, so the machine had been checked).
 func TestLogoutForgetsAnUnreadableSession(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := account.NewClient("https://monoes.example", account.OpenStore(dir, account.NewMemorySealer()))
+	store := account.OpenStore(dir, account.NewMemorySealer())
+	if err := account.NewClient("https://monoes.example", store).Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tokenless(t, store)
+}
+
+// Spec 4.5 and D5, A23: a clock set back must not postpone the enforcement date, and an account that
+// monoes.me has blocked must not get out from under that by logging out, an open command, first.
+// Logout keeps the machine's high-water mark in a session with no token, so the date is still judged
+// against it: with the clock set before the date the machine is not logged in, and enforced.
+func TestLogoutKeepsTheClockGuardRecord(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	c, store := newFakeClient(t, fake)
+	date := time.Now().Add(-time.Hour) // the date has passed: this machine is enforced
+	account.SetEnforceFromForTest(t, date)
+	signInAtFake(t, c)
 	if err := c.Logout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "session.json")); !os.IsNotExist(err) {
-		t.Fatalf("the unreadable session survived a logout: %v", err)
+	sess := tokenless(t, store)
+	if sess.HW.Before(date) {
+		t.Fatalf("the high-water mark %v is older than the date %v that the machine has already seen", sess.HW, date)
+	}
+	setBack := date.Add(-48 * time.Hour) // the clock is set to before the date
+	if st := account.Evaluate(sess, setBack); st.State != account.StateLocked || st.Reason != account.ReasonNotLoggedIn || !st.Enforced {
+		t.Fatalf("with the clock set back: %+v, want locked(not_logged_in), enforced", st)
+	}
+	// Without the record there is nothing to judge the date against: the hole logout used to open.
+	if st := account.Evaluate(nil, setBack); st.Enforced {
+		t.Fatalf("with no record the same clock is not enforced, and this test would prove nothing: %+v", st)
+	}
+}
+
+// Logging out twice is the same as once: the second finds a record with no token and nothing to
+// forget, and leaves it as it is (nothing is written, the mark does not move).
+func TestASecondLogoutChangesNothing(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	c, store := newFakeClient(t, fake)
+	signInAtFake(t, c)
+	if err := c.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Dir(), "session.json")
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if second, _ := os.ReadFile(path); !bytes.Equal(first, second) {
+		t.Fatal("a second logout rewrote the clock-guard record")
+	}
+}
+
+// A new sign-in replaces the record that logout left: the session is whole again.
+func TestLoginAfterLogoutReplacesTheRecord(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	c, store := newFakeClient(t, fake)
+	signInAtFake(t, c)
+	if err := c.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := signInAtFake(t, c); st.State != account.StateOK {
+		t.Fatalf("status %+v", st)
+	}
+	sess, _ := store.Load()
+	if rt, _ := store.LoadRefresh(); sess == nil || sess.AccessToken == "" || rt == "" {
+		t.Fatalf("a sign-in after a logout did not make a whole session: %s (refresh token stored: %v)", sessionSummary(sess), rt != "")
+	}
+}
+
+// monoes.me ends every refresh token of an account when a rotated one is presented again, and a
+// refresh in another process rotates the one that logout would have read first. So logout reads the
+// refresh token it revokes under the lock: the live one, not a rotated-away one. Here another
+// process refreshes while logout waits for the lock.
+func TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	c, store := newFakeClient(t, fake)
+	signInAtFake(t, c)
+	rt, _ := store.LoadRefresh()
+	ctx := context.Background()
+	unlock, err := store.Lock(ctx) // another process holds the lock, in the middle of a refresh
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Logout(ctx) }()
+	select {
+	case err := <-done:
+		t.Fatalf("logout did not wait for the lock: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	rotated, err := account.NewRefresher(fake.URL).Refresh(ctx, rt) // the other process's refresh: rt is spent now
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRefresh(rotated.RefreshToken); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var refused *account.RefusedError
+	if _, err := account.NewRefresher(fake.URL).Refresh(ctx, rotated.RefreshToken); !errors.As(err, &refused) {
+		t.Fatalf("the refresh token that was on disk when logout held the lock was not revoked: %v", err)
 	}
 }
 
@@ -2464,6 +2675,11 @@ func TestLogoutNeverRevokesOverPlainHTTP(t *testing.T) {
 	}
 	if rt, _ := store.LoadRefresh(); calls != 0 || rt != "" {
 		t.Fatalf("%d requests went out, refresh token kept: %v", calls, rt != "")
+	}
+	// A refresh token with no session behind it (a sign-in that stopped between its two writes)
+	// leaves no clock-guard record to keep: none is made.
+	if sess, _ := store.Load(); sess != nil {
+		t.Fatalf("logout made a session out of nothing: %s", sessionSummary(sess))
 	}
 }
 ```
@@ -2574,12 +2790,33 @@ func TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A20: the exchange spends the older refresh token, and its answer holds the only copy of the one that
+// replaces it, so once it is sent it is completed and stored even if the caller gives up while
+// monoes.me is answering (Ctrl-C, a closing context). The caller's context is cancelled at the moment
+// the fake has the request; the session is stored all the same, and nothing is presented twice.
+func TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	c, store := newFakeClient(t, fake)
+	_, rt := fake.NewGrant("ada")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake.OnToken(cancel)
+	res, err := c.Adopt(ctx, olderLogin(rt), nil)
+	if err != nil || !res.Adopted || fake.Refreshes != 1 || fake.Replays != 0 {
+		t.Fatalf("adopted %v, refreshes %d, replays %d, %v", res.Adopted, fake.Refreshes, fake.Replays, err)
+	}
+	if got, _ := store.LoadRefresh(); got == "" || got == rt {
+		t.Fatal("the rotated refresh token was not stored: the older one is spent and would be presented again")
+	}
+}
 ```
 
 - [ ] **Step 2: Run them and watch them fail.**
 
 ```bash
-go test ./internal/account/ -run '^(TestLogoutRevokesAndForgetsEvenOffline|TestLogoutForgetsAnUnreadableSession|TestLogoutWithNothingToForgetLeavesNoFiles|TestLogoutNeverRevokesOverPlainHTTP|TestAdoptStoresASessionFromAnOlderRefreshToken|TestAdoptNeverReadsAnAnswerAsARefusal|TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock)$' -count=1
+go test ./internal/account/ -run '^(TestLogoutRevokesAndForgetsEvenOffline|TestLogoutForgetsAnUnreadableSession|TestLogoutWithNothingToForgetLeavesNoFiles|TestLogoutNeverRevokesOverPlainHTTP|TestLogoutKeepsTheClockGuardRecord|TestASecondLogoutChangesNothing|TestLoginAfterLogoutReplacesTheRecord|TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock|TestAdoptStoresASessionFromAnOlderRefreshToken|TestAdoptNeverReadsAnAnswerAsARefusal|TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock|TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall)$' -count=1
 ```
 
 Expected: FAIL, build errors: `undefined: account.AdoptResult`, `c.Adopt undefined`, `c.Logout undefined`.
@@ -2614,12 +2851,14 @@ import (
 	"time"
 )
 
-// Logout revokes the refresh token at monoes.me (best effort) and deletes the
-// session and the refresh token on this machine, whatever monoes.me answers.
+// Logout revokes the refresh token at monoes.me (best effort) and forgets the login on
+// this machine, whatever monoes.me answers: the refresh token is deleted and the session
+// is replaced by one that holds no token, only the clock-guard record (clockRecord). It
+// never erases that record (spec §4.5, A23): the enforcement date is judged against the
+// highest time this machine has seen, and a machine that could drop the mark by logging
+// out could run again after setting its clock back before the date.
 func (c *Client) Logout(ctx context.Context) error {
-	sess, lerr := c.Store.Load()
-	rt, rerr := c.Store.LoadRefresh()
-	if sess == nil && lerr == nil && rt == "" && rerr == nil {
+	if !c.stored() {
 		return nil // nothing to forget: leave no files behind
 	}
 	unlock, err := c.Store.Lock(ctx)
@@ -2627,14 +2866,53 @@ func (c *Client) Logout(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
+	// Both reads are made under the lock. A refresh in another process before this point has
+	// rotated the refresh token: revoking the one read earlier would revoke a dead token and
+	// leave the live one valid at monoes.me.
+	sess, lerr := c.Store.Load()
+	rt, _ := c.Store.LoadRefresh() // a key store that does not answer means no revocation, not no logout
 	if rt != "" {
 		c.revoke(ctx, rt)
 	}
 	err = c.Store.DeleteRefresh()
-	if rmErr := os.Remove(filepath.Join(c.Store.Dir(), "session.json")); err == nil && rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-		err = rmErr
+	if keep := c.clockRecord(sess, lerr); keep != nil {
+		if saveErr := c.Store.Save(keep); err == nil {
+			err = saveErr
+		}
 	}
 	return err
+}
+
+// stored says whether the account folder holds anything to forget. It looks at the two
+// file names only, reads no secret and makes no file, so a machine with nothing stored
+// is left untouched.
+func (c *Client) stored() bool {
+	for _, name := range []string{"session.json", "refresh.enc"} {
+		if _, err := os.Stat(filepath.Join(c.Store.Dir(), name)); !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+	}
+	return false
+}
+
+// clockRecord is the session that logout leaves in place of sess: no token, the host and
+// the high-water mark, the later of the one on file and now. It is nil when there is no
+// session to replace (a refresh token alone has no mark to keep) and when sess already is
+// such a record, so a second logout writes nothing. An unreadable session.json (lerr)
+// loses its mark, so its record starts from now.
+func (c *Client) clockRecord(sess *Session, lerr error) *Session {
+	now := c.Now()
+	switch {
+	case lerr != nil:
+		return &Session{V: 1, Host: c.Host, HW: now}
+	case sess == nil || (sess.AccessToken == "" && sess.State == ""):
+		return nil
+	}
+	hw := now
+	if sess.HW.After(hw) {
+		hw = sess.HW // a clock set back must not lower the mark
+	}
+	return &Session{V: 1, Host: sess.Host, HW: hw}
 }
 
 // revoke asks monoes.me to revoke token, within five seconds and never twice
@@ -2697,6 +2975,9 @@ type AdoptResult struct {
 // invalid_grant, Tokens when the exchange spent it and issued new ones that no
 // session could be made of (the caller keeps the older login alive with them), and
 // neither when monoes.me did not answer, so the token is as it was.
+//
+// Once the exchange is sent it is completed and stored even if ctx is cancelled (A20);
+// until then a cancelled ctx stops the call, with the older refresh token untouched.
 func (c *Client) Adopt(ctx context.Context, older func() (refreshToken string, user *User, ok bool), done func(AdoptResult)) (AdoptResult, error) {
 	unlock, err := c.Store.Lock(ctx)
 	if err != nil {
@@ -2718,7 +2999,15 @@ func (c *Client) Adopt(ctx context.Context, older func() (refreshToken string, u
 }
 
 func (c *Client) exchangeOlder(ctx context.Context, refreshToken string, u *User) (AdoptResult, error) {
-	ts, err := NewRefresher(c.Host).Refresh(ctx, refreshToken)
+	// The exchange spends the older refresh token, and its answer holds the only copy of the one
+	// that replaces it, so once it is sent it is completed whatever the caller does next (A20): it
+	// runs on a context the caller's cancellation does not reach, bounded by the guard's own
+	// deadline. A caller that gives up (Ctrl-C) waits at most that long. What follows asks the
+	// network only for the user's name, which falls back to the older login's own when the
+	// caller has given up, and commit takes no context.
+	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshCallTimeout)
+	defer cancel()
+	ts, err := NewRefresher(c.Host).Refresh(gctx, refreshToken)
 	var refused *RefusedError
 	switch {
 	case errors.As(err, &refused):
@@ -2746,7 +3035,7 @@ func (c *Client) exchangeOlder(ctx context.Context, refreshToken string, u *User
 - [ ] **Step 4: Run the tests with the race detector.**
 
 ```bash
-go test ./internal/account/ -run '^(TestLogoutRevokesAndForgetsEvenOffline|TestLogoutForgetsAnUnreadableSession|TestLogoutWithNothingToForgetLeavesNoFiles|TestLogoutNeverRevokesOverPlainHTTP|TestAdoptStoresASessionFromAnOlderRefreshToken|TestAdoptNeverReadsAnAnswerAsARefusal|TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock)$' -count=1 -race
+go test ./internal/account/ -run '^(TestLogoutRevokesAndForgetsEvenOffline|TestLogoutForgetsAnUnreadableSession|TestLogoutWithNothingToForgetLeavesNoFiles|TestLogoutNeverRevokesOverPlainHTTP|TestLogoutKeepsTheClockGuardRecord|TestASecondLogoutChangesNothing|TestLoginAfterLogoutReplacesTheRecord|TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock|TestAdoptStoresASessionFromAnOlderRefreshToken|TestAdoptNeverReadsAnAnswerAsARefusal|TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock|TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall)$' -count=1 -race
 ```
 
 Expected: `ok  	github.com/monoes/mono-agent/internal/account`.
@@ -2766,7 +3055,7 @@ git add internal/account/logout.go internal/account/adopt.go internal/account/lo
 ```
 
 ```bash
-git commit -m "feat(account): logout that forgets everything, and adoption that never reads an answer as a refusal" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "feat(account): logout that keeps the clock guard, and adoption that always completes and never reads an answer as a refusal" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 7: Host, the default guard, the package-level sign-in functions and the devaccount key
@@ -2948,6 +3237,35 @@ func TestDevAccountBuildTrustsTheDevelopmentKey(t *testing.T) {
 	issued := signed + "." + enc.EncodeToString(ed25519.Sign(priv, []byte(signed)))
 	if _, err := account.Verify(issued, now); err != nil {
 		t.Fatalf("a token signed with the development key does not verify: %v", err)
+	}
+}
+
+// TrustedKeys hands out a copy, so what a caller does to the keys it was given, the slice and the
+// bytes of every public key in it, never changes what the next call trusts. Only a devaccount build
+// has an extra key to merge into the pinned set, which is why this is pinned here and not in the
+// default build's tests.
+func TestDevaccountTrustedKeysReturnsACopy(t *testing.T) {
+	pub, _ := accounttest.DevKeyPair()
+	holdsDevKey := func(keys []account.Key) bool {
+		for _, k := range keys {
+			if k.KID == accounttest.DevKID && k.Public.Equal(pub) {
+				return true
+			}
+		}
+		return false
+	}
+	keys := account.TrustedKeys()
+	if !holdsDevKey(keys) {
+		t.Fatal("a devaccount build does not trust the development key")
+	}
+	for i := range keys {
+		keys[i].KID = "scribbled"
+		for j := range keys[i].Public {
+			keys[i].Public[j] ^= 0xff
+		}
+	}
+	if !holdsDevKey(account.TrustedKeys()) {
+		t.Fatal("changing the keys TrustedKeys returned changed the keys it trusts next")
 	}
 }
 
@@ -3146,7 +3464,8 @@ func VerifyEmailCode(ctx context.Context, email, code string) (Status, error) {
 	return c.VerifyEmailCode(ctx, email, code)
 }
 
-// Logout revokes the refresh token (best effort) and deletes the session.
+// Logout revokes the refresh token (best effort) and forgets the login, keeping the machine's
+// clock-guard record: the session becomes one with no token (Client.Logout, A23).
 func Logout(ctx context.Context) error {
 	c, err := defaultClient(false)
 	if err != nil {
@@ -3224,7 +3543,7 @@ Expected: `ok  	github.com/monoes/mono-agent/internal/account`: the whole packag
 go test -tags devaccount ./internal/account/ -count=1 -race
 ```
 
-Expected: `ok` again, now with the devaccount tests (they are skipped by the default build).
+Expected: `ok` again, now with the devaccount tests (they are skipped by the default build), `TestDevaccountTrustedKeysReturnsACopy` among them.
 
 - [ ] **Step 6: Vet, format and build the devaccount binary.**
 
@@ -3248,12 +3567,12 @@ git commit -m "feat(account): the default guard, the host seam and the devaccoun
 
 ### Task 8: internal/library reads with the machine session, and keeps an older login working
 
-D21 and D22. The library client reads with the machine session when there is one for its host, through a `SessionSource` over the account guard and store. A profile's own vault login (what a release before the session left behind) stays as the read fallback, so merging this phase, which is dormant, changes nothing for a user who is already logged in to the library (index §1). The library never refreshes the session itself: a 401 is "log in first". Its refresh of the older login takes the account lock and refreshes what the vault holds then, so it never presents a token an adoption in another process has just spent.
+D21 and D22. The library client reads with the machine session when there is one for its host, through a `SessionSource` over the account guard and store. A profile's own vault login (what a release before the session left behind) stays as the read fallback, so merging this phase, which is dormant, changes nothing for a user who is already logged in to the library (index §1). The library never refreshes the session itself: a 401 is "log in first". Its refresh of the older login takes the account lock and refreshes what the vault holds then, so it never presents a token an adoption in another process has just spent; and, once its grant is sent, it is completed and stored whatever the caller does next, because the answer holds the only copy of the refresh token that replaces the spent one (A20).
 
 **Files:**
 - Create: `internal/library/session.go`
 - Modify: `internal/library/client.go` (lines 36-46, the `Client` struct)
-- Modify: `internal/library/auth.go` (as Task 2 leaves it: lines 16-37 `currentToken`, 125-137 `refresh`, 228-251 `Logout`; only their heads change)
+- Modify: `internal/library/auth.go` (as Task 2 leaves it: lines 16-37 `currentToken` and 228-251 `Logout`, only their heads change; 125-137 `refresh`, replaced)
 - Test: `internal/library/session_test.go`
 
 **Interfaces:**
@@ -3469,6 +3788,30 @@ func TestOlderLoginRefreshWaitsForAnAdoptionAndUsesWhatItLeft(t *testing.T) {
 	}
 }
 
+// A20: the refresh of the profile's own older login spends its refresh token like any other, so once
+// the grant is sent it is completed and stored even if the caller gives up while monoes.me answers
+// (Ctrl-C, a closing context): the vault keeps the refresh token that replaced the spent one, and
+// nothing is presented twice.
+func TestOlderLoginRefreshIsStoredWhenTheCallerGivesUp(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	seed := &memStore{}
+	login(t, fake, seed)
+	old := *seed.t
+	old.ExpiresAt = time.Now().Add(-time.Minute) // its access token has expired: a refresh is due
+	legacy := &sharedStore{t: &old}
+	c := mustClient(t, fake.URL, legacy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake.OnToken(cancel) // the caller gives up while monoes.me is answering
+	tok, err := c.Token(ctx)
+	kept, _ := legacy.Load(context.Background())
+	if err != nil || tok == nil || kept == nil || kept.RefreshToken == old.RefreshToken || tok.RefreshToken != kept.RefreshToken || fake.Replays != 0 {
+		t.Fatalf("token %v (%v), vault entry %v, replaced the spent refresh token %v, replays %d",
+			tok != nil, err, kept != nil, kept != nil && kept.RefreshToken != old.RefreshToken, fake.Replays)
+	}
+}
+
 // The account guard refreshes the session before a call when it is due. The client
 // never refreshes it itself: a 401 is "log in first", and a refused session stops a
 // new process before it asks monoes.me anything.
@@ -3516,7 +3859,7 @@ func TestLibraryLogoutLegacyRevokesAndForgetsTheOlderLogin(t *testing.T) {
 - [ ] **Step 2: Run them and watch them fail.**
 
 ```bash
-go test ./internal/library/ -run '^(TestSessionTokenIsSentOnlyToItsHost|TestAnOlderLoginServesReadsUntilASessionExists|TestSessionIsRefreshedByTheGuardAndNeverByTheClient|TestOlderLoginRefreshWaitsForAnAdoptionAndUsesWhatItLeft|TestLibraryLogoutLegacyRevokesAndForgetsTheOlderLogin)$' -count=1
+go test ./internal/library/ -run '^(TestSessionTokenIsSentOnlyToItsHost|TestAnOlderLoginServesReadsUntilASessionExists|TestSessionIsRefreshedByTheGuardAndNeverByTheClient|TestOlderLoginRefreshWaitsForAnAdoptionAndUsesWhatItLeft|TestOlderLoginRefreshIsStoredWhenTheCallerGivesUp|TestLibraryLogoutLegacyRevokesAndForgetsTheOlderLogin)$' -count=1
 ```
 
 Expected: FAIL, build errors: `undefined: library.AccountSession`, `c.Session undefined`, `c.LogoutLegacy undefined`.
@@ -3530,7 +3873,7 @@ FAIL
 internal/library/session_test.go:16:77: undefined: library.AccountSession
 internal/library/session_test.go:18:18: undefined: library.AccountSession
 internal/library/session_test.go:23:64: undefined: library.AccountSession
-internal/library/session_test.go:226:32: (&library.Client{}).LogoutLegacy undefined (type *library.Client has no field or method LogoutLegacy)
+internal/library/session_test.go:250:32: (&library.Client{}).LogoutLegacy undefined (type *library.Client has no field or method LogoutLegacy)
 ```
 
 - [ ] **Step 3: Add the session source.**
@@ -3546,6 +3889,11 @@ import (
 
 	"github.com/monoes/mono-agent/internal/account"
 )
+
+// refreshGrantTimeout bounds the refresh of the profile's own login from the moment its grant is
+// sent: the grant runs on a context the caller's cancellation does not reach (A20), so it needs a
+// deadline of its own. It is the guard's backstop on one grant.
+const refreshGrantTimeout = 20 * time.Second
 
 // SessionSource supplies the machine-wide monoes.me session (spec D21): the one
 // login that `account login` and `library login` both make and every library
@@ -3681,7 +4029,10 @@ In `internal/library/auth.go`, replace the declaration that starts `func (c *Cli
 // machine session source it does so under the account store lock and on what the
 // store holds once it has the lock, so it can never present a refresh token that an
 // adoption in another process has just spent: monoes.me ends every refresh token
-// of the account when a spent one is presented again.
+// of the account when a spent one is presented again. Once the grant is sent it is
+// completed and stored whatever the caller does next (A20): the answer holds the only
+// copy of the refresh token that replaces this one, so the grant and the save run on a
+// context the caller's cancellation does not reach, bounded by refreshGrantTimeout.
 func (c *Client) refresh(ctx context.Context, t *Token) (*Token, error) {
 	if l, ok := c.Session.(interface {
 		Lock(ctx context.Context) (unlock func(), err error)
@@ -3697,13 +4048,16 @@ func (c *Client) refresh(ctx context.Context, t *Token) (*Token, error) {
 		}
 		t = cur
 	}
+	endpoint := c.endpoints(ctx).TokenEndpoint // discovery spends nothing: a caller that gives up may stop it
+	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshGrantTimeout)
+	defer cancel()
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {t.RefreshToken}, "client_id": {ClientID}}
-	tr, err := c.postToken(ctx, c.endpoints(ctx).TokenEndpoint, form)
+	tr, err := c.postToken(gctx, endpoint, form)
 	if err != nil {
 		return nil, err
 	}
 	nt := c.tokenFrom(tr, t.Method, t)
-	if err := c.setToken(ctx, nt); err != nil {
+	if err := c.setToken(gctx, nt); err != nil {
 		return nil, err
 	}
 	return nt, nil
@@ -4034,6 +4388,28 @@ func TestAdoptDropsADeadLoginAndTriesTheNextProfile(t *testing.T) {
 	}
 }
 
+// A20: the exchange spends the older refresh token, so what becomes of it in the vault is settled even
+// when the caller gives up while monoes.me is answering (Ctrl-C at the first command after the update):
+// the session is stored, the vault entry is gone, and nothing is presented twice.
+func TestAdoptCompletesWhenTheCallerGivesUp(t *testing.T) {
+	f := newAdoptFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.fake.OnToken(cancel)
+	if adopted, err := library.AdoptIntoAccount(ctx, f.db.DB, f.guard); err != nil || !adopted {
+		t.Fatalf("adopted %v, %v", adopted, err)
+	}
+	if sess := f.session(t); sess == nil || sess.Host != f.fake.URL {
+		t.Fatalf("session present %v", sess != nil)
+	}
+	if tok, _ := f.vault.Load(context.Background()); tok != nil {
+		t.Fatal("the adopted login is still in the vault: the spent refresh token would be presented again")
+	}
+	if f.fake.Replays != 0 {
+		t.Fatal("a refresh token was presented after it was spent")
+	}
+}
+
 // Nothing on disk until a write: a machine with no older login makes no account folder.
 func TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin(t *testing.T) {
 	keyring.MockInit()
@@ -4060,7 +4436,7 @@ func TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin(t *testing.T) {
 - [ ] **Step 2: Run them and watch them fail.**
 
 ```bash
-go test ./internal/library/ -run '^(TestAdoptTurnsAnOlderLoginIntoTheSession|TestAdoptIsDormantUntilTheGateIs|TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin|TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce|TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued|TestAdoptDropsADeadLoginAndTriesTheNextProfile|TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin)$' -count=1
+go test ./internal/library/ -run '^(TestAdoptTurnsAnOlderLoginIntoTheSession|TestAdoptIsDormantUntilTheGateIs|TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin|TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce|TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued|TestAdoptDropsADeadLoginAndTriesTheNextProfile|TestAdoptCompletesWhenTheCallerGivesUp|TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin)$' -count=1
 ```
 
 Expected: FAIL, build error: `undefined: library.AdoptIntoAccount`.
@@ -4074,7 +4450,7 @@ FAIL
 internal/library/adopt_test.go:94:26: undefined: library.AdoptIntoAccount
 internal/library/adopt_test.go:108:27: undefined: library.AdoptIntoAccount
 internal/library/adopt_test.go:120:29: undefined: library.AdoptIntoAccount
-internal/library/adopt_test.go:243:29: undefined: library.AdoptIntoAccount
+internal/library/adopt_test.go:265:29: undefined: library.AdoptIntoAccount
 ```
 
 - [ ] **Step 3: Implement the adoption.**
@@ -4092,6 +4468,10 @@ import (
 	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
+
+// vaultWriteTimeout bounds the update of an older login's vault entry once its exchange is done:
+// a local database write, made on a context the caller's cancellation does not reach (A20).
+const vaultWriteTimeout = 10 * time.Second
 
 // AdoptIntoAccount turns an older monoes.me library login into the machine session
 // (spec D23): the first profile, the active one first, whose vault holds a login
@@ -4115,7 +4495,10 @@ import (
 // something no session can be made of): the login stays, with the tokens monoes.me
 // issued when it answered, and the call stops there. The older login is read and
 // updated under the account store lock, so no other process presents its token
-// meanwhile. A caller that must judge at once afterwards builds a new guard.
+// meanwhile. Once an exchange is sent it is completed, and what became of the older
+// refresh token is written to the vault, even if ctx is cancelled meanwhile (A20): a
+// spent refresh token left in the vault would be presented again. A caller that must
+// judge at once afterwards builds a new guard.
 func AdoptIntoAccount(ctx context.Context, db *sql.DB, g *account.Guard) (adopted bool, err error) {
 	if db == nil || g == nil || account.EnforceDate().IsZero() {
 		return false, nil
@@ -4151,11 +4534,15 @@ func AdoptIntoAccount(ctx context.Context, db *sql.DB, g *account.Guard) (adopte
 			}
 			return tok.RefreshToken, u, true
 		}, func(res account.AdoptResult) {
+			// The exchange has spent the older refresh token, so what becomes of it is settled even if
+			// the caller gave up meanwhile (A20): a context of its own, bounded.
+			vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), vaultWriteTimeout)
+			defer cancel()
 			switch {
 			case res.Adopted, res.Dead:
-				_ = vs.Delete(ctx) // adopted, or dead: it must never be presented again
+				_ = vs.Delete(vctx) // adopted, or dead: it must never be presented again
 			case res.Tokens != nil && cur != nil:
-				keepAlive(ctx, vs, cur, res.Tokens)
+				keepAlive(vctx, vs, cur, res.Tokens)
 			}
 		})
 		switch {
@@ -4200,7 +4587,7 @@ func keepAlive(ctx context.Context, vs *VaultStore, tok *Token, ts *account.Toke
 - [ ] **Step 4: Run the tests.**
 
 ```bash
-go test ./internal/library/ -run '^(TestAdoptTurnsAnOlderLoginIntoTheSession|TestAdoptIsDormantUntilTheGateIs|TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin|TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce|TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued|TestAdoptDropsADeadLoginAndTriesTheNextProfile|TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin)$' -count=1 -race
+go test ./internal/library/ -run '^(TestAdoptTurnsAnOlderLoginIntoTheSession|TestAdoptIsDormantUntilTheGateIs|TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin|TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce|TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued|TestAdoptDropsADeadLoginAndTriesTheNextProfile|TestAdoptCompletesWhenTheCallerGivesUp|TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin)$' -count=1 -race
 ```
 
 Expected: `ok  	github.com/monoes/mono-agent/internal/library` (the first test builds the migrated template database, a few seconds).
@@ -4573,6 +4960,13 @@ func TestAccountLoginStatusLogout(t *testing.T) {
 	if st, code = f.accountStatus(); code != 4 || st.Reason != account.ReasonNotLoggedIn {
 		t.Fatalf("after logout: exit %d, %+v", code, st)
 	}
+	// What a person reads after logging out is the plain "not logged in": the record that logout
+	// keeps (a session with no token, A23) is not a login and says nothing of its own. Logging out
+	// again is not an error.
+	if _, _, err := runCLI(t, f.home, "account", "status"); exitCodeFor(err) != 4 || !strings.Contains(err.Error(), "Not logged in to monoes.me. Run: monoagentcli account login") {
+		t.Fatalf("account status after logout: %v", err)
+	}
+	f.must(nil, "account", "logout")
 }
 
 // Spec D5 and D27: a blocked account is locked at its next renewal and signs in
@@ -5478,6 +5872,8 @@ The code of every task was built and run in a scratch export of the repository a
 The twelve tasks were then replayed in order on that tree exactly as written here (every code block, command and edit of this document is generated from the files that were run): every failing run failed as stated, every implementation made it pass, every commit step's paths existed. Results: the new tests pass with `-race` in `internal/account`, `internal/library` and `cmd/monoagentcli`, and `internal/account` and `internal/library` also pass with `-tags devaccount`; B1a's own tests, its import-rule test and its default-build development-key test included, still pass with this plan's files in the package; `go build ./...`, `go build -tags nosocial -o /dev/null`, `go build -tags devaccount -o /dev/null`, `go vet` of the touched packages and `gofmt -l .` are clean, and the two packages also build and vet for `windows/amd64` and `linux/amd64`. The whole `cmd/monoagentcli` package fails only the four tests that already fail on pristine master (index §4: `TestCaptureTaskFilesOnTheBoard`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks`, `TestCoderConversationFolders`) and the load flake `TestAgentTestGoDeadline`.
 
 Thirteen deliberate breakages of the finished tree each made the named test fail, and were undone: any OAuth error read as a refusal, the session handed to any host, the sign-in without the audience, the emailed code without the audience, an emailed refresh token that is not traded, an older login refreshed without the account lock, adoption reading the older login before it takes the lock, adoption leaving a dead login in the vault, adoption going on after a login it cannot judge, a mismatched development key, logout leaving an unreadable session behind, the login-required document losing its `code`, and the default store ignoring a test's sealer.
+
+The amendments of spec A20 to A23 (what the second security review of B1a found for this plan) were replayed afterwards in a scratch export on B1a's merged branches as they stood then (`feat/account-core`, `feat/account-hardening`, `feat/account-t9` and `feat/account-t10`; the security fix branch was not in them): Tasks 1 to 12 as amended, with `gofmt`, `go vet` (also with `-tags devaccount`), `go build ./cmd/monoagentcli`, `go test -race` of `internal/account`, `internal/library`, `internal/library/libraryfake` and the account and library tests of `cmd/monoagentcli`, and the account and library packages again with `-tags devaccount`, all clean. Each new test failed against the code it replaces. The old `Logout` (the refresh token read before the lock, `session.json` removed) fails `TestLogoutRevokesAndForgetsEvenOffline`, `TestLogoutForgetsAnUnreadableSession`, `TestLogoutKeepsTheClockGuardRecord`, `TestASecondLogoutChangesNothing` and `TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock`, and reading the refresh token before the lock fails the last alone; an exchange, a library refresh or a vault update on the caller's own context fails `TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall` (the fake has rotated the token and the adoption reports "not adopted"), `TestOlderLoginRefreshIsStoredWhenTheCallerGivesUp` and `TestAdoptCompletesWhenTheCallerGivesUp` respectively; a typed-nil error on the HTTP-error path fails `TestRefresherNeverReturnsATypedNilError`; a `TrustedKeys` that passes no extra keys, or shares them, fails `TestDevaccountTrustedKeysReturnsACopy`. `TestLoginAfterLogoutReplacesTheRecord` and the lines added to `TestLogoutNeverRevokesOverPlainHTTP` and `TestAccountLoginStatusLogout` guard the new design and also pass against the old code.
 
 Replaying against B1a's real code found one trap the plan now avoids: `internal/secrets` keeps the account key it first made for the whole process, while the CLI tests re-make the mock keyring in most tests, so the second sign-in of a test binary sealed a refresh token that the next renewal could not open (the decision on the sealer above, `account.SetSealerForTest`, Task 7).
 
