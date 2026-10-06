@@ -268,6 +268,11 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 				// org run prints a signature refusal on stdout.
 				msg = strings.TrimSpace(msg + "\n" + stdout.String())
 			}
+			// ...and a host (R6) or daemon-lock (R1) refusal too, leaving only
+			// "[ERROR] org start failed" on stderr.
+			if r := asStartRefusal(name, stdout.String()+"\n"+msg); r != nil {
+				return nil, r
+			}
 			return nil, asSignatureRefusal(name, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg))
 		}
 		trimmed := bytes.TrimSpace(stdout.Bytes())
@@ -302,12 +307,21 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	}
 	cmd := Command(bin, args...)
 	inRoot(cmd, projectRoot)
-	cmd, err = startDetached(cmd)
+	// A start monomind refuses (R6/R1) exits at once and says why on its
+	// output; keep that (boundedly) to report it instead of a start nobody
+	// sees fail.
+	capture, err := newStartCapture()
 	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	cmd.Stdout, cmd.Stderr = capture.f, capture.f
+	began := time.Now()
+	cmd, err = startDetached(cmd)
+	if err != nil {
+		capture.close()
+		return fmt.Errorf("start monomind org run %s: %w", name, err)
+	}
+	return watchStart(ctx, cmd, name, capture, func() bool { return runStarted(projectRoot, name, began) })
 }
 
 // OrgStatus returns one org's status, or every org's status when name=="".
