@@ -63,7 +63,7 @@ func TestApproveRefusesAnyTaskThatIsNotInInbox(t *testing.T) {
 }
 
 // A call that names several tasks is one transaction: the task that fails fails all of them, and
-// the error names it. A task named twice is the second time in the state the first left it in.
+// the error names it. A task named twice is refused as that, before anything is read.
 func TestBulkCallsAreAllOrNothingAndNameTheTaskThatFailed(t *testing.T) {
 	s, db, _ := newTestStore(t)
 	other := addProfile(t, db, "p2")
@@ -87,15 +87,15 @@ func TestBulkCallsAreAllOrNothingAndNameTheTaskThatFailed(t *testing.T) {
 		{"approve: a task in Ready", approve(g1.ID, ready.ID, g2.ID), ErrInvalid, fmt.Sprintf("#%d", ready.ID)},
 		{"approve: an unknown id", approve(g1.ID, 424242, g2.ID), ErrNotFound, "#424242"},
 		{"approve: another profile's task", approve(g1.ID, theirs.ID, g2.ID), ErrNotFound, fmt.Sprintf("#%d", theirs.ID)},
-		{"approve: the same task twice", approve(g1.ID, g1.ID), ErrInvalid, fmt.Sprintf("#%d", g1.ID)},
+		{"approve: the same task twice", approve(g1.ID, g1.ID), ErrInvalid, fmt.Sprintf("task #%d is named twice", g1.ID)},
 		{"approve: no task", approve(), ErrInvalid, ""},
 		{"archive: an archived task", archive(g1.ID, arch.ID, g2.ID), ErrInvalid, fmt.Sprintf("#%d is already archived", arch.ID)},
 		{"archive: an unknown id", archive(g1.ID, 424242), ErrNotFound, "#424242"},
-		{"archive: the same task twice", archive(g1.ID, g1.ID), ErrInvalid, fmt.Sprintf("#%d is already archived", g1.ID)},
+		{"archive: the same task twice", archive(g1.ID, g1.ID), ErrInvalid, fmt.Sprintf("task #%d is named twice", g1.ID)},
 		{"archive: no task", archive(), ErrInvalid, ""},
 		{"unarchive: a task that is not archived", unarchive(arch.ID, g1.ID), ErrInvalid, fmt.Sprintf("#%d is inbox, not archived", g1.ID)},
 		{"unarchive: an unknown id", unarchive(arch.ID, 424242), ErrNotFound, "#424242"},
-		{"unarchive: the same task twice", unarchive(arch.ID, arch.ID), ErrInvalid, fmt.Sprintf("#%d is ", arch.ID)},
+		{"unarchive: the same task twice", unarchive(arch.ID, arch.ID), ErrInvalid, fmt.Sprintf("task #%d is named twice", arch.ID)},
 		{"unarchive: no task", unarchive(), ErrInvalid, ""},
 	} {
 		if !errors.Is(k.err, k.want) || (k.err != nil && !strings.Contains(k.err.Error(), k.says)) {

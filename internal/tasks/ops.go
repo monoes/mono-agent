@@ -101,7 +101,8 @@ func (s *Store) columnOf(ctx context.Context, x dbx, profileID string, st Status
 // the last position together, reads all of it: this asks for the last only, which the
 // index answers at once, so that archiving a column does not read the whole archive
 // again for each card. The card being archived is not in the archive yet, so no card
-// is left out.
+// is left out. Like every end it is refused, with errPositionRange, where the last
+// card leaves no room for a gap.
 func (s *Store) archiveEnd(ctx context.Context, x dbx, profileID string) (int64, error) {
 	var hi sql.NullInt64
 	err := x.QueryRowContext(ctx,
@@ -112,7 +113,7 @@ func (s *Store) archiveEnd(ctx context.Context, x dbx, profileID string) (int64,
 	if !hi.Valid {
 		return positionGap, nil
 	}
-	return hi.Int64 + positionGap, nil
+	return gapBelow(hi.Int64)
 }
 
 // placeIn returns the position that puts card id where p says in column `to`
@@ -134,6 +135,9 @@ func (s *Store) placeIn(ctx context.Context, x dbx, profileID string, id int64, 
 	if p.After != 0 {
 		ref = p.After
 	}
+	if ref == id {
+		return 0, invalid("a task cannot be placed before or after itself")
+	}
 	ids, pos, err := s.columnOf(ctx, x, profileID, to, id)
 	if err != nil {
 		return 0, err
@@ -147,9 +151,9 @@ func (s *Store) placeIn(ctx context.Context, x dbx, profileID string, id int64, 
 	}
 	switch {
 	case idx == 0:
-		return pos[0] - positionGap, nil
+		return gapAbove(pos[0])
 	case idx == len(ids):
-		return pos[idx-1] + positionGap, nil
+		return gapBelow(pos[idx-1])
 	case pos[idx]-pos[idx-1] >= 2:
 		return pos[idx-1] + (pos[idx]-pos[idx-1])/2, nil
 	}
@@ -241,24 +245,45 @@ func (s *Store) Move(ctx context.Context, profileID string, id int64, to Status,
 	return out, nil
 }
 
-// each runs fn on every id in one transaction and returns the tasks as they are
-// afterwards, in the order of the ids. Any failure undoes all of it; the revision
-// moves once for the whole call.
-func (s *Store) each(ctx context.Context, profileID string, ids []int64, fn func(x dbx, cur Task) error) ([]Task, error) {
+// each runs a verb on the tasks named, in one transaction, and returns them as they
+// are afterwards, in the order of the ids. A task named twice is refused up front.
+// Every task is read and checked in the order the ids are given, so a refusal names
+// the first task that is wrong; then apply runs on each of them, from the first to
+// the last or, with reverse, from the last to the first. Any failure undoes all of
+// it; the revision moves once for the whole call.
+func (s *Store) each(ctx context.Context, profileID string, ids []int64, reverse bool, check func(cur Task) error, apply func(x dbx, cur Task) error) ([]Task, error) {
 	if len(ids) == 0 {
 		return nil, invalid("name at least one task")
+	}
+	named := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if named[id] {
+			return nil, invalid("task #%d is named twice", id)
+		}
+		named[id] = true
 	}
 	var out []Task
 	err := s.tx(ctx, func(x dbx) error {
 		if _, err := s.profileOf(ctx, x, profileID); err != nil {
 			return err
 		}
+		cards := make([]Task, 0, len(ids))
 		for _, id := range ids {
 			cur, err := s.getTx(ctx, x, profileID, id)
 			if err != nil {
 				return err
 			}
-			if err := fn(x, cur); err != nil {
+			if err := check(cur); err != nil {
+				return err
+			}
+			cards = append(cards, cur)
+		}
+		for i := range cards {
+			cur := cards[i]
+			if reverse {
+				cur = cards[len(cards)-1-i]
+			}
+			if err := apply(x, cur); err != nil {
 				return err
 			}
 		}
@@ -283,26 +308,29 @@ func (s *Store) each(ctx context.Context, profileID string, ids []int64, fn func
 
 // Approve moves Inbox tasks to Ready, to the bottom of the queue or, with top, the
 // top of it, in the order the ids are given either way. A task that is not in
-// Inbox refuses the whole call.
+// Inbox refuses the whole call, and the refusal names the first one in that order.
+// With top the group is placed from the last id to the first, each on the top of
+// the queue: the first id ends on the very top, and only the end of the column is
+// read, so the queue is never renumbered (each id put after the one before it
+// would halve the room above the old top every time).
 func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top bool, actor Actor) ([]Task, error) {
 	if actor.Kind != Human {
 		return nil, operatorOnly("approve a task")
 	}
-	var prev int64
-	return s.each(ctx, profileID, ids, func(x dbx, cur Task) error {
-		if cur.Status != StatusInbox {
-			return invalid("task #%d is %s, not inbox: only an inbox task is approved", cur.ID, cur.Status)
-		}
-		p := Placement{Bottom: true}
-		if top {
-			p = Placement{Top: true}
-			if prev != 0 {
-				p = Placement{After: prev} // each id on top in turn would reverse the group
+	p := Placement{Bottom: true}
+	if top {
+		p = Placement{Top: true}
+	}
+	return s.each(ctx, profileID, ids, top,
+		func(cur Task) error {
+			if cur.Status != StatusInbox {
+				return invalid("task #%d is %s, not inbox: only an inbox task is approved", cur.ID, cur.Status)
 			}
-		}
-		prev = cur.ID
-		return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", "approved")
-	})
+			return nil
+		},
+		func(x dbx, cur Task) error {
+			return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", "approved")
+		})
 }
 
 // Archive hides tasks from the board, keeping them.
@@ -310,12 +338,16 @@ func (s *Store) Archive(ctx context.Context, profileID string, ids []int64, acto
 	if actor.Kind != Human {
 		return nil, operatorOnly("archive a task")
 	}
-	return s.each(ctx, profileID, ids, func(x dbx, cur Task) error {
-		if cur.Status == StatusArchived {
-			return invalid("task #%d is already archived", cur.ID)
-		}
-		return s.moveTx(ctx, x, profileID, cur, StatusArchived, Placement{Bottom: true}, actor, "archived", "")
-	})
+	return s.each(ctx, profileID, ids, false,
+		func(cur Task) error {
+			if cur.Status == StatusArchived {
+				return invalid("task #%d is already archived", cur.ID)
+			}
+			return nil
+		},
+		func(x dbx, cur Task) error {
+			return s.moveTx(ctx, x, profileID, cur, StatusArchived, Placement{Bottom: true}, actor, "archived", "")
+		})
 }
 
 // ArchiveStatus archives every task of one column, in the order it is in, and
@@ -364,26 +396,30 @@ func (s *Store) Unarchive(ctx context.Context, profileID string, ids []int64, ac
 	if actor.Kind != Human {
 		return nil, operatorOnly("unarchive a task")
 	}
-	return s.each(ctx, profileID, ids, func(x dbx, cur Task) error {
-		if cur.Status != StatusArchived {
-			return invalid("task #%d is %s, not archived", cur.ID, cur.Status)
-		}
-		to := StatusInbox
-		var from string
-		err := x.QueryRowContext(ctx,
-			`SELECT from_status FROM task_events WHERE task_id = ? AND kind = 'archived' ORDER BY id DESC LIMIT 1`, cur.ID).Scan(&from)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-		case err != nil:
-			return fmt.Errorf("tasks: reading where #%d was archived from: %w", cur.ID, err)
-		default:
-			if st, perr := ParseStatus(from); perr == nil && st.IsBoard() {
-				to = st
+	return s.each(ctx, profileID, ids, false,
+		func(cur Task) error {
+			if cur.Status != StatusArchived {
+				return invalid("task #%d is %s, not archived", cur.ID, cur.Status)
 			}
-		}
-		if to == StatusInProgress {
-			to = StatusReady
-		}
-		return s.moveTx(ctx, x, profileID, cur, to, Placement{}, actor, "unarchived", "")
-	})
+			return nil
+		},
+		func(x dbx, cur Task) error {
+			to := StatusInbox
+			var from string
+			err := x.QueryRowContext(ctx,
+				`SELECT from_status FROM task_events WHERE task_id = ? AND kind = 'archived' ORDER BY id DESC LIMIT 1`, cur.ID).Scan(&from)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+			case err != nil:
+				return fmt.Errorf("tasks: reading where #%d was archived from: %w", cur.ID, err)
+			default:
+				if st, perr := ParseStatus(from); perr == nil && st.IsBoard() {
+					to = st
+				}
+			}
+			if to == StatusInProgress {
+				to = StatusReady
+			}
+			return s.moveTx(ctx, x, profileID, cur, to, Placement{}, actor, "unarchived", "")
+		})
 }

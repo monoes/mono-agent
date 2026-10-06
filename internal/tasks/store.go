@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -114,8 +115,31 @@ func (s *Store) bump(ctx context.Context, x dbx, profileID string) error {
 // is chronological, at the end of a queue otherwise.
 func atTop(st Status) bool { return st == StatusInbox || st == StatusReview || st == StatusDone }
 
+// errPositionRange is what an end placement answers when the card at that end of a
+// column is so near the limit of an int64 that one more gap would wrap round and put
+// the new card at the other end. A move changes a position by one gap, so only a row
+// written by hand or imported gets there; it is a plain error, not an invalid request.
+var errPositionRange = errors.New("tasks: positions in this column are out of range")
+
+// gapAbove is the position one gap above pos, which is before it in the column, and
+// gapBelow the position one gap below it. Neither wraps: they refuse.
+func gapAbove(pos int64) (int64, error) {
+	if pos < math.MinInt64+positionGap {
+		return 0, errPositionRange
+	}
+	return pos - positionGap, nil
+}
+
+func gapBelow(pos int64) (int64, error) {
+	if pos > math.MaxInt64-positionGap {
+		return 0, errPositionRange
+	}
+	return pos + positionGap, nil
+}
+
 // edgePosition is a position above every other card of the column (top) or
-// below every one (bottom), ignoring the card except.
+// below every one (bottom), ignoring the card except. It is refused, with
+// errPositionRange, where the end card leaves no room for a gap.
 func (s *Store) edgePosition(ctx context.Context, x dbx, profileID string, status Status, top bool, except int64) (int64, error) {
 	var lo, hi sql.NullInt64
 	err := x.QueryRowContext(ctx,
@@ -128,9 +152,9 @@ func (s *Store) edgePosition(ctx context.Context, x dbx, profileID string, statu
 	case !lo.Valid:
 		return positionGap, nil
 	case top:
-		return lo.Int64 - positionGap, nil
+		return gapAbove(lo.Int64)
 	}
-	return hi.Int64 + positionGap, nil
+	return gapBelow(hi.Int64)
 }
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
@@ -298,11 +322,18 @@ func sourceKindFor(actor Actor, requested string) (string, error) {
 	return "", invalid("unknown actor")
 }
 
+// openTasksSQL counts the tasks of a profile that are on the board. It names the five
+// columns where it could leave the archive out (status <> 'archived'): the archive has
+// no limit, and a range that leaves one value out is read entry by entry, archive
+// included, by every add and by every card that comes back from it, while five
+// equalities are five seeks in the index, bounded by the 2,000 open tasks.
+const openTasksSQL = `SELECT COUNT(*) FROM tasks WHERE profile_id = ? AND status IN ('inbox', 'ready', 'in_progress', 'review', 'done')`
+
 // checkAddLimits refuses a task that would pass the board's size or the hourly
 // limit on agent-created tasks.
 func (s *Store) checkAddLimits(ctx context.Context, x dbx, profileID, kind string) error {
 	var open int
-	if err := x.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE profile_id = ? AND status <> 'archived'`, profileID).Scan(&open); err != nil {
+	if err := x.QueryRowContext(ctx, openTasksSQL, profileID).Scan(&open); err != nil {
 		return fmt.Errorf("tasks: counting tasks: %w", err)
 	}
 	if open >= MaxOpenTasks {
