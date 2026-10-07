@@ -410,6 +410,8 @@ function drawProfiles(state) {
 
   // The binding select offers the same list; redraw it when the list changes.
   if (typeof panelBinding !== "undefined") panelBinding.redraw();
+  // The task box names the profile too (sidepanel_tasks.js).
+  document.dispatchEvent(new CustomEvent("panel:profiles"));
 }
 
 function openProfileMenu() {
@@ -450,6 +452,7 @@ profileOptions.addEventListener("change", async (event) => {
   // A choice made here supersedes a "your profile was deleted" note.
   if (profileNote.dataset.tone === "warn") profileNote.hidden = true;
   if (lastFormState) lastFormState = Object.assign({}, lastFormState, { profile: id, profileChanged: false });
+  document.dispatchEvent(new CustomEvent("panel:profiles"));
   await ask({ type: "capture_profile_set", profile: id });
 });
 
