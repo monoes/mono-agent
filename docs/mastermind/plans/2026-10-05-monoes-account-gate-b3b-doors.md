@@ -4,7 +4,7 @@
 
 **Goal:** Every network door of the daemon (the HTTP API, the org receiver, `/v1` on both of its listeners, the webhook server, the extension bridge and MCP) refuses work while the machine holds no valid monoes.me login, answers in its own wire shape, and stays open in `grace` and while dormant.
 
-**Architecture:** Each door asks `account.Require` (the process guard's cached verdict, no I/O) where it first looks at a request, and answers through a new small package, `internal/accountdoor`, which holds the one sentence, the one code and the one account summary. The HTTP API also gets a default-deny gate in front of its whole mux, because routes mounted through `ExtraRoutes` bring their own authentication and `Server.auth` cannot wrap them. Every door judges each request afresh and refuses call by call without cutting a stream, so a sign-in works on a running process at once and work in flight finishes (spec §6.4).
+**Architecture:** Each door asks `account.Require` (the process guard's cached verdict, no I/O) where it first looks at a request, and answers through a new small package, `internal/accountdoor`, which holds the one sentence, the one code and the one account summary. The HTTP API also gets a default-deny gate in front of its whole mux, because routes mounted through `ExtraRoutes` bring their own authentication and `Server.auth` cannot wrap them. Every door judges each request afresh and refuses call by call without cutting a stream or a socket, so a sign-in works on a running process at once and a turn or stream a door already let in finishes (spec §6.4 as amended by ruling R4 of 2026-10-07, which ends a run of the engine at its next node: that check is B3a's).
 
 **Tech Stack:** Go 1.26 (`net/http` and `gorilla/websocket`, both already used), `internal/account` and `internal/account/accounttest` (B1a), OpenAPI 3.0.3 linted with `@redocly/cli@2.49.0` (CI job `openapi-lint`).
 
@@ -23,6 +23,7 @@ Copied from the index §2; the ones that bind these doors.
 - `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build, and a default build honors `MONOES_BASE_URL` nowhere: the library talks only to monoes.me, `library login` against another host refuses and names `-tags devaccount`, and the session token is sent only to the host that issued it. A local monoes.me dev server needs a `-tags devaccount` build.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
+  - This plan only: `internal/orgbridge/receiver.go` (515 lines) and `internal/extension/server.go` (805) were over 500 lines before it. Tasks 4 and 7 add 9 and 5 lines to them and do not split them (ruled 2026-10-07); every other addition goes to a new file.
 - Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
 
 ## Review Focus
@@ -73,8 +74,7 @@ The failure modes the spec implies that the per-door tables alone would not exer
   const Code = "login_required"
   type Summary struct{ State account.State; Reason account.Reason; ValidUntil time.Time; Enforced bool } // JSON state, reason, valid_until (omitted when zero), enforced
   func SummaryOf(st account.Status) Summary                 // never carries the user
-  func Refusal(err error) account.Status                    // the verdict behind an error from account.Require
-  func WriteUnauthorized(w http.ResponseWriter, err error)  // 401 {"error":"login_required","login_required":true,"account":{"state","reason"}}
+  func WriteUnauthorized(w http.ResponseWriter, err error)  // 401 {"error":"login_required","login_required":true,"account":{"state","reason"}}: the verdict err carries
   package doortest
   type Row struct{ Name string; Mode accounttest.Mode; Refused bool; State, Reason string; Enforced bool }
   var Modes []Row // signed in, grace, dormant (allowed; dormant is not enforced); locked/no login, locked/refused (refused)
@@ -123,6 +123,7 @@ package accountdoor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,6 +151,20 @@ func TestWriteUnauthorizedBody(t *testing.T) {
 	const want = `{"error":"login_required","login_required":true,"account":{"state":"locked","reason":"refused"}}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s\nwant   %s", got, want)
+	}
+}
+
+// account.Require refuses with a *LoginRequiredError, whose verdict the body
+// carries. Any other error is described by the current verdict, so the body
+// always says what the account is.
+func TestWriteUnauthorizedDescribesAnyOtherErrorByTheCurrentVerdict(t *testing.T) {
+	accounttest.Install(t, accounttest.LockedRefused)
+	rec := httptest.NewRecorder()
+	WriteUnauthorized(rec, errors.New("not a verdict"))
+
+	const want = `{"error":"login_required","login_required":true,"account":{"state":"locked","reason":"refused"}}`
+	if got := strings.TrimSpace(rec.Body.String()); rec.Code != http.StatusUnauthorized || got != want {
+		t.Errorf("%d %s\nwant 401 %s", rec.Code, got, want)
 	}
 }
 
@@ -196,7 +211,7 @@ func TestRequireInEveryState(t *testing.T) {
 - [ ] **Step 3: Run it and watch it fail**
 
 Run: `go test ./internal/accountdoor/... -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
-Expected: `FAIL github.com/monoes/mono-agent/internal/accountdoor [build failed]` with `accountdoor_test.go:…: undefined: Message` (and `Code`, `WriteUnauthorized`, `Refusal`, `SummaryOf`).
+Expected: `FAIL github.com/monoes/mono-agent/internal/accountdoor [build failed]` with `accountdoor_test.go:…: undefined: Message` (and `Code`, `WriteUnauthorized`, `SummaryOf`).
 
 - [ ] **Step 4: Implement** `internal/accountdoor/accountdoor.go`:
 
@@ -242,17 +257,6 @@ func SummaryOf(st account.Status) Summary {
 	return Summary{State: st.State, Reason: st.Reason, ValidUntil: st.ValidUntil, Enforced: st.Enforced}
 }
 
-// Refusal is the verdict behind an error from account.Require. Any error
-// refuses; one that is not a *account.LoginRequiredError is described by the
-// current verdict.
-func Refusal(err error) account.Status {
-	var lre *account.LoginRequiredError
-	if errors.As(err, &lre) {
-		return lre.Status
-	}
-	return account.CurrentStatus()
-}
-
 type lockedAccount struct {
 	State  account.State  `json:"state"`
 	Reason account.Reason `json:"reason"`
@@ -267,15 +271,20 @@ type unauthorizedBody struct {
 // WriteUnauthorized answers a refused HTTP request as the HTTP API and the org
 // receiver do: 401 and {"error":"login_required","login_required":true,
 // "account":{"state","reason"}}. It sets no WWW-Authenticate header: the
-// caller's bearer is not what was refused.
+// caller's bearer is not what was refused. The account is the verdict err
+// carries (account.Require refuses with a *account.LoginRequiredError); any
+// other error is described by the current verdict.
 func WriteUnauthorized(w http.ResponseWriter, err error) {
-	st := Refusal(err)
+	var refusal *account.LoginRequiredError
+	if !errors.As(err, &refusal) {
+		refusal = &account.LoginRequiredError{Status: account.CurrentStatus()}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(unauthorizedBody{
 		Error:         Code,
 		LoginRequired: true,
-		Account:       lockedAccount{State: st.State, Reason: st.Reason},
+		Account:       lockedAccount{State: refusal.Status.State, Reason: refusal.Status.Reason},
 	})
 }
 ```
@@ -303,7 +312,7 @@ The gate in front of the mux is the door of every route. `Server.auth` keeps its
 - Modify: `internal/httpapi/server.go`: imports (3-14), `Server` (27-32), `NewServer` (48), `Handler` (74-77), `Serve` (94), `auth` (155-157), before `bearerCredential` (172), `handleHealth` (201)
 
 **Interfaces:**
-- Consumes: `accountdoor.WriteUnauthorized`, `accountdoor.SummaryOf`, `account.Require`, `account.CurrentStatus`, `doortest.Modes`, `accounttest.Install`; the package's `newTestServer(t, allowMutations bool) *Server`, `testToken(t, s) string`, `doReq(t, s, method, path, token string, body []byte) *httptest.ResponseRecorder` (`server_test.go:37`, `66`, `75`) and `tokenSecretName` (`token.go:20`).
+- Consumes: `accountdoor.WriteUnauthorized`, `accountdoor.SummaryOf`, `account.Require`, `account.CurrentStatus`, `doortest.Modes`, `accounttest.Install`; the package's `NewServer(Options{…, ExtraRoutes})`, `newTestServer(t, allowMutations bool) *Server`, `testToken(t, s) string`, `doReq(t, s, method, path, token string, body []byte) *httptest.ResponseRecorder` (`server_test.go:37`, `66`, `75`) and `tokenSecretName` (`token.go:20`).
 - Produces: `func accountGate(next http.Handler) http.Handler`, `func openWhileLocked(r *http.Request) bool`, the field `Server.handler` (which `Handler()` and `Serve` now use). Open while locked: `GET` and `HEAD /health`, and the `/v1` paths, whose gateway answers in the OpenAI envelope (Task 5). Everything else gets the 401 body of index §3.4 item 5. `GET /health` gains `"account":{"state","reason","valid_until","enforced"}`.
 
 - [ ] **Step 1: Write the failing tests** `internal/httpapi/account_door_test.go`:
@@ -317,6 +326,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -406,32 +416,46 @@ func TestLockedServerRefusesEveryPathButHealth(t *testing.T) {
 		{"POST", "/org-endpoint/x"}, {"GET", "/nope"}, {"POST", "/health"}, {"GET", "/health/"},
 		{"GET", "//workflows"}, {"GET", "/./workflows"}, {"GET", "/WORKFLOWS"}, {"GET", "/v1x"},
 	}
-	for _, mutations := range []bool{false, true} {
-		s := newTestServer(t, mutations)
-		tok := testToken(t, s)
-		accounttest.Install(t, accounttest.LockedNoLogin)
-		for _, p := range paths {
-			wantLoginRequired(t, doReq(t, s, p.method, p.path, tok, nil), "locked", "not_logged_in")
-		}
-		rec := doReq(t, s, http.MethodGet, "/v1/../workflows", tok, nil)
-		if loc := rec.Header().Get("Location"); rec.Code == http.StatusOK || loc == "" {
-			t.Fatalf("GET /v1/../workflows = %d, want a redirect", rec.Code)
-		} else {
-			wantLoginRequired(t, doReq(t, s, http.MethodGet, loc, tok, nil), "locked", "not_logged_in")
-		}
+	for _, server := range []struct {
+		name      string
+		mutations bool
+	}{{"read-only", false}, {"mutations allowed", true}} {
+		t.Run(server.name, func(t *testing.T) {
+			s := newTestServer(t, server.mutations)
+			tok := testToken(t, s)
+			accounttest.Install(t, accounttest.LockedNoLogin)
+			for _, p := range paths {
+				wantLoginRequired(t, doReq(t, s, p.method, p.path, tok, nil), "locked", "not_logged_in")
+			}
+			rec := doReq(t, s, http.MethodGet, "/v1/../workflows", tok, nil)
+			if loc := rec.Header().Get("Location"); rec.Code == http.StatusOK || loc == "" {
+				t.Fatalf("GET /v1/../workflows = %d, want a redirect", rec.Code)
+			} else {
+				wantLoginRequired(t, doReq(t, s, http.MethodGet, loc, tok, nil), "locked", "not_logged_in")
+			}
+		})
 	}
 }
 
 // A route registered through ExtraRoutes brings its own authentication, so auth
-// cannot wrap it: one that forgot a door is still refused by the gate.
+// cannot wrap it: one that forgot a door is still refused by the gate that
+// NewServer puts in front of the mux.
 func TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused(t *testing.T) {
 	var reached int
-	s := newTestServer(t, false)
-	s.opts.ExtraRoutes = func(mux *http.ServeMux) {
-		mux.HandleFunc("GET /extra", func(http.ResponseWriter, *http.Request) { reached++ })
+	s, err := NewServer(Options{
+		DBPath:       filepath.Join(t.TempDir(), "httpapi-test.db"),
+		Profile:      "default",
+		WorkflowsDir: filepath.Join(t.TempDir(), "workflows"),
+		Addr:         "127.0.0.1:0",
+		Version:      "test",
+		ExtraRoutes: func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /extra", func(http.ResponseWriter, *http.Request) { reached++ })
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
 	}
-	s.mux = s.routes() // registered as NewServer does, behind the same gate
-	s.handler = accountGate(s.mux)
+	t.Cleanup(s.Close)
 	for _, c := range doortest.Modes {
 		t.Run(c.Name, func(t *testing.T) {
 			reached = 0
@@ -512,7 +536,7 @@ func TestServeServesTheGatedHandler(t *testing.T) {
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `go test ./internal/httpapi/ -run '^(TestAuthenticatedRoutesAreRefusedWhileLocked|TestHealthIsOpenInEveryStateAndReportsTheAccount|TestLockedServerRefusesEveryPathButHealth|TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused|TestAuthRefusesALockedAccountBeforeTheVault|TestServeServesTheGatedHandler)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
-Expected: a build failure, `account_door_test.go:…: s.handler undefined` and `undefined: accountGate`.
+Expected: `--- FAIL` for all six (they build: they use only what the package already has): every subtest of `TestHealthIsOpenInEveryStateAndReportsTheAccount` (no `account` object yet), the subtests `locked,_no_login` and `locked,_refused` of `TestAuthenticatedRoutesAreRefusedWhileLocked` and of `TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused`, both subtests of `TestLockedServerRefusesEveryPathButHealth`, and `TestAuthRefusesALockedAccountBeforeTheVault` and `TestServeServesTheGatedHandler`.
 
 - [ ] **Step 3: Implement.** Apply these eight edits to `internal/httpapi/server.go`, in order:
 
@@ -663,10 +687,13 @@ Expected: `Your API description is valid.`, one warning (`operation-4xx-response
 +
 +
 +    Every route also needs a valid monoes.me login on the machine that serves
-+    it. While there is none every path but `GET /health` answers `401` with
-+    `login_required: true` (the `/v1` paths in their own OpenAI-shaped error),
-+    before the bearer token or the API key is looked at. `GET /health` stays
-+    open and reports the account state.
++    it. While there is none, every request but `GET` and `HEAD /health` gets
++    `401` with `login_required: true` before the bearer token is looked at,
++    also for a path that is no route. The four `/v1` routes give that `401` in
++    their OpenAI-shaped error, on both listeners and before the API key is
++    looked at; any other path under `/v1`, and a path the dedicated
++    `--v1-addr` listener does not serve, keeps its `404` or `405`.
++    `GET /health` stays open and reports the account state.
    version: "1.0.0"
 ```
 
@@ -791,6 +818,13 @@ func TestReceiverRefusesDeliveriesWhileLocked(t *testing.T) {
 			rcv := &Receiver{DB: db, Store: workflow.NewSQLiteWorkflowStore(db), VerifyWindow: time.Minute,
 				RootOf: func(string) string { return t.TempDir() },
 				Mux:    NewMux(func(ctx context.Context, _, _, _ string, _ func([]byte)) error { <-ctx.Done(); return nil })}
+			t.Cleanup(func() { // an accepted delivery starts the org's bus tail: end it with the test
+				rcv.mu.Lock()
+				defer rcv.mu.Unlock()
+				for _, unsubscribe := range rcv.subs {
+					unsubscribe()
+				}
+			})
 			mux := http.NewServeMux()
 			rcv.Register(mux)
 			srv := httptest.NewServer(mux)
@@ -818,7 +852,9 @@ func TestReceiverRefusesDeliveriesWhileLocked(t *testing.T) {
 				t.Errorf("a refused delivery was recorded: %d pending, %d subscriptions", len(rcv.pending), len(rcv.subs))
 			}
 			var n int
-			_ = db.QueryRow(`SELECT COUNT(*) FROM workflow_executions`).Scan(&n)
+			if err := db.QueryRow(`SELECT COUNT(*) FROM workflow_executions`).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
 			if n != 0 {
 				t.Errorf("%d executions were created for a refused delivery", n)
 			}
@@ -995,7 +1031,11 @@ func TestTheDedicatedListenerRefusesToo(t *testing.T) {
 			key := h.key(t, "default", "app", false)
 			accounttest.Install(t, c.Mode)
 			addr, stop := startServe(t, h, anyPolicy, nil)
-			defer stop()
+			defer func() {
+				if err := stop(); err != nil {
+					t.Errorf("Serve: %v", err)
+				}
+			}()
 
 			code, body := get(t, http.DefaultClient, "http://"+addr+"/v1/models", key)
 			refused := code == http.StatusUnauthorized && strings.Contains(body, `"code":"login_required"`)
@@ -1162,11 +1202,11 @@ git commit -m "feat(openaiapi): /v1 refuses in the OpenAI envelope while the acc
 
 **Files:**
 - Create: `internal/workflow/webhook_account.go`, `internal/workflow/webhook_account_test.go`
-- Modify: `internal/workflow/webhook_server.go`: imports (18), `WebhookServer` fields (72), `ServeHTTP` (271-275). It stays under 500 lines (469 after the edits): the helpers live in the new file.
+- Modify: `internal/workflow/webhook_server.go`: `WebhookServer` fields (72), `ServeHTTP` (271-275). It stays under 500 lines (467 after the edits): the helpers live in the new file.
 
 **Interfaces:**
 - Consumes: `accountdoor.Code`, `account.Require`, `doortest.Modes`, `accounttest.Install`; `NewWebhookServer(addr string, logger zerolog.Logger) *WebhookServer`, `Register(*WebhookRegistration) error`, `writeJSONError(w, code, msg)`.
-- Produces: `func (s *WebhookServer) refuseWhileLocked(w http.ResponseWriter, r *http.Request) bool` (503, `Retry-After: 60`, `{"error":"login_required"}`; the first statement of `ServeHTTP`, so no path lookup, body read, credential check or `admitTrace` ledger write happens), `func (s *WebhookServer) noteLocked()` (one `Warn` line a minute), `webhookRetryAfter = "60"`, `lockedLogEvery = time.Minute`, the field `lockedLogAt atomic.Int64`. A refused request runs nothing, so spec §6.2's "a webhook trigger that fires while locked is dropped with one log line a minute" holds for HTTP webhooks here; B3a's engine check covers every other trigger.
+- Produces: `func (s *WebhookServer) refuseWhileLocked(w http.ResponseWriter, r *http.Request) bool` (503, `Retry-After: 60`, `{"error":"login_required"}`; the first statement of `ServeHTTP`, so no path lookup, body read, credential check or `admitTrace` ledger write happens), `type webhookLockedLog` (its `due()` allows one `Warn` line a minute, measured on its clock `now`, `time.Now` unless a test sets it), `webhookRetryAfter = "60"`, `webhookLockedLogEvery = time.Minute`, the field `WebhookServer.lockedLog`. Every name is prefixed `webhook` because B3a declares `lockedLogEvery` in the same package (`internal/workflow/account_gate.go`) and both branches must merge. A refused request runs nothing, so spec §6.2's "a webhook trigger that fires while locked is dropped with one log line a minute" holds for HTTP webhooks here; B3a's engine check covers every other trigger.
 
 - [ ] **Step 1: Write the failing tests** `internal/workflow/webhook_account_test.go`:
 
@@ -1179,6 +1219,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -1243,25 +1284,34 @@ func TestWebhookServerRefusesRequestsWhileLocked(t *testing.T) {
 	}
 }
 
-// The server says once a minute why its callers are getting 503s.
+// The server says once a minute why its callers are getting 503s. The log has a
+// clock of its own, which the test steps.
 func TestWebhookServerLogsALockedAccountOncePerMinute(t *testing.T) {
 	var logs bytes.Buffer
 	s := NewWebhookServer(":0", zerolog.New(&logs))
+	clock := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	s.lockedLog.now = func() time.Time { return clock }
 	accounttest.Install(t, accounttest.LockedNoLogin)
 	refuse := func() {
 		s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/webhook/hook", nil))
 	}
+	lines := func() int { return strings.Count(logs.String(), "no valid monoes.me login") }
 
 	for i := 0; i < 5; i++ {
 		refuse()
 	}
-	if n := strings.Count(logs.String(), "no valid monoes.me login"); n != 1 {
+	if n := lines(); n != 1 {
 		t.Fatalf("logged %d times for 5 refusals, want once:\n%s", n, logs.String())
 	}
-	s.lockedLogAt.Store(s.lockedLogAt.Load() - int64(2*lockedLogEvery)) // a minute and more has passed
+	clock = clock.Add(webhookLockedLogEvery - time.Second)
 	refuse()
-	if n := strings.Count(logs.String(), "no valid monoes.me login"); n != 2 {
-		t.Fatalf("logged %d times after a minute passed, want 2", n)
+	if n := lines(); n != 1 {
+		t.Fatalf("logged %d times before a minute passed, want once", n)
+	}
+	clock = clock.Add(time.Second)
+	refuse()
+	if n := lines(); n != 2 {
+		t.Fatalf("logged %d times once a minute passed, want twice", n)
 	}
 }
 ```
@@ -1269,7 +1319,7 @@ func TestWebhookServerLogsALockedAccountOncePerMinute(t *testing.T) {
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `go test ./internal/workflow/ -run '^(TestWebhookServerRefusesRequestsWhileLocked|TestWebhookServerLogsALockedAccountOncePerMinute)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
-Expected: a build failure: `s.lockedLogAt undefined` and `undefined: lockedLogEvery`.
+Expected: a build failure: `s.lockedLog undefined` and `undefined: webhookLockedLogEvery`.
 
 - [ ] **Step 3: Implement.** Create `internal/workflow/webhook_account.go`:
 
@@ -1278,6 +1328,7 @@ package workflow
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/account"
@@ -1288,9 +1339,36 @@ const (
 	// webhookRetryAfter is the Retry-After (seconds) of a request refused for a
 	// locked account: callers that retry on a 503 come back after a minute.
 	webhookRetryAfter = "60"
-	// lockedLogEvery is how often the server logs that it is refusing requests.
-	lockedLogEvery = time.Minute
+	// webhookLockedLogEvery is how often the server logs that it is refusing
+	// requests.
+	webhookLockedLogEvery = time.Minute
 )
+
+// webhookLockedLog spaces the server's "webhook refused" lines: at most one
+// per webhookLockedLogEvery. The zero value is ready to use.
+type webhookLockedLog struct {
+	mu   sync.Mutex
+	last time.Time
+	now  func() time.Time // nil: time.Now; a test sets it
+}
+
+// due reports whether a line is due, and if it is, counts it as written. It
+// measures with time.Now, whose monotonic reading a wall clock that is set back
+// does not move.
+func (l *webhookLockedLog) due() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now
+	if l.now != nil {
+		now = l.now
+	}
+	at := now()
+	if !l.last.IsZero() && at.Sub(l.last) < webhookLockedLogEvery {
+		return false
+	}
+	l.last = at
+	return true
+}
 
 // refuseWhileLocked answers a request with 503, Retry-After and
 // {"error":"login_required"} while the machine holds no valid monoes.me login,
@@ -1300,48 +1378,30 @@ func (s *WebhookServer) refuseWhileLocked(w http.ResponseWriter, r *http.Request
 	if account.Require(r.Context()) == nil {
 		return false
 	}
-	s.noteLocked()
+	if s.lockedLog.due() {
+		// Without this line the only sign of a locked daemon at the webhook
+		// port is the callers' 503s.
+		s.logger.Warn().Msg("webhook refused: no valid monoes.me login (run: monoagentcli account login)")
+	}
 	w.Header().Set("Retry-After", webhookRetryAfter)
 	writeJSONError(w, http.StatusServiceUnavailable, accountdoor.Code)
 	return true
 }
-
-// noteLocked logs, at most once a minute, that requests are being refused:
-// without it the only sign of a locked daemon at the webhook port is the
-// callers' 503s.
-func (s *WebhookServer) noteLocked() {
-	now := time.Now().UnixNano()
-	last := s.lockedLogAt.Load()
-	if last != 0 && now-last < int64(lockedLogEvery) {
-		return
-	}
-	if s.lockedLogAt.CompareAndSwap(last, now) {
-		s.logger.Warn().Msg("webhook refused: no valid monoes.me login (run: monoagentcli account login)")
-	}
-}
 ```
 
-Then apply these three edits to `internal/workflow/webhook_server.go`:
+Then apply these two edits to `internal/workflow/webhook_server.go`:
 
 **Edit 1** in `internal/workflow/webhook_server.go`:
 
 ```diff
- 	"sync"
-+	"sync/atomic"
- 	"syscall"
-```
-
-**Edit 2** in `internal/workflow/webhook_server.go`:
-
-```diff
  	keyErrorOnce sync.Once
-+	// lockedLogAt is when a request refused for a locked account was last
-+	// logged, in Unix nanoseconds (see noteLocked).
-+	lockedLogAt atomic.Int64
++	// lockedLog spaces the log lines of requests refused for a locked
++	// account (webhook_account.go).
++	lockedLog webhookLockedLog
  }
 ```
 
-**Edit 3** in `internal/workflow/webhook_server.go`:
+**Edit 2** in `internal/workflow/webhook_server.go`:
 
 ```diff
  // Returns 404 if path not found, 405 if method doesn't match, 200 on success.
@@ -1367,9 +1427,10 @@ git add internal/workflow/webhook_account.go internal/workflow/webhook_server.go
 git commit -m "feat(workflow): the webhook server answers 503 while the account is locked" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 6: Mutation check** (after the commit). Make each change with the `Edit` tool (the line is unique in its file), run the command, expect the failure, restore the file with `git checkout -- <file>` (it returns to the commit just made), and go on. A pass would mean a door is not pinned: fix the test, not the mutation.
+- [ ] **Step 6: Mutation checks** (after the commit). Make each change with the `Edit` tool (the line is unique in its file), run the command, expect the failure, restore the file with `git checkout -- <file>` (it returns to the commit just made), and go on. A pass would mean a door is not pinned: fix the test, not the mutation.
 
 - **webhook**: in `internal/workflow/webhook_account.go` change `if account.Require(r.Context()) == nil {` to `if account.Require(r.Context()) == nil || true {`. Run `go test ./internal/workflow/ -run '^(TestWebhookServerRefusesRequestsWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/workflow/webhook_account.go`.
+- **webhook-log**: in `internal/workflow/webhook_account.go` change `if !l.last.IsZero() && at.Sub(l.last) < webhookLockedLogEvery {` to `if false {`. Run `go test ./internal/workflow/ -run '^(TestWebhookServerLogsALockedAccountOncePerMinute)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/workflow/webhook_account.go`.
 
 ---
 
