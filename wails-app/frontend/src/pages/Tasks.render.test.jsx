@@ -9,6 +9,7 @@ const { api } = vi.hoisted(() => ({
 }))
 vi.mock('../services/tasks.js', () => ({ tasksApi: api, onTasksChanged: () => () => {} }))
 import Tasks from './Tasks.jsx'
+import TaskDrawer from '../components/TaskDrawer.jsx'
 
 const card = (id, extra = {}) => ({ id, title: `Task ${id}`, notes: '', position: id, claim: null, ...extra })
 const doc = () => ({ rev: 1, counts: {}, tasks: { inbox: [card(1), card(2, { notes: 'needle' })], ready: [card(3)] } })
@@ -85,6 +86,27 @@ describe('Tasks page', () => {
     await screen.findByText(/Read-only/)
     expect(screen.queryByLabelText('New task title')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Archive/ })).not.toBeInTheDocument()
+  })
+
+  it('stays read-only until the agent shell answers', async () => {
+    let answer
+    api.agentShell.mockReturnValue(new Promise(r => { answer = r }))
+    render(<Tasks />)
+    await screen.findByText('Task 1')
+    expect(screen.queryByLabelText('New task title')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Archive/ })).not.toBeInTheDocument()
+    answer('')
+    expect(await screen.findAllByLabelText('New task title')).not.toHaveLength(0)
+  })
+
+  it('keeps unsaved typing in the drawer when the task changes remotely', async () => {
+    const { rerender } = render(<TaskDrawer task={card(1, { notes: 'a' })} onClose={() => {}} onEdit={() => {}} onComment={() => {}} />)
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Mine' } })
+    rerender(<TaskDrawer task={card(1, { title: 'Theirs', notes: 'b' })} onClose={() => {}} onEdit={() => {}} onComment={() => {}} />)
+    expect(screen.getByLabelText('Title')).toHaveValue('Mine') // dirty: kept
+    expect(screen.getByLabelText('Notes')).toHaveValue('b') // untouched: follows the remote
+    rerender(<TaskDrawer task={card(2)} onClose={() => {}} onEdit={() => {}} onComment={() => {}} />)
+    expect(screen.getByLabelText('Title')).toHaveValue('Task 2') // another card resets
   })
 
   it('reports a board that cannot be read', async () => {

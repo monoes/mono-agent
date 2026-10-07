@@ -1245,13 +1245,11 @@
       "done": "Hecho"
     },
     "empty": "Nada aquí",
-    "quickAdd": "Añadir una tarea",
     "quickAddPlaceholder": "Título de la nueva tarea",
     "addToReady": "Añadir a Listo",
     "add": "Añadir",
     "approve": "Aprobar a Listo",
     "archive": "Archivar",
-    "moveTo": "Mover a",
     "claimedBy": "Reclamada por {{by}}",
     "stale": "Reclamo vencido",
     "close": "Cerrar",
@@ -1262,7 +1260,18 @@
       "history": "Historial",
       "comment": "Añadir un comentario",
       "send": "Comentar",
-      "loadError": "No se pudo leer la tarea"
+      "loadError": "No se pudo leer la tarea",
+      "kind": {
+        "created": "creó",
+        "edited": "editó",
+        "moved": "movió",
+        "claimed": "reclamó",
+        "reclaimed": "retomó",
+        "comment": "comentó",
+        "question": "preguntó",
+        "result": "informó",
+        "released": "liberó"
+      }
     },
     "refused": "Rechazado: {{error}}"
   },

@@ -58,12 +58,12 @@ export default function Tasks({ isActive = true }) {
   const b = useTaskBoard(isActive)
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState(null)
-  const [shell, setShell] = useState('')
+  const [shell, setShell] = useState(null) // null until agentShell() answers
   const dragging = useRef(null)
   const root = useRef(null)
 
-  useEffect(() => { tasksApi.agentShell().then(setShell) }, [])
-  const readOnly = !!shell
+  useEffect(() => { tasksApi.agentShell().then(v => setShell(v || '')) }, [])
+  const readOnly = shell === null || !!shell
   const shown = useMemo(() => searchBoard(b.board, query), [b.board, query])
   const open = openId && b.board ? findTask(b.board, openId)?.task : null
 

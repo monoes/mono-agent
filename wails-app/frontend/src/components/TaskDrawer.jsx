@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
@@ -13,7 +13,17 @@ export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment 
   const [notes, setNotes] = useState(task.notes || '')
   const [text, setText] = useState('')
 
-  useEffect(() => { setTitle(task.title); setNotes(task.notes || '') }, [task.id, task.title, task.notes])
+  // A remote change replaces a field only while that field is untouched, so
+  // typing in progress is never overwritten; a different card resets both.
+  const seen = useRef({ id: task.id, title: task.title, notes: task.notes || '' })
+  useEffect(() => {
+    const prev = seen.current
+    const next = { id: task.id, title: task.title, notes: task.notes || '' }
+    seen.current = next
+    if (prev.id !== next.id) { setTitle(next.title); setNotes(next.notes); return }
+    setTitle(cur => (cur === prev.title ? next.title : cur))
+    setNotes(cur => (cur === prev.notes ? next.notes : cur))
+  }, [task.id, task.title, task.notes])
   useEffect(() => {
     let live = true
     tasksApi.show(task.id).then(r => {
@@ -56,7 +66,7 @@ export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment 
       <ul style={{ listStyle: 'none', padding: 0, fontSize: 12 }}>
         {events.map(e => (
           <li key={e.id} style={{ marginBottom: 6 }}>
-            <strong>{e.actor}</strong> {e.kind}{e.to_status ? ` → ${e.to_status}` : ''}
+            <strong>{e.actor}</strong> {t(`tasks.drawer.kind.${e.kind}`, { defaultValue: e.kind })}{e.to_status ? ` → ${t(`tasks.column.${e.to_status}`, { defaultValue: e.to_status })}` : ''}
             {e.note && <div style={{ whiteSpace: 'pre-wrap', opacity: 0.85 }}>{e.note}</div>}
           </li>
         ))}

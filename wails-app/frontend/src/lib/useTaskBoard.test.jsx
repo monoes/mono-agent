@@ -53,6 +53,25 @@ describe('useTaskBoard', () => {
     expect(result.current.notice).toEqual({ id: 1, error: 'only a person can approve', code: 'human_gate' })
   })
 
+  it('keeps the op until a read is applied, even when a newer load supersedes the first', async () => {
+    api.board.mockResolvedValueOnce(doc([t(1, 'inbox')]))
+    const { result } = renderHook(() => useTaskBoard())
+    await waitFor(() => expect(result.current.board).toBeTruthy())
+    const reads = []
+    api.board.mockImplementation(() => new Promise(r => { reads.push(r) }))
+    api.move.mockResolvedValue({ id: 1 })
+    let p
+    act(() => { p = result.current.move(1, 'ready', { where: '' }) })
+    await waitFor(() => expect(reads).toHaveLength(1))
+    act(() => { handlers.forEach(h => h()) }) // a newer load starts
+    await waitFor(() => expect(reads).toHaveLength(2))
+    await act(async () => { reads[0](doc([t(1, 'inbox')])) }) // the stale read is discarded
+    expect(result.current.board.columns.ready.map(x => x.id)).toEqual([1])
+    await act(async () => { reads[1](doc([], [t(1, 'ready')])); await p })
+    expect(result.current.board.columns.ready.map(x => x.id)).toEqual([1])
+    expect(result.current.board.columns.inbox).toHaveLength(0)
+  })
+
   it('reports a failed read', async () => {
     api.board.mockResolvedValue({ error: 'no database' })
     const { result } = renderHook(() => useTaskBoard())

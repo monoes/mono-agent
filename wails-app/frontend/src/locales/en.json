@@ -1287,13 +1287,11 @@
       "done": "Done"
     },
     "empty": "Nothing here",
-    "quickAdd": "Add a task",
     "quickAddPlaceholder": "New task title",
     "addToReady": "Add to Ready",
     "add": "Add",
     "approve": "Approve to Ready",
     "archive": "Archive",
-    "moveTo": "Move to",
     "claimedBy": "Claimed by {{by}}",
     "stale": "Stale claim",
     "close": "Close",
@@ -1304,7 +1302,18 @@
       "history": "History",
       "comment": "Add a comment",
       "send": "Comment",
-      "loadError": "Could not read the task"
+      "loadError": "Could not read the task",
+      "kind": {
+        "created": "created",
+        "edited": "edited",
+        "moved": "moved",
+        "claimed": "claimed",
+        "reclaimed": "took over",
+        "comment": "commented",
+        "question": "asked",
+        "result": "reported",
+        "released": "released"
+      }
     },
     "refused": "Refused: {{error}}"
   },
