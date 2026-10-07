@@ -414,6 +414,18 @@ func TestBridgeRestartTargetsServiceAndVerifiesVersion(t *testing.T) {
 	}
 }
 
+// A bridge run by the daemon keeps the daemon repair even when the autostart
+// service is the daemon's own unit.
+func TestDaemonOwnedBridgeUnderServiceKeepsDaemonRepair(t *testing.T) {
+	b := BridgeInfo{PID: 7, Version: "v1.0.0", ServiceUnit: "monoagent.service"}
+	env := &Env{Version: "v1.1.0", Bridge: func(context.Context) (BridgeInfo, bool) { return b, true },
+		Daemon:        func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 7} },
+		RestartBridge: func(context.Context, func(string)) error { return nil }}
+	if res := checkBridge(context.Background(), env); res.FixID == FixBridgeServiceRestart {
+		t.Fatalf("daemon-owned bridge must keep the daemon repair: %+v", res)
+	}
+}
+
 // A unit file systemd doesn't have enabled is not "starts at login", and
 // the row says why.
 func TestAutostartExplainsANotEnabledEntry(t *testing.T) {

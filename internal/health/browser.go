@@ -118,7 +118,7 @@ func checkBridge(ctx context.Context, env *Env) Result {
 			FixID:  FixBridgeRestart}
 		// Where no fix is offered, what to do goes in the detail: a result's FixCommand is
 		// shown only with a fix, and is not in the report without one.
-		if b.ServiceUnit != "" && env.RestartBridge != nil {
+		if b.ServiceUnit != "" && env.RestartBridge != nil && !isDaemonOwned(ctx, env, b) {
 			res.FixID = FixBridgeServiceRestart
 			res.Detail = fmt.Sprintf("the bridge runs %s but this CLI is %s — restart its service: systemctl --user restart %s", b.Version, env.Version, b.ServiceUnit)
 			res.FixCommand = "systemctl --user restart " + b.ServiceUnit
