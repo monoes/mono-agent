@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/tasks"
@@ -18,6 +19,8 @@ import (
 
 func TestClientLabel(t *testing.T) {
 	long := strings.Repeat("x", 300)
+	// A name whose cut at maxClientLabel falls right after the hyphen of a gap: the hyphen goes too.
+	edge := strings.Repeat("a", maxClientLabel-1)
 	for in, want := range map[string]string{
 		"claude-code":          "claude-code",
 		"Claude Desktop":       "Claude-Desktop",
@@ -30,6 +33,7 @@ func TestClientLabel(t *testing.T) {
 		"\U000065e5\U0000672c": "mcp",
 		"\U0000202eevil":       "evil",
 		long:                   long[:maxClientLabel],
+		edge + " bbbb":         edge,
 	} {
 		if got := clientLabel(in); got != want {
 			t.Errorf("clientLabel(%q) = %q, want %q", in, got, want)
@@ -87,10 +91,23 @@ func TestTheTaskActorIsNamedAfterTheClientInInitialize(t *testing.T) {
 }
 
 func TestTwoSessionsOfOneClientAreTwoClaimants(t *testing.T) {
-	real := newActorSuffix()
-	if !regexp.MustCompile(`^[0-9a-f]{4}$`).MatchString(real) {
-		t.Errorf("a server's suffix is %q, want four hex digits", real)
+	// The real generator first: the other assertions about a suffix inject it (withSuffixes), so none
+	// of them would notice a generator that gives every server one value, which makes two sessions
+	// of one client one claimant. Four hex digits each, and not all alike: 32 draws are alike with
+	// odds of 65536^-31.
+	fourHex := regexp.MustCompile(`^[0-9a-f]{4}$`)
+	drawn := map[string]bool{}
+	for i := 0; i < 32; i++ {
+		suffix := newActorSuffix()
+		if !fourHex.MatchString(suffix) {
+			t.Errorf("a server's suffix is %q, want four hex digits", suffix)
+		}
+		drawn[suffix] = true
 	}
+	if len(drawn) < 2 {
+		t.Errorf("32 draws of the real suffix generator gave %d distinct value, want at least 2: two sessions of one client would share a claimant", len(drawn))
+	}
+
 	withSuffixes(t, "0001", "0002")
 	a, b := NewServer(Options{Version: "test"}), NewServer(Options{Version: "test"})
 	for _, s := range []*Server{a, b} {
@@ -123,6 +140,42 @@ func TestEveryClientNameMakesAClaimableActor(t *testing.T) {
 		actor := s.taskActor()
 		if _, err := store.Claim(ctx, "default", task.ID, actor, 0); err != nil {
 			t.Errorf("client %q: the store refuses its actor %q: %v", client, actor.Name, err)
+		}
+	}
+}
+
+// Requests run on goroutines of their own (Serve), so an initialize (recordClient) and a task call
+// (taskActor) can meet: clientMu is there for that, and the race detector is what notices it gone
+// (CI runs the suite with -race). Every caller records the client before it asks for the actor, so
+// whoever asks first fixes the client's name, and every caller sees that one name.
+func TestConcurrentInitializesAndTaskCallsShareOneActor(t *testing.T) {
+	withSuffixes(t, "beef")
+	params, err := json.Marshal(map[string]any{"clientInfo": map[string]any{"name": "claude-code"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 25; round++ {
+		s := NewServer(Options{Version: "test"})
+		var (
+			wg    sync.WaitGroup
+			start = make(chan struct{})
+			names [16]string
+		)
+		for i := range names {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				s.recordClient(params)
+				names[i] = s.taskActor().Name
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for i, got := range names {
+			if got != "agent:claude-code#beef" {
+				t.Errorf("round %d, caller %d: the actor is %q, want agent:claude-code#beef", round, i, got)
+			}
 		}
 	}
 }
