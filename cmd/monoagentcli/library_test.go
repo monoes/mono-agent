@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -148,29 +149,35 @@ func TestLibraryLoginStatusLogout(t *testing.T) {
 	}
 	f.login()
 	f.must(&st, "library", "status")
-	if !st.LoggedIn || st.User.Email != "ada@example.com" || st.Method != "pkce" {
+	if !st.LoggedIn || st.User.Email != "ada@example.com" || st.Method != "session" {
 		t.Fatalf("status = %+v", st)
 	}
-	// The login lives in the profile's vault, never in plain config.
+	// The login is the machine-wide session, never a vault entry (spec D21)...
 	var secrets []struct{ Name, URL string }
 	f.must(&secrets, "secret", "list")
-	found := false
 	for _, s := range secrets {
-		found = found || (s.Name == "monoes-library" && s.URL == f.fake.URL)
+		if s.Name == "monoes-library" {
+			t.Fatalf("a vault entry was written: %+v", secrets)
+		}
 	}
-	if !found {
-		t.Fatalf("no vault entry: %+v", secrets)
-	}
-	// Another profile is not logged in.
+	// ...so another profile has it too, and `account status` says the same.
 	f.must(nil, "profile", "create", "other")
 	f.must(&st, "--profile", "other", "library", "status")
-	if st.LoggedIn {
-		t.Fatal("login leaked into another profile")
+	if !st.LoggedIn {
+		t.Fatal("the machine session did not reach another profile")
+	}
+	var acc account.Status
+	f.must(&acc, "account", "status", "--offline")
+	if acc.State != account.StateOK || acc.User == nil || acc.User.Username != "ada" {
+		t.Fatalf("account status = %+v", acc)
 	}
 	f.must(nil, "library", "logout")
 	f.must(&st, "library", "status")
 	if st.LoggedIn {
 		t.Fatalf("after logout: %+v", st)
+	}
+	if out, err := f.run("account", "status"); exitCodeFor(err) != 4 || !strings.Contains(out, "not_logged_in") {
+		t.Fatalf("account status after a library logout: %v %s", err, out)
 	}
 }
 
@@ -187,8 +194,16 @@ func TestLibraryEmailLogin(t *testing.T) {
 	}
 	var st libStatus
 	f.must(&st, "library", "login", "--email", "ada@example.com", "--code", "123456")
-	if !st.LoggedIn || st.Method != "email" {
+	if !st.LoggedIn || st.Method != "session" {
 		t.Fatalf("status = %+v", st)
+	}
+	// Today's claim endpoint answers an opaque token and no refresh token: no session
+	// can be made of it, and the user is told to use the browser.
+	f.must(nil, "library", "logout")
+	f.fake.SetEmailOpaque(true)
+	out, err = f.run("library", "login", "--email", "ada@example.com", "--code", "123456")
+	if exitCodeFor(err) != 4 || !strings.Contains(out, "cannot start a machine session") {
+		t.Fatalf("an email sign-in that cannot make a session: %v %s", err, out)
 	}
 }
 
@@ -316,20 +331,23 @@ func TestLibraryReadsNeedALogin(t *testing.T) {
 	f.must(nil, "library", "installed")
 }
 
-// A 401 on a read refreshes the login once and retries; a 401 the refresh
-// cannot cure (the login was revoked) is "log in first", exit 4.
-func TestLibraryRead401RefreshesThenAsksForLogin(t *testing.T) {
+// A session close to its expiry is renewed before the call, by the account guard. A
+// 401 from monoes.me (its side expired or revoked the token) is "log in first", exit
+// 4: the CLI renews nothing in answer to it, and a session whose renewal is refused
+// stops before any library request.
+func TestLibraryReadRenewsTheSessionThenAsksForLogin(t *testing.T) {
 	noSeed(t)
 	f := newLibFixture(t)
 	f.fake.Add("monoes", "automation", "hackernews", "Hacker News", "official", "1.1.0", pack(t, "hackernews", ""),
 		map[string]any{"automation_id": "hackernews"})
+	f.fake.AccessTTL = 2 * time.Minute // inside the 5 minute renewal margin: a renewal is due
 	f.login()
+	f.backdate(2 * time.Minute)
 
-	f.fake.ExpireAccessTokens()
 	var list libList
 	f.must(&list, "library", "list", "--scope", "official")
 	if list.Total != 1 || f.fake.Refreshes != 1 {
-		t.Fatalf("list after expiry = %+v (refreshes %d)", list, f.fake.Refreshes)
+		t.Fatalf("list on a due session = %+v (refreshes %d)", list, f.fake.Refreshes)
 	}
 	var res libInstallResult
 	f.must(&res, "library", "install", "automation", "hackernews")
@@ -337,19 +355,30 @@ func TestLibraryRead401RefreshesThenAsksForLogin(t *testing.T) {
 		t.Fatalf("install = %+v", res)
 	}
 
-	f.fake.RevokeAll()
+	f.fake.AccessTTL = time.Hour
+	f.login()
+	renewals := f.fake.Refreshes
+	f.fake.ExpireAccessTokens() // monoes.me says it expired; locally the token is still good
 	before := f.fake.Requests["GET /api/library/items"]
 	f.loginRequired("library", "list", "--scope", "official")
-	if got := f.fake.Requests["GET /api/library/items"] - before; got != 1 { // the --json run only: its refresh was refused, which drops the login, so the text run asks nothing
-		t.Fatalf("list requests = %d, want 1", got)
+	if got := f.fake.Requests["GET /api/library/items"] - before; got != 2 || f.fake.Refreshes != renewals { // --json run + text run: one request each, no retry
+		t.Fatalf("list requests = %d, renewals %d -> %d", got, renewals, f.fake.Refreshes)
 	}
+
+	f.fake.AccessTTL = 2 * time.Minute
+	f.login()
+	f.backdate(2 * time.Minute)
+	f.fake.RevokeAll() // monoes.me revoked everything: the next renewal is invalid_grant
+	before = f.fake.Requests["GET /api/library/items"]
+	f.loginRequired("library", "list", "--scope", "official")
 	f.loginRequired("library", "show", "automation/hackernews")
 	f.loginRequired("library", "update", "--dry-run")
-	if f.fake.Refreshes != 1 {
-		t.Fatalf("refreshes = %d, want 1", f.fake.Refreshes)
+	if f.fake.Requests["GET /api/library/items"] != before {
+		t.Fatal("a refused session reached the library")
 	}
 
 	// Logging in again fixes it.
+	f.fake.AccessTTL = time.Hour
 	f.login()
 	f.must(&list, "library", "list", "--scope", "official")
 	if list.Total != 1 || list.Items[0].Installed == nil {
