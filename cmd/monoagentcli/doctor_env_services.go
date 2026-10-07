@@ -28,7 +28,7 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 	env.FindBrowser = browserdetect.FindBrowser
 	env.ExtensionInstalled = browserdetect.ExtensionInstalled
 	env.ExtensionDir = browserdetect.ExtensionDir
-	env.Bridge = func(context.Context) (health.BridgeInfo, bool) {
+	env.Bridge = func(ctx context.Context) (health.BridgeInfo, bool) {
 		st, addr, ok := findRunningBridge() // read-only GET of /monoagent/health
 		if !ok {
 			return health.BridgeInfo{}, false
@@ -38,8 +38,22 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 		if live {
 			daemonPID = hb.PID
 		}
+		unit := serviceUnit(st.PID)
 		return health.BridgeInfo{Addr: bridgeAddr(st, addr), Status: st.Status, PID: st.PID, Version: st.Version, UptimeSec: st.UptimeSec,
-			Owner: bridgeOwner(st.PID, daemonPID, processCommand(st.PID), serviceUnit(st.PID))}, true
+			Owner:       bridgeOwner(st.PID, daemonPID, processCommand(st.PID), unit),
+			ServiceUnit: bridgeUserService(ctx, st.PID, unit)}, true
+	}
+	env.RestartBridge = func(ctx context.Context, progress func(string)) error {
+		b, ok := env.Bridge(ctx)
+		if !ok || b.ServiceUnit == "" {
+			return fmt.Errorf("the bridge is not owned by a restartable user service")
+		}
+		progress("restarting " + b.ServiceUnit)
+		out, err := exec.CommandContext(ctx, "systemctl", "--user", "restart", "--", b.ServiceUnit).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("restarting %s: %w: %s", b.ServiceUnit, err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
 
 	env.Daemon = func(context.Context) health.DaemonInfo {
@@ -316,6 +330,21 @@ func serviceUnit(pid int) string {
 		return ""
 	}
 	return unitFromCgroup(string(b))
+}
+
+// A cgroup may name a system service, or a child of a user service. Only
+// restart through the user manager when its MainPID is the bridge itself.
+func bridgeUserService(ctx context.Context, pid int, unit string) string {
+	if runtime.GOOS != "linux" || pid <= 0 || unit == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=MainPID", "--value", "--", unit).Output()
+	if err != nil || strings.TrimSpace(string(out)) != strconv.Itoa(pid) {
+		return ""
+	}
+	return unit
 }
 
 func unitFromCgroup(cgroup string) string {
