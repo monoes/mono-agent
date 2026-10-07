@@ -11,6 +11,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/library/libraryfake"
 )
@@ -28,6 +29,12 @@ func newLibFixture(t *testing.T) *libFixture {
 	fake := libraryfake.New()
 	t.Cleanup(fake.Close)
 	t.Setenv("MONOES_BASE_URL", fake.URL)
+	// The machine session is signed at the fake: its host, its signing key, and a
+	// sealer of its own, so its refresh token depends on no key store (not even the
+	// mock keyring above, which most tests re-make).
+	account.SetHostForTest(t, fake.URL)
+	account.SetSealerForTest(t, account.NewMemorySealer())
+	libraryfake.TrustKey(t)
 	// The browser: open the authorize URL and follow its redirect back to
 	// the CLI's loopback listener.
 	prev := openLoginURL
