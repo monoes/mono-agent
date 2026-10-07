@@ -65,10 +65,13 @@ function withCounts(board, columns) {
 }
 
 // applyMove is the board after moving card id to column `to` at place, as
-// the store will do it: a card that leaves In progress loses its claim.
+// the store will do it: a card that leaves In progress loses its claim, and a
+// move to the column the card is in with no place named changes nothing (spec
+// 4.6: the default end belongs to a card new to a column).
 export function applyMove(board, id, to, place) {
   const found = findTask(board, id)
   if (!found || !COLUMNS.includes(to)) return board
+  if (found.status === to && !place?.where) return board
   const columns = { ...board.columns, [found.status]: board.columns[found.status].filter(t => t.id !== id) }
   const target = [...columns[to]]
   const moved = { ...found.task, status: to, claim: to === 'in_progress' ? found.task.claim : null }

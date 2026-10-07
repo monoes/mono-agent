@@ -38,6 +38,12 @@ describe('applyMove', () => {
   it('puts a card at the default place of its new column', () => {
     expect(ids(applyMove(base(), 1, 'ready', { where: '' }), 'ready')).toEqual([3, 4, 1])
     expect(ids(applyMove(base(), 3, 'review', { where: '' }), 'review')).toEqual([3, 6])
+    expect(ids(applyMove(base(), 3, 'inbox', { where: '' }), 'inbox')).toEqual([3, 1, 2])
+    expect(ids(applyMove(base(), 3, 'in_progress', { where: '' }), 'in_progress')).toEqual([5, 3])
+  })
+  it('gives the card the status of its new column', () => {
+    expect(findTask(applyMove(base(), 1, 'ready', { where: '' }), 1).task.status).toBe('ready')
+    expect(findTask(applyMove(base(), 5, 'review', { where: '' }), 5).task.status).toBe('review')
   })
   it('puts it before or after a card, and falls back when that card is not there', () => {
     expect(ids(applyMove(base(), 1, 'ready', { where: 'before', ref: 4 }), 'ready')).toEqual([3, 1, 4])
@@ -48,6 +54,13 @@ describe('applyMove', () => {
     const b = applyMove(base(), 4, 'ready', { where: 'before', ref: 3 })
     expect(ids(b, 'ready')).toEqual([4, 3])
     expect(b.counts.ready).toBe(2)
+  })
+  it('changes nothing for a move to the column the card is in when no place is named', () => {
+    // Spec 4.6: the default end belongs to a card that is new to a column.
+    const b = base()
+    expect(applyMove(b, 3, 'ready', { where: '' })).toBe(b)
+    expect(applyMove(b, 1, 'inbox', {})).toBe(b)
+    expect(applyMove(b, 4, 'ready', undefined)).toBe(b)
   })
   it('ends the claim of a card that leaves In progress and keeps it inside', () => {
     expect(findTask(applyMove(base(), 5, 'ready', { where: '' }), 5).task.claim).toBeNull()
@@ -74,6 +87,20 @@ describe('applyOps and applyRemove', () => {
     expect(applyRemove(base(), 7).counts.done).toBe(119)
     expect(applyOps(null, [{ type: 'remove', id: 1 }])).toBeNull()
   })
+  it('lays them oldest first, so a later one sees what an earlier one did', () => {
+    // Card 1 dragged to Ready, then card 2 dropped right after it.
+    const dragged = applyOps(base(), [
+      { type: 'move', id: 1, to: 'ready', place: { where: '' } },
+      { type: 'move', id: 2, to: 'ready', place: { where: 'after', ref: 1 } },
+    ])
+    expect(ids(dragged, 'ready')).toEqual([3, 4, 1, 2])
+    // The same card sent to Ready and then to Review ends in Review.
+    const twice = applyOps(base(), [
+      { type: 'move', id: 1, to: 'ready', place: { where: '' } },
+      { type: 'move', id: 1, to: 'review', place: { where: '' } },
+    ])
+    expect(findTask(twice, 1).status).toBe('review')
+  })
 })
 
 describe('placeFor', () => {
@@ -92,6 +119,11 @@ describe('isNoopDrop', () => {
     expect(isNoopDrop([3, 4], 'ready', 'ready', [4], 0, 3)).toBe(true)
     expect(isNoopDrop([3, 4], 'ready', 'ready', [4], 1, 3)).toBe(false)
     expect(isNoopDrop([3, 4], 'ready', 'review', [6], 0, 3)).toBe(false)
+  })
+  it('never takes a drop into another column for a no-op, a lone card into an empty column included', () => {
+    expect(isNoopDrop([3], 'ready', 'review', [], 0, 3)).toBe(false)
+    expect(isNoopDrop([1], 'inbox', 'ready', [], 0, 1)).toBe(false)
+    expect(isNoopDrop([3], 'ready', 'ready', [], 0, 3)).toBe(true) // back into its own column: nothing to do
   })
 })
 
@@ -131,5 +163,9 @@ describe('focusTarget', () => {
     expect(focusTarget(b, 2, 'right')).toBe(4)
     expect(focusTarget(b, 5, 'right')).toBe(7)
     expect(focusTarget(b, 1, 'left')).toBeNull()
+  })
+  it('lands on the last card when the nearest column is shorter than the card is deep', () => {
+    // Card 4 is the second of Ready; In progress holds card 5 alone.
+    expect(focusTarget(base(), 4, 'right')).toBe(5)
   })
 })
