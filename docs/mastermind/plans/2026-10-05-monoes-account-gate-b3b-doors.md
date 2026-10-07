@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every network door of the daemon (the HTTP API, the org receiver, `/v1` on both of its listeners, the webhook server, the extension bridge and MCP) refuses work while the machine holds no valid monoes.me login, answers in its own wire shape, and stays open in `grace` and while dormant.
+**Goal:** Every network door of the daemon (the HTTP API, the org receiver, `/v1` on both of its listeners, the webhook server, the extension bridge and MCP) refuses work while the machine holds no valid monoes.me login, answers in its own wire shape, and stays open in `grace` and while dormant. A capture the bridge keeps while locked has nothing run on it: no summary, no page-kind classification, no indexing (Task 7b).
 
 **Architecture:** Each door asks `account.Require` (the process guard's cached verdict, no I/O) where it first looks at a request, and answers through a new small package, `internal/accountdoor`, which holds the one sentence, the one code and the one account summary. The HTTP API also gets a default-deny gate in front of its whole mux, because routes mounted through `ExtraRoutes` bring their own authentication and `Server.auth` cannot wrap them. Every door judges each request afresh and refuses call by call without cutting a stream or a socket, so a sign-in works on a running process at once and a turn or stream a door already let in finishes (spec §6.4 as amended by ruling R4 of 2026-10-07, which ends a run of the engine at its next node: that check is B3a's).
 
@@ -23,7 +23,7 @@ Copied from the index §2; the ones that bind these doors.
 - `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build, and a default build honors `MONOES_BASE_URL` nowhere: the library talks only to monoes.me, `library login` against another host refuses and names `-tags devaccount`, and the session token is sent only to the host that issued it. A local monoes.me dev server needs a `-tags devaccount` build.
 - Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
 - Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
-  - This plan only: `internal/orgbridge/receiver.go` (515 lines) and `internal/extension/server.go` (805) were over 500 lines before it. Tasks 4 and 7 add 9 and 5 lines to them and do not split them (ruled 2026-10-07); every other addition goes to a new file.
+  - This plan only: `internal/orgbridge/receiver.go` (515 lines), `internal/extension/server.go` (805) and `internal/extension/capture.go` (543) were over 500 lines before it. Tasks 4 and 7 add 9 and 5 lines to the first two and Task 7b none to the third, and none is split (ruled 2026-10-07); every other addition goes to a new file.
 - Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
 
 ## Review Focus
@@ -35,6 +35,7 @@ The failure modes the spec implies that the per-door tables alone would not exer
 3. **A refusal that reads like another failure.** The relay client turns a 401 into "re-pair", and a 404 or 405 on a locked server hides the cause and shows a probe which routes exist. Pins: `TestRelayIsRefusedWhileLocked` (Task 7), `TestLockedServerRefusesEveryPathButHealth` (Task 2).
 4. **A webhook sender and the operator.** A 503 without `Retry-After` makes the sender hammer, a body read before the check lets a locked server be fed megabytes, and with no log line a locked daemon looks dead. Pins (Task 6): `TestWebhookServerRefusesRequestsWhileLocked` (a 2 MiB request included), `TestWebhookServerLogsALockedAccountOncePerMinute`.
 5. **A door that names the user, or a route nobody guarded.** `/health` and `ping` answer callers with no credential: state, reason and whether it is enforced, never the email; a route added through `ExtraRoutes` with no door of its own is refused anyway. Pins: `TestNoBodyNamesTheUser` (Task 1), `TestHealthIsOpenInEveryStateAndReportsTheAccount`, `TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused` (Task 2).
+6. **A locked bridge that goes on working on what it keeps.** Pushed captures stay accepted (Task 7), but writing one starts a summary, a page-kind classification that sends the page to TypeSafe Jev and an indexing pass that runs a monomind process, and the indexing queue starts passes of its own: the catch-up after a bridge starts, which a locked daemon under KeepAlive reaches at every restart, a retry, the indexing after a summary. Pins (Task 7b): `TestTheAfterWriteHookIsSkippedWhileLocked`, `TestTheQueueIndexesNothingWhileLocked`.
 
 ---
 
@@ -49,6 +50,7 @@ The failure modes the spec implies that the per-door tables alone would not exer
 | Webhook server | `WebhookServer.ServeHTTP` | 503, `Retry-After: 60`, `{"error":"login_required"}` | 6 |
 | Extension bridge | request frames, the relay, the CDP socket (connect and each command) | reply code `account_locked`; 503 | 7 |
 | MCP | `Server.handleToolsCall` | `isError: true`, the login-required text | 8 |
+| (not a door) the bridge's work on a capture it wrote, and its indexing queue | `Server.written`, `captureindex.Queue.pass` | skipped, with one log line; the capture is kept | 7b |
 
 - **B1a is merged** as the index §3 describes. The code below was compiled and run in a scratch export of `HEAD`, first against a stand-in for `internal/account` and `accounttest` with the contract's exact signatures, then against the real package that B1a's plan produces (the real `Require`, `CurrentStatus` and `accounttest.Install`, in strict and dormant mode); every door test and every mutation check below passes there as written.
 - **B3a owns** the engine and runner checks, the guard wiring in the serving commands (`cmd/monoagentcli/daemon.go`, `httpapi.go`, `mcp.go`, `extension_serve.go`) and the heartbeat field. This plan edits no file of `cmd/monoagentcli`.
@@ -543,20 +545,20 @@ Expected: `--- FAIL` for all six (they build: they use only what the package alr
 **Edit 1** in `internal/httpapi/server.go`:
 
 ```diff
- 	"os"
+	"os"
 +	"strings"
- 	"time"
- 
+	"time"
+
 +	"github.com/monoes/mono-agent/internal/account"
 +	"github.com/monoes/mono-agent/internal/accountdoor"
- 	"github.com/monoes/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
  )
 ```
 
 **Edit 2** in `internal/httpapi/server.go`:
 
 ```diff
- 	mux  *http.ServeMux
+	mux  *http.ServeMux
 -	rt   *runtime
 +	// handler is mux behind the account gate: what Handler and Serve use.
 +	handler http.Handler
@@ -567,9 +569,9 @@ Expected: `--- FAIL` for all six (they build: they use only what the package alr
 **Edit 3** in `internal/httpapi/server.go`:
 
 ```diff
- 	s.mux = s.routes()
+	s.mux = s.routes()
 +	s.handler = accountGate(s.mux)
- 	return s, nil
+	return s, nil
 ```
 
 **Edit 4** in `internal/httpapi/server.go`:
@@ -590,13 +592,13 @@ Expected: `--- FAIL` for all six (they build: they use only what the package alr
 **Edit 6** in `internal/httpapi/server.go`:
 
 ```diff
- 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 +		// A locked account is refused before the vault is opened or the bearer is read.
 +		if err := account.Require(r.Context()); err != nil {
 +			accountdoor.WriteUnauthorized(w, err)
 +			return
 +		}
- 		want, err := ensureToken(r.Context(), s.rt.db.DB, s.rt.profileID)
+		want, err := ensureToken(r.Context(), s.rt.db.DB, s.rt.profileID)
 ```
 
 **Edit 7** in `internal/httpapi/server.go`:
@@ -637,9 +639,9 @@ Expected: `--- FAIL` for all six (they build: they use only what the package alr
 **Edit 8** in `internal/httpapi/server.go`:
 
 ```diff
- 		"allow_mutations": s.opts.AllowMutations,
+		"allow_mutations": s.opts.AllowMutations,
 +		"account":         accountdoor.SummaryOf(account.CurrentStatus()),
- 	})
+	})
 ```
 
 - [ ] **Step 4: Run the new tests, then the whole package.** The package's existing tests install no guard, and with none installed `account.Require` fails open inside a test binary (D24), so they pass unchanged.
@@ -753,7 +755,7 @@ Expected: `Your API description is valid.`, one warning (`operation-4xx-response
 +        reason: { type: string, description: "Empty when ok. For grace, why the login was not renewed (unreachable, server_error, keyring_unavailable, unconfirmed); for locked, why it is refused (not_logged_in, expired, refused, clock_rollback, clock_skew, key_unknown, unconfirmed, invalid)." }
 +        valid_until: { type: string, format: date-time, description: When the access token expires; absent without a session. }
 +        enforced: { type: boolean, description: "Whether anything is refused. False while dormant and before the enforcement date, when state can be locked while every route answers. Present in GET /health; absent from a login_required 401, which implies it." }
- 
+
 ```
 
 - [ ] **Step 3: Lint again**
@@ -875,7 +877,7 @@ Expected: `--- FAIL: TestReceiverRefusesDeliveriesWhileLocked` with the subtests
 ```diff
 +	"github.com/monoes/mono-agent/internal/account"
 +	"github.com/monoes/mono-agent/internal/accountdoor"
- 	"github.com/monoes/mono-agent/internal/credfile"
+	"github.com/monoes/mono-agent/internal/credfile"
 ```
 
 **Edit 2** in `internal/orgbridge/receiver.go`:
@@ -891,7 +893,7 @@ Expected: `--- FAIL: TestReceiverRefusesDeliveriesWhileLocked` with the subtests
 +		accountdoor.WriteUnauthorized(w, err)
 +		return
 +	}
- 	r.mu.Lock()
+	r.mu.Lock()
 ```
 
 - [ ] **Step 4: Run it, then the package**
@@ -1114,10 +1116,10 @@ Expected: `--- FAIL` for all four (the locked rows get `status = 200, want 401`;
 **Edit 1** in `internal/openaiapi/auth.go`:
 
 ```diff
- 	"strings"
- 
+	"strings"
+
 +	"github.com/monoes/mono-agent/internal/account"
- 	"github.com/monoes/mono-agent/internal/apikeys"
+	"github.com/monoes/mono-agent/internal/apikeys"
  )
 ```
 
@@ -1136,22 +1138,22 @@ Expected: `--- FAIL` for all four (the locked rows get `status = 200, want 401`;
 **Edit 3** in `internal/openaiapi/auth.go`:
 
 ```diff
- 		w.Header().Set("X-Request-Id", id)
+		w.Header().Set("X-Request-Id", id)
 +		if err := account.Require(r.Context()); err != nil {
 +			writeError(w, errLoginRequired())
 +			return
 +		}
- 		key, err
+		key, err
 ```
 
 **Edit 1** in `internal/openaiapi/errors.go`:
 
 ```diff
- 	"unicode"
- 
+	"unicode"
+
 +	"github.com/monoes/mono-agent/internal/account"
 +	"github.com/monoes/mono-agent/internal/accountdoor"
- 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/monomind"
  )
 ```
 
@@ -1171,11 +1173,11 @@ Expected: `--- FAIL` for all four (the locked rows get `status = 200, want 401`;
 **Edit 3** in `internal/openaiapi/errors.go`:
 
 ```diff
- 		switch {
+		switch {
 +		case account.IsLoginRequired(execErr):
 +			// The account locked after the door let the request in: Exec refused.
 +			return errLoginRequired()
- 		case errors.Is(execErr, errShuttingDown):
+		case errors.Is(execErr, errShuttingDown):
 ```
 
 - [ ] **Step 4: Run the new tests, then the package**
@@ -1394,7 +1396,7 @@ Then apply these two edits to `internal/workflow/webhook_server.go`:
 **Edit 1** in `internal/workflow/webhook_server.go`:
 
 ```diff
- 	keyErrorOnce sync.Once
+	keyErrorOnce sync.Once
 +	// lockedLog spaces the log lines of requests refused for a locked
 +	// account (webhook_account.go).
 +	lockedLog webhookLockedLog
@@ -1412,7 +1414,7 @@ Then apply these two edits to `internal/workflow/webhook_server.go`:
 +	if s.refuseWhileLocked(w, r) {
 +		return
 +	}
- 	// Parse path: must be /webhook/{path}
+	// Parse path: must be /webhook/{path}
 ```
 
 - [ ] **Step 4: Run the new tests with `-race`, then the package**
@@ -1447,7 +1449,7 @@ The bridge has three entries that do work for a caller and `ping`, which tells t
 
 The relay refusal is a 503 and not a 401: `RemoteSender` reads a 401 or 403 as `ErrRelayUnauthorized` ("pairing token mismatch, re-pair", `remote.go:119`), while a non-2xx reply that carries a `Response` comes back as the extension's own error (`decodeRelayResponse`, `remote.go:140`).
 
-Open on purpose, pinned by `TestTheOpenEndpointsOfALockedBridge`: the handshake `/monoagent`, `/monoagent/health` (other processes use it to find this bridge and must keep getting a 200, or they would start competing bridges), `/monoagent/auth`, `/monoagent/pair`, `/monoagent/pair/exchange` and `/monoagent/browsers` (names browsers only to a caller with the token). Binding pushes, activity-recording frames (`serveRecording`) and the pages the extension pushes unasked are data, not work, and they stay accepted, pinned by `TestPushedCapturesAndRecordingsAreAcceptedWhileLocked`: the extension counts a successful socket send as delivery and drops its queued copy (`chrome-extension/capture_bridge.js:111-117`, CLIP-08), and installed extensions cannot be updated centrally, so refusing a push would lose a capture without a trace. This is a deliberate deviation from "the bridge refuses everything but `ping`" (spec §6.3), approved by the lead for the owner; refusing pushes later needs an extension release first. What runs on them afterwards (`record.analyze` is a request, a summary goes through `monomind.Exec`) is refused where it runs.
+Open on purpose, pinned by `TestTheOpenEndpointsOfALockedBridge`: the handshake `/monoagent`, `/monoagent/health` (other processes use it to find this bridge and must keep getting a 200, or they would start competing bridges), `/monoagent/auth`, `/monoagent/pair`, `/monoagent/pair/exchange`, `/monoagent/browsers` and `/monoagent/resolve` (`server.go:279`: read-only, they name the connected browsers and the one a profile resolves to, only to a caller with the token). Binding pushes, activity-recording frames (`serveRecording`) and the pages the extension pushes unasked are data, not work, and they stay accepted, pinned by `TestPushedCapturesAndRecordingsAreAcceptedWhileLocked`: the extension counts a successful socket send as delivery and drops its queued copy (`chrome-extension/capture_bridge.js:111-117`, CLIP-08), and installed extensions cannot be updated centrally, so refusing a push would lose a capture without a trace. This is a deliberate deviation from "the bridge refuses everything but `ping`" (spec §6.3), approved by the lead for the owner; refusing pushes later needs an extension release first. Nothing runs on them while locked: `record.analyze`, the work on a recording, is a request and is refused like any other, and the work that follows the write of a capture (its summary, page-kind classification and indexing) is skipped by Task 7b.
 
 **Files:**
 - Create: `internal/extension/account_door.go`, `internal/extension/account_door_test.go`
@@ -1691,8 +1693,8 @@ func TestCDPIsRefusedWhileLocked(t *testing.T) {
 // no answer, and drops its queued copy once the socket takes the frame
 // (chrome-extension/capture_bridge.js:111-117): refusing a push would lose it
 // without a trace, and installed extensions cannot be updated centrally. So a
-// locked bridge keeps accepting them, and what runs on them afterwards is refused
-// where it runs. Refusing pushes later needs an extension release first.
+// locked bridge keeps accepting them; refusing pushes later needs an extension
+// release first.
 func TestPushedCapturesAndRecordingsAreAcceptedWhileLocked(t *testing.T) {
 	srv, ext, inbox := startCaptureServer(t)
 	landed := make(chan struct{}, 1)
@@ -1721,14 +1723,17 @@ func TestPushedCapturesAndRecordingsAreAcceptedWhileLocked(t *testing.T) {
 
 // The endpoints that stay open while locked, pinned: a new one is added here on
 // purpose. The handshake is open so that ping can reach the browser, the probes
-// because other processes use them to find this bridge.
+// because other processes use them to find this bridge, and the two read-only
+// routes (which browsers are connected, which one a profile resolves to) behind
+// the token.
 func TestTheOpenEndpointsOfALockedBridge(t *testing.T) {
 	srv, _, _ := startCaptureServer(t)
 	addr, tok := bridgeAddr(t, srv)
 	accounttest.Install(t, accounttest.LockedNoLogin)
 
 	for path, want := range map[string]int{
-		"/monoagent/health": http.StatusOK, "/monoagent/auth": http.StatusNoContent, "/monoagent/browsers": http.StatusOK,
+		"/monoagent/health": http.StatusOK, "/monoagent/auth": http.StatusNoContent,
+		"/monoagent/browsers": http.StatusOK, "/monoagent/resolve": http.StatusOK,
 		"/monoagent/pair": http.StatusBadRequest, "/monoagent/pair/exchange?n=nope": http.StatusNotFound, // the pages' own checks
 	} {
 		req, _ := http.NewRequest(http.MethodGet, "http://"+addr+path, nil)
@@ -1776,10 +1781,9 @@ import (
 //
 // Left open on purpose: the handshake and pairing, the probes (/monoagent/health
 // also tells other processes where this bridge is and must keep answering 200)
-// and the listing of browsers. Binding pushes, activity-recording frames and
-// pages the extension flushes unasked are data, not work: what runs on them
-// afterwards is refused where it runs (record.analyze is a request, a summary
-// goes through monomind.Exec).
+// and the listing and resolving of browsers. Binding pushes, activity-recording
+// frames and pages the extension flushes unasked are data, not work: they stay
+// accepted (record.analyze, the work on a recording, is a request).
 
 // errAccountLocked is the error of every reply the bridge refuses.
 var errAccountLocked = errors.New(accountdoor.Message)
@@ -1810,7 +1814,7 @@ Then apply these edits, `request.go` first, then `server.go` and `cdp.go`:
 **Edit 1** in `internal/extension/request.go`:
 
 ```diff
- 	CodeInternal      = "internal"
+	CodeInternal      = "internal"
 +	CodeAccountLocked = "account_locked" // no valid monoes.me login: see account_door.go
  )
 ```
@@ -1818,42 +1822,42 @@ Then apply these edits, `request.go` first, then `server.go` and `cdp.go`:
 **Edit 2** in `internal/extension/request.go`:
 
 ```diff
- 			"methods": s.RequestMethods(),
+			"methods": s.RequestMethods(),
 +			"account": accountSummary(),
- 		}, nil
+		}, nil
 ```
 
 **Edit 3** in `internal/extension/request.go`:
 
 ```diff
- 	req.Origin = c.info()
- 
+	req.Origin = c.info()
+
 +	if req.Method != MethodPing && accountRefuses() { // before the lookup: see account_door.go
 +		s.replyError(c, req.ID, CodeAccountLocked, errAccountLocked)
 +		return
 +	}
 +
- 	handler, ok := s.handlerFor(req.Method)
+	handler, ok := s.handlerFor(req.Method)
 ```
 
 **Edit 1** in `internal/extension/server.go`:
 
 ```diff
- 		http.Error(w, "unauthorized", http.StatusUnauthorized)
- 		return
- 	}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 +	// After the token, so a caller without it learns nothing of the account.
 +	if accountRefuses() {
 +		writeRelayLocked(w)
 +		return
 +	}
- 	var cmd Command
+	var cmd Command
 ```
 
 **Edit 1** in `internal/extension/cdp.go`:
 
 ```diff
- 	"github.com/gorilla/websocket"
+	"github.com/gorilla/websocket"
 +
 +	"github.com/monoes/mono-agent/internal/accountdoor"
  )
@@ -1862,32 +1866,32 @@ Then apply these edits, `request.go` first, then `server.go` and `cdp.go`:
 **Edit 2** in `internal/extension/cdp.go`:
 
 ```diff
- 		http.Error(w, "unauthorized", http.StatusUnauthorized)
- 		return
- 	}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 +	// Before the upgrade: a refused client reads a plain 503, not a socket that
 +	// closes for no stated reason.
 +	if accountRefuses() { // the upgrade
 +		http.Error(w, accountdoor.Message, http.StatusServiceUnavailable)
 +		return
 +	}
- 	target := targetFromQuery(r.URL.Query())
+	target := targetFromQuery(r.URL.Query())
 ```
 
 **Edit 3** in `internal/extension/cdp.go`:
 
 ```diff
- 				Error: fmt.Sprintf("the CDP relay carries %s/%s/%s only, not %q", CmdCdp, CmdCdpAttach, CmdCdpDetach, cmd.Type),
- 			})
- 			continue
- 		}
+				Error: fmt.Sprintf("the CDP relay carries %s/%s/%s only, not %q", CmdCdp, CmdCdpAttach, CmdCdpDetach, cmd.Type),
+			})
+			continue
+		}
 +		if accountRefuses() { // each command
 +			// A socket opened before the lock is refused command by command, not
 +			// cut: what is in flight finishes, and it works again once a login lands.
 +			_ = client.write(&Response{ID: cmd.ID, Type: cmd.Type, Error: accountdoor.Message})
 +			continue
 +		}
- 
+
 ```
 
 - [ ] **Step 4: Run the new tests with `-race`, then the package**
@@ -1911,6 +1915,243 @@ git commit -m "feat(extension): the bridge refuses requests, relay and CDP while
 - **ext-cdp**: in `internal/extension/cdp.go` change `if accountRefuses() { // the upgrade` to `if accountRefuses() && false { // the upgrade`. Run `go test ./internal/extension/ -run '^(TestCDPIsRefusedWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/extension/cdp.go`.
 - **ext-cdp-call**: in `internal/extension/cdp.go` change `if accountRefuses() { // each command` to `if accountRefuses() && false { // each command`. Run `go test ./internal/extension/ -run '^(TestCDPIsRefusedWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/extension/cdp.go`.
 - **ext-push**: in `internal/extension/capture.go` change `case isCaptureResponse(resp):` to `case isCaptureResponse(resp) && !accountRefuses():`. Run `go test ./internal/extension/ -run '^(TestPushedCapturesAndRecordingsAreAcceptedWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/extension/capture.go`.
+
+---
+
+### Task 7b: Nothing runs on a capture written while locked
+
+A capture the bridge writes starts work through its after-write hook, which `installCaptureSummaries` installs (`cmd/monoagentcli/extension_summary.go:89-93`): it queues a summary (an agent turn through `monomind.Exec`, which B3a gates), runs the page-kind classifier (when the capture's profile enabled the Jev `capture` surface it sends the page to TypeSafe Jev over HTTP: `cmd/monoagentcli/capture_classify.go:177`, `internal/jev/client.go:257`) and queues its indexing (a `monomind mcp exec -t knowledge_ingest` process: `internal/monomind/docsync.go:117`). On a locked machine the pushes Task 7 keeps accepting would start that work, and the classification and the indexing pass no gate. Ruling R8 of 2026-10-07: while the account is locked the bridge keeps the capture and runs none of them. `Server.written` (`internal/extension/capture.go:276`), the one place the hook is run, for pushed and requested captures alike, skips it.
+
+The indexing queue starts a pass in three more ways that follow no write: the catch-up 30 seconds after a bridge starts (`sweepCaptureIndexAfter`, `cmd/monoagentcli/extension_capture_index.go:72`), which a locked daemon that launchd or Docker restarts reaches at every start; the retry of a failed pass (`Queue.scheduleRetry`, `internal/captureindex/queue.go:193`); and the indexing that follows a finished summary (`sum.OnDone`, `extension_summary.go:88`). So the queue checks the account where a pass runs, at the top of `Queue.pass`, and drops a pass while locked. Nothing is lost: a pass indexes every capture of its profile that is not indexed yet, so the profile's next pass after a sign-in (its next capture, the next start of a bridge, or `monoagentcli profile documents index --all`) takes up what a dropped one left. `internal/captureindex` may import `internal/account`: it is not in `go list -deps -test ./internal/secrets/` (index §3.6, A15), and Step 4 vets it.
+
+What a person sees of a capture pushed while locked: it is stored and listed. It has no `summary.json` (it lists as a capture that asked for no summary, and nothing summarizes it later), no `classification.json` (`monoagentcli capture classify <path>` makes one after a sign-in), and it is indexed by its profile's next pass after the sign-in. Work already started when the account locks finishes: a classification in flight, a pass under way, a summary turn that `monomind.Exec` let in. A summary queued before the lock whose turn starts after it is refused by `monomind.Exec` and recorded as `error` (B3a, spec A17).
+
+**Files:**
+- Create: `internal/extension/account_after_write_test.go`, `internal/captureindex/account_test.go`
+- Modify: `internal/extension/account_door.go` (Task 7's: its comment, and after `writeRelayLocked`); `internal/extension/capture.go`: `SetAfterWrite`'s comment (263-267), `written` (280); `internal/captureindex/queue.go`: imports (10), `pass` (157). `capture.go` was 543 lines before this plan and stays at 543.
+
+**Interfaces:**
+- Consumes: `accountRefuses()` (Task 7), `account.Require`, `doortest.Modes`, `accounttest.Install`; in `internal/extension` the package's `startCaptureServer`, `(*fakeExtension).sendFinal`, `b64Artifact`, `sampleMeta` (`capture_test.go:34`, `140`, `165`, `173`), `(*Server).SetAfterWrite` and `OnCapture`, `capture.List`; in `internal/captureindex` the test package's `newTestDB`, `writeCapture`, `recorder` and `docByPath` (`captureindex_test.go:25`, `43`, `66`, `88`), the profile id `work`, and `Queue{Indexer, Open, Logf}`.
+- Produces: `func (s *Server) skipAfterWrite(path string) bool` (true while `accountRefuses()`, with one `Warn` line per capture); `written` runs no hook while it is true. `Queue.pass` drops a pass while `account.Require` refuses, with one line through `Logf`: `capture index: <profile>: skipped, no valid monoes.me login (run: monoagentcli account login)`.
+
+- [ ] **Step 1: Write the failing tests** `internal/extension/account_after_write_test.go`:
+
+```go
+package extension
+
+import (
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/account/accounttest"
+	"github.com/monoes/mono-agent/internal/accountdoor/doortest"
+	"github.com/monoes/mono-agent/internal/capture"
+)
+
+// A capture written while locked is stored, and nothing runs on it: the
+// after-write hook (the bridge's summary, page-kind classifier and indexing)
+// is skipped. In every other state it runs once per capture.
+func TestTheAfterWriteHookIsSkippedWhileLocked(t *testing.T) {
+	for _, c := range doortest.Modes {
+		t.Run(c.Name, func(t *testing.T) {
+			srv, ext, inbox := startCaptureServer(t)
+			var hooked atomic.Int32
+			srv.SetAfterWrite(func(*capture.Result) { hooked.Add(1) })
+			landed := make(chan error, 1)
+			srv.OnCapture(func(_ *capture.Result, err error) { landed <- err })
+			accounttest.Install(t, c.Mode)
+
+			ext.sendFinal("ext-pushed-1", sampleMeta(), b64Artifact(capture.ArtifactReadable, "# A Post"))
+			select {
+			case err := <-landed:
+				if err != nil {
+					t.Fatalf("the pushed capture was not written: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the pushed capture never landed")
+			}
+			if entries, err := capture.List(inbox); err != nil || len(entries) != 1 {
+				t.Fatalf("inbox = %+v, %v, want the pushed capture", entries, err)
+			}
+			// OnCapture reports a pushed capture after its hook has returned, so
+			// the count is final.
+			want := int32(1)
+			if c.Refused {
+				want = 0
+			}
+			if got := hooked.Load(); got != want {
+				t.Errorf("the after-write hook ran %d times, want %d", got, want)
+			}
+		})
+	}
+}
+```
+
+and `internal/captureindex/account_test.go`:
+
+```go
+package captureindex_test
+
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/account/accounttest"
+	"github.com/monoes/mono-agent/internal/accountdoor/doortest"
+	"github.com/monoes/mono-agent/internal/captureindex"
+)
+
+// A locked account indexes nothing, whatever asked for the pass: a new
+// capture, the bridge's catch-up after it starts (EnqueueRetry, as here), a
+// retry or the indexing after a summary. The pass says why and runs no
+// monomind; in every other state it indexes the capture.
+func TestTheQueueIndexesNothingWhileLocked(t *testing.T) {
+	for _, c := range doortest.Modes {
+		t.Run(c.Name, func(t *testing.T) {
+			db := newTestDB(t)
+			a := writeCapture(t, work, "a", "alpha")
+			rec := &recorder{}
+			lines := make(chan string, 16)
+			q := &captureindex.Queue{
+				Indexer: &captureindex.Indexer{Ingest: rec.ingest},
+				Open:    func() (*sql.DB, func(), error) { return db, func() {}, nil },
+				Logf:    func(format string, args ...any) { lines <- fmt.Sprintf(format, args...) },
+			}
+			accounttest.Install(t, c.Mode)
+			q.Start()
+			defer q.Stop()
+
+			q.EnqueueRetry(work)
+			var line string
+			select {
+			case line = <-lines:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the pass never ran")
+			}
+			if skipped := strings.Contains(line, "no valid monoes.me login"); skipped != c.Refused {
+				t.Fatalf("the pass logged %q, want skipped = %v", line, c.Refused)
+			}
+			if c.Refused {
+				if n := rec.count(); n != 0 {
+					t.Fatalf("%d captures were ingested while locked", n)
+				}
+				return
+			}
+			if !docByPath(t, db, work, a).Indexed {
+				t.Fatal("the capture was not indexed")
+			}
+		})
+	}
+}
+```
+
+- [ ] **Step 2: Run them and watch them fail**
+
+Run: `go test ./internal/extension/ -run '^TestTheAfterWriteHookIsSkippedWhileLocked$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`, then `go test ./internal/captureindex/ -run '^TestTheQueueIndexesNothingWhileLocked$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
+Expected: `--- FAIL` for both, in the subtests `locked,_no_login` and `locked,_refused` (they build: they use only what the packages have). The hook runs once for a capture written while locked, and the pass logs `capture index: <profile>: indexed a (…)` instead of the skip.
+
+- [ ] **Step 3: Implement.** Apply these edits, `account_door.go` first, then `capture.go` and `queue.go`:
+
+**Edit 1** in `internal/extension/account_door.go`:
+
+```diff
+ // and the listing and resolving of browsers. Binding pushes, activity-recording
+ // frames and pages the extension flushes unasked are data, not work: they stay
+-// accepted (record.analyze, the work on a recording, is a request).
++// accepted (record.analyze, the work on a recording, is a request), and while
++// the account is locked nothing runs on a capture once it is written
++// (skipAfterWrite).
+```
+
+**Edit 2** in `internal/extension/account_door.go`:
+
+```diff
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(&Response{Error: accountdoor.Message})
+ }
++
++// skipAfterWrite reports whether the after-write hook must not run for the
++// capture written at path, and logs why when it must not. A locked account
++// keeps the capture (the extension has already dropped its copy) but runs
++// none of the work that follows a write: the summary, the page-kind
++// classifier and the indexing that the bridge commands install.
++func (s *Server) skipAfterWrite(path string) bool {
++	if !accountRefuses() {
++		return false
++	}
++	s.logger.Warn().Str("path", path).Msg("capture stored without its summary, classification or indexing: no valid monoes.me login (run: monoagentcli account login)")
++	return true
++}
+```
+
+**Edit 1** in `internal/extension/capture.go`:
+
+```diff
+ // SetAfterWrite registers a hook run for every envelope that lands on disk,
+ // requested or flushed, after it is written and before anyone waits on it
+-// further. It must return quickly: the summary job (internal/capturesummary)
+-// only queues work here, so a capture is acknowledged exactly as fast as it
+-// was before summaries existed.
++// further; while the account is locked it is not run (skipAfterWrite). It
++// must return quickly: the summary job (internal/capturesummary) only queues
++// work here, so a capture is acknowledged as fast as before summaries existed.
+```
+
+**Edit 2** in `internal/extension/capture.go`:
+
+```diff
+	fn := s.afterWrite
+	s.pendMu.Unlock()
+-	if fn == nil || res == nil {
++	if fn == nil || res == nil || s.skipAfterWrite(res.Path) {
+		return
+	}
+```
+
+**Edit 1** in `internal/captureindex/queue.go`:
+
+```diff
+	"time"
+
++	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/profiledir"
+ )
+```
+
+**Edit 2** in `internal/captureindex/queue.go`:
+
+```diff
+ func (q *Queue) pass(ctx context.Context, profileID string, retry bool) {
++	// A locked monoes.me account indexes nothing, whatever asked for this
++	// pass. It is dropped, not retried: the profile's next pass after a
++	// sign-in takes up the captures it leaves.
++	if account.Require(ctx) != nil {
++		q.logf("capture index: %s: skipped, no valid monoes.me login (run: monoagentcli account login)", profileID)
++		return
++	}
+	db, closeDB, err := q.Open()
+```
+
+- [ ] **Step 4: Run the new tests, then the packages, then vet the new import**
+
+Run the first command of Step 2 with `-race` after `-count=1`, the second as it is (under `-race` each of its five subtests migrates a database, about 80 seconds in all; CI's `-race` jobs run it), then `go test ./internal/extension/ ./internal/captureindex/ -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`, then `go vet ./internal/captureindex/ ./internal/secrets/`
+Expected: `ok` for each test command, and no output from `go vet` (an import cycle through `internal/secrets` would be reported here).
+
+- [ ] **Step 5: Commit**
+
+```
+git add internal/extension/account_door.go internal/extension/capture.go internal/extension/account_after_write_test.go internal/captureindex/queue.go internal/captureindex/account_test.go
+git commit -m "feat(capture): nothing runs on a capture written while the account is locked" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
+- [ ] **Step 6: Mutation checks** (after the commit). Make each change with the `Edit` tool (the line is unique in its file), run the command, expect the failure, restore the file with `git checkout -- <file>` (it returns to the commit just made), and go on. A pass would mean the gate is not pinned: fix the test, not the mutation.
+
+- **ext-after-write**: in `internal/extension/capture.go` change `if fn == nil || res == nil || s.skipAfterWrite(res.Path) {` to `if fn == nil || res == nil {`. Run `go test ./internal/extension/ -run '^(TestTheAfterWriteHookIsSkippedWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/extension/capture.go`.
+- **index-pass**: in `internal/captureindex/queue.go` change `if account.Require(ctx) != nil {` to `if account.Require(ctx) != nil && false {`. Run `go test ./internal/captureindex/ -run '^(TestTheQueueIndexesNothingWhileLocked)$' -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'` and expect at least one `--- FAIL`. Restore: `git checkout -- internal/captureindex/queue.go`.
 
 ---
 
@@ -1989,10 +2230,13 @@ func TestToolsCallIsRefusedWhileLocked(t *testing.T) {
 				if id == "1" || id == "2" {
 					continue
 				}
-				text, isErr := toolText(t, resps[id])
+				// A protocol error carries no result for toolText to read: report it first.
 				if _, isProtocolError := resps[id]["error"]; isProtocolError {
-					t.Errorf("call %s: a protocol error %s, want the tool error of a locked account", id, resps[id]["error"])
-				} else if refused := isErr && text == loginRequiredText; refused != c.Refused {
+					t.Errorf("call %s: a protocol error %s, want a tool result", id, resps[id]["error"])
+					continue
+				}
+				text, isErr := toolText(t, resps[id])
+				if refused := isErr && text == loginRequiredText; refused != c.Refused {
 					t.Errorf("call %s = %q (isError %v), want refused = %v", id, text, isErr, c.Refused)
 				}
 			}
@@ -2053,7 +2297,7 @@ Expected: `--- FAIL` for both, in the subtests `locked,_no_login` and `locked,_r
 ```diff
 +	"github.com/monoes/mono-agent/internal/account"
 +	"github.com/monoes/mono-agent/internal/accountdoor"
- 	"github.com/monoes/mono-agent/internal/apiconfig"
+	"github.com/monoes/mono-agent/internal/apiconfig"
 ```
 
 **Edit 2** in `internal/mcp/server.go`:
@@ -2069,7 +2313,7 @@ Expected: `--- FAIL` for both, in the subtests `locked,_no_login` and `locked,_r
 +			IsError: true,
 +		})
 +	}
- 	var params struct {
+	var params struct {
 ```
 
 - [ ] **Step 4: Run the new tests, then the package**
@@ -2101,12 +2345,12 @@ Expected: no output from any of them (the `devaccount` tag exists once B1a is me
 
 - [ ] **Step 2: The packages this plan touched, in full**
 
-Run: `go test ./internal/accountdoor/... ./internal/httpapi/ ./internal/orgbridge/ ./internal/openaiapi/ ./internal/workflow/ ./internal/mcp/ ./internal/extension/ -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
-Expected: seven `ok` lines (the packages run in parallel: a minute or two). A failure on the index §4 list of load flakes (`TestGrantWaitTimeoutNote`, `TestManyUpdateCallsAtOnceAllLand`) is judged against that list; any other failure is yours.
+Run: `go test ./internal/accountdoor/... ./internal/httpapi/ ./internal/orgbridge/ ./internal/openaiapi/ ./internal/workflow/ ./internal/mcp/ ./internal/extension/ ./internal/captureindex/ -count=1 2>&1 | grep -E '^(ok|FAIL|--- FAIL|    --- FAIL|internal/|cmd/)'`
+Expected: eight `ok` lines (the packages run in parallel: a minute or two). A failure on the index §4 list of load flakes (`TestGrantWaitTimeoutNote`, `TestManyUpdateCallsAtOnceAllLand`) is judged against that list; any other failure is yours.
 
-- [ ] **Step 3: Race the doors that add concurrency.** The HTTP API, `/v1`, receiver and MCP doors add no shared state, and the new HTTP API tests alone take about two minutes under `-race` (each builds a vault), so they are left out.
+- [ ] **Step 3: Race the doors that add concurrency.** The HTTP API, `/v1`, receiver and MCP doors add no shared state, and the new HTTP API tests alone take about two minutes under `-race` (each builds a vault), so they are left out; so is the queue's test of Task 7b (its gate reads the guard's verdict on the queue's own worker, and under `-race` its five databases take about 80 seconds).
 
-Run: `go test ./internal/accountdoor/... -count=1 -race`, then `go test ./internal/workflow/ -run '^(TestWebhookServerRefusesRequestsWhileLocked|TestWebhookServerLogsALockedAccountOncePerMinute)$' -count=1 -race`, then `go test ./internal/extension/ -run '^(TestRequestsAreRefusedWhileLocked|TestABridgeSocketRecoversWhenTheAccountDoes|TestRelayIsRefusedWhileLocked|TestCDPIsRefusedWhileLocked|TestPushedCapturesAndRecordingsAreAcceptedWhileLocked|TestTheOpenEndpointsOfALockedBridge)$' -count=1 -race`
+Run: `go test ./internal/accountdoor/... -count=1 -race`, then `go test ./internal/workflow/ -run '^(TestWebhookServerRefusesRequestsWhileLocked|TestWebhookServerLogsALockedAccountOncePerMinute)$' -count=1 -race`, then `go test ./internal/extension/ -run '^(TestRequestsAreRefusedWhileLocked|TestABridgeSocketRecoversWhenTheAccountDoes|TestRelayIsRefusedWhileLocked|TestCDPIsRefusedWhileLocked|TestPushedCapturesAndRecordingsAreAcceptedWhileLocked|TestTheOpenEndpointsOfALockedBridge|TestTheAfterWriteHookIsSkippedWhileLocked)$' -count=1 -race`
 Expected: `ok` for each.
 
 - [ ] **Step 4: The OpenAPI lint**
@@ -2133,20 +2377,21 @@ Every HTTP, WebSocket and stdio entry the repository registers was enumerated wi
 | the webhook server | `internal/workflow/webhook_server.go` | `refuseWhileLocked` |
 | bridge: requests, relay, CDP socket | `internal/extension/{request,server,cdp}.go` | Task 7 |
 | MCP `tools/call`, grant mode included | `internal/mcp/server.go:374` | `handleToolsCall` |
+| not a door: the work that follows the write of a capture (summary, page-kind classifier, indexing), and every pass of the bridge's indexing queue | `cmd/monoagentcli/extension_summary.go:89-93`, `internal/captureindex/queue.go:157` | `Server.written` (`skipAfterWrite`), `Queue.pass` (Task 7b) |
 
 Registration order and wrapping: `routes()` registers `GET /health` first, the authenticated routes next and the `ExtraRoutes` last (`internal/httpapi/server.go:123-143`), and the gate wraps the finished mux, so order cannot open a route; Go's mux panics on a conflicting pattern instead of letting a later one shadow an earlier one. The dedicated `/v1` listener has no mux of its own beyond `Gateway.Handler`, whose only routes are `/health` and `Mount`'s four.
 
 Open on purpose, each pinned by a test:
 - `GET` and `HEAD /health` of the HTTP API (it reports the account: `TestHealthIsOpenInEveryStateAndReportsTheAccount`) and `GET /health` of the dedicated `/v1` listener (it reports nothing of the account: `TestTheDedicatedListenerRefusesToo`).
-- The bridge's handshake, probes, pairing and browser listing (`TestTheOpenEndpointsOfALockedBridge`).
+- The bridge's handshake, probes and pairing, and the listing and resolving of browsers (`/monoagent/browsers`, `/monoagent/resolve`: read-only, behind the token) (`TestTheOpenEndpointsOfALockedBridge`).
 - The sign-in loopback callback of `internal/library/auth.go:209`: it is the login itself.
 - The one-shot OAuth callback of `internal/connections/oauth.go:118`: started by `connect oauth`, a gated command, for a third-party grant. It is a callback, not a door.
 
 Covered elsewhere, not a request door:
 - A delivery the org receiver accepted before the lock whose bus event arrives after it (`Receiver.onEvent`, `dispatch`): `CreateUnownedExecution` queues a run that `handleExecution` refuses and records (B3a), and `sendReplies` then tells the sender. Refusing it in `dispatch` would drop a message the sender was told was accepted.
 - In-process callers of `Server.SendCommandTo` (workflow browser nodes, `node run`): `ActionExecutor.executeDef` (B3a).
-- Background work of the gateway (catalog refresh, Jev picks, summaries) and every agent turn: `monomind.Exec` (B3a).
-- Activity-recording frames, unsolicited page captures and binding pushes on the bridge socket: data, not work, kept accepted (`TestPushedCapturesAndRecordingsAreAcceptedWhileLocked`) because the extension drops its queued copy once the socket takes a push and installed extensions cannot be updated centrally; what runs on them is refused where it runs. Tightening this needs an extension release first.
+- Work the gateway does for a `/v1` request: the refresh of its model catalog (`monomind` scans and model listings, started from a request, `internal/openaiapi/catalog_flight.go:39`) and the auto model's Jev pick (a Jev HTTP call, `internal/openaiapi/auto_jev.go:44`, reached from `request.go:74`) run only for a request the door let in. Every agent turn goes through `monomind.Exec` (B3a).
+- Activity-recording frames, unsolicited page captures and binding pushes on the bridge socket: data, not work, kept accepted (`TestPushedCapturesAndRecordingsAreAcceptedWhileLocked`) because the extension drops its queued copy once the socket takes a push and installed extensions cannot be updated centrally. Nothing runs on them while locked: the work that follows the write of a capture is skipped and the indexing queue drops its passes (Task 7b), and `record.analyze` is a request. Tightening this needs an extension release first.
 - The desktop app (`wails-app`) starts no listener (a search of its Go for `net.Listen`, `ListenAndServe` and `http.Server` finds none); its bindings shell out to `monoagentcli`, which the CLI gate covers (B2, B4).
 
 ## Contract change requests
@@ -2155,5 +2400,5 @@ All four were ruled on by the lead and are applied in this plan; none changes a 
 
 1. **Index §3.4 item 7: the shapes B4's side panel reads.** Approved; the lead writes them into the index. This plan implements, with the existing reply envelope of `internal/extension/request.go`, the refusal `{"kind":"reply","id":"<id>","error":"Log in to monoes.me first: monoagentcli account login","code":"account_locked"}` (no `ok` key: `Reply.OK` is `omitempty` at `request.go:122`, so a reader tests `!reply.ok`), and `ping` data `{"pong":true,"methods":[…],"account":{"state":"ok|grace|locked","reason":"…","valid_until":"<RFC 3339, absent without a session>","enforced":true}}`, the same object as `GET /health`'s `account`, never carrying the user.
 2. **`enforced` on the `ping` and `/health` account objects (B4's request).** Approved and applied: `accountdoor.Summary` carries `Enforced` (from `Status.Enforced`), and the `/health` and `ping` tests assert it per mode (false only while dormant). B3a adds the same field to the heartbeat's `AccountState`; B5a asserts `{state, reason, valid_until, enforced}`. The 401 bodies stay `{"state","reason"}`: a refusal implies enforcement.
-3. **Pushed captures, recordings and bindings stay accepted while locked (B4's request 2).** Approved as the owner's proxy and pinned by a test; the lead lists it for the owner as a deliberate deviation from "the bridge refuses everything but `ping`". Refusing them later needs an extension release first.
+3. **Pushed captures, recordings and bindings stay accepted while locked (B4's request 2).** Approved as the owner's proxy and pinned by a test; the lead lists it for the owner as a deliberate deviation from "the bridge refuses everything but `ping`". Refusing them later needs an extension release first. Nothing runs on them while locked (ruling R8 of 2026-10-07, Task 7b): a capture pushed then gets no summary or page-kind classification, and is indexed by its profile's next pass after a sign-in.
 4. **B1a's `account.LoginRequiredMessage`.** Approved: Task 1 defines `const Message = account.LoginRequiredMessage`, and `TestWriteUnauthorizedBody` keeps the literal sentence as the pin.
