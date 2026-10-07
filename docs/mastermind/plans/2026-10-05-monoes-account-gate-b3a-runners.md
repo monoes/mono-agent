@@ -1640,7 +1640,7 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
 
 ### Task 5: The serving commands start the guard's refresher at once
 
-`daemon`, `httpapi`, `mcp` and `extension serve` (alias `bridge serve`) are the CLI gate's `serve` class: they pass it when locked and serve for as long as they run, so their guard must not wait the five minutes `run()` (B2) gives every other process. `org serve --foreground` serves in its own process too, but `org serve` is a gated command (refused at start when locked, `--foreground` included) and without `--foreground` a launcher that starts nothing here (`cmd/monoagentcli/org_process.go:28-52`), so its refresher is for a session that locks while it runs. Done in each command's pre-run (the index says "in their own RunE"; a pre-run runs just before it, on the same context, and can be tested without starting a server). Nothing here sets an `OnRefused` handler: cancel-on-refusal is the engine's (Task 3), and the serving processes keep serving (§6.4).
+`daemon`, `httpapi`, `mcp` and `extension serve` (alias `bridge serve`) are the CLI gate's `serve` class: they pass it when locked and serve for as long as they run, so their guard must not wait the five minutes `run()` (B2) gives every other process. `org serve --foreground` serves in its own process too, but `org serve` is a gated command (refused at start when locked, `--foreground` included) and without `--foreground` a launcher that starts nothing here (`cmd/monoagentcli/org_process.go:28-60`), so its refresher is for a session that locks while it runs. Done in each command's pre-run, as index §3.5 says ("in their own `PreRun`"): it runs just before the command's `RunE`, on the same context, and can be tested without starting a server. Nothing here sets an `OnRefused` handler: cancel-on-refusal is the engine's (Task 3), and the serving processes keep serving (§6.4).
 
 **Files:**
 - Create: `cmd/monoagentcli/account_serving.go`
@@ -1659,9 +1659,12 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
   import (
   	"context"
   	"strings"
+  	"sync/atomic"
   	"testing"
+  	"time"
 
   	"github.com/monoes/mono-agent/internal/account"
+  	"github.com/monoes/mono-agent/internal/account/accounttest"
   )
 
   // recordServingGuard replaces startServingGuard with a counter for one test.
@@ -1727,18 +1730,67 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
   	}
   }
 
-  // With no guard installed (a test, or a process nothing guards) there is
-  // nothing to start, and a nil context is not a crash.
-  func TestStartServingGuardWithNoGuardDoesNothing(t *testing.T) {
-  	account.InstallForTest(t, nil)
-  	startServingGuard(context.Background())
-  	startServingGuard(nil)
+  // countingRefresher counts the grants the guard sends and answers each with
+  // invalid_grant, so that nothing more happens to the session afterwards.
+  type countingRefresher struct{ grants atomic.Int32 }
+
+  func (r *countingRefresher) Refresh(context.Context, string) (*account.TokenSet, error) {
+  	r.grants.Add(1)
+  	return nil, &account.RefusedError{Description: "the account was blocked"}
+  }
+
+  // dueGuard installs a signed-in guard whose token is past half its life, so that the
+  // first pass of a refresher that has been started sends a grant at once, and returns
+  // the refresher that counts it. The enforcement date has passed (accounttest.New sets
+  // one), because StartRefresher does nothing while the gate is dormant.
+  func dueGuard(t *testing.T) *countingRefresher {
+  	t.Helper()
+  	fx := accounttest.New(t)
+  	store := account.OpenStore(t.TempDir(), account.NewMemorySealer())
+  	token := fx.Token(accounttest.TokenOptions{Sub: "u1", IssuedAt: fx.Clock.Now().Add(-40 * time.Minute)})
+  	if err := store.Save(&account.Session{V: 1, Host: account.HostURL, AccessToken: token, User: &account.User{ID: "u1"}}); err != nil {
+  		t.Fatal(err)
+  	}
+  	if err := store.SaveRefresh("refresh-1"); err != nil {
+  		t.Fatal(err)
+  	}
+  	r := &countingRefresher{}
+  	g := account.NewGuard(account.GuardOptions{Store: store, Refresher: r, Now: fx.Clock.Now})
+  	account.InstallForTest(t, g)
+  	t.Cleanup(g.Close) // registered last, so it runs first: the refresher has ended before the guard is uninstalled and the date and key are restored
+  	return r
+  }
+
+  // TestStartServingGuardStartsTheInstalledGuardsRefresher is the one test of the real
+  // startServingGuard (the tests above replace it): the guard that is installed gets
+  // its refresher, so a session that is due is sent its grant. It fails when the
+  // StartRefresher call is deleted, and when the no-guard rule is.
+  func TestStartServingGuardStartsTheInstalledGuardsRefresher(t *testing.T) {
+  	t.Run("a guard that is due", func(t *testing.T) {
+  		r := dueGuard(t)
+  		ctx, cancel := context.WithCancel(context.Background())
+  		t.Cleanup(cancel)
+
+  		startServingGuard(ctx)
+
+  		for deadline := time.Now().Add(10 * time.Second); r.grants.Load() == 0; time.Sleep(10 * time.Millisecond) {
+  			if time.Now().After(deadline) {
+  				t.Fatal("no grant was sent within 10s of startServingGuard: the guard's refresher was not started")
+  			}
+  		}
+  	})
+  	t.Run("no guard installed", func(t *testing.T) {
+  		account.InstallForTest(t, nil)
+  		account.SetEnforceFromForTest(t, time.Now().Add(-24*time.Hour)) // enforced: a dormant gate returns before it touches a nil guard
+
+  		startServingGuard(context.Background()) // there is nothing to start, and nothing panics
+  	})
   }
   ```
 
 - [ ] **Step 2: Run them and see them fail.**
   ```
-  go test ./cmd/monoagentcli/ -run '^(TestServingCommandsStartTheGuardRefresher|TestOrgServeStartsTheGuardOnlyWhenItServes|TestStartServingGuardWithNoGuardDoesNothing)$' -count=1
+  go test ./cmd/monoagentcli/ -run '^(TestServingCommandsStartTheGuardRefresher|TestOrgServeStartsTheGuardOnlyWhenItServes|TestStartServingGuardStartsTheInstalledGuardsRefresher)$' -count=1
   ```
   Expected: `FAIL … [build failed]` with `undefined: startServingGuard`.
 
@@ -1824,6 +1876,10 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
 
 - [ ] **Step 8: Mutation checks, one per command.** Each turns a command back into an unmarked one: `perl -pi -e 's/return servingCommand\(c\)/return c/' cmd/monoagentcli/daemon.go`, then `go test ./cmd/monoagentcli/ -run '^TestServingCommandsStartTheGuardRefresher$' -count=1`, expect FAIL `daemon does not start the guard's refresher: no PreRun`, then `git restore` the file. The same for `httpapi.go`, `mcp.go` and `extension_serve.go` (`s/return servingCommand\(cmd\)/return cmd/`; the message names `httpapi`, `mcp`, `extension serve`) and for `org_process.go` (`s/return servingCommand\(c, servesInForeground\)/return c/`, test `'^TestOrgServeStartsTheGuardOnlyWhenItServes$'`).
 
+  The helper itself, each time on `cmd/monoagentcli/account_serving.go` and with `go test ./cmd/monoagentcli/ -run '^TestStartServingGuardStartsTheInstalledGuardsRefresher$' -count=1`, then `git restore` the file:
+  - Deleting the call that does the work: `perl -ni -e 'print unless /^\tg\.StartRefresher\(ctx\)$/' cmd/monoagentcli/account_serving.go`: the row `a guard that is due` fails after 10 seconds with `no grant was sent within 10s of startServingGuard: the guard's refresher was not started`.
+  - Deleting the no-guard rule: `perl -0pi -e 's/\tif g == nil \{\n\t\treturn\n\t\}\n//' cmd/monoagentcli/account_serving.go`: the test panics in `no guard installed` with `invalid memory address or nil pointer dereference`.
+
 ### Task 6: The heartbeat reports the account, and automatic re-validation waits while locked
 
 `daemonhb.Heartbeat` gains `Account *AccountState` (index §3.4 item 4, with the `enforced` key of spec A4); the daemon fills it before every write, so the desktop and `doctor` see a lock within the 10-second heartbeat interval. The daemon's automatic re-validation (off by default, a paid model call per check) reports itself busy while locked: the validators call `monomind.AgentTest`, not `Exec`, so Task 4's gate would not stop them, and a refused check would be stored as a failed validation (see Decisions).
@@ -1835,7 +1891,7 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
 - Test: Create `internal/daemonhb/account_test.go`, `cmd/monoagentcli/daemon_account_status_test.go`
 
 **Interfaces:**
-- Consumes (B1a): `func account.CurrentStatus() account.Status` (nil-safe, no I/O), `(account.Status).Allowed() bool`, the `Status` fields `State`, `Reason`, `ValidUntil`, `EnforceFrom`, `Enforced`; `accounttest.Install` with `LockedNoLogin`, `SignedIn`, `Dormant`; `account.InstallForTest(t, nil)` and `account.SetEnforceFromForTest` for the warn period. From this repo: `heartbeatSchedules` (`daemon.go:266`), `appBusy(ctx, db) (bool, string)` (`agent_auto_revalidate.go:54`).
+- Consumes (B1a): `func account.CurrentStatus() account.Status` (nil-safe; no network call, and at most one `stat` of `session.json` every 5 seconds), `(account.Status).Allowed() bool`, the `Status` fields `State`, `Reason`, `ValidUntil`, `EnforceFrom`, `Enforced`; `accounttest.Install` with `LockedNoLogin`, `SignedIn`, `Dormant`; `account.InstallForTest(t, nil)` and `account.SetEnforceFromForTest` for the warn period. From this repo: `heartbeatSchedules` (`daemon.go:266`), `appBusy(ctx, db) (bool, string)` (`agent_auto_revalidate.go:54`).
 - Produces: in `internal/daemonhb`, `type AccountState struct{ State string "json:\"state\""; Reason string "json:\"reason,omitempty\""; ValidUntil time.Time "json:\"valid_until,omitzero\""; Enforced bool "json:\"enforced\"" }` and the field `Account *AccountState "json:\"account,omitempty\""` on `Heartbeat` (index §3.4 item 4); in `cmd/monoagentcli` (unexported) `heartbeatAccount(st account.Status) *daemonhb.AccountState` (nil while `st.EnforceFrom` is the zero time), `daemonHeartbeatRefresh(engine *workflow.WorkflowEngine) func(*daemonhb.Heartbeat)` and `busyOrLocked(ctx context.Context, db *sql.DB) (bool, string)` (locked: `true, "the monoes.me account is locked"`; otherwise `appBusy`).
 
 - [ ] **Step 1: Write the failing tests.** Create `internal/daemonhb/account_test.go`:
@@ -2066,7 +2122,7 @@ Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended; refined by R18): `account
 
 ### Task 7: A locked daemon stops its org services and resumes by itself
 
-D8 and §6.4, exactly. The daemon never exits because of a lock (launchd's KeepAlive would respawn it in a loop). Locked, it starts no org services (a daemon that starts locked never starts them) and stops the ones it started, logs once the exact command that ends the lock, and polls `account.CurrentStatus()` every `account.PollInterval`; when the verdict is allowed again it starts them again. A refusal also cancels what the engine is running, once per lock (the engine's own handler, Task 3, usually got there first; both are idempotent, and this one needs no callback). Everything else the daemon starts stays up and refuses by itself: the engine (Tasks 1 to 3), the HTTP API, `/v1`, the webhook server and the bridge (B3b), the heartbeat (Task 6).
+D8 and §6.4, exactly. The daemon never exits because of a lock (launchd's KeepAlive would respawn it in a loop). Locked, it starts no org services (a daemon that starts locked never starts them) and stops the ones it started, logs once the exact command that ends the lock, and polls `account.CurrentStatus()` every `account.PollInterval`; when the verdict is allowed again it starts them again. A refusal also cancels what the engine is running, once per lock (the engine's own handler, Task 3, usually got there first; both are idempotent, and this one needs no callback). Everything else the daemon starts stays up and refuses by itself: the engine (Tasks 1 to 3b), the HTTP API, `/v1`, the webhook server and the bridge (B3b), the heartbeat (Task 6).
 
 **Files:**
 - Modify: `cmd/monoagentcli/daemon_org.go` (imports, lines 3-23; struct `orgServices`, lines 54-67; `start`, lines 101, 102, 115 and 125)
@@ -2513,10 +2569,10 @@ D8 and §6.4, exactly. The daemon never exits because of a lock (launchd's KeepA
 
 ### Task 8: The layer-2 caller survey for the findings file, and the full verification
 
-Spike S4's layer-2 half (which processes call the three gate sites with no guard installed) goes into the findings file, then the whole branch is verified in both builds.
+Spike S4's layer-2 half (which processes call the three gate sites with no guard installed) goes into your report, from which the controller appends it to the findings file on the docs branch, and then the whole branch is verified in both builds.
 
 **Files:**
-- Modify (append): `docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md`. Plan A's first task creates it; if it does not exist in your branch yet, create it with the single line `# Spike findings` first.
+- None in this branch. The findings file, `docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md`, exists on the docs branch (plan A's Task 2 created it there) and is not part of this branch: do not create or edit it here, whatever the `docs/` folder of your worktree shows, because a copy made here would conflict with it at the merge. The S4 section of step 2 goes into your report file, and the controller appends it to the findings file on the docs branch.
 
 **Interfaces:** none.
 
@@ -2540,7 +2596,7 @@ Spike S4's layer-2 half (which processes call the three gate sites with no guard
   ```
   Expected: `monoagentcli: ` and a number above zero (23 when this plan was written), `inspect: 0`, `schemagen: 0`. A binary other than `monoagentcli` that prints a non-zero number links `Exec`: it must call `monomind.SetAccountGate(account.Require)` before it runs a turn (without it `Exec` refuses, even before the enforcement date), so add it to the list below and tell the lead. The desktop's Go side is the same check on its own binary (it needs the Wails toolchain, so it is optional here); when this plan was written it linked none of `Exec`, `ActionExecutor.executeDef` and `WorkflowEngine.handleExecution`.
 
-- [ ] **Step 2: Append the findings.** Add this section to the end of the findings file:
+- [ ] **Step 2: Write the findings into your report.** Put this section in your report file, under the heading `S4 section for the findings file`; the controller appends it, as it stands, to the end of the findings file on the docs branch:
 
   ```markdown
   ## S4, layer 2 (from plan B3a)
@@ -2552,16 +2608,15 @@ Spike S4's layer-2 half (which processes call the three gate sites with no guard
   - **`cmd/debug_registry`, `cmd/inspect`, `cmd/schemagen`** import neither `internal/workflow`, `internal/monomind` nor `internal/action` directly (`schemagen` reaches `internal/workflow` through `internal/tools/schemagen`, for schemas only).
   - **Test binaries** have no guard and `account.Require` fails open there (`testing.Testing()`); `StrictForTest` and `accounttest.Install` switch that off for the gate-site tests.
   - **External `monomind` processes** (an org's agents) call mono-agent only through `monoagentcli mcp --grant`.
-  - **Two model calls that do not go through `monomind.Exec`.** `monomind.AgentTest` (`internal/monomind/agenttest.go:62`, called from `internal/agentroster/validate.go:180`) runs `monomind agent test`; it serves `agent validate` (gated at layer 1) and the daemon's automatic re-validation (waits while the account is locked, plan B3a task 6). Spec §3 says validators go through `Exec`; with `agent test --json` available they do not. `registerClaudeCodeProject` (`internal/monomind/profile_init.go:129`) runs one `claude -p` turn; it is reached from `doctor fix` (`cmd/monoagentcli/doctor_env.go:115`), which D6 leaves open. **Capture summaries** (`internal/capturesummary/runner.go:50`) call `Exec` from the bridge's background worker: one processed while the account is locked is recorded as `summary.json` status `error` with the login text (`internal/capturesummary/summarizer.go:218`) and is not retried; the capture itself is untouched.
+  - **A fourth way to create execution rows.** `workflow.CreateUnownedExecution` (`internal/workflow/org_unification.go:111`) has no layer-2 gate in it. Its callers are `internal/mcp/grant.go:304` (grant-mode MCP, whose door plan B3b refuses while the account is locked) and `internal/orgbridge/receiver.go:382` (the org receiver: an org service that plan B3a task 7 stops while the account is locked, with its HTTP route behind a door of plan B3b). The row it creates is an unowned QUEUED row that the engine's resume loop adopts, and plan B3a task 2 makes that loop adopt nothing while the account is locked, so a row created in the window before the doors refuse waits and runs after the next sign-in.
+  - **Two model calls that do not go through `monomind.Exec`.** `monomind.AgentTest` (`internal/monomind/agenttest.go:62`, called from `internal/agentroster/validate.go:180`) runs `monomind agent test`; it serves `agent validate` (gated at layer 1) and the daemon's automatic re-validation (waits while the account is locked, plan B3a task 6). Spec §3 says validators go through `Exec`; with `agent test --json` available they do not. `registerClaudeCodeProject` (`internal/monomind/profile_init.go:129`) runs one `claude -p` turn; it is reached from `doctor fix` (`cmd/monoagentcli/doctor_env.go:115`), which D6 leaves open. **Capture summaries** (`internal/capturesummary/runner.go:50`) call `Exec` from the bridge's background worker: one processed while the account is locked is recorded as `summary.json` status `error` with the login text (`internal/capturesummary/summarizer.go:217-218`) and is not retried; the capture itself is untouched.
   ```
 
-- [ ] **Step 3: Commit the findings.**
+- [ ] **Step 3: Check that no findings file was created or edited here.** The S4 section lives in your report, not in a commit of this branch:
   ```
-  git add docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md
+  git status --short -- docs/
   ```
-  ```
-  git commit -m "docs(account): S4 layer-2 callers without a guard" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
-  ```
+  Expected: no output.
 
 - [ ] **Step 4: Format, build and vet, both build variants.**
   ```
@@ -2578,14 +2633,14 @@ Spike S4's layer-2 half (which processes call the three gate sites with no guard
   go test ./internal/workflow/ ./internal/daemonhb/ ./internal/action/ -count=1 -race
   go test ./internal/monomind/ -count=1 -race
   ```
-  Expected: `ok` for the first three (`internal/workflow` takes about 20 s, several times that under `-race` on a loaded machine); for `internal/monomind` the single failure `TestFindAll_ListsShadowedCopies`, a known failure of pristine master (index §4).
+  Expected: `ok` for the first three (`internal/workflow` takes about 20 s, several times that under `-race` on a loaded machine); for `internal/monomind` the single failure `TestFindAll_ListsShadowedCopies`, a known failure of pristine master (index §4), and, on a loaded machine, the flake `TestAgentTestGoDeadline` (`internal/monomind/agenttest_test.go:83`), which passes alone.
 
 - [ ] **Step 6: This plan's CLI tests, with the race detector, then the whole CLI suite.**
   ```
-  go test ./cmd/monoagentcli/ -run '^(TestServingCommandsStartTheGuardRefresher|TestOrgServeStartsTheGuardOnlyWhenItServes|TestStartServingGuardWithNoGuardDoesNothing|TestSupervisorFollowsTheAccount|TestSupervisorStartedLockedWaitsForTheLogin|TestSupervisorLeavesTheOrgServicesAloneBeforeTheEnforcementDate|TestSupervisorWaitsForTheOldOrgServicesBeforeStartingNew|TestDaemonAccountTexts|TestOrgServicesStopWhenTheirContextEnds|TestDaemonHeartbeatRefreshCarriesTheAccount|TestAutoRevalidationWaitsWhileTheAccountIsLocked|TestExecIsGatedByTheAccountInTheCLI)$' -count=1 -race
+  go test ./cmd/monoagentcli/ -run '^(TestServingCommandsStartTheGuardRefresher|TestOrgServeStartsTheGuardOnlyWhenItServes|TestStartServingGuardStartsTheInstalledGuardsRefresher|TestSupervisorFollowsTheAccount|TestSupervisorStartedLockedWaitsForTheLogin|TestSupervisorLeavesTheOrgServicesAloneBeforeTheEnforcementDate|TestSupervisorWaitsForTheOldOrgServicesBeforeStartingNew|TestDaemonAccountTexts|TestOrgServicesStopWhenTheirContextEnds|TestDaemonHeartbeatRefreshCarriesTheAccount|TestAutoRevalidationWaitsWhileTheAccountIsLocked|TestExecIsGatedByTheAccountInTheCLI)$' -count=1 -race
   go test ./cmd/monoagentcli/ -count=1
   ```
-  Expected: `ok` for the first. The second takes several minutes and fails only on tests of the index §4 known-failure list: `TestCaptureTaskFilesOnTheBoard`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks`, `TestCoderConversationFolders` (and the load flake `TestAgentTestGoDeadline`, which passes alone). Any other failure is this plan's until shown otherwise: export `HEAD` with `git archive HEAD | tar -x -C <fresh dir>` and run it there.
+  Expected: `ok` for the first. The second takes several minutes and fails only on tests of the index §4 known-failure list: `TestCaptureTaskFilesOnTheBoard`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks`, `TestCoderConversationFolders`. Any other failure is this plan's until shown otherwise: export `HEAD` with `git archive HEAD | tar -x -C <fresh dir>` and run it there.
 
 - [ ] **Step 7: Confirm the unchanged tests were really unchanged.**
   ```
