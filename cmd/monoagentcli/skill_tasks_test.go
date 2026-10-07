@@ -16,11 +16,11 @@ import (
 	"github.com/monoes/mono-agent/data"
 )
 
-const taskSkill = "monoagent-tasks/SKILL.md"
+const taskSkill = "monoagent-tasks"
 
 func taskSkillText(t *testing.T) string {
 	t.Helper()
-	b, err := data.SkillsFS.ReadFile("skills/" + taskSkill)
+	b, err := data.SkillsFS.ReadFile("skills/" + taskSkill + ".md")
 	if err != nil {
 		t.Fatalf("the skill is not embedded: %v", err)
 	}
@@ -156,11 +156,11 @@ func TestTheTaskSkillIsInstalledCreateOnly(t *testing.T) {
 		t.Errorf("missing %v stale %v", missing, stale)
 	}
 	// An edited copy is the user's: reported stale, never rewritten.
-	if err := os.WriteFile(filepath.Join(skills, taskSkill), []byte("my notes"), 0o644); err != nil {
+	if err := os.WriteFile(claudeSkillFile(skills, taskSkill), []byte("my notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runClaudeFirstRunCheck()
-	if b, _ := os.ReadFile(filepath.Join(skills, taskSkill)); string(b) != "my notes" {
+	if b, _ := os.ReadFile(claudeSkillFile(skills, taskSkill)); string(b) != "my notes" {
 		t.Errorf("an edited skill was rewritten: %q", b)
 	}
 	if _, _, stale := claudeSkillsState(); len(stale) != 1 || stale[0] != taskSkill {

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Settings can restart a stale extension bridge owned by a verified systemd user service, including `monoagent-bridge.service`. The repair verifies the new bridge version and reports when the service still uses an older CLI binary.
+- Claude Code skills install as `~/.claude/skills/<name>/SKILL.md` folders; old flat `<name>.md` files are removed only when unedited.
 
 ## [0.107.0] - 2026-10-06
 
