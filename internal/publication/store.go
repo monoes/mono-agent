@@ -4,6 +4,7 @@ package publication
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,8 @@ type Filter struct {
 	Until      string `json:"until"`
 	Limit      int    `json:"limit"`
 	Offset     int    `json:"offset"`
+	// Cursor continues after the last entry of a previous page (see ListPage); it excludes Offset.
+	Cursor string `json:"cursor"`
 }
 type Store struct {
 	db        *sql.DB
@@ -68,6 +71,32 @@ func date(value string) (string, error) {
 		return "", invalid("date must be RFC3339 or YYYY-MM-DD")
 	}
 	return t.UTC().Format(time.RFC3339Nano), nil
+}
+
+// tsLayout is the fixed-width UTC form stored in published_ts; it sorts as text.
+const tsLayout = "2006-01-02T15:04:05.000Z"
+
+func sortTS(t time.Time) string { return t.UTC().Format(tsLayout) }
+
+func parseTS(value string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func encodeCursor(e Entry) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(sortTS(parseTS(e.PublishedAt)) + "|" + e.ID))
+}
+
+func decodeCursor(c string) (ts, id string, err error) {
+	raw, err := base64.RawURLEncoding.DecodeString(c)
+	parts := strings.SplitN(string(raw), "|", 2)
+	if err != nil || len(parts) != 2 || parts[1] == "" {
+		return "", "", invalid("cursor is not valid")
+	}
+	return parts[0], parts[1], nil
 }
 
 const columns = "id, profile_id, kind, platform, title, body, url, remote_id, parent_url, account, workflow_id, execution_id, node_id, agent_id, org_id, role_id, published_at, recorded_at, idempotency_key, media"
@@ -142,7 +171,7 @@ func (s *Store) Register(ctx context.Context, e Entry) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.db.ExecContext(ctx, "INSERT INTO publications ("+columns+") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", e.ID, e.ProfileID, e.Kind, e.Platform, e.Title, e.Body, e.URL, e.RemoteID, e.ParentURL, e.Account, e.WorkflowID, e.ExecutionID, e.NodeID, e.AgentID, e.OrgID, e.RoleID, e.PublishedAt, e.RecordedAt, e.IdempotencyKey, string(media))
+	result, err := s.db.ExecContext(ctx, "INSERT INTO publications ("+columns+", published_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING", e.ID, e.ProfileID, e.Kind, e.Platform, e.Title, e.Body, e.URL, e.RemoteID, e.ParentURL, e.Account, e.WorkflowID, e.ExecutionID, e.NodeID, e.AgentID, e.OrgID, e.RoleID, e.PublishedAt, e.RecordedAt, e.IdempotencyKey, string(media), sortTS(parseTS(e.PublishedAt)))
 	if err != nil {
 		return nil, err
 	}
@@ -171,18 +200,38 @@ func (s *Store) Register(ctx context.Context, e Entry) (*Entry, error) {
 	}
 	return nil, fmt.Errorf("publication registration conflict")
 }
+
+// List returns one page; see ListPage for keyset paging.
 func (s *Store) List(ctx context.Context, f Filter) ([]Entry, error) {
+	entries, _, err := s.ListPage(ctx, f)
+	return entries, err
+}
+
+// ListPage returns one page, newest first, and the cursor of the next page
+// ("" on the last one). Pass it as Filter.Cursor; offsets still work without it.
+func (s *Store) ListPage(ctx context.Context, f Filter) ([]Entry, string, error) {
 	if s.db == nil {
-		return nil, errors.New("publication database unavailable")
+		return nil, "", errors.New("publication database unavailable")
 	}
 	if f.Limit == 0 {
 		f.Limit = 50
 	}
 	if f.Limit < 1 || f.Limit > 1000 || f.Offset < 0 {
-		return nil, invalid("limit must be 1–1000 and offset nonnegative")
+		return nil, "", invalid("limit must be 1–1000 and offset nonnegative")
+	}
+	if f.Cursor != "" && f.Offset != 0 {
+		return nil, "", invalid("cursor and offset cannot be combined")
 	}
 	where := []string{"profile_id=?"}
 	args := []any{s.profileID}
+	if f.Cursor != "" {
+		ts, id, err := decodeCursor(f.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		where = append(where, "(published_ts < ? OR (published_ts = ? AND id < ?))")
+		args = append(args, ts, ts, id)
+	}
 	for _, v := range []struct{ col, value string }{{"platform", strings.ToLower(f.Platform)}, {"kind", strings.ToLower(f.Kind)}, {"workflow_id", f.WorkflowID}, {"agent_id", f.AgentID}} {
 		if v.value != "" {
 			where = append(where, v.col+"=?")
@@ -194,7 +243,7 @@ func (s *Store) List(ctx context.Context, f Filter) ([]Entry, error) {
 		if v.value != "" {
 			d, err := date(v.value)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			if v.op == ">=" {
 				since = d
@@ -208,15 +257,15 @@ func (s *Store) List(ctx context.Context, f Filter) ([]Entry, error) {
 				op = "<"
 				until = d
 			}
-			where = append(where, "julianday(published_at) "+op+" julianday(?)")
-			args = append(args, d)
+			where = append(where, "published_ts "+op+" ?")
+			args = append(args, sortTS(parseTS(d)))
 		}
 	}
 	if since != "" && until != "" {
 		a, _ := time.Parse(time.RFC3339Nano, since)
 		b, _ := time.Parse(time.RFC3339Nano, until)
 		if a.After(b) {
-			return nil, invalid("since must not follow until")
+			return nil, "", invalid("since must not follow until")
 		}
 	}
 	if f.Search != "" {
@@ -225,21 +274,47 @@ func (s *Store) List(ctx context.Context, f Filter) ([]Entry, error) {
 			args = append(args, f.Search)
 		}
 	}
-	args = append(args, f.Limit, f.Offset)
-	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM publications WHERE "+strings.Join(where, " AND ")+" ORDER BY julianday(published_at) DESC, id DESC LIMIT ? OFFSET ?", args...)
+	// One extra row says whether another page follows.
+	args = append(args, f.Limit+1, f.Offset)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM publications WHERE "+strings.Join(where, " AND ")+" ORDER BY published_ts DESC, id DESC LIMIT ? OFFSET ?", args...)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
 	entries := []Entry{}
 	for rows.Next() {
 		e, err := scan(rows)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		entries = append(entries, *e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(entries) > f.Limit {
+		entries = entries[:f.Limit]
+		next = encodeCursor(entries[f.Limit-1])
+	}
+	return entries, next, nil
+}
+
+// Delete removes one publication of this profile.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	if s.db == nil {
+		return errors.New("publication database unavailable")
+	}
+	res, err := s.db.ExecContext(ctx, "DELETE FROM publications WHERE profile_id=? AND id=?", s.profileID, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 func (s *Store) Stats(ctx context.Context) (map[string]interface{}, error) {
 	if s.db == nil {
@@ -247,7 +322,7 @@ func (s *Store) Stats(ctx context.Context) (map[string]interface{}, error) {
 	}
 	var total int
 	var latest sql.NullString
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*), (SELECT published_at FROM publications WHERE profile_id=? ORDER BY julianday(published_at) DESC, id DESC LIMIT 1) FROM publications WHERE profile_id=?", s.profileID, s.profileID).Scan(&total, &latest); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*), (SELECT published_at FROM publications WHERE profile_id=? ORDER BY published_ts DESC, id DESC LIMIT 1) FROM publications WHERE profile_id=?", s.profileID, s.profileID).Scan(&total, &latest); err != nil {
 		return nil, err
 	}
 	result := map[string]interface{}{"total": total, "latest_published_at": latest.String}

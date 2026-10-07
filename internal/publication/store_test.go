@@ -25,6 +25,13 @@ func testStore(t *testing.T) *Store {
 	if _, err = db.Exec(string(migration)); err != nil {
 		t.Fatal(err)
 	}
+	migration, err = data.MigrationsFS.ReadFile("migrations/064_publications_sortable_ts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(migration)); err != nil {
+		t.Fatal(err)
+	}
 	return NewStore(db, "p1")
 }
 func TestRegisterScopeAndIdentity(t *testing.T) {
@@ -180,5 +187,62 @@ func TestRegisterOpaqueParentIdentifiers(t *testing.T) {
 		if err != nil || e.ParentURL != parent {
 			t.Fatalf("parent %q: %+v %v", parent, e, err)
 		}
+	}
+}
+
+func TestKeysetCursorAndDelete(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	// Two entries share a timestamp, to prove the id tie-break.
+	for i, at := range []string{"2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z", "2026-10-02T00:00:00Z", "2026-10-03T00:00:00Z", "2026-10-04T00:00:00Z"} {
+		if _, err := s.Register(ctx, Entry{Platform: "x", Kind: "post", Body: "b" + string(rune('a'+i)), PublishedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := s.List(ctx, Filter{})
+	if err != nil || len(all) != 5 {
+		t.Fatalf("all: %v %v", all, err)
+	}
+	var got []string
+	cursor := ""
+	for pages := 0; pages < 10; pages++ {
+		page, next, err := s.ListPage(ctx, Filter{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range page {
+			got = append(got, e.ID)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(got) != 5 {
+		t.Fatalf("cursor paging got %d", len(got))
+	}
+	for i := range got {
+		if got[i] != all[i].ID {
+			t.Fatalf("cursor order differs at %d", i)
+		}
+	}
+	if _, _, err := s.ListPage(ctx, Filter{Cursor: "!!"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("bad cursor: %v", err)
+	}
+	if _, _, err := s.ListPage(ctx, Filter{Cursor: cursor, Offset: 1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("cursor+offset: %v", err)
+	}
+	other := NewStore(s.db, "p2")
+	if err := other.Delete(ctx, all[1].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-profile delete: %v", err)
+	}
+	if err := s.Delete(ctx, all[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, all[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted still there: %v", err)
+	}
+	if err := s.Delete(ctx, all[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
 	}
 }
