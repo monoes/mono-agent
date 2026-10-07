@@ -12,8 +12,8 @@ const (
 	taskListMax     = 200 // and the most it returns
 )
 
-// taskReadTools only read the board: they are in every server, the default
-// read-only one included (spec 8).
+// taskReadTools only read the board: they are in the default server, the
+// read-only one included (spec 8); --api-only and --grant serve other sets.
 func taskReadTools() []tool {
 	return []tool{
 		{
@@ -28,14 +28,8 @@ func taskReadTools() []tool {
 				"limit: at most this many (default 50, at most 200). " +
 				"Refusals: invalid_input (an unknown status, an argument this tool does not take).",
 			schema: objSchema(map[string]interface{}{
-				"status": map[string]interface{}{
-					"anyOf": []interface{}{
-						map[string]interface{}{"type": "string"},
-						map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-					},
-					"description": "Columns to list: inbox, ready, in_progress, review, done, archived (default: ready, in_progress and review)",
-				},
-				"limit": intParam("At most this many tasks (default 50, at most 200)"),
+				"status": strParam("Columns to list, comma-separated: inbox, ready, in_progress, review, done, archived (default: ready, in_progress and review)"),
+				"limit":  intParam("At most this many tasks (default 50, at most 200)"),
 			}),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolTaskList,

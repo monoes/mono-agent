@@ -71,6 +71,54 @@ func TestTaskNextOffersAStaleClaimOfAnotherAgentAndNeverALiveOne(t *testing.T) {
 	}
 }
 
+// task_list's status is one string in the schema, a plain type every client takes: the tool is in the
+// tool list of every default server, the read-only one included, and no other property there is only
+// an anyOf. The decoder still takes a list of columns, as a model may send one, and a string of
+// several, as the schema says.
+func TestTaskListTakesStatusAsAStringOrAList(t *testing.T) {
+	found := false
+	for _, def := range toolDefinitions(false) {
+		name, _ := def["name"].(string)
+		if !strings.HasPrefix(name, "task_") {
+			continue
+		}
+		schema, _ := def["inputSchema"].(map[string]interface{})
+		props, _ := schema["properties"].(map[string]interface{})
+		for prop, p := range props {
+			if typ, _ := p.(map[string]interface{})["type"].(string); typ == "" {
+				t.Errorf("%s: the property %s has no plain type: %v", name, prop, p)
+			}
+		}
+		if name == "task_list" {
+			found = true
+			if status, _ := props["status"].(map[string]interface{}); status["type"] != "string" {
+				t.Errorf("task_list: status is %v, want type string", status)
+			}
+		}
+	}
+	if !found {
+		t.Error("task_list is not in the tool list")
+	}
+
+	f := newTaskFixture(t, taskSetup{})
+	ready := f.add("default", "ready", true)
+	reviewed := f.add("default", "in review", true)
+	byHand := f.add("default", "moved by hand", true)
+	for id, to := range map[int64]tasks.Status{reviewed.ID: tasks.StatusReview, byHand.ID: tasks.StatusInProgress} {
+		if _, err := f.Store.Move(context.Background(), "default", id, to, tasks.Placement{}, tasks.Actor{Kind: tasks.Human}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := listed(f.doc("task_list", nil)); !idsAre(got, ready.ID, byHand.ID, reviewed.ID) {
+		t.Fatalf("without status: %v, want Ready, In progress and Review: [%d %d %d]", got, ready.ID, byHand.ID, reviewed.ID)
+	}
+	for form, status := range map[string]any{"a string": "ready,review", "a list": []string{"ready", "review"}} {
+		if got := listed(f.doc("task_list", map[string]any{"status": status})); !idsAre(got, ready.ID, reviewed.ID) {
+			t.Errorf("status as %s: %v, want the cards of the two columns named: [%d %d]", form, got, ready.ID, reviewed.ID)
+		}
+	}
+}
+
 // A server's profile can be deleted while it runs. Every call then ends in the same refusal, the
 // store's "unknown profile" as invalid_input (spec 4.2 says not_found; the store answers invalid_input
 // for every verb, and the tools pass its code on), and that says nothing of the tasks the board held.
