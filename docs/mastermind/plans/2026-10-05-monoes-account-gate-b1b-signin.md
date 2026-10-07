@@ -124,8 +124,8 @@ import (
 	"github.com/monoes/mono-agent/internal/account"
 )
 
-// browse plays the user's browser: it follows the authorize URL's redirect_uri back
-// to the loopback listener with the given extra query, and returns the status.
+// followRedirect plays the user's browser: it follows the authorize URL's redirect_uri
+// back to the loopback listener with the given extra query, and returns the status.
 func followRedirect(t *testing.T, authURL string, query url.Values) int {
 	t.Helper()
 	u, err := url.Parse(authURL)
@@ -142,13 +142,25 @@ func followRedirect(t *testing.T, authURL string, query url.Values) int {
 	return resp.StatusCode
 }
 
+// inBrowser runs browse on a goroutine of its own, as the user's browser runs beside the
+// sign-in, and the test waits for that goroutine before it ends: what browse reports
+// reaches the test, never a test that is already over.
+func inBrowser(t *testing.T, browse func()) {
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	go func() {
+		defer close(done)
+		browse()
+	}()
+}
+
 func TestAuthorizeReturnsTheCodeTheVerifierAndTheRedirect(t *testing.T) {
 	var shown string
 	o := account.AuthorizeOptions{Label: "test login", Timeout: 10 * time.Second, SuccessText: "done",
 		OnURL: func(u string) { shown = u },
 		Open: func(u string) error {
 			uq, _ := url.Parse(u)
-			go followRedirect(t, u, url.Values{"code": {"c1"}, "state": {uq.Query().Get("state")}})
+			inBrowser(t, func() { followRedirect(t, u, url.Values{"code": {"c1"}, "state": {uq.Query().Get("state")}}) })
 			return nil
 		}}
 	res, err := account.AuthorizeInBrowser(context.Background(), "https://monoes.example/authorize", url.Values{"client_id": {"monoagent"}, "resource": {"https://r"}}, o)
@@ -167,13 +179,13 @@ func TestAuthorizeReturnsTheCodeTheVerifierAndTheRedirect(t *testing.T) {
 
 func TestAuthorizeIgnoresAForeignStateAndKeepsWaiting(t *testing.T) {
 	o := account.AuthorizeOptions{Timeout: 10 * time.Second, Open: func(u string) error {
-		go func() {
+		inBrowser(t, func() {
 			if followRedirect(t, u, url.Values{"code": {"evil"}, "state": {"not-ours"}}) != http.StatusBadRequest {
 				t.Error("a foreign state was not refused")
 			}
 			uq, _ := url.Parse(u)
 			followRedirect(t, u, url.Values{"code": {"good"}, "state": {uq.Query().Get("state")}})
-		}()
+		})
 		return nil
 	}}
 	res, err := account.AuthorizeInBrowser(context.Background(), "https://monoes.example/authorize", nil, o)
@@ -185,7 +197,9 @@ func TestAuthorizeIgnoresAForeignStateAndKeepsWaiting(t *testing.T) {
 func TestAuthorizeReportsARefusalAndATimeout(t *testing.T) {
 	o := account.AuthorizeOptions{Label: "account login", Timeout: 10 * time.Second, Open: func(u string) error {
 		uq, _ := url.Parse(u)
-		go followRedirect(t, u, url.Values{"error": {"access_denied"}, "state": {uq.Query().Get("state")}})
+		inBrowser(t, func() {
+			followRedirect(t, u, url.Values{"error": {"access_denied"}, "state": {uq.Query().Get("state")}})
+		})
 		return nil
 	}}
 	if _, err := account.AuthorizeInBrowser(context.Background(), "https://monoes.example/authorize", nil, o); err == nil ||
@@ -231,10 +245,10 @@ The output includes lines like (timings differ):
 FAIL	github.com/monoes/mono-agent/internal/account [build failed]
 FAIL
 # github.com/monoes/mono-agent/internal/account_test [github.com/monoes/mono-agent/internal/account.test]
-internal/account/oauth_test.go:37:15: undefined: account.AuthorizeOptions
-internal/account/oauth_test.go:44:22: undefined: account.AuthorizeInBrowser
-internal/account/oauth_test.go:59:15: undefined: account.AuthorizeOptions
-internal/account/oauth_test.go:103:20: too many errors
+internal/account/oauth_test.go:49:15: undefined: account.AuthorizeOptions
+internal/account/oauth_test.go:56:22: undefined: account.AuthorizeInBrowser
+internal/account/oauth_test.go:71:15: undefined: account.AuthorizeOptions
+internal/account/oauth_test.go:117:20: too many errors
 ```
 
 - [ ] **Step 3: Implement the package.**
@@ -690,7 +704,7 @@ func (s *Server) OnToken(fn func()) // fn runs when a token request arrives, bef
 
 type TokenRequest struct {
 	Form   url.Values  // never print it: it holds codes and refresh tokens
-	Header http.Header // without Authorization
+	Header http.Header // an Authorization header reads "redacted"
 }
 
 func (s *Server) TokenRequests() []TokenRequest // every request to the token endpoint, in order (B5b's contract change request)
@@ -1129,7 +1143,9 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	s.lastResource = f.Get("resource")
 	hdr := r.Header.Clone()
-	hdr.Del("Authorization")
+	if _, sent := hdr["Authorization"]; sent {
+		hdr.Set("Authorization", "redacted") // that one was sent, never what it held
+	}
 	s.tokenReqs = append(s.tokenReqs, TokenRequest{Form: url.Values(f), Header: hdr})
 	switch f.Get("grant_type") {
 	case "authorization_code":
@@ -1369,7 +1385,7 @@ func (s *Server) Unblock(userID string) {
 // TokenRequest is one request to the token endpoint as the fake received it.
 type TokenRequest struct {
 	Form   url.Values  // the form fields, refresh tokens and codes included: never print them
-	Header http.Header // without Authorization
+	Header http.Header // an Authorization header reads "redacted": that it was sent, never what it held
 }
 
 // TokenRequests is every request the token endpoint has received, in order. A test
