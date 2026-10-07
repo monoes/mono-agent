@@ -80,11 +80,23 @@ func (f *taskFixture) doc(name string, args map[string]any) map[string]any {
 	return parseDoc(f.t, mustCall(f.t, f.Server, name, args))
 }
 
+// parseDoc reads the document a task tool returned. Every result of a task tool names the profile
+// it is of and carries the note (spec 8), so the tests of every tool check both here, once.
 func parseDoc(t *testing.T, text string) map[string]any {
 	t.Helper()
 	var d map[string]any
 	if err := json.Unmarshal([]byte(text), &d); err != nil {
 		t.Fatalf("not a JSON document: %v\n%s", err, text)
+	}
+	p, _ := d["profile"].(map[string]any)
+	if id, _ := p["id"].(string); id == "" {
+		t.Errorf("a result without the id of its profile: profile = %v", d["profile"])
+	}
+	if name, _ := p["name"].(string); name == "" {
+		t.Errorf("a result without the name of its profile: profile = %v", d["profile"])
+	}
+	if d["note"] != untrustedNote {
+		t.Errorf("a result without the untrusted note: note = %v", d["note"])
 	}
 	return d
 }
@@ -280,5 +292,35 @@ func TestTheTaskReadToolsAreInTheDefaultServer(t *testing.T) {
 	}
 	if got := NewServer(Options{}).instructions(); !strings.HasSuffix(got, " The user's task board: task_next shows what is ready to work on.") {
 		t.Errorf("the default instructions: %q", got)
+	}
+}
+
+// Every task tool's description opens with the introduction of the board (global constraint 12): which
+// board it is, that a task's words may come from web pages and other apps, that a task is worked only
+// after the operator moved it to Ready, and that an Inbox task is never worked. The sentences are
+// written out here, so that an edit of taskBoardIntro itself is noticed too, not only a description
+// that no longer starts with it. The tools are those called task_*, the verbs of later tasks included.
+func TestEveryTaskToolDescriptionOpensWithTheBoardIntroduction(t *testing.T) {
+	const board = "The user's monoagent task board (not a monomind org's issues)"
+	if !strings.HasPrefix(taskBoardIntro, board) {
+		t.Errorf("taskBoardIntro does not start with %q", board)
+	}
+	for _, phrase := range []string{"web pages and other apps", "worked only after the operator moved it to Ready", "Inbox", "never work"} {
+		if !strings.Contains(taskBoardIntro, phrase) {
+			t.Errorf("taskBoardIntro lacks %q", phrase)
+		}
+	}
+	seen := 0
+	for _, tl := range allTools() {
+		if !strings.HasPrefix(tl.name, "task_") {
+			continue
+		}
+		seen++
+		if !strings.HasPrefix(tl.description, taskBoardIntro) {
+			t.Errorf("%s: the description does not open with taskBoardIntro: %.100q", tl.name, tl.description)
+		}
+	}
+	if seen < 3 {
+		t.Errorf("only %d tools are called task_*: is the table of tools read?", seen)
 	}
 }
