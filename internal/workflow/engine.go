@@ -36,6 +36,7 @@ type WorkflowEngine struct {
 	maxExecHistory   int
 	profileID        string
 	allowAllProfiles bool
+	drops            dropNotes // triggers dropped while the account is locked
 }
 
 // EngineConfig holds WorkflowEngine configuration.
@@ -313,17 +314,29 @@ func (e *WorkflowEngine) resumeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.adoptQueuedExecutions(ctx)
-			ids, err := e.store.ListResumableExecutions(ctx)
-			if err != nil {
-				e.logger.Warn().Err(err).Msg("engine: listing resumable executions")
-				continue
-			}
-			for _, id := range ids {
-				if err := e.ResumeExecution(id); err != nil {
-					e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: failed to resume execution")
-				}
-			}
+			e.resumeTick(ctx)
+		}
+	}
+}
+
+// resumeTick is one pass of resumeLoop. A locked account does neither half
+// (spec D8: a locked daemon starts nothing new): adopting would claim queued
+// rows and resuming would flip paused runs to QUEUED, where the gate in
+// handleExecution would fail them for good. Left as they are, they run again
+// once the account is valid.
+func (e *WorkflowEngine) resumeTick(ctx context.Context) {
+	if tickErr := account.Require(ctx); tickErr != nil {
+		return
+	}
+	e.adoptQueuedExecutions(ctx)
+	ids, err := e.store.ListResumableExecutions(ctx)
+	if err != nil {
+		e.logger.Warn().Err(err).Msg("engine: listing resumable executions")
+		return
+	}
+	for _, id := range ids {
+		if err := e.ResumeExecution(id); err != nil {
+			e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: failed to resume execution")
 		}
 	}
 }
@@ -385,6 +398,10 @@ func (e *WorkflowEngine) adoptQueuedExecutions(ctx context.Context) {
 // reloads its persisted resume_state so RunExecution skips completed nodes and
 // continues from the pause point.
 func (e *WorkflowEngine) ResumeExecution(executionID string) error {
+	// No ctx here (the callers are loops and receivers); Require reads memory only.
+	if resumeErr := account.Require(context.Background()); resumeErr != nil {
+		return resumeErr
+	}
 	dctx, cancel := dbCtx()
 	defer cancel()
 	exec, err := e.store.GetExecution(dctx, executionID)
@@ -523,6 +540,18 @@ func (e *WorkflowEngine) reregisterTriggers(ctx context.Context) error {
 // It creates a WorkflowExecution record and enqueues it for execution.
 func (e *WorkflowEngine) handleTrigger(workflowID string, nodeID string, items []Item) {
 	ctx := e.ctx
+
+	// A locked account starts nothing: the trigger is dropped, and a schedule's
+	// tick is not made up later. One log line a minute says so (spec section
+	// 6.2). The judgement uses its own context: e.ctx is nil before Start and
+	// cancelled during Stop, and a trigger that fires then is still a trigger.
+	if dropErr := account.Require(context.Background()); dropErr != nil {
+		if n, due := e.drops.note(); due {
+			e.logger.Warn().Err(dropErr).Int("dropped", n).Str("workflow_id", workflowID).
+				Msg("engine: monoes.me login required; trigger dropped (logged once a minute)")
+		}
+		return
+	}
 
 	// Determine trigger type from the node.  We load the workflow to find the
 	// node's Type field.
