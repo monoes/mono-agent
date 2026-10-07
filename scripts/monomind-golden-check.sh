@@ -17,9 +17,11 @@
 #
 # Everything monomind writes (HOME, project, run state) lives under one temp
 # folder; nothing touches ~/.monomind or ~/.monoagent. Needs jq, python3, go.
-# It is not a workflow job: CI never runs an unpinned npm package (see
-# mcp-pin-guard in ci.yml), and the monomind pinned in .mcp.json is older than
-# the one the fixtures were recorded from.
+# CI does not run it: the scripted run starts an org, which needs the bubblewrap
+# authority mask (bwrap), and the GitHub runners have none. Run it by hand
+# before a release, against the monomind pinned in .mcp.json (the version the
+# fixtures were recorded from) and the newest one (the commands above). CI never
+# runs an unpinned npm package (see mcp-pin-guard in ci.yml).
 set -euo pipefail
 
 mm="${1:-monomind}"

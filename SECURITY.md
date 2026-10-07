@@ -479,6 +479,7 @@ that works a task acts on them. The defences:
   removed: treat task text as untrusted whatever it looks like. The CLI
   prints a task's notes indented, between a notice that they are
   untrusted and a closing line.
+- **The macOS menu** (`task os install` and `task os uninstall`, the operator's) hands the selected text to `monoagentcli` on standard input, never on a command line, and files it as a capture: Inbox only. It passes no `--as` and keeps the environment it runs in, so under an agent-context variable the CLI refuses `--source os`; as with the operator guard, this does not stop an agent that deliberately clears its environment or drives the Services menu through the screen, and the human gate still holds. It writes only a bundle it marks as its own, never replaces another profile's menu, and replaces a bundle of the same name it did not write only with `--force`.
 - **Claims are cooperative.** The name given with `--as` is a label, not
   a credential: two agents that choose the same name are one claimant.
   The labels `you`, `agent`, `capture`, `chrome` and `os` are reserved,

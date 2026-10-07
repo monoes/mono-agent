@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/monoes/mono-agent/internal/tasks"
 )
 
@@ -81,21 +79,6 @@ func refFlagsIn(text string) (flags []string) {
 	return flags
 }
 
-// refTaskSub finds `task NAME` the way the CLI does, in a root command whose global
-// flags its subcommands inherit; nil for a name that is no subcommand.
-func refTaskSub(name string) *cobra.Command {
-	sub, _, err := newRootCmd().Find([]string{"task", name})
-	if err != nil || sub.Name() != name || sub.Parent() == nil || sub.Parent().Name() != "task" {
-		return nil
-	}
-	return sub
-}
-
-// refHasFlag says whether a subcommand declares the flag or inherits it.
-func refHasFlag(sub *cobra.Command, name string) bool {
-	return sub.Flags().Lookup(name) != nil || sub.InheritedFlags().Lookup(name) != nil
-}
-
 // refTaskEntries are the `ref commands` entries of the task group, by subcommand.
 func refTaskEntries() map[string]cmdDoc {
 	entries := map[string]cmdDoc{}
@@ -119,7 +102,13 @@ func TestRefTasksEntriesDescribeTheirOwnCommand(t *testing.T) {
 			t.Errorf("the usage of `task %s` is %q: it does not call that command", name, d.Usage)
 		}
 		for _, ex := range d.Examples {
-			if calls := refTaskCall.FindAllStringSubmatch(ex, -1); len(calls) != 1 || calls[0][1] != name {
+			calls := refTaskCall.FindAllStringSubmatch(ex, -1)
+			if len(calls) != 1 {
+				t.Errorf("the example %q of `task %s` is not one call of the task group", ex, name)
+				continue
+			}
+			// A group's examples call its subcommands (task os install), and no other entry's do.
+			if path, _, _ := refTaskCallee(calls[0]); path != name && !strings.HasPrefix(path, name+" ") {
 				t.Errorf("the example %q of `task %s` is not a call of that command", ex, name)
 			}
 		}
@@ -143,12 +132,12 @@ func TestRefTasksEntriesUseOnlyFlagsTheCommandHas(t *testing.T) {
 }
 
 func TestRefTasksEntriesNameEveryFlagOfTheirCommand(t *testing.T) {
-	for _, sub := range newTaskCmd(&globalConfig{}).Commands() {
-		d := refTaskEntries()[sub.Name()] // no entry at all is TestEveryTaskCommandHasAReferenceEntry's to say
+	for path, sub := range refTaskCommands() {
+		d := refTaskEntries()[path] // no entry at all is TestEveryTaskCommandHasAReferenceEntry's to say
 		documented := append(refFlagsIn(d.Usage), refFlagsIn(d.Flags)...)
 		for _, m := range refUsageFlag.FindAllStringSubmatch(sub.LocalFlags().FlagUsages(), -1) {
 			if m[1] != "help" && !slices.Contains(documented, m[1]) {
-				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", sub.Name(), m[1])
+				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", path, m[1])
 			}
 		}
 	}
@@ -157,14 +146,14 @@ func TestRefTasksEntriesNameEveryFlagOfTheirCommand(t *testing.T) {
 func TestRefTasksSuggestsOnlyCommandsTheCLIHas(t *testing.T) {
 	check := func(where, text string) {
 		for _, m := range refTaskCall.FindAllStringSubmatch(text, -1) {
-			sub := refTaskSub(m[1])
+			path, sub, rest := refTaskCallee(m)
 			if sub == nil {
-				t.Errorf("%s suggests `task %s`, which is no command", where, m[1])
+				t.Errorf("%s suggests `task %s`, which is no command", where, path)
 				continue
 			}
-			for _, flag := range refFlagsIn(m[2]) {
+			for _, flag := range refFlagsIn(rest) {
 				if !refHasFlag(sub, flag) {
-					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, m[1], flag)
+					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, path, flag)
 				}
 			}
 		}
