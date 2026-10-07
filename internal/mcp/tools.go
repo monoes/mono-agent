@@ -218,6 +218,7 @@ func allTools() []tool {
 		},
 	}
 	native = append(native, monoagentAdaptedTools()...)
+	native = append(native, taskTools()...)
 	native = append(native, apiTools()...)
 	return append(native, apiConfigTools()...)
 }
