@@ -8,8 +8,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/accountdoor"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -28,7 +31,9 @@ type Server struct {
 	opts Options
 	addr string
 	mux  *http.ServeMux
-	rt   *runtime
+	// handler is mux behind the account gate: what Handler and Serve use.
+	handler http.Handler
+	rt      *runtime
 }
 
 // NewServer builds a Server. The runtime (DB, profile, engine) is bootstrapped
@@ -46,6 +51,7 @@ func NewServer(opts Options) (*Server, error) {
 
 	s := &Server{opts: opts, addr: opts.Addr, rt: rt}
 	s.mux = s.routes()
+	s.handler = accountGate(s.mux)
 	return s, nil
 }
 
@@ -71,10 +77,10 @@ func (s *Server) AllowsMutations() bool { return s.opts.AllowMutations }
 // Close releases the underlying runtime (engine + database).
 func (s *Server) Close() { s.rt.Close() }
 
-// Handler returns the server's http.Handler (auth + routing applied),
-// mainly for tests that want to drive it with httptest without a real
-// listener.
-func (s *Server) Handler() http.Handler { return s.mux }
+// Handler returns the server's http.Handler (account gate, auth and routing
+// applied), mainly for tests that want to drive it with httptest without a
+// real listener.
+func (s *Server) Handler() http.Handler { return s.handler }
 
 // ListenAndServe binds s.Addr() and serves until ctx is cancelled, then
 // gracefully shuts down. It is the entry point used by the `monoagentcli
@@ -91,7 +97,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 // gracefully shuts down.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	httpSrv := &http.Server{
-		Handler:      s.mux,
+		Handler:      s.handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute, // workflow run waits can be long
 		IdleTimeout:  120 * time.Second,
@@ -154,6 +160,11 @@ const authHeaderPrefix = "Bearer "
 // token.go.
 func (s *Server) auth(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A locked account is refused before the vault is opened or the bearer is read.
+		if err := account.Require(r.Context()); err != nil {
+			accountdoor.WriteUnauthorized(w, err)
+			return
+		}
 		want, err := ensureToken(r.Context(), s.rt.db.DB, s.rt.profileID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "resolve bearer credential: "+err.Error())
@@ -167,6 +178,35 @@ func (s *Server) auth(h http.HandlerFunc) http.Handler {
 		}
 		h(w, r)
 	})
+}
+
+// accountGate refuses every request but GET /health, and the /v1 paths (whose
+// gateway answers in the OpenAI envelope), while the account is locked. Routes
+// registered through ExtraRoutes bring their own authentication, so auth cannot
+// wrap them: this covers them, and a path the API does not have, so that a
+// locked server's 404 tells nothing about which routes exist.
+func accountGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !openWhileLocked(r) {
+			if refusal := account.Require(r.Context()); refusal != nil {
+				accountdoor.WriteUnauthorized(w, refusal)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// openWhileLocked reports whether the gate leaves r to the mux whatever the
+// account says: the health check and the /v1 surface, which has its own door.
+func openWhileLocked(r *http.Request) bool {
+	switch p := r.URL.Path; {
+	case p == "/health":
+		return r.Method == http.MethodGet || r.Method == http.MethodHead
+	case p == "/v1", strings.HasPrefix(p, "/v1/"):
+		return true
+	}
+	return false
 }
 
 func bearerCredential(r *http.Request) string {
@@ -199,6 +239,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":          "ok",
 		"version":         s.opts.Version,
 		"allow_mutations": s.opts.AllowMutations,
+		"account":         accountdoor.SummaryOf(account.CurrentStatus()),
 	})
 }
 
