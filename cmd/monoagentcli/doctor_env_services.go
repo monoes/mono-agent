@@ -29,7 +29,7 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 	env.ExtensionInstalled = browserdetect.ExtensionInstalled
 	env.ExtensionDir = browserdetect.ExtensionDir
 	env.Bridge = func(ctx context.Context) (health.BridgeInfo, bool) {
-		st, addr, ok := findRunningBridge() // read-only GET of /monoagent/health
+		st, addr, ok := findRunningBridgeCtx(ctx) // read-only GET of /monoagent/health
 		if !ok {
 			return health.BridgeInfo{}, false
 		}
@@ -40,18 +40,21 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 		}
 		unit := serviceUnit(st.PID)
 		return health.BridgeInfo{Addr: bridgeAddr(st, addr), Status: st.Status, PID: st.PID, Version: st.Version, UptimeSec: st.UptimeSec,
-			Owner:       bridgeOwner(st.PID, daemonPID, processCommand(st.PID), unit),
-			ServiceUnit: bridgeUserService(ctx, st.PID, unit)}, true
+			Owner: bridgeOwner(st.PID, daemonPID, processCommand(st.PID), unit)}, true
 	}
-	env.RestartBridge = func(ctx context.Context, progress func(string)) error {
-		b, ok := env.Bridge(ctx)
-		if !ok || b.ServiceUnit == "" {
-			return fmt.Errorf("the bridge is not owned by a restartable user service")
+	// Resolved on demand: `systemctl --user show` is too slow for every health check.
+	env.BridgeService = func(ctx context.Context, pid int) string {
+		return bridgeUserService(ctx, pid, serviceUnit(pid))
+	}
+	env.RestartBridge = func(ctx context.Context, unit string, pid int, progress func(string)) error {
+		st, _, ok := findRunningBridgeCtx(ctx)
+		if !ok || st.PID != pid || unit == "" || bridgeUserService(ctx, pid, serviceUnit(pid)) != unit {
+			return fmt.Errorf("the bridge is no longer pid %d run by %s — not restarting", pid, unit)
 		}
-		progress("restarting " + b.ServiceUnit)
-		out, err := exec.CommandContext(ctx, "systemctl", "--user", "restart", "--", b.ServiceUnit).CombinedOutput()
+		progress("restarting " + unit)
+		out, err := exec.CommandContext(ctx, "systemctl", "--user", "restart", "--", unit).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("restarting %s: %w: %s", b.ServiceUnit, err, strings.TrimSpace(string(out)))
+			return fmt.Errorf("restarting %s: %w: %s", unit, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
