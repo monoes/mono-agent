@@ -180,10 +180,10 @@ func (s *Server) auth(h http.HandlerFunc) http.Handler {
 	})
 }
 
-// accountGate refuses every request but GET /health, and the /v1 paths (whose
-// gateway answers in the OpenAI envelope), while the account is locked. Routes
-// registered through ExtraRoutes bring their own authentication, so auth cannot
-// wrap them: this covers them, and a path the API does not have, so that a
+// accountGate refuses every request but GET and HEAD /health, and the /v1 paths
+// (whose gateway answers in the OpenAI envelope), while the account is locked.
+// Routes registered through ExtraRoutes bring their own authentication, so auth
+// cannot wrap them: this covers them, and a path the API does not have, so that a
 // locked server's 404 tells nothing about which routes exist.
 func accountGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -199,8 +199,10 @@ func accountGate(next http.Handler) http.Handler {
 
 // openWhileLocked reports whether the gate leaves r to the mux whatever the
 // account says: the health check and the /v1 surface, which has its own door.
+// It judges the escaped path, the one the mux routes and unescapes per segment:
+// an encoded slash (/v1%2Fx) is no path under /v1 to the mux.
 func openWhileLocked(r *http.Request) bool {
-	switch p := r.URL.Path; {
+	switch p := r.URL.EscapedPath(); {
 	case p == "/health":
 		return r.Method == http.MethodGet || r.Method == http.MethodHead
 	case p == "/v1", strings.HasPrefix(p, "/v1/"):

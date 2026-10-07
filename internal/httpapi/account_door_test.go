@@ -88,13 +88,17 @@ func TestHealthIsOpenInEveryStateAndReportsTheAccount(t *testing.T) {
 
 // Nothing but /health is open on a locked server. A path the API does not have
 // (or a mutating one that is not registered) is refused like any other: a 404
-// would tell a caller which routes exist. Odd spellings do not slip past, and the
-// /v1 prefix is no way round: the mux only redirects a dot-segment after it.
+// would tell a caller which routes exist. Odd spellings do not slip past, HEAD
+// and OPTIONS are no way round, and the /v1 prefix is none either: the mux only
+// redirects a dot-segment after it, and takes an encoded slash (v1%2F) for part of
+// one segment, which is no path under /v1.
 func TestLockedServerRefusesEveryPathButHealth(t *testing.T) {
 	paths := []struct{ method, path string }{
 		{"GET", "/workflows"}, {"POST", "/workflows/x/run"}, {"POST", "/hil/x/approve"}, {"GET", "/nodes/x/schema"},
 		{"POST", "/org-endpoint/x"}, {"GET", "/nope"}, {"POST", "/health"}, {"GET", "/health/"},
 		{"GET", "//workflows"}, {"GET", "/./workflows"}, {"GET", "/WORKFLOWS"}, {"GET", "/v1x"},
+		{"HEAD", "/nope"}, {"OPTIONS", "/workflows"}, {"OPTIONS", "/health"},
+		{"GET", "/v1%2Fmodels"}, {"GET", "/v1%2F..%2Fworkflows"},
 	}
 	for _, server := range []struct {
 		name      string
@@ -119,7 +123,8 @@ func TestLockedServerRefusesEveryPathButHealth(t *testing.T) {
 
 // A route registered through ExtraRoutes brings its own authentication, so auth
 // cannot wrap it: one that forgot a door is still refused by the gate that
-// NewServer puts in front of the mux.
+// NewServer puts in front of the mux. HEAD matches a GET pattern, so it is called
+// too.
 func TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused(t *testing.T) {
 	var reached int
 	s, err := NewServer(Options{
@@ -141,9 +146,11 @@ func TestARouteMountedThroughExtraRoutesWithNoDoorIsRefused(t *testing.T) {
 			reached = 0
 			accounttest.Install(t, c.Mode)
 			rec := doReq(t, s, http.MethodGet, "/extra", "", nil)
-			want := 1
+			head := doReq(t, s, http.MethodHead, "/extra", "", nil)
+			want := 2
 			if c.Refused {
 				wantLoginRequired(t, rec, c.State, c.Reason)
+				wantLoginRequired(t, head, c.State, c.Reason)
 				want = 0
 			}
 			if reached != want {
@@ -200,7 +207,8 @@ func TestServeServesTheGatedHandler(t *testing.T) {
 		}
 	})
 
-	resp, err := http.Get("http://" + ln.Addr().String() + "/nope")
+	client := &http.Client{Timeout: 10 * time.Second} // a refusal that never came must fail the test, not hang it
+	resp, err := client.Get("http://" + ln.Addr().String() + "/nope")
 	if err != nil {
 		t.Fatal(err)
 	}
