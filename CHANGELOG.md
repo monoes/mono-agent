@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Publication history:** profile-scoped local records of posts, comments, replies and other content published by agents and workflows, with CLI `publication list|get|register|stats`, MCP tools and a desktop Publication page. Supported publishing operations register successful results automatically, preserving content and source identifiers while excluding private messages and drafts. Custom publishers register after success through the CLI, MCP or a `publication.register` workflow node. History starts with installation; existing external publications are not fetched.
 
+- **Tasks tab:** a desktop board of the active profile's tasks (Inbox, Ready, In progress, Review, Done) with drag and keyboard moves, search, quick add, a detail drawer with history and comments, and a sidebar badge for what waits on a person. It only renders; every change runs through `monoagentcli task`.
+
 ### Fixed
 - Settings can restart a stale extension bridge owned by a verified systemd user service, including `monoagent-bridge.service`. The repair verifies the new bridge version and reports when the service still uses an older CLI binary.
 

@@ -14,6 +14,7 @@
       "secretsVault": "Vault",
       "applications": "Applications",
       "documents": "Documents",
+      "tasks": "Tasks",
       "logs": "Live Logs",
       "settings": "Settings"
     },
@@ -1271,6 +1272,41 @@
     "couldNotSend": "Could not send: {{error}}",
     "openAsBubble": "Open as bubble",
     "openAsBubbleNamed": "Open {{name}} as a chat bubble"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "search": "Search tasks",
+    "loading": "Loading the board…",
+    "loadError": "Could not read the board",
+    "readOnly": "Read-only: this app was started by an agent, so only people change the board.",
+    "column": {
+      "inbox": "Inbox",
+      "ready": "Ready",
+      "in_progress": "In progress",
+      "review": "Review",
+      "done": "Done"
+    },
+    "empty": "Nothing here",
+    "quickAdd": "Add a task",
+    "quickAddPlaceholder": "New task title",
+    "addToReady": "Add to Ready",
+    "add": "Add",
+    "approve": "Approve to Ready",
+    "archive": "Archive",
+    "moveTo": "Move to",
+    "claimedBy": "Claimed by {{by}}",
+    "stale": "Stale claim",
+    "close": "Close",
+    "drawer": {
+      "title": "Title",
+      "notes": "Notes",
+      "save": "Save",
+      "history": "History",
+      "comment": "Add a comment",
+      "send": "Comment",
+      "loadError": "Could not read the task"
+    },
+    "refused": "Refused: {{error}}"
   },
   "publication": {
     "title": "Publication",

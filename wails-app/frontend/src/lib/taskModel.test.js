@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   COLUMNS, normalizeBoard, findTask, applyMove, applyRemove, applyOps, placeFor, isNoopDrop, dropIndex,
-  keyMove, focusTarget,
+  keyMove, focusTarget, searchBoard,
 } from './taskModel.js'
 
 const T0 = Date.parse('2026-10-06T09:00:00Z')
@@ -167,5 +167,21 @@ describe('focusTarget', () => {
   it('lands on the last card when the nearest column is shorter than the card is deep', () => {
     // Card 4 is the second of Ready; In progress holds card 5 alone.
     expect(focusTarget(base(), 4, 'right')).toBe(5)
+  })
+})
+
+describe('searchBoard', () => {
+  const board = normalizeBoard({ tasks: {
+    inbox: [{ id: 1, position: 1, title: 'Fix Login', notes: '' }],
+    ready: [{ id: 2, position: 1, title: 'Write docs', notes: 'about login flow' }],
+  } })
+  it('keeps cards holding every word, in title or notes', () => {
+    const r = searchBoard(board, 'LOGIN fix')
+    expect(r.columns.inbox.map(t => t.id)).toEqual([1])
+    expect(r.columns.ready).toEqual([])
+    expect(searchBoard(board, 'login').columns.ready.map(t => t.id)).toEqual([2])
+  })
+  it('returns the board untouched for a blank query', () => {
+    expect(searchBoard(board, '  ')).toBe(board)
   })
 })

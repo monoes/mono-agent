@@ -161,3 +161,17 @@ export function focusTarget(shown, id, key) {
   }
   return null
 }
+
+// searchBoard keeps the cards whose title or notes hold every word of query
+// (case-insensitive); a blank query keeps them all. Counts stay the board's.
+export function searchBoard(board, query) {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (!board || words.length === 0) return board
+  const hit = t => {
+    const text = `${t.title || ''}\n${t.notes || ''}`.toLowerCase()
+    return words.every(w => text.includes(w))
+  }
+  const columns = {}
+  for (const s of COLUMNS) columns[s] = board.columns[s].filter(hit)
+  return { ...board, columns }
+}
