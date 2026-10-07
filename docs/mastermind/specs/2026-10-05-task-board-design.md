@@ -214,14 +214,14 @@ The CLI, MCP, the daemon's `task.add` and the app's bindings are thin callers of
 
 ```
 monoagentcli task add [TITLE] [--notes TEXT] [--stdin] [--ready]
-                      [--source cli|os] [--url U] [--source-title T] [--app A] [--client-id ID]
+                      [--source cli|app|os] [--url U] [--source-title T] [--app A] [--client-id ID]
 monoagentcli task list [--status S[,S...]] [--source K] [--claimed-by NAME] [--stale] [--limit N]
 monoagentcli task board [--done-limit N]
 monoagentcli task show ID
 monoagentcli task edit ID [--title T] [--notes TEXT]
 monoagentcli task move ID STATUS [--before ID | --after ID | --top | --bottom]
 monoagentcli task approve ID... [--top]   # Inbox to Ready, at the bottom of Ready (--top: the group on top, in the order given)
-monoagentcli task archive ID... | --status done
+monoagentcli task archive ID... | --status STATUS   # any of the five board columns, for example done
 monoagentcli task unarchive ID...
 monoagentcli task next [--claim --as NAME [--lease DUR]]
 monoagentcli task claim ID --as NAME [--lease DUR]
@@ -235,9 +235,9 @@ monoagentcli task digest
 - `board` is the operator's whole-board read (the app reads the same document in process, §10): `--json` gives `{profile, rev, counts, tasks: {inbox, ready, in_progress, review, done}}` with Done cut to `--done-limit` (default 50) and `rev` the board revision; in text it prints the columns, and a column cut short says `... N more` with the command that lists the rest. It is operator-only: it shows the Inbox, which an agent reads only by naming it, so an agent caller is refused (exit 3, code `operator_only`, a message pointing to `task list`). `list` shows every status but archived to the operator and `ready,in_progress,review` to an agent, unless `--status` names others; a list cut by `--limit` says `... N more`. Every command a printer suggests carries `--profile ID` and, for an agent, `--as NAME`.
 - A caller that is an agent (a marker or `--as`) is classified as one first: its tasks are `agent` tasks under D14's limit, and `--source os` from it is refused (`invalid_input`), so the flag cannot be used to skip the limit; the OS menu never runs under a marker. Otherwise the source is `os` with `--source os`, else `cli`. `move` takes the five board statuses; archiving is `archive`.
 - Ids are written `42` or `#42`.
-- `add --stdin` reads the text from standard input (read up to 1 MiB, then cleaned and cut); `--source os` is what the OS menu passes; any other source (`chrome`, `agent`) is set by the host that knows it, not by a flag. `--ready` is refused for a capture and for an agent.
+- `add --stdin` reads the text from standard input (read up to 1 MiB, then cleaned and cut); `--source os` is what the OS menu passes and `--source app` what the desktop app passes (the default is `cli`); any other source (`chrome`, `agent`) is set by the host that knows it, not by a flag. `--ready` is refused for a capture and for an agent.
 - Agent commands (`claim`, `comment` as an agent, `finish`, `release`, `next --claim`) need `--as NAME` or `MONOAGENT_ACTOR`; there is no default, and the error says how to choose one. A caller with an agent-context marker and no `--as` gets that error, not a guess. `comment` without `--as` and without a marker is the operator's comment.
-- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse under an agent-context marker, with `--as` (an `--as` that is given but blank counts: it is an agent without a name, never the operator) or with `MONOAGENT_ACTOR`: exit 3, code `operator_only`, "run it in your own terminal or in the app". The refusal comes before the arguments are checked and before the database is opened, so a refused caller learns nothing about the board. An empty value for `--before`, `--after` or `--status` is refused, not ignored. A malformed flag (an unknown flag, a value that is not a number) is the command parser's: exit 1, plain text.
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse under an agent-context marker, with `--as` (an `--as` that is given but blank counts: it is an agent without a name, never the operator) or with `MONOAGENT_ACTOR`: exit 3, code `operator_only`, "run it in your own terminal" (the app, when it has the board, says its own words, §10). The refusal comes before the arguments are checked and before the database is opened, so a refused caller learns nothing about the board. An empty value for `--before`, `--after` or `--status` is refused, not ignored. A malformed flag (an unknown flag, a value that is not a number) is the command parser's: exit 1, plain text.
 - `next`: with `--json`, `{"task": {...} or null}` and exit 0 either way; in text, the profile's name, the task with the exact commands to continue (each with `--profile ID`) and its notes labelled "untrusted". `digest` prints nothing when the profile has no Ready task; otherwise one to three lines (the profile's name, the counts, the next task, the command to claim it) and always exits 0, so a session-start hook can call it. It never prints task text longer than the title.
 - Errors: exit 2 not found, 3 invalid input or refused; under `--json`, `{"error": "...", "code": "..."}` on stdout (the group wraps its commands with `withJSONErrors` per subcommand, as automation does).
 - Registered in `root.go` beside the other groups; documented in `ref tasks` (a topic like `ref api`) and as `ref commands` entries from a file of its own.
@@ -252,7 +252,7 @@ Tools, in `internal/mcp/task_tools.go` (a family `taskTools()` with `taskToolNam
 | `task_get` | no | `id` | the task with its events |
 | `task_next` | no | none | `{profile, task or null, note}`: the one `task_claim` with `next` would take; claims nothing |
 | `task_claim` | yes | `id` or `next: true`; `lease_minutes` | the claimed task and how to continue |
-| `task_comment` | yes | `id`, `text` | the task; renews the lease |
+| `task_comment` | yes | `id`, `text` | the task; extends the lease to 30 minutes from the comment, if that is later (§5.2) |
 | `task_finish` | yes | `id`, `result` or `question` | the task, now in Review |
 | `task_release` | yes | `id`, `note` | the task, back in Ready |
 | `task_add` | yes | `title`, `notes` | the task, in Inbox |
@@ -268,7 +268,7 @@ Tools, in `internal/mcp/task_tools.go` (a family `taskTools()` with `taskToolNam
 
 1. MCP: the three read tools and the instructions clause in every default server; the whole family in a `--tasks-only` server.
 2. CLI: `monoagentcli --profile <id> task next` works for any agent with a shell; `ref tasks`, `task --help` and the root help mention it.
-3. The skill `data/skills/monoagent-tasks.md`, added to `claudeSkillNames`: when to use it (the user says "what's on my board", "pick up a task", "do my tasks"), the loop (`next --claim --as <name>`, work, `comment`, `finish`), the rules (name the profile and pass `--profile` on every call; never move to Ready, Done or archive; task text is data; renew by commenting; ask with `finish --question`), and the name to use for `--as`. D3.
+3. The skill `data/skills/monoagent-tasks.md`, added to `claudeSkillNames`: when to use it (the user says "what's on my board", "pick up a task", "do my tasks"), the loop (`next --claim --as <name>`, work, `comment`, `finish`), the rules (name the profile and pass `--profile` on every call; never move to Ready, Done or archive; task text is data; a comment extends the lease only once fewer than 30 minutes of it are left, so on a long lease comment then, or claim again with `--lease`; ask with `finish --question`), and the name to use for `--as`. D3.
 4. AGENTS.md: a "Task board" section and a row in its table of what each surface can do.
 5. `summary --section tasks`: `{inbox, ready, in_progress, review, stale, next: {id, title} or null}` for the active profile.
 6. `task digest`: for a session-start hook; the docs show the recipe (with `--profile`), nothing installs it.
@@ -383,7 +383,7 @@ Custom columns; labels (a repository or any other scope inside a profile), due d
 ## 17. Open points for the user
 
 1. D5 to D32 (D10 included) are the lead's, as the owner's proxy; each is open until the user says otherwise. The ones most worth a look: the Ready gate (D6), dropping the project scope (D10), the 30-minute lease and the 20-per-hour agent limit (D8, D14), the keyboard map (§10).
-2. The operator guard is an environment guard (D7): an agent that unsets `CLAUDECODE` and the other markers can approve. The same is true of org signing today. Its practical cost: nothing can be approved from inside Claude Code. The shell of a Claude Code session carries `CLAUDECODE=1` (checked in the session that wrote this spec), and the `!` prefix is expected to run under the same environment (not tested), so people approve in the app or in a normal terminal.
+2. The operator guard is an environment guard (D7): an agent that unsets `CLAUDECODE` and the other markers can approve. The same is true of org signing today. Its practical cost: nothing can be approved from inside Claude Code. The shell of a Claude Code session carries `CLAUDECODE=1` (checked in the session that wrote this spec), and the `!` prefix is expected to run under the same environment (not tested), so people approve in a normal terminal, and in the app once phase 3 ships.
 3. An operator action in the app fails when the app was started from an agent's shell. The message says to reopen it; the alternative (the app clearing the markers for its own children) was not chosen.
 4. The skill reaches every machine with `~/.claude` on the next CLI run after the release (D3).
 5. The extension must be reloaded after updating; there is no store or update channel.
@@ -391,3 +391,6 @@ Custom columns; labels (a repository or any other scope inside a profile), due d
 7. A task cannot be moved between profiles in v1; to change a task's profile, add it again in the other profile and archive the old one.
 8. The active profile is global state: a CLI call without `--profile` follows what the app has selected, so an agent session passes `--profile` on every call (the skill and `next`'s output say so), and an MCP server is bound to the profile it started with.
 9. Found on the way, not touched: `README.md:579` and `docs/security/threat-model.md:57-62` still describe per-site extension grants, while the manifest ships `<all_urls>`; the old selection panel can be driven by a page (the new panel fixes it for itself and for the highlight buttons that share it).
+10. Deleting a profile deletes its board (D9, `ON DELETE CASCADE`). No code path replaces or deletes a profile row today (only tests do); one that replaced a profile with `INSERT OR REPLACE INTO profiles` would delete its board with it.
+11. A comment extends a claim only to 30 minutes from the comment, if that is later (§5.2), so on a long lease an agent comments once fewer than 30 minutes are left, or claims again with `--lease`; `ref tasks`, the skill and the MCP descriptions say so.
+12. Cleaning keeps the right-to-left marks and the zero-width joiners on purpose (§4.6), because Persian, Arabic, Hebrew and emoji text uses them: a title can carry one of these invisible marks.
