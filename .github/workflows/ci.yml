@@ -222,6 +222,34 @@ jobs:
       - name: Test
         run: go test -timeout 35m ./... -race
 
+  # INFORMATIONAL (continue-on-error): runs internal/account's tests on Windows
+  # and macOS, where no other job here does. The package has Windows-only code
+  # (the LockFileEx file lock, the MOVEFILE_WRITE_THROUGH rename), and its Unix
+  # code (flock, directory fsync) meets another kernel and filesystem on macOS.
+  # Added without a way to run either OS's CI first, so a red first run must not
+  # block a merge: the owner flips it to required (removes continue-on-error)
+  # after the first green run. The tests swap in an in-memory keyring
+  # (TestMain), so the real macOS Keychain and Windows Credential Manager are
+  # not exercised. No -race: Windows may lack cgo, and the `test` job above
+  # already runs this package under -race.
+  account-os:
+    name: Account package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./internal/account/... -count=1 -timeout 20m
+
   # Social platforms are built by default; this job keeps the opt-out
   # (-tags nosocial) build compiling and passing.
   test-nosocial:
