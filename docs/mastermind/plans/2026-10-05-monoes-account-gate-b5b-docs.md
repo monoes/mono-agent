@@ -17,7 +17,7 @@
 From the index §2, the lines that bind this plan, verbatim.
 
 - Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
-- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace.
+- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace. A grant whose outcome is unknown (the request may have been processed, so monoes.me may have rotated the refresh token) or whose answer could not be saved (A24(d)) is retried within 240 seconds and after that is never presented again: this machine drops its refresh token and the reason is `unconfirmed` (A24, §3.6), a grace reason that ends as `locked(unconfirmed)`; the other installs of the account are untouched.
 - Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard re-checks `session.json`'s mtime lazily inside `Status`, at most once per 5 seconds (no goroutine for a non-refresher guard; spec A8). The refresh request carries `resource=<Audience>`.
 - Storage (§4.6): `~/.monoagent/account/` (directory 0700) with `session.json`, `refresh.enc` and `session.lock` (files 0600). One session per OS user, shared by all profiles, whatever `--db-path` says.
 - Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
@@ -33,7 +33,7 @@ The serving commands are documented and tested here (Task 3), in AGENTS.md and i
 
 ## Review Focus
 
-1. **A container or headless install that goes wrong without a visible failure.** (a) It signs in but cannot unseal its refresh token: it works for the first hour; then the daemon cannot read `refresh.enc` back (no passphrase source for the file keyring), shows `grace` with `keyring_unavailable`, and stops doing work 24 hours after its last refresh with no earlier warning. The daemon is a serving command, so it stays up and the image's `HEALTHCHECK` (`version`, always open) keeps the container looking healthy while it refuses work. `secret keyring set-passphrase` is itself gated, so the documented order puts the passphrase file first. (b) A sign-in that is copied, restored from a backup or baked into an image goes stale at the first refresh of the original, and presenting the stale refresh token makes monoes.me end every sign-in of the account on every machine (plan A, spike S2): the documents say never to copy `~/.monoagent/account/`. Pinned by `TestAgentsDocCoversTheAccount` (Task 3), `TestRefAccountDocumentsTheGate` (Task 5), `TestDockerFilesSetUpTheSignIn` (Task 4) and `TestSecurityDocStatesWhatLeavesTheMachine` (Task 2).
+1. **A container or headless install that goes wrong without a visible failure.** (a) It signs in but cannot unseal its refresh token: it works for the first hour; then the daemon cannot read `refresh.enc` back (no passphrase source for the file keyring), shows `grace` with `keyring_unavailable`, and stops doing work 24 hours after its last refresh with no earlier warning. The daemon is a serving command, so it stays up and the image's `HEALTHCHECK` (`version`, always open) keeps the container looking healthy while it refuses work. `secret keyring set-passphrase` is itself gated, so the documented order puts the passphrase file first. (b) A sign-in that is copied, restored from a backup or baked into an image goes stale at the first refresh of the original, and presenting the stale refresh token makes monoes.me end that sign-in, on the original and on every copy (plan A's Task 3, refresh-token families, ruling R1; a server without them ends every sign-in of the account, spike S2): the documents say never to copy `~/.monoagent/account/`, and that a copy signs out the original and every copy while machines that signed in on their own keep working. Pinned by `TestAgentsDocCoversTheAccount` (Task 3), `TestRefAccountDocumentsTheGate` (Task 5), `TestDockerFilesSetUpTheSignIn` (Task 4) and `TestSecurityDocStatesWhatLeavesTheMachine` (Task 2).
 2. **Documentation that becomes true only after the release that needs it.** R's first users would read "no phone-home" beside a build that calls monoes.me, and R's notes would be a commit dump, because `release.yml` reads `CHANGELOG.md` at the commit it tags. Pinned by `TestChangelogNamesTheEnforcementDate` (Task 6: fails while `account.EnforceDate()` is the zero time, unless the CHANGELOG names the date, and unless a release section above `[0.100.1]` tells the account story; later releases add sections above it without breaking it) and the landing rule below.
 3. **A privacy statement that omits something sent, or says "no device identifier" with nothing behind it.** The e-mail address that `--email` sends, the client id and the IP address belong in it. Pinned by `TestSecurityDocStatesWhatLeavesTheMachine` (Task 2) and the code-reading step before it; B1b's `libraryfake.Server.TokenRequests()` pins the field set of a refresh and of a code exchange.
 4. **A retired claim that survives where nobody looked, or a rewritten one that overshoots** (saying again that nothing is sent, or promising what a build before R does not do). The inventory covers 25 files; `staleClaims` fails on every one of them that a test reads, and Task 4's test reads the locale strings, the issue template, the install script, the Dockerfile and the compose file. The owner's reading before the push (the last step of Task 6) is the check that no test can be. Pinned by `TestFrontDoorDocsStateTheAccount`, `TestSecurityDocStatesWhatLeavesTheMachine`, `TestAgentsDocCoversTheAccount` and `TestPositioningTextsAreTrue`.
@@ -174,7 +174,7 @@ func spelled(wrap string) (out []string) {
 	}
 	for _, r := range []account.Reason{account.ReasonNotLoggedIn, account.ReasonExpired, account.ReasonRefused, account.ReasonClockRollback,
 		account.ReasonClockSkew, account.ReasonKeyUnknown, account.ReasonInvalid, account.ReasonUnreachable, account.ReasonServerError,
-		account.ReasonKeyringUnavailable} {
+		account.ReasonKeyringUnavailable, account.ReasonUnconfirmed} {
 		out = append(out, wrap+string(r)+wrap)
 	}
 	return out
@@ -252,7 +252,7 @@ with:
 - In `README.md`, after line 637 (it ends `…ompose.yml) and the env-var table in [AGENTS.md](AGENTS.md).`), insert:
 
 ````
-A container needs a monoes.me sign-in kept in its volume (never baked into the image: a copied sign-in signs the account out everywhere, see [SECURITY.md](SECURITY.md#one-sign-in-per-machine-never-copied)). The daemon starts without one and stays up, logging the command to run, but from the enforcement date it refuses work until you sign in. A container has no OS keyring, so the sign-in's refresh token is sealed under the file keyring, whose passphrase the daemon must be able to read without a terminal. The compose file sets `MONOAGENT_ALLOW_FILE_KEYRING=1` and `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=/data/keyring-pass`; once, before `up`:
+A container needs a monoes.me sign-in kept in its volume (never baked into the image: a copied sign-in signs out the original and every copy, see [SECURITY.md](SECURITY.md#one-sign-in-per-machine-never-copied)). The daemon starts without one and stays up, logging the command to run, but from the enforcement date it refuses work until you sign in. A container has no OS keyring, so the sign-in's refresh token is sealed under the file keyring, whose passphrase the daemon must be able to read without a terminal. The compose file sets `MONOAGENT_ALLOW_FILE_KEYRING=1` and `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=/data/keyring-pass`; once, before `up`:
 
 ```bash
 printf '%s\n' "$PASSPHRASE" | docker compose run --rm -T --entrypoint sh monoagent -c 'umask 077; cat > /data/keyring-pass'
@@ -377,7 +377,7 @@ func TestSecurityDocStatesWhatLeavesTheMachine(t *testing.T) {
 		"A monoes.me account is required", "the email address you type", "IP address", "client id `"+account.ClientID+"`", "refresh token",
 		"GitHub, to check for updates", graceText(), "~/.monoagent/account/", "session.json", "refresh.enc", "session.lock",
 		"The sign-in requirement is a product check", "not a security boundary", "The monoes.me session", "monoes..account",
-		"### One sign-in per machine, never copied", "never copy or restore", "signs the account out everywhere",
+		"### One sign-in per machine, never copied", "never copy or restore", "signs out the original and every copy",
 		"### When a sign-in is locked", "does not sign out an install")
 }
 ```
@@ -520,8 +520,14 @@ prompt; `refresh.enc` (0600), the refresh token sealed with AES-256-GCM under a
 key from the OS keyring or, where there is none and `MONOAGENT_ALLOW_FILE_KEYRING=1`
 is set, the file keyring (see above), read only by a refresh; and `session.lock`
 (0600), which keeps two processes from refreshing at once. `account logout`
-deletes the token and the refresh token. The token is verified on your machine
-against public keys built into the binary: there is no network call per command.
+deletes the token and the refresh token and leaves a `session.json` that holds no
+token, only the highest time this machine has seen. A machine that has never signed
+in gets the same record, and `session.lock`, from the first command that is refused
+once the enforcement date has been reached. The record is what stops setting the
+clock back before that date from switching the requirement off; like the rest of
+the requirement, it is a product check, not a security boundary (see below). The
+token is verified on your machine against public keys built into the binary: there
+is no network call per command.
 
 The key that seals the refresh token is an item of its own in that key store (in
 the OS keychain, under the vault's service name `monoagent-vault`). In a file
@@ -536,9 +542,10 @@ Sign in once on each machine. Never copy or restore `~/.monoagent/account/`
 between machines or from an old backup or disk image, and never bake a sign-in
 into a Docker image or a container snapshot: keep it in the container's volume.
 monoes.me rotates the refresh token at every refresh and treats one that was
-already used as stolen: it ends every Mono Agent sign-in of that account, on every
-machine. A stale copy, once presented, therefore signs the account out everywhere,
-and each machine then has to sign in again.
+already used as stolen: it ends that sign-in. A copy shares the sign-in of the
+machine it came from, so a stale copy, once presented, signs out the original and
+every copy, and each of them then has to sign in again. Machines that signed in
+on their own keep working.
 
 ### When a sign-in is locked
 
@@ -562,7 +569,7 @@ a daemon, an API, an MCP server or the extension bridge runs. This is a check in
 the official builds, not a security boundary: a binary you build or patch
 yourself can remove it, a copy of the session files works on another machine for
 a while (it counts accounts, not devices) until one of the two copies presents a
-refresh token the other has already used, which ends every sign-in of the account
+refresh token the other has already used, which ends that sign-in on both machines
 (see above), and releases before the enforcement release do not have it. A bypass
 of an official build (a token that verifies when it should not, a gated door that
 stays open) is a vulnerability: report it as described above. Removing the check
@@ -674,7 +681,7 @@ func TestAgentsDocCoversTheAccount(t *testing.T) {
 		"## monoes.me account", "### Headless and Docker", refusalLine(), "login_required", "account login --email", "account status --json",
 		"account logout", "MONOAGENT_ALLOW_FILE_KEYRING", "MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE", "-tags devaccount", "core.monoes_account",
 		"`ref account`", "No credential comes from an environment variable", "daemon restart", graceText(),
-		"never copy or restore", "signs the account out everywhere", "services.daemon.restart", "MONOAGENT_DEV_ENFORCE_FROM", "monoes..account")...)
+		"never copy or restore", "signs out the original and every copy", "services.daemon.restart", "MONOAGENT_DEV_ENFORCE_FROM", "monoes..account")...)
 	if strings.Contains(flat(docText(t, "AGENTS.md")), "stored per profile in the encrypted vault") {
 		t.Error("AGENTS.md still says the library login is stored per profile in the vault: it uses the machine session")
 	}
@@ -824,19 +831,24 @@ time plus 24 hours.
 **Sign in once per machine; never copy or restore `~/.monoagent/account/` between
 machines or from an old backup, and never bake a sign-in into a Docker image.**
 monoes.me rotates the refresh token at every refresh and treats one that was already
-used as stolen: it ends every Mono Agent sign-in of that account, on every machine. A
-stale copy, once presented, signs the account out everywhere, and each machine then
-has to sign in again. Signing out of the monoes.me website does not sign out an
-install.
+used as stolen: it ends that sign-in. A copy shares the sign-in of the machine it came
+from, so a stale copy, once presented, signs out the original and every copy, and each
+of them then has to sign in again; machines that signed in on their own keep working.
+Signing out of the monoes.me website does not sign out an install.
 
 | `state` | Meaning | `reason` |
 |---|---|---|
 | `ok` | verified and not expired | empty |
-| `grace` | verified and expired, within 24 hours of its issue time: work continues | why it was not refreshed: `unreachable`, `server_error`, `keyring_unavailable` |
-| `locked` | work is refused | `not_logged_in`, `expired` (24 hours without a refresh), `refused` (monoes.me answered `invalid_grant`: the account is blocked, the sign-in was revoked, or an already-used refresh token was presented, as from a copied session; work in flight is cancelled), `clock_rollback`, `clock_skew`, `key_unknown` (run `update`), `invalid` |
+| `grace` | verified and expired, within 24 hours of its issue time: work continues | why it was not refreshed: `unreachable`, `server_error`, `keyring_unavailable`, `unconfirmed` (a refresh whose answer never arrived: this machine stopped using its saved sign-in) |
+| `locked` | work is refused | `not_logged_in`, `expired` (24 hours without a refresh), `refused` (monoes.me answered `invalid_grant`: the account is blocked, the sign-in was revoked, or an already-used refresh token was presented, as from a copied session; work in flight is cancelled), `clock_rollback`, `clock_skew`, `key_unknown` (run `update`), `unconfirmed` (the grace of an unconfirmed machine is over: sign in again on it), `invalid` |
 
 Only an `invalid_grant` answer to a refresh is a refusal; every other failure counts
-as unreachable, so the 24-hour grace applies. A blocked account is locked at the next
+as unreachable, so the 24-hour grace applies. A refresh whose outcome is unknown (the
+request went out and the answer never came, was cut short or was a server error, as when
+the process is killed mid-refresh) is retried at once for 240 seconds; after that this
+machine deletes its refresh token instead of presenting it again, and says `unconfirmed`.
+The account and the other machines are not affected, and one `account login` on this
+machine ends it. A blocked account is locked at the next
 refresh, within about an hour. A build before the enforcement release is dormant
 (nothing locks, warns or calls monoes.me); from the release that sets the date until
 `enforce_from`, gated commands run and print `A monoes.me login will be required from
@@ -1224,7 +1236,7 @@ func TestRefAccountDocumentsTheGate(t *testing.T) {
 	out := captureStdout(t, func() { c := refAccountCmd(); c.Run(c, nil) })
 	for _, w := range append(spelled(""), refusalLine(), "login_required", "exit 4", graceText(), "account login --email", "--send", "--code",
 		"MONOAGENT_ALLOW_FILE_KEYRING", "MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE", "-tags devaccount", "no credential comes from an environment variable",
-		"never copy or restore", "signs the account out everywhere", "MONOAGENT_DEV_ENFORCE_FROM", "monoes..account") {
+		"never copy or restore", "signs out the original and every copy", "MONOAGENT_DEV_ENFORCE_FROM", "monoes..account") {
 		if !strings.Contains(flat(out), flat(w)) {
 			t.Errorf("`ref account` does not say %q", w)
 		}
@@ -1355,25 +1367,34 @@ ONE SIGN-IN PER MACHINE
   Sign in once per machine: never copy or restore ~/.monoagent/account/ between machines
   or from an old backup, and never bake a sign-in into a Docker image. monoes.me rotates
   the refresh token at every refresh and treats one that was already used as stolen: it
-  ends every Mono Agent sign-in of that account, on every machine. A stale copy, once
-  presented, signs the account out everywhere, and each machine then has to sign in
-  again. Signing out of the monoes.me website does not sign out an install.
+  ends that sign-in. A copy shares the sign-in of the machine it came from, so a stale
+  copy, once presented, signs out the original and every copy, and each of them then has
+  to sign in again; machines that signed in on their own keep working. Signing out of the
+  monoes.me website does not sign out an install.
 
 STATES AND REASONS
   ok       a verified sign-in that has not expired
   grace    verified and expired, but inside 24 hours of its issue time: work continues.
            reason says why it was not refreshed: unreachable (no network, a timeout),
-           server_error (monoes.me answered with an error) or keyring_unavailable (the
-           key store holding the refresh token could not be opened)
+           server_error (monoes.me answered with an error), keyring_unavailable (the
+           key store holding the refresh token could not be opened) or unconfirmed (a
+           refresh whose answer never arrived: this machine stopped using its saved
+           sign-in; run 'monoagentcli account login')
   locked   work is refused. reason: not_logged_in; expired (24 hours without a refresh);
            refused (monoes.me answered invalid_grant: the account is blocked, the sign-in
            was revoked, or an already-used refresh token was presented, as from a copied
            session; work in flight is cancelled); clock_rollback (the clock went back; a fresh sign-in resets it);
            clock_skew (this clock is over 5 minutes behind monoes.me's); key_unknown (run
-           'monoagentcli update'); invalid (the stored sign-in does not verify)
+           'monoagentcli update'); unconfirmed (as in grace, once the 24 hours are over: sign
+           in again on this machine); invalid (the stored sign-in does not verify)
   Only an invalid_grant answer to a refresh is a refusal. Everything else (no network,
   a timeout, any 4xx or 5xx, any other OAuth error) counts as unreachable, so the
-  24-hour grace applies. A blocked account is locked at the next refresh, within an hour.
+  24-hour grace applies. A refresh whose outcome is unknown (the request went out and
+  the answer never came, was cut short or was a server error, as when the process is
+  killed mid-refresh) is retried at once for 240 seconds; after that this machine
+  deletes its refresh token instead of presenting it again. The account and the other
+  machines are not affected. A blocked account is locked at the next refresh, within an
+  hour.
 
 PHASES
   dormant   a build before the enforcement release: nothing locks, warns or contacts
@@ -1584,7 +1605,7 @@ echo "${MAJOR}.${MINOR}.${PATCH}"
 - **The documentation says what is true.** Mono Agent is no longer described as local-first, usable offline without limit or free of network calls: your data stays on your machine, a monoes.me sign-in is required, and README, AGENTS.md, SECURITY.md, SUPPORT.md and the comparison page list what it contacts. Headless and Docker: sign in once with `account login --email`; a container needs `MONOAGENT_ALLOW_FILE_KEYRING=1` and a passphrase file (README, "Docker"). There are no environment-variable credentials.
 
 ### Notes
-- Sign in once per machine. Never copy or restore `~/.monoagent/account/` between machines or from an old backup, and never bake a sign-in into a Docker image: monoes.me treats a refresh token that was already used as stolen and ends every sign-in of the account, on every machine (SECURITY.md).
+- Sign in once per machine. Never copy or restore `~/.monoagent/account/` between machines or from an old backup, and never bake a sign-in into a Docker image: monoes.me treats a refresh token that was already used as stolen and ends that sign-in, on the original machine and on every copy; machines that signed in on their own keep working (SECURITY.md).
 - Versions before this one are not gated; only the monoes.me library, which monoes.me already gates, stops for them. A build from source is gated like a release: developers build with `-tags devaccount` (CONTRIBUTING.md), and releases never carry the tag.
 ```
 
@@ -1592,7 +1613,7 @@ echo "${MAJOR}.${MINOR}.${PATCH}"
 - [ ] **Step 6: Commit.**
   - `git add cmd/monoagentcli/docs_changelog_test.go CHANGELOG.md`
   - `git commit -m "docs(changelog): release notes for the monoes.me account" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"`
-- [ ] **Step 7: The landing check.** `git fetch origin`, then `git log --oneline origin/master..HEAD` (expected: B5a's commits, then the six `docs(...)` commits of Tasks 1 to 6: B1a to B4b and B5c are already on master by then, because each of them merged, and released, before R). Rebase onto `origin/master` if it moved and rerun `next-version.sh` immediately before the push: any release in between shifts the number, so edit the heading if it changed. Then `go build ./...`, `go vet ./...`, `gofmt -l .` (no output), `go build -tags nosocial -o /dev/null ./cmd/monoagentcli`, `go test ./internal/i18n/ -count=1` and `go test ./cmd/monoagentcli/ -run 'TestStaleClaims|TestFrontDoor|TestSecurityDoc|TestAgentsDoc|TestOpenList|TestContributing|TestPositioning|TestDockerFiles|TestRefAccount|TestRefLists|TestRefDocs|TestChangelog|TestEveryCommandIsClassified' -count=1` (expected: `ok`). R is not cut until B5a's readiness checklist is done (plan A deployed, the production signing key pinned in `internal/account/keys_default.go`, the server's reuse window live; index §1): look there first.
+- [ ] **Step 7: The landing check.** `git fetch origin`, then `git log --oneline origin/master..HEAD` (expected: B5a's commits, then the six `docs(...)` commits of Tasks 1 to 6: B1a to B4b and B5c are already on master by then, because each of them merged, and released, before R). Rebase onto `origin/master` if it moved and rerun `next-version.sh` immediately before the push: any release in between shifts the number, so edit the heading if it changed. Then `go build ./...`, `go vet ./...`, `gofmt -l .` (no output), `go build -tags nosocial -o /dev/null ./cmd/monoagentcli`, `go test ./internal/i18n/ -count=1` and `go test ./cmd/monoagentcli/ -run 'TestStaleClaims|TestFrontDoor|TestSecurityDoc|TestAgentsDoc|TestOpenList|TestContributing|TestPositioning|TestDockerFiles|TestRefAccount|TestRefLists|TestRefDocs|TestChangelog|TestEveryCommandIsClassified' -count=1` (expected: `ok`). R is not cut until B5a's readiness checklist is done (plan A deployed, the production signing key pinned in `internal/account/keys_default.go`, the server's reuse window live; index §1): look there first. The documents' statement that a stale copy signs out only the original and its copies holds once plan A's Task 3 (refresh-token families) is deployed, which "plan A deployed" includes; on a server without it a stale copy ends every sign-in of the account.
 - [ ] **Step 8: The owner reads the claims.** Hand the owner the review sheet at the top of this plan and `git diff origin/master -- README.md SECURITY.md AGENTS.md SUPPORT.md CONTRIBUTING.md docs/COMPARISON.md CHANGELOG.md internal/i18n/locales`. The owner reads every rewritten statement, says whether each is true of the build that will ship and whether the date in the CHANGELOG is theirs. A statement they change goes through the guard tests again (they pin phrases, not paragraphs, so rewording is free: rerun the tests of Tasks 1 to 6). Push only after that answer, and tell the lead: push B5a and Tasks 1 to 6 together, never B5a alone.
 
 ## Contract change requests

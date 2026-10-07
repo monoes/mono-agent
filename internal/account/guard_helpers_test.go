@@ -165,6 +165,21 @@ func (e *env) touch() {
 	}
 }
 
+// readReplaced reads a file a running refresher may be replacing. On Windows a
+// plain open is refused with a sharing violation while the rename of a write is
+// in flight (the store itself opens with delete sharing, os.ReadFile does not),
+// so a failed read is tried again for a short while.
+func readReplaced(path string) ([]byte, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil || time.Now().After(deadline) {
+			return data, err
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func (e *env) session() *account.Session {
 	e.t.Helper()
 	sess, err := e.store.Load()

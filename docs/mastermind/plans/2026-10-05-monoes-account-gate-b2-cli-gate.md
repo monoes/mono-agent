@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
-- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `EnsureFresh`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear only on a login or a refresh. The high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
+- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, and neither does a guard pass (`EnsureFresh`, `Refresh`, the background refresher) while the gate is dormant or its date is still ahead, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear on a login or a refresh and, from the enforcement date on (A25), on the first guard pass of a machine that has no session: that pass creates the directory, `session.lock` and a session with no token (`{v, host, hw}`, never `refresh.enc`), the clock-guard record of a machine that never signed in. So a gated command that is refused on an empty HOME leaves exactly `account/session.lock` and `account/session.json` once the date has been reached, and nothing before it. Otherwise the high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
 - Process globals (`enforceFrom`, the trusted keys, the installed guard, the strict flag) are guarded by a `sync.RWMutex` and read only through accessors. The `*ForTest` hooks and `accounttest.Install` are for tests that do not call `t.Parallel()`; CI's Linux jobs run `-race`.
 - A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
 - Open commands (D6): `version`, `help`, `completion`, cobra's hidden `__complete` and `__completeNoDesc`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), `library login`, `library logout`, `library status`. Everything else is gated, except the serving commands:
@@ -33,8 +33,10 @@ Failure modes the spec implies that a person using the software would meet and t
 1. A long-running command started while locked: `daemon` under launchd's `KeepAlive` (`internal/autostart/autostart_darwin.go:33`), the `mcp` an AI client launches, the bridge the side panel connects to. Refused at start they respawn in a loop or cannot say what to do. They must start and say why on stderr. Pinned by `TestGateWhenLocked` and `pinnedServe` in `TestEveryCommandIsClassified` (Tasks 1 and 3).
 2. Help, shell completion and the way out must stay open while signed out: `__complete`, `help`, `workflow run --help`, `--profile work account login`. Pinned by `TestOpenCommandsStayOpenWhenLocked` (Task 4), `TestGateWhenLocked` (Task 3) and the S5 rows (Task 2).
 3. An argument spelling that cobra runs but the gate lets through: a value flag swallowing `--help` or a command name, `--help=false`, `--`, an alias, an unknown flag. Pinned by `TestGateNeverDowngradesWhatCobraWouldRun` (Task 2).
-4. Something written to HOME before the gate says no, or by an open command: the first-run marker, the database, account files on a fresh HOME. Pinned by `TestRunRefusesGatedCommandsWhenLocked` and `TestRunCreatesNothingForOpenCommands` (Task 4).
+4. Something written to HOME before the gate says no, or by an open command: the first-run marker, the database, account files on a fresh HOME. From the enforcement date a refusal writes exactly one thing, the clock-guard record of a machine that never signed in (A25): `account/session.lock` and `account/session.json`, a session with no token and a high-water mark equal to the clock, so a clock set back before the date does not un-enforce the gate for a user who leaves the account folder alone (spec §4.8); before the date and for an open command nothing is written. Pinned by `TestRunRefusesGatedCommandsWhenLocked`, `TestRunRefusesAgainWhenTheClockIsSetBackBeforeTheDate` and `TestRunCreatesNothingForOpenCommands` (Task 4).
 5. A script that reads stdout: under `--json` the refusal is exactly one JSON document and no gate text reaches stdout; while enforcement is dormant the gate says nothing and the doctor row neither warns nor fails. Pinned by `TestRunRefusalIsOneJSONDocumentUnderJSON`, `TestRunLetsGatedCommandsRunWhenAllowed` and `TestGateAnnouncesGraceAndWarning` (Tasks 3 and 4), and `TestMonoesAccountCheck` (Task 5).
+6. A Ctrl-C that cannot end the process. The guard never abandons a refresh grant it has sent (A20), so a shutdown can wait for monoes.me's answer and then for the key-store write of the new refresh token (the grant, then the write: about 20 seconds, 30 at the worst), and `signal.NotifyContext` keeps swallowing the signals until it is stopped. `run()` therefore lets go of the signals before it releases the guard, so a second Ctrl-C ends a shutdown that waits in the guard's `Close`; while a command is still inside the gate's own refresh (`gateStatus`) the signals stay caught, the wait is bounded, and `gateStatus` says so. Pinned by `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` (Task 4).
+7. A gate site reached with no guard installed. `account.Require` and `account.CurrentStatus` with no guard judge the enforcement date on the clock alone: the clock-guard record (A23, A25) is read only through a guard, so a clock set back before the date un-enforces every gate that runs without one, whatever the record on disk says. Nothing in B1a calls `Require`; every gate site of this binary (the serving commands' `PreRun`, the engine, the runners and the doors they start, B3a and B3b) runs inside a command. So `run()` installs the process guard before any part of a command can run, in every process (every command, the daemon, the doors), and keeps it installed until the command has returned. Pinned by `TestEveryCommandRunsWithTheProcessGuardInstalled` (Task 4), which runs every command of the tree with its hooks replaced by a probe. One case stays: a process whose guard cannot be built (no home directory) has no guard and no record either, and the gate judges it on the clock alone, as it judges a machine whose record was deleted (spec §4.8).
 
 ---
 
@@ -218,7 +220,8 @@ import (
 //
 //	open   runs whatever the account state;
 //	gated  with no valid session is refused before cobra runs a single hook
-//	       (no first-run check, no database open, nothing written): exit 4;
+//	       (no first-run check, no database open; from the enforcement date the
+//	       guard writes only the clock-guard record, A25): exit 4;
 //	serve  a long-running command (spec §6.4): it starts even when locked and
 //	       refuses the work itself (layers 2 and 3), because a daemon that
 //	       exited on the lock would be respawned in a loop by launchd, and a
@@ -762,7 +765,7 @@ git commit -m "docs(account): spike S5, how root.Find resolves the target" -m "C
 ```go
 func newGateRefusal(st account.Status) error                          // exit 4, login_required fields, account.LoginRequiredError's text
 func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *account.Guard, stderr io.Writer) error
-func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil
+func gateStatus(ctx context.Context, g *account.Guard) account.Status // EnsureFresh, then the verdict; g may be nil; may wait for the grant, then the key-store write, after a Ctrl-C
 func announce(w io.Writer, st account.Status)                         // the grace line, the warn-period line
 // exitCodeFor: any *account.LoginRequiredError, wrapped or not, is exit 4
 ```
@@ -835,12 +838,32 @@ func installExpiredSession(t *testing.T, fail error) *fakeRefresher {
 	return r
 }
 
+// installUnconfirmedSession installs a guard whose access token ran out an hour ago (inside the 24
+// hours), with no refresh token and last_result "unconfirmed": what a refresh whose answer never
+// arrived leaves once the guard has dropped the token (A24). The refresher counts what is asked of it.
+func installUnconfirmedSession(t *testing.T) *fakeRefresher {
+	t.Helper()
+	f := accounttest.New(t)
+	store := account.OpenStore(t.TempDir(), account.NewMemorySealer())
+	expired := f.Token(accounttest.TokenOptions{IssuedAt: f.Clock.Now().Add(-2 * time.Hour)})
+	if err := store.Save(&account.Session{V: 1, Host: account.HostURL, AccessToken: expired, User: &account.User{ID: "user-1"},
+		LastAttempt: f.Clock.Now().Add(-time.Hour), LastResult: string(account.ReasonUnconfirmed)}); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRefresher{next: func() string { return f.Token(accounttest.TokenOptions{}) }}
+	g := account.NewGuard(account.GuardOptions{Store: store, Refresher: r, Now: f.Clock.Now})
+	account.InstallForTest(t, g)
+	t.Cleanup(g.Close)
+	return r
+}
+
 // A refusal is the text of account.LoginRequiredError: the fixed first line
-// and, for the five reasons of spec §6.1 where signing in again is not the whole
-// story, a second one. It exits 4 and is a login-required error.
+// and, for the five reasons of spec §6.1 and for unconfirmed (A24), where signing
+// in again is not the whole story, a second one. It exits 4 and is a
+// login-required error.
 func TestRefusalTextPerReason(t *testing.T) {
 	for _, r := range []account.Reason{account.ReasonExpired, account.ReasonRefused, account.ReasonClockRollback,
-		account.ReasonClockSkew, account.ReasonKeyUnknown} {
+		account.ReasonClockSkew, account.ReasonKeyUnknown, account.ReasonUnconfirmed} {
 		err := newGateRefusal(account.Status{State: account.StateLocked, Reason: r, Enforced: true})
 		lines := strings.Split(err.Error(), "\n")
 		if len(lines) != 2 || lines[0] != loginRequiredLine || lines[1] == "" || exitCodeFor(err) != 4 || !isLoginRequired(err) {
@@ -911,7 +934,7 @@ func TestGateRefreshesBeforeGatedCommandsOnly(t *testing.T) {
 // and a dormant gate stay silent.
 func TestGateAnnouncesGraceAndWarning(t *testing.T) {
 	t.Run("grace", func(t *testing.T) {
-		installExpiredSession(t, &account.TransientError{Reason: account.ReasonUnreachable, Err: errors.New("offline")})
+		installExpiredSession(t, &account.TransientError{Reason: account.ReasonUnreachable, Settled: true, Err: errors.New("offline")})
 		stderr, err := gate("workflow", "list")
 		st := account.CurrentStatus()
 		want := "monoes.me is unreachable; this login works offline until " + st.GraceUntil.Local().Format(time.RFC3339) + "\n"
@@ -920,6 +943,19 @@ func TestGateAnnouncesGraceAndWarning(t *testing.T) {
 		}
 		if stderr, _ := gate("doctor"); stderr != "" {
 			t.Errorf("an open command printed %q", stderr)
+		}
+	})
+	// A24: monoes.me is not the problem and the refresh token is gone, so the line does not say "unreachable":
+	// it says that the login cannot be renewed on this machine, until when it works and what to do. Nothing is
+	// asked of monoes.me: there is no refresh token to present.
+	t.Run("grace after a refresh whose answer never arrived", func(t *testing.T) {
+		r := installUnconfirmedSession(t)
+		stderr, err := gate("workflow", "list")
+		st := account.CurrentStatus()
+		want := "This login can no longer be renewed on this machine and works until " + st.GraceUntil.Local().Format(time.RFC3339) +
+			". Sign in again: monoagentcli account login\n"
+		if err != nil || st.State != account.StateGrace || st.Reason != account.ReasonUnconfirmed || stderr != want || r.calls.Load() != 0 {
+			t.Errorf("state %s/%s: %v, stderr %q, want %q, %d refresh calls", st.State, st.Reason, err, stderr, want, r.calls.Load())
 		}
 	})
 	t.Run("warn period", func(t *testing.T) {
@@ -1004,6 +1040,12 @@ func gateCommand(ctx context.Context, root *cobra.Command, args []string, g *acc
 	return nil
 }
 
+// gateStatus renews the session when that is due and reads the verdict. EnsureFresh may block after
+// a Ctrl-C while a refresh grant is in flight, for the grant and then for the key-store write of the
+// new refresh token (about 20 seconds, 30 at the worst): the guard never abandons a grant it has
+// sent (A20), because the answer holds the only copy of the refresh token that replaces the one
+// monoes.me has already rotated. The signals stay caught until the command ends, so a second
+// Ctrl-C does not shorten the wait; only SIGKILL does.
 func gateStatus(ctx context.Context, g *account.Guard) account.Status {
 	if g == nil {
 		return account.CurrentStatus()
@@ -1013,15 +1055,21 @@ func gateStatus(ctx context.Context, g *account.Guard) account.Status {
 }
 
 // announce is the one line an allowed command owes the user, on stderr only:
-// the grace line when the login works offline, the warning when a login will
-// be required from a date. While enforcement is dormant (no date) it says
-// nothing.
+// the grace line when the login works offline (or, once a refresh whose answer
+// never arrived has cost this machine its refresh token, A24, the line that says
+// to sign in again), the warning when a login will be required from a date.
+// While enforcement is dormant (no date) it says nothing.
 func announce(w io.Writer, st account.Status) {
 	if st.EnforceFrom.IsZero() {
 		return
 	}
 	switch st.State {
 	case account.StateGrace:
+		if st.Reason == account.ReasonUnconfirmed { // monoes.me is not the problem
+			fmt.Fprintf(w, "This login can no longer be renewed on this machine and works until %s. Sign in again: monoagentcli account login\n",
+				st.GraceUntil.Local().Format(time.RFC3339))
+			return
+		}
 		fmt.Fprintf(w, "monoes.me is unreachable; this login works offline until %s\n", st.GraceUntil.Local().Format(time.RFC3339))
 	case account.StateLocked: // allowed only before the date
 		fmt.Fprintf(w, "A monoes.me login will be required from %s: monoagentcli account login\n", st.EnforceFrom.Local().Format("2006-01-02"))
@@ -1075,11 +1123,13 @@ func run(args []string, stdout, stderr io.Writer) int
 func reportGateRefusal(args []string, err error, stdout, stderr io.Writer)
 func argsWantJSON(args []string) bool
 var newDefaultGuard = account.NewDefaultGuard                     // seam: a test makes it fail
+var newRunRoot = newRootCmd                                        // seam: a test wraps every command's hooks
 func processGuard() (*account.Guard, func())
 func cancelsOnRefusal(class string) bool                           // only gated commands: a refused daemon keeps serving (D8)
 var cancelWhenRefused = func(g *account.Guard, cancel context.CancelFunc)   // seam; B3a's request for spec §6.4
 var afterFunc = time.AfterFunc                                     // seams: a test sees the timer armed and fired
 var startRefresher = func(ctx context.Context, g *account.Guard) { g.StartRefresher(ctx) }
+var notifyContext = signal.NotifyContext                           // seam: a test sees when the signals are let go
 func armLateRefresher(ctx context.Context, g *account.Guard) (disarm func())
 ```
 
@@ -1093,12 +1143,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/account/accounttest"
@@ -1132,13 +1187,51 @@ func requireEmpty(t *testing.T, dir string) {
 	}
 }
 
+// filesUnder lists every file below dir, as slash-separated paths relative to it, in lexical order.
+func filesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(dir, path)
+			files = append(files, filepath.ToSlash(rel))
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// guardOverHome makes run build, as a real process does, a guard over the account folder of the current
+// HOME, on the fixture's clock so that a test can move it, with a sealer of its own that keeps the
+// operating system's key store out of it.
+func guardOverHome(t *testing.T, f *accounttest.Fixture) {
+	t.Helper()
+	prev := newDefaultGuard
+	newDefaultGuard = func() (*account.Guard, error) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		store := account.OpenStore(filepath.Join(home, ".monoagent", "account"), account.NewMemorySealer())
+		return account.NewGuard(account.GuardOptions{Store: store, Now: f.Clock.Now}), nil
+	}
+	t.Cleanup(func() { newDefaultGuard = prev })
+}
+
 // A gated command with no session fails before cobra runs a single hook: exit
-// 4, the message on stderr, nothing on stdout, and nothing written — not the
-// first-run marker, not the database. The commands are harmless ones: a broken
-// gate would run them.
+// 4, the message on stderr, nothing on stdout, and nothing written but the
+// clock-guard record of a machine that never signed in (A25): not the first-run
+// marker, not the database, not a refresh token. The commands are harmless ones:
+// a broken gate would run them. run builds the guard over HOME, as a real
+// process does, on the fixture's clock.
 func TestRunRefusesGatedCommandsWhenLocked(t *testing.T) {
-	accounttest.Install(t, accounttest.LockedNoLogin)
+	account.InstallForTest(t, nil)
+	f := accounttest.New(t) // trusts the test key; the date is a day before the fixture's clock: enforced
 	home := freshHome(t)
+	guardOverHome(t, f)
 	for _, args := range [][]string{
 		{"workflow", "list"}, {"--profile", "work", "workflow", "list"}, {"person", "list"}, {"config", "list"},
 		{"workflow", "list", "--help=false"}, {"--profile", "--help", "workflow", "list"},
@@ -1148,7 +1241,66 @@ func TestRunRefusesGatedCommandsWhenLocked(t *testing.T) {
 			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
 		}
 	}
-	requireEmpty(t, home)
+	// What the refusals left: the two files of the record, a session with no token whose high-water
+	// mark is the clock, and nothing else.
+	want := []string{".monoagent/account/session.json", ".monoagent/account/session.lock"}
+	if got := filesUnder(t, home); !slices.Equal(got, want) {
+		t.Fatalf("the refusals left %v in HOME, want %v", got, want)
+	}
+	sess, err := account.OpenStore(filepath.Join(home, ".monoagent", "account"), account.NewMemorySealer()).Load()
+	if err != nil || sess == nil || sess.AccessToken != "" || sess.State != "" || !sess.HW.Equal(f.Clock.Now()) {
+		t.Fatalf("the record: present %v (%v), want a session with no token and the clock as its high-water mark", sess != nil, err)
+	}
+}
+
+// A25: the record outlives the process. A machine that has been refused once after the date is refused
+// again when its clock is then set back to before the date, which is what the record is for.
+func TestRunRefusesAgainWhenTheClockIsSetBackBeforeTheDate(t *testing.T) {
+	account.InstallForTest(t, nil)
+	f := accounttest.New(t)
+	freshHome(t)
+	guardOverHome(t, f)
+	if code, _, stderr := runMain(t, "workflow", "list"); code != 4 || stderr != loginRequiredLine+"\n" {
+		t.Fatalf("after the date: exit %d, stderr %q", code, stderr)
+	}
+	f.Clock.Set(account.EnforceDate().Add(-48 * time.Hour)) // the clock is set to two days before the date
+	if code, stdout, stderr := runMain(t, "workflow", "list"); code != 4 || stdout != "" || stderr != loginRequiredLine+"\n" {
+		t.Errorf("with the clock set back: exit %d, stdout %q, stderr %q, want the refusal again", code, stdout, stderr)
+	}
+}
+
+// A25 writes its record once the date has been reached, and not before: in the warn period, and while the
+// gate is dormant, an allowed gated command leaves no account folder, not even the lock. (The same clock on
+// a machine that has been refused is the test above.)
+func TestRunWritesNothingToTheAccountFolderBeforeTheDateOrWhileDormant(t *testing.T) {
+	account.InstallForTest(t, nil)
+	f := accounttest.New(t)
+	guardOverHome(t, f)
+	date := account.EnforceDate()
+	for _, tc := range []struct {
+		name    string
+		clock   time.Time
+		dormant bool
+		stderr  string // what the allowed command says
+	}{
+		{"the warn period", date.Add(-48 * time.Hour), false,
+			"A monoes.me login will be required from " + date.Local().Format("2006-01-02") + ": monoagentcli account login\n"},
+		{"dormant", date.Add(48 * time.Hour), true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.dormant {
+				account.SetEnforceFromForTest(t, time.Time{})
+			}
+			f.Clock.Set(tc.clock)
+			home := freshHome(t)
+			if code, _, stderr := runMain(t, "workflow", "list"); code != 0 || stderr != tc.stderr {
+				t.Errorf("exit %d, stderr %q, want exit 0 and %q", code, stderr, tc.stderr)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".monoagent", "account")); !os.IsNotExist(err) {
+				t.Errorf("the guard made the account folder: %v", err)
+			}
+		})
+	}
 }
 
 // With --json anywhere in the arguments the refusal is one JSON document on
@@ -1229,7 +1381,7 @@ func TestRunLetsGatedCommandsRunWhenAllowed(t *testing.T) {
 		}
 	}
 
-	installExpiredSession(t, &account.TransientError{Reason: account.ReasonUnreachable, Err: errors.New("offline")})
+	installExpiredSession(t, &account.TransientError{Reason: account.ReasonUnreachable, Settled: true, Err: errors.New("offline")})
 	freshHome(t)
 	code, stdout, stderr := runMain(t, "workflow", "list", "--json")
 	if code != 0 || !strings.HasPrefix(stderr, "monoes.me is unreachable; this login works offline until ") || strings.Contains(stdout, "unreachable") {
@@ -1312,10 +1464,13 @@ func TestCancelWhenRefusedEndsTheContext(t *testing.T) {
 }
 
 // With nobody signed in, an open command makes the guard run installs create
-// no file (scripts/doctor-smoke.sh asserts the same of the real binary), and
-// run removes the guard it built. A guard installed beforehand is left alone.
+// no file, even once the gate is enforced: the clock-guard record (A25) is
+// written by a guard pass, and an open command runs none (scripts/doctor-smoke.sh
+// asserts the same of the real binary). run removes the guard it built. A guard
+// installed beforehand is left alone.
 func TestRunCreatesNothingForOpenCommands(t *testing.T) {
 	account.InstallForTest(t, nil)
+	accounttest.New(t) // enforced: the date is in the past, so a guard pass would write the record
 	home := freshHome(t)
 	var called sync.Map
 	healthEnvHook = offlineEnv(t, &called)
@@ -1359,6 +1514,111 @@ func TestRunFailsClosedWhenNoGuardCanBeBuilt(t *testing.T) {
 	}
 }
 
+// The signals are let go before the guard is released. Releasing the guard (its Close) waits for a
+// refresh grant that monoes.me is still answering, up to the guard's call timeout, because a grant that
+// was sent is never abandoned (A20); signal.NotifyContext keeps catching the signals until its stop
+// function runs, so with the guard released first a second Ctrl-C during that wait would be swallowed
+// and only SIGKILL would end the process. The guard run built is still installed when the signals are
+// let go, and is gone after.
+func TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard(t *testing.T) {
+	account.InstallForTest(t, nil)
+	freshHome(t)
+	g := account.NewGuard(account.GuardOptions{Store: account.OpenStore(t.TempDir(), account.NewMemorySealer())})
+	prevGuard := newDefaultGuard
+	newDefaultGuard = func() (*account.Guard, error) { return g, nil }
+	t.Cleanup(func() { newDefaultGuard = prevGuard })
+	var guardWhenLetGo *account.Guard
+	prevNotify := notifyContext
+	notifyContext = func(parent context.Context, sigs ...os.Signal) (context.Context, context.CancelFunc) {
+		ctx, stop := prevNotify(parent, sigs...)
+		return ctx, func() { guardWhenLetGo = account.Current(); stop() }
+	}
+	t.Cleanup(func() { notifyContext = prevNotify })
+
+	if code, _, _ := runMain(t, "completion", "bash"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if guardWhenLetGo != g {
+		t.Error("the signals were let go after the guard was released: a second Ctrl-C during Close would be swallowed")
+	}
+	if account.Current() != nil {
+		t.Error("run left the guard it built installed")
+	}
+}
+
+// Require and CurrentStatus with no guard installed judge the enforcement date on the clock alone: the
+// clock-guard record (A23, A25) is read only through a guard, so a clock set back before the date would
+// un-enforce every gate reached without one. Every gate site of this binary runs inside a command (the
+// serving commands' PreRun, the engine, the runners and the doors they start; the CLI gate gets run's guard
+// as an argument), so run installs the process guard before any part of a command can run and keeps it
+// installed until the command has returned. The test wraps every hook of every command of the tree run
+// executes with a probe that records the installed guard and runs nothing else, runs every runnable command
+// through run with the gate dormant (so that each one reaches its hooks), and expects in every hook the guard
+// that run built.
+func TestEveryCommandRunsWithTheProcessGuardInstalled(t *testing.T) {
+	account.InstallForTest(t, nil)
+	account.SetEnforceFromForTest(t, time.Time{}) // dormant: the gate lets every command through to its hooks
+	freshHome(t)
+	var built *account.Guard
+	prevGuard := newDefaultGuard
+	newDefaultGuard = func() (*account.Guard, error) {
+		built = account.NewGuard(account.GuardOptions{Store: account.OpenStore(t.TempDir(), account.NewMemorySealer())})
+		return built, nil
+	}
+	t.Cleanup(func() { newDefaultGuard = prevGuard })
+	var seen []*account.Guard
+	probe := func(*cobra.Command, []string) error { seen = append(seen, account.Current()); return nil }
+	var each func(c *cobra.Command, fn func(*cobra.Command))
+	each = func(c *cobra.Command, fn func(*cobra.Command)) {
+		fn(c)
+		for _, sub := range c.Commands() {
+			each(sub, fn)
+		}
+	}
+	prevRoot := newRunRoot
+	newRunRoot = func() *cobra.Command {
+		root := prevRoot()
+		each(root, func(c *cobra.Command) {
+			c.Args = cobra.ArbitraryArgs // an argument check would end the command before its hooks
+			c.PersistentPreRun, c.PersistentPreRunE = nil, probe
+			c.PreRun, c.PreRunE = nil, probe
+			if c.Runnable() {
+				c.Run, c.RunE = nil, probe
+			}
+			c.PostRun, c.PostRunE = nil, probe
+			c.PersistentPostRun, c.PersistentPostRunE = nil, probe
+		})
+		return root
+	}
+	t.Cleanup(func() { newRunRoot = prevRoot })
+
+	var paths [][]string
+	each(newRootCmd(), func(c *cobra.Command) {
+		if c.HasParent() && c.Runnable() {
+			paths = append(paths, strings.Fields(c.CommandPath())[1:])
+		}
+	})
+	if len(paths) < 300 {
+		t.Fatalf("the walk found %d runnable commands: it does not see the tree", len(paths))
+	}
+	for _, args := range paths {
+		seen, built = nil, nil
+		run(args, io.Discard, io.Discard)
+		if len(seen) == 0 {
+			t.Errorf("%q: none of its hooks ran", args)
+		}
+		for _, g := range seen {
+			if g == nil || g != built {
+				t.Errorf("%q: a hook ran with no guard installed (%v) or another guard than the one run built", args, g == nil)
+				break
+			}
+		}
+	}
+	if account.Current() != nil {
+		t.Error("run left the guard it built installed")
+	}
+}
+
 // A nil slice must not make cobra read the test binary's own arguments, and
 // an ordinary command error keeps its exit code and its place.
 func TestRunKeepsCobrasOwnBehaviour(t *testing.T) {
@@ -1377,10 +1637,10 @@ func TestRunKeepsCobrasOwnBehaviour(t *testing.T) {
 - [ ] **Step 2: Run it and see it fail.**
 
 ```bash
-go test ./cmd/monoagentcli/ -run '^(TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunKeepsCobrasOwnBehaviour)$' -count=1
+go test ./cmd/monoagentcli/ -run '^(TestRunRefusesGatedCommandsWhenLocked|TestRunRefusesAgainWhenTheClockIsSetBackBeforeTheDate|TestRunWritesNothingToTheAccountFolderBeforeTheDateOrWhileDormant|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard|TestEveryCommandRunsWithTheProcessGuardInstalled|TestRunKeepsCobrasOwnBehaviour)$' -count=1
 ```
 
-Expected: FAIL, build errors such as `undefined: run`, `undefined: afterFunc`, `undefined: startRefresher` and `undefined: cancelWhenRefused`, ending `[build failed]`.
+Expected: FAIL, build errors such as `undefined: run`, `undefined: afterFunc`, `undefined: startRefresher`, `undefined: cancelWhenRefused`, `undefined: notifyContext` and `undefined: newRunRoot`, ending `[build failed]`.
 
 - [ ] **Step 3: Implement `run`.** In `cmd/monoagentcli/main.go` add `"github.com/monoes/mono-agent/internal/account"` to the imports (before `internal/i18n`), then replace the whole existing `func main() {…}` (lines 65-92) with:
 
@@ -1415,19 +1675,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// docs/i18n.md.
 	i18n.SetLocale(i18n.Detect(args))
 
+	// The guard is installed before anything of a command can run, and released after it has returned:
+	// Require and CurrentStatus with no guard judge the enforcement date on the clock alone (the
+	// clock-guard record is read only through a guard), and every gate site of this binary runs inside
+	// a command. It is built before the signals are caught, so that the signals are let go before the
+	// guard is released: deferred calls run last in, first out. release (the guard's Close) waits for a
+	// refresh grant that monoes.me is still answering, up to the guard's call timeout, because a grant
+	// that was sent is never abandoned (A20), and signal.NotifyContext keeps catching the signals
+	// until its stop function runs. With the guard released first, a second Ctrl-C during that wait
+	// would be swallowed and only SIGKILL would end the process.
+	g, release := processGuard()
+	defer release()
+
 	// SIGHUP too: a CLI whose terminal or parent goes away must cancel, so
 	// commands end what they started (monoes/mono-agent#235).
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, cancel := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
-	root := newRootCmd()
+	root := newRunRoot()
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.SetArgs(args)
 	applyClassification(root)
 
-	g, release := processGuard()
-	defer release()
 	if g != nil {
 		defer armLateRefresher(ctx, g)()
 	}
@@ -1491,12 +1761,19 @@ func argsWantJSON(args []string) bool {
 // what happens when none can be built.
 var newDefaultGuard = account.NewDefaultGuard
 
+// newRunRoot builds the command tree that run executes; a test wraps every
+// command's hooks to see that the process guard is installed whenever one runs.
+var newRunRoot = newRootCmd
+
 // processGuard returns this process's account guard and what to call when the
 // command is done. A guard installed before run (only a test does that) is
 // used as it is. Otherwise run builds and installs the default guard over
-// ~/.monoagent/account, which creates nothing while no one is signed in. If it
-// cannot be built there is none: a gated command then fails closed once
-// enforcement is on, and runs before.
+// ~/.monoagent/account, which creates nothing until a guard pass or a sign-in
+// writes something: from the enforcement date the first pass of a machine that
+// never signed in writes the clock-guard record (A25). If it cannot be built
+// (no home directory) there is none: a gated command then fails closed once
+// enforcement is on, and runs before, judged on the clock alone, since without
+// a guard no record can be read (and such a process has no home to hold one).
 func processGuard() (*account.Guard, func()) {
 	if g := account.Current(); g != nil {
 		return g, func() {}
@@ -1535,6 +1812,9 @@ var (
 	startRefresher = func(ctx context.Context, g *account.Guard) { g.StartRefresher(ctx) }
 )
 
+// notifyContext is signal.NotifyContext; a test swaps it to see when run lets go of the signals.
+var notifyContext = signal.NotifyContext
+
 // armLateRefresher starts g's background refresher once the process has run
 // for account.LateRefresher, so a long `workflow run` or `chat` keeps its
 // login fresh (spec §6.4). The serving commands start it at once in their own
@@ -1572,12 +1852,15 @@ git commit -m "feat(cli): run() gates every command before cobra runs it" -m "Co
   - Delete `applyClassification(root)`: `TestOpenCommandsStayOpenWhenLocked` FAILS (every command is gated, `doctor` included).
   - Delete `defer armLateRefresher(ctx, g)()`: `TestRunArmsTheLateRefresher` FAILS.
   - Delete `cancelWhenRefused(g, cancel)`: `TestRunGivesOnlyGatedCommandsTheCancel` FAILS.
+  - Move `g, release := processGuard()` and `defer release()` below `defer cancel()` (the guard released before the signals are let go): `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` FAILS.
+  - In `processGuard`, delete `account.Install(g)` (the CLI gate still gets the guard as an argument; every gate site inside a command would find none): `TestEveryCommandRunsWithTheProcessGuardInstalled` and `TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard` FAIL.
+  - Replace `defer release()` with `release()` (the guard removed before the command runs): `TestEveryCommandRunsWithTheProcessGuardInstalled` FAILS.
   - In `cancelsOnRefusal`, replace `class == classGated` with `class != classOpen`: `TestOnlyGatedCommandsAreCancelledOnRefusal` FAILS (a refused daemon would cancel itself).
 
 - [ ] **Step 8: Run the gate tests under the race detector.**
 
 ```bash
-go test -race ./cmd/monoagentcli/ -count=1 -timeout 15m -run '^(TestEveryCommandIsClassified|TestGateMatchesTheClassOfEveryCommandAndAlias|TestFindResolvesTheTargetForEveryInvocationForm|TestGateNeverDowngradesWhatCobraWouldRun|TestRefusalTextPerReason|TestAnyLoginRequiredErrorExitsFour|TestGateWhenLocked|TestGateRefreshesBeforeGatedCommandsOnly|TestGateAnnouncesGraceAndWarning|TestRunRefusesGatedCommandsWhenLocked|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunKeepsCobrasOwnBehaviour)$'
+go test -race ./cmd/monoagentcli/ -count=1 -timeout 15m -run '^(TestEveryCommandIsClassified|TestGateMatchesTheClassOfEveryCommandAndAlias|TestFindResolvesTheTargetForEveryInvocationForm|TestGateNeverDowngradesWhatCobraWouldRun|TestRefusalTextPerReason|TestAnyLoginRequiredErrorExitsFour|TestGateWhenLocked|TestGateRefreshesBeforeGatedCommandsOnly|TestGateAnnouncesGraceAndWarning|TestRunRefusesGatedCommandsWhenLocked|TestRunRefusesAgainWhenTheClockIsSetBackBeforeTheDate|TestRunWritesNothingToTheAccountFolderBeforeTheDateOrWhileDormant|TestRunRefusalIsOneJSONDocumentUnderJSON|TestOpenCommandsStayOpenWhenLocked|TestRunLetsGatedCommandsRunWhenAllowed|TestRunGivesOnlyGatedCommandsTheCancel|TestOnlyGatedCommandsAreCancelledOnRefusal|TestCancelWhenRefusedEndsTheContext|TestRunArmsTheLateRefresher|TestRunCreatesNothingForOpenCommands|TestRunFailsClosedWhenNoGuardCanBeBuilt|TestRunLetsGoOfTheSignalsBeforeItReleasesTheGuard|TestEveryCommandRunsWithTheProcessGuardInstalled|TestRunKeepsCobrasOwnBehaviour)$'
 ```
 
 Expected: `ok  	github.com/monoes/mono-agent/cmd/monoagentcli	<n>s` and no `DATA RACE`.
@@ -1638,14 +1921,17 @@ func TestMonoesAccountCheck(t *testing.T) {
 		{"offline", on(AccountInfo{State: "grace", Reason: "unreachable", GraceUntil: until}), StatusWarn, "", "monoes.me is unreachable; this login works offline until " + until.Local().Format("2006-01-02 15:04")},
 		{"server error", on(AccountInfo{State: "grace", Reason: "server_error", GraceUntil: until}), StatusWarn, "", "answered with an error"},
 		{"key store", on(AccountInfo{State: "grace", Reason: "keyring_unavailable", GraceUntil: until}), StatusWarn, "", "key store cannot be opened"},
+		{"unconfirmed, still working", on(AccountInfo{State: "grace", Reason: "unconfirmed", GraceUntil: until}), StatusWarn, FixMonoesLogin, "answer never arrived"},
 		{"not signed in", on(AccountInfo{State: "locked", Reason: "not_logged_in"}), StatusFail, FixMonoesLogin, "not signed in to monoes.me"},
 		{"refused", on(AccountInfo{State: "locked", Reason: "refused"}), StatusFail, FixMonoesLogin, "monoes.me ended this login"},
 		{"expired", on(AccountInfo{State: "locked", Reason: "expired"}), StatusFail, FixMonoesLogin, "more than 24 hours"},
 		{"unknown key", on(AccountInfo{State: "locked", Reason: "key_unknown"}), StatusFail, FixUpdate, "does not know the key"},
+		{"unconfirmed, ended", on(AccountInfo{State: "locked", Reason: "unconfirmed"}), StatusFail, FixMonoesLogin, "answer never arrived"},
 		{"warn period", warn(AccountInfo{State: "locked", Reason: "not_logged_in"}), StatusWarn, FixMonoesLogin, "required from " + date.Local().Format("2006-01-02")},
 		{"dormant, not signed in", AccountInfo{State: "locked", Reason: "not_logged_in"}, StatusInfo, "", "not required yet"},
 		{"dormant, refused", AccountInfo{State: "locked", Reason: "refused"}, StatusInfo, "", "not required yet"},
 		{"dormant, offline", AccountInfo{State: "grace", Reason: "unreachable", GraceUntil: until}, StatusInfo, "", "works offline"},
+		{"dormant, unconfirmed", AccountInfo{State: "grace", Reason: "unconfirmed", GraceUntil: until}, StatusInfo, "", "answer never arrived"},
 		{"dormant, signed in", AccountInfo{State: "ok", Email: "a@b.c"}, StatusOK, "", "signed in as"},
 		{"unknown state", AccountInfo{}, StatusSkip, "", "not available"},
 	}
@@ -1753,6 +2039,7 @@ var lockedWhy = map[string]string{
 	"clock_skew":     "the system clock is more than 5 minutes behind monoes.me",
 	"key_unknown":    "this build does not know the key monoes.me signs logins with",
 	"invalid":        "the stored login is not valid",
+	"unconfirmed":    "monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login",
 }
 
 // checkMonoesAccount: ok when signed in; warn when the login works offline
@@ -1776,8 +2063,11 @@ func checkMonoesAccount(ctx context.Context, env *Env) Result {
 		return Result{Status: StatusOK, Summary: "signed in"}
 	case "grace":
 		res := Result{Status: StatusWarn, Summary: graceSummary(a)}
-		if dormant {
+		switch {
+		case dormant:
 			res.Status = StatusInfo
+		case a.Reason == "unconfirmed": // this machine cannot renew the login: the user has to sign in again (A24)
+			res.FixID = FixMonoesLogin
 		}
 		return res
 	case "locked":
@@ -1807,6 +2097,8 @@ func graceSummary(a AccountInfo) string {
 		return "the key store cannot be opened, so the login is not renewed; it works offline until " + until
 	case "server_error":
 		return "monoes.me answered with an error; this login works offline until " + until
+	case "unconfirmed":
+		return "monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login; it works until " + until + ". Sign in again"
 	}
 	return "monoes.me is unreachable; this login works offline until " + until
 }
@@ -1989,7 +2281,9 @@ Expected: no output from the first three commands, then the builds succeed silen
 
 - **B3a.** Its requests 2 and 3 (`docs/mastermind/plans/2026-10-05-monoes-account-gate-b3a-runners.md`, Contract change requests) are taken here: a gated one-shot command's context is cancelled when the login is refused (`cancelWhenRefused`; serving and open commands keep going), and any `*account.LoginRequiredError`, wrapped or not, exits 4 (`exitCodeFor`). The JSON fields of such an error need B1a's method (request 4 below). The four serving commands reach their `RunE` even when locked; the gate has already printed the refusal on stderr (never stdout: an MCP server's stdout is its protocol) and does not refuse them. `org serve` stays gated, `--foreground` included (the lead's ruling): a locked one exits 4 at the gate; one already running that becomes locked is B3a's layers. `setup` and `doctor fix services.daemon.start` start the daemon by spawning `monoagentcli daemon` (`cmd/monoagentcli/doctor_env_services.go:125`, `:242`), and `registerClaudeMCP` registers a launch of `mcp` (`:377`): without the `serve` class those children would exit 4 on a locked machine.
 - **B5a.** (a) Once a date is set, a fresh HOME makes `core.monoes_account` `fail`, which breaks `scripts/doctor-smoke.sh:90` (`all(.results[]; .group == "core" and .status != "fail")` after `setup --group core --yes`); the row is not required, so no exit code changes, but that assertion needs `and .id != "core.monoes_account"` or a signed-in smoke. (b) Its table row for the Docker `ENTRYPOINT daemon` says the daemon is gated: with the `serve` class a container with no sign-in starts, stays up and logs the command to run (spec §9). (c) `daemon restart` stays gated, so `update` restarting the daemon in its own process (its decision 6) is right.
-- **B5b.** `TestOpenListMatchesTheGate` should compare the documented open list with the commands whose annotation is `open`; the serving commands (`serve`) are a separate list.
+- **B5b.** `TestOpenListMatchesTheGate` should compare the documented open list with the commands whose annotation is `open`; the serving commands (`serve`) are a separate list. The reason lists of the documentation gain `unconfirmed` (A24): a grace reason, then `locked`, with the sentence of B1a's `errors.go`.
+- **Gate sites run inside a command (B3a, B3b, B4).** `account.Require` and `account.CurrentStatus` with no guard installed judge the enforcement date on the clock alone, because the clock-guard record is read only through a guard. `run()` installs the process guard before any hook of any command runs and keeps it until the command returns (`TestEveryCommandRunsWithTheProcessGuardInstalled`), so a gate site that a command reaches (a `PreRun`, the engine, a runner, a door it starts) always has it. A gate site that could run outside a command (an `init`, a package-level goroutine started before `run`, another process) would not, and a clock set back before the date would un-enforce it: every process that has a gate site installs a guard first (the desktop's is B4's).
+- **A25 (B3a, B3b, B5a, B5c).** From the enforcement date the guard of a machine that never signed in writes a session with no token, so a refused gated command on a fresh HOME leaves `account/session.lock` and `account/session.json`, and a serving command that the gate lets through while locked leaves them too. A test that runs `run()` or the real binary on a fresh HOME after the date and then asserts that HOME is empty must expect those two files (this plan's `TestRunRefusesGatedCommandsWhenLocked` is the model: the guard over HOME on the fixture's clock, `filesUnder`); one that asserts it for an open command, for the warn period or while the gate is dormant still holds. A test that installs its guard with `accounttest.Install` has the account folder in a store of its own and is not affected.
 
 ## Contract change requests
 
@@ -1997,4 +2291,4 @@ Expected: no output from the first three commands, then the builds succeed silen
 2. **`account.Install(nil)` removes the process guard; `account.InstallForTest(t, nil)` installs none and restores the previous guard on cleanup. Approved by the lead.** B1a's plan carries both, each pinned by a test. `run()` removes the guard it built, so tests do not leak it, and five tests start from "no guard installed".
 3. **`account` has exactly the subcommands `login`, `logout` and `status` (B1b). Approved by the lead.** They are in `pinnedOpen`; any other subcommand needs a deliberate edit there.
 4. **B1a: `func (e *LoginRequiredError) JSONErrorFields() map[string]any`.** Reason: index §3.4.2 says any command that returns `*account.LoginRequiredError` prints the `login_required` document under `--json`, but `withJSONErrors` (`cmd/monoagentcli/automation.go:56`) and `reportCommandError` add fields only for errors that implement `jsonErrorFields`. Proposed: it returns `{"login_required": true, "account": {"state": string(e.Status.State), "reason": string(e.Status.Reason)}}`, the keys of B1b's `loginRequiredError`, and no other change is needed. B1a's plan now carries it (`TestLoginRequiredErrorJSONFields`).
-5. **Behaviour the tests rely on, no change asked.** `accounttest.Install` installs the guard it returns as `account.Current()`; `accounttest.New(t)` trusts its key, sets enforcement in the past and gives a `Clock` that `Fixture.Token` follows; a `Guard` over an expired-inside-24-hours token with a refresh token renews it on `EnsureFresh`, or, when the `Refresher` answers `*account.TransientError{Reason: account.ReasonUnreachable}`, stays in `grace` with `GraceUntil = iat + 24h`; a `Refresher` answering `*account.RefusedError` makes `Refresh` fire the `OnRefused` callbacks on their own goroutines; `account.CurrentStatus()` with no guard is `locked(not_logged_in)` with `Enforced` and `EnforceFrom` filled in; `(*LoginRequiredError).Error()` is the fixed first line (`account.LoginRequiredMessage`) plus, for the reasons that have one, a second line.
+5. **Behaviour the tests rely on, no change asked.** `accounttest.Install` installs the guard it returns as `account.Current()`; `accounttest.New(t)` trusts its key, sets enforcement in the past and gives a `Clock` that `Fixture.Token` follows; a `Guard` over an expired-inside-24-hours token with a refresh token renews it on `EnsureFresh`, or, when the `Refresher` answers `*account.TransientError{Reason: account.ReasonUnreachable, Settled: true}` (an offline monoes.me: the request never left), stays in `grace` with `GraceUntil = iat + 24h`, and an unsettled failure (the zero value: the request may have been processed, A24) stays in grace too but keeps `pending_since` and drops the refresh token after 240 seconds as `unconfirmed`; a `Refresher` answering `*account.RefusedError` makes `Refresh` fire the `OnRefused` callbacks on their own goroutines; `account.CurrentStatus()` with no guard is `locked(not_logged_in)` with `Enforced` and `EnforceFrom` filled in; `(*LoginRequiredError).Error()` is the fixed first line (`account.LoginRequiredMessage`) plus, for the reasons that have one, a second line.

@@ -25,7 +25,7 @@ import (
 // theRecord is what the guard writes for a machine that has no session, spelled as JSON.
 func theRecord(t *testing.T, e *env, hw time.Time) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(e.dir, "session.json"))
+	data, err := readReplaced(filepath.Join(e.dir, "session.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

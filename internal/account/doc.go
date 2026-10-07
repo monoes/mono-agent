@@ -30,7 +30,7 @@
 //	globals.go          the lock and the flag behind the process-wide variables
 //	keys.go             the pinned verification keys and TrustedKeys
 //	keys_default.go     extra keys of a default build: none
-//	keys_devaccount.go  the slot for the development key of a -tags devaccount build
+//	keys_devaccount.go  the development key, which only a -tags devaccount build trusts
 //	verify.go           strict EdDSA verification of an access token
 //	sealer.go           the sealer of the refresh token, under the OS keyring key
 //	store.go            the Store interface and the session on disk: atomic writes, the cross-process lock,
@@ -51,6 +51,14 @@
 //	guard_pending.go    a grant whose answer may be lost: its marker, its age and the drop of the token
 //	guard_loop.go       the background refresher: StartRefresher and its loop
 //	process.go          the process-wide guard: Install, InstallForTest, Current, Require, CurrentStatus
+//	oauth.go            endpoint discovery pinned to the base host, and the browser sign-in (PKCE, loopback)
+//	refresh.go          the network Refresher (NewRefresher), the host check, and the rule of Settled (GrantSettled)
+//	login.go            Client: the browser and emailed-code sign-in, and the commit of a new session
+//	logout.go           Client.Logout: forgets the login, keeps the clock-guard record, revokes what the guard would present
+//	adopt.go            Client.Adopt: an older library login's refresh token becomes the session
+//	defaultguard.go     Host, DefaultStore, NewDefaultGuard, the package-level sign-in calls and their test seams
+//	host_default.go     the host of a default build: HostURL
+//	host_devaccount.go  the host of a -tags devaccount build: MONOES_BASE_URL, else HostURL
 //	testhooks.go        the other test seams (SetTrustedKeysForTest, SetEnforceFromForTest, StrictForTest),
 //	                    which panic outside a test binary like InstallForTest
 package account
