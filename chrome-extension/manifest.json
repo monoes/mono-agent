@@ -61,6 +61,7 @@
       "js": [
         "content.js",
         "highlights.js",
+        "highlight_panel.js",
         "highlight_page.js"
       ],
       "run_at": "document_idle"

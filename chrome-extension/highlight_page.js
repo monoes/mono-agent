@@ -3,7 +3,9 @@
  *
  * A content script on every page. It does three things and nothing else:
  * turn a selection into a highlight, paint stored highlights back when the
- * page is revisited, and let a highlight be commented on or removed.
+ * page is revisited, and let a highlight be commented on or removed. Its
+ * panel also hands a selection to the task board (the task button); the
+ * panel's shell, which a page can neither reach nor press, is highlight_panel.js.
  *
  * All the judgement lives in highlights.js, which is loaded into this same
  * isolated world (see manifest.json) and is node-tested: the anchor shape,
@@ -30,8 +32,14 @@
   const H = globalThis.MonoHighlights;
   if (!H) return; // highlights.js did not load: do nothing rather than half-work
 
+  const UI = globalThis.MonoHighlightPanel;
+  if (!UI) return; // highlight_panel.js did not load: the same
+
   const MARK_CLASS = "monoagent-highlight";
-  const UI_ID = "monoagent-highlight-ui";
+  const UI_ID = UI.UI_ID;
+  // A task's text is cut here before it is sent, and again by the worker and
+  // by MonoAgent (task board spec 11.4).
+  const TASK_TEXT_BYTES = 64 * 1024;
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "SELECT"]);
   /** Elements whose text starts a new line. Crossing one reads as a space
    *  even when the markup has no whitespace there. */
@@ -300,50 +308,20 @@
 
   // ── The floating UI ──────────────────────────────────────────────
 
-  function dismiss() {
-    const existing = document.getElementById(UI_ID);
-    if (existing) existing.remove();
-  }
-
-  function panel(x, y) {
-    dismiss();
-    const box = document.createElement("div");
-    box.id = UI_ID;
-    box.style.cssText = [
-      "position:absolute",
-      `left:${Math.round(x)}px`,
-      `top:${Math.round(y)}px`,
-      "z-index:2147483647",
-      "background:#0b0f14",
-      "color:#e2e8f0",
-      "font:13px/1.4 -apple-system,system-ui,sans-serif",
-      "border-radius:8px",
-      "padding:6px",
-      "box-shadow:0 6px 24px rgba(0,0,0,.4)",
-      "display:flex",
-      "gap:6px",
-      "align-items:center",
-    ].join(";");
-    box.addEventListener("mousedown", (e) => e.stopPropagation());
-    document.body.appendChild(box);
-    return box;
-  }
-
-  function button(label, title, onClick) {
-    const el = document.createElement("button");
-    el.textContent = label;
-    el.title = title || label;
-    el.style.cssText =
-      "background:#1e293b;color:#e2e8f0;border:0;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit";
-    el.addEventListener("click", onClick);
-    return el;
-  }
+  // The shell lives in highlight_panel.js: a closed shadow root, and buttons
+  // that answer only a real click.
+  const dismiss = () => UI.close(document);
+  const panel = (x, y) => UI.open(document, x, y);
+  const button = (label, title, onClick) => UI.button(document, label, title, onClick);
 
   /** offer shows the "highlight this" button next to a live selection. */
   function offer(selection) {
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
     const box = panel(rect.left + window.scrollX, rect.bottom + window.scrollY + 6);
+    // What the reader sees selected, taken now: getSelection() leaves out
+    // text the page hides, which a range's raw text would carry along.
+    const text = String(selection.toString() || "");
 
     for (const color of H.COLORS) {
       const swatch = button(" ", `Highlight (${color})`, () => saveSelection(range, color));
@@ -354,6 +332,7 @@
     box.appendChild(
       button("＋ note", "Highlight and add a note", () => saveSelection(range, "yellow", true))
     );
+    box.appendChild(button(String.fromCodePoint(0xff0b) + " task", "Add the selection as a task", () => addTask(text)));
   }
 
   async function saveSelection(range, color, withNote) {
@@ -381,6 +360,20 @@
     });
     window.getSelection().removeAllRanges();
     if (reply && reply.record) restore([reply.record]);
+  }
+
+  /**
+   * addTask hands the selection, as the reader saw it, to the worker, which
+   * files it in the "Saving into" profile's Inbox and shows how it went in a
+   * toast. The page's address and title are the worker's to take from the
+   * tab, not this script's to send.
+   */
+  async function addTask(text) {
+    dismiss();
+    const body = UI.capBytes(String(text || "").trim(), TASK_TEXT_BYTES);
+    if (!body) return;
+    await ask("task_add", { text: body });
+    window.getSelection().removeAllRanges();
   }
 
   /** edit is the panel on an existing highlight: comment, or remove. */
@@ -417,7 +410,11 @@
 
   // ── Wiring ───────────────────────────────────────────────────────
 
-  document.addEventListener("mouseup", (event) => {
+  // Opening the panel takes a real mouseup: a page that selects text and
+  // fires a mouseup of its own must not put the panel under the pointer.
+  // Closing it (the two listeners below) takes any event; a page can only
+  // close the panel, never press it.
+  document.addEventListener("mouseup", UI.trusted((event) => {
     if (event.target && event.target.closest && event.target.closest(`#${UI_ID}`)) return;
     // A click on an existing highlight edits it rather than offering to
     // make another one on top.
@@ -434,7 +431,7 @@
       }
       offer(selection);
     }, 0);
-  });
+  }));
 
   document.addEventListener("mousedown", (event) => {
     if (event.target && event.target.closest && event.target.closest(`#${UI_ID}`)) return;
