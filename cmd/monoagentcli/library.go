@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/library"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -34,8 +34,8 @@ func newLibraryCmd(cfg *globalConfig) *cobra.Command {
 			"  monoagentcli library install automation instagram # download, verify, install\n" +
 			"  monoagentcli library publish workflow <id>        # upload (private unless --public)\n" +
 			"  monoagentcli library update                       # newer versions of what you installed\n\n" +
-			"The host is https://monoes.me unless MONOES_BASE_URL says otherwise. The login is kept per " +
-			"profile in its encrypted vault.",
+			"The host is https://monoes.me unless MONOES_BASE_URL says otherwise. The login is the machine-wide " +
+			"monoes.me session (`monoagentcli account status`), shared by every profile.",
 		PersistentPostRun: func(cmd *cobra.Command, args []string) { env.Close() },
 	}
 	for _, c := range []*cobra.Command{
@@ -52,16 +52,22 @@ func newLibraryCmd(cfg *globalConfig) *cobra.Command {
 // libEnv opens the database, the profile's library client and the
 // automation registry lazily, once per command.
 type libEnv struct {
-	cfg    *globalConfig
-	db     *storage.Database
-	client *library.Client
-	reg    *automation.Registry
+	cfg     *globalConfig
+	db      *storage.Database
+	client  *library.Client
+	reg     *automation.Registry
+	session *library.AccountSession // the machine session every library call reads with
+	guard   *account.Guard
 }
 
 func (e *libEnv) Close() {
 	if e.db != nil {
 		e.db.Close()
 		e.db = nil
+	}
+	if e.guard != nil {
+		e.guard.Close()
+		e.guard = nil
 	}
 }
 
@@ -78,6 +84,15 @@ func (e *libEnv) open() (*library.Client, error) {
 	c, err := library.NewClient(base, &library.VaultStore{DB: db.DB, ProfileID: e.cfg.ProfileID, BaseURL: base})
 	if err != nil {
 		return nil, errInvalidInput("%v", err)
+	}
+	// The machine session serves every library call. The profile's own vault login is
+	// only what a release before the session left behind (spec D21, D22).
+	if store, err := account.DefaultStore(); err == nil {
+		if g, err := account.NewDefaultGuard(); err == nil {
+			e.guard = g
+			e.session = &library.AccountSession{Guard: g, Store: store}
+			c.Session = e.session
+		}
 	}
 	e.client = c
 	return c, nil
@@ -121,22 +136,6 @@ func (e *libEnv) requireLogin(ctx context.Context) (*library.Client, error) {
 	return c, nil
 }
 
-// loginRequiredError is exit 4 with "login_required": true in --json, so
-// the app can tell "log in" from a connection failure.
-type loginRequiredError struct{ *cliError }
-
-func (e loginRequiredError) Unwrap() error { return e.cliError }
-
-func (loginRequiredError) JSONErrorFields() map[string]any {
-	return map[string]any{"login_required": true}
-}
-
-// isLoginRequired reports whether err means "log in to monoes.me first".
-func isLoginRequired(err error) bool {
-	var lr loginRequiredError
-	return errors.Is(err, library.ErrNotLoggedIn) || errors.As(err, &lr)
-}
-
 // libErr gives a library failure the CLI's exit code: 2 not found, 3
 // rejected input, 4 login/connection. No login, or a 401 the token
 // refresh did not cure, says "Log in to monoes.me first".
@@ -151,7 +150,7 @@ func libErr(err error) error {
 	var ae *library.APIError
 	switch {
 	case errors.Is(err, library.ErrNotLoggedIn):
-		return loginRequiredError{&cliError{code: 4, msg: library.ErrNotLoggedIn.Error()}}
+		return libraryLoginRequired()
 	case errors.As(err, &ae):
 		switch ae.Status {
 		case http.StatusNotFound:
@@ -218,6 +217,19 @@ func statusFrom(e *libEnv, t *library.Token) libStatus {
 	return s
 }
 
+// statusFromAccount is the library's view of the machine session st: what
+// `library login` prints.
+func statusFromAccount(e *libEnv, st account.Status) libStatus {
+	s := libStatus{BaseURL: e.client.BaseURL, Profile: e.cfg.ProfileID, Scopes: []string{}, LoggedIn: true, Method: "session"}
+	if u := st.User; u != nil {
+		s.User = &library.User{ID: u.ID, Email: u.Email, Username: u.Username}
+	}
+	if !st.ValidUntil.IsZero() {
+		s.ExpiresAt = st.ValidUntil.UTC().Format(time.RFC3339)
+	}
+	return s
+}
+
 func printStatus(cfg *globalConfig, cmd *cobra.Command, s libStatus) error {
 	return printLib(cfg, cmd, s, func(w io.Writer) {
 		switch {
@@ -253,6 +265,9 @@ func newLibraryStatusCmd(e *libEnv) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			if e.session != nil {
+				e.session.Offline = offline // --offline never asks monoes.me to renew the session
+			}
 			t, err := c.Token(ctx)
 			if err != nil {
 				return err
@@ -285,99 +300,36 @@ func newLibraryStatusCmd(e *libEnv) *cobra.Command {
 }
 
 func newLibraryLoginCmd(e *libEnv) *cobra.Command {
-	var email, code string
-	var send, noBrowser bool
-	var timeout time.Duration
+	var f signInFlags
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Log in to monoes.me (opens the browser; --email for a code by email)",
-		Long: "Logs this profile in to monoes.me.\n\n" +
+		Short: "Log in to monoes.me (an alias of `account login`; --email for a code by email)",
+		Long: "An alias of `monoagentcli account login`: one monoes.me login per machine serves the whole CLI, " +
+			"the library included, whatever the profile.\n\n" +
 			"By default this opens the browser at monoes.me's sign-in page and waits (up to --timeout) for it " +
 			"to redirect back to a one-time listener on 127.0.0.1 (OAuth 2.1 with PKCE). --no-browser only " +
 			"prints the URL to open.\n\n" +
 			"On a machine without a browser, use a code sent by email:\n" +
 			"  monoagentcli library login --email you@example.com            # sends a code, then asks for it\n" +
 			"  monoagentcli library login --email you@example.com --send     # only send the code\n" +
-			"  monoagentcli library login --email you@example.com --code 123456\n\n" +
-			"The login is stored in the profile's encrypted vault and refreshed automatically.",
+			"  monoagentcli library login --email you@example.com --code 123456",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.open()
-			if err != nil {
+			if base := library.BaseURL(); base != account.Host() {
+				return errInvalidInput("MONOES_BASE_URL is %s but this build logs in to %s; logging in to another monoes.me needs a build made with -tags devaccount", base, account.Host())
+			}
+			if _, err := e.open(); err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			if email == "" && (send || code != "") {
-				return errInvalidInput("--send and --code need --email")
-			}
-			if email != "" {
-				return emailLogin(e, cmd, c, email, code, send)
-			}
-			stderr := cmd.ErrOrStderr()
-			opts := library.LoginOptions{Timeout: timeout, OnURL: func(u string) {
-				if e.cfg.JSONOutput {
-					b, _ := json.Marshal(map[string]string{"kind": "url", "url": u})
-					fmt.Fprintln(stderr, string(b))
-					return
-				}
-				if noBrowser {
-					fmt.Fprintf(stderr, "Open this URL to log in to monoes.me:\n\n  %s\n\nWaiting for the sign-in to finish…\n", u)
-				} else {
-					fmt.Fprintf(stderr, "Opening your browser to log in to monoes.me…\nIf it does not open, visit:\n\n  %s\n\n", u)
-				}
-			}}
-			if !noBrowser {
-				opts.Open = openLoginURL
-			}
-			t, err := c.LoginPKCE(ctx, opts)
-			if err != nil {
-				if err = libErr(err); exitCodeFor(err) == 1 {
-					err = errAuthConnection("%v", err) // no answer, refused, or a bad redirect
-				}
+			st, sent, err := signIn(cmd, e.cfg, &f, "library login")
+			if err != nil || sent {
 				return err
 			}
-			return printStatus(e.cfg, cmd, statusFrom(e, t))
+			return printStatus(e.cfg, cmd, statusFromAccount(e, st))
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "Log in with a code sent to this address instead of the browser")
-	cmd.Flags().BoolVar(&send, "send", false, "With --email: only send the code (then run again with --code)")
-	cmd.Flags().StringVar(&code, "code", "", "With --email: the code from the email")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the sign-in URL instead of opening the browser")
-	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "How long to wait for the browser sign-in")
+	f.add(cmd)
 	return cmd
-}
-
-func emailLogin(e *libEnv, cmd *cobra.Command, c *library.Client, email, code string, send bool) error {
-	ctx := cmd.Context()
-	if code == "" {
-		if err := c.SendEmailCode(ctx, email); err != nil {
-			return libErr(err)
-		}
-		if send || e.cfg.JSONOutput {
-			return printLib(e.cfg, cmd, map[string]any{"code_sent": true, "email": email}, func(w io.Writer) {
-				fmt.Fprintf(w, "If %s has a monoes.me account, a code is on its way. Then run:\n  monoagentcli library login --email %s --code <code>\n", email, email)
-			})
-		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "If %s has a monoes.me account, a code is on its way.\nCode: ", email)
-		line, err := readLine(cmd.InOrStdin())
-		if err != nil {
-			return fmt.Errorf("read the code: %w", err)
-		}
-		code = line
-	}
-	code = strings.TrimSpace(code)
-	if code == "" {
-		return errInvalidInput("no code given")
-	}
-	t, err := c.VerifyEmailCode(ctx, email, code)
-	if err != nil {
-		var ae *library.APIError
-		if errors.As(err, &ae) && ae.Status == http.StatusBadRequest {
-			return errAuthConnection("the code is wrong or expired; ask for a new one with `monoagentcli library login --email %s --send`", email)
-		}
-		return libErr(err)
-	}
-	return printStatus(e.cfg, cmd, statusFrom(e, t))
 }
 
 func readLine(r io.Reader) (string, error) {
@@ -403,14 +355,20 @@ func readLine(r io.Reader) (string, error) {
 func newLibraryLogoutCmd(e *libEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
-		Short: "Log this profile out of monoes.me (revokes and forgets the saved login)",
+		Short: "Log out of monoes.me (an alias of `account logout`; also forgets this profile's older login)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := e.open()
 			if err != nil {
 				return err
 			}
-			if err := c.Logout(cmd.Context()); err != nil {
+			ctx := cmd.Context()
+			if c.BaseURL == account.Host() { // MONOES_BASE_URL elsewhere: the machine session is not that host's
+				if err := account.Logout(ctx); err != nil {
+					return err
+				}
+			}
+			if err := c.LogoutLegacy(ctx); err != nil {
 				return err
 			}
 			return printLib(e.cfg, cmd, map[string]any{"logged_out": true, "base_url": c.BaseURL}, func(w io.Writer) {

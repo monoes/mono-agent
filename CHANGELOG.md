@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`monoagentcli account login|logout|status`** (#366). Signs in to monoes.me once per machine; `library login`, `logout` and `status` are now aliases of that session, and an older library login keeps working for reads. Dormant: nothing is enforced.
+
 ## [0.100.1] - 2026-10-01
 
 ### Fixed
