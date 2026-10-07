@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -49,7 +50,7 @@ func DiscoverEndpoints(ctx context.Context, hc *http.Client, baseURL string) (*O
 			unreachable = err
 		} else {
 			if resp.StatusCode == http.StatusOK {
-				_ = json.NewDecoder(resp.Body).Decode(m)
+				_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(m)
 			}
 			resp.Body.Close()
 		}
