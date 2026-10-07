@@ -118,10 +118,10 @@ func checkBridge(ctx context.Context, env *Env) Result {
 			FixID:  FixBridgeRestart}
 		// Where no fix is offered, what to do goes in the detail: a result's FixCommand is
 		// shown only with a fix, and is not in the report without one.
-		if b.ServiceUnit != "" && env.RestartBridge != nil && !isDaemonOwned(ctx, env, b) {
+		if unit := bridgeServiceUnit(ctx, env, b); unit != "" && env.RestartBridge != nil && !isDaemonOwned(ctx, env, b) {
 			res.FixID = FixBridgeServiceRestart
-			res.Detail = fmt.Sprintf("the bridge runs %s but this CLI is %s — restart its service: systemctl --user restart %s", b.Version, env.Version, b.ServiceUnit)
-			res.FixCommand = "systemctl --user restart " + b.ServiceUnit
+			res.Detail = fmt.Sprintf("the bridge runs %s but this CLI is %s — restart its service: systemctl --user restart %s", b.Version, env.Version, unit)
+			res.FixCommand = "systemctl --user restart " + unit
 		} else if runtime.GOOS == "windows" {
 			// Windows has no way to signal the daemon, so doctor can't restart it.
 			res.FixID = ""
@@ -213,6 +213,15 @@ func fixBridgeRestart(ctx context.Context, env *Env, progress func(string)) erro
 	return nil
 }
 
+// bridgeServiceUnit is the user service that owns b, resolved only when asked
+// (a skewed version) because it costs a systemctl call.
+func bridgeServiceUnit(ctx context.Context, env *Env, b BridgeInfo) string {
+	if b.ServiceUnit != "" || env.BridgeService == nil {
+		return b.ServiceUnit
+	}
+	return env.BridgeService(ctx, b.PID)
+}
+
 // Re-resolve ownership when clicked: the bridge may have changed since the
 // Settings check. The machine hook only restarts a verified owning service.
 func fixBridgeServiceRestart(ctx context.Context, env *Env, progress func(string)) error {
@@ -220,14 +229,18 @@ func fixBridgeServiceRestart(ctx context.Context, env *Env, progress func(string
 		return fmt.Errorf("restarting the bridge service is not available here")
 	}
 	b, ok := env.Bridge(ctx)
-	if !ok || b.ServiceUnit == "" {
+	unit := ""
+	if ok {
+		unit = bridgeServiceUnit(ctx, env, b)
+	}
+	if unit == "" {
 		return fmt.Errorf("the bridge is not owned by a restartable user service — restart whatever started it")
 	}
 	if !skewed(b.Version, env.Version) {
 		progress("the bridge already runs the current build")
 		return nil
 	}
-	if err := env.RestartBridge(ctx, progress); err != nil {
+	if err := env.RestartBridge(ctx, unit, b.PID, progress); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -235,7 +248,7 @@ func fixBridgeServiceRestart(ctx context.Context, env *Env, progress func(string
 	for {
 		if next, ok := env.Bridge(ctx); ok && next.PID != b.PID {
 			if skewed(next.Version, env.Version) {
-				return fmt.Errorf("the restarted bridge runs %s but this CLI is %s — update the monoagentcli binary used by %s", next.Version, env.Version, b.ServiceUnit)
+				return fmt.Errorf("the restarted bridge runs %s but this CLI is %s — update the monoagentcli binary used by %s", next.Version, env.Version, unit)
 			}
 			progress(fmt.Sprintf("bridge running (pid %d, %s)", next.PID, next.Version))
 			return nil

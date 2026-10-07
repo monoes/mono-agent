@@ -384,7 +384,7 @@ func TestBridgeRestartTargetsServiceAndVerifiesVersion(t *testing.T) {
 	b := BridgeInfo{PID: 7, Version: "v1.0.0", ServiceUnit: "monoagent-bridge.service"}
 	restarts := 0
 	env := &Env{Version: "v1.1.0", Bridge: func(context.Context) (BridgeInfo, bool) { return b, true },
-		RestartBridge: func(context.Context, func(string)) error {
+		RestartBridge: func(context.Context, string, int, func(string)) error {
 			restarts++
 			b.PID++
 			b.Version = "v1.1.0"
@@ -401,7 +401,7 @@ func TestBridgeRestartTargetsServiceAndVerifiesVersion(t *testing.T) {
 		t.Fatalf("already current: %v, calls %d", err, restarts)
 	}
 	b.Version = "v1.0.0"
-	env.RestartBridge = func(context.Context, func(string)) error { restarts++; b.PID++; return nil }
+	env.RestartBridge = func(context.Context, string, int, func(string)) error { restarts++; b.PID++; return nil }
 	if err := fixBridgeServiceRestart(ctx, env, noop); err == nil || !strings.Contains(err.Error(), "update the monoagentcli binary") {
 		t.Fatalf("old service binary must not report success: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestDaemonOwnedBridgeUnderServiceKeepsDaemonRepair(t *testing.T) {
 	b := BridgeInfo{PID: 7, Version: "v1.0.0", ServiceUnit: "monoagent.service"}
 	env := &Env{Version: "v1.1.0", Bridge: func(context.Context) (BridgeInfo, bool) { return b, true },
 		Daemon:        func(context.Context) DaemonInfo { return DaemonInfo{Running: true, PID: 7} },
-		RestartBridge: func(context.Context, func(string)) error { return nil }}
+		RestartBridge: func(context.Context, string, int, func(string)) error { return nil }}
 	if res := checkBridge(context.Background(), env); res.FixID == FixBridgeServiceRestart {
 		t.Fatalf("daemon-owned bridge must keep the daemon repair: %+v", res)
 	}
