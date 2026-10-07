@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,12 +17,53 @@ import (
 // don't repeat the check on every subsequent invocation.
 const claudeInitMarker = ".claude_init"
 
-// claudeSkillNames are the skill files distributed with monoagent. They are
-// installed into ~/.claude/skills/ so that a Claude Code session in ANY project
-// — not just this repo — knows monoagent exists and how to drive it.
+// claudeSkillNames are the skills distributed with monoagent. Each is embedded
+// as data/skills/<name>.md and installed as ~/.claude/skills/<name>/SKILL.md
+// (the folder layout Claude Code loads) so that a Claude Code session in ANY
+// project — not just this repo — knows monoagent exists and how to drive it.
+// record-to-action is deliberately absent: it is the prompt `record analyze`
+// feeds the monomind runner, not a skill for interactive sessions.
 var claudeSkillNames = []string{
-	"action-template-generator.md",
-	"monoagent-workflows.md",
+	"action-template-generator",
+	"monoagent-workflows",
+}
+
+// legacyClaudeSkillSHA256 are the contents earlier releases wrote as flat
+// ~/.claude/skills/<name>.md files (every version of the embedded source in
+// git history). A flat file is removed only when it matches one of these or
+// the current embedded source; anything else is the user's and stays.
+var legacyClaudeSkillSHA256 = map[string][]string{
+	"action-template-generator": {"c449b34462a7c64dc790f8fa438b51ea9fd1af26c78f945c8073c34ccd956a6a"},
+	"monoagent-workflows": {
+		"de0cd8e93a65370fb2deea72158ae54fd6a96782a8898927f74e79b60147f37c",
+		"ea17e3874149f4af46a7a467057c827b0eeb061918221d9a45915aa536b4a545",
+	},
+}
+
+// claudeSkillFile is where a skill lives under skillsDir.
+func claudeSkillFile(skillsDir, name string) string {
+	return filepath.Join(skillsDir, name, "SKILL.md")
+}
+
+// removeLegacyClaudeSkill deletes the old flat <name>.md when it is
+// byte-identical to something monoagent shipped. Best-effort.
+func removeLegacyClaudeSkill(skillsDir, name string, current []byte) {
+	flat := filepath.Join(skillsDir, name+".md")
+	got, err := os.ReadFile(flat)
+	if err != nil {
+		return
+	}
+	sum := sha256.Sum256(got)
+	hexSum := hex.EncodeToString(sum[:])
+	match := bytes.Equal(got, current)
+	for _, h := range legacyClaudeSkillSHA256[name] {
+		if h == hexSum {
+			match = true
+		}
+	}
+	if match {
+		_ = os.Remove(flat)
+	}
 }
 
 // newInitCmd returns the `monoagent init` command.
@@ -61,15 +104,19 @@ func installClaudeSkill(verbose bool) error {
 	}
 
 	for _, name := range claudeSkillNames {
-		content, err := data.SkillsFS.ReadFile("skills/" + name)
+		content, err := data.SkillsFS.ReadFile("skills/" + name + ".md")
 		if err != nil {
 			return fmt.Errorf("read embedded skill %s: %w", name, err)
 		}
 
-		dest := filepath.Join(skillsDir, name)
+		dest := claudeSkillFile(skillsDir, name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("create skill dir: %w", err)
+		}
 		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return fmt.Errorf("write skill to %s: %w", dest, err)
 		}
+		removeLegacyClaudeSkill(skillsDir, name, content)
 		if verbose {
 			fmt.Printf("Claude skill installed: %s\n", dest)
 		}
@@ -140,11 +187,11 @@ func claudeSkillsState() (claudeFound bool, missing, stale []string) {
 		return false, nil, nil
 	}
 	for _, name := range claudeSkillNames {
-		want, err := data.SkillsFS.ReadFile("skills/" + name)
+		want, err := data.SkillsFS.ReadFile("skills/" + name + ".md")
 		if err != nil {
 			continue
 		}
-		got, err := os.ReadFile(filepath.Join(claudeDir, "skills", name))
+		got, err := os.ReadFile(claudeSkillFile(filepath.Join(claudeDir, "skills"), name))
 		switch {
 		case err != nil:
 			missing = append(missing, name)
@@ -167,11 +214,15 @@ func installMissingClaudeSkills(names []string) error {
 		return err
 	}
 	for _, name := range names {
-		content, err := data.SkillsFS.ReadFile("skills/" + name)
+		content, err := data.SkillsFS.ReadFile("skills/" + name + ".md")
 		if err != nil {
 			return err
 		}
-		f, err := os.OpenFile(filepath.Join(skillsDir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		dest := claudeSkillFile(skillsDir, name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, os.ErrExist) {
 			continue // appeared meanwhile: it is not ours to replace
 		}
@@ -185,6 +236,7 @@ func installMissingClaudeSkills(names []string) error {
 		if werr != nil {
 			return werr
 		}
+		removeLegacyClaudeSkill(skillsDir, name, content)
 	}
 	monoagentDir := filepath.Join(home, ".monoagent")
 	_ = os.MkdirAll(monoagentDir, 0o755)

@@ -6,7 +6,11 @@ import (
 	"fmt"
 
 	"github.com/monoes/mono-agent/internal/publication"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
+
+// maxPublicationInput matches the CLI's cap on registered publication JSON.
+const maxPublicationInput = 4 * 1024 * 1024
 
 func publicationToolDefs() []ToolDef {
 	makeDef := func(name, desc string, props map[string]interface{}, required ...string) ToolDef {
@@ -56,8 +60,17 @@ func (mt *MonoagentTools) executePublication(ctx context.Context, name, args str
 		if err = mt.checkInjectionGate(name); err != nil {
 			break
 		}
+		if len(args) > maxPublicationInput {
+			err = fmt.Errorf("publication JSON exceeds 4 MiB")
+			break
+		}
 		var e publication.Entry
 		if err = json.Unmarshal([]byte(args), &e); err == nil {
+			// When the call runs on behalf of an org, the context decides who
+			// published; caller-supplied identity is discarded.
+			if src := workflow.PublicationSource(ctx, workflow.NodeInput{}); src.OrgID != "" || src.RoleID != "" || src.AgentID != "" {
+				e.OrgID, e.RoleID, e.AgentID = src.OrgID, src.RoleID, src.AgentID
+			}
 			result, err = store.Register(ctx, e)
 		}
 	}
