@@ -173,6 +173,7 @@ read-only call that returns counts for:
 - Jev usage (24 h, from the local usage table)
 - logins: active, expiring within 72 h, expired
 - vault counts (counts only, never secret names or values)
+- the profile's task board: inbox, ready, in progress, review, stale claims and the next task (`--section tasks`; not in `--all-profiles`, since a board is one profile's)
 - daemon, extension bridge and org-serve state
 
 It is local-only: it never calls Jev, monomind or the network (apart from a
@@ -342,6 +343,7 @@ monoagentcli mcp                     # stdio JSON-RPC MCP server, read-only tool
 monoagentcli mcp --allow-mutations   # also serve mutating tools
 monoagentcli mcp --allow-mutations --allow-api-exposure   # also let api_config_set widen what the API's server exposes, and api_auto_set switch the auto model on
 monoagentcli mcp --api-only --allow-mutations --allow-api-exposure   # the same, serving the OpenAI-compatible API's tools (api_*) and no other
+monoagentcli --profile work mcp --tasks-only --allow-mutations   # the user's task board's tools (task_*) and no other, for one profile
 ```
 
 Register it with any MCP client (stdio transport). Prefer MCP when the
@@ -397,6 +399,10 @@ dangerous calls.
   model tells the user, who runs that command, or the operator allows
   `api_config_set` with `unset: "all"` to remove the row (the gate below). A row
   a newer version saved is an error that nothing here removes.
+- `task_list`, `task_get`, `task_next`: the user's task board (see
+  [Task board](#task-board)), on the server's profile. Every text a person, an
+  agent or a capture wrote comes back in a field ending in `_untrusted`, and
+  every result names the profile and carries a note to weigh that text
 - `docs` (browse `ref` topics)
 
 **Mutating — require `--allow-mutations` or
@@ -415,6 +421,10 @@ existing MCP client config that relies on them.
   `org_role_set_reports_to`, `org_role_remove`, `org_reload`
 - `org_automation_add`, `org_grant_set`, `org_autonomy_set` (the last two
   preview unless `confirm:true`)
+- `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add`: an
+  agent's verbs on the task board, acting as the agent the server names after
+  its client (`agent:<client>#<4 hex>`); no tool approves, edits, moves or
+  archives a task
 - `api_key_create`, `api_key_update`, `api_key_revoke` — the active profile's
   API keys, under the rules of `api key create|update|revoke` (names, the
   context switch, the errors); a key of another profile is "not found". A name
@@ -522,6 +532,16 @@ existing MCP client config that relies on them.
   not stopped by it. Grant mode refuses it. A test keeps the family and the
   filter in step: every tool called `api_*` is one of the API's and the other way
   round.
+- **`--tasks-only`** (or `MONOAGENT_MCP_TASKS_ONLY=1`) serves the task board's
+  eight `task_*` tools (`taskToolNames`) and no other, for an agent that is to
+  work the user's board and nothing else: `--allow-mutations`, which the five
+  verbs need, also serves the workflow tools that can run a command as the OS
+  user. A call by name of another tool is refused ("is not served ...
+  `--tasks-only`"). A server serves one profile, so register one per profile:
+  `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`.
+  It cannot be combined with `--api-only` (refused at start, the environment
+  variables included) or `--grant`. A host that has tools of its own, such as a
+  shell tool, is not stopped by it. Nothing registers it for you.
 
 **Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
 provider monomind spawns for an org role. It serves only that role's
@@ -530,7 +550,7 @@ granted automations (`automation_<alias>`, `automation_status`,
 calls in `monoagentcli daemon`, and refuses a grant used by another org or
 role. Plain `mcp` refuses to start inside an org role's process.
 
-Most of this surface (vault, secrets, people, orgs; not the `api_*` tools) is
+Most of this surface (vault, secrets, people, orgs; not the `api_*` or `task_*` tools) is
 the same implementation the chat feature already uses natively — see
 "Assistant chat & tools" below for the safety properties (metadata-only secrets,
 pre-delete backups, `confirm:true` previews on destructive/cascading
@@ -1224,7 +1244,8 @@ Walkthrough (curl, the Python and JavaScript SDKs, a headless Linux setup):
 ## Task board
 
 Every profile has a task board: a personal queue that people and AI
-agents share. `monoagentcli task` is the interface in this release. It
+agents share. `monoagentcli task` is the base interface to the board; the
+table at the end of this section lists the other ways to reach it. It
 is the user's own board in monoagent, not a monomind org's issues
 (`capture task` files those). A task always sits in one profile: pass
 `--profile <id or name>` on every call, or the active profile is used,
@@ -1301,6 +1322,10 @@ a row here):
 |---|---|
 | CLI | `monoagentcli task ...` (this section) |
 | Session-start hook | `monoagentcli --profile <id> task digest`; nothing installs the hook for you |
+| MCP, any server | `monoagentcli mcp`: `task_list`, `task_get`, `task_next`; with `--allow-mutations` also `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add`, acting on the server's one profile as `agent:<client>#<4 hex>`; text in fields ending in `_untrusted`; no tool approves, edits, moves or archives a task |
+| MCP, the board alone | `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`: the same eight tools and no other, one server per profile; nothing registers it for you |
+| Claude Code skill | `~/.claude/skills/monoagent-tasks/SKILL.md`, written create-only by the next CLI run on a machine with `~/.claude` |
+| Dashboard summary | `monoagentcli --profile <id> --json summary --section tasks`: one profile's counts and its next task (not in `--all-profiles`) |
 | macOS menu | Services, "Add to MonoAgent Tasks: <profile>" on text selected in any app, installed once per profile by `monoagentcli --profile <id> task os install` and removed by `task os uninstall` (both the operator's: an agent is refused with `operator_only`); it runs `task add --stdin --source os`, a capture into Inbox (`monoagentcli ref tasks`) |
 
 ## Assistant chat & tools
