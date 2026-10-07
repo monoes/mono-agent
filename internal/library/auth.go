@@ -3,34 +3,14 @@ package library
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"html"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-)
 
-// oauthMeta is the part of the authorization server metadata (RFC 8414)
-// MonoAgent uses.
-type oauthMeta struct {
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	RevocationEndpoint    string `json:"revocation_endpoint"`
-}
-
-// Fallback endpoints (Better-Auth's oauth-provider defaults) when the
-// server publishes no metadata.
-const (
-	defaultAuthorizePath = "/api/auth/oauth2/authorize"
-	defaultTokenPath     = "/api/auth/oauth2/token"
-	defaultRevokePath    = "/api/auth/oauth2/revoke"
+	"github.com/monoes/mono-agent/internal/account"
 )
 
 // currentToken returns the stored token, refreshing it first when it is
@@ -69,50 +49,19 @@ func (c *Client) setToken(ctx context.Context, t *Token) error {
 	return c.Store.Save(ctx, t)
 }
 
-// endpoints discovers the authorization server's endpoints. An endpoint
-// on another host than the base URL is used by path on the base URL, so a
-// misconfigured issuer can never receive the code verifier or a token.
-func (c *Client) endpoints(ctx context.Context) *oauthMeta {
+// endpoints discovers the authorization server's endpoints, once per client.
+func (c *Client) endpoints(ctx context.Context) *account.OAuthEndpoints {
 	c.mu.Lock()
 	m := c.oauth
 	c.mu.Unlock()
 	if m != nil {
 		return m
 	}
-	m = &oauthMeta{}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/.well-known/oauth-authorization-server", nil)
-	if resp, err := c.HTTP.Do(req); err == nil {
-		if resp.StatusCode == http.StatusOK {
-			_ = json.NewDecoder(resp.Body).Decode(m)
-		}
-		resp.Body.Close()
-	}
-	m.AuthorizationEndpoint = c.onBase(m.AuthorizationEndpoint, defaultAuthorizePath)
-	m.TokenEndpoint = c.onBase(m.TokenEndpoint, defaultTokenPath)
-	m.RevocationEndpoint = c.onBase(m.RevocationEndpoint, defaultRevokePath)
+	m, _ = account.DiscoverEndpoints(ctx, c.HTTP, c.BaseURL)
 	c.mu.Lock()
 	c.oauth = m
 	c.mu.Unlock()
 	return m
-}
-
-func (c *Client) onBase(endpoint, fallback string) string {
-	if endpoint == "" {
-		return c.BaseURL + fallback
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Path == "" {
-		return c.BaseURL + fallback
-	}
-	base, _ := url.Parse(c.BaseURL)
-	if strings.EqualFold(u.Host, base.Host) && u.Scheme == base.Scheme {
-		return endpoint
-	}
-	p := u.Path
-	if u.RawQuery != "" {
-		p += "?" + u.RawQuery
-	}
-	return c.BaseURL + p
 }
 
 // tokenResponse is an OAuth token endpoint (or email verify) answer.
@@ -196,96 +145,21 @@ type LoginOptions struct {
 	Timeout time.Duration // default 5 minutes
 }
 
-// LoginPKCE runs the OAuth 2.1 authorization code flow with PKCE and a
-// loopback redirect (RFC 8252): it listens on 127.0.0.1:<random>, sends the
-// user to the authorize URL, waits for the redirect, exchanges the code and
-// stores the token together with the account it belongs to.
+// LoginPKCE runs the OAuth 2.1 authorization code flow with PKCE and a loopback
+// redirect (RFC 8252): it sends the user to the authorize URL, waits for the
+// redirect, exchanges the code and stores the token together with the account it
+// belongs to.
 func (c *Client) LoginPKCE(ctx context.Context, opts LoginOptions) (*Token, error) {
-	if opts.Timeout <= 0 {
-		opts.Timeout = 5 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("library login: listen on loopback: %w", err)
-	}
-	defer ln.Close()
-	redirect := fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
-	verifier, state := randomString(48), randomString(24)
-	sum := sha256.Sum256([]byte(verifier))
 	meta := c.endpoints(ctx)
-	q := url.Values{
-		"response_type": {"code"}, "client_id": {ClientID}, "redirect_uri": {redirect},
-		"scope": {strings.Join(Scopes, " ")}, "state": {state},
-		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"},
+	res, err := account.AuthorizeInBrowser(ctx, meta.AuthorizationEndpoint,
+		url.Values{"client_id": {ClientID}, "scope": {strings.Join(Scopes, " ")}},
+		account.AuthorizeOptions{Open: opts.Open, OnURL: opts.OnURL, Timeout: opts.Timeout, Label: "library login",
+			SuccessText: "MonoAgent is now connected to your monoes.me library. You can close this tab."})
+	if err != nil {
+		return nil, err
 	}
-	sep := "?"
-	if strings.Contains(meta.AuthorizationEndpoint, "?") {
-		sep = "&"
-	}
-	authURL := meta.AuthorizationEndpoint + sep + q.Encode()
-
-	type result struct {
-		code string
-		err  error
-	}
-	done := make(chan result, 1)
-	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/callback" {
-			http.NotFound(w, r)
-			return
-		}
-		v := r.URL.Query()
-		var res result
-		switch {
-		case v.Get("state") != state:
-			res.err = errors.New("library login: the redirect's state does not match (ignored)")
-			writeCallbackPage(w, false, "This sign-in link is not for this login attempt.")
-			return // keep waiting for the real redirect
-		case v.Get("error") != "":
-			res.err = fmt.Errorf("library login: monoes.me refused: %s %s", v.Get("error"), v.Get("error_description"))
-			writeCallbackPage(w, false, "monoes.me did not authorize MonoAgent: "+v.Get("error"))
-		case v.Get("code") == "":
-			res.err = errors.New("library login: the redirect carried no code")
-			writeCallbackPage(w, false, "The sign-in redirect carried no code.")
-		default:
-			res.code = v.Get("code")
-			writeCallbackPage(w, true, "")
-		}
-		select {
-		case done <- res:
-		default:
-		}
-	})}
-	go func() { _ = srv.Serve(ln) }()
-	// Shutdown, not Close: Close cuts connections that are still writing, so
-	// the browser that delivered the code could get EOF instead of the
-	// "you can close this tab" page (and the test that plays it failed
-	// intermittently on CI). Shutdown lets that response finish, briefly.
-	defer func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(sctx)
-	}()
-
-	if opts.OnURL != nil {
-		opts.OnURL(authURL)
-	}
-	if opts.Open != nil {
-		_ = opts.Open(authURL) // the URL was shown; the user can open it by hand
-	}
-	var res result
-	select {
-	case res = <-done:
-	case <-ctx.Done():
-		return nil, fmt.Errorf("library login: no answer from the browser within %s", opts.Timeout)
-	}
-	if res.err != nil {
-		return nil, res.err
-	}
-	form := url.Values{"grant_type": {"authorization_code"}, "code": {res.code}, "redirect_uri": {redirect},
-		"client_id": {ClientID}, "code_verifier": {verifier}}
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {res.Code}, "redirect_uri": {res.Redirect},
+		"client_id": {ClientID}, "code_verifier": {res.Verifier}}
 	tr, err := c.postToken(ctx, meta.TokenEndpoint, form)
 	if err != nil {
 		return nil, fmt.Errorf("library login: exchange the code: %w", err)
@@ -313,17 +187,6 @@ func (c *Client) finishLogin(ctx context.Context, t *Token) (*Token, error) {
 		return nil, fmt.Errorf("library login: save the login in the vault: %w", err)
 	}
 	return t, nil
-}
-
-func writeCallbackPage(w http.ResponseWriter, ok bool, msg string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	title, body := "Logged in to monoes.me", "MonoAgent is now connected to your monoes.me library. You can close this tab."
-	if !ok {
-		w.WriteHeader(http.StatusBadRequest)
-		title, body = "Sign-in failed", msg
-	}
-	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>%s</title><body style="font-family:system-ui;margin:3rem"><h1>%s</h1><p>%s</p>`,
-		html.EscapeString(title), html.EscapeString(title), html.EscapeString(body))
 }
 
 // SendEmailCode asks monoes.me to email a login code (the headless
@@ -385,14 +248,6 @@ func (c *Client) Logout(ctx context.Context) error {
 		return nil
 	}
 	return c.Store.Delete(ctx)
-}
-
-func randomString(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err) // crypto/rand never fails on supported platforms
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func nonEmpty(a, b string) string {

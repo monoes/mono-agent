@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/account"
 )
 
 // MaxArtifactBytes caps a download (the library accepts at most 20 MB).
@@ -40,7 +42,7 @@ type Client struct {
 	mu     sync.Mutex
 	token  *Token
 	loaded bool
-	oauth  *oauthMeta
+	oauth  *account.OAuthEndpoints
 }
 
 // NewClient returns a client for baseURL ("" = BaseURL()). Tokens only ever
