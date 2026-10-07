@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -70,6 +72,7 @@ func TestTaskBindingsPassTheirArgumentsExactly(t *testing.T) {
 		a.TaskEdit(12, `{"notes":""}`),
 		a.TaskMove(12, "ready", "", 0),
 		a.TaskMove(12, "done", "top", 0),
+		a.TaskMove(12, "inbox", "bottom", 0),
 		a.TaskMove(12, "review", "before", 9),
 		a.TaskMove(12, "in_progress", "after", 9),
 		a.TaskApprove([]int64{3, 4}, false),
@@ -91,6 +94,7 @@ func TestTaskBindingsPassTheirArgumentsExactly(t *testing.T) {
 		p + "edit|12|--notes=|",
 		p + "move|12|ready|",
 		p + "move|12|done|--top|",
+		p + "move|12|inbox|--bottom|",
 		p + "move|12|review|--before|9|",
 		p + "move|12|in_progress|--after|9|",
 		p + "approve|3|4|",
@@ -139,6 +143,8 @@ func TestTaskBindingsRefuseBadInputWithoutRunningTheCLI(t *testing.T) {
 		"edit id 0":           a.TaskEdit(0, `{"title":"x"}`),
 		"notes over the cap":  a.TaskEdit(3, long),
 		"show id -1":          a.TaskShow(-1),
+		"show id 0":           a.TaskShow(0),
+		"move id 0":           a.TaskMove(0, "ready", "", 0),
 		"move to archived":    a.TaskMove(3, "archived", "", 0),
 		"an unknown place":    a.TaskMove(3, "ready", "middle", 0),
 		"before no card":      a.TaskMove(3, "ready", "before", 0),
@@ -147,6 +153,7 @@ func TestTaskBindingsRefuseBadInputWithoutRunningTheCLI(t *testing.T) {
 		"archive id 0":        a.TaskArchive([]int64{0}),
 		"unarchive nothing":   a.TaskUnarchive([]int64{}),
 		"a comment of spaces": a.TaskComment(3, " \n"),
+		"a comment on id 0":   a.TaskComment(0, "x"),
 	} {
 		var doc struct{ Error, Code string }
 		if err := json.Unmarshal([]byte(got), &doc); err != nil || doc.Error == "" || doc.Code != "invalid_input" {
@@ -243,8 +250,153 @@ func TestTaskAgentShellNamesTheMarkerTheAppInherited(t *testing.T) {
 	if got := a.TaskAgentShell(); got != "MONOAGENT_ACTOR" {
 		t.Fatalf("MONOAGENT_ACTOR set: %q", got)
 	}
+	// A value of only spaces is an agent that gave no name, to the CLI too
+	// (spec D7: it refuses every operator action then); only an empty one,
+	// as at the top, is as good as none.
+	for _, blank := range []string{" ", "\t"} {
+		t.Setenv("MONOAGENT_ACTOR", blank)
+		if got := a.TaskAgentShell(); got != "MONOAGENT_ACTOR" {
+			t.Fatalf("MONOAGENT_ACTOR %q: %q, want MONOAGENT_ACTOR", blank, got)
+		}
+	}
 	t.Setenv("CLAUDECODE", "1")
 	if got := a.TaskAgentShell(); got != "CLAUDECODE" {
 		t.Fatalf("CLAUDECODE set: %q", got)
+	}
+}
+
+// The notes cap is in characters, as its refusal says, not in bytes: notes of
+// two- or three-byte letters are not refused at half or a third of it. Just
+// under the cap goes to the CLI whole, just over is refused and the CLI never
+// runs.
+func TestTaskBindingsNotesLimitCountsCharacters(t *testing.T) {
+	for _, c := range []struct{ name, letter string }{
+		{"two bytes a letter", "\U000000e9"},
+		{"three bytes a letter", "\U00003042"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			log, _ := taskCLIFake(t, `{"ok":true}`, 0)
+			a := newTaskTestApp(t)
+			under, over := strings.Repeat(c.letter, maxArgNotes), strings.Repeat(c.letter, maxArgNotes+1)
+			spec := func(fields map[string]string) string {
+				raw, err := json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(raw)
+			}
+			if got := a.TaskAdd(spec(map[string]string{"title": "t", "notes": under})); got != `{"ok":true}` {
+				t.Fatalf("add with %d characters of notes: %.200q, want the CLI's answer", maxArgNotes, got)
+			}
+			if got := a.TaskEdit(12, spec(map[string]string{"notes": under})); got != `{"ok":true}` {
+				t.Fatalf("edit with %d characters of notes: %.200q, want the CLI's answer", maxArgNotes, got)
+			}
+			p := "--profile|work|--json|task|"
+			want := []string{p + "add|--source|app|--notes=" + under + "|--|t|", p + "edit|12|--notes=" + under + "|"}
+			if got := loggedArgs(t, log); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+				t.Fatalf("the CLI did not get the notes whole: %d calls logged", len(got))
+			}
+			for name, got := range map[string]string{
+				"add":  a.TaskAdd(spec(map[string]string{"title": "t", "notes": over})),
+				"edit": a.TaskEdit(12, spec(map[string]string{"notes": over})),
+			} {
+				var doc struct{ Error, Code string }
+				if err := json.Unmarshal([]byte(got), &doc); err != nil || doc.Error != notesTooLong || doc.Code != "invalid_input" {
+					t.Errorf("%s with %d characters of notes: %.200q, want the notes refusal", name, maxArgNotes+1, got)
+				}
+			}
+			if got := loggedArgs(t, log); len(got) != 2 {
+				t.Fatalf("the CLI ran for notes over the cap: %d calls logged", len(got))
+			}
+		})
+	}
+}
+
+// taskBoardView is the part of the board document the board tests read.
+type taskBoardView struct {
+	Profile struct{ ID string }
+	Counts  struct{ Inbox, Done int }
+	Tasks   map[string][]struct{ Title string }
+}
+
+func decodeTaskBoard(t *testing.T, raw string) taskBoardView {
+	t.Helper()
+	var v taskBoardView
+	if err := json.Unmarshal([]byte(raw), &v); err != nil || v.Profile.ID == "" {
+		t.Fatalf("TaskBoard = %.300s (%v), want a board document", raw, err)
+	}
+	return v
+}
+
+// titles names a column's cards, sorted and joined, so a test says which cards
+// a column holds without pinning their order.
+func (v taskBoardView) titles(column string) string {
+	var out []string
+	for _, c := range v.Tasks[column] {
+		out = append(out, c.Title)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
+// The board is the active profile's, read when it is asked for: one app
+// answers for whichever profile is active at the moment, and for no other.
+func TestTaskBoardIsTheActiveProfilesBoard(t *testing.T) {
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	if _, err := a.db.Exec(`INSERT INTO profiles (id, name) VALUES ('work', 'Work')`); err != nil {
+		t.Fatal(err)
+	}
+	addTestTask(t, a, "default", "at home")
+	addTestTask(t, a, "work", "for the client")
+	addTestTask(t, a, "work", "for the audit")
+	for _, c := range []struct{ profile, inbox string }{
+		{"default", "at home"},
+		{"work", "for the audit,for the client"},
+		{"default", "at home"},
+	} {
+		a.setActiveProfileID(c.profile)
+		v := decodeTaskBoard(t, a.TaskBoard(0))
+		if v.Profile.ID != c.profile || v.titles("inbox") != c.inbox {
+			t.Errorf("active profile %q: the board of %q with Inbox %q, want Inbox %q", c.profile, v.Profile.ID, v.titles("inbox"), c.inbox)
+		}
+	}
+}
+
+// Done shows the cards asked for, the most recent first, and the board's 50
+// when no limit is asked for (Store.Board would read 0 as every card); the
+// count still says how many there are.
+func TestTaskBoardCutsDoneToTheLimit(t *testing.T) {
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	store, human := tasks.NewStore(a.db), tasks.Actor{Kind: tasks.Human}
+	for i := 1; i <= 52; i++ {
+		card, _, err := store.Add(a.ctx, "default", tasks.AddInput{Title: fmt.Sprintf("card %d", i)}, human)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Move(a.ctx, "default", card.ID, tasks.StatusDone, tasks.Placement{}, human); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ asked, shown int }{{0, 50}, {-3, 50}, {2, 2}, {60, 52}} {
+		v := decodeTaskBoard(t, a.TaskBoard(c.asked))
+		if len(v.Tasks["done"]) != c.shown || v.Counts.Done != 52 {
+			t.Errorf("TaskBoard(%d): %d Done cards and counts.done %d, want %d and 52", c.asked, len(v.Tasks["done"]), v.Counts.Done, c.shown)
+		}
+	}
+	v := decodeTaskBoard(t, a.TaskBoard(2))
+	if len(v.Tasks["done"]) != 2 || v.Tasks["done"][0].Title != "card 52" || v.Tasks["done"][1].Title != "card 51" {
+		t.Errorf("TaskBoard(2) Done = %+v, want the two most recent: card 52, then card 51", v.Tasks["done"])
+	}
+}
+
+// Before startup has opened the database the board answers with an error
+// document, and does not panic on the missing database.
+func TestTaskBoardBeforeTheDatabaseIsOpen(t *testing.T) {
+	raw := (&App{}).TaskBoard(0)
+	var doc map[string]string
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil || len(doc) != 1 || doc["error"] == "" {
+		t.Fatalf("TaskBoard without a database = %q (%v), want a lone {\"error\"} document", raw, err)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/monoes/mono-agent/internal/orgsign"
 	"github.com/monoes/mono-agent/internal/tasks"
@@ -30,9 +31,9 @@ const taskCLITimeout = 30 * time.Second
 // boardDoneLimit is how many Done cards the board shows (spec §10).
 const boardDoneLimit = 50
 
-// maxArgNotes caps the notes the app passes on the command line, which
-// Windows limits to 32,767 characters in all; longer notes are saved with
-// the CLI in a terminal.
+// maxArgNotes caps the notes the app passes on the command line, counted in
+// characters (runes), as notesTooLong says: Windows limits a command line to
+// 32,767 characters in all; longer notes are saved with the CLI in a terminal.
 const maxArgNotes = 30000
 
 // notesTooLong is the refusal for notes over maxArgNotes, in TaskAdd and TaskEdit.
@@ -146,7 +147,7 @@ func (a *App) TaskAdd(spec string) string {
 		return taskRefusal("give a title or a text, not both")
 	case hasText && s.Notes != "":
 		return taskRefusal("give notes or text, not both")
-	case len(s.Notes) > maxArgNotes:
+	case utf8.RuneCountInString(s.Notes) > maxArgNotes:
 		return taskRefusal(notesTooLong)
 	}
 	args := []string{"add", "--source", "app"}
@@ -184,7 +185,7 @@ func (a *App) TaskEdit(id int64, spec string) string {
 		args = append(args, "--title="+*s.Title)
 	}
 	if s.Notes != nil {
-		if len(*s.Notes) > maxArgNotes {
+		if utf8.RuneCountInString(*s.Notes) > maxArgNotes {
 			return taskRefusal(notesTooLong)
 		}
 		args = append(args, "--notes="+*s.Notes)
@@ -284,11 +285,15 @@ func (a *App) TaskComment(id int64, text string) string {
 // or MONOAGENT_ACTOR, or "". The CLI the app runs inherits it and then
 // refuses every operator action (spec D7, §10 Errors), so the page shows the
 // board read-only and says to open MonoAgent from the Dock or Finder.
+// MONOAGENT_ACTOR counts as the CLI counts it (callerFor in
+// cmd/monoagentcli/task.go): set to anything, a value of only spaces too (an
+// agent that gave no name); an empty value is as good as none, as the markers
+// are read.
 func (a *App) TaskAgentShell() string {
 	if m := orgsign.AgentContextMarker(); m != "" {
 		return m
 	}
-	if strings.TrimSpace(os.Getenv("MONOAGENT_ACTOR")) != "" {
+	if os.Getenv("MONOAGENT_ACTOR") != "" {
 		return "MONOAGENT_ACTOR"
 	}
 	return ""
