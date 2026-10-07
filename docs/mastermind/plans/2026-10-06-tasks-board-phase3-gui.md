@@ -753,10 +753,10 @@ Make each change below, run the same test command, see the named test FAIL, then
 1. `TaskAdd`: `"--", s.Title` becomes `s.Title` → `TestTaskBindingsPassTheirArgumentsExactly`.
 2. `TaskEdit`: `"--title="+*s.Title` becomes two arguments `"--title", *s.Title` → the same test.
 3. `TaskMove`: drop `|| ref == id` → `TestTaskBindingsRefuseBadInputWithoutRunningTheCLI`.
-4. `TaskAgentShell`: drop the `MONOAGENT_ACTOR` branch → `TestTaskAgentShellNamesTheMarkerTheAppInherited`.
+4. `TaskAgentShell`: drop the `MONOAGENT_ACTOR` branch and put `_ = os.Getenv` in its place (the line only keeps the `os` import used) → `TestTaskAgentShellNamesTheMarkerTheAppInherited`.
 5. `boardLimit`: `n <= 0` becomes `n < 0` → `TestTaskBoardLimitIsNeverEveryDoneCard` (0 would read every Done card).
 6. `TaskEdit`: drop the `maxArgNotes` check → `TestTaskBindingsRefuseBadInputWithoutRunningTheCLI`; then the same in `TaskAdd` → the same test.
-7. `TaskBoard`: replace its body after the `a.db` check with `return a.taskCLI("", "board", "--done-limit", strconv.Itoa(boardLimit(doneLimit)))` → `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker` (the CLI's refusal comes back instead of the board).
+7. `TaskBoard`: replace its body after the `a.db` check with `_ = tasks.NewStore` (the line only keeps the `tasks` import used) and `return a.taskCLI("", "board", "--done-limit", strconv.Itoa(boardLimit(doneLimit)))` → `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker` (the CLI's refusal comes back instead of the board).
 8. `TaskBoard`: `tasks.Actor{Kind: tasks.Human}` becomes `tasks.Actor{}` → the same test (the store refuses an actor that was never set, so the document is an error); then, separately, the actor becomes `tasks.Actor{Kind: tasks.Agent, Name: "app"}` when `a.TaskAgentShell() != ""` (the CLI's way of telling who runs a command) → the same test (an app started from an agent's shell loses its board).
 
 - [ ] **Step 6: Commit**
