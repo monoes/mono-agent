@@ -317,7 +317,14 @@ var ErrSandboxRequired = errors.New("the required sandbox is not available")
 // ctx cancellation sends a cancel frame first (best-effort graceful), then
 // escalates to a process-group kill after a grace window so neither
 // monomind nor an agent-CLI grandchild survives the caller.
+//
+// A locked monoes.me account runs no turn: Exec returns the account gate's
+// error (the typed *account.LoginRequiredError) before it looks for monomind
+// (spec section 6.2).
 func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResult, error) {
+	if lrErr := requireAccount(ctx); lrErr != nil {
+		return nil, lrErr
+	}
 	bin := opts.Bin
 	if bin == "" {
 		var err error

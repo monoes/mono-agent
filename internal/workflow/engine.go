@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
@@ -35,6 +36,7 @@ type WorkflowEngine struct {
 	maxExecHistory   int
 	profileID        string
 	allowAllProfiles bool
+	drops            dropNotes // triggers dropped while the account is locked
 }
 
 // EngineConfig holds WorkflowEngine configuration.
@@ -312,17 +314,29 @@ func (e *WorkflowEngine) resumeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.adoptQueuedExecutions(ctx)
-			ids, err := e.store.ListResumableExecutions(ctx)
-			if err != nil {
-				e.logger.Warn().Err(err).Msg("engine: listing resumable executions")
-				continue
-			}
-			for _, id := range ids {
-				if err := e.ResumeExecution(id); err != nil {
-					e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: failed to resume execution")
-				}
-			}
+			e.resumeTick(ctx)
+		}
+	}
+}
+
+// resumeTick is one pass of resumeLoop. A locked account does neither half
+// (spec D8: a locked daemon starts nothing new): adopting would claim queued
+// rows and resuming would flip paused runs to QUEUED, where the gate in
+// handleExecution would fail them for good. Left as they are, they run again
+// once the account is valid.
+func (e *WorkflowEngine) resumeTick(ctx context.Context) {
+	if tickErr := account.Require(ctx); tickErr != nil {
+		return
+	}
+	e.adoptQueuedExecutions(ctx)
+	ids, err := e.store.ListResumableExecutions(ctx)
+	if err != nil {
+		e.logger.Warn().Err(err).Msg("engine: listing resumable executions")
+		return
+	}
+	for _, id := range ids {
+		if err := e.ResumeExecution(id); err != nil {
+			e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: failed to resume execution")
 		}
 	}
 }
@@ -384,6 +398,10 @@ func (e *WorkflowEngine) adoptQueuedExecutions(ctx context.Context) {
 // reloads its persisted resume_state so RunExecution skips completed nodes and
 // continues from the pause point.
 func (e *WorkflowEngine) ResumeExecution(executionID string) error {
+	// No ctx here (the callers are loops and receivers); Require reads memory only.
+	if resumeErr := account.Require(context.Background()); resumeErr != nil {
+		return resumeErr
+	}
 	dctx, cancel := dbCtx()
 	defer cancel()
 	exec, err := e.store.GetExecution(dctx, executionID)
@@ -523,6 +541,18 @@ func (e *WorkflowEngine) reregisterTriggers(ctx context.Context) error {
 func (e *WorkflowEngine) handleTrigger(workflowID string, nodeID string, items []Item) {
 	ctx := e.ctx
 
+	// A locked account starts nothing: the trigger is dropped, and a schedule's
+	// tick is not made up later. One log line a minute says so (spec section
+	// 6.2). The judgement uses its own context: e.ctx is nil before Start and
+	// cancelled during Stop, and a trigger that fires then is still a trigger.
+	if dropErr := account.Require(context.Background()); dropErr != nil {
+		if n, due := e.drops.note(); due {
+			e.logger.Warn().Err(dropErr).Int("dropped", n).Str("workflow_id", workflowID).
+				Msg("engine: monoes.me login required; trigger dropped (logged once a minute)")
+		}
+		return
+	}
+
 	// Determine trigger type from the node.  We load the workflow to find the
 	// node's Type field.
 	triggerType := "unknown"
@@ -607,6 +637,14 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	// Status-only read — cheaper than loading the full execution record.
 	if st, err := e.store.GetExecutionStatus(ctx, req.ExecutionID); err == nil && st == "CANCELLED" {
 		log.Info().Msg("engine: handleExecution: execution cancelled before dispatch; skipping")
+		return
+	}
+
+	// 0b. A locked account starts nothing (spec section 6.2). Record the refusal
+	// and stop before the workflow is loaded; the row is final, nothing retries it.
+	if lrErr := account.Require(ctx); lrErr != nil {
+		log.Warn().Err(lrErr).Msg("engine: handleExecution: monoes.me login required; execution refused")
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", "login_required: "+lrErr.Error())
 		return
 	}
 
@@ -944,8 +982,12 @@ func (e *WorkflowEngine) DeactivateWorkflow(ctx context.Context, id string) erro
 // ---------------------------------------------------------------------------
 
 // TriggerWorkflow manually triggers a workflow (for manual trigger nodes).
-// Returns the new execution ID.
+// Returns the new execution ID. A locked account creates no execution row: the
+// caller gets the typed *account.LoginRequiredError.
 func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	if trigErr := account.Require(ctx); trigErr != nil {
+		return "", trigErr
+	}
 	exec, err := e.newManualExecution(ctx, workflowID, data)
 	if err != nil {
 		return "", err
@@ -977,6 +1019,9 @@ func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string,
 // whichever engine is alive — see adoptQueuedExecutions. Returns the new
 // execution ID.
 func (e *WorkflowEngine) TriggerWorkflowPersistOnly(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	if persistErr := account.Require(ctx); persistErr != nil {
+		return "", persistErr
+	}
 	exec, err := e.newManualExecution(ctx, workflowID, data)
 	if err != nil {
 		return "", err
@@ -1050,6 +1095,9 @@ func (e *WorkflowEngine) CancelExecution(executionID string) {
 
 // RetryExecution re-queues a failed execution as a new execution.
 func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string) (string, error) {
+	if retryErr := account.Require(ctx); retryErr != nil {
+		return "", retryErr
+	}
 	orig, err := e.store.GetExecution(ctx, executionID)
 	if err != nil {
 		return "", fmt.Errorf("engine: retry execution: %w", err)
