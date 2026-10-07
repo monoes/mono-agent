@@ -175,6 +175,11 @@ func daemonStartBlocked(ctx context.Context, args []string, as autostart.Install
 // has stopped.
 const daemonStopPollInterval = 300 * time.Millisecond
 
+// daemonKillWait is how long stopDaemon waits for the daemon to go after
+// SIGKILL before it gives up. A variable so that a test can lengthen it on a
+// loaded machine.
+var daemonKillWait = 5 * time.Second
+
 // daemonStopGrace is how long stopDaemon waits for a SIGTERM'd daemon to
 // finish its own graceful shutdown (draining in-flight workflow executions,
 // see daemon.go) before it escalates to a forced kill. A variable so that a
@@ -228,7 +233,7 @@ func stopDaemon(ctx context.Context, pid int, progress func(string)) error {
 				return fmt.Errorf("force-stopping pid %d: %w", pid, err)
 			}
 			forced = true
-			deadline = time.Now().Add(5 * time.Second)
+			deadline = time.Now().Add(daemonKillWait)
 			continue
 		}
 		select {
