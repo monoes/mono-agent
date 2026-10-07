@@ -486,6 +486,7 @@ that works a task acts on them. The defences:
   The labels `you`, `agent`, `capture`, `chrome` and `os` are reserved,
   in any case, so an agent's events never read as the operator's or a
   capture's.
+- **Tasks from the Chrome extension.** The extension adds tasks through the bridge it already uses (loopback, paired token): one request method, `task.add`, which only adds to the Inbox of a profile that exists, as the browser capture `chrome`, whatever the environment of the process that hosts the bridge. The page address sent with a task loses its user-info, fragment and session-token parameters in the extension, and MonoAgent checks it again; a tab title that is only that address is not sent either. A selection carries what `getSelection()` reads: text hidden with `display:none` is left out, text hidden by colour, size or position is not. Both are why the operator reads a captured task before approving it.
 - **No HTTP route and no new port.** The task board does not listen on the network.
 
 ## OpenAI-compatible API surface

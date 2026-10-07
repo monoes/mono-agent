@@ -190,6 +190,11 @@ COLUMNS
   done         closed by the operator.
   archived     hidden, kept: not a column of the board (list --status archived).
 
+FROM CHROME
+  The MonoAgent Bridge extension adds tasks from the browser (a selection, a page, or
+  a note typed in its side panel) to the Inbox of the profile it is "Saving into".
+  They are captures: the operator reads them before moving them to Ready.
+
 WHO MAY DO WHAT
   The operator is the person who owns the profile, at a terminal of their own. The
   operator may add (also with --ready), list, show, edit, move, approve, archive,
