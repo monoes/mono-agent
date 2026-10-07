@@ -14,7 +14,7 @@ Preserve existing uncommitted user changes. Never repeat a remote publication be
 
 ### Task 1: Repository and CLI
 
-- [x] Create `data/migrations/062_publications.sql`, `internal/publication/store.go`, and repository tests. Define `Entry` with string fields `ID, ProfileID, Kind, Platform, Title, Body, URL, RemoteID, ParentURL, Account, WorkflowID, ExecutionID, NodeID, AgentID, OrgID, RoleID, PublishedAt, RecordedAt, IdempotencyKey`; `Media []string`. Define `Filter` with `Search, Platform, Kind, WorkflowID, AgentID, Since, Until string`, `Limit, Offset int`. JSON uses snake_case.
+- [x] Create `data/migrations/063_publications.sql`, `internal/publication/store.go`, and repository tests. Define `Entry` with string fields `ID, ProfileID, Kind, Platform, Title, Body, URL, RemoteID, ParentURL, Account, WorkflowID, ExecutionID, NodeID, AgentID, OrgID, RoleID, PublishedAt, RecordedAt, IdempotencyKey`; `Media []string`. Define `Filter` with `Search, Platform, Kind, WorkflowID, AgentID, Since, Until string`, `Limit, Offset int`. JSON uses snake_case.
 - [x] Implement `NewStore(db *sql.DB, profileID string) *Store`, `Register(ctx context.Context, entry Entry) (*Entry,error)`, `List(ctx context.Context, filter Filter) ([]Entry,error)`, `Get(ctx context.Context,id string) (*Entry,error)`, `Stats(ctx context.Context) (map[string]interface{},error)`. Expose `ErrNotFound`. Validate platform/kind/body-or-title-or-url/media, dates, paging. Idempotency keys belong to a profile; deduplicate remote identity within profile/platform/account/kind.
 - [x] Create `cmd/monoagentcli/publication.go`, register it in `root.go`. Supply list/get/register --stdin-json/stats, filter flags and mapped exits.
 - [x] Run `go test ./internal/publication ./cmd/monoagentcli` and check JSON with a temporary database.
@@ -53,7 +53,7 @@ Automatic capture covers native browser posts/comments/replies, Bluesky, Mastodo
 
 ## PR integration
 
-Prepared on current `origin/master` in an isolated `feat/publication` worktree. Publication uses migration 062 because upstream migration 061 now stores API keys. Existing MCP API tools and page activation behavior are retained. Only Publication bindings are added; pre-existing workspace dependency/generated-file changes are excluded. Coder publication guidance is added directly to current master's prompt with the turn's profile and custom database pinned, without including the separate unmerged workflow-guidance feature. The workspace-list test checks membership instead of relying on macOS path alias ordering.
+Prepared on current `origin/master` in an isolated `feat/publication` worktree. Publication uses migration 063 because migrations 061 (API keys) and 062 (task board) are taken upstream. Existing MCP API tools and page activation behavior are retained. Only Publication bindings are added; pre-existing workspace dependency/generated-file changes are excluded. Coder publication guidance is added directly to current master's prompt with the turn's profile and custom database pinned, without including the separate unmerged workflow-guidance feature. The workspace-list test checks membership instead of relying on macOS path alias ordering.
 
 The full frontend suite passes (154 files, 1,646 tests) with two workers, and its production build passes. Standard/nosocial Go builds and targeted nosocial Publication, node registry, MCP and grant suites pass. The initial concurrent broad run hit existing test timeouts; cancellation passes in isolation and the frontend rerun passes with reduced concurrency.
 

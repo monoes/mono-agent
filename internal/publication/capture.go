@@ -301,7 +301,7 @@ func Normalize(in CaptureInput) []Entry {
 }
 
 func slackShared(channel string) bool {
-	return strings.HasPrefix(channel, "C") || strings.HasPrefix(channel, "G") || strings.HasPrefix(channel, "#")
+	return strings.HasPrefix(channel, "C") || strings.HasPrefix(channel, "#")
 }
 
 func discordShared(c, r map[string]interface{}) bool {

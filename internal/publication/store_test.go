@@ -18,7 +18,7 @@ func testStore(t *testing.T) *Store {
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
-	migration, err := data.MigrationsFS.ReadFile("migrations/062_publications.sql")
+	migration, err := data.MigrationsFS.ReadFile("migrations/063_publications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

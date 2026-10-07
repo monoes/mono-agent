@@ -1976,7 +1976,8 @@ Subcommands:
   crawling              How to automate scraping on new/custom platforms
   api                   HTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes
   org                   Orgs, automations, grants, automation roles, autonomy, holding orgs
-  publication           Published content history and automatic registration`,
+  publication           Published content history and automatic registration
+  tasks                 The profile's task board: columns, who may do what, the agent loop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("monoagentcli ref — built-in reference")
 			fmt.Println()
@@ -1994,6 +1995,7 @@ Subcommands:
 			fmt.Fprintln(w, "  api\tHTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes")
 			fmt.Fprintln(w, "  org\tOrgs, automations, grants, automation roles, autonomy, holding orgs")
 			fmt.Fprintln(w, "  publication\tPublished content history and automatic registration")
+			fmt.Fprintln(w, "  tasks\tThe profile's task board: columns, who may do what, the agent loop")
 			w.Flush()
 			fmt.Println()
 			fmt.Println("Example:  monoagentcli ref templates")
@@ -2018,6 +2020,7 @@ Subcommands:
 		refAPICmd(),
 		refOrgCmd(),
 		refPublicationCmd(),
+		refTasksCmd(),
 	)
 	return root
 }
