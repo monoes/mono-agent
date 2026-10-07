@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tasks tab:** a desktop board of the active profile's tasks (Inbox, Ready, In progress, Review, Done) with drag and keyboard moves, search, quick add, a detail drawer with history and comments, and a sidebar badge for what waits on a person. It only renders; every change runs through `monoagentcli task`.
 
 ### Fixed
+- Task board writes retry a few times, with a short backoff, when the database stays locked past the busy timeout, instead of failing at once.
 - The global `--profile` now matches a profile name case-insensitively, like `profile get`.
 - Publication history: a retried publish no longer stores duplicates, Slack posts to private channels reported by the response and dev.to `published: "false"` are not recorded, and chat/MCP `register` takes org/role/agent from the run context and caps input at 4 MiB.
 - Settings can restart a stale extension bridge owned by a verified systemd user service, including `monoagent-bridge.service`. The repair verifies the new bridge version and reports when the service still uses an older CLI binary.

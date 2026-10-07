@@ -38,7 +38,7 @@ func (s *Store) tx(ctx context.Context, fn func(x dbx) error) error {
 		return fmt.Errorf("tasks: connection: %w", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := s.beginImmediate(ctx, conn); err != nil {
 		return fmt.Errorf("tasks: begin: %w", err)
 	}
 	committed := false
@@ -57,6 +57,40 @@ func (s *Store) tx(ctx context.Context, fn func(x dbx) error) error {
 	}
 	committed = true
 	return nil
+}
+
+// Taking the write lock waits up to the connection's busy timeout (5 s). A writer
+// that holds it longer than that fails the BEGIN with "database is locked"; the
+// BEGIN is retried a few times with a short backoff before the error is returned.
+// Only the BEGIN is retried: nothing has been written yet, so a retry cannot repeat
+// a change. Variables so that tests can shorten them.
+var (
+	busyRetries = 3
+	busyBackoff = 100 * time.Millisecond
+)
+
+// isBusy says whether err is SQLite's "database is locked" or "table is locked" (SQLITE_BUSY).
+func isBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := err.Error()
+	return strings.Contains(m, "SQLITE_BUSY") || strings.Contains(m, "database is locked") || strings.Contains(m, "database table is locked")
+}
+
+// beginImmediate opens the write transaction, retrying only a busy database.
+func (s *Store) beginImmediate(ctx context.Context, conn *sql.Conn) error {
+	for attempt := 0; ; attempt++ {
+		_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if err == nil || !isBusy(err) || attempt >= busyRetries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(busyBackoff << attempt):
+		}
+	}
 }
 
 // snapshot runs fn in one read transaction, so what it reads agrees.
