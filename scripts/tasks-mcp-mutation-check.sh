@@ -13,6 +13,15 @@ trap 'rm -r "$work" 2>/dev/null || true' EXIT
 cp -r "$src/." "$work/"
 cd "$work"
 
+testcmd=(go test ./internal/mcp -run 'Task|Tasks|Grant' -count=1)
+
+# The unmutated tree must pass first: otherwise every mutation would look "killed" for the wrong reason.
+if ! "${testcmd[@]}" >"$work/base.txt" 2>&1; then
+  cat "$work/base.txt" >&2
+  echo "mutation check: the unmutated tests fail, so no mutation result would mean anything; fix them first" >&2
+  exit 2
+fi
+
 survived=0
 mutate() { # name file old new
   local name="$1" file="$2" old="$3" new="$4"
@@ -26,7 +35,7 @@ if old not in s:
     sys.exit("anchor missing in %s: %s" % (f, old))
 open(f, "w").write(s.replace(old, os.environ["NEW"], 1))
 PY
-  if go test ./internal/mcp -run 'Task|Tasks|Grant' -count=1 >"$work/out.txt" 2>&1; then
+  if "${testcmd[@]}" >"$work/out.txt" 2>&1; then
     echo "SURVIVED: $name"
     survived=1
   else
@@ -39,8 +48,19 @@ mutate "mutating tools callable without --allow-mutations" internal/mcp/tools.go
 mutate "mutating tools listed without --allow-mutations" internal/mcp/tools.go 't.mutating && !allowMutations {' 'false {'
 mutate "--tasks-only no longer narrows the server" internal/mcp/apionly.go 'case s.opts.TasksOnly:' 'case false:'
 mutate "--tasks-only serves every tool" internal/mcp/apionly.go 'keep = taskToolNames()' 'return all'
-mutate "server follows another profile" internal/mcp/task_tools.go 'store.Profile(ctx, rt.profileID)' 'store.Profile(ctx, "work")'
-mutate "task_list ignores the profile" internal/mcp/task_read.go 'store.List(ctx, p.ID,' 'store.List(ctx, "",'
-mutate "task_claim ignores the profile" internal/mcp/task_write.go 'store.Claim(ctx, p.ID,' 'store.Claim(ctx, "",'
+mutate "server follows another profile" internal/mcp/task_tools.go 'store.Profile(ctx, rt.profileID)' 'store.Profile(ctx, "p-7f3a9c")'
+# Every tool must scope to the profile: the profile id is replaced by "" in each store call.
+scope() { # tool file call-prefix
+  mutate "$1 ignores the profile" "internal/mcp/$2" "$3(ctx, p.ID," "$3(ctx, \"\","
+}
+scope task_list task_read.go store.List
+scope task_get task_read.go store.Get
+scope task_next task_read.go store.Next
+scope "task_claim (next)" task_write.go store.Next
+scope task_claim task_write.go store.Claim
+scope task_comment task_write.go store.Comment
+scope task_finish task_write.go store.Finish
+scope task_release task_write.go store.Release
+scope task_add task_write.go store.Add
 
 exit "$survived"

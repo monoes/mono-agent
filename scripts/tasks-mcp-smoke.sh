@@ -38,17 +38,29 @@ names="$(resp "$out" 2 | jq -r '[.result.tools[].name]|sort|join(",")')"
 resp "$out" 3 | jq -e '.result.isError==true and (.result.content[0].text|contains("--allow-mutations"))' >/dev/null || fail "task_claim not refused without --allow-mutations"
 
 echo "== with --allow-mutations: exactly the eight task_* tools; claim, comment, finish; a workflow tool refused"
-out="$({
-  echo "$init"
-  sleep 1
-  echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-  call 3 task_claim '{"next":true}'
-  sleep 1
-  call 4 task_comment '{"id":1,"text":"working on it"}'
-  sleep 1
-  call 5 task_finish '{"id":1,"result":"done in the smoke script"}'
-  call 6 workflow_list '{}'
-} | rpc --allow-mutations)"
+# The server answers each request from its own goroutine, so a request is sent only after the previous
+# one was answered (bounded wait), not after a guessed pause.
+fifo="$root/in"; outf="$root/out"; mkfifo "$fifo"; : >"$outf"
+rpc --allow-mutations <"$fifo" >"$outf" 2>"$root/rpc.err" &
+srv=$!
+exec 3>"$fifo"
+await() { # id : wait up to 20s for the response with this id
+  local i
+  for i in $(seq 1 200); do
+    jq -e "select(.id==$1)" "$outf" >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  fail "no response to request $1 within 20s: $(cat "$root/rpc.err")"
+}
+echo "$init" >&3; await 1
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' >&3; await 2
+call 3 task_claim '{"next":true}' >&3; await 3
+call 4 task_comment '{"id":1,"text":"working on it"}' >&3; await 4
+call 5 task_finish '{"id":1,"result":"done in the smoke script"}' >&3; await 5
+call 6 workflow_list '{}' >&3; await 6
+exec 3>&-
+wait "$srv" || true
+out="$(cat "$outf")"
 names="$(resp "$out" 2 | jq -r '[.result.tools[].name]|sort|join(",")')"
 [ "$names" = "task_add,task_claim,task_comment,task_finish,task_get,task_list,task_next,task_release" ] || fail "tools/list: $names"
 resp "$out" 3 | jq -e '.result.isError!=true and (.result.content[0].text|contains("agent:smoke-client#"))' >/dev/null || fail "task_claim: $(resp "$out" 3)"
