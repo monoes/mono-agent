@@ -333,8 +333,8 @@ func TestLibraryRead401RefreshesThenAsksForLogin(t *testing.T) {
 	f.fake.RevokeAll()
 	before := f.fake.Requests["GET /api/library/items"]
 	f.loginRequired("library", "list", "--scope", "official")
-	if got := f.fake.Requests["GET /api/library/items"] - before; got != 2 { // --json run + text run, no retry after the failed refresh
-		t.Fatalf("list requests = %d, want 2", got)
+	if got := f.fake.Requests["GET /api/library/items"] - before; got != 1 { // the --json run only: its refresh was refused, which drops the login, so the text run asks nothing
+		t.Fatalf("list requests = %d, want 1", got)
 	}
 	f.loginRequired("library", "show", "automation/hackernews")
 	f.loginRequired("library", "update", "--dry-run")

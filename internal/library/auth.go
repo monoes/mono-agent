@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,9 +14,17 @@ import (
 	"github.com/monoes/mono-agent/internal/account"
 )
 
-// currentToken returns the stored token, refreshing it first when it is
-// about to expire. nil, nil when logged out.
+// currentToken returns the login to send. With a machine session for this host
+// (spec D21) that is its token: the account guard refreshes it, never this client.
+// Otherwise it is the profile's own stored login, refreshed first when it is about
+// to expire; that keeps a login made before the session existed working. nil, nil
+// when logged out.
 func (c *Client) currentToken(ctx context.Context) (*Token, error) {
+	if c.Session != nil {
+		if t, err := c.sessionToken(ctx); err != nil || t != nil {
+			return t, err
+		}
+	}
 	c.mu.Lock()
 	if !c.loaded && c.Store != nil {
 		t, err := c.Store.Load(ctx)
@@ -122,15 +131,54 @@ func (c *Client) tokenFrom(tr *tokenResponse, method string, prev *Token) *Token
 	return t
 }
 
-// refresh trades the refresh token for a new access token and stores it.
+// refresh trades the refresh token for a new access token and stores it. With a
+// machine session source it does so under the account store lock and on what the
+// store holds once it has the lock, so it can never present a refresh token that an
+// adoption in another process has just spent: monoes.me ends every refresh token
+// of the account when a spent one is presented again. Once the grant is sent it is
+// completed and stored whatever the caller does next (A20): the answer holds the only
+// copy of the refresh token that replaces this one, so the grant and the save run on a
+// context the caller's cancellation does not reach, bounded by refreshGrantTimeout. A
+// grant whose outcome is unknown (refreshGrant: anything but a request never written or
+// a complete 4xx) may have spent the token (A24), an invalid_grant says it is dead, and
+// an answer the vault did not take has spent it (A24(d)): in each case the login is
+// dropped (dropLogin), and nothing presents the token again, not even the retry that a
+// 401 would trigger in the same call.
 func (c *Client) refresh(ctx context.Context, t *Token) (*Token, error) {
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {t.RefreshToken}, "client_id": {ClientID}}
-	tr, err := c.postToken(ctx, c.endpoints(ctx).TokenEndpoint, form)
+	c.mu.Lock()
+	gone := c.loaded && c.token == nil // logged out, or dropped by an earlier refresh
+	c.mu.Unlock()
+	if gone {
+		return nil, fmt.Errorf("library: the saved login is gone")
+	}
+	if l, ok := c.Session.(interface {
+		Lock(ctx context.Context) (unlock func(), err error)
+	}); ok && c.Store != nil {
+		unlock, err := l.Lock(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+		cur, err := c.Store.Load(ctx)
+		if err != nil || cur == nil || cur.RefreshToken == "" {
+			return nil, fmt.Errorf("library: the saved login is gone")
+		}
+		t = cur
+	}
+	endpoint := c.endpoints(ctx).TokenEndpoint // discovery spends nothing: a caller that gives up may stop it
+	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshGrantTimeout)
+	defer cancel()
+	tr, settled, err := c.refreshGrant(gctx, endpoint, t.RefreshToken)
 	if err != nil {
+		var ae *APIError
+		if !settled || (errors.As(err, &ae) && ae.Code == "invalid_grant") {
+			c.dropLogin(gctx)
+		}
 		return nil, err
 	}
 	nt := c.tokenFrom(tr, t.Method, t)
-	if err := c.setToken(ctx, nt); err != nil {
+	if err := c.setToken(gctx, nt); err != nil {
+		c.dropLogin(gctx) // the vault still holds the spent token: it must not be presented again
 		return nil, err
 	}
 	return nt, nil
@@ -229,17 +277,7 @@ func (c *Client) VerifyEmailCode(ctx context.Context, email, code string) (*Toke
 func (c *Client) Logout(ctx context.Context) error {
 	t, _ := c.currentToken(ctx)
 	if t != nil {
-		tok := nonEmpty(t.RefreshToken, t.AccessToken)
-		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		req, err := http.NewRequestWithContext(rctx, http.MethodPost, c.endpoints(rctx).RevocationEndpoint,
-			strings.NewReader(url.Values{"token": {tok}, "client_id": {ClientID}}.Encode()))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			if resp, err := c.HTTP.Do(req); err == nil {
-				resp.Body.Close()
-			}
-		}
-		cancel()
+		c.revoke(ctx, nonEmpty(t.RefreshToken, t.AccessToken))
 	}
 	c.mu.Lock()
 	c.token, c.loaded = nil, true
@@ -248,6 +286,36 @@ func (c *Client) Logout(ctx context.Context) error {
 		return nil
 	}
 	return c.Store.Delete(ctx)
+}
+
+// LogoutLegacy revokes and forgets the profile's own login, the one a release before
+// the machine-wide session kept in its vault. It never touches the session.
+func (c *Client) LogoutLegacy(ctx context.Context) error {
+	if c.Store == nil {
+		return nil
+	}
+	if t, _ := c.Store.Load(ctx); t != nil {
+		c.revoke(ctx, nonEmpty(t.RefreshToken, t.AccessToken))
+	}
+	c.mu.Lock()
+	c.token, c.loaded = nil, true
+	c.mu.Unlock()
+	return c.Store.Delete(ctx)
+}
+
+// revoke asks monoes.me to revoke tok, best effort.
+func (c *Client) revoke(ctx context.Context, tok string) {
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, http.MethodPost, c.endpoints(rctx).RevocationEndpoint,
+		strings.NewReader(url.Values{"token": {tok}, "client_id": {ClientID}}.Encode()))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if resp, err := c.HTTP.Do(req); err == nil {
+		resp.Body.Close()
+	}
 }
 
 func nonEmpty(a, b string) string {
