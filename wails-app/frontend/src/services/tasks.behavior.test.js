@@ -85,6 +85,33 @@ describe('the task service', () => {
     }
   })
 
+  // The ten members that go through run, one row each: the binding it must call
+  // and the arguments, in order, it must give it. agentShell does not go through run.
+  const MEMBERS = [
+    ['board', 'TaskBoard', () => tasksApi.board(), [50]],
+    ['show', 'TaskShow', () => tasksApi.show(3), [3]],
+    ['add', 'TaskAdd', () => tasksApi.add({ title: 'one', notes: 'two' }), ['{"title":"one","notes":"two"}']],
+    ['edit', 'TaskEdit', () => tasksApi.edit(3, { title: 'one', notes: 'two' }), [3, '{"title":"one","notes":"two"}']],
+    ['move', 'TaskMove', () => tasksApi.move(3, 'review', { where: 'after', ref: 7 }), [3, 'review', 'after', 7]],
+    ['approve', 'TaskApprove', () => tasksApi.approve([1, 2], true), [[1, 2], true]],
+    ['archive', 'TaskArchive', () => tasksApi.archive([4, 5]), [[4, 5]]],
+    ['unarchive', 'TaskUnarchive', () => tasksApi.unarchive([6, 7]), [[6, 7]]],
+    ['comment', 'TaskComment', () => tasksApi.comment(3, 'hello'), [3, 'hello']],
+    ['pulse', 'TaskPulse', () => tasksApi.pulse(), []],
+  ]
+
+  it.each(MEMBERS)('%s calls %s with its arguments in order; a refusal or a failure comes back as {error}', async (_member, binding, call, args) => {
+    const own = App[binding]
+    own.mockResolvedValue('{"ok":true}')
+    await call()
+    expect(own.mock.calls).toEqual([args])
+    expect(Object.keys(App).filter(name => name !== binding && App[name].mock.calls.length > 0)).toEqual([])
+    own.mockResolvedValue('{"error":"nope","code":"operator_only"}')
+    expect(await call()).toEqual({ error: 'nope', code: 'operator_only' })
+    own.mockRejectedValue(new Error('boom'))
+    expect(await call()).toEqual({ error: 'boom' })
+  })
+
   it('returns the pulse as it is, {} included', async () => {
     App.TaskPulse.mockResolvedValue({ profile_id: 'default', rev: 4, inbox: 1, review: 2 })
     expect(await tasksApi.pulse()).toEqual({ profile_id: 'default', rev: 4, inbox: 1, review: 2 })
