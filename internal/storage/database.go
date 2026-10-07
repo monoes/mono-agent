@@ -270,7 +270,24 @@ func embeddedMigrations() ([]migration, error) {
 	sort.Slice(migrations, func(i, j int) bool {
 		return migrations[i].version < migrations[j].version
 	})
+	if err := checkDuplicateVersions(migrations); err != nil {
+		return nil, err
+	}
 	return migrations, nil
+}
+
+// checkDuplicateVersions fails when two migration files share a version
+// number: schema_migrations is keyed by version, so the second file would
+// silently never be applied. Expects migrations sorted by version. There are
+// no historic duplicates, so no allow-list is needed.
+func checkDuplicateVersions(migrations []migration) error {
+	for i := 1; i < len(migrations); i++ {
+		if migrations[i].version == migrations[i-1].version {
+			return fmt.Errorf("duplicate migration version %d: %s and %s",
+				migrations[i].version, migrations[i-1].filename, migrations[i].filename)
+		}
+	}
+	return nil
 }
 
 // splitStatements splits a SQL script by semicolons while respecting quoted
