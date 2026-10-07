@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Task board: the macOS menu.** `monoagentcli task os install` adds "Add to MonoAgent Tasks: <profile>" to the Services menu of every Mac app: select text, right-click, Services, and it lands in that profile's Inbox (the active profile unless `--profile` names another; run it once per profile, in your own terminal). `task os status` lists the installed menus and whether each is current, and `task os uninstall` removes one. The text reaches `monoagentcli` on standard input, never on a command line. macOS may need the item enabled once in System Settings, Keyboard, Keyboard Shortcuts, Services, Text. On Windows and Linux, `monoagentcli ref tasks` shows a hotkey recipe instead.
 - **Publication history:** profile-scoped local records of posts, comments, replies and other content published by agents and workflows, with CLI `publication list|get|register|stats`, MCP tools and a desktop Publication page. Supported publishing operations register successful results automatically, preserving content and source identifiers while excluding private messages and drafts. Custom publishers register after success through the CLI, MCP or a `publication.register` workflow node. History starts with installation; existing external publications are not fetched.
 
 ### Fixed
