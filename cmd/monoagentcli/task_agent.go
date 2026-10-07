@@ -197,7 +197,7 @@ func newTaskClaimCmd(cfg *globalConfig) *cobra.Command {
 func newTaskCommentCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "comment ID TEXT... [--as NAME]",
-		Short: "Add a note to a task: your own, or an AI agent's progress report (extends its lease to 30 minutes from the comment, if that is later)",
+		Short: "Add a note to a task; an agent's note extends its lease to 30 minutes from now, if later",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The comment is the operator's only when nothing says that an agent runs the command:
 			// not a marker, not --as (a blank one too), not MONOAGENT_ACTOR. An agent's comment is its own.

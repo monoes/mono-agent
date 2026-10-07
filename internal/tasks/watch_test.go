@@ -227,11 +227,23 @@ func TestWatchPollsEveryTwoSecondsWithoutAnInterval(t *testing.T) {
 	}
 }
 
-// An interval above 0 is the one the watcher waits, a shorter one than the default included.
+// An interval above 0 is the one the watcher waits, a shorter one than the default included. The floor is
+// exact: no poll comes before the interval has passed. The ceiling of a gap is wide, because a poll on a busy
+// runner, under -race, can take seconds. What tells the interval from the default of two seconds is the
+// quickest of three gaps: one slow poll cannot fail it, and a watcher that waited the default would have no
+// gap under 1.9 seconds.
 func TestWatchPollsAtTheIntervalItIsGiven(t *testing.T) {
 	const interval = 100 * time.Millisecond
-	if gap := watchGap(t, interval); gap < interval || gap > time.Second {
-		t.Fatalf("with an interval of %v the watcher waited %v between two polls", interval, gap)
+	quickest := 5 * time.Second
+	for i := 0; i < 3; i++ {
+		gap := watchGap(t, interval)
+		if gap < interval || gap > 5*time.Second {
+			t.Fatalf("with an interval of %v the watcher waited %v between two polls", interval, gap)
+		}
+		quickest = min(quickest, gap)
+	}
+	if quickest >= 1900*time.Millisecond {
+		t.Fatalf("with an interval of %v the quickest of three gaps between two polls was %v: the watcher waits its default", interval, quickest)
 	}
 }
 

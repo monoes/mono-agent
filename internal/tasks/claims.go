@@ -300,8 +300,9 @@ func (s *Store) heldBy(ctx context.Context, x dbx, profileID string, id int64, a
 }
 
 // Comment adds a note to a task's history. The operator comments on any task; an agent only on one it
-// holds, and its comment renews the lease (never shortening it). A comment is refused once the task has
-// MaxEventsPerTask events: a change of state is always recorded, a comment is not.
+// holds, and its comment extends the claim to half an hour from the comment if that is later, and never
+// shortens it. A comment is refused once the task has MaxEventsPerTask events: a change of state is always
+// recorded, a comment is not.
 func (s *Store) Comment(ctx context.Context, profileID string, id int64, text string, actor Actor) (Task, error) {
 	switch actor.Kind {
 	case Agent:

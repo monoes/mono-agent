@@ -405,7 +405,7 @@ func TestTaskAgentCommandsExplainTheirOptionsInTheirHelp(t *testing.T) {
 		{[]string{"claim", "--help"}, []string{"--lease", "default 30m, at most 24h", "--as NAME"}, nil},
 		{[]string{"finish", "--help"}, []string{"exactly one of --result", "--question", "Review for the operator to read"}, []string{"for you to read"}},
 		{[]string{"release", "--help"}, []string{"--note", "back to Ready"}, nil},
-		{[]string{"comment", "--help"}, []string{"extends its lease to 30 minutes from the comment, if that is later"}, []string{"renews its lease"}},
+		{[]string{"comment", "--help"}, []string{"extends its lease to 30 minutes from now, if later"}, []string{"renews its lease"}},
 		{[]string{"digest", "--help"}, []string{"In text, prints nothing when the profile has no ready task", "With --json it prints its document on success, even when nothing is ready",
 			"always exits 0 whatever goes wrong at run time"}, []string{"It always exits 0, so", "it always prints its document"}},
 		{[]string{"--help"}, []string{"(in text, prints nothing when there are none)"}, []string{"(prints nothing when there are none)"}},

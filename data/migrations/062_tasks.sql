@@ -4,6 +4,9 @@
 -- position orders cards inside a column. client_id is an idempotency key from a
 -- capture surface. claimed_by and claim_until are empty unless an agent holds
 -- the task.
+-- Deleting a profile deletes its board, so a migration that rebuilds profiles
+-- (create, copy, drop, rename) is safe only where foreign keys are off, as on
+-- the migration connection: dropping profiles with them on deletes every board.
 CREATE TABLE IF NOT EXISTS tasks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id   TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
