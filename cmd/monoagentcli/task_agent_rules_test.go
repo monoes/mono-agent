@@ -10,8 +10,10 @@ import (
 )
 
 // A look (next without --claim) is a read, for everyone who may read: the operator, a named agent,
-// an agent that has not said its name, a blank --as. It never takes the task, whatever else the call
-// says, and it writes nothing: not a claim, not an event, not a revision of the board.
+// an agent that has not said its name, a blank --as. It never takes the task and it writes nothing:
+// not a claim, not an event, not a revision of the board. (A --lease on a look is refused, which
+// TestTaskLeaseThatIsGivenMustBeAPositiveTimeAndNextTakesItOnlyToClaim shows leaves the board as it
+// was; the store's look ignores a lease it is given, as TestNextWithoutClaimIgnoresTheLeaseItIsGiven shows.)
 func TestTaskNextPeekNeverClaims(t *testing.T) {
 	db := newTaskTestDB(t)
 	n := opsAdd(t, db, "waiting", "--ready")

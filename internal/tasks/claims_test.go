@@ -30,6 +30,36 @@ func TestNextPeeksTheTopReadyTask(t *testing.T) {
 	}
 }
 
+// A look takes no lease: Next without claim only reads, so a lease that comes with it (the CLI refuses the
+// combination, another surface might pass it) is ignored. The top Ready task comes back as it is, Ready and
+// held by nobody, with the one event it was created with, and the revision of the board stays where it was.
+// An agent without a name may look, so it is one of the actors: a look that fell into the claim would
+// refuse it for its name.
+func TestNextWithoutClaimIgnoresTheLeaseItIsGiven(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	mustAdd(t, s, "default", "in the inbox", false) // never offered
+	top := mustAdd(t, s, "default", "top", true)
+	mustAdd(t, s, "default", "behind", true)
+	rev := claimsRev(t, s)
+	for _, actor := range []Actor{bot("b"), {Kind: Agent}} {
+		for _, lease := range []time.Duration{time.Second, time.Hour, 10 * MaxLease} {
+			got, err := s.Next(bg, "default", actor, false, lease)
+			if err != nil || got == nil || got.ID != top.ID || got.Status != StatusReady || got.Claim != nil {
+				t.Fatalf("a look by %+v with a lease of %v: %+v, %v, want the top Ready task, not held", actor, lease, got, err)
+			}
+			if row := claimsText(t, db, `SELECT status || '|' || claimed_by || '|' || claim_until FROM tasks WHERE id = ?`, top.ID); row != "ready||" {
+				t.Errorf("a look by %+v with a lease of %v left the task as %q, want ready with no holder and no end", actor, lease, row)
+			}
+			if n, claimed := countWhere(t, db, "task_events", "task_id = ?", top.ID), countWhere(t, db, "task_events", "task_id = ? AND kind = 'claimed'", top.ID); n != 1 || claimed != 0 {
+				t.Errorf("a look by %+v with a lease of %v left %d events, %d of them claimed, want the created event alone", actor, lease, n, claimed)
+			}
+			if after := claimsRev(t, s); after != rev {
+				t.Errorf("a look by %+v with a lease of %v moved the revision from %d to %d", actor, lease, rev, after)
+			}
+		}
+	}
+}
+
 func TestNextClaimTakesItWithALease(t *testing.T) {
 	s, _, c := newTestStore(t)
 	task := mustAdd(t, s, "default", "work", true)

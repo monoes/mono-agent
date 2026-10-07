@@ -14,7 +14,7 @@ import (
 // value is no value, as the markers are read, and a name that is given wins over a blank one.
 func TestTaskCallerReadsABlankMONOAGENTACTORAsAnAgentWithoutAName(t *testing.T) {
 	newTaskTestDB(t) // the operator's environment
-	for _, blank := range []string{" ", "   ", "\t", " \t\n", " "} {
+	for _, blank := range []string{" ", "   ", "\t", " \t\n", "\U000000a0"} {
 		t.Setenv("MONOAGENT_ACTOR", blank)
 		c := parsedCaller(t)
 		if !c.isAgent() || c.actor.Name != "" || c.marker != "" || c.asBlank || !c.envBlank {
