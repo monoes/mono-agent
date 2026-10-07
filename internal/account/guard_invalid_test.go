@@ -140,7 +140,7 @@ func TestALongRunningGuardWritesNothingOverAnUnusableSessionFile(t *testing.T) {
 					t.Fatalf("pass %d wrote over the unusable session.json", i+1)
 				}
 			}
-			if data, err := os.ReadFile(filepath.Join(e.dir, "session.json")); err != nil || string(data) != "{not json" {
+			if data, err := readReplaced(filepath.Join(e.dir, "session.json")); err != nil || string(data) != "{not json" {
 				t.Fatalf("session.json = %q (%v), want the unusable text left as it was", data, err)
 			}
 			if n := e.ref.calls.Load(); n != 0 {
