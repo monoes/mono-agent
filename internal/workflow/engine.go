@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
@@ -610,6 +611,14 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		return
 	}
 
+	// 0b. A locked account starts nothing (spec section 6.2). Record the refusal
+	// and stop before the workflow is loaded; the row is final, nothing retries it.
+	if lrErr := account.Require(ctx); lrErr != nil {
+		log.Warn().Err(lrErr).Msg("engine: handleExecution: monoes.me login required; execution refused")
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", "login_required: "+lrErr.Error())
+		return
+	}
+
 	// Persistence contexts are detached AND non-expiring, created fresh per
 	// call: a deadline minted at dispatch (the old 10s persistCtx) expired
 	// under any run longer than 10s, so the final SetExecutionFinished
@@ -944,8 +953,12 @@ func (e *WorkflowEngine) DeactivateWorkflow(ctx context.Context, id string) erro
 // ---------------------------------------------------------------------------
 
 // TriggerWorkflow manually triggers a workflow (for manual trigger nodes).
-// Returns the new execution ID.
+// Returns the new execution ID. A locked account creates no execution row: the
+// caller gets the typed *account.LoginRequiredError.
 func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	if trigErr := account.Require(ctx); trigErr != nil {
+		return "", trigErr
+	}
 	exec, err := e.newManualExecution(ctx, workflowID, data)
 	if err != nil {
 		return "", err
@@ -977,6 +990,9 @@ func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string,
 // whichever engine is alive — see adoptQueuedExecutions. Returns the new
 // execution ID.
 func (e *WorkflowEngine) TriggerWorkflowPersistOnly(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	if persistErr := account.Require(ctx); persistErr != nil {
+		return "", persistErr
+	}
 	exec, err := e.newManualExecution(ctx, workflowID, data)
 	if err != nil {
 		return "", err
@@ -1050,6 +1066,9 @@ func (e *WorkflowEngine) CancelExecution(executionID string) {
 
 // RetryExecution re-queues a failed execution as a new execution.
 func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string) (string, error) {
+	if retryErr := account.Require(ctx); retryErr != nil {
+		return "", retryErr
+	}
 	orig, err := e.store.GetExecution(ctx, executionID)
 	if err != nil {
 		return "", fmt.Errorf("engine: retry execution: %w", err)
