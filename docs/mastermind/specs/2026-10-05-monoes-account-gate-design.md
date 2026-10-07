@@ -17,7 +17,7 @@ Acceptance (§11 turns each into tests):
 
 1. After the enforcement date, with no valid session, every gated command exits 4 with `login_required` and does nothing else (no first-run writes, no database open), and every door of §6.3 refuses.
 2. Signed in, then blocked on monoes.me: locked within one refresh interval (about an hour), and work in flight is cancelled.
-3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes.
+3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes the node it is in, and a run ends at its next node (ruling R4 of 2026-10-07).
 4. Before the enforcement date nothing locks, and once a date is set every surface warns.
 5. A release binary built with the `devaccount` tag cannot ship.
 
@@ -31,8 +31,8 @@ Acceptance (§11 turns each into tests):
 | D4 | One machine-wide session, signed by monoes.me and verified on the machine against keys pinned in the binary. No network call per command; the daemon, the APIs and MCP check again while they run. | user |
 | D5 | monoes.me answering *no* (blocked, revoked) ends access at once. monoes.me *unreachable* is tolerated until 24 hours after the newest token was issued. | user |
 | D6 | Default-deny, one gate before any command runs. Open: `version`, `help`, `completion`, `ref`, `update`, `doctor` (with `doctor fix`), `setup` and the `account` commands. Everything else is gated, purely local commands included. | user |
-| D7 | Three layers: the CLI gate; checks in `handleExecution`, `monomind.Exec` and `ActionExecutor.executeDef`; the doors (HTTP API, `/v1`, webhook server, extension bridge, MCP). | user |
-| D8 | A locked daemon stays up, starts nothing new, stops the org services it manages, reports the state and resumes by itself. In-flight work is cancelled when monoes.me refused, and left to finish when it was only unreachable at the 24 hours. | user |
+| D7 | Three layers: the CLI gate; checks in `handleExecution`, `monomind.Exec` and `ActionExecutor.executeDef` (and, ruling R4 of 2026-10-07, before every node of a run); the doors (HTTP API, `/v1`, webhook server, extension bridge, MCP). | user |
+| D8 | A locked daemon stays up, starts nothing new, stops the org services it manages, reports the state and resumes by itself. In-flight work is cancelled when monoes.me refused; otherwise it finishes while the account is ok or grace, and a locked verdict (the 24 hours without monoes.me, or any other lock) ends a run at its next node, the node in flight finishing (amended by ruling R4 of 2026-10-07). | user |
 | D9 | Server first. Then one client release with the enforcement date built in, about three weeks after it ships: warnings before, enforcement after, no second release. Older versions stay ungated. | user |
 | D10 | No credential through an environment variable and no unattended machine tokens in v1. Headless sign-in is `account login --email`, kept in the data directory. | user |
 | D11 | Developers and CI run the real binary built with `-tags devaccount`. Releases never carry the tag. | user |
@@ -199,6 +199,7 @@ The server half has its own repository and pipeline. The plan splits into Part A
 - `handleExecution`, after the cancelled-before-dispatch check and before the workflow is loaded. A refusal is recorded with `persistExecutionFinished(…, "FAILED", "login_required: …")` and is not retried. `TriggerWorkflow` and `TriggerWorkflowPersistOnly` check first so a caller gets the typed error; a schedule or webhook trigger that fires while locked is dropped with one log line a minute.
 - `monomind.Exec`, as its first statement, returning the typed error, so chat, coder, `/v1`, `agent.ask` and every other turn fail the same way.
 - `ActionExecutor.executeDef`, which covers the direct browser and action paths.
+- The engine's node loop (`RunExecution`), before every node (ruling R4 of 2026-10-07). A run in flight goes on while the account is ok or grace; a locked verdict ends it `FAILED` at its next node with `login_required: ` and the first line of the refusal, and the node in flight finishes. Without it a run with no agent or browser node (a polling loop, a long wait) never meets a gate again once it has started.
 
 Why again behind layer 1: the daemon, MCP and the API processes outlive the CLI check and can lock while they run, and some paths reach the engine with no command at all (webhooks, schedules, org grants).
 
@@ -216,7 +217,7 @@ Why again behind layer 1: the daemon, MCP and the API processes outlive the CLI 
 
 - `account.Guard` is installed by `main()` for every command. The long-running commands (`daemon`, `httpapi`, `mcp`, `extension serve`, `org serve`) start its refresher at once; any other process starts it after five minutes of running, so a long `workflow run` or `chat` is covered too. The guard re-reads `session.json` when the file changes (a poll every 5 seconds), and offers `Require`, `State` and `OnRefused`.
 - The daemon never exits because of the lock (launchd's KeepAlive would respawn it in a loop). Locked, it starts no execution, stops the org services it starts, reports `account: locked`, and resumes by itself when a valid session appears (a sign-in from the CLI or the app writes `session.json`).
-- `refused`: `OnRefused` cancels the work in flight, not the server. The daemon calls `CancelExecution` on its running executions; a one-shot process (`workflow run`, `chat`) cancels its command context; the serving processes (`httpapi`, `mcp`, `extension serve`) keep serving and refuse each call as §6.3 says. `expired` (24 hours unreachable): nothing in flight is cancelled, nothing new starts, and the daemon keeps retrying.
+- `refused`: `OnRefused` cancels the work in flight, not the server. The daemon calls `CancelExecution` on its running executions; a one-shot process (`workflow run`, `chat`) cancels its command context; the serving processes (`httpapi`, `mcp`, `extension serve`) keep serving and refuse each call as §6.3 says. `expired` (24 hours unreachable), and any other lock: nothing in flight is cancelled; in-flight work finishes while the account is ok or grace, and a locked verdict ends a run at its next node (the node in flight finishes; ruling R4 of 2026-10-07); nothing new starts, and the daemon keeps retrying.
 - External `monomind` processes that already run (an org's agents) are not killed by mono-agent in v1 beyond what the daemon manages; their calls back into mono-agent fail.
 
 ### 6.5 The desktop app

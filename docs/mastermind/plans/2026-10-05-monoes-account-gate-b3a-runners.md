@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every execution, agent turn and browser action refuses to start while the monoes.me account is locked, and a locked daemon stays up, starts nothing, stops its org services, reports the state in its heartbeat and resumes by itself.
+**Goal:** Every execution, agent turn and browser action refuses to start while the monoes.me account is locked, a run in flight ends at its next node once the account is locked, and a locked daemon stays up, starts nothing, stops its org services, reports the state in its heartbeat and resumes by itself.
 
-**Architecture:** Layer 2 is one account check at each choke point: `account.Require` in `handleExecution`, in the engine entry points that create an execution and in `ActionExecutor.executeDef`, and a gate that `cmd/monoagentcli` installs as `account.Require` for `monomind.Exec` (`internal/monomind` cannot import the account package). Holds in the engine's trigger and resume paths make a locked process start nothing and fail nothing for good. The engine registers its own cancel-on-refusal handler when it starts; serving commands start the guard's refresher at once from a pre-run hook; the daemon gets an account supervisor that stops and restarts the org services as the verdict changes.
+**Architecture:** Layer 2 is one account check at each choke point: `account.Require` in `handleExecution`, in the engine entry points that create an execution, before every node of a run in the engine's node loop (`RunExecution`, ruling R4) and in `ActionExecutor.executeDef`, and a gate that `cmd/monoagentcli` installs as `account.Require` for `monomind.Exec` (`internal/monomind` cannot import the account package). Holds in the engine's trigger and resume paths make a locked process start nothing and fail nothing for good. The engine registers its own cancel-on-refusal handler when it starts; serving commands start the guard's refresher at once from a pre-run hook; the daemon gets an account supervisor that stops and restarts the org services as the verdict changes.
 
 **Tech Stack:** Go 1.26, cobra, zerolog, SQLite (the existing stores); no new dependency.
 
@@ -29,13 +29,14 @@ Copied from the index §2; these bind every task.
 
 ## Review Focus
 
-The five failure modes the spec implies that a plain refuse-or-allow test would miss, most likely first. Each is pinned by a named test in the task that owns the code.
+The six failure modes the spec implies that a plain refuse-or-allow test would miss, most likely first. Each is pinned by a named test in the task that owns the code.
 
-1. **A change a user can see before the enforcement date.** Every phase before B5a ships dormant: while `account.EnforceDate()` is the zero time nothing here may refuse, cancel, stop an org service or add an `account` key to the heartbeat. Pinned by the `dormant` rows of the gate tests (Tasks 1, 2, 4), the `warn period` rows of the engine's (Tasks 1, 2: a date set and not reached refuses nothing), the `refused before the enforcement date` row of `TestOnlyARefusalCancels` (Task 3), the `dormant` third of `TestDaemonHeartbeatRefreshCarriesTheAccount` (Task 6) and `TestSupervisorLeavesTheOrgServicesAloneBeforeTheEnforcementDate` (Task 7).
+1. **A change a user can see before the enforcement date.** Every phase before B5a ships dormant: while `account.EnforceDate()` is the zero time nothing here may refuse, cancel, stop an org service or add an `account` key to the heartbeat. Pinned by the `dormant` rows of the gate tests (Tasks 1, 2, 4), the `warn period` rows of the engine's (Tasks 1, 2: a date set and not reached refuses nothing), `TestADormantGateNeverEndsARun` (Task 3b), the `refused before the enforcement date` row of `TestOnlyARefusalCancels` (Task 3), the `dormant` third of `TestDaemonHeartbeatRefreshCarriesTheAccount` (Task 6) and `TestSupervisorLeavesTheOrgServicesAloneBeforeTheEnforcementDate` (Task 7).
 2. **A locked daemon destroys paused and queued runs.** The spec routes every Human-in-Loop resume and every `--no-wait` adoption through `handleExecution`, which would record them FAILED, for good, while the account is locked. Task 2 leaves them as they are until the account is valid: `TestResumeTickGate`, `TestResumeExecutionGate`.
 3. **A refusal leaves runs that wait for a concurrency slot QUEUED forever.** They have no goroutine to stop, so cancelling a context is not enough: `TestRefusalEndsRunsQueuedBehindTheLimit` (Task 3).
 4. **A refused node sits in retry backoff.** A node with a retry policy would retry a gate refusal for minutes: `TestExecuteWithRetry_LoginRequiredNotRetried` (Task 1).
-5. **`expired` treated like a refusal, or a person's cancel treated like one.** Only `invalid_grant` cancels; at the 24 hours work in flight finishes, and a person's own cancel never says `login_required`: `TestOnlyARefusalCancels`, `TestRefusalCancelsWhatIsRunning` (Task 3), `TestSupervisorFollowsTheAccount` (Task 7).
+5. **`expired` treated like a refusal, or a person's cancel treated like one.** Only `invalid_grant` cancels; at the 24 hours nothing is cancelled, the node in flight finishes and the run ends at its next node (Task 3b), and a person's own cancel never says `login_required`: `TestOnlyARefusalCancels`, `TestRefusalCancelsWhatIsRunning` (Task 3), `TestSupervisorFollowsTheAccount` (Task 7).
+6. **A run in flight outlives the gate, or a valid account stops it.** A run that has started meets the gates of Tasks 1 and 4 only at its agent turns and browser actions, so one made of plain nodes (a polling loop, a long wait) would run on for good after the 24 hours; the node loop's check ends it at its next node, and must never end one while the account is `ok` or `grace`, or interrupt the node in flight: `TestARunEndsAtItsNextNodeOnceTheAccountLocks`, `TestARunGoesOnWhileTheAccountIsOkOrInGrace`, `TestARefusedNodeEndsTheRunWithTheFirstLineOfTheRefusal` (Task 3b).
 
 ## Decisions this plan makes (read before Task 1)
 
@@ -44,13 +45,13 @@ The five failure modes the spec implies that a plain refuse-or-allow test would 
 - **Three engine sites beyond the named ones**, because "starts nothing new" and "fails nothing for good" need them: `RetryExecution` (no junk row, typed error), `ResumeExecution` and the resume loop's tick (`resumeTick`: adoption and resume). Without them every approved Human-in-Loop run would be failed by the backstop in `handleExecution`.
 - **Cancel on refusal belongs to the engine.** `WorkflowEngine.Start` registers one `OnRefused` handler, so the daemon, `httpapi`, `mcp` and a one-shot `workflow run` cancel their running executions with no per-command code. The daemon's supervisor also cancels, by polling `CurrentStatus()`: the daemon is the unattended process that matters most, the poll needs no callback semantics, and both paths are idempotent.
 - **Not done here.** A one-shot command cancelling its command context is B2's `run()` (`cancelWhenRefused` in its plan), not this plan's: `main.go` is B2's. In-flight `/v1` turns and MCP tool calls are not cancelled: `Gateway.Shutdown` is terminal (`internal/openaiapi/gateway.go:301`: "The gateway serves nothing useful afterwards"), so there is no non-terminal cancel to call; they end by their own timeout and every new turn is refused at the door (B3b).
-- **`expired` (24 hours unreachable):** nothing is cancelled, and a run in flight finishes the node it is in; its next gated call (an agent turn, a browser action) is refused and the run ends FAILED, not retried.
-- **A run with no agent or browser node outlives the 24 hours. An open question for the owner; no code here.** The sentence above holds only for a run that still has a gated call ahead of it. The three gate sites are `handleExecution` (an execution starts), `monomind.Exec` (an agent turn) and `ActionExecutor.executeDef` (a browser node and the rest of Task 4's list), so an execution that started before the expiry and has no such node (a loop of HTTP requests, a polling workflow, a long wait) never meets a gate again: it keeps running for as long as it likes while the account is `locked(expired)`. The spec says in-flight work finishes, and a looping run never does. An optional `account.Require(ctx)` between nodes, in the engine's node loop (`RunExecution`, `internal/workflow/execution.go:35`), would close it: it needs no I/O (it reads the cached verdict) and would end such a run FAILED with `login_required:` at its next node. This plan does not add it, because it also ends runs that the spec lets finish, and a refusal (`invalid_grant`) is already handled: Task 3 cancels everything in flight. Owner: decide whether a run in flight may outlive the 24 hours when it has no gated node.
+- **`expired` (24 hours unreachable):** nothing is cancelled, and a run in flight finishes the node it is in; its next node is refused (Task 3b) and the run ends FAILED with `login_required:`, not retried.
+- **A run in flight ends at its next node while the account is locked (ruling R4 of 2026-10-07; an open question for the owner until then).** The gate sites of Tasks 1 and 4 meet a run only when it starts (`handleExecution`) and at its gated calls (`monomind.Exec` for an agent turn, `ActionExecutor.executeDef` for a browser node and the rest of Task 4's list), so an execution that started before the lock and has no such node ahead (a loop of HTTP requests, a polling workflow, a long wait) would never meet a gate again and would keep running while the account is `locked(expired)`. Task 3b adds `account.Require(ctx)` at the start of every node in the engine's node loop (`RunExecution`, `internal/workflow/execution.go:35`): it needs no I/O (it reads the cached verdict), `ok` and `grace` never stop a run, the node in flight finishes (an agent turn or a browser action included: only the next node is refused), and a locked verdict, `expired` or any other lock, ends the run FAILED at its next node with `login_required: ` and the first line of the refusal. The spec says so too (D8 and §6.4: in-flight work finishes while the account is ok or grace). The cost, accepted with the ruling: a run in flight when the clock goes back (`clock_rollback`) also ends at its next node. A refusal (`invalid_grant`) still cancels everything in flight at once (Task 3).
 - **Heartbeat:** `account` is `{state, reason, valid_until, enforced}` (index §3.4 item 4 with the `enforced` key of spec A4), set from `account.CurrentStatus()` before every write (`daemonhb.RunWith`: at start and every 10 s). It is absent while the gate is dormant (`EnforceFrom` is the zero time), so a dormant daemon writes the file it always wrote; readers treat absent as "nothing to report". In the warn period (a date set and not reached, nobody signed in) it reads `{"state":"locked","reason":"not_logged_in","enforced":false}` while nothing is refused and the daemon starts executions: `enforced` is how a reader tells that from a real lock.
 - **Which commands can start locked.** The CLI gate's `serve` class (index §3.5, spec A1) is `daemon`, `httpapi`, `mcp` (with `--grant`) and `extension serve` (alias `bridge serve`): they pass the gate when locked, start, and are refused at layers 2 and 3, so Tasks 5 and 7 assume they can start locked. `org serve` is gated, refused at start when locked, `--foreground` included; without `--foreground` it is a launcher that starts a detached monomind process and returns (`cmd/monoagentcli/org_process.go:28-52`). Task 5's wiring there is for `org serve --foreground` while signed in, which locks later.
 - **Known edges, not covered by layer 2** (spec A17), listed so the owner can see them: (a) validators run through `monomind.AgentTest`, not `Exec` (`internal/agentroster/validate.go:180` calls `internal/monomind/agenttest.go:62`, a separate `monomind agent test` process): `agent validate` is gated at layer 1, and the daemon's automatic re-validation waits while locked (Task 6), because a refusal would be stored as a failed validation; (b) `doctor fix`, an open command, runs one fixed `claude -p` profile-init prompt outside `Exec` (`internal/monomind/profile_init.go:129`, reached from `cmd/monoagentcli/doctor_env.go:115`); (c) a capture summary refused while locked is recorded with status `error` and is not retried (`internal/capturesummary/summarizer.go:218`); (d) in-flight `/v1` and MCP turns finish instead of being cancelled (see "Not done here").
 - **Mutation recipe**, the last step of every task. Run after the task's commit so `git restore` returns to the committed code: `perl -pi -e 's/(; VAR != nil) \{/$1 && false {/' FILE` makes the named gate's `if` let everything through and still compiles; run the named test, expect FAIL; `git restore FILE`; run it again, expect PASS.
-- **Why the existing tests stay green.** They install no guard and never call `StrictForTest`: `internal/workflow/engine_handletrigger_test.go:22` (`newTriggerEngine`) and `engine_test.go:79` (`newTestEngine`) build engines with `NewWorkflowEngineWithStore`; `internal/monomind/exec_test.go` calls `Exec(context.Background(), ExecOptions{Bin: bin, …})` 16 times; the `internal/action` tests build `NewActionExecutor(context.Background(), …)` 21 times. In a test binary `testing.Testing()` is true, so `account.Require` returns nil (index §3.2), and so does `Exec`'s own `requireAccount` when no gate is installed; the tests of `cmd/monoagentcli` run with the gate that `init` installs, which is `account.Require`, so they get the same nil. Tasks 1, 4 and 8 run those suites unchanged.
+- **Why the existing tests stay green.** They install no guard and never call `StrictForTest`: `internal/workflow/engine_handletrigger_test.go:22` (`newTriggerEngine`) and `engine_test.go:79` (`newTestEngine`) build engines with `NewWorkflowEngineWithStore`; `internal/monomind/exec_test.go` calls `Exec(context.Background(), ExecOptions{Bin: bin, …})` 16 times; the `internal/action` tests build `NewActionExecutor(context.Background(), …)` 21 times. In a test binary `testing.Testing()` is true, so `account.Require` returns nil (index §3.2), and so does `Exec`'s own `requireAccount` when no gate is installed; the tests of `cmd/monoagentcli` run with the gate that `init` installs, which is `account.Require`, so they get the same nil. The tests of `RunExecution` (`execution_test.go`, `execution_realnode_test.go`, `execution_confine_test.go`, `trigger_context_test.go`) call it with no guard either, so Task 3b's node check lets them through. Tasks 1, 3b, 4 and 8 run those suites unchanged.
 
 ---
 
@@ -796,8 +797,9 @@ A schedule or webhook trigger that fires while locked is dropped with one log li
   	}
   }
 
-  // TestOnlyARefusalCancels: a refusal cancels; at the 24 hours (expired) a run in
-  // flight finishes, and before the enforcement date nothing is cancelled.
+  // TestOnlyARefusalCancels: a refusal cancels; at the 24 hours (expired) nothing is
+  // cancelled (a run in flight ends at its next node, Task 3b), and before the
+  // enforcement date nothing is cancelled.
   func TestOnlyARefusalCancels(t *testing.T) {
   	for name, c := range map[string]struct {
   		st   account.Status
@@ -879,8 +881,9 @@ A schedule or webhook trigger that fires while locked is dropped with one log li
   }
 
   // refusalCancels says whether a verdict makes the engine cancel what it is
-  // running: a refusal, and only a refusal. At the 24 hours (expired) work in
-  // flight finishes (spec D8), and before the enforcement date nothing is cancelled.
+  // running: a refusal, and only a refusal. At the 24 hours (expired) nothing is
+  // cancelled: the node in flight finishes and the run ends at its next node (spec
+  // D8, Task 3b's node check), and before the enforcement date nothing is cancelled.
   func refusalCancels(st account.Status) bool {
   	return !st.Allowed() && st.Reason == account.ReasonRefused
   }
@@ -933,6 +936,348 @@ A schedule or webhook trigger that fires while locked is dropped with one log li
   - `perl -pi -e 's/cancelledMessage\(runErr\)/runErr.Error()/' internal/workflow/engine.go`; the same test: `recorded "node n (N): workflow: execution was cancelled", want it to start with login_required: `.
   - `perl -pi -e 's/ && st\.Reason == account\.ReasonRefused//' internal/workflow/account_refused.go`; `'^TestOnlyARefusalCancels$'`: `expired: refusalCancels = true, want false`.
   - `perl -0pi -e 's/\t\te\.CancelExecution\(id\)\n/\t\te.queue.Cancel(id)\n/' internal/workflow/engine.go`; `'^TestRefusalEndsRunsQueuedBehindTheLimit$'`: after 10 s `execution still QUEUED after 10s`.
+
+### Task 3b: A run in flight ends at its next node while the account is locked
+
+Ruling R4 of 2026-10-07 (spec D8 and §6.4 as amended): `account.Require(ctx)` at the start of every node in the engine's node loop (`RunExecution`, `internal/workflow/execution.go:35` at master `f4441a2a`). A locked verdict (the 24 hours, `expired`, or any other lock) ends the run `FAILED` at its next node, with an error text that is `login_required: ` and the first line of the refusal; `ok` and `grace` never stop a run; the node in flight finishes, an agent turn or a browser action included, and only the next node is refused. Without the check a run with no agent or browser node (a polling loop, a long wait) never meets a gate again once it has started, and outlives the 24 hours. The check reads the guard's cached verdict, so a node pays no I/O for it. A refusal (`invalid_grant`) still cancels at once (Task 3); this task ends what a cancel does not reach and every other lock.
+
+**Files:**
+- Create: `internal/workflow/account_node.go`
+- Modify: `internal/workflow/execution.go` (the node loop of `RunExecution`: after the context-cancellation check, lines 129-134 at master; Tasks 1 to 3 do not touch this file)
+- Test: Create `internal/workflow/execution_account_test.go`
+
+**Interfaces:**
+- Consumes (B1a): `func account.Require(ctx context.Context) error`, `type account.LoginRequiredError struct{ Status account.Status }` (its `Error()` is `account.LoginRequiredMessage`, then for `expired` a second line with the reason), `account.LoginRequiredMessage`, `func account.CurrentStatus() account.Status`, `account.StateLocked`, `account.StateOK`, `account.StateGrace`, `account.ReasonExpired`, `account.InstallForTest`, `account.StrictForTest`, `account.SetEnforceFromForTest`; `func accounttest.InstallWithFixture(t testing.TB, m accounttest.Mode) (*account.Guard, *accounttest.Fixture)` (the guard runs on the fixture's `Clock`, which `.Advance(d)` moves) with the modes `SignedIn` and `InGrace`. From package `workflow`: `RunExecution`, `BuildDAG`, `NewNodeTypeRegistry`, `NewWorkflowEngineWithStore`, `handleExecution`, `ExecutionRequest`, `EngineConfig`, and the test store `stubStore` with `nodeRecord` (`internal/workflow/execution_test.go`).
+- Produces: unexported `requireAccountForNode(ctx context.Context) error` and `nodeRefusedError` (its `Error()` is `login_required: ` and the first line of the refusal; `Unwrap()` returns the `*account.LoginRequiredError`, so `account.IsLoginRequired` sees it). `RunExecution` returns it at the node it refuses, and `handleExecution` records the run `FAILED` with that text through its existing default case (no change there).
+
+- [ ] **Step 1: Read the node loop (no edits).** In `internal/workflow/execution.go` confirm that the loop of `RunExecution` starts with the resume skip (`if completedNodes[node.ID] { continue }`) and the context-cancellation check (`// Check context cancellation.`, a `select` on `ctx.Done()` that returns `ErrExecutionCancelled`), and that `handleExecution`'s step 5 records any other error of `runExecution` with `persistExecutionFinished(log, req.ExecutionID, "FAILED", runErr.Error())`. The check goes right after the cancellation check, so a cancelled run still ends `CANCELLED` (Task 3's tests) and a node that a resume skips is not judged again.
+
+- [ ] **Step 2: Write the failing test.** Create `internal/workflow/execution_account_test.go`:
+
+  ```go
+  package workflow
+
+  import (
+  	"context"
+  	"errors"
+  	"slices"
+  	"strings"
+  	"sync"
+  	"testing"
+  	"time"
+
+  	"github.com/rs/zerolog"
+
+  	"github.com/monoes/mono-agent/internal/account"
+  	"github.com/monoes/mono-agent/internal/account/accounttest"
+  )
+
+  // nodeGateStep is a plain node (no agent turn, no browser action). The test's hook
+  // for it runs while it is in flight, and then it tells the test it ran to its end.
+  type nodeGateStep struct{ ran func(nodeID string) }
+
+  func (nodeGateStep) Type() string { return "test.step" }
+
+  func (s nodeGateStep) Execute(_ context.Context, in NodeInput, _ map[string]interface{}) ([]NodeOutput, error) {
+  	s.ran(in.NodeID)
+  	return []NodeOutput{{Handle: "main", Items: in.Items}}, nil
+  }
+
+  // nodeGateStore is the stub store that hands the engine the run's execution and
+  // keeps the terminal status and message the engine records.
+  type nodeGateStore struct {
+  	*stubStore
+  	exec     *WorkflowExecution
+  	finished []string // "<status> <message>"
+  }
+
+  func (s *nodeGateStore) GetExecution(context.Context, string) (*WorkflowExecution, error) {
+  	cp := *s.exec
+  	return &cp, nil
+  }
+
+  func (s *nodeGateStore) SetExecutionFinished(_ context.Context, _ string, status, msg string) error {
+  	s.mu.Lock()
+  	defer s.mu.Unlock()
+  	s.finished = append(s.finished, status+" "+msg)
+  	return nil
+  }
+
+  // nodeGateWorkflow is a trigger and three plain nodes in a row: t1, n1, n2, n3.
+  func nodeGateWorkflow() *Workflow {
+  	node := func(id, typ string) WorkflowNode {
+  		return WorkflowNode{ID: id, WorkflowID: "wf-node-gate", Type: typ, Name: id}
+  	}
+  	edge := func(from, to string) WorkflowConnection {
+  		return WorkflowConnection{SourceNodeID: from, SourceHandle: "main", TargetNodeID: to, TargetHandle: "main"}
+  	}
+  	return &Workflow{ID: "wf-node-gate", Name: "node gate", IsActive: true, ProfileID: "engine-profile",
+  		Nodes:       []WorkflowNode{node("t1", "trigger.manual"), node("n1", "test.step"), node("n2", "test.step"), node("n3", "test.step")},
+  		Connections: []WorkflowConnection{edge("t1", "n1"), edge("n1", "n2"), edge("n2", "n3")}}
+  }
+
+  // nodeGateRegistry registers test.step, whose nodes call during(nodeID) while they
+  // are in flight and then append their id to *ran.
+  func nodeGateRegistry(during func(nodeID string), ran *[]string) *NodeTypeRegistry {
+  	var mu sync.Mutex
+  	reg := NewNodeTypeRegistry()
+  	reg.Register("test.step", func() NodeExecutor {
+  		return nodeGateStep{ran: func(id string) {
+  			if during != nil {
+  				during(id)
+  			}
+  			mu.Lock()
+  			*ran = append(*ran, id)
+  			mu.Unlock()
+  		}}
+  	})
+  	return reg
+  }
+
+  // runNodeGateWorkflow runs nodeGateWorkflow through the engine's queue handler, as
+  // every run starts, and returns the plain nodes that ran to their end, the terminal
+  // status and message the engine recorded, and the store with the node records.
+  func runNodeGateWorkflow(t *testing.T, during func(nodeID string)) (ran []string, final string, store *nodeGateStore) {
+  	t.Helper()
+  	wf := nodeGateWorkflow()
+  	store = &nodeGateStore{stubStore: &stubStore{workflowToReturn: wf},
+  		exec: &WorkflowExecution{ID: "exec-node-gate", WorkflowID: wf.ID, ProfileID: wf.ProfileID}}
+  	eng := NewWorkflowEngineWithStore(store, nil, nil, nodeGateRegistry(during, &ran),
+  		EngineConfig{ProfileID: "engine-profile"}, zerolog.Nop())
+
+  	eng.handleExecution(context.Background(), ExecutionRequest{WorkflowID: wf.ID, ExecutionID: "exec-node-gate"})
+
+  	store.mu.Lock()
+  	defer store.mu.Unlock()
+  	if len(store.finished) != 1 {
+  		t.Fatalf("the engine recorded %d terminal statuses %q, want one", len(store.finished), store.finished)
+  	}
+  	return ran, store.finished[0], store
+  }
+
+  // Ruling R4: a run in flight ends at its next node once the account is locked. The
+  // 24 hours run out while n1 runs (the guard's clock jumps past the grace): n1
+  // finishes, n2 never starts, and the run is FAILED with "login_required: " and the
+  // first line of the refusal. A run of plain nodes, with no agent turn or browser
+  // action of its own, cannot outlive the gate.
+  func TestARunEndsAtItsNextNodeOnceTheAccountLocks(t *testing.T) {
+  	_, fx := accounttest.InstallWithFixture(t, accounttest.SignedIn)
+
+  	ran, final, store := runNodeGateWorkflow(t, func(id string) {
+  		if id == "n1" {
+  			fx.Clock.Advance(25 * time.Hour) // no refresh for 25 hours: the grace is over
+  		}
+  	})
+
+  	if st := account.CurrentStatus(); st.State != account.StateLocked || st.Reason != account.ReasonExpired {
+  		t.Fatalf("the verdict after the jump is %s(%s), want locked(expired)", st.State, st.Reason)
+  	}
+  	if !slices.Equal(ran, []string{"n1"}) {
+  		t.Fatalf("the nodes that ran to their end are %v, want [n1]: the node in flight finishes, the next one is refused", ran)
+  	}
+  	n1, n2 := store.nodeRecord("n1"), store.nodeRecord("n2")
+  	if n1 == nil || n1.Status != "SUCCESS" || n2 != nil {
+  		t.Fatalf("n1 recorded SUCCESS %v, n2 recorded at all %v: want n1, the node in flight, finished and no record of n2",
+  			n1 != nil && n1.Status == "SUCCESS", n2 != nil)
+  	}
+  	if want := "FAILED login_required: " + account.LoginRequiredMessage; final != want {
+  		t.Fatalf("the run recorded %q, want %q", final, want)
+  	}
+  }
+
+  // Ruling R4: ok and grace never stop a run, also when the verdict moves from ok to
+  // grace while it runs.
+  func TestARunGoesOnWhileTheAccountIsOkOrInGrace(t *testing.T) {
+  	for _, c := range []struct {
+  		name string
+  		mode accounttest.Mode
+  		jump time.Duration // how far the guard's clock moves while n1 runs
+  		want account.State
+  	}{
+  		{"ok", accounttest.SignedIn, 0, account.StateOK},
+  		{"grace", accounttest.InGrace, 0, account.StateGrace},
+  		{"ok, then grace while n1 runs", accounttest.SignedIn, 2 * time.Hour, account.StateGrace},
+  	} {
+  		t.Run(c.name, func(t *testing.T) {
+  			_, fx := accounttest.InstallWithFixture(t, c.mode)
+
+  			ran, final, _ := runNodeGateWorkflow(t, func(id string) {
+  				if id == "n1" {
+  					fx.Clock.Advance(c.jump)
+  				}
+  			})
+
+  			if st := account.CurrentStatus(); st.State != c.want {
+  				t.Fatalf("the verdict is %s(%s), want %s", st.State, st.Reason, c.want)
+  			}
+  			if !slices.Equal(ran, []string{"n1", "n2", "n3"}) || final != "SUCCESS " {
+  				t.Fatalf("nodes %v, recorded %q: want all three and SUCCESS", ran, final)
+  			}
+  		})
+  	}
+  }
+
+  // A dormant gate (no enforcement date) or a date still ahead changes nothing: the
+  // run goes on when the guard's clock passes the 24 hours while it runs, and with no
+  // guard installed at all, judged strictly as a release binary is.
+  func TestADormantGateNeverEndsARun(t *testing.T) {
+  	for _, c := range []struct {
+  		name string
+  		set  func(t *testing.T) (jump func())
+  	}{
+  		{"dormant, a guard whose grace runs out while n1 runs", func(t *testing.T) func() {
+  			_, fx := accounttest.InstallWithFixture(t, accounttest.SignedIn)
+  			account.SetEnforceFromForTest(t, time.Time{})
+  			return func() { fx.Clock.Advance(25 * time.Hour) }
+  		}},
+  		{"dormant, strict, no guard", func(t *testing.T) func() {
+  			account.InstallForTest(t, nil)
+  			account.StrictForTest(t)
+  			account.SetEnforceFromForTest(t, time.Time{})
+  			return func() {}
+  		}},
+  		{"a date still ahead, strict, no guard", func(t *testing.T) func() {
+  			account.InstallForTest(t, nil)
+  			account.StrictForTest(t)
+  			account.SetEnforceFromForTest(t, time.Now().Add(48*time.Hour))
+  			return func() {}
+  		}},
+  	} {
+  		t.Run(c.name, func(t *testing.T) {
+  			jump := c.set(t)
+
+  			ran, final, _ := runNodeGateWorkflow(t, func(id string) {
+  				if id == "n1" {
+  					jump()
+  				}
+  			})
+
+  			if !slices.Equal(ran, []string{"n1", "n2", "n3"}) || final != "SUCCESS " {
+  				t.Fatalf("nodes %v, recorded %q: want all three and SUCCESS", ran, final)
+  			}
+  		})
+  	}
+  }
+
+  // The refusal of a node is a typed error. The execution's text is "login_required: "
+  // and the first line of the refusal; the error unwraps to the
+  // *account.LoginRequiredError, whose verdict says why, and whose own text keeps the
+  // reason line that the execution's leaves out.
+  func TestARefusedNodeEndsTheRunWithTheFirstLineOfTheRefusal(t *testing.T) {
+  	_, fx := accounttest.InstallWithFixture(t, accounttest.SignedIn)
+  	var ran []string
+  	reg := nodeGateRegistry(func(id string) {
+  		if id == "n1" {
+  			fx.Clock.Advance(25 * time.Hour)
+  		}
+  	}, &ran)
+  	wf := nodeGateWorkflow()
+  	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+  	if err != nil {
+  		t.Fatalf("BuildDAG: %v", err)
+  	}
+
+  	err = RunExecution(context.Background(), &WorkflowExecution{ID: "exec-node-gate", WorkflowID: wf.ID}, wf, dag, reg,
+  		&stubStore{}, nil, NewExpressionEngine(), zerolog.Nop())
+
+  	var lr *account.LoginRequiredError
+  	if !errors.As(err, &lr) || lr.Status.Reason != account.ReasonExpired {
+  		t.Fatalf("RunExecution = %v, want a *account.LoginRequiredError for expired", err)
+  	}
+  	if got, want := err.Error(), "login_required: "+account.LoginRequiredMessage; got != want {
+  		t.Fatalf("the error text is %q, want %q", got, want)
+  	}
+  	if !strings.HasPrefix(lr.Error(), account.LoginRequiredMessage+"\n") {
+  		t.Fatalf("the refusal is %q, want its first line and then the reason", lr.Error())
+  	}
+  	if !slices.Equal(ran, []string{"n1"}) {
+  		t.Fatalf("the nodes that ran to their end are %v, want [n1]", ran)
+  	}
+  }
+  ```
+
+- [ ] **Step 3: Run it and see it fail.**
+  ```
+  go test ./internal/workflow/ -run '^(TestARunEndsAtItsNextNodeOnceTheAccountLocks|TestARunGoesOnWhileTheAccountIsOkOrInGrace|TestADormantGateNeverEndsARun|TestARefusedNodeEndsTheRunWithTheFirstLineOfTheRefusal)$' -count=1
+  ```
+  Expected: `FAIL`. Two tests fail and say why; the other two pass, because before this task nothing ends a run in flight:
+  ```
+  --- FAIL: TestARunEndsAtItsNextNodeOnceTheAccountLocks (0.01s)
+      execution_account_test.go:119: the nodes that ran to their end are [n1 n2 n3], want [n1]: the node in flight finishes, the next one is refused
+  --- FAIL: TestARefusedNodeEndsTheRunWithTheFirstLineOfTheRefusal (0.01s)
+      execution_account_test.go:228: RunExecution = <nil>, want a *account.LoginRequiredError for expired
+  ```
+
+- [ ] **Step 4: Implement.**
+
+  (a) Create `internal/workflow/account_node.go`:
+  ```go
+  package workflow
+
+  import (
+  	"context"
+  	"strings"
+
+  	"github.com/monoes/mono-agent/internal/account"
+  )
+
+  // requireAccountForNode is the account check before every node of a run (spec D8
+  // and section 6.4, ruling R4 of 2026-10-07). A run in flight goes on while the
+  // account is ok or grace; a locked verdict (the 24 hours without monoes.me, a
+  // refusal, any other lock) ends it at its next node, so a run with no agent or
+  // browser node (a polling loop, a long wait) cannot outlive the gate. The node in
+  // flight is never interrupted: an agent turn or a browser action that started
+  // before the lock finishes, and only the next node is refused. Require reads the
+  // guard's cached verdict, so a node pays no I/O for it.
+  func requireAccountForNode(ctx context.Context) error {
+  	if err := account.Require(ctx); err != nil {
+  		return &nodeRefusedError{err: err}
+  	}
+  	return nil
+  }
+
+  // nodeRefusedError ends a run at a node that a locked account refuses. Its text is
+  // what the execution records: "login_required: " and the first line of the
+  // refusal (the reason line stays in the wrapped error). It unwraps to the
+  // *account.LoginRequiredError, so account.IsLoginRequired sees it.
+  type nodeRefusedError struct{ err error }
+
+  func (e *nodeRefusedError) Error() string {
+  	first, _, _ := strings.Cut(e.err.Error(), "\n")
+  	return "login_required: " + first
+  }
+
+  func (e *nodeRefusedError) Unwrap() error { return e.err }
+  ```
+  (b) In `internal/workflow/execution.go`, in the loop of `RunExecution`, directly after the context-cancellation check (the `select { case <-ctx.Done(): return ErrExecutionCancelled; default: }` block) and before `// Skip disabled nodes; still mark their successors so mergeWaiting`, insert (no import changes: the check lives in `account_node.go`):
+  ```go
+  		// A locked account ends the run here, before this node starts; the node
+  		// before it has finished (account_node.go).
+  		if nodeErr := requireAccountForNode(ctx); nodeErr != nil {
+  			return nodeErr
+  		}
+  ```
+
+- [ ] **Step 5: Run it and see it pass, with the race detector.** The command of step 3 with `-race`. Expected: `ok  	github.com/monoes/mono-agent/internal/workflow`.
+
+- [ ] **Step 6: The whole package still passes.** The older tests of `RunExecution` install no guard, and in a test binary `Require` then returns nil.
+  ```
+  go test ./internal/workflow/ -count=1
+  ```
+  Expected: `ok  	github.com/monoes/mono-agent/internal/workflow` (about 15 s).
+
+- [ ] **Step 7: Commit.**
+  ```
+  git add internal/workflow/account_node.go internal/workflow/execution.go internal/workflow/execution_account_test.go
+  ```
+  ```
+  git commit -m "feat(account): a run in flight ends at its next node while the account is locked" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+  ```
+
+- [ ] **Step 8: Mutation checks.** For each: apply, run the command of step 3, expect the FAIL, `git restore` the file.
+  - The recipe of the Decisions list with VAR `nodeErr` on `internal/workflow/execution.go` (the check lets everything through): `TestARunEndsAtItsNextNodeOnceTheAccountLocks` says `the nodes that ran to their end are [n1 n2 n3], want [n1]` and `TestARefusedNodeEndsTheRunWithTheFirstLineOfTheRefusal` says `RunExecution = <nil>, want a *account.LoginRequiredError for expired`.
+  - `perl -pi -e 's/"\\n"\)/"\\x00")/' internal/workflow/account_node.go` (the execution's text carries the whole refusal, its reason line included): both of those tests fail on the text, `want "FAILED login_required: Log in to monoes.me first: monoagentcli account login"` and `want "login_required: Log in to monoes.me first: monoagentcli account login"`.
+  - The check after the node instead of before it, so that the node in flight is refused too (two commands, then restore the file): `perl -0pi -e 's/\t\tif nodeErr := requireAccountForNode\(ctx\); nodeErr != nil \{\n\t\t\treturn nodeErr\n\t\t\}\n\n//' internal/workflow/execution.go` and `perl -0pi -e 's/(\t\toutputs, execErr := executeWithRetry\(ctx, executor, nodeInput, resolvedConfig, retryPolicy\)\n)/$1\t\tif nodeErr := requireAccountForNode(ctx); nodeErr != nil {\n\t\t\treturn nodeErr\n\t\t}\n/' internal/workflow/execution.go`: `TestARunEndsAtItsNextNodeOnceTheAccountLocks` says `n1 recorded SUCCESS false, n2 recorded at all false`.
 
 ### Task 4: Every agent turn and every browser action refuses while locked
 
@@ -1778,9 +2123,9 @@ D8 and §6.4, exactly. The daemon never exits because of a lock (launchd's KeepA
 
   // The supervisor follows the account: it starts the org services while the
   // account is valid; at the 24 hours (expired) it stops them, cancels nothing
-  // (work in flight finishes), logs once and does not end the daemon; at the next
-  // sign-in it starts them again; on a refusal it stops them and cancels what the
-  // engine is running, once per lock.
+  // (the engine ends each run at its next node), logs once and does not end the
+  // daemon; at the next sign-in it starts them again; on a refusal it stops them
+  // and cancels what the engine is running, once per lock.
   func TestSupervisorFollowsTheAccount(t *testing.T) {
   	rig := newSupRig(t, supOK)
   	supUntil(t, "the org services start", func() bool { n, live, _ := rig.state(); return n == 1 && live })
@@ -2002,8 +2347,9 @@ D8 and §6.4, exactly. The daemon never exits because of a lock (launchd's KeepA
   // run applies the verdict at once and then every poll, until ctx ends. It never
   // returns because of a lock. A daemon that starts locked never starts the org
   // services; one that is locked later stops them and starts them again when the
-  // account is valid. A refusal (and only a refusal: at the 24 hours, expired, work
-  // in flight finishes) also cancels what the engine is running, once per lock.
+  // account is valid. A refusal (and only a refusal: at the 24 hours, expired, the
+  // engine ends each run at its next node) also cancels what the engine is running,
+  // once per lock.
   func (s *accountSupervisor) run(ctx context.Context) {
   	var (
   		stop      context.CancelFunc // non-nil while the org services run
@@ -2147,7 +2493,7 @@ Spike S4's layer-2 half (which processes call the three gate sites with no guard
   ```markdown
   ## S4, layer 2 (from plan B3a)
 
-  Which processes reach the three layer-2 gate sites (`WorkflowEngine.handleExecution` and the calls that create an execution, `monomind.Exec`, `ActionExecutor.executeDef`), and whether a guard is installed there. Surveyed at master `f4441a2a` with the greps of plan B3a task 8.
+  Which processes reach the three layer-2 gate sites (`WorkflowEngine.handleExecution` and the calls that create an execution, `monomind.Exec`, `ActionExecutor.executeDef`), and whether a guard is installed there. The node check of `RunExecution` (plan B3a task 3b, ruling R4) is reached only through `handleExecution` (`WorkflowEngine.runExecution` is its one caller outside tests), so it is covered by the same answer. Surveyed at master `f4441a2a` with the greps of plan B3a task 8.
 
   - **`monoagentcli`** (every command, so also the daemon, `httpapi`, `mcp`, `mcp --grant`, `extension serve` and, while signed in, `org serve --foreground`, and the engines that `internal/httpapi` and `internal/mcp` start inside those processes) is the only production process that reaches the three sites. `run()` (B2) installs its guard, and the `init` of `cmd/monoagentcli` installs `account.Require` as the gate `monomind.Exec` asks (plan B3a task 4): a binary that links `monomind` and never installs that gate is refused by `Exec`, and none exists.
   - **The desktop's Go side (`wails-app`) reaches none of them.** It calls `monomind.Scan`, `ListModels` and `IngestDocument`, `nodes.BootAutomations` and `workflow.NewWorkflowFileStore`, and runs every execution through a `monoagentcli` subprocess with its own guard. B4's read-only guard is not load-bearing for layer 2. The linker agrees: the desktop's binary (the Go side built with a stub `frontend/dist`), `cmd/inspect` and `cmd/schemagen` link none of `monomind.Exec`, `ActionExecutor.executeDef` and `WorkflowEngine.handleExecution` (`go tool nm`), and `monoagentcli` links all three.
@@ -2193,7 +2539,7 @@ Spike S4's layer-2 half (which processes call the three gate sites with no guard
   ```
   git diff --stat <the commit noted in Task 1 step 1>..HEAD -- '*_test.go'
   ```
-  Expected: only the new files of Tasks 1 to 7 (`internal/workflow/engine_account_test.go`, `engine_locked_test.go`, `engine_refused_test.go`, `internal/monomind/exec_account_test.go`, `internal/action/executor_account_test.go`, `internal/daemonhb/account_test.go`, `cmd/monoagentcli/{monomind_gate,account_serving,daemon_account,daemon_account_status}_test.go`), and a summary line with no `deletions(-)`: no existing test was edited.
+  Expected: only the new files of Tasks 1 to 7, Task 3b included (`internal/workflow/engine_account_test.go`, `engine_locked_test.go`, `engine_refused_test.go`, `execution_account_test.go`, `internal/monomind/exec_account_test.go`, `internal/action/executor_account_test.go`, `internal/daemonhb/account_test.go`, `cmd/monoagentcli/{monomind_gate,account_serving,daemon_account,daemon_account_status}_test.go`), and a summary line with no `deletions(-)`: no existing test was edited.
 
 ## Contract change requests
 

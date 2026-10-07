@@ -1360,7 +1360,8 @@ import (
 const shortToken = 15 * time.Second
 
 // Acceptance 3: signed in, monoes.me unreachable: the work goes on until 24 hours after the newest
-// token was issued, then the machine is locked; work in flight at that moment finishes.
+// token was issued, then the machine is locked; work in flight at that moment finishes the node it is
+// in (this job has one node, so it ends SUCCESS; a run with a next node ends there, ruling R4).
 func TestUnreachableIsGraceUntilTwentyFourHours(t *testing.T) {
 	r := newRig(t, rigOptions{enforce: past})
 	r.signIn()
@@ -1383,7 +1384,7 @@ func TestUnreachableIsGraceUntilTwentyFourHours(t *testing.T) {
 	r.backdate(24*time.Hour + time.Minute)
 	r.waitFor("the daemon to lock", 60*time.Second, func() bool { return r.accountState() == "locked" })
 	if got := r.execution(id).Status; got != "RUNNING" {
-		t.Fatalf("the job was %s when the 24 hours ran out: unreachable is not a refusal, so work in flight finishes", got)
+		t.Fatalf("the job was %s when the 24 hours ran out: unreachable is not a refusal, so the node in flight finishes", got)
 	}
 	r.assertLocked(r.run("--json", "workflow", "list"), "expired", true)
 	r.waitFor("the job to finish", 90*time.Second, func() bool { return r.execution(id).Status != "RUNNING" })
@@ -2180,7 +2181,7 @@ Expected: no output from the vets and `gofmt`; `ok` for `internal/account` with 
 |---|---|
 | 1. After the date, with no valid session, every gated command exits 4 with `login_required` and does nothing else, and every door refuses | `TestNoSessionAfterTheDateIsRefusedAndNothingIsWritten` (Task 2): a command that would write is refused with the fixed line and the JSON error and leaves nothing in HOME but the clock-guard record of a machine that never signed in (A25: `account/session.lock` and a `session.json` with no token), `org serve --foreground` is refused as a gated launcher, an open command works, one sign-in opens the machine, a logout closes it. `TestEveryDoorRefusesWhenLockedAndOpensWhenSignedIn` (Task 4): in a daemon that started locked, the HTTP API, `/v1`, the org receiver, the webhook server, the bridge and MCP refuse, and each opens after a sign-in without a restart. |
 | 2. Signed in, then blocked: locked within one refresh interval, work in flight cancelled | `TestBlockedAccountLocksAndCancelsWorkInFlight` (Task 3): the fake answers `invalid_grant`, the run in the daemon ends `CANCELLED`, the heartbeat says `locked`/`refused`, `refresh.enc` is deleted, the daemon stays up and resumes after one sign-in. |
-| 3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes | `TestUnreachableIsGraceUntilTwentyFourHours` (Task 3): grace with its stderr line on stderr only, then `locked(expired)` while a 40-second job finishes `SUCCESS`; `TestAnswersThatAreNotARefusalKeepTheGrace` (D27: a 500, `invalid_client`, `invalid_target` and a page that is not JSON never lock and keep the refresh token); `TestAnUnknownSigningKeyIsTheRunUpdateCase` (spec §4.7, A9: `server_error` in the grace, then `locked(key_unknown)` and a doctor fix that is the update). |
+| 3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes the node it is in, and a run ends at its next node (ruling R4) | `TestUnreachableIsGraceUntilTwentyFourHours` (Task 3): grace with its stderr line on stderr only, then `locked(expired)` while a 40-second job of one node finishes `SUCCESS` (a run with a next node ends there: B3a's Task 3b pins that in the engine); `TestAnswersThatAreNotARefusalKeepTheGrace` (D27: a 500, `invalid_client`, `invalid_target` and a page that is not JSON never lock and keep the refresh token); `TestAnUnknownSigningKeyIsTheRunUpdateCase` (spec §4.7, A9: `server_error` in the grace, then `locked(key_unknown)` and a doctor fix that is the update). |
 | 4. Before the date nothing locks, and once a date is set every surface warns | `TestNothingLocksBeforeTheDateAndEverySurfaceWarns` (Task 2): with a date two days ahead and no session, a command succeeds, the warning appears once on stderr and never on stdout, `account status` says `locked`/`not_logged_in` with `enforced` false, the doctor row warns, the heartbeat says so, and the daemon runs work. The dormant half (a date of zero until R) is B5a's `TestEnforcedFlipsAtTheDate` and its suite run. |
 | 5. A release binary built with the `devaccount` tag cannot ship | B5a's guard. Here `TestDefaultBuildIgnoresTheEnforceOverride` (Task 1) pins that a default build, the one every release is, ignores `MONOAGENT_DEV_ENFORCE_FROM` whatever it holds. |
 
