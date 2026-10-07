@@ -20,7 +20,9 @@ import (
 // also tells other processes where this bridge is and must keep answering 200)
 // and the listing and resolving of browsers. Binding pushes, activity-recording
 // frames and pages the extension flushes unasked are data, not work: they stay
-// accepted (record.analyze, the work on a recording, is a request).
+// accepted (record.analyze, the work on a recording, is a request), and while
+// the account is locked nothing runs on a capture once it is written
+// (skipAfterWrite).
 
 // errAccountLocked is the error of every reply the bridge refuses.
 var errAccountLocked = errors.New(accountdoor.Message)
@@ -43,4 +45,17 @@ func writeRelayLocked(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(&Response{Error: accountdoor.Message})
+}
+
+// skipAfterWrite reports whether the after-write hook must not run for the
+// capture written at path, and logs why when it must not. A locked account
+// keeps the capture (the extension has already dropped its copy) but runs
+// none of the work that follows a write: the summary, the page-kind
+// classifier and the indexing that the bridge commands install.
+func (s *Server) skipAfterWrite(path string) bool {
+	if !accountRefuses() {
+		return false
+	}
+	s.logger.Warn().Str("path", path).Msg("capture stored without its summary, classification or indexing: no valid monoes.me login (run: monoagentcli account login)")
+	return true
 }
