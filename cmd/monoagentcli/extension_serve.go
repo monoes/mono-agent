@@ -67,6 +67,10 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 	// advertised at all, and the popup quietly saves into the default
 	// profile — see internal/extension/profile_list.go.
 	srv.SetProfileSource(extensionProfileSource(defaultDBPath))
+	// task.add: the extension's task entries file into the board of the
+	// profile they name (extension_tasks.go). Advertised in ping, so a newer
+	// extension knows this bridge takes tasks.
+	srv.SetTaskSink(extensionTaskSink(defaultDBPath))
 	srv.SetVersion(getVersion())
 	// Every bridge that owns the connection writes the summaries its
 	// captures ask for. `extension serve` re-installs this with its own

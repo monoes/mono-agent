@@ -193,6 +193,31 @@
     </section>
 
     <div class="panels">
+      <!-- Task board (spec 11.1): a task for the profile the header shows,
+           filed in its Inbox. The add-task shortcut opens this section. -->
+      <details class="panel" id="task-panel">
+        <summary><span>Add a task</span></summary>
+        <div class="panel-body">
+          <div class="field">
+            <label for="task-text">The task</label>
+            <textarea id="task-text" rows="3" maxlength="65536" placeholder="What needs doing? The first line is the title."></textarea>
+          </div>
+          <div class="row row-start">
+            <button type="button" id="task-add" class="btn-secondary" disabled>Choose a profile first</button>
+          </div>
+          <div id="task-msg" class="msg" role="status" aria-live="polite"></div>
+          <div id="task-failed" class="field" hidden>
+            <p id="task-failed-text" class="note-line"></p>
+            <textarea id="task-failed-body" rows="2" readonly aria-label="The text of the latest task MonoAgent did not add"></textarea>
+            <button type="button" id="task-dismiss" class="link">Dismiss</button>
+          </div>
+          <p class="note-line">
+            Tasks land in the profile's Inbox; an AI agent sees one only after you
+            approve it in MonoAgent. Cmd or Ctrl+Enter adds.
+          </p>
+        </div>
+      </details>
+
       <!-- §8.2/§8.6: record what you do on this tab, then turn it into an
            action. Opened for you while a recording is running, and the red
            dot in the summary says so even when it is folded. -->
@@ -399,5 +424,7 @@
        and MonoPanelPage. -->
   <script src="sidepanel_record_view.js"></script>
   <script src="sidepanel_record.js"></script>
+  <!-- The task box. Also after sidepanel.js, for `ask` and `profiles`. -->
+  <script src="sidepanel_tasks.js"></script>
 </body>
 </html>

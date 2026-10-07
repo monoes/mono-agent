@@ -320,8 +320,30 @@
     return { text: `Nothing in your captures${where} matches that yet.`, tone: "" };
   }
 
+  /**
+   * taskButton is the side panel's "Add a task" button for the profile the
+   * header shows. A task always sits in a profile (task board spec 4.5), so
+   * with the shared inbox chosen, or nothing known yet, it adds nothing and
+   * says what to do.
+   */
+  function taskButton(current) {
+    if (!current || !current.id) return { text: "Choose a profile first", enabled: false };
+    return { text: `Add to ${current.name}`, enabled: true };
+  }
+
+  /** taskFailures is the line about tasks MonoAgent refused: how many, and the latest. */
+  function taskFailures(failures) {
+    const list = Array.isArray(failures) ? failures : [];
+    if (!list.length) return "";
+    const last = list[list.length - 1];
+    const what = list.length === 1 ? "1 task" : `${list.length} tasks`;
+    return `MonoAgent did not add ${what}. Latest: "${last.title}": ${last.reason}`;
+  }
+
   root.MonoPanelView = {
     askStatus,
+    taskButton,
+    taskFailures,
     describeTab,
     tabChange,
     describeProfiles,

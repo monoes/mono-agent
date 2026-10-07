@@ -36,6 +36,9 @@
 
   const ROOT_ID = "monoagent-root";
   const SELECTION_ID = "monoagent-capture-selection";
+  // The task board's two items. Their clicks are task_menu.js's: menuRoute
+  // returns null for them, as for any item that is not a capture.
+  const TASK_IDS = { selection: "monoagent-tasks-selection", page: "monoagent-tasks-page" };
   const idFor = (mode) => `monoagent-capture-${mode}`;
 
   /**
@@ -60,6 +63,8 @@
         documentUrlPatterns: videoPatterns,
       },
       { id: SELECTION_ID, parentId: ROOT_ID, title: "Save selection to monomind", contexts: ["selection"] },
+      { id: TASK_IDS.page, parentId: ROOT_ID, title: "Add page as task", contexts: ["page"] },
+      { id: TASK_IDS.selection, parentId: ROOT_ID, title: "Add selection as task", contexts: ["selection"] },
     ];
   }
 
@@ -107,5 +112,5 @@
     };
   }
 
-  root.MonoCaptureModes = { MODES, menuItems, menuRoute, paramsFor, feedback, ROOT_ID, SELECTION_ID, idFor };
+  root.MonoCaptureModes = { MODES, menuItems, menuRoute, paramsFor, feedback, ROOT_ID, SELECTION_ID, TASK_IDS, idFor };
 })(globalThis);
