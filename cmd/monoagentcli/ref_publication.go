@@ -18,6 +18,15 @@ Read history (all local-only):
   monoagentcli --json publication get <id>
   monoagentcli --json publication stats
 
+Page with a keyset cursor (stable while new records arrive; --offset still works):
+  monoagentcli --json publication list --limit 100 --cursor ""      # {"publications":[...],"next_cursor":"..."}
+  monoagentcli --json publication list --limit 100 --cursor <next_cursor>
+An empty next_cursor is the last page. --cursor and --offset cannot be combined.
+
+Remove a record from history (operator only; refused inside an agent session; it
+does not touch the remote post):
+  monoagentcli publication delete <id>
+
 Built-in publishing operations record automatically through workflows, agent-granted
 automations and direct node runs. Reads, likes, follows, drafts and private messages
 do not create records. History starts when this feature is installed.

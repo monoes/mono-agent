@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/data"
@@ -19,6 +20,13 @@ func testStore(t *testing.T) *Store {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	migration, err := data.MigrationsFS.ReadFile("migrations/063_publications.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	migration, err = data.MigrationsFS.ReadFile("migrations/064_publications_sortable_ts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +187,137 @@ func TestRegisterOpaqueParentIdentifiers(t *testing.T) {
 		e, err := store.Register(context.Background(), Entry{Platform: "custom", Kind: "reply", Body: "reply", ParentURL: parent})
 		if err != nil || e.ParentURL != parent {
 			t.Fatalf("parent %q: %+v %v", parent, e, err)
+		}
+	}
+}
+
+func TestKeysetCursorAndDelete(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	// Two entries share a timestamp, to prove the id tie-break.
+	for i, at := range []string{"2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z", "2026-10-02T00:00:00Z", "2026-10-03T00:00:00Z", "2026-10-04T00:00:00Z"} {
+		if _, err := s.Register(ctx, Entry{Platform: "x", Kind: "post", Body: "b" + string(rune('a'+i)), PublishedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := s.List(ctx, Filter{})
+	if err != nil || len(all) != 5 {
+		t.Fatalf("all: %v %v", all, err)
+	}
+	var got []string
+	cursor := ""
+	for pages := 0; pages < 10; pages++ {
+		page, next, err := s.ListPage(ctx, Filter{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range page {
+			got = append(got, e.ID)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(got) != 5 {
+		t.Fatalf("cursor paging got %d", len(got))
+	}
+	for i := range got {
+		if got[i] != all[i].ID {
+			t.Fatalf("cursor order differs at %d", i)
+		}
+	}
+	if _, _, err := s.ListPage(ctx, Filter{Cursor: "!!"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("bad cursor: %v", err)
+	}
+	if _, _, err := s.ListPage(ctx, Filter{Cursor: cursor, Offset: 1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("cursor+offset: %v", err)
+	}
+	other := NewStore(s.db, "p2")
+	if err := other.Delete(ctx, all[1].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-profile delete: %v", err)
+	}
+	if err := s.Delete(ctx, all[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, all[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted still there: %v", err)
+	}
+	if err := s.Delete(ctx, all[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
+// Legacy rows (inserted before migration 064) with sub-millisecond digits must
+// page across a boundary without skipping or repeating, and an unparseable
+// published_at must map to the same zero time in the backfill and in Go.
+func TestLegacySubMillisecondAndUnparseablePaging(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	run := func(name string) {
+		m, err := data.MigrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(string(m)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("063_publications.sql")
+	legacy := []struct{ id, at string }{
+		{"a", "2026-10-01T00:00:00.1239Z"},      // would round up to .124
+		{"b", "2026-10-01T00:00:00.1236789Z"},   // same millisecond as a
+		{"c", "2026-10-01T00:00:00.9996Z"},      // must not carry into the next second
+		{"d", "2026-10-01T02:00:00.5009+02:00"}, // offset, truncated .500
+		{"e", "2026-10-01T00:00:00Z"},
+		{"f", "garbage"},
+		{"g", ""},
+	}
+	for _, r := range legacy {
+		if _, err := db.Exec(`INSERT INTO publications (id, profile_id, kind, platform, published_at, recorded_at, idempotency_key) VALUES (?, 'p1', 'post', 'x', ?, ?, ?)`, r.id, r.at, r.at, r.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("064_publications_sortable_ts.sql")
+	want := map[string]string{
+		"a": "2026-10-01T00:00:00.123Z", "b": "2026-10-01T00:00:00.123Z", "c": "2026-10-01T00:00:00.999Z",
+		"d": "2026-10-01T00:00:00.500Z", "e": "2026-10-01T00:00:00.000Z",
+		"f": "0001-01-01T00:00:00.000Z", "g": "0001-01-01T00:00:00.000Z",
+	}
+	for _, r := range legacy {
+		var ts string
+		if err := db.QueryRow("SELECT published_ts FROM publications WHERE id=?", r.id).Scan(&ts); err != nil {
+			t.Fatal(err)
+		}
+		if ts != want[r.id] || ts != sortTS(parseTS(r.at)) {
+			t.Fatalf("%s: sql %q want %q go %q", r.id, ts, want[r.id], sortTS(parseTS(r.at)))
+		}
+	}
+	s := NewStore(db, "p1")
+	ctx := context.Background()
+	for _, size := range []int{1, 2, 3} {
+		var got []string
+		cursor := ""
+		for pages := 0; pages < 20; pages++ {
+			page, next, err := s.ListPage(ctx, Filter{Limit: size, Cursor: cursor})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range page {
+				got = append(got, e.ID)
+			}
+			if next == "" {
+				break
+			}
+			cursor = next
+		}
+		// c(.999) > d(.500) > b,a (.123, id desc) > e(.000) > g,f (zero time, id desc)
+		if want := "c d b a e g f"; strings.Join(got, " ") != want {
+			t.Fatalf("limit %d: got %v want %s", size, got, want)
 		}
 	}
 }
