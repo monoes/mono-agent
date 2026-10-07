@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import {
   LayoutDashboard, Users,
   Terminal, PlayCircle, Settings, Image, Mail, KeyRound,
-  ChevronDown, Plus, Check, Building2, FolderOpen, FolderCog, Loader2, Briefcase, FileText, Send
+  ChevronDown, Plus, Check, Building2, FolderOpen, FolderCog, Loader2, Briefcase, FileText, Send, KanbanSquare
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
@@ -12,6 +12,7 @@ import { notify } from '../services/api.js'
 import { confirm } from './ConfirmDialog.jsx'
 import NewProfileModal from './NewProfileModal.jsx'
 import { iconUrl } from './orgdesigner/roleIcons.js'
+import { tasksApi, onTasksChanged } from '../services/tasks.js'
 
 const GetProfiles          = WailsApp.GetProfiles          ?? (async () => [])
 const SwitchProfile        = WailsApp.SwitchProfile        ?? (async () => {})
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { id: 'secretsVault', labelKey: 'secretsVault', icon: KeyRound,      section: 'DATA' },
   { id: 'applications', labelKey: 'applications', icon: Briefcase,     section: 'DATA' },
   { id: 'documents',   labelKey: 'documents',   icon: FileText,        section: 'DATA' },
+  { id: 'tasks',       labelKey: 'tasks',       icon: KanbanSquare,    section: 'DATA' },
   { id: 'logs',        labelKey: 'logs',        icon: Terminal,        section: 'DEBUG' },
   { id: 'settings',    labelKey: 'settings',    icon: Settings,        section: 'SYSTEM' },
 ]
@@ -156,7 +158,17 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
 
   const activeProfileName = profiles.find(p => p.id === activeProfileID)?.name ?? 'Default'
 
+  // Tasks: what waits for a person (Inbox plus Review), from the board pulse.
+  const [taskWaiting, setTaskWaiting] = useState(0)
+  useEffect(() => {
+    const read = (p) => setTaskWaiting(p && !p.error ? (p.inbox || 0) + (p.review || 0) : 0)
+    tasksApi.pulse().then(read)
+    const off = onTasksChanged(read)
+    return () => { if (typeof off === 'function') off() }
+  }, [])
+
   const getBadge = (id) => {
+    if (id === 'tasks' && taskWaiting > 0) return taskWaiting
     if (!stats) return null
     if (id === 'people' && stats.total_people > 0) return stats.total_people
     return null

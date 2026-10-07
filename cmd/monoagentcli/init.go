@@ -26,6 +26,7 @@ const claudeInitMarker = ".claude_init"
 var claudeSkillNames = []string{
 	"action-template-generator",
 	"monoagent-workflows",
+	"monoagent-tasks",
 }
 
 // legacyClaudeSkillSHA256 are the contents earlier releases wrote as flat

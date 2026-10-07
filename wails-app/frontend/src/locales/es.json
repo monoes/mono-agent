@@ -9,6 +9,7 @@
       "orgs": "Organización",
       "people": "Personas",
       "publication": "Publicación",
+      "tasks": "Tareas",
       "communications": "Comunicaciones",
       "vault": "Imágenes",
       "secretsVault": "Bóveda",
@@ -1229,6 +1230,50 @@
     "couldNotSend": "No se pudo enviar: {{error}}",
     "openAsBubble": "Abrir como burbuja",
     "openAsBubbleNamed": "Abrir {{name}} como burbuja de chat"
+  },
+  "tasks": {
+    "title": "Tareas",
+    "search": "Buscar tareas",
+    "loading": "Cargando el tablero…",
+    "loadError": "No se pudo leer el tablero",
+    "readOnly": "Solo lectura: esta app la inició un agente, así que solo las personas cambian el tablero.",
+    "column": {
+      "inbox": "Bandeja",
+      "ready": "Listo",
+      "in_progress": "En curso",
+      "review": "Revisión",
+      "done": "Hecho"
+    },
+    "empty": "Nada aquí",
+    "quickAddPlaceholder": "Título de la nueva tarea",
+    "addToReady": "Añadir a Listo",
+    "add": "Añadir",
+    "approve": "Aprobar a Listo",
+    "archive": "Archivar",
+    "claimedBy": "Reclamada por {{by}}",
+    "stale": "Reclamo vencido",
+    "close": "Cerrar",
+    "drawer": {
+      "title": "Título",
+      "notes": "Notas",
+      "save": "Guardar",
+      "history": "Historial",
+      "comment": "Añadir un comentario",
+      "send": "Comentar",
+      "loadError": "No se pudo leer la tarea",
+      "kind": {
+        "created": "creó",
+        "edited": "editó",
+        "moved": "movió",
+        "claimed": "reclamó",
+        "reclaimed": "retomó",
+        "comment": "comentó",
+        "question": "preguntó",
+        "result": "informó",
+        "released": "liberó"
+      }
+    },
+    "refused": "Rechazado: {{error}}"
   },
   "publication": {
     "title": "Publicación",

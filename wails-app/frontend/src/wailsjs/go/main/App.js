@@ -1190,6 +1190,50 @@ export function TagApplication(arg1, arg2, arg3) {
   return window['go']['main']['App']['TagApplication'](arg1, arg2, arg3);
 }
 
+export function TaskAdd(arg1) {
+  return window['go']['main']['App']['TaskAdd'](arg1);
+}
+
+export function TaskAgentShell() {
+  return window['go']['main']['App']['TaskAgentShell']();
+}
+
+export function TaskApprove(arg1, arg2) {
+  return window['go']['main']['App']['TaskApprove'](arg1, arg2);
+}
+
+export function TaskArchive(arg1) {
+  return window['go']['main']['App']['TaskArchive'](arg1);
+}
+
+export function TaskBoard(arg1) {
+  return window['go']['main']['App']['TaskBoard'](arg1);
+}
+
+export function TaskComment(arg1, arg2) {
+  return window['go']['main']['App']['TaskComment'](arg1, arg2);
+}
+
+export function TaskEdit(arg1, arg2) {
+  return window['go']['main']['App']['TaskEdit'](arg1, arg2);
+}
+
+export function TaskMove(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TaskMove'](arg1, arg2, arg3, arg4);
+}
+
+export function TaskPulse() {
+  return window['go']['main']['App']['TaskPulse']();
+}
+
+export function TaskShow(arg1) {
+  return window['go']['main']['App']['TaskShow'](arg1);
+}
+
+export function TaskUnarchive(arg1) {
+  return window['go']['main']['App']['TaskUnarchive'](arg1);
+}
+
 export function TestAutomation(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestAutomation'](arg1, arg2, arg3);
 }
