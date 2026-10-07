@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/imagescan"
@@ -419,8 +418,8 @@ func RunExecution(
 					}
 					pubOutputs = append(pubOutputs, publication.Output{Handle: out.Handle, Items: items})
 				}
-				entries := publication.Normalize(publication.CaptureInput{NodeType: node.Type, Config: resolvedConfig, Outputs: pubOutputs, AttemptID: uuid.NewString(),
-					Source: PublicationSource(ctx, nodeInput)})
+				entries := publication.Normalize(publication.CaptureInput{NodeType: node.Type, Config: resolvedConfig, Outputs: pubOutputs,
+					Source: withNodeRun(PublicationSource(ctx, nodeInput), execNode.ID)})
 				publication.Record(ctx, publication.NewStore(db, vault.ProfileIDFromContext(ctx)), entries, func(msg string) { logger.Warn().Msg(msg) })
 			}
 

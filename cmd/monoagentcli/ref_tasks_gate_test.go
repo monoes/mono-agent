@@ -14,7 +14,7 @@ import (
 // operator's rows. When a command is added, removed or changes class, edit this table, and make
 // ref_tasks.go and AGENTS.md say the same.
 var refTaskGate = []struct {
-	row  string   // what the text names: a subcommand, or "add --ready"
+	row  string   // what the text names: a subcommand, "add --ready", or a command of a group ("os install")
 	op   bool     // the operator's only: an agent's call answers operator_only
 	call []string // a call of it; the tests add the agent's --as
 }{
@@ -34,34 +34,57 @@ var refTaskGate = []struct {
 	{"finish", false, []string{"finish", "1", "--result", "x"}},
 	{"release", false, []string{"release", "1"}},
 	{"digest", false, []string{"digest"}},
+	{"os install", true, []string{"os", "install"}},
+	{"os status", false, []string{"os", "status"}},
+	{"os uninstall", true, []string{"os", "uninstall"}},
+}
+
+// refGatePath is the command a row of refTaskGate names: its words that are not flags, so that
+// "add --ready" is add and "os install" is install in the group os.
+func refGatePath(row string) string {
+	var words []string
+	for _, w := range strings.Fields(row) {
+		if !strings.HasPrefix(w, "-") {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
-	// The table covers the command tree, both ways.
+	// The table covers the command tree, both ways: every command that is not a group has a row,
+	// and a row names such a command. A group has the rows of its commands and none of its own: a
+	// row named just os, marked as an agent's, would pass the check of WHO MAY DO WHAT below by
+	// "the labels you, agent, capture, chrome and os are reserved".
 	rows := map[string]bool{}
 	for _, r := range refTaskGate {
-		rows[strings.Fields(r.row)[0]] = true
-		if r.call[0] != strings.Fields(r.row)[0] {
-			t.Errorf("the row %q of refTaskGate calls `task %s`", r.row, r.call[0])
+		path := refGatePath(r.row)
+		rows[path] = true
+		if !strings.HasPrefix(strings.Join(r.call, " ")+" ", path+" ") {
+			t.Errorf("the row %q of refTaskGate calls `task %s`", r.row, strings.Join(r.call, " "))
 		}
 	}
-	exists := map[string]bool{}
-	for _, sub := range newTaskCmd(&globalConfig{}).Commands() {
-		exists[sub.Name()] = true
-		if !rows[sub.Name()] {
-			t.Errorf("`task %s` has no row in refTaskGate (ref_tasks_gate_test.go): add one that says whether an agent may run it, and say the same in WHO MAY DO WHAT (ref_tasks.go) and in AGENTS.md", sub.Name())
+	commands := refTaskCommands()
+	for path, sub := range commands {
+		if !sub.HasSubCommands() && !rows[path] {
+			t.Errorf("`task %s` has no row in refTaskGate (ref_tasks_gate_test.go): add one that says whether an agent may run it, and say the same in WHO MAY DO WHAT (ref_tasks.go) and in AGENTS.md", path)
 		}
 	}
-	for name := range rows {
-		if !exists[name] {
-			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command: remove or rename it", name)
+	for path := range rows {
+		if sub := commands[path]; sub == nil || sub.HasSubCommands() {
+			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command, or a group (a group has the rows of its commands): remove or rename it", path)
 		}
 	}
 
-	// The real CLI refuses an agent exactly where the table says.
+	// The real CLI refuses an agent exactly where the table says. A command that takes --dest (os)
+	// gets a temporary folder for it, so that nothing of the user's is read or written.
 	db := newTaskTestDB(t)
 	for _, r := range refTaskGate {
-		out, _, err := runTask(t, db, "default", true, "", append(append([]string{}, r.call...), "--as", "bot")...)
+		args := append(append([]string{}, r.call...), "--as", "bot")
+		if sub := commands[refGatePath(r.row)]; sub != nil && refHasFlag(sub, "dest") {
+			args = append(args, "--dest", t.TempDir())
+		}
+		out, _, err := runTask(t, db, "default", true, "", args...)
 		var doc struct {
 			Code string `json:"code"`
 		}

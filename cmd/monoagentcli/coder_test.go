@@ -159,7 +159,11 @@ func TestCoderConversationFolders(t *testing.T) {
 	var rec ai.ConversationRecord
 	decodeChatJSON(t, out, &rec)
 	home, _ := os.UserHomeDir()
-	if rec.Mode != ai.ModeCoder || filepath.Dir(rec.Cwd) != filepath.Join(home, "monoagent-coder") {
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved // macOS: /var/... is /private/var/...
+	}
+	gotDir, _ := filepath.EvalSymlinks(filepath.Dir(rec.Cwd))
+	if rec.Mode != ai.ModeCoder || gotDir != filepath.Join(home, "monoagent-coder") {
 		t.Fatalf("conversation = %+v", rec)
 	}
 	if fi, err := os.Stat(rec.Cwd); err != nil || !fi.IsDir() {

@@ -84,7 +84,17 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 // same addresses setupExtensionBridge probes, so both agree on what
 // "already running" means.
 func findRunningBridge() (extension.Status, string, bool) {
+	return findRunningBridgeCtx(context.Background())
+}
+
+// findRunningBridgeCtx is findRunningBridge that stops probing once ctx is
+// done, so a caller polling under a deadline cannot outlast it by more than
+// one probe (each is bounded by the status probe timeout).
+func findRunningBridgeCtx(ctx context.Context) (extension.Status, string, bool) {
 	for _, addr := range extensionProbeAddrs() {
+		if ctx.Err() != nil {
+			break
+		}
 		if st, err := extension.FetchStatus(addr); err == nil {
 			return st, addr, true
 		}
