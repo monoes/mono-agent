@@ -100,6 +100,8 @@ test("one MonoAgent parent, four page modes, the video one only on videos, and t
     "Save page summary",
     "Save video summary",
     "Save selection to monomind",
+    "Add page as task",
+    "Add selection as task",
   ]);
   const video = byId["monoagent-capture-video"];
   assert.ok(video.documentUrlPatterns.some((p) => p.includes("youtube.com/watch")));
@@ -238,4 +240,16 @@ test("toast shows a line in a tab's page, for the task bridge too", async () => 
   env.MonoCaptureBridge.toast(42, "Added to Inbox in Work (#12)", "ok");
   await new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(record.toasts.at(-1), { text: "Added to Inbox in Work (#12)", level: "ok" });
+});
+
+test("the task items: one on a page, one on a selection, left to the task menu", () => {
+  const { env, record } = setup();
+  const M = env.MonoCaptureModes;
+  const byId = Object.fromEntries(record.menus.map((m) => [m.id, m]));
+  assert.deepEqual(byId[M.TASK_IDS.page].contexts, ["page"]);
+  assert.deepEqual(byId[M.TASK_IDS.selection].contexts, ["selection"]);
+  assert.equal(byId[M.TASK_IDS.page].parentId, M.ROOT_ID);
+  assert.equal(byId[M.TASK_IDS.selection].parentId, M.ROOT_ID);
+  assert.equal(M.menuRoute({ menuItemId: M.TASK_IDS.page }, { id: 3 }), null);
+  assert.equal(M.menuRoute({ menuItemId: M.TASK_IDS.selection }, { id: 3 }), null);
 });

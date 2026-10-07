@@ -30,3 +30,9 @@ test("the worker sends what waited when the socket opens", () => {
   assert.ok(start !== -1 && end > start, "ws.onopen not found");
   assert.match(background.slice(start, end), /MonoTaskBridge\.connected\(\);/);
 });
+
+test("the worker loads the task menu with the bridge and installs it once", () => {
+  assert.match(background, /importScripts\("task_outbox\.js", "task_bridge\.js", "task_menu\.js"\);/);
+  assert.equal(count("MonoTaskMenu.install("), 1);
+  assert.ok(background.indexOf("MonoTaskMenu.install(") > background.indexOf("MonoTaskBridge.install("));
+});

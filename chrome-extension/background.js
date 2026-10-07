@@ -28,7 +28,7 @@ importScripts("capture_form.js", "capture_profile.js", "browser_binding.js", "su
 importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // Tasks from the browser (the task board): the outbox and the worker's half.
 // After the recall group: tasks are sent over ask.js, which MonoRecall installs.
-importScripts("task_outbox.js", "task_bridge.js");
+importScripts("task_outbox.js", "task_bridge.js", "task_menu.js");
 // The raw CDP proxy (GLU-01/RIG-07): the generalisation of eval_cdp/type_cdp
 // that lets monobrowse drive the user's own Chrome. Events flow back through
 // it unasked-for, which is why it needs its own module rather than another
@@ -1340,6 +1340,8 @@ MonoTaskBridge.install({
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,
 });
+// Its menu items and the add-task shortcut (task_menu.js).
+MonoTaskMenu.install();
 
 // The activity recorder rides the same socket: kind:"recording" frames out,
 // buffered through its own outbox while the bridge is down.

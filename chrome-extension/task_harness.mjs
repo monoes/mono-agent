@@ -5,7 +5,7 @@ import { loadExtensionScripts } from "./test_helpers.mjs";
 
 const SCRIPTS = [
   "capture_profile.js", "capture_modes.js", "capture_queue.js", "recorder_privacy.js",
-  "task_outbox.js", "task_bridge.js",
+  "task_outbox.js", "task_bridge.js", "task_menu.js",
 ];
 
 const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
