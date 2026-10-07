@@ -287,3 +287,191 @@ func TestAStatusArgumentIsOneColumnOrSeveral(t *testing.T) {
 		}
 	}
 }
+
+// A refused value names its argument and is said in a model's words, not Go's: no "json: cannot
+// unmarshal number into Go struct field", so the model gets one refusal it can act on.
+func TestARefusedArgumentIsNamedInTheModelsWords(t *testing.T) {
+	type args struct {
+		ID     taskIDArg `json:"id"`
+		Limit  numberArg `json:"limit"`
+		Status statusArg `json:"status"`
+		Text   string    `json:"text"`
+		Next   bool      `json:"next"`
+		Count  int       `json:"count"`
+		Tags   []string  `json:"tags"`
+	}
+	for raw, want := range map[string]string{
+		`{"limit": "x"}`:       "invalid_input: limit: expected a whole number, such as 20",
+		`{"limit": true}`:      "invalid_input: limit: expected a whole number, such as 20",
+		`{"limit": 20.5}`:      "invalid_input: limit: expected a whole number, such as 20",
+		`{"id": "x"}`:          "invalid_input: id: expected a task's number, such as 12",
+		`{"id": 0}`:            "invalid_input: id: expected a task's number, such as 12",
+		`{"status": 5}`:        "invalid_input: status: expected a column name or a list of them",
+		`{"text": 5}`:          "invalid_input: text: expected a string",
+		`{"text": ["a"]}`:      "invalid_input: text: expected a string",
+		`{"next": "yes"}`:      "invalid_input: next: expected true or false",
+		`{"count": "x"}`:       "invalid_input: count: expected a whole number",
+		`{"tags": 5}`:          "invalid_input: tags: expected another kind of value",
+		`{"id": 3, "text": 5}`: "invalid_input: text: expected a string",
+	} {
+		if err := decodeTaskArgs(json.RawMessage(raw), &args{}); err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %q", raw, err, want)
+		}
+	}
+	// With several bad values the same one is named every time, the first by name, not whichever a
+	// map gives first.
+	for i := 0; i < 40; i++ {
+		err := decodeTaskArgs(json.RawMessage(`{"text": 5, "next": "no", "limit": "x"}`), &args{})
+		if want := "invalid_input: limit: expected a whole number, such as 20"; err == nil || err.Error() != want {
+			t.Fatalf("three bad values: %v, want %q", err, want)
+		}
+	}
+}
+
+// The store's own refusal of a status reads the same whichever way it reaches the model: through
+// the arguments of task_list or as an error of the store.
+func TestAStatusRefusalReadsTheSameThroughEveryPath(t *testing.T) {
+	type args struct {
+		Status statusArg `json:"status"`
+	}
+	_, refusal := tasks.ParseStatus("someday")
+	want := taskToolErr(refusal).Error()
+	if !strings.HasPrefix(want, `invalid_input: unknown status "someday"`) || strings.Contains(want, "invalid input") {
+		t.Fatalf("the store's refusal as a tool returns it: %q", want)
+	}
+	for _, raw := range []string{`{"status": "someday"}`, `{"status": "ready,someday"}`, `{"status": ["ready", "someday"]}`} {
+		if err := decodeTaskArgs(json.RawMessage(raw), &args{}); err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want the store's words once: %q", raw, err, want)
+		}
+	}
+}
+
+// A model that sends several arguments a tool does not take is told about all of them, in order,
+// and what the tool does take.
+func TestEveryUnknownArgumentIsNamedWithThoseTheToolTakes(t *testing.T) {
+	type args struct {
+		Title string    `json:"title"`
+		ID    taskIDArg `json:"id"`
+	}
+	const why = " (this server serves one profile and names its caller itself)"
+	for name, c := range map[string]struct{ raw, want string }{
+		"one": {`{"profile": "work"}`,
+			`invalid_input: "profile" is not an argument of this tool: it takes only id, title` + why},
+		"every one, in order": {`{"ready": true, "as": "you", "profile": "work", "id": 3, "Title": "T"}`,
+			`invalid_input: "Title", "as", "profile", "ready" are not arguments of this tool: it takes only id, title` + why},
+		"a name in the wrong case": {`{"ID": 3}`,
+			`invalid_input: "ID" is not an argument of this tool: it takes only id, title` + why},
+	} {
+		for i := 0; i < 40; i++ { // a map's order is random: one try would prove nothing
+			if err := decodeTaskArgs(json.RawMessage(c.raw), &args{}); err == nil || err.Error() != c.want {
+				t.Fatalf("%s: %v, want %q", name, err, c.want)
+			}
+		}
+	}
+	err := decodeTaskArgs(json.RawMessage(`{"profile": "work"}`), &struct{}{})
+	if want := `invalid_input: "profile" is not an argument of this tool: it takes no arguments` + why; err == nil || err.Error() != want {
+		t.Errorf("a tool that takes none: %v, want %q", err, want)
+	}
+}
+
+// Some clients keep every number as a float, so 12 arrives as 12.0 or 1.2e1. That is still the
+// whole number 12, exactly (read as a float, 9007199254740993.0 would be 9007199254740992); a
+// fraction is not a whole number.
+func TestAWholeNumberMayBeWrittenAsAFloat(t *testing.T) {
+	for _, raw := range []string{`12.0`, `1.2e1`, `1.2E+1`, `120e-1`, `"12.0"`, `"1.2e1"`, `" 12.0 "`, `"+12.0"`} {
+		var n numberArg
+		if err := json.Unmarshal([]byte(raw), &n); err != nil || n != 12 {
+			t.Errorf("a number of %s: %d, %v; want 12", raw, n, err)
+		}
+	}
+	for _, raw := range []string{`12.0`, `1.2e1`, `"12.0"`, `"#12.0"`, `" #1.2e1 "`} {
+		var id taskIDArg
+		if err := json.Unmarshal([]byte(raw), &id); err != nil || id != 12 {
+			t.Errorf("an id of %s: %d, %v; want 12", raw, id, err)
+		}
+	}
+	for raw, want := range map[string]numberArg{
+		`-5.0`: -5, `-0.0`: 0, `9007199254740993.0`: 9007199254740993, `1e18`: 1000000000000000000,
+		`9223372036854775807`: 9223372036854775807, `9223372036854775807.0`: 9223372036854775807, `-9223372036854775808`: -9223372036854775808,
+	} {
+		var n numberArg
+		if err := json.Unmarshal([]byte(raw), &n); err != nil || n != want {
+			t.Errorf("a number of %s: %d, %v; want %d", raw, n, err, want)
+		}
+	}
+	for _, raw := range []string{`12.5`, `"12.5"`, `0.1`, `1e-1`, `1e-400`, `20.000000000000000001`, `9223372036854775808`, `1e19`, `1e30`, `1e999`, `"1e999"`,
+		`"000000000000000000012"`, `"12.000000000000000000000"`, `"0e1000"`, `"0e999999"`, `"1_2"`, `"0x1p4"`, `"4/2"`, `"Inf"`, `"NaN"`, `".5"`, `"5."`, `"1e"`, `"12.0.0"`} {
+		var n numberArg
+		if err := json.Unmarshal([]byte(raw), &n); err == nil || !strings.Contains(err.Error(), "whole number") {
+			t.Errorf("a number of %s: %d, %v; want a refusal that asks for a whole number", raw, n, err)
+		}
+		var id taskIDArg
+		if err := json.Unmarshal([]byte(raw), &id); err == nil {
+			t.Errorf("an id of %s was taken as %d", raw, id)
+		}
+	}
+	for _, raw := range []string{`0.0`, `-0.0`, `-1.0`, `"#0.0"`} { // a float is no way round an id being positive
+		var id taskIDArg
+		if err := json.Unmarshal([]byte(raw), &id); err == nil {
+			t.Errorf("an id of %s was taken as %d", raw, id)
+		}
+	}
+}
+
+// What names an argument is the json tag of a field, up to its options: a field with no name or
+// with "-" there takes none.
+func TestOnlyTheTagsOfADstAreArguments(t *testing.T) {
+	type args struct {
+		ID      taskIDArg `json:"id"`
+		Note    string    `json:"note,omitempty"`
+		Plain   string
+		Skipped string `json:"-"`
+	}
+	var a args
+	if err := decodeTaskArgs(json.RawMessage(`{"id": 4, "note": "n"}`), &a); err != nil || a.ID != 4 || a.Note != "n" {
+		t.Errorf("the arguments it takes: %+v, %v", a, err)
+	}
+	for _, name := range []string{"", "-", "Plain", "Skipped", "note,omitempty", "ID"} {
+		raw, _ := json.Marshal(map[string]string{name: "x"})
+		want := fmt.Sprintf("invalid_input: %q is not an argument of this tool: it takes only id, note", name)
+		if err := decodeTaskArgs(raw, &args{}); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("%s: %v, want it to start %q", raw, err, want)
+		}
+	}
+}
+
+// Models often send null for an argument they do not use: it is no argument, whatever its kind.
+func TestANullArgumentIsNoArgument(t *testing.T) {
+	type args struct {
+		ID     taskIDArg `json:"id"`
+		Limit  numberArg `json:"limit"`
+		Status statusArg `json:"status"`
+		Text   string    `json:"text"`
+		Next   bool      `json:"next"`
+	}
+	a := args{ID: 3, Limit: 4, Text: "keep", Next: true}
+	if err := decodeTaskArgs(json.RawMessage(`{"id": null, "limit": null, "status": null, "text": null, "next": null}`), &a); err != nil {
+		t.Fatalf("null arguments: %v", err)
+	}
+	if a.ID != 3 || a.Limit != 4 || len(a.Status) != 0 || a.Text != "keep" || !a.Next {
+		t.Errorf("null arguments changed what was there: %+v", a)
+	}
+}
+
+// A dst that is no pointer to a struct is the caller's mistake: it is returned as one, never
+// panicked on, and never blamed on the model.
+func TestADstThatIsNotAPointerToAStructIsRefused(t *testing.T) {
+	type args struct {
+		ID taskIDArg `json:"id"`
+	}
+	var n int
+	var absent *args
+	for name, dst := range map[string]any{"nil": nil, "a struct, not its address": args{}, "a pointer to an int": &n, "a nil pointer": absent} {
+		for _, raw := range []string{`{"id": 3}`, ``, `null`} {
+			err := decodeTaskArgs(json.RawMessage(raw), dst)
+			if err == nil || !strings.Contains(err.Error(), "pointer to a struct") || strings.HasPrefix(err.Error(), "invalid_input") {
+				t.Errorf("%s with %q: %v, want a refusal that blames the caller, not the model", name, raw, err)
+			}
+		}
+	}
+}
