@@ -429,7 +429,7 @@ func (s *Server) instructions() string {
 	if s.opts.APIOnly {
 		return "Tools here manage the OpenAI-compatible API: its keys, its models, its status and its settings. Start with api_status or api_config_get."
 	}
-	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals."
+	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals. The user's task board: task_next shows what is ready to work on."
 }
 
 func (s *Server) result(id json.RawMessage, result interface{}) *rpcResponse {
