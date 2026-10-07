@@ -232,3 +232,10 @@ test("paramsFor keeps what the caller asked for over the mode's defaults", () =>
   assert.ok(!M.paramsFor({ mode: "summary", summarize: false }).summarize);
   assert.equal(M.paramsFor({ mode: "nonsense" }).mode, "full");
 });
+
+test("toast shows a line in a tab's page, for the task bridge too", async () => {
+  const { env, record } = setup();
+  env.MonoCaptureBridge.toast(42, "Added to Inbox in Work (#12)", "ok");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(record.toasts.at(-1), { text: "Added to Inbox in Work (#12)", level: "ok" });
+});

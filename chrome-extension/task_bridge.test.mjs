@@ -317,3 +317,19 @@ test("pageTitle drops a title that is only the page's address, and keeps any oth
   assert.equal(B.pageTitle({ title: "/home/sam/notes.txt", url: "file:///home/sam/notes.txt" }), "/home/sam/notes.txt", "no host, nothing to match");
   for (const page of [undefined, null, {}, { title: null }, { title: 7 }, { title: "  " }]) assert.equal(B.pageTitle(page), "");
 });
+
+test("the badge counts a waiting task, then the same task refused", async () => {
+  const ask = fakeAsk({
+    reply: () => {
+      throw refuse("invalid_input", "gone");
+    },
+  });
+  const { listeners, record, net, B } = setupTasks({ ask, connected: false });
+  await send(listeners, { type: "task_add", text: "later" }, PAGE);
+  assert.equal(record.badges.at(-1), "1");
+  assert.equal(record.titles.at(-1), "1 task waiting for the bridge");
+  net.up = true;
+  await B.flush();
+  assert.equal(record.badges.at(-1), "1");
+  assert.match(record.titles.at(-1), /^1 task was not added/);
+});

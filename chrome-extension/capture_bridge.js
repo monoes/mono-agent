@@ -320,5 +320,15 @@
     });
   }
 
-  root.MonoCaptureBridge = { install, handleCommand, handleMenuClick, captureActiveTab, flush, context };
+  /**
+   * toast shows one line in a tab's page, as a menu capture's outcome is
+   * shown (task_bridge.js reports tasks the same way). A restricted page
+   * refuses the script; the badge and the side panel still say it.
+   */
+  function toast(tabId, text, level) {
+    if (!tabId || !chrome.scripting) return;
+    chrome.scripting.executeScript({ target: { tabId }, func: pageToast, args: [text, level] }).catch(() => {});
+  }
+
+  root.MonoCaptureBridge = { install, handleCommand, handleMenuClick, captureActiveTab, flush, context, toast };
 })(globalThis);
