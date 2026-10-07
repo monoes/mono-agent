@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -42,13 +43,17 @@ func asDoc(t *testing.T, v any) map[string]any {
 }
 
 func TestATaskViewNamesEveryTextUntrusted(t *testing.T) {
-	at := time.Date(2026, 10, 6, 10, 30, 0, 0, time.UTC)
+	// Four different times, so that a view that mixes two of them up is seen.
+	created := time.Date(2026, 10, 5, 8, 15, 0, 0, time.UTC)
+	changed := time.Date(2026, 10, 6, 9, 50, 0, 0, time.UTC)
+	happened := time.Date(2026, 10, 6, 9, 45, 0, 0, time.UTC)
+	until := time.Date(2026, 10, 6, 10, 30, 0, 0, time.UTC)
 	v := asDoc(t, viewOf(tasks.Task{
 		ID: 7, ProfileID: "default", Title: "the title", Notes: "the notes", Status: tasks.StatusInProgress, Position: 2048,
 		Source:    tasks.Source{Kind: "chrome", URL: "https://example.com/a", Title: "the page", App: "the app"},
-		Claim:     &tasks.Claim{By: "agent:x#0001", Until: at},
-		LastEvent: &tasks.LastEvent{Actor: "agent:x#0001", Kind: "claimed", At: at},
-		CreatedAt: at, UpdatedAt: at,
+		Claim:     &tasks.Claim{By: "agent:x#0001", Until: until, Stale: true},
+		LastEvent: &tasks.LastEvent{Actor: "agent:y#0002", Kind: "claimed", At: happened},
+		CreatedAt: created, UpdatedAt: changed,
 	}))
 	want := []string{"claim", "created_at", "id", "last_event", "notes_untrusted", "position", "profile_id",
 		"source_app_untrusted", "source_kind", "source_title_untrusted", "source_url_untrusted", "status", "title_untrusted", "updated_at"}
@@ -58,25 +63,72 @@ func TestATaskViewNamesEveryTextUntrusted(t *testing.T) {
 	for k, want := range map[string]any{
 		"title_untrusted": "the title", "notes_untrusted": "the notes", "source_url_untrusted": "https://example.com/a",
 		"source_title_untrusted": "the page", "source_app_untrusted": "the app", "source_kind": "chrome",
-		"status": "in_progress", "id": float64(7), "profile_id": "default", "created_at": "2026-10-06T10:30:00Z",
+		"status": "in_progress", "id": float64(7), "profile_id": "default", "position": float64(2048),
+		"created_at": "2026-10-05T08:15:00Z", "updated_at": "2026-10-06T09:50:00Z",
 	} {
 		if v[k] != want {
 			t.Errorf("%s = %v, want %v", k, v[k], want)
 		}
 	}
-	if c, _ := v["claim"].(map[string]any); c["by"] != "agent:x#0001" || c["until"] != "2026-10-06T10:30:00Z" || c["stale"] != false {
-		t.Errorf("claim = %v", v["claim"])
+	// The claim and the last event go out as the store's own structs, under plain names: a text
+	// field added to either one would reach an agent unmarked. So their fields are pinned too, and
+	// a new one fails here until someone decides what it is called.
+	claim, _ := v["claim"].(map[string]any)
+	if got, want := docKeys(claim), []string{"by", "stale", "until"}; !equalStrings(got, want) {
+		t.Errorf("a claim's fields are %v, want exactly %v", got, want)
+	}
+	if claim["by"] != "agent:x#0001" || claim["until"] != "2026-10-06T10:30:00Z" || claim["stale"] != true {
+		t.Errorf("claim = %v", claim)
+	}
+	last, _ := v["last_event"].(map[string]any)
+	if got, want := docKeys(last), []string{"actor", "at", "kind"}; !equalStrings(got, want) {
+		t.Errorf("a last event's fields are %v, want exactly %v", got, want)
+	}
+	if last["actor"] != "agent:y#0002" || last["kind"] != "claimed" || last["at"] != "2026-10-06T09:45:00Z" {
+		t.Errorf("last_event = %v", last)
+	}
+}
+
+func TestAViewThroughAPointerIsTheViewOrNothing(t *testing.T) {
+	task := tasks.Task{ID: 7, Title: "the title", Status: tasks.StatusReady, Claim: &tasks.Claim{By: "agent:x#0001"}}
+	if viewPtr(nil) != nil {
+		t.Error("a task that is not there must have no view")
+	}
+	if p := viewPtr(&task); p == nil || !reflect.DeepEqual(*p, viewOf(task)) {
+		t.Errorf("a view through a pointer is %+v, want %+v", p, viewOf(task))
 	}
 }
 
 func TestAnEventViewNamesItsNoteUntrusted(t *testing.T) {
 	at := time.Date(2026, 10, 6, 10, 30, 0, 0, time.UTC)
-	e := asDoc(t, eventViews([]tasks.Event{{ID: 3, At: at, Actor: "you", Kind: "comment", Note: "look here"}})[0])
+	later := time.Date(2026, 10, 6, 10, 35, 0, 0, time.UTC)
+	views := eventViews([]tasks.Event{
+		{ID: 3, At: at, Actor: "you", Kind: "comment", Note: "look here"},
+		{ID: 4, At: later, Actor: "agent:x#0001", Kind: "claimed", FromStatus: "ready", ToStatus: "in_progress", Note: "taking it"},
+	})
+	if len(views) != 2 {
+		t.Fatalf("two events came back as %d views", len(views))
+	}
+	e := asDoc(t, views[0])
 	if got, want := docKeys(e), []string{"actor", "at", "from_status", "id", "kind", "note_untrusted", "to_status"}; !equalStrings(got, want) {
 		t.Errorf("an event's fields are %v, want exactly %v", got, want)
 	}
-	if e["note_untrusted"] != "look here" || e["kind"] != "comment" || e["actor"] != "you" {
-		t.Errorf("event = %v", e)
+	for k, want := range map[string]any{
+		"id": float64(3), "at": "2026-10-06T10:30:00Z", "actor": "you", "kind": "comment",
+		"from_status": "", "to_status": "", "note_untrusted": "look here",
+	} {
+		if e[k] != want {
+			t.Errorf("event %s = %v, want %v", k, e[k], want)
+		}
+	}
+	moved := asDoc(t, views[1])
+	for k, want := range map[string]any{
+		"id": float64(4), "at": "2026-10-06T10:35:00Z", "actor": "agent:x#0001", "kind": "claimed",
+		"from_status": "ready", "to_status": "in_progress", "note_untrusted": "taking it",
+	} {
+		if moved[k] != want {
+			t.Errorf("event %s = %v, want %v", k, moved[k], want)
+		}
 	}
 	for name, v := range map[string]any{"no events": eventViews(nil), "no tasks": listViews(nil)} {
 		if b, _ := json.Marshal(v); string(b) != "[]" {
