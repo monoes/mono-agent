@@ -68,6 +68,7 @@ describe("highlight_page.js in a browser", { skip, concurrency: 1 }, () => {
     page = join(fixtures, "fixture.html");
     url = fileUrl(page);
     const highlights = await readFile(join(HERE, "highlights.js"), "utf8");
+    const shell = await readFile(join(HERE, "highlight_panel.js"), "utf8");
     const highlighter = await readFile(join(HERE, "highlight_page.js"), "utf8");
     // The worker, replaced by the real store over an in-memory bag. SEED is
     // substituted per navigation so a reload keeps what was saved.
@@ -80,6 +81,15 @@ describe("highlight_page.js in a browser", { skip, concurrency: 1 }, () => {
           remove: (k) => { mem.delete(k); return Promise.resolve(); },
         };
         window.__dump = () => JSON.stringify([...mem]);
+        window.__tasks = [];
+        // The panel lives in a closed shadow root, which a page cannot reach;
+        // the test keeps a handle on it from here, as no page could.
+        const attachShadow = Element.prototype.attachShadow;
+        Element.prototype.attachShadow = function (init) {
+          const shadow = attachShadow.call(this, init);
+          if (this.id === "monoagent-highlight-ui") window.__ui = shadow;
+          return shadow;
+        };
         const H = globalThis.MonoHighlights;
         // The replies are the shapes recall_bridge.js really sends back.
         async function handle(msg) {
@@ -98,6 +108,10 @@ describe("highlight_page.js in a browser", { skip, concurrency: 1 }, () => {
             const { removed, records } = await H.remove(storage, msg.url, msg.id);
             return { ok: removed, count: records.length };
           }
+          if (msg.type === "task_add") {
+            window.__tasks.push(msg);
+            return { ok: true, status: "added" };
+          }
           return null;
         }
         window.chrome = {
@@ -109,7 +123,7 @@ describe("highlight_page.js in a browser", { skip, concurrency: 1 }, () => {
         };
       })();
     `;
-    bootstrapSource = `${highlights}\n${worker}\n${highlighter}`;
+    bootstrapSource = `${highlights}\n${worker}\n${shell}\n${highlighter}`;
   }
 
   /** open (re)writes the fixture, seeds the stub store, and loads the page. */
@@ -453,5 +467,46 @@ describe("highlight_page.js in a browser", { skip, concurrency: 1 }, () => {
       );
       assert.equal(collapse(joined), record.text, `highlight ${record.id} came back on the wrong text`);
     }
+  });
+
+  it("keeps its buttons out of the page's reach", async () => {
+    await open();
+    await select("#one", 20, "#one", 60);
+    assert.equal(await browser.evaluate("document.querySelectorAll('#monoagent-highlight-ui').length"), 1, "the panel did not open");
+    assert.equal(await browser.evaluate("document.getElementById('monoagent-highlight-ui').shadowRoot"), null);
+    assert.equal(await browser.evaluate("document.querySelectorAll('#monoagent-highlight-ui button').length"), 0);
+    // A click the page's own script dispatches is not the reader's.
+    await browser.evaluate("window.__ui.querySelector('button').click()");
+    await browser.evaluate("new Promise((r) => setTimeout(r, 80))");
+    assert.deepEqual(await marks(), [], "a scripted click made a highlight");
+    assert.equal(await browser.evaluate("window.__tasks.length"), 0);
+  });
+
+  it("does not open for a selection and a mouseup the page made up", async () => {
+    await open();
+    await browser.evaluate(`(() => {
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById("one"));
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.getElementById("one").dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      return true;
+    })()`);
+    await browser.evaluate("new Promise((r) => setTimeout(r, 50))");
+    assert.equal(await browser.evaluate("document.querySelectorAll('#monoagent-highlight-ui').length"), 0);
+  });
+
+  it("adds the selection as a task, as the reader sees it", async () => {
+    await open({ html: AWKWARD });
+    const selected = await select("#veiled", 5, "#veiled", 50);
+    await clickButton("Add the selection as a task");
+    const sent = JSON.parse(await browser.evaluate("JSON.stringify(window.__tasks)"));
+    assert.equal(sent.length, 1, "no task was sent");
+    assert.equal(sent[0].type, "task_add");
+    assert.equal(collapse(sent[0].text), collapse(selected));
+    assert.ok(!sent[0].text.includes("IS NOT SHOWN"), "the task carried text the reader cannot see");
+    assert.deepEqual(await marks(), [], "adding a task painted a highlight");
+    assert.equal(await browser.evaluate("document.querySelectorAll('#monoagent-highlight-ui').length"), 0, "the panel stayed open");
   });
 });

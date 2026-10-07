@@ -321,6 +321,14 @@ The URL and the page title come from `sender.tab`, never from the message; the U
 
 The manifest version goes from 1.5.0 up by a minor. An older extension simply lacks the entries. A newer extension against an older daemon gets no `task.add` in `ping`'s methods: the task waits in the outbox and a toast says the daemon needs updating (D25). The extension is installed unpacked, so people reload it after updating; the README says so.
 
+### 11.6 The floating panel, as built
+
+- `chrome-extension/highlight_panel.js` (a content script loaded before `highlight_page.js`) owns the panel's shell: `open`, `close`, `button`, `trusted`, `capBytes`. `highlight_page.js`'s `panel()`, `button()` and `dismiss()` are one-line wrappers over it, as 11.1 says.
+- The host is one `div#monoagent-highlight-ui` with a closed shadow root: to the page it has no `shadowRoot` and no children. Its `mousedown` stops propagation for any event (it only stops one). Opening the panel (the `mouseup` listener) and every button need `event.isTrusted === true`; closing takes any event.
+- The button reads "＋ task" and sends `{type: "task_add", text}` with the text of `selection.toString()` (what the reader sees, not the range's raw text), trimmed and cut to 64 KiB of UTF-8 without splitting a character. The worker takes the address from the sending frame and the title from the tab, and the page cannot choose the profile. It then clears the selection; the panel adds no highlight.
+- Not stopped: the host is still in the page's DOM, so a page can move or cover it and bait a real click. Such a click files an Inbox task with page-chosen text, which the operator reads before approving it (D6).
+- Tests: `highlight_panel.test.mjs` against a fake document, and three cases in `highlight_page.browser.test.mjs` (skipped without Chrome).
+
 ## 12. The macOS menu (P5)
 
 - `monoagentcli task os install [--profile NAME_OR_ID] [--dest DIR]`, `status`, `uninstall [--profile NAME_OR_ID]`, macOS only (elsewhere: exit 3 and the recipe below). A menu item files into one profile: the one named, else the active profile at install time, which the command prints. To have the menu for several profiles, run it once per profile.
