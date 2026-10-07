@@ -39,3 +39,14 @@ Previous B1a final gates were green per the session ledger; they were not all re
 ## Resume
 
 Fetch `monoes/mono-agent` and `monoes/monoes-landing`. Recreate worktrees from the named remote branches, not from local temporary agent names. Continue from the matching issue/plan; historical scratch directories are not required. Archived ledgers/reports under `docs/handoffs/2026-10-07-account-records/` are reference material, not a prompt to reload wholesale.
+
+## GitHub continuation issues
+
+- [Account/login gate: cross-machine continuation tracker and saved branch checkpoints](https://github.com/monoes/mono-agent/issues/374)
+- [Account gate B1b: finish sign-in, refresh transport, session adoption and account CLI](https://github.com/monoes/mono-agent/issues/366)
+- [Account gate B2/B3a: finish CLI classification and engine, agent, browser and daemon enforcement](https://github.com/monoes/mono-agent/issues/367)
+- [Account gate B3b: finish network and MCP doors, capture-work suppression and bypass verification](https://github.com/monoes/mono-agent/issues/368)
+- [Account gate B4/B4b: implement desktop sign-in gate and extension account-state UI](https://github.com/monoes/mono-agent/issues/369)
+- [Account gate B5: complete integration smoke, rollout readiness, documentation and license audits](https://github.com/monoes/mono-agent/issues/370)
+- [MonoAgent account gate: finish server JWT audience, refresh-token families, blocking and signing-key contract](https://github.com/monoes/monoes-landing/issues/2)
+- [Account gate: owner-only production protection, migration, signing-key and release checks](https://github.com/monoes/mono-agent/issues/373)
