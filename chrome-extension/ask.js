@@ -264,6 +264,10 @@
     probe,
     supports,
     isOffline,
+    // What the bridge said it can answer on this connection, or null when it
+    // has not answered: probe() resolves [] either way, and "MonoAgent needs
+    // updating" must not be said to a bridge that never heard the question.
+    known: () => methods,
     inFlight: () => pending.size,
     CODE_OFFLINE,
     CODE_TIMEOUT,
