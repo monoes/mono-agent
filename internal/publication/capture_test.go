@@ -205,3 +205,32 @@ func TestInstanceAndResourceIdentityNamespaces(t *testing.T) {
 		t.Fatalf("unrelated remote publications collided: %+v %v", records, err)
 	}
 }
+
+func TestRetryKeyStableWithoutRemoteIdentity(t *testing.T) {
+	in := func() CaptureInput {
+		return CaptureInput{NodeType: "comm.slack", Config: map[string]interface{}{"operation": "post_message", "channel": "C1", "text": "hi"},
+			Outputs: []Output{{Handle: "main", Items: []map[string]interface{}{{"ok": true}}}}, Source: Source{ExecutionID: "e", NodeID: "n"}}
+	}
+	a, b := Normalize(in()), Normalize(in())
+	if len(a) != 1 || a[0].IdempotencyKey != b[0].IdempotencyKey {
+		t.Fatalf("retry key differs: %+v %+v", a, b)
+	}
+	c := in()
+	c.Config["text"] = "other"
+	if Normalize(c)[0].IdempotencyKey == a[0].IdempotencyKey {
+		t.Fatal("different content shares key")
+	}
+}
+
+func TestSlackResponseTypeAndStringFalsePublished(t *testing.T) {
+	slack := CaptureInput{NodeType: "comm.slack", Config: map[string]interface{}{"operation": "post_message", "channel": "C1", "text": "hi"},
+		Outputs: []Output{{Handle: "main", Items: []map[string]interface{}{{"id": "1", "is_private": true}}}}}
+	if es := Normalize(slack); len(es) != 0 {
+		t.Fatalf("private slack recorded: %+v", es)
+	}
+	dev := CaptureInput{NodeType: "service.devto", Config: map[string]interface{}{"operation": "publish_article", "published": "false", "title": "t", "body_markdown": "b"},
+		Outputs: []Output{{Handle: "main", Items: []map[string]interface{}{{"id": 1}}}}}
+	if es := Normalize(dev); len(es) != 0 {
+		t.Fatalf("unpublished dev.to recorded: %+v", es)
+	}
+}
