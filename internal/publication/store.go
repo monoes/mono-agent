@@ -86,8 +86,12 @@ func parseTS(value string) time.Time {
 	return t
 }
 
-func encodeCursor(e Entry) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(sortTS(parseTS(e.PublishedAt)) + "|" + e.ID))
+// encodeCursor takes ts verbatim from the row's stored published_ts column, so
+// the keyset comparison can never disagree with how the row was ordered.
+// published_ts is sortTS(parseTS(published_at)); an unparseable published_at is
+// stored as the zero time, "0001-01-01T00:00:00.000Z" (migration 064 does the same).
+func encodeCursor(ts, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(ts + "|" + id))
 }
 
 func decodeCursor(c string) (ts, id string, err error) {
@@ -295,7 +299,12 @@ func (s *Store) ListPage(ctx context.Context, f Filter) ([]Entry, string, error)
 	next := ""
 	if len(entries) > f.Limit {
 		entries = entries[:f.Limit]
-		next = encodeCursor(entries[f.Limit-1])
+		last := entries[f.Limit-1]
+		var ts string
+		if err := s.db.QueryRowContext(ctx, "SELECT published_ts FROM publications WHERE profile_id=? AND id=?", s.profileID, last.ID).Scan(&ts); err != nil {
+			return nil, "", err
+		}
+		next = encodeCursor(ts, last.ID)
 	}
 	return entries, next, nil
 }
