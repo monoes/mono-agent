@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/accountdoor"
 	"github.com/monoes/mono-agent/internal/apiconfig"
 	"github.com/monoes/mono-agent/internal/secrets"
 )
@@ -371,7 +373,16 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 	}
 }
 
+// handleToolsCall runs one tool. A locked monoes.me account refuses every call,
+// grant mode included, with a tool error (isError) that says what to do, before
+// the call is parsed. initialize and tools/list still answer.
 func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) *rpcResponse {
+	if err := account.Require(ctx); err != nil {
+		return s.result(req.ID, toolResult{
+			Content: []toolContent{{Type: "text", Text: accountdoor.Message}},
+			IsError: true,
+		})
+	}
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
