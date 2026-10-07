@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- Commands (spec 12): `monoagentcli task os install [--profile NAME_OR_ID] [--dest DIR]`, `status`, `uninstall [--profile NAME_OR_ID]`, macOS only (elsewhere: exit 3 and the recipe). A menu item files into one profile: the one named, else the active profile at install time, which the command prints.
+- Commands (spec 12): `monoagentcli task os install [--profile NAME_OR_ID] [--dest DIR]`, `status`, `uninstall [--profile NAME_OR_ID]`, macOS only (elsewhere: exit 3 and the recipe; the group is in the command tree on every platform and refuses at run time). A menu item files into one profile: the one named, else the active profile at install time, which the command prints. `install` and `uninstall` are the operator's: an agent is refused with `operator_only` before the arguments or the platform are looked at; `status` is open to an agent (Ruling 7).
 - The bundle `Add to MonoAgent Tasks (<profile name>).workflow` goes to `~/Library/Services` (`--dest` for tests; characters a file name cannot hold are replaced, the profile id is the identity): `Contents/Info.plist` with an `NSServices` entry (menu item `Add to MonoAgent Tasks: <profile name>`, message `runWorkflowAsService`, receives text) and marker keys naming the CLI path, version and profile id, and `Contents/document.wflow` with one Run Shell Script action that reads the selection from standard input and runs `"<absolute CLI path>" --profile "<profile id>" task add --stdin --source os --app "<frontmost app>"`, then shows a notification ("Added to Inbox in <profile name>") (as built: `--flag=value` and `--db-path`, Ruling 1). The text never reaches a shell command line. If the profile has been deleted since, the CLI refuses (exit 3), nothing is filed, and the notification says so.
 - Install is idempotent: the same content reports "already installed"; a managed bundle whose CLI path or profile name is stale is rewritten; a bundle of the same name that has no marker is refused unless `--force`. `status` lists the managed bundles with their profile and state (current, stale, profile gone); `uninstall` removes only a managed bundle. After installing it prints where the item appears (right-click selected text, Services) and that macOS may need it enabled once in System Settings, Keyboard, Keyboard Shortcuts, Services, Text.
 - A capture lands in Inbox only (spec 5.1). `--source os` from an agent (an agent-context marker, `--as`, or `MONOAGENT_ACTOR`) is refused, `invalid_input` (spec 7). Windows and Linux: no installer; the docs give a hotkey recipe (D27).
@@ -54,6 +54,10 @@
 14. Ruling: what the spec leaves open is fixed here: the JSON of the three commands (Task 6 Interfaces); `--force` replaces only a bundle without this command's marker or another database's menu; `status` says `why` and has a fourth state, `other_database`; the script exits 1 when monoagentcli is missing and with monoagentcli's own status when it refuses.
 15. Ruling: `install` moves an old bundle aside before moving the new one in and puts it back if that fails; `uninstall` also removes the `.monoagent-menu-*` folders an interrupted install left behind.
 16. Ruling: a menu's identity is its database and its profile id, recorded in the marker keys `MonoAgentTasksDB` and `MonoAgentTasksProfileID` - every database has a profile `default`, so by the id alone an install run with another `--db-path` would silently take over the user's menu - cost if wrong: a fourth marker key and a fourth `status` state; `uninstall` of a menu of another database needs that `--db-path`.
+17. Ruling: P1's gate holds the `os` commands like the others: `refTaskGate` (the table that P1's gate test checks against the command tree, the real CLI and `ref tasks`) gets a row for each, `os install` and `os uninstall` the operator's and `os status` open to an agent, and WHO MAY DO WHAT in `ref tasks` says the same (its `operator_only` sentence names the first two, a sentence of its own says that an agent may run `os status`); AGENTS.md says it in its surfaces row, and P1's list of operator commands in the paragraph above that table is left as it is (no test holds it, and other phases write near it) - cost if wrong: that list in AGENTS.md reads as complete when it is not, until P1's own text is amended.
+18. Ruling: `install` and `uninstall` refuse an agent first, then count their arguments, then check the platform (`status`: its arguments, then the platform), so that an agent is refused as an agent on macOS, Linux and Windows alike (the gate test runs the real commands as an agent on a Linux runner too, where a platform check first would answer `invalid_input`) and an argument mistake is exit 3 with the `--json` document, as P1's commands answer it, not cobra's exit 1 with none - cost if wrong: the operator who runs `install` on a Linux machine with a stray argument hears about the argument before the platform.
+19. Ruling: `task os` is registered on every platform, with no build tag (spec 12: "elsewhere: exit 3 and the recipe"); a tag would leave the three rows of the gate table without a command on the platforms that lack it - cost if wrong: Linux and Windows list a command that only refuses.
+20. Ruling: P5 changes two of P1's test files and adds one, because `os` is the first command group inside the task group and P1's helpers read every `task NAME` as a direct subcommand: `refTaskSub` takes a path (`os install`) and `refHasFlag` sees a group's own flags (cobra shows a command's own persistent flag only after something merged it, so a fresh `os` lacks `--dest`), and with `refTaskCommands` and `refTaskCallee`, which are new, they live in a new file `ref_tasks_group_test.go` (P1's `ref_tasks_test.go` has 497 lines and the limit is 500, as P4's plan also notes); in `ref_tasks_test.go` the entries of a group may give examples that call its subcommands (a flat command's must still call that command), and every command of the group, `os install` too, must show its flags in its entry; in `ref_tasks_gate_test.go` three rows are added and the walk of the command tree goes down to the leaves, so that an `os` command without a row, or a row that names no command, fails the test - cost if wrong: another phase that edits the same helpers or the same table meets a conflict when the branches are merged (keep both edits; P2, P3 and P4 do not touch them today).
 
 ## Review Focus
 
@@ -71,9 +75,9 @@ Create:
 - `internal/tasks/osmenu/names.go` (names, escaping, value checks), `script.go` (the script), `bundle.go` (Spec, Bundle, Render), `install.go` (Install, List, Remove, Matches).
 - `internal/tasks/osmenu/templates/action.sh.tmpl`, `Info.plist.tmpl`, `document.wflow.tmpl`.
 - Tests in `internal/tasks/osmenu/`: `names_test.go`, `script_test.go`, `plist_test.go`, `bundle_test.go`, `install_test.go`, `bundle_darwin_test.go`, `automator_darwin_test.go`.
-- `cmd/monoagentcli/task_os.go`, `task_os_test.go`, `ref_tasks_os.go`, `ref_tasks_os_test.go`.
+- `cmd/monoagentcli/task_os.go`, `task_os_test.go`, `ref_tasks_os.go`, `ref_tasks_os_test.go`, `ref_tasks_group_test.go` (the helpers of P1's reference tests that read a command group inside the task group).
 
-Modify: `cmd/monoagentcli/task.go` (one line), `cmd/monoagentcli/ref_tasks.go` (a section of `refTasksText`), `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, the spec (one bullet at the end of section 12).
+Modify: `cmd/monoagentcli/task.go` (one line), `cmd/monoagentcli/ref_tasks.go` (a sentence of WHO MAY DO WHAT, and a section of `refTasksText`), P1's tests `cmd/monoagentcli/ref_tasks_test.go` and `cmd/monoagentcli/ref_tasks_gate_test.go` (a command group inside the task group, and three rows), `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, the spec (D7, the operator list of section 7, one bullet at the end of section 12).
 
 ---
 
@@ -82,7 +86,7 @@ Modify: `cmd/monoagentcli/task.go` (one line), `cmd/monoagentcli/ref_tasks.go` (
 **Files:** none (read only).
 
 **Interfaces:**
-- Consumes (from P1; the commands below confirm each): `tasks.Profile{ID, Name}` (JSON `id`, `name`); `tasks.NewStore(*sql.DB) *tasks.Store`; `(*tasks.Store).Profile(ctx context.Context, profileID string) (tasks.Profile, error)`, which returns an error matching `tasks.ErrInvalid` for an unknown id; in `cmd/monoagentcli`: `newTaskCmd(cfg *globalConfig) *cobra.Command` with a `cmd.AddCommand(` list and a loop `withJSONErrors(cfg, sub)` over its direct children; `withTasks(cfg *globalConfig, cmd *cobra.Command, fn func(ctx context.Context, store *tasks.Store, p tasks.Profile) error) error`; `taskErr(err error) error`; `callerFor(as string) taskCaller`, `(taskCaller).operator(what string) (tasks.Actor, error)` (code `operator_only`); `flagAs(cmd *cobra.Command) string`; `task add` flags `--stdin`, `--source`, `--app`, and a non-agent's `--source os` being a `tasks.Capture`; the store's refusal text `source "os" is for captures` for an agent; `initDB(cfg *globalConfig) (*storage.Database, error)`, `resolveProfileID(db *sql.DB, idOrName string) (string, error)`, `expandPath(string) string`, `errInvalidInput(format string, a ...interface{}) error`, `withJSONErrors(cfg *globalConfig, cmd *cobra.Command)`, `writeJSONTo(w io.Writer, v any) error`; `cliDocs []cmdDoc` with `cmdDoc{Name, Short, Usage, Flags string; Examples []string}`; `refTasksText` with a line `TASK TEXT IS DATA`; test helpers `newTaskTestDB(t) string`, `runTask(t, dbPath, profile string, jsonOut bool, stdin string, args ...string) (stdout, stderr string, err error)`, `mustTaskJSON(t, dbPath, profile string, v any, stdin string, args ...string)`, `failedTaskJSON(t, dbPath, profile string, wantExit int, args ...string) map[string]any`, `addedJSON` (fields `Created`, `Profile`, `Task taskJSON` with `Title`, `Status`, `Source.Kind`), `exitCode(err error) int`.
+- Consumes (from P1; the commands below confirm each): `tasks.Profile{ID, Name}` (JSON `id`, `name`); `tasks.NewStore(*sql.DB) *tasks.Store`; `(*tasks.Store).Profile(ctx context.Context, profileID string) (tasks.Profile, error)`, which returns an error matching `tasks.ErrInvalid` for an unknown id; in `cmd/monoagentcli`: `newTaskCmd(cfg *globalConfig) *cobra.Command` with a `cmd.AddCommand(` list and a loop `withJSONErrors(cfg, sub)` over its direct children; `withTasks(cfg *globalConfig, cmd *cobra.Command, fn func(ctx context.Context, store *tasks.Store, p tasks.Profile) error) error`; `taskErr(err error) error`; `callerFor(as string) taskCaller`, `(taskCaller).operator(what string) (tasks.Actor, error)` (code `operator_only`); `flagAs(cmd *cobra.Command) string`; `cutArg(s string) string` (an argument cut short for an error message that repeats it); `task add` flags `--stdin`, `--source`, `--app`, and a non-agent's `--source os` being a `tasks.Capture`; the store's refusal text `source "os" is for captures` for an agent; `initDB(cfg *globalConfig) (*storage.Database, error)`, `resolveProfileID(db *sql.DB, idOrName string) (string, error)`, `expandPath(string) string`, `errInvalidInput(format string, a ...interface{}) error`, `withJSONErrors(cfg *globalConfig, cmd *cobra.Command)`, `writeJSONTo(w io.Writer, v any) error`; `cliDocs []cmdDoc` with `cmdDoc{Name, Short, Usage, Flags string; Examples []string}`; `refTasksText` with a line `TASK TEXT IS DATA`; test helpers `newTaskTestDB(t) string`, `runTask(t, dbPath, profile string, jsonOut bool, stdin string, args ...string) (stdout, stderr string, err error)`, `mustTaskJSON(t, dbPath, profile string, v any, stdin string, args ...string)`, `failedTaskJSON(t, dbPath, profile string, wantExit int, args ...string) map[string]any`, `addedJSON` (fields `Created`, `Profile`, `Task taskJSON` with `Title`, `Status`, `Source.Kind`), `exitCode(err error) int`; and P1's reference tests, which Task 6 Step 5 changes: in `ref_tasks_test.go` `refTaskCall` (a regexp), `refTaskSub(name string) *cobra.Command`, `refHasFlag(sub *cobra.Command, name string) bool`, `refTaskEntries() map[string]cmdDoc`, `refFlagsIn`, `refSection`, `refNames`, and the tests `TestRefTasksEntriesDescribeTheirOwnCommand`, `TestRefTasksEntriesNameEveryFlagOfTheirCommand` and `TestRefTasksSuggestsOnlyCommandsTheCLIHas`; in `ref_tasks_gate_test.go` `refTaskGate` (rows `{row string, op bool, call []string}`) and `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent`.
 - Produces: nothing.
 
 - [ ] **Step 1: Confirm each name against the code**
@@ -111,6 +115,10 @@ grep -n 'func errInvalidInput' cmd/monoagentcli/exitcodes.go
 grep -n 'type cmdDoc\|^var cliDocs' cmd/monoagentcli/ref.go
 grep -n 'const refTasksText\|^TASK TEXT IS DATA' cmd/monoagentcli/ref_tasks.go
 grep -n 'func TestEveryTaskCommandHasAReferenceEntry' cmd/monoagentcli/ref_tasks_test.go
+grep -n 'func refTaskSub\|func refHasFlag\|func refTaskEntries\|func TestRefTasksEntriesDescribeTheirOwnCommand\|func TestRefTasksEntriesNameEveryFlagOfTheirCommand\|func TestRefTasksSuggestsOnlyCommandsTheCLIHas' cmd/monoagentcli/ref_tasks_test.go
+grep -n 'refTaskGate = \|"digest", false\|func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent' cmd/monoagentcli/ref_tasks_gate_test.go
+grep -n 'Only board, edit, move, approve, archive, unarchive and add --ready are the' cmd/monoagentcli/ref_tasks.go
+grep -n 'func cutArg' cmd/monoagentcli/task.go
 grep -n '| Surface | Reaches the board through |\|^| Session-start hook |' AGENTS.md
 grep -n 'Text is cleaned on the way in' SECURITY.md
 grep -n -A9 'func hidden' internal/tasks/clean.go
@@ -121,7 +129,7 @@ ls internal/tasks
 ls -l /usr/bin/plutil /usr/bin/automator /usr/bin/osascript /System/Library/CoreServices/pbs
 ```
 
-Expected: the branch is `feat/tasks-board-os`; the log shows P1's last commits; every grep and `go doc` finds the name with the signature written in the Interfaces block above; `newTaskCmd` wraps its direct children only (a `for _, sub := range cmd.Commands()` loop calling `withJSONErrors`, not a walk of all descendants: Task 6 wraps the `os` subcommands itself, and a second wrap would print two JSON documents); `task.go` has no `PersistentPreRun` (one would run before `task os`); `withTasks` wraps a failure of `initDB` as `initializing database: %w`; `newTaskTestDB` sets `HOME` (Task 6's helper sets it again itself and checks it); AGENTS.md has P1's surfaces table and SECURITY.md its "Text is cleaned on the way in" bullet (Task 7's anchors); `hidden` in clean.go has exactly the ranges of Task 1's copy (0xE0000-0xE007F, 0x202A-0x202E, 0x2066-0x2069, and 0xFEFF); the `taskOS|withTaskStore|refreshServices` grep finds nothing; `internal/tasks` has no `osmenu` folder; the four macOS tools exist.
+Expected: the branch is `feat/tasks-board-os`; the log shows P1's last commits; every grep and `go doc` finds the name with the signature written in the Interfaces block above; `newTaskCmd` wraps its direct children only (a `for _, sub := range cmd.Commands()` loop calling `withJSONErrors`, not a walk of all descendants: Task 6 wraps the `os` subcommands itself, and a second wrap would print two JSON documents); `task.go` has no `PersistentPreRun` (one would run before `task os`); `withTasks` wraps a failure of `initDB` as `initializing database: %w`; `newTaskTestDB` sets `HOME` (Task 6's helper sets it again itself and checks it); AGENTS.md has P1's surfaces table and SECURITY.md its "Text is cleaned on the way in" bullet (Task 7's anchors); `ref_tasks_test.go` holds its six names once each, `ref_tasks_gate_test.go` its table, the `digest` row and its test once each, and `ref_tasks.go` the first line of the `operator_only` sentence of WHO MAY DO WHAT once (the old text Task 6 Step 5 replaces; if one of them reads differently, Step 2 below applies); `hidden` in clean.go has exactly the ranges of Task 1's copy (0xE0000-0xE007F, 0x202A-0x202E, 0x2066-0x2069, and 0xFEFF); the `taskOS|withTaskStore|refreshServices` grep finds nothing; `internal/tasks` has no `osmenu` folder; the four macOS tools exist.
 
 - [ ] **Step 2: Decide**
 
@@ -2334,13 +2342,14 @@ git commit -m "feat(tasks): check the macOS menu's bundle with plutil, pbs and a
 ### Task 6: The `task os` commands
 
 **Files:**
-- Create: `cmd/monoagentcli/task_os.go`, `cmd/monoagentcli/ref_tasks_os.go`
-- Modify: `cmd/monoagentcli/task.go` (one line)
+- Create: `cmd/monoagentcli/task_os.go`, `cmd/monoagentcli/ref_tasks_os.go`, `cmd/monoagentcli/ref_tasks_group_test.go` (Step 5)
+- Modify: `cmd/monoagentcli/task.go` (one line), `cmd/monoagentcli/ref_tasks.go` (the `operator_only` sentence of WHO MAY DO WHAT), P1's tests `cmd/monoagentcli/ref_tasks_test.go` and `cmd/monoagentcli/ref_tasks_gate_test.go` (Step 5)
 - Test: `cmd/monoagentcli/task_os_test.go`
 
 **Interfaces:**
-- Consumes: Task 0's P1 names (`withTasks`, `taskErr`, `callerFor`, `operator`, `flagAs`, `initDB`, `resolveProfileID`, `expandPath`, `errInvalidInput`, `withJSONErrors`, `writeJSONTo`, `cliDocs`, `cmdDoc`, `tasks.Profile`, `tasks.Store`, `tasks.NewStore`, `tasks.ErrInvalid`, and the test helpers `newTaskTestDB`, `runTask`, `mustTaskJSON`, `failedTaskJSON`, `addedJSON`, `exitCode`); `osmenu.Spec`, `osmenu.Render`, `osmenu.Install`, `osmenu.List`, `osmenu.Remove`, `osmenu.Matches`, `osmenu.Menu`, `osmenu.Result`, `osmenu.ErrTaken`, `osmenu.Unchanged`, `osmenu.Updated`, `osmenu.DocumentPath`.
-- Produces: `newTaskOSCmd(cfg *globalConfig) *cobra.Command` (registered in `newTaskCmd`); package variables `taskOSGOOS`, `taskOSExecutable`, `refreshServices`; `taskOSOnly() error`, `taskOSDir(cmd) (string, bool, error)`, `taskOSDBPath(cfg) (string, error)`, `taskOSMenuSpec(cfg, cli string, p tasks.Profile) (osmenu.Spec, error)`, `taskOSRunnable(path string) bool`, `withTaskStore(cfg, cmd, fn func(ctx context.Context, store *tasks.Store, db *sql.DB, active string) error) error`, `taskOSState(...)`, the printers; four `cliDocs` entries (`task os`, `task os install`, `task os status`, `task os uninstall`).
+- Consumes: Task 0's P1 names (`withTasks`, `taskErr`, `callerFor`, `operator`, `flagAs`, `cutArg`, `initDB`, `resolveProfileID`, `expandPath`, `errInvalidInput`, `withJSONErrors`, `writeJSONTo`, `cliDocs`, `cmdDoc`, `tasks.Profile`, `tasks.Store`, `tasks.NewStore`, `tasks.ErrInvalid`, and the test helpers `newTaskTestDB`, `runTask`, `mustTaskJSON`, `failedTaskJSON`, `addedJSON`, `exitCode`); `osmenu.Spec`, `osmenu.Render`, `osmenu.Install`, `osmenu.List`, `osmenu.Remove`, `osmenu.Matches`, `osmenu.Menu`, `osmenu.Result`, `osmenu.ErrTaken`, `osmenu.Unchanged`, `osmenu.Updated`, `osmenu.DocumentPath`.
+- Produces: `newTaskOSCmd(cfg *globalConfig) *cobra.Command` (registered in `newTaskCmd`); package variables `taskOSGOOS`, `taskOSExecutable`, `refreshServices`; `taskOSOnly() error`, `taskOSDir(cmd) (string, bool, error)`, `taskOSDBPath(cfg) (string, error)`, `taskOSMenuSpec(cfg, cli string, p tasks.Profile) (osmenu.Spec, error)`, `taskOSRunnable(path string) bool`, `withTaskStore(cfg, cmd, fn func(ctx context.Context, store *tasks.Store, db *sql.DB, active string) error) error`, `taskOSState(...)`, the printers; four `cliDocs` entries (`task os`, `task os install`, `task os status`, `task os uninstall`); in P1's tests (Step 5) `refTaskSub` and `refHasFlag` changed and moved to the new `ref_tasks_group_test.go`, `refTaskCommands` and `refTaskCallee` new beside them, `refGatePath` new in `ref_tasks_gate_test.go`, and the rows `os install`, `os status` and `os uninstall` of `refTaskGate`.
+- Order of the checks in a command: `install` and `uninstall` (the operator's) refuse an agent, then count their arguments (any argument is `errInvalidInput`: exit 3, the `--json` document, not cobra's `Args`, whose mistake is exit 1 with no document), then check the platform; `status` (open to an agent) counts its arguments, then checks the platform. Only then do they look at `--dest`, the executable or the database.
 - JSON: `install` is `{"profile", "path", "menu_item", "cli", "outcome", "removed"}` (`cli` is the monoagentcli the menu runs; `outcome` one of `installed`, `already_installed`, `updated`); `status` is `{"dir", "menus": [{"path", "profile": {"id","name"}, "cli", "db", "state", "why"}]}` (`state` one of `current`, `stale`, `profile_gone`, `other_database`; `name` empty when the profile is gone or in another database); `uninstall` is `{"profile_id", "removed"}`. Arrays are never null.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2497,14 +2506,20 @@ func TestTaskOSRefusesAwayFromMacOS(t *testing.T) {
 	}
 }
 
+// An agent is refused as an agent on every platform, before the platform is looked at: P1's gate
+// test runs the real commands as an agent on whatever machine it is on, a Linux runner too.
 func TestTaskOSInstallAndUninstallAreTheOperators(t *testing.T) {
 	db, dest, _, _ := newTaskOSTest(t)
 	t.Setenv("CLAUDECODE", "1")
-	for _, sub := range []string{"install", "uninstall"} {
-		if doc := failedTaskJSON(t, db, "", 3, "os", sub, "--dest", dest); doc["code"] != "operator_only" {
-			t.Errorf("os %s under an agent's marker: %v", sub, doc)
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		taskOSGOOS = goos
+		for _, sub := range []string{"install", "uninstall"} {
+			if doc := failedTaskJSON(t, db, "", 3, "os", sub, "--dest", dest); doc["code"] != "operator_only" {
+				t.Errorf("os %s under an agent's marker on %s: %v", sub, goos, doc)
+			}
 		}
 	}
+	taskOSGOOS = "darwin"
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Error("an agent's install wrote the menu")
 	}
@@ -2512,6 +2527,30 @@ func TestTaskOSInstallAndUninstallAreTheOperators(t *testing.T) {
 		Menus []any `json:"menus"`
 	}
 	mustTaskJSON(t, db, "", &st, "", "os", "status", "--dest", dest)
+}
+
+// A mistake in the arguments is exit 3 with the --json document, like every other one of the group
+// (cobra's own Args check would be exit 1 and no document); the operator's two commands refuse an
+// agent that makes one as an agent, first; nothing is written.
+func TestTaskOSCommandsTakeNoArguments(t *testing.T) {
+	db, dest, _, refreshes := newTaskOSTest(t)
+	for _, sub := range []string{"install", "status", "uninstall"} {
+		doc := failedTaskJSON(t, db, "", 3, "os", sub, "junk", "--dest", dest)
+		if msg, _ := doc["error"].(string); doc["code"] != "invalid_input" || !strings.Contains(msg, "task os "+sub+" takes no arguments") {
+			t.Errorf("os %s junk: %v", sub, doc)
+		}
+		if _, _, err := runTask(t, db, "", false, "", "os", sub, "junk", "--dest", dest); exitCode(err) != 3 {
+			t.Errorf("os %s junk as text: exit %d (%v), want 3", sub, exitCode(err), err)
+		}
+	}
+	for _, sub := range []string{"install", "uninstall"} {
+		if doc := failedTaskJSON(t, db, "", 3, "os", sub, "junk", "--as", "bot", "--dest", dest); doc["code"] != "operator_only" {
+			t.Errorf("os %s junk run by an agent: %v, want operator_only before the arguments are read", sub, doc)
+		}
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) || *refreshes != 0 {
+		t.Errorf("a refused call wrote or refreshed something (%d refreshes)", *refreshes)
+	}
 }
 
 func TestTaskOSInstallRefusesATemporaryBuild(t *testing.T) {
@@ -2919,12 +2958,17 @@ replaces a bundle of the same name that this command did not write; the menu of
 another profile is never replaced.`,
 		Example: `  monoagentcli task os install
   monoagentcli --profile Work task os install`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := taskOSOnly(); err != nil {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// As P1's operator commands do: an agent is refused first, on every platform; then the
+			// arguments are counted (cobra's Args would be exit 1 with no --json document); then the
+			// platform is checked.
+			if _, err := callerFor(flagAs(cmd)).operator("install the macOS menu"); err != nil {
 				return err
 			}
-			if _, err := callerFor(flagAs(cmd)).operator("install the macOS menu"); err != nil {
+			if len(args) != 0 {
+				return errInvalidInput("task os install takes no arguments (got %q): the profile is --profile, as in monoagentcli --profile Work task os install", cutArg(args[0]))
+			}
+			if err := taskOSOnly(); err != nil {
 				return err
 			}
 			dir, services, err := taskOSDir(cmd)
@@ -3017,8 +3061,10 @@ menu's monoagentcli is gone, or the menu was changed or written in an older
 format: install it again); profile_gone (the profile was deleted: uninstall it
 with --profile and the id shown); or other_database (it files into another
 database: run status with that --db-path to judge it).`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return errInvalidInput("task os status takes no arguments (got %q): its one option is --dest", cutArg(args[0]))
+			}
 			if err := taskOSOnly(); err != nil {
 				return err
 			}
@@ -3120,12 +3166,14 @@ name), else into the active profile, of the database this command uses
 prints it. Only a menu task os install wrote is removed; nothing to remove is
 not an error.`,
 		Example: `  monoagentcli --profile Work task os uninstall`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := taskOSOnly(); err != nil {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := callerFor(flagAs(cmd)).operator("remove the macOS menu"); err != nil {
 				return err
 			}
-			if _, err := callerFor(flagAs(cmd)).operator("remove the macOS menu"); err != nil {
+			if len(args) != 0 {
+				return errInvalidInput("task os uninstall takes no arguments (got %q): the profile is --profile, as in monoagentcli --profile Work task os uninstall", cutArg(args[0]))
+			}
+			if err := taskOSOnly(); err != nil {
 				return err
 			}
 			dir, services, err := taskOSDir(cmd)
@@ -3190,7 +3238,7 @@ func init() {
 		},
 		cmdDoc{
 			Name:  "task os install",
-			Short: `Add "Add to MonoAgent Tasks: <profile>" to the macOS Services menu, filing into one profile (you only)`,
+			Short: `Add "Add to MonoAgent Tasks: <profile>" to the macOS Services menu, filing into one profile (the operator only)`,
 			Usage: "monoagentcli [--profile P] task os install [--force] [--dest DIR]",
 			Flags: `  --force     Replace a bundle of the same name that this command did not write
   --dest DIR  The Services folder (default ~/Library/Services)`,
@@ -3207,7 +3255,7 @@ func init() {
 		},
 		cmdDoc{
 			Name:     "task os uninstall",
-			Short:    "Remove a profile's Add to MonoAgent Tasks menu (a deleted profile is named by its id; you only)",
+			Short:    "Remove a profile's Add to MonoAgent Tasks menu (a deleted profile is named by its id; the operator only)",
 			Usage:    "monoagentcli [--profile P] task os uninstall [--dest DIR]",
 			Examples: []string{"monoagentcli --profile Work task os uninstall"},
 		},
@@ -3215,19 +3263,332 @@ func init() {
 }
 ```
 
-- [ ] **Step 5: Register the group in `newTaskCmd`**
+- [ ] **Step 5: Register the group in `newTaskCmd`, and teach P1's reference tests a command group**
 
-In `cmd/monoagentcli/task.go`, add `newTaskOSCmd(cfg),` as the last entry of the `cmd.AddCommand(` list in `newTaskCmd`, after the entry that is last there now (Task 0 printed the list). Change nothing else in the file.
+In `cmd/monoagentcli/task.go`, add `newTaskOSCmd(cfg),` as the last entry of the `cmd.AddCommand(` list in `newTaskCmd`, after the entry that is last there now (Task 0 printed the list). Change nothing else in the file. The group is registered on every platform (Ruling 19), so the rows below are right on macOS, Linux and Windows.
+
+`os` is the first command group inside the task group, and P1's reference tests read every `task NAME` as a direct subcommand and every flag as a flag of that command. With Step 4's entries and the group registered, three of them fail: `TestRefTasksEntriesDescribeTheirOwnCommand` (`task os install` "is no command", and its examples are read as calls of `os`), `TestRefTasksSuggestsOnlyCommandsTheCLIHas` (`--force` and `--dest`, written after `task os`, are looked for on the group; and a group's own `--dest` is declared with `PersistentFlags()`, which cobra merges into `Flags()` only when something asks for the inherited flags, so the first look at a command that `Find` has just returned does not see it) and `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent` (`task os` has no row). Teach them the group in the seven places below. `ref_tasks_test.go` has 497 lines and the limit is 500, so it must not grow: items 1 and 2 move the two helpers that have to change into a new file, and the other items are Edit calls whose old text occurs once in its file (Task 0 checked). If one reads differently by now, amend what says the same, keep what it checks and report it.
+
+1. `cmd/monoagentcli/ref_tasks_test.go`, the helpers leave. `refTaskSub` and `refHasFlag` move to the new file of item 2, where `refTaskSub` takes a path, `refHasFlag` sees a group's own flags, and `refTaskCommands` and `refTaskCallee` are new; the import of cobra goes with them (nothing else in this file names it). Replace
+
+```go
+// refTaskSub finds `task NAME` the way the CLI does, in a root command whose global
+// flags its subcommands inherit; nil for a name that is no subcommand.
+func refTaskSub(name string) *cobra.Command {
+	sub, _, err := newRootCmd().Find([]string{"task", name})
+	if err != nil || sub.Name() != name || sub.Parent() == nil || sub.Parent().Name() != "task" {
+		return nil
+	}
+	return sub
+}
+
+// refHasFlag says whether a subcommand declares the flag or inherits it.
+func refHasFlag(sub *cobra.Command, name string) bool {
+	return sub.Flags().Lookup(name) != nil || sub.InheritedFlags().Lookup(name) != nil
+}
+
+// refTaskEntries are the `ref commands` entries of the task group, by subcommand.
+```
+
+with
+
+```go
+// refTaskEntries are the `ref commands` entries of the task group, by subcommand.
+```
+
+and replace
+
+```go
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/monoes/mono-agent/internal/tasks"
+```
+
+with
+
+```go
+	"time"
+
+	"github.com/monoes/mono-agent/internal/tasks"
+```
+
+2. Create `cmd/monoagentcli/ref_tasks_group_test.go`: the helpers that read the commands of the task group by path, `refTaskSub` and `refHasFlag` as they are to be, `refTaskCommands` (every command of the group by its path) and `refTaskCallee` (reads a call written in a text: `task os install --force` calls `install`; the command tree says which commands are groups).
+
+```go
+package main
+
+import (
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+// The helpers of the tests that hold the texts and the gate table to the commands of the task group.
+// A command of the group is named by its path under task: "add" or, in a group of its own, "os install".
+
+// refTaskSub finds `task NAME` the way the CLI does, in a root command whose global
+// flags its subcommands inherit. NAME is a command of the group, or the path to one in a
+// group of its own ("os install"); nil for a name that is no command.
+func refTaskSub(name string) *cobra.Command {
+	words := strings.Fields(name)
+	if len(words) == 0 {
+		return nil
+	}
+	sub, rest, err := newRootCmd().Find(append([]string{"task"}, words...))
+	if err != nil || len(rest) != 0 || sub.Name() != words[len(words)-1] {
+		return nil
+	}
+	return sub
+}
+
+// refTaskCommands are the commands of the task group by their path under task: "add", "os"
+// and, below a group, "os install".
+func refTaskCommands() map[string]*cobra.Command {
+	found := map[string]*cobra.Command{}
+	var walk func(prefix string, group *cobra.Command)
+	walk = func(prefix string, group *cobra.Command) {
+		for _, sub := range group.Commands() {
+			found[prefix+sub.Name()] = sub
+			walk(prefix+sub.Name()+" ", sub)
+		}
+	}
+	walk("", newTaskCmd(&globalConfig{}))
+	return found
+}
+
+// refTaskCallee reads a call that refTaskCall found in a text: the command it calls, as its
+// path under task ("add", "os install"), and what is left of the line after it, which holds
+// the call's flags. A group takes the word after it for its subcommand when that is one, so
+// `task os install --force` calls install: the command tree says which commands are groups.
+// The command is nil when the call names none.
+func refTaskCallee(call []string) (path string, sub *cobra.Command, rest string) {
+	path, rest = call[1], call[2]
+	if sub = refTaskSub(path); sub == nil {
+		return path, nil, rest
+	}
+	for sub.HasSubCommands() {
+		word, tail, _ := strings.Cut(strings.TrimSpace(rest), " ")
+		next := refTaskSub(path + " " + word)
+		if word == "" || next == nil {
+			break
+		}
+		path, sub, rest = path+" "+word, next, tail
+	}
+	return path, sub, rest
+}
+
+// refHasFlag says whether a command declares the flag, as its own or, for a group, as one
+// of all its commands (os has --dest), or inherits it.
+func refHasFlag(sub *cobra.Command, name string) bool {
+	return sub.Flags().Lookup(name) != nil || sub.PersistentFlags().Lookup(name) != nil || sub.InheritedFlags().Lookup(name) != nil
+}
+```
+
+3. `cmd/monoagentcli/ref_tasks_test.go`, in `TestRefTasksEntriesDescribeTheirOwnCommand`: an example of a group's entry calls one of its commands (`task os`: `task os install`), and no other entry's example may call anything but its own command. Replace
+
+```go
+		for _, ex := range d.Examples {
+			if calls := refTaskCall.FindAllStringSubmatch(ex, -1); len(calls) != 1 || calls[0][1] != name {
+				t.Errorf("the example %q of `task %s` is not a call of that command", ex, name)
+			}
+		}
+```
+
+with
+
+```go
+		for _, ex := range d.Examples {
+			calls := refTaskCall.FindAllStringSubmatch(ex, -1)
+			if len(calls) != 1 {
+				t.Errorf("the example %q of `task %s` is not one call of the task group", ex, name)
+				continue
+			}
+			// A group's examples call its subcommands (task os install), and no other entry's do.
+			if path, _, _ := refTaskCallee(calls[0]); path != name && !strings.HasPrefix(path, name+" ") {
+				t.Errorf("the example %q of `task %s` is not a call of that command", ex, name)
+			}
+		}
+```
+
+4. The same file, in `TestRefTasksEntriesNameEveryFlagOfTheirCommand`: every command of the group is held to its entry, the leaves of `os` too. Replace
+
+```go
+	for _, sub := range newTaskCmd(&globalConfig{}).Commands() {
+		d := refTaskEntries()[sub.Name()] // no entry at all is TestEveryTaskCommandHasAReferenceEntry's to say
+		documented := append(refFlagsIn(d.Usage), refFlagsIn(d.Flags)...)
+		for _, m := range refUsageFlag.FindAllStringSubmatch(sub.LocalFlags().FlagUsages(), -1) {
+			if m[1] != "help" && !slices.Contains(documented, m[1]) {
+				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", sub.Name(), m[1])
+			}
+		}
+	}
+```
+
+with
+
+```go
+	for path, sub := range refTaskCommands() {
+		d := refTaskEntries()[path] // no entry at all is TestEveryTaskCommandHasAReferenceEntry's to say
+		documented := append(refFlagsIn(d.Usage), refFlagsIn(d.Flags)...)
+		for _, m := range refUsageFlag.FindAllStringSubmatch(sub.LocalFlags().FlagUsages(), -1) {
+			if m[1] != "help" && !slices.Contains(documented, m[1]) {
+				t.Errorf("`task %s` has --%s, which its `ref commands` entry does not show", path, m[1])
+			}
+		}
+	}
+```
+
+5. The same file, in `TestRefTasksSuggestsOnlyCommandsTheCLIHas`: the flags written after a call are checked against the command the call reaches. Replace
+
+```go
+		for _, m := range refTaskCall.FindAllStringSubmatch(text, -1) {
+			sub := refTaskSub(m[1])
+			if sub == nil {
+				t.Errorf("%s suggests `task %s`, which is no command", where, m[1])
+				continue
+			}
+			for _, flag := range refFlagsIn(m[2]) {
+				if !refHasFlag(sub, flag) {
+					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, m[1], flag)
+				}
+			}
+		}
+```
+
+with
+
+```go
+		for _, m := range refTaskCall.FindAllStringSubmatch(text, -1) {
+			path, sub, rest := refTaskCallee(m)
+			if sub == nil {
+				t.Errorf("%s suggests `task %s`, which is no command", where, path)
+				continue
+			}
+			for _, flag := range refFlagsIn(rest) {
+				if !refHasFlag(sub, flag) {
+					t.Errorf("%s suggests `task %s` with --%s, which it does not have", where, path, flag)
+				}
+			}
+		}
+```
+
+6. `cmd/monoagentcli/ref_tasks_gate_test.go`: three rows, and a walk of the command tree that goes down to the leaves, so that a command of `os` without a row, a row that names no command, and a row whose call is not its own all fail. `os install` and `os uninstall` are the operator's, `os status` is open (Ruling 17); the test calls `newTaskTestDB`, whose temporary `HOME` is what `os status` reads on a Mac, so no real Services folder is touched, and the tests of Task 6 pin the order that makes an agent's `os install` answer `operator_only` on every platform. Replace
+
+```go
+	row  string   // what the text names: a subcommand, or "add --ready"
+```
+
+with
+
+```go
+	row  string   // what the text names: a subcommand, "add --ready", or a command of a group ("os install")
+```
+
+and replace
+
+```go
+	{"digest", false, []string{"digest"}},
+}
+
+func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
+	// The table covers the command tree, both ways.
+	rows := map[string]bool{}
+	for _, r := range refTaskGate {
+		rows[strings.Fields(r.row)[0]] = true
+		if r.call[0] != strings.Fields(r.row)[0] {
+			t.Errorf("the row %q of refTaskGate calls `task %s`", r.row, r.call[0])
+		}
+	}
+	exists := map[string]bool{}
+	for _, sub := range newTaskCmd(&globalConfig{}).Commands() {
+		exists[sub.Name()] = true
+		if !rows[sub.Name()] {
+			t.Errorf("`task %s` has no row in refTaskGate (ref_tasks_gate_test.go): add one that says whether an agent may run it, and say the same in WHO MAY DO WHAT (ref_tasks.go) and in AGENTS.md", sub.Name())
+		}
+	}
+	for name := range rows {
+		if !exists[name] {
+			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command: remove or rename it", name)
+		}
+	}
+```
+
+with
+
+```go
+	{"digest", false, []string{"digest"}},
+	{"os install", true, []string{"os", "install"}},
+	{"os status", false, []string{"os", "status"}},
+	{"os uninstall", true, []string{"os", "uninstall"}},
+}
+
+// refGatePath is the command a row of refTaskGate names: its words that are not flags, so that
+// "add --ready" is add and "os install" is install in the group os.
+func refGatePath(row string) string {
+	var words []string
+	for _, w := range strings.Fields(row) {
+		if !strings.HasPrefix(w, "-") {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
+	// The table covers the command tree, both ways: every command that is not a group has a row
+	// (a group has the rows of its commands), and a row names a command that is there.
+	rows := map[string]bool{}
+	for _, r := range refTaskGate {
+		path := refGatePath(r.row)
+		rows[path] = true
+		if !strings.HasPrefix(strings.Join(r.call, " ")+" ", path+" ") {
+			t.Errorf("the row %q of refTaskGate calls `task %s`", r.row, strings.Join(r.call, " "))
+		}
+	}
+	commands := refTaskCommands()
+	for path, sub := range commands {
+		if !sub.HasSubCommands() && !rows[path] {
+			t.Errorf("`task %s` has no row in refTaskGate (ref_tasks_gate_test.go): add one that says whether an agent may run it, and say the same in WHO MAY DO WHAT (ref_tasks.go) and in AGENTS.md", path)
+		}
+	}
+	for path := range rows {
+		if commands[path] == nil {
+			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command: remove or rename it", path)
+		}
+	}
+```
+
+7. `cmd/monoagentcli/ref_tasks.go`, the `operator_only` sentence of WHO MAY DO WHAT: it names the two commands of `os` that are the operator's, and a sentence of its own says that an agent may run `os status` (the gate test wants each name on one line, `os install` and `os uninstall` in the sentence that carries the code and `os status` outside it). Replace
+
+```
+  Only board, edit, move, approve, archive, unarchive and add --ready are the
+  operator's: they answer an agent with exit 3 and the code operator_only. board
+  shows the Inbox, so an agent uses "task list".
+```
+
+with
+
+```
+  Only board, edit, move, approve, archive, unarchive, add --ready, os install and
+  os uninstall are the operator's: they answer an agent with exit 3 and the code
+  operator_only. board shows the Inbox, so an agent uses "task list". os install and
+  os uninstall change the Services menu of the user's Mac, outside the board.
+  os status only lists those menus: an agent may run it.
+```
+
+(The first text is the line `  Only board, edit, move, approve, archive, unarchive and add --ready are the` and the two lines after it. If the sentence was reworded since, amend the one that says the same so that its list holds `os install` and `os uninstall`, add the sentence about `os status`, and report it.) The new text has no backtick, so the raw string of `refTasksText` stays intact.
 
 - [ ] **Step 6: Run the tests to see them pass**
 
-Run: `gofmt -l cmd/monoagentcli` then `go vet ./cmd/monoagentcli/` then `go test ./cmd/monoagentcli/ -run 'TestTaskOS|TestTheMenusCommandLine|TestEveryTaskOSCommand|TestEveryTaskCommandHasAReferenceEntry|TestTaskAdd' -count=1` then `GOOS=linux go vet ./cmd/monoagentcli/` then `GOOS=windows go vet ./cmd/monoagentcli/` then `grep -nP '[^\x00-\x7F]' cmd/monoagentcli/task_os.go cmd/monoagentcli/task_os_test.go cmd/monoagentcli/ref_tasks_os.go`
-Expected: no output from `gofmt`, the two cross-OS vets or `grep`, vet clean, PASS. `TestEveryTaskCommandHasAReferenceEntry` is P1's: it now also needs the `task os` entry, which Step 4 adds.
+Run: `gofmt -l cmd/monoagentcli` then `go vet ./cmd/monoagentcli/` then `go test ./cmd/monoagentcli/ -run 'TestTaskOS|TestTheMenusCommandLine|TestEveryTaskOSCommand|TestEveryTaskCommandHasAReferenceEntry|TestRefTasks|TestTaskAdd' -count=1` then `GOOS=linux go vet ./cmd/monoagentcli/` then `GOOS=windows go vet ./cmd/monoagentcli/` then `grep -nP '[^\x00-\x7F]' cmd/monoagentcli/task_os.go cmd/monoagentcli/task_os_test.go cmd/monoagentcli/ref_tasks_os.go cmd/monoagentcli/ref_tasks_group_test.go` then `wc -l cmd/monoagentcli/task_os.go cmd/monoagentcli/task_os_test.go cmd/monoagentcli/ref_tasks_test.go cmd/monoagentcli/ref_tasks_gate_test.go cmd/monoagentcli/ref_tasks_group_test.go cmd/monoagentcli/ref_tasks.go`
+Expected: no output from `gofmt`, the two cross-OS vets or `grep`, vet clean, PASS, and no file of 500 lines or more (`ref_tasks_test.go` is a few lines shorter than before: Step 5 moved two helpers out of it). `TestEveryTaskCommandHasAReferenceEntry` and the `TestRefTasks...` tests are P1's: they now need the `task os` entries (Step 4), the registered group, and the changes of Step 5 (they pass on this Mac as on a Linux runner: Task 6's `TestTaskOSInstallAndUninstallAreTheOperators` pins the order of the checks that the gate test depends on there).
 
 - [ ] **Step 7: Commit**
 
 ```
-git add cmd/monoagentcli/task_os.go cmd/monoagentcli/task_os_test.go cmd/monoagentcli/ref_tasks_os.go cmd/monoagentcli/task.go
+git add cmd/monoagentcli/task_os.go cmd/monoagentcli/task_os_test.go cmd/monoagentcli/ref_tasks_os.go cmd/monoagentcli/task.go cmd/monoagentcli/ref_tasks.go cmd/monoagentcli/ref_tasks_test.go cmd/monoagentcli/ref_tasks_gate_test.go cmd/monoagentcli/ref_tasks_group_test.go
 ```
 then
 ```
@@ -3308,7 +3669,7 @@ Expected: PASS (P1's `TestRefTasksNamesTheGateTheLoopAndTheProfile` too).
 In the surfaces table that ends the `## Task board` section (header `| Surface | Reaches the board through |`), add this row after the table's last row: P1's last row starts `| Session-start hook |`; if rows of other phases follow it by now, add it after theirs. Add no paragraph anywhere (other phases write next to `## Assistant chat & tools`); the longer text lives in `ref tasks`.
 
 ```markdown
-| macOS menu | Services, "Add to MonoAgent Tasks: <profile>" on text selected in any app, installed once per profile by `monoagentcli --profile <id> task os install` (the operator's); it runs `task add --stdin --source os`, a capture into Inbox (`monoagentcli ref tasks`) |
+| macOS menu | Services, "Add to MonoAgent Tasks: <profile>" on text selected in any app, installed once per profile by `monoagentcli --profile <id> task os install` and removed by `task os uninstall` (both the operator's: an agent is refused with `operator_only`); it runs `task add --stdin --source os`, a capture into Inbox (`monoagentcli ref tasks`) |
 ```
 
 - [ ] **Step 4: `SECURITY.md`**
@@ -3316,7 +3677,7 @@ In the surfaces table that ends the `## Task board` section (header `| Surface |
 In the `## Task board` section, add this bullet right after the bullet that starts `- **Text is cleaned on the way in:**` (not at the end of the list: another phase replaces the last bullet, `- **No HTTP route and no new port.** ...`):
 
 ```markdown
-- **The macOS menu** (`task os install`, the operator's) hands the selected text to `monoagentcli` on standard input, never on a command line, and files it as a capture: Inbox only. It passes no `--as` and keeps the environment it runs in, so under an agent-context variable the CLI refuses `--source os`; as with the operator guard, this does not stop an agent that deliberately clears its environment or drives the Services menu through the screen, and the human gate still holds. It writes only a bundle it marks as its own, never replaces another profile's menu, and replaces a bundle of the same name it did not write only with `--force`.
+- **The macOS menu** (`task os install` and `task os uninstall`, the operator's) hands the selected text to `monoagentcli` on standard input, never on a command line, and files it as a capture: Inbox only. It passes no `--as` and keeps the environment it runs in, so under an agent-context variable the CLI refuses `--source os`; as with the operator guard, this does not stop an agent that deliberately clears its environment or drives the Services menu through the screen, and the human gate still holds. It writes only a bundle it marks as its own, never replaces another profile's menu, and replaces a bundle of the same name it did not write only with `--force`.
 ```
 
 - [ ] **Step 5: `CHANGELOG.md`**
@@ -3329,7 +3690,7 @@ Find the list with `grep -n "Unreleased" CHANGELOG.md` and add this bullet at th
 
 - [ ] **Step 6: Amend the spec (spec 15.2; the lead's ruling on Ruling 7)**
 
-In `docs/mastermind/specs/2026-10-05-task-board-design.md`, make exactly these three edits with the Edit tool and touch nothing else:
+In `docs/mastermind/specs/2026-10-05-task-board-design.md`, make exactly these three edits with the Edit tool and touch nothing else (each first text occurs once in the spec; if a sentence was reworded since, amend the one that says the same thing and report it):
 
 1. D7: the row ends with the first line below; replace it with the second.
 
@@ -3338,17 +3699,17 @@ not one that deliberately unsets its environment. | lead |
 not one that deliberately unsets its environment. `task os install` and `task os uninstall` are operator-only as well (P5): they change the user's machine outside the board. | lead |
 ```
 
-2. Section 7: the operator list starts with the first line below; replace it with the second.
+2. Section 7: the operator list starts with the first line below (P1 put `board` first); replace it with the second.
 
 ```markdown
-- Operator-only commands (`edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse
-- Operator-only commands (`edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`, and `os install` and `os uninstall` (P5)) refuse
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`, and `os install` and `os uninstall` (P5)) refuse
 ```
 
 3. Section 12: add this bullet as its last item, immediately before the line `## 13. Security`:
 
 ```markdown
-- As built in P5: the script runs under `/bin/sh` and passes every value as `--flag=value`, adding `--db-path=<the database the profile was found in>`; `Info.plist` is that of Apple's plain-text service plus a `CFBundleIdentifier` per profile, an empty `NSRequiredContext` (Apple's Services documentation asks for one in every service) and the marker keys `MonoAgentTasksCLI`, `MonoAgentTasksDB`, `MonoAgentTasksProfileID` and `MonoAgentTasksVersion` (the template's revision, not the CLI release); a menu's identity is its database and profile id; `/` and `:` in the profile's name become `-` in the item and the bundle name; `--dest` works for all three commands; `install` and `uninstall` are the operator's (D7); another profile's menu of the same name is never replaced while that profile exists, not even with `--force`, and another database's only with `--force`; `status` judges a menu with the monoagentcli its marker names, says why it is stale, and lists another database's menu as `other_database`; `uninstall --profile` also takes a deleted profile's id; a failed capture shows the CLI's last error line and fails the action, so macOS shows its own alert too; no `--client-id` (one click is one capture); no doctor check.
+- As built in P5: the script runs under `/bin/sh` and passes every value as `--flag=value`, adding `--db-path=<the database the profile was found in>`; `Info.plist` is that of Apple's plain-text service plus a `CFBundleIdentifier` per profile, an empty `NSRequiredContext` (Apple's Services documentation asks for one in every service) and the marker keys `MonoAgentTasksCLI`, `MonoAgentTasksDB`, `MonoAgentTasksProfileID` and `MonoAgentTasksVersion` (the template's revision, not the CLI release); a menu's identity is its database and profile id; `/` and `:` in the profile's name become `-` in the item and the bundle name; `--dest` works for all three commands; `install` and `uninstall` are the operator's (D7) and refuse an agent before they look at their arguments or the platform, `status` is open to an agent; another profile's menu of the same name is never replaced while that profile exists, not even with `--force`, and another database's only with `--force`; `status` judges a menu with the monoagentcli its marker names, says why it is stale, and lists another database's menu as `other_database`; `uninstall --profile` also takes a deleted profile's id; a failed capture shows the CLI's last error line and fails the action, so macOS shows its own alert too; no `--client-id` (one click is one capture); no doctor check.
 ```
 
 - [ ] **Step 7: Run the tests and commit**
@@ -3434,6 +3795,11 @@ For each row: apply the change with the Edit tool, run the test named (`go test 
 | 21 | `install.go`, `write`: delete the line `_ = rename(aside, target) // the old menu goes back` | `TestInstallPutsTheOldMenuBackWhenTheNewOneCannotGoIn` |
 | 22 | `install.go`, `Install`: delete the case `case ok && m.DB != b.DBPath:` and its body | `TestInstallKeepsAnotherDatabasesMenu` |
 | 23 | `install.go`, `Remove`: `if m.ProfileID != profileID || m.DB != db {` becomes `if m.ProfileID != profileID {` | `TestInstallKeepsAnotherDatabasesMenu` |
+| 24 | `task_os.go`, install: delete the three lines `if len(args) != 0 {` ... `}` that return `task os install takes no arguments` | `./cmd/monoagentcli/` `TestTaskOSCommandsTakeNoArguments` |
+| 25 | `task_os.go`, install: move the block `if err := taskOSOnly(); err != nil {` ... `}` to the first lines of `RunE`, above the operator check | `./cmd/monoagentcli/` `TestTaskOSInstallAndUninstallAreTheOperators` |
+| 26 | `ref_tasks.go`, WHO MAY DO WHAT: delete the line `  os status only lists those menus: an agent may run it.` | `./cmd/monoagentcli/` `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent` |
+| 27 | `ref_tasks_group_test.go`, `refHasFlag`: delete `|| sub.PersistentFlags().Lookup(name) != nil` | `./cmd/monoagentcli/` `TestRefTasksSuggestsOnlyCommandsTheCLIHas` |
+| 28 | `ref_tasks_group_test.go`, `refTaskCallee`: `for sub.HasSubCommands() {` becomes `for false {` | `./cmd/monoagentcli/` `TestRefTasksEntriesDescribeTheirOwnCommand|TestRefTasksSuggestsOnlyCommandsTheCLIHas` |
 
 - [ ] **Step 4: Smoke-run the built CLI under a throwaway home**
 
@@ -3480,7 +3846,7 @@ Expected: install prints `Installed "Add to MonoAgent Tasks: Smoke Work"` with t
 
 - [ ] **Step 5: Hand over**
 
-Do not push, open a PR or merge: the lead does that after the independent reviews, and re-checks before opening the PR that `062_tasks.sql` is still the only migration 062 anywhere (spec D32). Report: the commits (`git log --oneline feat/tasks-board..HEAD`), the results of Steps 1 and 2 (with the automator log line), which of the twenty-three mutations failed their tests, the smoke output, and anything that behaved differently from this plan or the spec. List for the PR description what only the user's Mac can verify (spec 14, 17.6), after running `monoagentcli task os install` in their own terminal (inside Claude Code, even with `!`, it refuses: Ruling 7): the item appears under Services on right-clicking selected text, with or without enabling it in System Settings; choosing it files the selection into the profile's Inbox with the right app name; the notification "Added to Inbox in <profile>" appears (it may need notifications for Script Editor allowed; with notifications off a successful capture shows nothing at all); after the profile is deleted or monoagentcli moved, choosing it shows "Not added: ..." and macOS's alert; a very large selection (over 1 MiB) ends cleanly. Say also what this build could not show: it was checked on macOS 27 (Darwin 27) only; the workflow runs `/bin/sh` where Apple's Show Map uses `/bin/bash`; the bundle keeps `Contents/document.wflow`, the layout of Automator-saved and third-party Quick Actions, not the `Contents/Resources/` of Apple's own; `automator -i` ran the workflow, which is not the path Services takes.
+Do not push, open a PR or merge: the lead does that after the independent reviews, and re-checks before opening the PR that `062_tasks.sql` is still the only migration 062 anywhere (spec D32). Report: the commits (`git log --oneline feat/tasks-board..HEAD`), the results of Steps 1 and 2 (with the automator log line), which of the twenty-eight mutations failed their tests, the smoke output, and anything that behaved differently from this plan or the spec. List for the PR description what only the user's Mac can verify (spec 14, 17.6), after running `monoagentcli task os install` in their own terminal (inside Claude Code, even with `!`, it refuses: Ruling 7): the item appears under Services on right-clicking selected text, with or without enabling it in System Settings; choosing it files the selection into the profile's Inbox with the right app name; the notification "Added to Inbox in <profile>" appears (it may need notifications for Script Editor allowed; with notifications off a successful capture shows nothing at all); after the profile is deleted or monoagentcli moved, choosing it shows "Not added: ..." and macOS's alert; a very large selection (over 1 MiB) ends cleanly. Say also what this build could not show: it was checked on macOS 27 (Darwin 27) only; the workflow runs `/bin/sh` where Apple's Show Map uses `/bin/bash`; the bundle keeps `Contents/document.wflow`, the layout of Automator-saved and third-party Quick Actions, not the `Contents/Resources/` of Apple's own; `automator -i` ran the workflow, which is not the path Services takes.
 
 ---
 
@@ -3489,5 +3855,5 @@ Do not push, open a PR or merge: the lead does that after the independent review
 - **Spec coverage.** Section 12: the command group and its flags (Task 6), the bundle and its files, the menu item, the message, the markers (Task 3), the script and its notification, the text on standard input only, the deleted-profile case (Task 2), idempotent install, stale rewrite, `--force`, `status`, `uninstall`, the printed hints (Tasks 4 and 6), Windows and Linux (Task 6's refusal, Task 7's recipe), rendering and paths in untagged files tested on Linux, darwin-only `pbs` and `automator` (Tasks 1 to 5). Section 5.1: a capture lands in Inbox only, `--source os` is refused for an agent (Task 6's pin, the smoke run). Section 5.3: no client id, a Ruling. Section 13: the text never on a command line, no log of it (Task 2). Section 14: rendering tests on any OS, an `automator` run against a stub CLI in a temporary folder (Task 5). Section 15.2: `ref tasks`, `ref commands`, AGENTS.md (one surfaces row), SECURITY.md, CHANGELOG, the spec amended in D7, 7 and 12 (Tasks 6 and 7). Not built: the optional doctor check (Ruling 12).
 - **Spec deviations.** Every Ruling above; Task 7's spec edits record the ones a reader of D7, 7 and 12 would otherwise miss.
 - **Placeholders.** None: every code step holds its code. Task 5 Step 4 is a stop rule, not a branch.
-- **Type consistency.** `osmenu`: `MenuPrefix`, `maxNameRunes`, `hidden`, `cleanName`, `menuName`, `MenuTitle`, `BundleName`, `bundleID`, `shellQuote`, `plistEscape`, `plainValue`, `osascript`, `funcs`, `scriptView`, `renderScript`, `Version`, `KeyCLI`, `KeyDB`, `KeyProfileID`, `KeyVersion`, `InfoPath`, `DocumentPath`, `Spec`, `Bundle`, `Render`, `render`, `wellFormed`, `ErrTaken`, `Outcome` (`Created`, `Unchanged`, `Updated`), `Result`, `Menu`, `Install(dir, b, force, gone)`, `List`, `Remove`, `Matches`, `tmpPrefix`, `rename`, `write`, `readMarker`, `topLevelStrings`; test helpers `rig`, `newRig`, `exitStatus`, `lines`, `hostileText`, `parsePlist`, `dig`, `testDB`, `testSpec`, `hostileName`, `hostileClean`, `cliPath`, `noneGone`, `mustRender`, `writeFile`. CLI: `newTaskOSCmd`, `taskOSGOOS`, `taskOSExecutable`, `refreshServices`, `taskOSOnly`, `taskOSDir`, `taskOSDBPath`, `taskOSMenuSpec`, `taskOSRunnable`, `withTaskStore`, `taskOSState`, `taskOSMenuJSON`, `printTaskOSInstalled(w, p, res, cli)`, `printTaskOSStatus`; test helpers `newTaskOSTest`, `taskOSStubCLI`, `execTaskOSSQL`, `addTaskOSProfile`, `countTaskOSTasks`, `taskOSInstalled`.
+- **Type consistency.** `osmenu`: `MenuPrefix`, `maxNameRunes`, `hidden`, `cleanName`, `menuName`, `MenuTitle`, `BundleName`, `bundleID`, `shellQuote`, `plistEscape`, `plainValue`, `osascript`, `funcs`, `scriptView`, `renderScript`, `Version`, `KeyCLI`, `KeyDB`, `KeyProfileID`, `KeyVersion`, `InfoPath`, `DocumentPath`, `Spec`, `Bundle`, `Render`, `render`, `wellFormed`, `ErrTaken`, `Outcome` (`Created`, `Unchanged`, `Updated`), `Result`, `Menu`, `Install(dir, b, force, gone)`, `List`, `Remove`, `Matches`, `tmpPrefix`, `rename`, `write`, `readMarker`, `topLevelStrings`; test helpers `rig`, `newRig`, `exitStatus`, `lines`, `hostileText`, `parsePlist`, `dig`, `testDB`, `testSpec`, `hostileName`, `hostileClean`, `cliPath`, `noneGone`, `mustRender`, `writeFile`. CLI: `newTaskOSCmd`, `taskOSGOOS`, `taskOSExecutable`, `refreshServices`, `taskOSOnly`, `taskOSDir`, `taskOSDBPath`, `taskOSMenuSpec`, `taskOSRunnable`, `withTaskStore`, `taskOSState`, `taskOSMenuJSON`, `printTaskOSInstalled(w, p, res, cli)`, `printTaskOSStatus`; test helpers `newTaskOSTest`, `taskOSStubCLI`, `execTaskOSSQL`, `addTaskOSProfile`, `countTaskOSTasks`, `taskOSInstalled`; in P1's tests (Task 6 Step 5) `refTaskSub` and `refHasFlag` changed and moved to `ref_tasks_group_test.go`, `refTaskCommands` and `refTaskCallee` new there, `refGatePath` new in `ref_tasks_gate_test.go`, the used names `refTaskCall`, `refTaskEntries`, `refFlagsIn`, `refSection`, `refNames` and `refTaskGate` as P1 has them.
 - **Review Focus.** Each of the five has named tests in the task that owns the code.
