@@ -121,22 +121,6 @@ func (e *libEnv) requireLogin(ctx context.Context) (*library.Client, error) {
 	return c, nil
 }
 
-// loginRequiredError is exit 4 with "login_required": true in --json, so
-// the app can tell "log in" from a connection failure.
-type loginRequiredError struct{ *cliError }
-
-func (e loginRequiredError) Unwrap() error { return e.cliError }
-
-func (loginRequiredError) JSONErrorFields() map[string]any {
-	return map[string]any{"login_required": true}
-}
-
-// isLoginRequired reports whether err means "log in to monoes.me first".
-func isLoginRequired(err error) bool {
-	var lr loginRequiredError
-	return errors.Is(err, library.ErrNotLoggedIn) || errors.As(err, &lr)
-}
-
 // libErr gives a library failure the CLI's exit code: 2 not found, 3
 // rejected input, 4 login/connection. No login, or a 401 the token
 // refresh did not cure, says "Log in to monoes.me first".
@@ -151,7 +135,7 @@ func libErr(err error) error {
 	var ae *library.APIError
 	switch {
 	case errors.Is(err, library.ErrNotLoggedIn):
-		return loginRequiredError{&cliError{code: 4, msg: library.ErrNotLoggedIn.Error()}}
+		return libraryLoginRequired()
 	case errors.As(err, &ae):
 		switch ae.Status {
 		case http.StatusNotFound:
