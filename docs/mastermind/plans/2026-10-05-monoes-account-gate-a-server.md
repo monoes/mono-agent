@@ -1713,7 +1713,7 @@ npx wrangler d1 execute monoes-community --remote --command "SELECT count(*) AS 
 
 **Interfaces:** Produces `revokeOAuthAccess(db: Db, userId: string)`, the delete statements for the user's `oauth_access_token`, `oauth_refresh_token` and `session` rows, meant for `db.batch`; and `accessTokenClaims(user: Record<string, unknown> | null | undefined): { plan: string }`, which throws `APIError("BAD_REQUEST", { error: "invalid_grant", error_description: "this account is blocked" })` for a blocked user. Consumes `Db` (`@/lib/db`), the three schema tables, `APIError` from `better-auth/api`.
 
-**Design (S3).** Before this task a block is two columns: the refresh grant accepts a blocked user (200), and a web session that is still alive can authorize and mint new tokens. Two layers fix it. The deletion makes every refresh find no row (`invalid_grant`, `session not found`), covers opaque chains too, and kills the live cookie. The claims guard makes an audience-bound grant for a blocked user answer `invalid_grant` even when the block was made some other way than the route; it runs before the refresh token is rotated, so nothing is consumed. Unblocking deletes nothing: the user signs in again. The deletion also takes the rotated refresh-token rows, so a token rotated a moment ago, inside Task 3's reuse window, no longer has a stored answer to replay: the spec presents one after the block. Nothing introspects tokens here, but the provider re-derives these claims at opaque-token introspection, so introspecting a blocked user's token now errors.
+**Design (S3).** Before this task a block is two columns: the refresh grant accepts a blocked user (200), and a web session that is still alive can authorize and mint new tokens. Two layers fix it. The deletion makes every refresh find no row (`invalid_grant`, `session not found`), covers opaque chains too, and kills the live cookie. The claims guard makes an audience-bound grant for a blocked user answer `invalid_grant` even when the block was made some other way than the route; it runs before the refresh token is rotated, so nothing is consumed. Unblocking deletes nothing: the user signs in again. The deletion also takes the rotated refresh-token rows, so a token rotated a moment ago, inside Task 3's reuse window, no longer has a stored answer to replay: the spec presents one after the block. A block ends every sign-in of the account at once, by design: Task 3's family rule narrows what a replayed token ends, not what a block ends, and after the block its hook finds no row and leaves the answer (`session not found`) to the provider. Nothing introspects tokens here, but the provider re-derives these claims at opaque-token introspection, so introspecting a blocked user's token now errors.
 
 - [ ] **Step 1: Branch.** Fetch first, or the branch starts from a stale `main` (two separate commands): `git fetch origin`, then `git switch -c feat/account-gate-blocking origin/main`. Task 3 must already be merged.
 
@@ -1957,7 +1957,7 @@ and replace lines 23-27 (`const updated = await db ... .returning({ id: user.id 
 
 The lines after it (`if (updated.length === 0) { ... 404 }`) stay as they are.
 
-- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts`: `8 passed` (a valid refresh is still never `invalid_grant`).
+- [ ] **Step 6: Run the unit tests and the spec.** The unit command of step 3: `ℹ pass 4`. The spec: `2 passed`. Re-run `tests/account-gate-tokens.spec.ts tests/account-gate-family.spec.ts`: `25 passed` (a valid refresh is still never `invalid_grant`, and a replay still ends only its own sign-in).
 
 - [ ] **Step 7: Checks.** `npm test`, `npx tsc --noEmit`, `npx eslint src/lib/access-token-claims.ts src/lib/auth.ts src/lib/community/revoke-oauth-access.ts "src/app/api/community/admin/users/[id]/block/route.ts" tests/account-gate-block.spec.ts`. Expected: `ℹ fail 0`, no other output.
 
@@ -2814,7 +2814,7 @@ Expected: exactly one key and its `kid` is the one from O3. Then sign in once wi
 
 **Beyond the spec's list, and why.** Spec D10 and §9 make headless sign-in `account login --email`, and §5 / D19 list no server change for it; the lead approved this task as the one server change beyond that list. Today `POST /api/auth/agent/claim/verify` inserts a one-hour opaque access token by hand and returns it alone (`src/app/api/auth/agent/claim/verify/route.ts`, lines 92-112): no refresh token, no JWT, and `resource` is ignored. A gate session is a refresh token, so that path cannot start one and `account login --email` would end in an error. The route now serves a client in either of two ways, and the client plans may use either. (1) A MonoAgent claim that includes `offline_access` (every claim the client sends) gets a `refresh_token` in the answer: a row of the table the provider's refresh grant reads, which the client trades at the token endpoint with `resource`, like an adopted old session (S2). (2) A body that carries `resource` gets that trade done at once through `auth.api.oauth2Token`, and the answer is the token endpoint's own. Either way the JWT, its claims, the signing key and the blocked-account guard are the provider's, and the opaque token of the plain answer stays what it was. If the exchange fails, the refresh row written for it is unreachable (its value never left the server) and expires in 30 days.
 
-Three things to know before shipping. A correct code used to buy one hour and now buys a self-renewing session (each rotation slides the 30 days); the existing guards stay: a 6-digit code, 5 attempts per code, 10 minutes, 3 outstanding codes per email per hour. Today's released client already asks for `offline_access` (`internal/library/types.go:24`, sent at `internal/library/auth.go:333`) and parses a `refresh_token` in this answer (`internal/library/auth.go:118-127`, `:350-363`), so after this task it stores one after an emailed-code login (`tokenFrom`, `:158-160`), as it does after a browser login, and refreshes it at the token endpoint with no `resource` (`:176-178`); the claim spec pins that refresh. And a blocked account is refused here too; before, the route did not look.
+Four things to know before shipping. The refresh row carries a family key, `authorization_code_id` `email-claim:<claim id>` (spike S7; Task 3's hook ends a replayed token's family by that column): a replay of an emailed sign-in after the reuse window ends that sign-in alone, as a browser sign-in's does, where a row without a key would end alone and leave its successor alive. The value can never equal an authorization code's hash, so the provider's own code-replay cleanup never matches it; the last claim spec test pins both. A correct code used to buy one hour and now buys a self-renewing session (each rotation slides the 30 days); the existing guards stay: a 6-digit code, 5 attempts per code, 10 minutes, 3 outstanding codes per email per hour. Today's released client already asks for `offline_access` (`internal/library/types.go:24`, sent at `internal/library/auth.go:333`) and parses a `refresh_token` in this answer (`internal/library/auth.go:118-127`, `:350-363`), so after this task it stores one after an emailed-code login (`tokenFrom`, `:158-160`), as it does after a browser login, and refreshes it at the token endpoint with no `resource` (`:176-178`); the claim spec pins that refresh. And a blocked account is refused here too; before, the route did not look.
 
 **Files:**
 - Create: `tests/account-gate-claim.spec.ts`
@@ -2839,8 +2839,9 @@ Consumes `oauthRefreshToken` (schema), `MONOAGENT_AUDIENCE`, `MONOAGENT_CLIENT_I
 ```ts
 import { test, expect } from "@playwright/test";
 import { eq } from "drizzle-orm";
-import { oauthResource, user } from "../src/lib/db/schema";
-import { AUDIENCE, MONOAGENT_SCOPES, bearer, decodeJwt, isJwt, refresh, seedClaimRequest, signUp, withDb } from "./helpers/oauth-api";
+import { emailClaimRequest, oauthRefreshToken, oauthResource, user } from "../src/lib/db/schema";
+import { sha256Base64Url } from "../src/lib/community/hash-token";
+import { AUDIENCE, MONOAGENT_SCOPES, bearer, decodeJwt, isJwt, login, refresh, seedClaimRequest, signUp, withDb } from "./helpers/oauth-api";
 
 // The headless sign-in (`account login --email` in mono-agent) is the emailed code. It must end
 // where the browser flow ends, with an audience-bound JWT and a refresh token: the MonoAgent client
@@ -2957,9 +2958,33 @@ test("an exchange the provider refuses comes back as its OAuth error, not a 500"
     await setDisabled(false);
   }
 });
+
+test("the emailed code's chain is a family of its own: a replay after the window ends only that sign-in", async ({ baseURL }) => {
+  // Task 3's src/lib/refresh-family.ts ends the family of a replayed token, keyed on authorization_code_id,
+  // which this route writes as `email-claim:<claim id>`. A row without one would end alone, its successor alive.
+  const account = await signUp(baseURL!);
+  await seedClaimRequest({ email: account.email, scope: MONOAGENT_SCOPES, code: "777777" });
+  const claimed = await verifyCode(baseURL!, account.email, "777777");
+  expect([claimed.status, Boolean(claimed.body.refresh_token)], "a refresh token").toEqual([200, true]);
+  const hash = await sha256Base64Url(claimed.body.refresh_token!);
+  const stored = await withDb(async (db) => ({
+    claimId: (await db.select({ id: emailClaimRequest.id }).from(emailClaimRequest).where(eq(emailClaimRequest.email, account.email)))[0].id,
+    key: (await db.select({ key: oauthRefreshToken.authorizationCodeId }).from(oauthRefreshToken).where(eq(oauthRefreshToken.token, hash)))[0].key,
+  }));
+
+  const browser = await login(baseURL!, { resource: AUDIENCE, account }); // another sign-in of the account
+  expect(browser.status).toBe(200);
+  const next = await refresh(baseURL!, claimed.body.refresh_token!, AUDIENCE);
+  expect(next.status).toBe(200);
+  await withDb((db) => db.update(oauthRefreshToken).set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) }).where(eq(oauthRefreshToken.userId, account.userId)));
+  expect((await refresh(baseURL!, claimed.body.refresh_token!, AUDIENCE)).status, "the replay").toBe(400);
+  expect((await refresh(baseURL!, next.body.refresh_token!, AUDIENCE)).status, "the emailed sign-in's newer token goes with it").toBe(400);
+  expect((await refresh(baseURL!, browser.body.refresh_token!, AUDIENCE)).status, "the browser sign-in keeps refreshing").toBe(200);
+  expect(stored.key, "the family key").toBe(`email-claim:${stored.claimId}`);
+});
 ```
 
-Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-claim.spec.ts --reporter=line`. Expected: `5 failed, 1 passed`; the passing one is `a claim without offline_access has no refresh token to give or exchange: the resource is ignored`. The first test fails at `the access token is a JWT` (`Expected: true`, `Received: false`) and the second at `expect(claimed.body.refresh_token).toBeTruthy()` (`Received: undefined`).
+Run `E2E_BASE_URL=http://localhost:3107 npx playwright test tests/account-gate-claim.spec.ts --reporter=line`. Expected: `6 failed, 1 passed`; the passing one is `a claim without offline_access has no refresh token to give or exchange: the resource is ignored`. The first test fails at `the access token is a JWT` (`Expected: true`, `Received: false`), the second at `expect(claimed.body.refresh_token).toBeTruthy()` (`Received: undefined`), and the last, `the emailed code's chain is a family of its own: ...`, at `a refresh token`. (The first test's `/api/library/me` with the JWT needs Task 5, which merges before this task.)
 
 - [ ] **Step 3: Update the route's unit tests.** In `src/app/api/auth/agent/claim/verify/route.test.ts` add these two cases before the `@/lib/db` one (line 12), so the route's new imports resolve:
 
@@ -3033,6 +3058,9 @@ Run `node --experimental-strip-types --test src/app/api/auth/agent/claim/verify/
       token: await sha256Base64Url(refresh.raw),
       clientId,
       userId: matchedUser.id,
+      // The chain's family key, as an authorization code's hash is for a browser sign-in: a replay
+      // after the reuse window ends this sign-in alone (Task 3, src/lib/refresh-family.ts).
+      authorizationCodeId: `email-claim:${claim.id}`,
       scopes,
       expiresAt: new Date(now.getTime() + REFRESH_TTL_MS),
       createdAt: now,
@@ -3092,7 +3120,7 @@ import { MONOAGENT_AUDIENCE, MONOAGENT_CLIENT_ID } from "@/lib/monoagent-token";
 
 In `public/auth.md` line 49 replace `On success: `200 { "access_token": string, "token_type": "Bearer", "expires_in": 3600, "scope": string }`. Codes expire` with ``On success: `200 { "access_token": string, "token_type": "Bearer", "expires_in": 3600, "scope": string }`. For the `monoagent` client and a claim whose scope includes `offline_access`, the answer also carries a `refresh_token`; adding `"resource": "https://monoes.me/api/monoagent"` to the body makes the answer the token endpoint's own instead: an audience-bound JWT `access_token` and that `refresh_token`. Codes expire``.
 
-- [ ] **Step 5: Run.** The unit file of step 3: `ℹ pass 8`, `ℹ fail 0`. The spec: `6 passed`. `npm test`: `ℹ fail 0`. With a browser available, `tests/oauth-claim.spec.ts` (3 tests) still passes: the old flow is unchanged.
+- [ ] **Step 5: Run.** The unit file of step 3: `ℹ pass 8`, `ℹ fail 0`. The spec: `7 passed`. `npm test`: `ℹ fail 0`. With a browser available, `tests/oauth-claim.spec.ts` (3 tests) still passes: the old flow is unchanged. Then prove the family key bites: delete the `authorizationCodeId` line of the insert, rerun the last spec test (`-g "the emailed code's chain"`), and it fails at `the emailed sign-in's newer token goes with it` (`Expected: 400`, `Received: 200`: a keyless chain ends alone, so its successor survives); put the line back.
 
 - [ ] **Step 6: Checks and commit.** `npx tsc --noEmit`; `npx eslint "src/app/api/auth/agent/claim/verify/route.ts" "src/app/api/auth/agent/claim/verify/route.test.ts" tests/account-gate-claim.spec.ts` (no output).
 
@@ -3139,10 +3167,19 @@ describe("the authentication docs page", () => {
     ];
     for (const text of mentioned) assert.ok(page.includes(text), `the page mentions ${text}`);
   });
+
+  it("says that a reused refresh token ends only its own sign-in, and that sid can be null", () => {
+    // Plan A's Task 3 (refresh-token families, ruling R1); spike S6 measured `sid` null after a sign-out.
+    const text = page.replace(/\s+/g, " ");
+    assert.ok(text.includes("revokes the refresh tokens of that sign-in"), "the page says what a reused refresh token ends");
+    assert.ok(text.includes("The other sign-ins of the account keep working"), "the page says the other sign-ins survive");
+    assert.ok(!text.includes("every MonoAgent refresh token of that account"), "the page no longer says a reuse ends the account");
+    assert.ok(text.includes("once that session has ended"), "the page says sid can be null");
+  });
 });
 ```
 
-Run `node --experimental-strip-types --test src/lib/docs/authentication.test.ts`. Expected: FAIL, `AssertionError [ERR_ASSERTION]: the page mentions https://monoes.me/api/monoagent` (the page has none of the audience, `at+jwt`, `exp - iat`, `invalid_target` or `invalid_grant` today).
+Run `node --experimental-strip-types --test src/lib/docs/authentication.test.ts`. Expected: FAIL, `ℹ fail 2`: `AssertionError [ERR_ASSERTION]: the page mentions https://monoes.me/api/monoagent` (the page has none of the audience, `at+jwt`, `exp - iat`, `invalid_target` or `invalid_grant` today) and `the page says what a reused refresh token ends`.
 
 - [ ] **Step 3: Add the section.** Insert before line 222 (`<h2 id="headless-agents-no-browser" ...>`) in `src/app/docs/authentication/page.tsx`:
 
@@ -3186,18 +3223,19 @@ Run `node --experimental-strip-types --test src/lib/docs/authentication.test.ts`
           unique per token.
         </li>
         <li>
-          <code>plan</code> is <code>free</code> for every account today. <code>sid</code> appears only on tokens from
-          the browser flow.
+          <code>plan</code> is <code>free</code> for every account today. <code>sid</code>, when present, names the web
+          session the sign-in went through, and is <code>null</code> once that session has ended: do not rely on it.
         </li>
       </ul>
       <p className="mt-3 text-[15px] leading-relaxed text-espresso/75">
         Refresh tokens rotate: each refresh returns a new one and the old one stops working. Retrying a refresh whose
         answer was lost, within five minutes, returns that same answer again; presenting a used refresh token after that
-        revokes every MonoAgent refresh token of that account, so sign in again. A refresh that is
-        answered <code>invalid_grant</code> means the account cannot continue: its tokens were revoked, they expired
-        after 30 days, or the account is blocked. Every other failure (<code>invalid_target</code>, a 5xx, no network) says
-        nothing about the account. Blocking an account deletes its refresh tokens, access tokens and web sessions in one
-        step; a JWT that was already issued is refused by every route and expires within the hour.
+        revokes the refresh tokens of that sign-in, so sign in again on that machine. The other sign-ins of the account
+        keep working. Revoking a refresh token at <code>/api/auth/oauth2/revoke</code> ends its sign-in the same way. A
+        refresh that is answered <code>invalid_grant</code> means the sign-in cannot continue: its tokens were revoked,
+        they expired after 30 days, or the account is blocked. Every other failure (<code>invalid_target</code>, a 5xx,
+        no network) says nothing about the account. Blocking an account deletes its refresh tokens, access tokens and
+        web sessions in one step; a JWT that was already issued is refused by every route and expires within the hour.
       </p>
 ```
 
@@ -3211,7 +3249,7 @@ In the headless section replace lines 244-245 (the sentence ``<code>{`{ access_t
           JWT and a <code>refresh_token</code>. Codes expire after 10 minutes and allow at most 5 attempts.
 ```
 
-- [ ] **Step 4: Run.** The test: `ℹ pass 1`. `npm test`: `ℹ fail 0`. With the dev server running: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3107/docs/authentication` prints `200` and `curl -s http://localhost:3107/docs/authentication | grep -c 'id="monoagent-tokens"'` prints `1`.
+- [ ] **Step 4: Run.** The test: `ℹ pass 2`. `npm test`: `ℹ fail 0`. With the dev server running: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3107/docs/authentication` prints `200` and `curl -s http://localhost:3107/docs/authentication | grep -c 'id="monoagent-tokens"'` prints `1`.
 
 - [ ] **Step 5: Checks and commit.** `npx tsc --noEmit`; `npx eslint src/app/docs/authentication/page.tsx src/lib/docs/authentication.test.ts`.
 
@@ -3226,4 +3264,4 @@ git commit -m "docs(auth): document the MonoAgent audience, claims, refresh and 
 
 ## Contract change requests
 
-None. The server produces exactly the frozen values of the index §3.2 (`Issuer`, `Audience`, `ClientID`) and satisfies §3.4 item 10. Facts the client plans must know, all recorded in the findings file: the email-code route (Task 7) answers a MonoAgent claim that includes `offline_access` with a `refresh_token`, which `VerifyEmailCode` trades at the token endpoint with `resource` like any other (the verify request stays unchanged), and it also honors a `resource` in the verify body, answering like the token endpoint in one call; against a server without Task 7 there is no `refresh_token` and an emailed-code sign-in must end in a clear error; adoption (D23) and `account logout` must delete every local copy of a refresh token, because presenting a rotated or revoked one ends the account's sessions on every machine (S2), except that a retry of a lost answer inside 300 seconds is answered again with the same response (Task 3); a refresh token unused for 30 days answers `invalid_grant` (S3); `aud` is an array; `iss`, `aud` and the client claim are what tell an access token from the ID token and the `/api/auth/token` session JWT that share the key.
+None. The server produces exactly the frozen values of the index §3.2 (`Issuer`, `Audience`, `ClientID`) and satisfies §3.4 item 10. Facts the client plans must know, all recorded in the findings file: the email-code route (Task 7) answers a MonoAgent claim that includes `offline_access` with a `refresh_token`, which `VerifyEmailCode` trades at the token endpoint with `resource` like any other (the verify request stays unchanged), and it also honors a `resource` in the verify body, answering like the token endpoint in one call; against a server without Task 7 there is no `refresh_token` and an emailed-code sign-in must end in a clear error; adoption (D23) and `account logout` must delete every local copy of a refresh token, because presenting a rotated or revoked one ends that sign-in, its refresh-token family, on every machine that holds a copy (Task 3, ruling R1; on a server without Task 3, every MonoAgent session of the account, S2), except that a retry of a lost answer inside 300 seconds is answered again with the same response (Task 3); a revoke at `/oauth2/revoke` ends the whole sign-in of the token presented, a successor the machine never received included, and answers 400 `invalid_request` (`token not found`, or `refresh token revoked` under that hint) for a token that was rotated away or revoked before, which `account logout` reads as already gone (S7); the loser of two presentations of one token at the same moment (two refreshes, a logout racing a refresh, a retry while the first request is still in flight) gets `invalid_grant`, so the client serialises refresh and logout per install and never retries a request that may still be in flight (S7); a refresh token unused for 30 days answers `invalid_grant` (S3); `aud` is an array; `iss`, `aud` and the client claim are what tell an access token from the ID token and the `/api/auth/token` session JWT that share the key.
