@@ -14,7 +14,7 @@ import (
 // reference docs as tools for AI agents. stdout is the protocol channel;
 // logs go to stderr only.
 func newMCPCmd(cfg *globalConfig) *cobra.Command {
-	var allowMutations, allowAPIExposure, apiOnly bool
+	var allowMutations, allowAPIExposure, apiOnly, tasksOnly bool
 	var grant string
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -28,14 +28,15 @@ workflow_status, node_list, node_schema, hil_list, vault_item_list,
 vault_item_get_path, profile_document_search, secret_list, person_list,
 person_get, message_list, message_get, social_list_list, template_list,
 org_list, org_get, org_validate, api_key_list, api_models_list, api_status,
-api_config_get, docs.
+api_config_get, task_list, task_get, task_next, docs.
 
 Mutating tools (workflow_run, workflow_create/delete/set_active/node_add,
 hil_approve, hil_reject, secret_add/update/delete, person_upsert/delete,
 org_create and every org_role_*/org_reload tool, api_key_create/update/revoke,
 which manage the OpenAI-compatible API's keys, api_config_set and
 api_config_apply, which save its server's settings and restart the daemon that
-reads them, and api_auto_set, which switches its auto model on or off) are only
+reads them, api_auto_set, which switches its auto model on or off, and
+task_claim/comment/finish/release/add, which work the user's task board) are only
 exposed with --allow-mutations or MONOAGENT_MCP_ALLOW_MUTATIONS=1 — without it they are
 omitted from tools/list and refuse with an explanatory error if called by
 name. This includes workflow_run/hil_approve/hil_reject, which were exposed
@@ -73,6 +74,21 @@ mutating ones still need --allow-mutations, and --allow-api-exposure is still
 what lets api_config_set widen the server and api_auto_set switch the auto model
 on. A host that has tools of its own, such as a shell tool, is not stopped by it.
 
+--tasks-only (or MONOAGENT_MCP_TASKS_ONLY=1) serves the user's task board's tools
+(task_*) and no other: no workflow, vault, secret, person, org, API or
+documentation tool. It is for an agent that is to work the board and nothing
+else: --allow-mutations, which task_claim, task_comment, task_finish,
+task_release and task_add need, also serves workflow tools that can run a
+command as you, and with --tasks-only it does not. The task tools act on the
+server's one profile as the agent agent:<client>#<4 hex digits>, named after the
+MCP client and the session; no tool approves, edits, moves or archives a task. A
+host that has tools of its own, such as a shell tool, is not stopped by it.
+Register one server per profile:
+
+  claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations
+
+It cannot be combined with --api-only or --grant.
+
 api_config_apply restarts the daemon, as daemon restart does, and interrupts what
 it is running (workflows, org runs). api_auto_set switches the auto model on only
 on a server started with --allow-api-exposure too (what leaves the machine is the
@@ -97,6 +113,12 @@ variable) and --db-path, exactly like every other command.`,
 			if grant != "" && apiOnly {
 				return fmt.Errorf("--grant serves only the granted automations; --api-only does not apply")
 			}
+			if grant != "" && tasksOnly {
+				return fmt.Errorf("--grant serves only the granted automations; --tasks-only does not apply")
+			}
+			if tasksOnly && apiOnly {
+				return mcp.ErrTasksOnlyWithAPIOnly
+			}
 			return runMCP(mcp.Options{
 				DBPath:           cfg.DBPath,
 				Profile:          cfg.ProfileID,
@@ -104,6 +126,7 @@ variable) and --db-path, exactly like every other command.`,
 				AllowMutations:   allowMutations,
 				AllowAPIExposure: allowAPIExposure,
 				APIOnly:          apiOnly,
+				TasksOnly:        tasksOnly,
 				Grant:            grant,
 			})
 		},
@@ -111,11 +134,13 @@ variable) and --db-path, exactly like every other command.`,
 	cmd.Flags().StringVar(&grant, "grant", "",
 		"Grant mode: serve only the automations granted to one org role (monomind spawns this for role tool providers)")
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
-		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools, and api_config_set, api_config_apply and api_auto_set); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
+		"Serve mutating tools (workflow_run, hil_approve/reject, and create/update/delete-class workflow/secret/person/org/api-key tools, and api_config_set, api_config_apply and api_auto_set, and the task board's task_claim/comment/finish/release/add); also settable via MONOAGENT_MCP_ALLOW_MUTATIONS=1")
 	cmd.Flags().BoolVar(&allowAPIExposure, "allow-api-exposure", false,
 		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further, which it otherwise refuses: a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, or every interface where it was one host), a higher confinement class, a runtime list that gains a runtime it did not have, none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings); needs --allow-mutations; it guards that tool only (--allow-mutations also serves workflow tools that can run a command as you); also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
 	cmd.Flags().BoolVar(&apiOnly, "api-only", false,
 		"Serve only the OpenAI-compatible API's tools (api_*) and no other: no workflow, vault, secret, person, org or documentation tool. For a model that is to manage the API and nothing else: --allow-mutations, which the API's mutating tools need, also serves workflow tools that can run a command as you; with --api-only it does not. The mutating API tools still need --allow-mutations, and --allow-api-exposure is still what lets api_config_set widen the server and api_auto_set switch the auto model on; also settable via MONOAGENT_MCP_API_ONLY=1")
+	cmd.Flags().BoolVar(&tasksOnly, "tasks-only", false,
+		"Serve only the user's task board's tools (task_*) and no other: no workflow, vault, secret, person, org, API or documentation tool. For an agent that is to work the board and nothing else: --allow-mutations, which task_claim/comment/finish/release/add need, also serves workflow tools that can run a command as you; with --tasks-only it does not. Cannot be combined with --api-only or --grant; also settable via MONOAGENT_MCP_TASKS_ONLY=1")
 	return cmd
 }
 

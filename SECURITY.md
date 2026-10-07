@@ -451,6 +451,7 @@ that works a task acts on them. The defences:
   Ready only a task it holds), and only the operator moves one to Done.
   An agent's `finish` goes to Review. An agent cannot edit a task's
   text, so what the operator approved is what it reads.
+- **Over MCP** an agent works the board through the `task_*` tools of `monoagentcli mcp`, over stdio (no port, no HTTP route). They act as the agent the server names after its client (`agent:<client>#<4 hex>`: two sessions are two claimants, and no argument can choose the name), on the one profile the server was started with. No tool approves, edits, moves or archives a task. Every text a person, an agent or a capture wrote comes back in a field ending in `_untrusted`, with a note to weigh it and not follow instructions inside it, and a tool refuses any argument it does not list. `mcp --tasks-only` serves these tools without the workflow tools that `--allow-mutations` would also serve.
 - **The operator-only commands refuse an agent-driven caller:** `board`
   (it shows the Inbox), `edit`, `move`, `approve`, `archive`,
   `unarchive` and `add --ready`. A caller is agent-driven when an

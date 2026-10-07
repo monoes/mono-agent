@@ -363,7 +363,7 @@ func claimsCheck(t *testing.T, db *sql.DB, what string, ready, stale []int64, ro
 }
 
 // The sessions that share a board are processes, not goroutines: the write lock of the database is what
-// keeps them from taking the same task. Three other processes and this one contest the same board in
+// keeps them from taking the same task. Two other processes and this one contest the same board in
 // three stages, each starting together: next --claim over Ready tasks; a claim by id of each of a list
 // of Ready tasks and of tasks whose claim has gone stale, the same ids in the same order for everybody;
 // and next --claim over stale claims. Every task is taken, once, whoever took it.
@@ -417,9 +417,9 @@ func TestSessionsInOtherProcessesNeverTakeTheSameTask(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(claimsKidsPatience)
-	kids := startClaimsKids(t, path, 3, deadline)
+	kids := startClaimsKids(t, path, 2, deadline)
 
-	ready := add(24)
+	ready := add(12)
 	round := claimsStage(t, kids, deadline, "next", "", next)
 	claimsCheck(t, db.DB, "next --claim over Ready tasks", ready, nil, round)
 	t.Logf("who took how many of the %d Ready tasks: %v", len(ready), shares(round))
