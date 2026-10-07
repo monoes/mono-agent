@@ -55,3 +55,9 @@ Task 4a model: Vitest 19/19 passed. Task 3 service behavior: Vitest 18/18 passed
 ## Portable records
 
 Plans/spec are already tracked in docs/mastermind. Archived phase 2/3 ledgers, pending-review reports and global constraints are under `docs/handoffs/2026-10-07-tasks-records/`; load only the record needed for the next task. Local `.superpowers` directories and Claude memory/scratch paths are unnecessary on the other machine. No raw chat logs, private profile data or credentials are included.
+
+## GitHub continuation issues
+
+- [Tasks board: cross-machine continuation tracker for MCP, desktop and capture backlog](https://github.com/monoes/mono-agent/issues/375)
+- [Task board phase 2: resume MCP tools, tasks-only server, summary and agent skill](https://github.com/monoes/mono-agent/issues/371)
+- [Task board phase 3: resume desktop board from saved service and model checkpoints](https://github.com/monoes/mono-agent/issues/372)
