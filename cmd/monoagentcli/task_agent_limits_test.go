@@ -9,8 +9,8 @@ import (
 	"github.com/monoes/mono-agent/internal/tasks"
 )
 
-// The lease is what --lease says, 30 minutes when it says nothing or asks for no time, and at most 24
-// hours. A claim by id and a claim by next are the same.
+// The lease is what --lease says, 30 minutes when it says nothing, and at most 24 hours (a --lease that
+// asks for no time is refused: see the test after this one). A claim by id and a claim by next are the same.
 func TestTaskClaimLeaseIsTheFlagDefaultsToThirtyMinutesAndStopsAtADay(t *testing.T) {
 	db := newTaskTestDB(t)
 	for _, c := range []struct {
@@ -24,8 +24,6 @@ func TestTaskClaimLeaseIsTheFlagDefaultsToThirtyMinutesAndStopsAtADay(t *testing
 		{"--lease 24h", []string{"--lease", "24h"}, 24 * time.Hour},
 		{"--lease 48h", []string{"--lease", "48h"}, 24 * time.Hour},
 		{"--lease 100000h", []string{"--lease", "100000h"}, 24 * time.Hour},
-		{"--lease 0", []string{"--lease", "0"}, 30 * time.Minute},
-		{"--lease -5m", []string{"--lease", "-5m"}, 30 * time.Minute},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			byID := opsAdd(t, db, "by id: "+c.name, "--ready")
@@ -60,6 +58,60 @@ func TestTaskClaimLeaseIsTheFlagDefaultsToThirtyMinutesAndStopsAtADay(t *testing
 	mustTaskJSON(t, db, "default", &held, "", "show", id(long))
 	if !held.Task.Claim.Until.Equal(longEnd) {
 		t.Errorf("a comment moved a lease of 3 hours from %s to %s", longEnd, held.Task.Claim.Until)
+	}
+}
+
+// A --lease that was given means what it says. Zero or less is no time and is refused, where the store would
+// read it as the default, which is for a caller that gave none (an agent that mistypes would learn nothing);
+// and next takes a lease only to claim with, since a look at the next task has none to use. The refusals that
+// were there before come first, and a refused call changes nothing.
+func TestTaskLeaseThatIsGivenMustBeAPositiveTimeAndNextTakesItOnlyToClaim(t *testing.T) {
+	db := newTaskTestDB(t)
+	waiting := id(opsAdd(t, db, "waiting", "--ready"))
+	before := agentSnapshot(t, db)
+	const positive = "--lease must be a positive time such as 30m; the default is 30m and the most is 24h"
+	const onlyClaim = "--lease only applies with --claim: a look at the next task takes no lease"
+	for _, c := range []struct {
+		args []string
+		want string // the words of the refusal: this one's, or of the one that comes before it
+	}{
+		{[]string{"claim", waiting, "--as", "bot", "--lease", "0"}, positive},
+		{[]string{"claim", waiting, "--as", "bot", "--lease", "0s"}, positive},
+		{[]string{"claim", waiting, "--as", "bot", "--lease", "-5m"}, positive},
+		{[]string{"claim", waiting, "--as", "bot", "--lease=-1ns"}, positive},
+		{[]string{"next", "--claim", "--as", "bot", "--lease", "0"}, positive},
+		{[]string{"next", "--claim", "--as", "bot", "--lease", "-5m"}, positive},
+		{[]string{"next", "--claim", "--as", "bot", "--lease=0s"}, positive},
+		{[]string{"next", "--lease", "2h"}, onlyClaim},
+		{[]string{"next", "--lease=30m"}, onlyClaim},
+		{[]string{"next", "--lease", "2h", "--as", "bot"}, onlyClaim},
+		// What was refused before is refused first.
+		{[]string{"claim", waiting, "--lease", "0"}, "name yourself with --as NAME"},
+		{[]string{"claim", waiting, "--as", "you", "--lease", "0"}, "reserved"},
+		{[]string{"claim", "abc", "--as", "bot", "--lease", "0"}, "is not a task id"},
+		{[]string{"claim", "--as", "bot", "--lease", "0"}, "task claim takes one task id"},
+		{[]string{"claim", waiting, "2", "--as", "bot", "--lease", "0"}, "task claim takes one task id"},
+		{[]string{"next", "--claim", "--lease", "0"}, "name yourself with --as NAME"},
+		{[]string{"next", "--claim", "--as", "bot", "--lease", "0", "extra"}, "task next takes no arguments"},
+		{[]string{"next", "--lease", "2h", "extra"}, "task next takes no arguments"},
+	} {
+		exit, code, msg := agentRefusal(t, db, c.args...)
+		earlier := c.want != positive && c.want != onlyClaim
+		if exit != 3 || code != "invalid_input" || !strings.Contains(msg, c.want) ||
+			earlier && (strings.Contains(msg, positive) || strings.Contains(msg, onlyClaim)) {
+			t.Errorf("task %s: exit %d, %q, %q; want exit 3, invalid_input and the words %q", strings.Join(c.args, " "), exit, code, msg, c.want)
+		}
+		if out, _, err := runTask(t, db, "default", false, "", c.args...); exitCode(err) != 3 || out != "" {
+			t.Errorf("task %s as text: exit %d (%v), %q; want exit 3 and nothing printed", strings.Join(c.args, " "), exitCode(err), err, out)
+		}
+	}
+	if after := agentSnapshot(t, db); after != before {
+		t.Errorf("refused commands changed the board:\nbefore\n%s\nafter\n%s", before, after)
+	}
+	// The same lease is fine where it is used, and a look needs none.
+	agentLease(t, db, "claim", waiting, "--as", "bot", "--lease", "1h")
+	if out, _, err := runTask(t, db, "default", false, "", "next", "--as", "bot"); err != nil || !strings.Contains(out, "Nothing is ready") {
+		t.Errorf("a look at the next task: %q, %v", out, err)
 	}
 }
 

@@ -330,5 +330,5 @@ func TestTaskEverySuggestedCommandNamesItsProfile(t *testing.T) {
 	}
 	t.Setenv("CLAUDECODE", "1")
 	_, _, err := runTask(t, db, "Work", false, "", "board")
-	check("the board's refusal", errText(err), "<id>", "<name>")
+	check("the board's refusal", errText(err), "<profile-id>", "<name>")
 }

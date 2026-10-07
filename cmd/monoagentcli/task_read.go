@@ -59,17 +59,26 @@ func printNotes(w io.Writer, notes string) {
 // of it belongs to a shell word, so a pasted name is one word.
 var pasteableName = regexp.MustCompile(`^[A-Za-z0-9._@:-][A-Za-z0-9._#@:-]{0,63}$`)
 
+// pasteableID matches a profile id that may be written into a command to paste, as it is: one
+// shell word. The ids are UUIDs, or default, but nothing in the database says so.
+var pasteableID = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`)
+
 // taskCommand writes a command that a printer suggests, to be pasted. It names the
 // profile it is for, by its id, because the active profile can change under a caller
 // (the app switches it) and an agent passes --profile on every call (spec 17.8). It ends
 // with --as NAME when the caller is an agent that has a name (as is that name, "" for the
 // operator and for an agent with none): pasted without it, the command would run as the
-// operator. A name that is not pasteable is written as <name>, since a pasted command does
-// what it says (a ; or a $( in a name would be a second command). words are what follows
-// task: taskCommand(p, "", "show 7 --json"). Every command a printer suggests is written
-// with it, so that none leaves the profile or the agent out.
+// operator. A name that is not pasteable is written as <name>, and a profile id that is not
+// one shell word as <profile-id>, since a pasted command does what it says (a ; or a $( in
+// either would be a second command). words are what follows task, as in
+// taskCommand(p, "", "show 7 --json"). Every command a printer suggests is written with
+// it, so that none leaves the profile or the agent out.
 func taskCommand(p tasks.Profile, as, words string) string {
-	command := "monoagentcli --profile " + p.ID + " task " + words
+	id := p.ID
+	if !pasteableID.MatchString(id) {
+		id = "<profile-id>"
+	}
+	command := "monoagentcli --profile " + id + " task " + words
 	switch {
 	case as == "":
 		return command
@@ -283,7 +292,13 @@ func newTaskListCmd(cfg *globalConfig) *cobra.Command {
 			// that is how it knows how many it left out, and says so.
 			f := tasks.Filter{Source: source, ClaimedBy: claimedBy, Stale: stale, Limit: tasks.MaxListLimit}
 			shown := listWindow(limit)
-			for _, name := range splitCSV(statuses) {
+			// A --status that is given and names nothing is refused, as archive refuses it: it
+			// must not list all of what it was meant to narrow (--status "$COLS", COLS unset).
+			names := splitCSV(statuses)
+			if cmd.Flags().Changed("status") && len(names) == 0 {
+				return errInvalidInput("--status names no status: use one or more of inbox, ready, in_progress, review, done or archived, separated by commas, or leave --status out")
+			}
+			for _, name := range names {
 				st, err := tasks.ParseStatus(name)
 				if err != nil {
 					return taskErr(err)
@@ -335,7 +350,7 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 				if as == "" {
 					as = "<name>"
 				}
-				inbox := taskCommand(tasks.Profile{ID: "<id>"}, as, "list --status inbox")
+				inbox := taskCommand(tasks.Profile{ID: "<profile-id>"}, as, "list --status inbox")
 				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (if you really need the Inbox: %s)", err, inbox)
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {

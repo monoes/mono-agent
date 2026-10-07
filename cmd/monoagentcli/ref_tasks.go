@@ -107,7 +107,7 @@ func init() {
 			Short: "The task an AI agent should work next, or take it with --claim (the task is null in --json when nothing is ready)",
 			Usage: "monoagentcli --profile P task next [--claim --as NAME [--lease 30m]]",
 			Flags: `  --claim           Take the task for yourself in one step (needs --as NAME)
-  --lease duration  How long you hold it (default 30m, at most 24h); a comment extends it only to 30 minutes from the comment`,
+  --lease duration  How long you hold it (default 30m, at most 24h; above zero, and only with --claim); a comment extends it only to 30 minutes from the comment`,
 			Examples: []string{
 				"monoagentcli --profile work task next",
 				"monoagentcli --profile work task next --claim --as claude-7f3a",
@@ -117,7 +117,7 @@ func init() {
 			Name:     "task claim",
 			Short:    "Take a ready task (an AI agent), renew your hold on one, or take over a claim whose lease has run out",
 			Usage:    "monoagentcli --profile P task claim ID --as NAME [--lease 30m]",
-			Flags:    `  --lease duration  How long you hold it (default 30m, at most 24h)`,
+			Flags:    `  --lease duration  How long you hold it (default 30m, at most 24h; above zero)`,
 			Examples: []string{"monoagentcli --profile work task claim 12 --as claude-7f3a"},
 		},
 		cmdDoc{
@@ -205,8 +205,9 @@ WHO MAY DO WHAT
   shows the Inbox, so an agent uses "task list".
   A caller counts as an agent when an agent-context variable is set in its
   environment (CLAUDECODE and the others org signing looks at), or --as is given
-  (a blank --as is an agent without a name, never the operator), or MONOAGENT_ACTOR
-  is set. Ask the person when the gate refuses you; do not look for a way round it.
+  (a blank --as, like a MONOAGENT_ACTOR of only spaces, is an agent without a name,
+  never the operator), or MONOAGENT_ACTOR is set. Ask the person when the gate refuses
+  you; do not look for a way round it.
   An agent names itself with --as NAME (or MONOAGENT_ACTOR), the same name for the
   whole task. A name is 1 to 64 characters of letters, digits and ._#@:-;
   the labels you, agent, capture, chrome and os are reserved (in any case). A name
@@ -251,7 +252,8 @@ THE AGENT LOOP
   next is the top of Ready, else a claim whose lease has run out. With nothing ready
   the text says "Nothing is ready." and --json gives task null: do not invent work.
   Take only what you can do; if you cannot, release it with a note.
-  A claim is a lease: 30 minutes, or --lease up to 24 hours. A comment of yours
+  A claim is a lease: 30 minutes, or --lease up to 24 hours (a time above zero: zero or
+  less is refused, and so is --lease on next without --claim). A comment of yours
   extends it to 30 minutes from the comment, if that is later, and never shortens it
   (it does not add the --lease you asked for), so with a long --lease a comment changes
   nothing until fewer than 30 minutes of it remain: comment then, or run

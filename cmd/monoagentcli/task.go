@@ -149,26 +149,32 @@ func taskErr(err error) error {
 }
 
 // taskCaller says who runs a task command (spec D7). An agent-context marker in
-// the environment, --as (a blank one too), or MONOAGENT_ACTOR makes the caller an
-// agent; otherwise it is the operator.
+// the environment, --as (a blank one too), or MONOAGENT_ACTOR (a blank one too)
+// makes the caller an agent; otherwise it is the operator.
 type taskCaller struct {
-	actor   tasks.Actor
-	marker  string // the agent-context marker that is set, if any
-	asBlank bool   // --as was given with no name, and MONOAGENT_ACTOR gave none
+	actor    tasks.Actor
+	marker   string // the agent-context marker that is set, if any
+	asBlank  bool   // --as was given with no name, and MONOAGENT_ACTOR gave none
+	envBlank bool   // MONOAGENT_ACTOR is set to a blank value, and --as gave no name
 }
 
 // callerFor says who runs a command, from the --as value flagAs gave. blankAs
 // stands for an --as given with no name: an agent that has not said who it is,
-// not the operator (MONOAGENT_ACTOR may still name it).
+// not the operator (MONOAGENT_ACTOR may still name it). A MONOAGENT_ACTOR that is
+// set to a value of only spaces is the same: a name that was meant and not given.
+// An empty one is not set, as the markers of orgsign are read.
 func callerFor(as string) taskCaller {
 	name := strings.TrimSpace(as)
 	blank := name == blankAs
+	envBlank := false
 	if name == "" || blank {
-		name = strings.TrimSpace(os.Getenv("MONOAGENT_ACTOR"))
+		env := os.Getenv("MONOAGENT_ACTOR")
+		name = strings.TrimSpace(env)
+		envBlank = env != "" && name == ""
 	}
 	marker := orgsign.AgentContextMarker()
-	if name != "" || marker != "" || blank {
-		return taskCaller{actor: tasks.Actor{Kind: tasks.Agent, Name: name}, marker: marker, asBlank: blank && name == ""}
+	if name != "" || marker != "" || blank || envBlank {
+		return taskCaller{actor: tasks.Actor{Kind: tasks.Agent, Name: name}, marker: marker, asBlank: blank && name == "", envBlank: envBlank}
 	}
 	return taskCaller{actor: tasks.Actor{Kind: tasks.Human}}
 }
@@ -184,10 +190,14 @@ func (c taskCaller) operator(what string) (tasks.Actor, error) {
 	switch {
 	case c.marker != "" && c.asBlank:
 		why = c.marker + " is set and --as is given with no name, so an agent is running this command"
+	case c.marker != "" && c.envBlank:
+		why = c.marker + " is set and MONOAGENT_ACTOR is set to a blank value, so an agent is running this command"
 	case c.marker != "":
 		why = c.marker + " is set, so an agent is running this command"
 	case c.asBlank:
 		why = "--as is given with no name, which counts as an agent"
+	case c.envBlank:
+		why = "MONOAGENT_ACTOR is set to a blank value, which counts as an agent"
 	}
 	return tasks.Actor{}, operatorOnlyError("%s: only the operator can %s; run it in your own terminal", why, what)
 }
@@ -199,6 +209,9 @@ func (c taskCaller) agent() (tasks.Actor, error) {
 	}
 	if c.asBlank {
 		return tasks.Actor{}, errInvalidInput("--as needs a name: write --as NAME (or set MONOAGENT_ACTOR), the same name for the whole task")
+	}
+	if c.envBlank {
+		return tasks.Actor{}, errInvalidInput("MONOAGENT_ACTOR is set to a blank value, which gives no name: name yourself with --as NAME (or give MONOAGENT_ACTOR a name), the same name for the whole task")
 	}
 	if c.actor.Name == "" {
 		return tasks.Actor{}, errInvalidInput("name yourself with --as NAME (or MONOAGENT_ACTOR), the same name for the whole task (%s is set, but it gives no name)", c.marker)

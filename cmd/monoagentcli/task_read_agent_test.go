@@ -25,6 +25,7 @@ var agentSigns = []struct {
 	{"--as", func(t *testing.T) {}, []string{"--as", "bot"}, "--as", "bot"},
 	{"a blank --as", func(t *testing.T) {}, []string{"--as", ""}, "no name", "<name>"},
 	{"a blank --as of spaces", func(t *testing.T) {}, []string{"--as", "   "}, "no name", "<name>"},
+	{"a blank MONOAGENT_ACTOR", func(t *testing.T) { t.Setenv("MONOAGENT_ACTOR", "\t ") }, nil, "MONOAGENT_ACTOR is set to a blank value", "<name>"},
 }
 
 func TestTaskListHidesTheInboxFromEveryKindOfAgent(t *testing.T) {
@@ -115,7 +116,7 @@ func TestTaskBoardIsRefusedToAnAgent(t *testing.T) {
 			// The command it suggests names a profile like every command a printer suggests; which one is
 			// not known here, because the refusal comes before the database is opened. It is the agent's
 			// form: pasted without --as it would run as the operator.
-			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "if you really need the Inbox: monoagentcli --profile <id> task list --status inbox --as " + c.hint + ")"} {
+			for _, want := range []string{c.why, "only the operator", "Inbox", "naming it", "task list", "if you really need the Inbox: monoagentcli --profile <profile-id> task list --status inbox --as " + c.hint + ")"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the refusal %q does not say %q", msg, want)
 				}

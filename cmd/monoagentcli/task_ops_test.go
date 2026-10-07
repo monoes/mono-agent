@@ -31,6 +31,10 @@ var opsAgentContexts = map[string]func(t *testing.T) []string{
 	"a blank --as":    func(t *testing.T) []string { return []string{"--as", ""} },
 	"a spaces --as":   func(t *testing.T) []string { return []string{"--as", "   "} },
 	"--as=":           func(t *testing.T) []string { return []string{"--as="} },
+	"a blank MONOAGENT_ACTOR": func(t *testing.T) []string {
+		t.Setenv("MONOAGENT_ACTOR", "   ")
+		return nil
+	},
 	"a marker and a blank --as": func(t *testing.T) []string {
 		t.Setenv("CLAUDECODE", "1")
 		return []string{"--as", ""}

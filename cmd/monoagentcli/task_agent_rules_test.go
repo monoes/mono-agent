@@ -26,7 +26,6 @@ func TestTaskNextPeekNeverClaims(t *testing.T) {
 		{"an agent named by MONOAGENT_ACTOR", env("MONOAGENT_ACTOR", "bot"), nil},
 		{"an agent context and no name", env("CLAUDECODE", "1"), nil},
 		{"a blank --as", nil, []string{"--as", ""}},
-		{"a lease that asks for a hold", nil, []string{"--as", "bot", "--lease", "2h"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.setup != nil {

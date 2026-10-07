@@ -58,6 +58,65 @@ func TestTaskCommandCarriesTheNameOfAnAgent(t *testing.T) {
 	}
 }
 
+// The profile is written by its id, and a pasted command does what it says: an id that a shell reads as
+// one word (a UUID, default) is written as it is, and any other as <profile-id>, as a name that is no
+// word is written <name>. The ids are UUIDs today, but nothing in the database says so.
+func TestTaskCommandWritesTheProfileIdOnlyWhenItIsOneShellWord(t *testing.T) {
+	for _, c := range []struct{ id, want string }{
+		{"default", "default"},
+		{"4f6c1d52-0b8e-4c1a-9e3d-7a52b9c0d1e8", "4f6c1d52-0b8e-4c1a-9e3d-7a52b9c0d1e8"},
+		{"a.b_c@d:e-f", "a.b_c@d:e-f"},
+		{"7", "7"},
+		// What a shell would not read as one word is not written out.
+		{"odd id; echo hi", "<profile-id>"},
+		{"has space", "<profile-id>"},
+		{"x;y", "<profile-id>"},
+		{"$(id)", "<profile-id>"},
+		{"`id`", "<profile-id>"},
+		{"a$HOME", "<profile-id>"},
+		{"it's", "<profile-id>"},
+		{`say "hi"`, "<profile-id>"},
+		{"a|b", "<profile-id>"},
+		{"a&b", "<profile-id>"},
+		{"a>b", "<profile-id>"},
+		{"a<b", "<profile-id>"},
+		{`a\b`, "<profile-id>"},
+		{"a*", "<profile-id>"},
+		{"~", "<profile-id>"},
+		{"#x", "<profile-id>"},
+		{"a\nb", "<profile-id>"},
+		{"a\tb", "<profile-id>"},
+		{"caf\U000000e9", "<profile-id>"},
+		{"", "<profile-id>"},
+		{"<id>", "<profile-id>"},
+		{"<profile-id>", "<profile-id>"},
+	} {
+		want := "monoagentcli --profile " + c.want + " task list"
+		if got := taskCommand(tasks.Profile{ID: c.id}, "", "list"); got != want {
+			t.Errorf("taskCommand with the profile id %q = %q, want %q", c.id, got, want)
+		}
+		if got := taskCommand(tasks.Profile{ID: c.id}, "bot", "list"); got != want+" --as bot" {
+			t.Errorf("taskCommand with the profile id %q and an agent = %q, want %q", c.id, got, want+" --as bot")
+		}
+	}
+	// A profile whose id is no shell word, as the commands print about it by its name: what they suggest
+	// carries the placeholder, and the id is not in the text anywhere.
+	db := newTaskTestDB(t)
+	addTaskProfile(t, db, "odd id; echo hi", "Odd")
+	seedTaskRows(t, db,
+		taskSeed{profile: "odd id; echo hi", title: "one", status: "ready"},
+		taskSeed{profile: "odd id; echo hi", title: "two", status: "ready"},
+	)
+	list, _, err := runTask(t, db, "Odd", false, "", "list", "--limit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(list, "\n"), "\n")
+	if got, want := lines[len(lines)-1], moreLine("1", "<profile-id>", ""); got != want || strings.Contains(list, "echo hi") {
+		t.Errorf("the list of a profile with an odd id ends with %q, want %q (and no id):\n%s", got, want, list)
+	}
+}
+
 // Every command the list and show print carries the agent's name when the caller is an agent that has
 // one, whether it said so with --as or with MONOAGENT_ACTOR; it carries none for the operator, and none
 // for an agent that has no name (a blank --as, or an agent context marker alone): the blank is never

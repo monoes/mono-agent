@@ -88,6 +88,16 @@ func printNext(w io.Writer, p tasks.Profile, t tasks.Task, as string) {
 	fmt.Fprintf(w, "\nTake it:\n  %s\n  %s\n", takeCommand(p, as, "next --claim"), takeCommand(p, as, fmt.Sprintf("claim %d", t.ID)))
 }
 
+// checkLease refuses a --lease that was given and is not a positive time. The store reads zero and
+// less as the default, which is for a caller that gave none: a lease that was typed means what it says
+// (--lease "$TIME", TIME unset, or a minus sign by mistake), and an agent that is not told learns nothing.
+func checkLease(cmd *cobra.Command, lease time.Duration) error {
+	if cmd.Flags().Changed("lease") && lease <= 0 {
+		return errInvalidInput("--lease must be a positive time such as 30m; the default is 30m and the most is 24h")
+	}
+	return nil
+}
+
 func newTaskNextCmd(cfg *globalConfig) *cobra.Command {
 	var claim bool
 	var lease time.Duration
@@ -112,6 +122,12 @@ a null task.`,
 			}
 			if len(args) != 0 {
 				return errInvalidInput("task next takes no arguments (got %q): its options are --claim and --lease", cutArg(args[0]))
+			}
+			if err := checkLease(cmd, lease); err != nil {
+				return err
+			}
+			if !claim && cmd.Flags().Changed("lease") {
+				return errInvalidInput("--lease only applies with --claim: a look at the next task takes no lease")
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {
 				t, err := store.Next(ctx, p.ID, actor, claim, lease)
@@ -155,6 +171,9 @@ func newTaskClaimCmd(cfg *globalConfig) *cobra.Command {
 			}
 			taskID, err := parseTaskID(args[0])
 			if err != nil {
+				return err
+			}
+			if err := checkLease(cmd, lease); err != nil {
 				return err
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {

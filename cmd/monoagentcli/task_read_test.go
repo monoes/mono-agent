@@ -74,6 +74,38 @@ func TestTaskListFilters(t *testing.T) {
 	}
 }
 
+// A --status that is given and names nothing is refused, as archive refuses it, and is not read as no
+// --status: a script that narrows a list with --status "$COLS" (COLS unset) must not get all of it. A
+// value that names a status still goes through, with the empty items it has.
+func TestTaskListRefusesAStatusThatNamesNothing(t *testing.T) {
+	db := newTaskTestDB(t)
+	opsAdd(t, db, "in the inbox")
+	opsAdd(t, db, "ready one", "--ready")
+	for _, args := range [][]string{
+		{"--status", ""}, {"--status="}, {"--status", ","}, {"--status", " "}, {"--status", " , ,"}, {"--status", "\t"},
+		{"--status", "", "--as", "bot"},
+	} {
+		args = append([]string{"list"}, args...)
+		doc := failedTaskJSON(t, db, "default", 3, args...)
+		msg, _ := doc["error"].(string)
+		if doc["code"] != "invalid_input" || !strings.Contains(msg, "--status names no status") || !strings.Contains(msg, "inbox, ready, in_progress, review, done or archived") {
+			t.Errorf("task %q: %v, want invalid_input, saying --status names no status and which there are", args, doc)
+		}
+		if out, _, err := runTask(t, db, "default", false, "", args...); exitCode(err) != 3 || out != "" {
+			t.Errorf("task %q as text: exit %d (%v), %q; want exit 3 and no list", args, exitCode(err), err, out)
+		}
+	}
+	var listed listJSON
+	mustTaskJSON(t, db, "default", &listed, "", "list")
+	if got := strings.Join(titlesOf(listed), "|"); got != "in the inbox|ready one" {
+		t.Errorf("no --status lists the default columns: %q", got)
+	}
+	mustTaskJSON(t, db, "default", &listed, "", "list", "--status", ", ready ,")
+	if got := strings.Join(titlesOf(listed), "|"); got != "ready one" {
+		t.Errorf("--status \", ready ,\" lists %q, want the ready one", got)
+	}
+}
+
 func TestTaskListHidesTheInboxFromAnAgentUnlessItAsks(t *testing.T) {
 	db := newTaskTestDB(t)
 	var added addedJSON
