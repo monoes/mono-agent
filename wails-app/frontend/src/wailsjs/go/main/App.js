@@ -1245,3 +1245,15 @@ export function ValidateOrgReport(arg1) {
 export function VerifyDraft(arg1, arg2, arg3) {
   return window['go']['main']['App']['VerifyDraft'](arg1, arg2, arg3);
 }
+
+export function ListPublications(search, platform, kind, workflow, agent, since, until, limit, offset) {
+  return window['go']['main']['App']['ListPublications'](search, platform, kind, workflow, agent, since, until, limit, offset);
+}
+
+export function GetPublication(id) {
+  return window['go']['main']['App']['GetPublication'](id);
+}
+
+export function GetPublicationStats() {
+  return window['go']['main']['App']['GetPublicationStats']();
+}

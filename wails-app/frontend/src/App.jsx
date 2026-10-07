@@ -17,6 +17,7 @@ import Profile from './pages/Profile.jsx'
 import PostDetail from './pages/PostDetail.jsx'
 import Connections from './pages/Connections.jsx'
 import Communications from './pages/Communications.jsx'
+import Publication from './pages/Publication.jsx'
 import Agents from './pages/Agents.jsx'
 import Orgs from './pages/Orgs.jsx'
 import Logs from './pages/Logs.jsx'
@@ -272,6 +273,7 @@ export default function App() {
     noderunner: <NodeRunner onNavigate={navigate} navData={navData} onWorkflowsChanged={refreshStats} />,
     people:    <People key={peopleRefreshKey} isActive={activePage === 'people'} onProfile={openProfile} />,
     communications: <Communications isActive={activePage === 'communications'} onProfile={openProfile} />,
+    publication: <Publication isActive={activePage === 'publication'} onNavigate={navigate} />,
     connections: <Connections onRefresh={refreshStats} navData={activePage === 'connections' ? navData : null} />,
     vault: <ImageVault isActive={activePage === 'vault'} />,
     secretsVault: <Vault isActive={activePage === 'secretsVault'} />,
