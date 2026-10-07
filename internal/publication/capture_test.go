@@ -222,6 +222,20 @@ func TestRetryKeyStableWithoutRemoteIdentity(t *testing.T) {
 	}
 }
 
+func TestIdenticalContentFromTwoNodeRunsIsTwoPublications(t *testing.T) {
+	in := func(run string) CaptureInput {
+		return CaptureInput{NodeType: "comm.slack", Config: map[string]interface{}{"operation": "post_message", "channel": "C1", "text": "hi"},
+			Outputs: []Output{{Handle: "main", Items: []map[string]interface{}{{"ok": true}}}}, Source: Source{ExecutionID: "e", NodeID: "n", NodeRunID: run}}
+	}
+	a, b, retry := Normalize(in("run1")), Normalize(in("run2")), Normalize(in("run1"))
+	if a[0].IdempotencyKey == b[0].IdempotencyKey {
+		t.Fatal("two runs of a loop body share a key")
+	}
+	if a[0].IdempotencyKey != retry[0].IdempotencyKey {
+		t.Fatal("a retry of the same run must keep its key")
+	}
+}
+
 func TestSlackResponseTypeAndStringFalsePublished(t *testing.T) {
 	slack := CaptureInput{NodeType: "comm.slack", Config: map[string]interface{}{"operation": "post_message", "channel": "C1", "text": "hi"},
 		Outputs: []Output{{Handle: "main", Items: []map[string]interface{}{{"id": "1", "is_private": true}}}}}

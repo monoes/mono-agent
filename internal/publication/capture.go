@@ -14,6 +14,9 @@ import (
 // belongs to the Store, never to a node's config or a publisher's result.
 type Source struct {
 	WorkflowID, ExecutionID, NodeID, AgentID, OrgID, RoleID string
+	// NodeRunID names one run of the node within the execution (a loop runs a node
+	// many times). It is the same across the retries of that run.
+	NodeRunID string
 }
 
 type Output struct {
@@ -291,7 +294,7 @@ func Normalize(in CaptureInput) []Entry {
 			if platform == "youtube" && e.RemoteID != "" && kind == "video" {
 				e.URL = "https://www.youtube.com/watch?v=" + e.RemoteID
 			}
-			e.IdempotencyKey = fmt.Sprintf("publication:%s:%s:%s:%s:%s:%s:%d:%s:%s", e.Platform, e.Account, e.Kind, in.Source.ExecutionID, in.Source.NodeID, out.Handle, i, e.RemoteID, e.URL)
+			e.IdempotencyKey = fmt.Sprintf("publication:%s:%s:%s:%s:%s:%s:%s:%d:%s:%s", e.Platform, e.Account, e.Kind, in.Source.ExecutionID, in.Source.NodeID, in.Source.NodeRunID, out.Handle, i, e.RemoteID, e.URL)
 			if e.RemoteID == "" && e.URL == "" {
 				// No remote identity: a retried attempt must derive the same key, so
 				// hash what was published rather than using a per-attempt value.

@@ -419,7 +419,7 @@ func RunExecution(
 					pubOutputs = append(pubOutputs, publication.Output{Handle: out.Handle, Items: items})
 				}
 				entries := publication.Normalize(publication.CaptureInput{NodeType: node.Type, Config: resolvedConfig, Outputs: pubOutputs,
-					Source: PublicationSource(ctx, nodeInput)})
+					Source: withNodeRun(PublicationSource(ctx, nodeInput), execNode.ID)})
 				publication.Record(ctx, publication.NewStore(db, vault.ProfileIDFromContext(ctx)), entries, func(msg string) { logger.Warn().Msg(msg) })
 			}
 

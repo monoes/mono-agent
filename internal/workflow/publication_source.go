@@ -30,3 +30,10 @@ func PublicationSource(ctx context.Context, input NodeInput) publication.Source 
 	}
 	return source
 }
+
+// withNodeRun tells apart the runs of one node in one execution, so identical
+// content published by two runs of a loop body is two publications.
+func withNodeRun(s publication.Source, id string) publication.Source {
+	s.NodeRunID = id
+	return s
+}
