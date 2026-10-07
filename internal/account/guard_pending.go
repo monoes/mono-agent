@@ -33,6 +33,19 @@ import (
 // command within one poll of the step, before that pass, and a step smaller than the
 // tolerance, both inside the 60 s between pendingRetryWindow and monoes.me's window.
 //
+// The same limit holds for a clock that stands still. A machine that is paused as a
+// whole while its clock does not move (a WSL2 guest after the host slept, a virtual
+// machine paused without time sync, Docker Desktop's) never reads a time that goes
+// back, so neither a pass nor the stored evidence can tell that real time passed: the
+// marker keeps its apparent age, and a retry (due at +30, +90 and +210 s of this
+// clock) comes as late in real time as the pause lasted. A pause that carries a retry
+// beyond monoes.me's 300 s (more than 270 s for the first retry, more than 90 s for
+// the last) presents the token outside its window, with or without a refresher. This
+// is an accepted residual too: no clock of the guest runs through the pause. What
+// closes it lies outside B1a: monoes.me's own clock as the reference of the age (the
+// Date header of its answers, read by B1b's Refresher), or a reuse that ends only the
+// family of the reused token (plan A).
+//
 // The age is judged on the clock read after the refresh token, just before the send;
 // a process suspended inside the Refresher after that, before the request is written
 // (discovery, dial, TLS), is not covered: closing that needs the deadline of the send
