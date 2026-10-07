@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Task board from Chrome.** The MonoAgent Bridge extension adds tasks to the board: *Add selection as task* and *Add page as task* in the MonoAgent right-click menu, an *Add a task* box in the side panel and an *add-task* shortcut (Ctrl+Shift+K, Cmd+Shift+K on a Mac). Tasks land in the Inbox of the profile the side panel is "Saving into", wait in the extension while MonoAgent is not running, and are never added twice. New request method `task.add` on the extension bridge; no new permission, port or HTTP route. Extension 1.6.0: reload it from `chrome://extensions` after updating.
 - **Publication history:** profile-scoped local records of posts, comments, replies and other content published by agents and workflows, with CLI `publication list|get|register|stats`, MCP tools and a desktop Publication page. Supported publishing operations register successful results automatically, preserving content and source identifiers while excluding private messages and drafts. Custom publishers register after success through the CLI, MCP or a `publication.register` workflow node. History starts with installation; existing external publications are not fetched.
 
 ### Fixed
