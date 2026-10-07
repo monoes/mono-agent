@@ -86,7 +86,8 @@ describe('the task service', () => {
   })
 
   // The ten members that go through run, one row each: the binding it must call
-  // and the arguments, in order, it must give it. agentShell does not go through run.
+  // and the arguments, in order, it must give it. Each row is run with a good
+  // answer, a CLI refusal and a failing binding. agentShell does not go through run.
   const MEMBERS = [
     ['board', 'TaskBoard', () => tasksApi.board(), [50]],
     ['show', 'TaskShow', () => tasksApi.show(3), [3]],
@@ -100,10 +101,10 @@ describe('the task service', () => {
     ['pulse', 'TaskPulse', () => tasksApi.pulse(), []],
   ]
 
-  it.each(MEMBERS)('%s calls %s with its arguments in order; a refusal or a failure comes back as {error}', async (_member, binding, call, args) => {
+  it.each(MEMBERS)('%s calls %s with its arguments in order and returns the answer parsed; a failure becomes {error}', async (_member, binding, call, args) => {
     const own = App[binding]
     own.mockResolvedValue('{"ok":true}')
-    await call()
+    expect(await call()).toEqual({ ok: true })
     expect(own.mock.calls).toEqual([args])
     expect(Object.keys(App).filter(name => name !== binding && App[name].mock.calls.length > 0)).toEqual([])
     own.mockResolvedValue('{"error":"nope","code":"operator_only"}')
