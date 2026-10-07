@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** monoes.me issues mono-agent an audience-bound JWT access token signed with a key the client can pin, answers `invalid_grant` for a blocked account, serves the library with that token, and deploys only from `main`.
+**Goal:** monoes.me issues mono-agent an audience-bound JWT access token signed with a key the client can pin, answers `invalid_grant` for a blocked account, ends only the family of a refresh token that is replayed after its reuse window (ruling R1 of 2026-10-07), serves the library with that token, and deploys only from `main`.
 
 **Architecture:** The `monoagent` OAuth client gets an RFC 8707 resource (a database row plus a client link) so the `@better-auth/oauth-provider` mints JWTs when a `resource` is sent and leaves every other request as it was. The `jwt()` plugin signs with a static Ed25519 key supplied as a Worker secret through its `adapter` option. A block revokes the account's tokens and web sessions; `customAccessTokenClaims` adds the `plan` claim and refuses blocked accounts; `getRequestAuth` verifies the JWT beside opaque tokens.
 
 **Tech Stack:** Next.js 16 on Cloudflare Workers (OpenNext), Better-Auth 1.7.1 with `@better-auth/oauth-provider` 1.7.1, Drizzle on D1, `jose`, TypeScript; tests are `node:test` unit tests (`npm test`) and browserless Playwright specs; GitHub Actions.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§5 entirely, D18, D19, D27, §4.1 and §4.7 server halves, spikes S1, S2, S3, S6). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 10). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§5 entirely, D18, D19, D27, §4.1 and §4.7 server halves, spikes S1, S2, S3, S6, and S7 for ruling R1). Index: `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§3.4 item 10). Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Owner-run steps
 
@@ -40,7 +40,7 @@ Copied from the index (§2, §3.2, §3.4, §4), verbatim where marked, adapted t
 
 Failure modes the spec implies that no task's tests would otherwise exercise, most likely to bite first. Each is pinned by a test in the task that owns the code.
 
-1. A replayed or copied refresh token (a second machine, a copied session file, a retry after a crash) makes the provider delete every MonoAgent refresh token of that account, so every install locks as refused; only the client's own retry of a lost answer, within 300 seconds (the owner's choice; the client's retry window, 240 seconds, sits inside it), is answered with the same response instead. Pinned in Task 3 by "a retry inside the 300-second reuse window gets the same answer and ends nothing", "a replayed refresh token after the window is invalid_grant and takes the account's newer MonoAgent refresh token with it" and "presenting an already punished refresh token again leaves a sign-in made since alone" (a machine whose disk is full cannot save its `refused` marker and presents the dead token at every due command, spec A21: the punishment happens once, and the sign-ins made after it survive), and in Task 4 by the rotated token a block must not leave replayable.
+1. A replayed or copied refresh token (a second machine, a copied session file, a retry after a crash) makes the unmodified provider delete every MonoAgent refresh token of that account, so every install locks as refused. Ruling R1 of 2026-10-07 requires that a replay of a rotated-away refresh token after the reuse window end only that token's family; the steps for it are written by the lead from S7's findings before Task 3 is dispatched, and they amend the pins below that end every session of the account. Only the client's own retry of a lost answer, within 300 seconds (the owner's choice; the client's retry window, 240 seconds, sits inside it), is answered with the same response instead. Pinned in Task 3 by "a retry inside the 300-second reuse window gets the same answer and ends nothing", "a replayed refresh token after the window is invalid_grant and takes the account's newer MonoAgent refresh token with it" and "presenting an already punished refresh token again leaves a sign-in made since alone" (a machine whose disk is full cannot save its `refused` marker and presents the dead token at every due command, spec A21: the punishment happens once, and the sign-ins made after it survive), and in Task 4 by the rotated token a block must not leave replayable.
 2. A refresh token not used for 30 days answers `invalid_grant`, which the client reads as a refusal, not as unreachable. Pinned in Task 3 by "a refresh token past its 30 days is invalid_grant".
 3. A deploy without the signing secret, or with a malformed one, must answer a loud 500 and must never sign with a key no release pins; it must not break `get-session`. Pinned in Task 6 by the `signingKeyAdapter` tests ("fails closed", "reports a malformed key when it is used") and by `disableSettingJwtHeader`.
 4. A verified JWT whose user was deleted, a token from another client or for another audience, an unsigned or foreign-key token: none may authenticate a library or community call. Pinned in Task 5 by "refuses a verified token whose user no longer exists" and the `verifyMonoagentAccessToken` cases.
@@ -51,7 +51,7 @@ Failure modes the spec implies that no task's tests would otherwise exercise, mo
 A local server (`next dev`, local D1) was driven with real PKCE flows on 2026-10-05; production was read through two public GETs. The full tables are the findings template of Task 2.
 - **S6, a token with a `resource` sent:** a JWT, header `{"typ":"at+jwt","alg":"EdDSA","kid":...}`; `iss` is `https://monoes.me/api/auth` (production's discovery document agrees); `aud` is an array `["https://monoes.me/api/monoagent","<issuer>/oauth2/userinfo"]` (a string only without `openid`); `azp` and `client_id` are both `monoagent`; `exp - iat` is 3600; claims `aud azp client_id exp iat iss jti scope sid sub` (`plan` after Task 3). Without a `resource` the access token is opaque (32 letters). The frozen `Issuer`, `Audience` and `ClientID` need no change.
 - **S1:** the default key is one non-rotating Ed25519 database row (production: `kid` `GB6kESA9qO98637VArEGR2EjW6wSyYqO`); a key supplied through `adapter.getJwks` signs, is published, and no row is generated.
-- **S2:** an old refresh token exchanged with `resource` gives an audience-bound JWT; refresh tokens rotate; presenting a rotated one ends every MonoAgent session of the account (with the 300-second reuse window of Task 3, only once the window has passed).
+- **S2:** an old refresh token exchanged with `resource` gives an audience-bound JWT; refresh tokens rotate; presenting a rotated one ends every MonoAgent session of the account (with the 300-second reuse window of Task 3, only once the window has passed). Ruling R1 of 2026-10-07 requires that such a replay end only the family of the reused token: spike S7 (Task 2) measures what names a family, and the steps for it are written by the lead from S7's findings before Task 3 is dispatched.
 - **S3:** the refresh grant never looked at a blocked user (200) and a live web session could mint new tokens; ending a web session does not touch refresh tokens.
 
 ---
@@ -249,13 +249,13 @@ gh api repos/monoes/monoes-landing/branches/main/protection --jq '.required_stat
 
 Expected: `["check"]`, then `false`. `enforce_admins` is false so the owner can still recover from a broken check; set it to true to close that door too. Separate decision, not part of this plan: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are repository secrets, readable by a workflow any collaborator adds on any branch; moving them into a GitHub Environment limited to `main` closes that.
 
-### Task 2: Spikes S1, S2, S3, S6 (local only; nothing is pushed)
+### Task 2: Spikes S1, S2, S3, S6, S7 (local only; nothing is pushed)
 
 **Files:** everything here stays untracked and nothing is pushed. `scripts/spikes/` is excluded from git in step 1 so it cannot be committed by accident; the helper `tests/helpers/oauth-api.ts` is committed by Task 3.
-- Create: `tests/helpers/oauth-api.ts`, `scripts/spikes/seed-audience.sql`, `scripts/spikes/s6-claims.ts`, `scripts/spikes/s2-s3-refresh.ts`, `scripts/spikes/s1-key.ts`
+- Create: `tests/helpers/oauth-api.ts`, `scripts/spikes/seed-audience.sql`, `scripts/spikes/s6-claims.ts`, `scripts/spikes/s2-s3-refresh.ts`, `scripts/spikes/s7-family.ts`, `scripts/spikes/s1-key.ts`
 - Write, in the mono-agent repository: `/Users/morteza/Desktop/monoes/mono-agent/.claude/worktrees/feat+monoes-account-gate/docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md` (or hand the text to the lead if that path is out of reach)
 
-**Interfaces:** Produces the findings file (its Constants table is what B1a's `internal/account/claims.go` is checked against) and the helper that Tasks 3 to 7 import: `AUDIENCE`, `MONOAGENT_SCOPES`, `signUp`, `signIn`, `pkce`, `authorize`, `exchange`, `refresh`, `login`, `decodeJwt`, `isJwt`, `verifiesAgainstJwks`, `bearer`, `withDb`, `setUserRole`, `seedClaimRequest`. Consumes nothing.
+**Interfaces:** Produces the findings file (its Constants table is what B1a's `internal/account/claims.go` is checked against, and its S7 section is what the lead writes Task 3's family steps from) and the helper that Tasks 3 to 7 import: `AUDIENCE`, `MONOAGENT_SCOPES`, `signUp`, `signIn`, `pkce`, `authorize`, `exchange`, `refresh`, `login`, `decodeJwt`, `isJwt`, `verifiesAgainstJwks`, `bearer`, `withDb`, `setUserRole`, `seedClaimRequest`. Consumes nothing.
 
 - [ ] **Step 1: Clone and install.** Stop any dev server in the old clone first: `npm ci` replaces `node_modules` and kills it.
 
@@ -617,6 +617,117 @@ authorize through the old web session        200 ok access=JWT
 refresh after sign-out / revoke-sessions / change-password   200 ok access=JWT (each)
 ```
 
+- [ ] **Step 6b: S7, what the family of a refresh token is (ruling R1 of 2026-10-07).** R1 adopts refresh-token families: a replay of a rotated-away refresh token after the reuse window must end only the family of the reused token (the sign-in it comes from), not every MonoAgent refresh token of the account. This step measures and changes nothing; the lead writes Task 3's steps for the family from what it finds, before Task 3 is dispatched.
+
+(a) Read how the installed provider revokes today:
+
+```bash
+grep -rn "invalidateRefreshFamily" node_modules/@better-auth/oauth-provider/dist/
+grep -rn "async function createRefreshToken\|authorizationCodeId: refreshToken.authorizationCodeId\|sessionId: refreshToken.sessionId\|async function revokeRefreshToken" node_modules/@better-auth/oauth-provider/dist/
+grep -n "oauth_refresh_token" -A 30 src/lib/db/schema.ts
+```
+
+Expected for 1.7.1 (read while planning; the file names carry a build hash): the definition `async function invalidateRefreshFamily(ctx, clientId, userId)`, which deletes every `oauthRefreshToken` row of that client and user and the `oauthAccessToken` rows that point at them through `refreshId`; and three calls: one in the refresh grant (a revoked token presented once `isWithinRefreshTokenReuseInterval` is false) and two in `revokeRefreshToken` (the revoke route, for a token that is already revoked, and for one a concurrent call revoked first). The refresh grant hands the presented token's `referenceId`, `authorizationCodeId` and `sessionId` on to the token it issues. The table has no column named for a family: `session_id` (a foreign key with `ON DELETE SET NULL`), `authorization_code_id`, `reference_id`, `revoked`, `rotated_at`. Write the file names and line numbers of every match into the findings.
+
+(b) Measure two sign-ins of one account. Create `scripts/spikes/s7-family.ts`:
+
+```ts
+// S7 (ruling R1 of 2026-10-07): what names the family of a refresh token, and what does a replay
+// after the reuse window end today?
+//   npx tsx scripts/spikes/s7-family.ts
+import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { oauthRefreshToken } from "../../src/lib/db/schema";
+import { AUDIENCE, login, refresh, withDb, type Result } from "../../tests/helpers/oauth-api";
+
+const base = process.env.SPIKE_BASE_URL ?? "http://localhost:3107";
+const origin = new URL(base).origin;
+
+// A short fingerprint of an identifier: equal values show as equal, and no value is printed.
+const tag = (v: string | null | undefined) => (v ? createHash("sha256").update(v).digest("hex").slice(0, 8) : "null");
+
+const line = (label: string, r: Result) => console.log(`${label.padEnd(48)} ${r.status} ${r.body.error ?? "ok"}`);
+
+// Every refresh-token row of the user, with the columns that could name a family.
+async function rows(userId: string, label: string) {
+  const all = await withDb(async (db) =>
+    await db
+      .select({
+        id: oauthRefreshToken.id,
+        revoked: oauthRefreshToken.revoked,
+        rotatedAt: oauthRefreshToken.rotatedAt,
+        sessionId: oauthRefreshToken.sessionId,
+        authorizationCodeId: oauthRefreshToken.authorizationCodeId,
+        referenceId: oauthRefreshToken.referenceId,
+      })
+      .from(oauthRefreshToken)
+      .where(eq(oauthRefreshToken.userId, userId)),
+  );
+  console.log(`== ${label}: ${all.length} refresh-token rows`);
+  for (const r of all) {
+    console.log(`  row ${tag(r.id)} revoked=${r.revoked ? "yes" : "no"} rotated=${r.rotatedAt ? "yes" : "no"} session=${tag(r.sessionId)} code=${tag(r.authorizationCodeId)} reference=${tag(r.referenceId)}`);
+  }
+}
+
+async function main() {
+  // One account, two sign-ins: two installs, two chains, each rotated once.
+  const a = await login(base, { resource: AUDIENCE });
+  const b = await login(base, { resource: AUDIENCE, account: a.account });
+  const uid = a.account.userId;
+  line("rotate A (A1 -> A2)", await refresh(base, a.body.refresh_token!, AUDIENCE));
+  const b2 = await refresh(base, b.body.refresh_token!, AUDIENCE);
+  line("rotate B (B1 -> B2)", b2);
+  await rows(uid, "two chains, each rotated once");
+
+  // An older token issued without a resource, exchanged with one (D23 adoption, S2).
+  const c = await login(base, { account: a.account });
+  line("exchange C1 (issued without a resource)", await refresh(base, c.body.refresh_token!, AUDIENCE));
+  await rows(uid, "after the exchange of a token issued without a resource");
+
+  // The end of the web session must not end a family (S3).
+  const out = await fetch(new URL("/api/auth/sign-out", base), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: origin, Cookie: a.account.cookie },
+    body: "{}",
+  });
+  console.log(`sign-out: ${out.status}`);
+  await rows(uid, "after the web session ended");
+
+  // A replay of A1 after the window (the unmodified server's window is 0 seconds).
+  line("replay A1", await refresh(base, a.body.refresh_token!, AUDIENCE));
+  await rows(uid, "after the replay of A1");
+  line("B2, the other sign-in", await refresh(base, b2.body.refresh_token!, AUDIENCE));
+
+  // The revoke route, given a rotated token.
+  const d = await login(base, { resource: AUDIENCE });
+  const e = await login(base, { resource: AUDIENCE, account: d.account });
+  await refresh(base, d.body.refresh_token!, AUDIENCE);
+  const revoke = await fetch(new URL("/api/auth/oauth2/revoke", base), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: d.body.refresh_token!, client_id: "monoagent" }),
+  });
+  console.log(`revoke D1 (rotated): ${revoke.status}`);
+  await rows(d.account.userId, "after the revoke of a rotated token");
+  line("E1, the other sign-in", await refresh(base, e.body.refresh_token!, AUDIENCE));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+Run `npx tsx scripts/spikes/s7-family.ts`. What the unmodified server should print, from S2, S3 and the reading in (a); the run decides every line, and which columns are equal inside a chain is exactly what it is for: 4 rows after the two rotations (each sign-in's first token `revoked=yes rotated=yes`, its successor `no no`), 6 after the exchange, still 6 after the sign-out (S3), then `replay A1 ... 400 invalid_grant`, 0 rows, and `B2, the other sign-in ... 400 invalid_grant` (S2: today a replay ends every MonoAgent refresh token of the account); for the revoke route, 0 rows and `E1, the other sign-in ... 400 invalid_grant` if `revokeRefreshToken` behaves as (a) reads.
+
+(c) The questions S7 answers, each in the findings with the evidence (a line of (a) or of the run):
+1. Which column, if any, holds one value for every token of a chain (a sign-in's first refresh token and each token rotated from it) and a different value for another sign-in of the same user and client: `authorization_code_id`, `session_id`, `reference_id`, or none?
+2. Is that value set on every path that issues a MonoAgent refresh token: the authorization-code exchange, the refresh grant (carried from the presented token), the exchange of an older token issued without a `resource` (D23 adoption, S2), and the email-code route of Task 7 (not merged yet: read `src/app/api/auth/agent/claim/verify/route.ts` and the provider function Task 7 makes it call, and say what that path would store)?
+3. Does it survive what must not end a family: a rotation, and the end of the web session (sign-out, revoke-sessions, change-password: S3 showed that the refresh tokens survive, and `session_id` is set to null when the session row goes)?
+4. What does a replay after the window end today, and on which paths: the refresh grant and the revoke route (`revokeRefreshToken`)? How many rows of the other sign-in survive (none, if (a) reads right)?
+5. What is the smallest change that ends only the reused token's family on both paths, and what does each candidate cost? The candidates: an option or hook of the provider 1.7.1, if it has one (`grep -n "invalidateRefreshFamily\|Reuse\|hooks" node_modules/@better-auth/oauth-provider/dist/index.d.mts`); a wrapper in front of `/oauth2/token` and `/oauth2/revoke` (a Better-Auth `hooks.before`) that finds a revoked token presented after its window, deletes only its family and answers `invalid_grant` before the provider sees it; a family column, that is a new column and a migration (an owner step like O2), written when a sign-in issues its first refresh token and copied at each rotation; a patch of the installed package (`patch-package`), the last resort. For each: does it survive a provider upgrade, does it need a migration, and does it keep Task 3's 300-second reuse window answering a retry with the first answer?
+6. After the change, what becomes of the access tokens of the ended family (their `refresh_id`) and of the other families' (untouched)? And does Task 3's "a dead token is punished once" still hold: the reused token's own row goes with its family, so a later presentation finds no row and ends nothing more?
+
 - [ ] **Step 7: S1, which key signs and can it be pinned.** Create `scripts/spikes/s1-key.ts`:
 
 ```ts
@@ -666,7 +777,7 @@ Check the options Task 6 relies on exist in the installed plugin: `grep -n "getJ
 - [ ] **Step 8: Write the findings.** Create the findings file named in **Files**, with this exact structure. Where a run printed something different from a line below, the run wins: correct the line and say what differed under that spike's Result.
 
 ````markdown
-# Mandatory monoes.me Account — Spike Findings (S1, S2, S3, S6)
+# Mandatory monoes.me Account — Spike Findings (S1, S2, S3, S6, S7)
 
 Date: 2026-10-05 (the planning run; Task 2 re-runs every script and re-dates this file).
 Written by plan A, Task 2. Later plans append their own spikes (S4, S5) under their own headings.
@@ -687,6 +798,7 @@ B1a updates `internal/account/claims.go` from this table. Every value equals the
 | Claims present | `aud azp client_id exp iat iss jti plan scope sid sub`. `sid` only on tokens from the browser flow. `plan` is `free`. | |
 | JWT or opaque | A JWT exactly when a `resource` is sent (on authorize and token, or on any refresh); otherwise opaque (32 letters), `expires_in` 3600. | |
 | Refresh token | Opaque. Rotates on every refresh. Expires 30 days after it was issued, so every rotation slides the expiry. A retry of the same request within 300 seconds of the rotation is answered again with the same response (Task 3's `refreshTokenReuseInterval`); the unmodified server has no window. The client retries a lost answer at once and for as long as 240 seconds after the first send (spec A24, `pendingRetryWindow`), never after. | |
+| Refresh-token family | S7 writes this row: the column that names a family (or the one Task 3 adds), set on every path that issues a MonoAgent refresh token. A replay of a rotated-away token after the reuse window ends only that family (ruling R1); unmodified, the provider ends every refresh token of the client and the user. | none: the client keeps A24 and A25 as defence in depth and changes no constant |
 | Same key, not access tokens | The ID token (`aud` `monoagent`, the access tokens' `iss`, 10 hours, no `typ`) and the session JWT of `GET /api/auth/token` (`iss` and `aud` are `https://monoes.me`, no `azp`, no `typ`) carry the same `kid`. | B1a keeps the issuer, audience and client checks: they tell these apart, the audience by design (an ID token's `aud` is the client id, and OIDC lets it carry `azp`); Task 3's spec pins both audiences. Only access tokens carry `typ: at+jwt`, so after this spike a `typ` check in the client's verifier is possible defense in depth; B1a does not make it |
 
 ## S6: what does a real token look like?
@@ -717,16 +829,25 @@ Result, before Task 4: the provider rotates refresh tokens, and the refresh gran
 Result, after Task 4 (verified by its specs): the block deletes the user's tokens and web sessions, and the refresh answers `invalid_grant`; so does an audience-bound grant for a blocked user whose tokens survived. Grants without a `resource` are covered by the deletion only.
 Consequence: only a block, `/oauth2/revoke`, 30 days without use, or a replay ends a MonoAgent refresh token. A machine offline for more than 30 days gets `invalid_grant`: locked as refused, not as unreachable.
 
-## Decisions taken (the lead, 2026-10-05)
+## S7: what is the family of a refresh token? (ruling R1 of 2026-10-07)
+
+Method: the reading of Task 2 step 6b (a), with the file names and line numbers it printed, and `scripts/spikes/s7-family.ts`.
+Result: the answers to the six questions of step 6b (c), in their order, each with its evidence: (1) the column that names a family, or none; (2) on which of the four paths it is set; (3) whether it survives a rotation and the end of the web session; (4) what a replay after the window ends today, on the refresh grant and on the revoke route, with the row counts the run printed; (5) the smallest change that ends only the reused token's family on both paths, with what each candidate costs; (6) what becomes of the access tokens, and whether a dead token is still punished once.
+Consequence: the family key and the change Task 3 makes. The lead writes Task 3's family steps from this section before Task 3 is dispatched.
+
+## Decisions taken (the lead, 2026-10-05; the fourth by ruling R1 of 2026-10-07)
 
 1. `refreshTokenReuseInterval: 300` (Task 3), the owner's to lower, together with the client's `pendingRetryWindow`. The client retries a lost response for as long as 240 seconds after the first send (spec A24), so a 60-second window would leave the later retries presenting a rotated token and ending every session of the account. Inside the window a replay of a used token, a thief's included, gets the same response; it does not cover an explicitly revoked token (`/oauth2/revoke`, a block), which answers `invalid_grant` at once.
 2. The email-code route (Task 7) is the one server change beyond spec §5. For the MonoAgent client's `offline_access` claim it returns a `refresh_token`, which the client trades at the token endpoint with `resource` (B1b's design), and it honors a `resource` in the verify body (one call, the token endpoint's own answer). Without `resource` the opaque access token is unchanged; a blocked account is refused.
 3. Extras approved: `disableSettingJwtHeader`; deleting a blocked account's web sessions; the optional previous-key secret for a rotation; the audience as a database row plus a client link (migration 0017). Spec §5 item 1 says `oauthProvider` "accepts the resource"; it is a row and a link, not an option.
+4. Refresh-token families (ruling R1 of 2026-10-07): a replay of a rotated-away refresh token after the reuse window ends only that token's family, not every MonoAgent refresh token of the account, which removes the 5xx trade-off of the client's A24 and shrinks each of its residuals to "that install signs itself out". S7 measures what names a family; the lead writes Task 3's steps for it from S7's findings before Task 3 is dispatched. The client keeps A24 and A25 as defence in depth and changes no constant until the server has shipped and been measured.
 ````
 
 - [ ] **Step 9: Check what is left behind.** `git status --short` shows `?? tests/helpers/oauth-api.ts` and, if `next dev` or `tsc` ran, the two tracked files they rewrite (`next-env.d.ts`, `tsconfig.tsbuildinfo`): restore them with `git checkout -- next-env.d.ts tsconfig.tsbuildinfo`. The excluded `scripts/spikes/` and `.env.local` do not appear. Nothing is committed or pushed. Leave the server running for the next tasks.
 
-### Task 3: Audience-bound JWTs, the `plan` claim and the refresh reuse window
+### Task 3: Audience-bound JWTs, the `plan` claim, the refresh reuse window and refresh-token families
+
+**Refresh-token families (ruling R1 of 2026-10-07).** Requirement: a replay of a rotated-away refresh token after the reuse window ends only that token's family (the sign-in it comes from), not every MonoAgent refresh token of the account; the other sign-ins of the account, every other install, keep working. The steps for it are written by the lead from S7's findings before Task 3 is dispatched. Until then the design text, the steps and the specs below describe the provider as it is (`invalidateRefreshFamily` ends every refresh token of the client and the user), and the lead's steps amend them, the replay specs and the paragraph on the dead token punished once included. The client keeps A24 and A25 as defence in depth and changes no constant.
 
 **Files:**
 - Create: `drizzle/0017_monoagent_audience.sql`, `drizzle/meta/0017_snapshot.json` (generated), `src/lib/monoagent-token.ts`, `src/lib/monoagent-token.test.ts`, `src/lib/access-token-claims.ts`, `src/lib/access-token-claims.test.ts`, `tests/account-gate-tokens.spec.ts`, `tests/helpers/oauth-api.ts` (written in Task 2)
