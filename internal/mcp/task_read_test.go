@@ -77,7 +77,7 @@ func TestTaskNextOffersAStaleClaimOfAnotherAgentAndNeverALiveOne(t *testing.T) {
 // several, as the schema says.
 func TestTaskListTakesStatusAsAStringOrAList(t *testing.T) {
 	found := false
-	for _, def := range toolDefinitions(false) {
+	for _, def := range append(toolDefinitions(false), toolDefinitions(true)...) { // the verbs only with mutations
 		name, _ := def["name"].(string)
 		if !strings.HasPrefix(name, "task_") {
 			continue
