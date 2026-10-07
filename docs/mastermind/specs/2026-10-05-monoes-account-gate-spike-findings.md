@@ -1,6 +1,6 @@
 # Mandatory monoes.me Account — Spike Findings (S1, S2, S3, S6, S7)
 
-Date: 2026-10-07 (Task 2's run of every script, then its fix round 1 after review: S7 answer 5 corrected and measured; the planning run was 2026-10-05).
+Date: 2026-10-07 (Task 2's run of every script, then its fix rounds after review: S7 answer 5 corrected and measured (round 1), and the revoke route's caller read pinned (round 2); the planning run was 2026-10-05).
 Written by plan A, Task 2. Later plans append their own spikes (S4, S5) under their own headings.
 Server: `monoes/monoes-landing` at `dbb9f58` (`origin/main` `dd232ae` plus Task 1's three commits, which change only `.github/workflows/deploy.yml` and its test), better-auth 1.7.1, @better-auth/oauth-provider 1.7.1 (the lockfile's version since the provider was added), run locally: `next dev` on port 3107, local D1, real HTTP flows. Production was read twice on 2026-10-07, by public GETs: `/api/auth/.well-known/oauth-authorization-server` and `/api/auth/jwks`.
 
@@ -84,7 +84,12 @@ The answers to step 6b (c):
 
 ### Corrected S7 answer 5
 
-This replaces the rule first written in answer 5. It is the rule of `task-2-review-1.md` ("Corrected S7 answer 5"), checked against the source, with two refinements from that check: the provider refuses two non-empty `client_id` values (point 4), and the hook's 200 must be a truthy return (point 5). It is one user `hooks.before` in the `betterAuth({...})` options of `getAuth` (`src/lib/auth.ts`), with its logic in a separate module; no migration, no owner step.
+This replaces the rule first written in answer 5. It is the rule of `task-2-review-1.md` ("Corrected S7 answer 5"), checked against the source, with three changes from that check:
+- the provider refuses two or more non-empty `client_id` values (point 4);
+- the hook's 200 must be a truthy return (point 5);
+- the revoke route's caller is resolved from the raw request text alone, read exactly as the provider reads it (point 4). The review checked `ctx.body.client_id` and the raw form together. This was pinned in fix round 2, after `task-2-rereview-1.md`, New Error 1.
+
+It is one user `hooks.before` in the `betterAuth({...})` options of `getAuth` (`src/lib/auth.ts`), with its logic in a separate module; no migration, no owner step.
 
 Measured first: `scripts/spikes/s7-bypass.ts`, one run on the unmodified server. Each case: one account, MonoAgent sign-ins A and B, A1 rotated to A2, so 3 MonoAgent refresh rows; B1 is the other sign-in's next refresh. The second column is what a hook sees (better-call's own `getBody` on the same body), judged by the first rule; the third is this rule, computed, not run; the fourth is measured. The rows count (read through a platform proxy) agrees with B1's refresh (the server's own view) in every row.
 
@@ -108,7 +113,11 @@ In C1 the server stored no replayed answer (its window is 0), so the provider an
 The request handling the rule mirrors (read):
 - A hook receives the body as better-call parsed it, before validation: a repeated field keeps its last value (`better-call/dist/utils.mjs:36-38`). The handler sees the schema's output, built inside the endpoint (`better-call/dist/context.mjs:10-17`).
 - The token schema trims `grant_type` (`authorize-Crqw4_bR.mjs:4580`) and nothing else: the provider hashes `refresh_token` as sent (`:4588`; T3).
-- The provider resolves its caller from the raw form: the non-empty `client_id` values, two or more refused (`utils-B77ebneW.mjs:559-561`). So `client_id=monoagent&client_id=` is `monoagent` to it and `""` to a hook (R3, T2).
+- The provider resolves its caller from the raw request text. When the lowercased content type contains `application/x-www-form-urlencoded` (`utils-B77ebneW.mjs:557`), it reads `new URLSearchParams(await request.clone().text())` (`:558`) and keeps the non-empty `client_id` values; two or more are refused (`:559-561`). So `client_id=monoagent&client_id=` is `monoagent` to it and `""` to a hook (R3, T2).
+- better-call parses two more shapes differently from that read:
+  - A media type such as `application/x-www-form-urlencoded+json` passes the revoke route's `allowedMediaTypes` substring test (`better-call/dist/utils.mjs:9-12`) but matches better-call's JSON test first (`:3`, `:24`). So `ctx.body` is the parsed JSON, with no `client_id`, while the provider's raw read finds one in a string field.
+  - With a leading U+FEFF before `client_id=`, `formData()` keeps the U+FEFF in the key name, while `text()` strips it.
+- Measured by the re-review on the unmodified server (`task-2-rereview-1.md`, New Error 1). Its probes, `rva2-parse.mjs` (library level, no server) and `rva2-e2e.ts`, are kept next to it in plan A's SDD directory. The plain form, the `+json` shape and the U+FEFF shape each made the revoke route answer 400 `invalid_request` (`token not found`) and end the other sign-in (`invalid_grant`). The U+FEFF shape was measured on Node only (the `next dev` server the plan's specs run against); workerd, which serves production, was not measured.
 - The revoke route treats a `token_type_hint` other than `access_token` and `refresh_token` as none (`authorize-Crqw4_bR.mjs:3567`). It trims the token and strips a `Bearer` or `DPoP` scheme before its lookup (`stripAccessTokenAuthorizationScheme`, `:3573`; exported by `better-auth/oauth2`; `@better-auth/core/dist/oauth2/dpop.mjs:58-84`; R4 to R6). Its schema transforms neither field (`:4850-4851`).
 - The revoke route punishes the caller's client for the row's user, whatever client the row belongs to (`:3505-3506`). In R7 the user's MonoAgent rows went and the other client's stayed.
 - Both endpoints set `cloneRequest: true` (`:4578`, `:4844`), so a hook can read the raw form through `ctx.request.clone()`.
@@ -124,7 +133,13 @@ The rule:
    mono-agent never retries after 240 seconds, so no honest retry falls in the last 10 of the 300.
 3. **Acting on the token route.** Delete the family, then `throw new APIError("BAD_REQUEST", { error: "invalid_grant", error_description: "invalid refresh token" })`. Otherwise return nothing: the provider replays inside the window or answers without punishing (`:2120-2158`). Every path to `:2160` for a MonoAgent row meets these conditions, because the provider requires the row's client to be the caller (`:2124`). The resource and scope checks are not mirrored, and neither is client validation (`utils-B77ebneW.mjs:636-657`: a disabled client, a scope outside the client's, a grant it may not use, the auth method). That only makes the hook end a dead token's family where the provider would have ended nothing.
 4. **Revoke route, owned by the hook.** On `ctx.path === "/oauth2/revoke"`, unless `token_type_hint` is exactly `access_token` (any other value reaches the refresh path, `:3567`, `:3588`), normalize the token with `stripAccessTokenAuthorizationScheme` (as `:3573` does) and look up its row.
-   - Handle the request if and only if the row exists and the caller is `monoagent`. The caller is the single non-empty `client_id` of the raw form when the request is form-encoded. With two or more, return nothing: the provider refuses with `invalid_request` (`utils-B77ebneW.mjs:560`). With none, it is a non-empty `ctx.body.client_id` (an `auth.api` call).
+   - Handle the request if and only if the row exists and the caller is `monoagent`. Resolve the caller as the provider does (`utils-B77ebneW.mjs:541-575`), never from `ctx.body` when a request exists.
+   - Whenever `ctx.request` is present, read `new URLSearchParams(await ctx.request.clone().text())`, the provider's own read (`:558`), and take its non-empty `client_id` values.
+   - Do not test the content type. Every HTTP request that reaches the hook has passed better-call's `allowedMediaTypes` test (`better-call/dist/utils.mjs:9-12`), and passing it implies passing the provider's gate (`utils-B77ebneW.mjs:557`).
+   - Never use `formData()` or `ctx.body` for the caller. `formData()` keeps a leading U+FEFF that `text()` strips, and for a `+json` media type `ctx.body` lacks the `client_id` the provider finds in the raw text. With the provider's own read, in the same runtime as the provider, the hook agrees with it on every shape, whatever that runtime does with a U+FEFF.
+   - Two or more values: return nothing (the provider refuses, `:560`). Exactly one: that is the caller. None: return nothing; the provider then takes a Basic header, which it refuses for `monoagent` (`:640-641`), or answers `invalid_client` (`authorize-Crqw4_bR.mjs:3569`).
+   - Only when there is no `ctx.request` (an `auth.api` call), use a non-empty `ctx.body.client_id`.
+   - Read the raw text only after the row is found, so no other request pays for that read.
    - Otherwise return nothing: the provider then punishes only the caller's own client, never `monoagent` (`:3506`).
    - The provider refuses client authentication for the public `monoagent` client: Basic credentials or a client assertion (`utils-B77ebneW.mjs:640-641`), a `client_secret` (`:648`). Handling such a request anyway only ends the presented token's family.
 5. **Handling a revoke.**
@@ -139,6 +154,8 @@ Specs for Task 3, each leaving the account's other sign-in alive:
 - revoking a token rotated less than 300 s ago, the A24 logout (R1);
 - revoking an expired revoked row (R2);
 - `client_id=monoagent&client_id=` on both routes (R3, T2);
+- a revoke of a rotated token with the media type `application/x-www-form-urlencoded+json` and a JSON body whose string field carries `&client_id=monoagent&` (`rva2-e2e.ts`, case 2);
+- a revoke of a rotated token whose form body starts with U+FEFF before `client_id=monoagent` (`rva2-e2e.ts`, case 3). Run it where the plan's other specs run; the U+FEFF shape was measured on Node only;
 - `token_type_hint=x` (R4);
 - `token=Bearer <token>`, and the token with surrounding spaces (R5, R6);
 - `grant_type=refresh_token%20` after the window (T1);
@@ -149,12 +166,12 @@ Specs for Task 3, each leaving the account's other sign-in alive:
 Residuals:
 1. **A rotation that races the delete.** A rotation whose compare-and-set lands just before the family delete can insert its successor just after it, leaving a live row in the ended family (the provider's own TODO, `introspect-6ew7sakf.mjs:1487-1494`). The second sweep narrows it; nothing closes it.
 2. **A retry arriving while the first request is still in flight.** Inside the window, a retry that reads the row after the first request's rotation but before its answer is stored (`:1881-1886`) gets `invalid_grant` (`:2155-2158`). No family ends, but mono-agent reads a refusal. The B plans must not retry while the first request may still be running.
-3. **A logout racing a refresh in one install.** Under the first rule, a concurrent revoke could mark the row `revoked` between the hook's read and the provider's (`:2146`), and a concurrent rotation could revoke it before `authorize-Crqw4_bR.mjs:3505`; either ended the account. This rule's delete closes both (point 6). The losing request still gets `invalid_grant` or a 400, so the B plans serialize logout with refresh per install as well.
+3. **A logout racing a refresh in one install.** Under the first rule, a concurrent revoke could mark the row `revoked` between the hook's read and the provider's (read at `:2113-2119`, tested at `:2146`), and a concurrent rotation could revoke it before `authorize-Crqw4_bR.mjs:3505`; either ended the account. This rule's delete closes both (point 6). The losing request still gets `invalid_grant` or a 400, so the B plans serialize logout with refresh per install as well.
 4. **The window's edge.** The hook and the provider judge the window at slightly different moments, so a replay at the very end could pass the hook as inside and reach `:2160` as outside. Judging the window 10 s early (point 2) closes that, as long as the two checks run less than 10 s apart.
 5. **JWT access tokens** of an ended family stay valid until `exp`, at most 3600 seconds, as today.
 
 Plan text that must change (plan A, read at `8354c255`):
-- **Task 3** (`:850-862`, the design text, already marked provisional at `:850`; the spec at `:1122-1134`, and the Review Focus item 1 at `:43`, which names it): a replay after the window takes only its own family's newer token, and another sign-in keeps working. The specs above are added.
+- **Task 3** (`:850-862`, the design text, already marked provisional at `:850`; the spec at `:1122-1134`, and the Review Focus item 1 at `:43`, which names it): a replay after the window takes only its own family's newer token, and another sign-in keeps working. The specs above are added. Among them are the two that pin how the revoke route reads its caller, each proving the other sign-in stays alive: a `+json` media type with `client_id` only in the raw text, and a form body with a leading U+FEFF before `client_id`, run where the plan's other specs run.
 - **Task 7** (the refresh-token insert, `:2560-2571`): add `authorizationCodeId: \`email-claim:${claim.id}\``.
 - **Task 8** (`:2721-2722`): "`sid` appears only on tokens from the browser flow" is false. `sid` is JSON `null` on a token refreshed after the web session ended (S6, P10).
 - **Task 8** (`:2727-2728`): "presenting a used refresh token after that revokes every MonoAgent refresh token of that account" becomes "revokes the refresh tokens of that sign-in".
