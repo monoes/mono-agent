@@ -141,7 +141,7 @@ func TestListOrdersByColumnThenPosition(t *testing.T) {
 
 func TestBoardCarriesFiveColumnsCountsAndTheRevision(t *testing.T) {
 	s, db, c := newTestStore(t)
-	empty, err := s.Board(bg, "default", 0)
+	empty, err := s.Board(bg, "default", 0, human)
 	if err != nil || empty.Profile.ID != "default" || empty.Rev != 0 {
 		t.Fatalf("empty board: %+v, %v", empty, err)
 	}
@@ -162,7 +162,7 @@ func TestBoardCarriesFiveColumnsCountsAndTheRevision(t *testing.T) {
 	if _, err := db.Exec(`UPDATE tasks SET claimed_by = 'old', claim_until = ? WHERE id = ?`, c.t.Add(-time.Minute).Format(timeFmt), stale); err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.Board(bg, "default", 2)
+	b, err := s.Board(bg, "default", 2, human)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +192,13 @@ func TestEveryReadIsScopedToItsProfile(t *testing.T) {
 	if ts, _ := s.List(bg, "default", Filter{}, human); len(ts) != 1 || ts[0].ID != mine.ID {
 		t.Errorf("list: %+v", ts)
 	}
-	if b, _ := s.Board(bg, other, 0); len(b.Tasks[StatusReady]) != 1 || b.Tasks[StatusReady][0].ID != theirs.ID {
+	if b, _ := s.Board(bg, other, 0, human); len(b.Tasks[StatusReady]) != 1 || b.Tasks[StatusReady][0].ID != theirs.ID {
 		t.Errorf("board of the other profile: %+v", b.Tasks)
 	}
 	if cn, _ := s.Counts(bg, "default"); cn.Ready != 1 {
 		t.Errorf("counts: %+v", cn)
 	}
-	if _, err := s.Board(bg, "no-such-profile", 0); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Board(bg, "no-such-profile", 0, human); !errors.Is(err, ErrInvalid) {
 		t.Errorf("board of an unknown profile: %v, want ErrInvalid", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestRevMovesOnWritesNotOnReads(t *testing.T) {
 	task := mustAdd(t, s, "default", "a", false)
 	_, _, _ = s.Get(bg, "default", task.ID)
 	_, _ = s.List(bg, "default", Filter{}, human)
-	_, _ = s.Board(bg, "default", 0)
+	_, _ = s.Board(bg, "default", 0, human)
 	if rev() != 1 {
 		t.Errorf("revision %d after one add and some reads, want 1", rev())
 	}

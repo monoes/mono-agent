@@ -90,8 +90,8 @@ func TestTaskReadsNeverChangeTheBoard(t *testing.T) {
 	}
 }
 
-// The board lists the Inbox, which an agent reads only by naming it (spec 4.1), and the
-// store's Board takes no actor: the board is the operator's, JSON and text alike.
+// The board lists the Inbox, which an agent reads only by naming it (spec 4.1): the board is
+// the operator's, JSON and text alike, and the command refuses an agent before the store does.
 func TestTaskBoardIsRefusedToAnAgent(t *testing.T) {
 	db := newTaskTestDB(t)
 	seedTaskRows(t, db,

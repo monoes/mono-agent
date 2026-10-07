@@ -78,7 +78,7 @@ func TestABoardIsReadInOneSnapshot(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if !ran() {
 		t.Fatal("the read never asked for the time: the test no longer writes in the middle of it")
 	}
@@ -113,7 +113,7 @@ func TestEveryReadReportsItsContextEnding(t *testing.T) {
 		"Counts": func() error { _, err := s.Counts(ctx, "default"); return err },
 		"Get":    func() error { _, _, err := s.Get(ctx, "default", 1); return err },
 		"List":   func() error { _, err := s.List(ctx, "default", Filter{}, human); return err },
-		"Board":  func() error { _, err := s.Board(ctx, "default", 0); return err },
+		"Board":  func() error { _, err := s.Board(ctx, "default", 0, human); return err },
 	} {
 		if err := read(); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s in a cancelled context: %v, want context.Canceled", name, err)
@@ -162,7 +162,7 @@ func TestAStoredTimeThatIsNotATimeFailsAListAndABoard(t *testing.T) {
 			if ts, err := s.List(bg, "default", Filter{}, human); err == nil || !strings.Contains(err.Error(), "not a time") || ts != nil {
 				t.Errorf("list: %v, %v, want no tasks and an error saying the stored value is not a time", ts, err)
 			}
-			if b, err := s.Board(bg, "default", 0); err == nil || !strings.Contains(err.Error(), "not a time") || b.Tasks != nil {
+			if b, err := s.Board(bg, "default", 0, human); err == nil || !strings.Contains(err.Error(), "not a time") || b.Tasks != nil {
 				t.Errorf("board: %+v, %v, want no board and an error saying the stored value is not a time", b, err)
 			}
 		})

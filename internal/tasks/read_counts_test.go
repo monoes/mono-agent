@@ -62,7 +62,7 @@ func TestTheCountsDoNotDependOnTheArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	board, err := s.Board(bg, "default", 0)
+	board, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestTheCountsDoNotDependOnTheArchive(t *testing.T) {
 	if got, err := s.Counts(bg, "default"); err != nil || got != counts {
 		t.Errorf("counts %+v (err %v) with 300 archived cards more, want %+v", got, err, counts)
 	}
-	if got, err := s.Board(bg, "default", 0); err != nil || !reflect.DeepEqual(got, board) {
+	if got, err := s.Board(bg, "default", 0, human); err != nil || !reflect.DeepEqual(got, board) {
 		t.Errorf("the board with 300 archived cards more (err %v):\n%+v\nwant\n%+v", err, got, board)
 	}
 	rows, err := db.Query(countsSQL, "default")

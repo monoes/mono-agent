@@ -322,11 +322,12 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 			if len(args) != 0 {
 				return errInvalidInput("task board takes no arguments (got %q): its one option is --done-limit", cutArg(args[0]))
 			}
-			// The board shows the Inbox, which an agent reads only by naming it (spec 4.1),
-			// and the store's Board takes no actor: the board is the operator's, and an
-			// agent is refused before the database is opened.
+			// The board shows the Inbox, which an agent reads only by naming it (spec 4.1):
+			// the board is the operator's, and an agent is refused before the database is
+			// opened (the store's Board refuses it too).
 			caller := callerFor(flagAs(cmd))
-			if _, err := caller.operator("show the board"); err != nil {
+			operator, err := caller.operator("show the board")
+			if err != nil {
 				// No profile id is known before the database is opened: the command names a placeholder.
 				// It is the agent's form, with the agent's name, or a placeholder for one: pasted without
 				// it, the command would run as the operator.
@@ -338,7 +339,7 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 				return operatorOnlyError("%v. The board shows the Inbox, which agents read only by naming it: use task list instead (if you really need the Inbox: %s)", err, inbox)
 			}
 			return withTasks(cfg, cmd, func(ctx context.Context, store *tasks.Store, p tasks.Profile) error {
-				b, err := store.Board(ctx, p.ID, doneLimit)
+				b, err := store.Board(ctx, p.ID, doneLimit, operator)
 				if err != nil {
 					return taskErr(err)
 				}

@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,7 @@ func TestAClaimThatEndsExactlyNowIsStaleInTheCountAndTheFilter(t *testing.T) {
 			if cn, err := s.Counts(bg, "default"); err != nil || cn != (Counts{InProgress: 1, Stale: k.stale}) {
 				t.Errorf("counts %+v, err %v, want 1 in progress and %d stale", cn, err, k.stale)
 			}
-			b, err := s.Board(bg, "default", 0)
+			b, err := s.Board(bg, "default", 0, human)
 			if err != nil || b.Counts.Stale != k.stale {
 				t.Errorf("the board counts %d stale (err %v), want %d", b.Counts.Stale, err, k.stale)
 			}
@@ -137,7 +138,7 @@ func TestAClaimPastItsLeaseIsStaleOnlyOnAnInProgressTask(t *testing.T) {
 	for _, task := range all {
 		check("list", task)
 	}
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,7 @@ func TestCountsHaveAFieldPerColumnAndSkipTheArchive(t *testing.T) {
 	if got, err := s.Counts(bg, "default"); err != nil || got != want {
 		t.Errorf("counts %+v, err %v, want %+v", got, err, want)
 	}
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if err != nil || b.Counts != want {
 		t.Fatalf("board counts %+v, err %v, want %+v", b.Counts, err, want)
 	}
@@ -186,7 +187,7 @@ func TestBoardColumnsAreInOrderAndOnlyDoneIsCut(t *testing.T) {
 	}
 	top := []int64{done[4], done[3], done[2], done[1], done[0]}
 	for _, k := range []struct{ limit, shown int }{{0, 5}, {-1, 5}, {1, 1}, {2, 2}, {4, 4}, {5, 5}, {6, 5}} {
-		b, err := s.Board(bg, "default", k.limit)
+		b, err := s.Board(bg, "default", k.limit, human)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,6 +275,52 @@ func TestListRefusesAnActorThatMayNotReadBeforeLookingAtTheFilter(t *testing.T) 
 	}
 }
 
+// The board shows the Inbox, which agents do not read (spec 5.1), so the store itself refuses it to
+// everyone but the operator, and does so first: an unknown profile and a context that has ended are
+// not what the refusal says. A card of the Inbox is there to be handed over if the check were missing.
+func TestBoardRefusesAnyoneButTheOperatorBeforeLookingAtAnythingElse(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	mustAdd(t, s, "default", "private", false)
+	ended, cancel := context.WithCancel(bg)
+	cancel()
+	asks := []struct {
+		what    string
+		ctx     context.Context
+		profile string
+	}{
+		{"its profile", bg, "default"},
+		{"an unknown profile", bg, "no-such-profile"},
+		{"a context that has ended", ended, "default"},
+	}
+	for _, k := range []struct {
+		name  string
+		actor Actor
+	}{
+		{"an agent", bot("b")},
+		{"an agent with no name", Actor{Kind: Agent}},
+		{"a chrome capture", Actor{Kind: Capture, Name: SourceChrome}},
+		{"an os capture", Actor{Kind: Capture, Name: SourceOS}},
+		{"a capture with no name", Actor{Kind: Capture}},
+		{"the zero actor", Actor{}},
+		{"an actor of a kind that does not exist", Actor{Kind: 99, Name: "x"}},
+	} {
+		for _, ask := range asks {
+			b, err := s.Board(ask.ctx, ask.profile, 0, k.actor)
+			if !errors.Is(err, ErrOperatorOnly) || !strings.Contains(err.Error(), "show the board") || b.Tasks != nil {
+				t.Errorf("%s asking for %s: %+v, %v, want no board and an error that is ErrOperatorOnly and says \"show the board\"", k.name, ask.what, b, err)
+			}
+		}
+	}
+	for _, a := range []Actor{human, {Kind: Human, Name: "morteza"}} {
+		if b, err := s.Board(bg, "default", 0, a); err != nil || len(b.Tasks[StatusInbox]) != 1 {
+			t.Errorf("operator %+v: %d Inbox cards (err %v), want the one", a, len(b.Tasks[StatusInbox]), err)
+		}
+	}
+	if _, err := s.Board(bg, "no-such-profile", 0, human); !errors.Is(err, ErrInvalid) {
+		t.Errorf("the operator asking for an unknown profile: %v, want ErrInvalid", err)
+	}
+}
+
 // ParseStatus accepts "progress" and "In-Progress" as in_progress: a name that is accepted must find it.
 func TestListFindsTheStatusesItAcceptsByAnyName(t *testing.T) {
 	s, db, _ := newTestStore(t)
@@ -341,7 +388,7 @@ func TestEveryTaskCarriesItsOwnLastEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("list", ts)
-	board, err := s.Board(bg, "default", 0)
+	board, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}

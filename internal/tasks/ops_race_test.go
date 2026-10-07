@@ -81,7 +81,7 @@ func TestMovesAtOnceKeepEveryColumnInOrder(t *testing.T) {
 	for err := range errs {
 		t.Errorf("a move failed: %v", err)
 	}
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}

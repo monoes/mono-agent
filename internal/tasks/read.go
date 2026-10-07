@@ -242,10 +242,16 @@ func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Acto
 
 // Board returns the whole board in one snapshot: the revision, the counts and
 // the five columns. The Done column is cut to doneLimit cards when it is above 0.
-// It checks the profile (an unknown one is ErrInvalid) and takes no actor: it is
-// the operator's whole-board read, so a surface that serves agents must not offer
-// it to them (the CLI refuses it for an agent caller).
-func (s *Store) Board(ctx context.Context, profileID string, doneLimit int) (Board, error) {
+// It is the operator's whole-board read, and the store holds it so: the board shows
+// the Inbox, which spec 5.1 withholds from agents, so anyone but the operator (an
+// agent, a capture, an actor that was never set) is refused with ErrOperatorOnly,
+// before the profile is looked up or the database is read. It checks the profile
+// (an unknown one is ErrInvalid).
+func (s *Store) Board(ctx context.Context, profileID string, doneLimit int, actor Actor) (Board, error) {
+	// Who is asking comes before what is asked, as in Edit.
+	if actor.Kind != Human {
+		return Board{}, operatorOnly("show the board")
+	}
 	b := Board{Tasks: map[Status][]Task{}}
 	err := s.snapshot(ctx, func(x dbx) error {
 		var err error

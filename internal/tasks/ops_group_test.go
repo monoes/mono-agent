@@ -57,7 +57,7 @@ func TestApproveTopPlacesALargeGroupWithoutRenumberingTheQueue(t *testing.T) {
 	if !slices.Equal(idsOf(got), given) {
 		t.Error("the answer is not in the order of the ids")
 	}
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}

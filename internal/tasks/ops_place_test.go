@@ -23,7 +23,7 @@ type colModel map[Status][]slot
 
 func modelOf(t *testing.T, s *Store) colModel {
 	t.Helper()
-	b, err := s.Board(bg, "default", 0)
+	b, err := s.Board(bg, "default", 0, human)
 	if err != nil {
 		t.Fatal(err)
 	}
