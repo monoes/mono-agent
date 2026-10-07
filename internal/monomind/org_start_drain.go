@@ -27,6 +27,16 @@ process.stdin.on('data', chunk => {
 });
 `
 
+// drainReadyWait caps the wait for the helper's "ready" handshake. Node's
+// startup takes well under a second normally but many seconds on a loaded
+// machine, so this is a hang guard, not a latency budget.
+var drainReadyWait = 30 * time.Second
+
+// drainExitGrace is how long finishDrain waits for the helper to commit the
+// final tail after monomind exits before killing it (a descendant holding
+// stdio). Under load the helper may need longer than a second to flush.
+var drainExitGrace = 10 * time.Second
+
 func (c *startCapture) startDrain(ctx context.Context, bin, root string) error {
 	node := ""
 	if dir := nodeDirFor(bin); dir != "" {
@@ -87,7 +97,7 @@ func (c *startCapture) startDrain(ctx context.Context, bin, root string) error {
 		}
 		ready <- err
 	}()
-	timer := time.NewTimer(3 * time.Second)
+	timer := time.NewTimer(drainReadyWait)
 	defer timer.Stop()
 	select {
 	case err = <-ready:
@@ -114,7 +124,7 @@ func (c *startCapture) finishDrain() {
 	// monomind's exit normally closes its stream and the helper exits after
 	// committing the final tail. A descendant retaining stdio must not hold
 	// the caller open indefinitely.
-	timer := time.NewTimer(time.Second)
+	timer := time.NewTimer(drainExitGrace)
 	defer timer.Stop()
 	select {
 	case <-c.drained:
