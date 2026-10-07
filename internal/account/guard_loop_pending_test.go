@@ -179,6 +179,7 @@ func TestTheRefresherDropsATokenItCouldNotConfirmAndTheGraceKeepsSayingWhy(t *te
 	}
 	e.f.Clock.Advance(241 * time.Second) // +454 s: the fourth retry of the schedule
 	eventually(t, "the drop", func() bool { return e.session().LastResult == "unconfirmed" })
+	e.underLock(func() {}) // the pass that dropped it has ended, so its guard has taken the drop in
 	quiet()
 	if got := net.grants(); got != 4 || srv.isRevoked() {
 		t.Fatalf("%d grants (revoked %t), want the four that were lost and no more: the pass that drops the token sends nothing", got, srv.isRevoked())

@@ -161,20 +161,29 @@ func expectCalls(t *testing.T, srv *loopServer, n int32, what string) {
 	}
 }
 
-// waitForAttempt waits, in real time, until session.json records an attempt at at. A grant is
-// counted when it is sent, and what it got is written after the answer: a test that reads the
-// session after an attempt waits for this record, never for a while.
+// waitForAttempt waits, in real time, until session.json records an attempt at at, and then for
+// the pass that wrote it to end: the refresher writes, and takes in what it wrote, under the
+// session lock, which this takes once. A grant is counted when it is sent and its record is
+// written after the answer, so a test that reads the session or the guard's verdict after an
+// attempt waits for this, never for a while.
 func waitForAttempt(t *testing.T, store account.Store, at time.Time, what string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		sess, err := store.Load()
 		if err == nil && sess != nil && sess.LastAttempt.Equal(at) {
-			return
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: stored session = %s (%v), want the last attempt at %v", what, describe(sess), err, at)
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	unlock, err := store.Lock(ctx)
+	if err != nil {
+		t.Fatalf("taking the session lock after %s: %v", what, err)
+	}
+	unlock()
 }
