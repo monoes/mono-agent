@@ -371,11 +371,70 @@ func bridgeUserService(ctx context.Context, pid int, unit string) string {
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		parts := strings.SplitN(line, ":", 3)
-		if len(parts) == 3 && (parts[2] == group || strings.HasPrefix(parts[2], group+"/")) {
-			return unit
+		if len(parts) == 3 && parts[2] == group {
+			if bridgeBelongsToUnit(ctx, pid, unit) {
+				return unit
+			}
+			return ""
 		}
 	}
 	return ""
+}
+
+// bridgeBelongsToUnit is true when the unit's MainPID is an ancestor of the
+// bridge, or the unit's ExecStart references the bridge's command. Sitting in
+// the unit's cgroup alone is not enough: a hand-started bridge can land in
+// another service's cgroup (e.g. a terminal server's).
+func bridgeBelongsToUnit(ctx context.Context, pid int, unit string) bool {
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=MainPID", "--value", "--", unit).Output()
+	if err != nil {
+		return false
+	}
+	if main, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && main > 0 && isAncestor(main, pid) {
+		return true
+	}
+	out, err = exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ExecStart", "--value", "--", unit).Output()
+	if err != nil {
+		return false
+	}
+	execStart := string(out)
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/cmdline", procRoot, pid))
+	if err != nil {
+		return false
+	}
+	args := strings.Split(strings.TrimRight(string(b), "\x00"), "\x00")
+	if len(args) > 2 {
+		args = args[:2]
+	}
+	for _, a := range args {
+		if a == "" || !strings.Contains(execStart, a) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAncestor reports whether anc is a (transitive) parent of pid, walking
+// PPid through procRoot.
+func isAncestor(anc, pid int) bool {
+	for i := 0; i < 64 && pid > 1; i++ {
+		b, err := os.ReadFile(fmt.Sprintf("%s/%d/status", procRoot, pid))
+		if err != nil {
+			return false
+		}
+		ppid := 0
+		for _, line := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(line, "PPid:"); ok {
+				ppid, _ = strconv.Atoi(strings.TrimSpace(v))
+				break
+			}
+		}
+		if ppid == anc {
+			return true
+		}
+		pid = ppid
+	}
+	return false
 }
 
 // procRoot is where /proc lives; tests point it at a temp dir.
