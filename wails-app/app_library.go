@@ -8,13 +8,8 @@
 package main
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
-	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -23,20 +18,14 @@ import (
 const (
 	libraryCLITimeout     = 60 * time.Second
 	libraryInstallTimeout = 5 * time.Minute
-	// The CLI's own login wait is 5 minutes; this leaves it room to report.
-	libraryLoginTimeout = 6 * time.Minute
 )
 
-// emitLibraryEvent sends a login progress event to the frontend (tests
-// replace it: a bare context has no Wails runtime to emit on).
+// emitLibraryEvent sends a login progress event to the frontend, named
+// "library:login" or "account:login" (tests replace it: a bare context has no
+// Wails runtime to emit on).
 var emitLibraryEvent = func(a *App, name string, data interface{}) {
 	runtime.EventsEmit(a.ctx, name, data)
 }
-
-var (
-	libraryLoginMu     sync.Mutex
-	libraryLoginCancel context.CancelFunc
-)
 
 // LibraryStatus returns `library status [--offline]`.
 func (a *App) LibraryStatus(offline bool) string {
@@ -47,103 +36,28 @@ func (a *App) LibraryStatus(offline bool) string {
 	return a.rawCLI(libraryCLITimeout, args...)
 }
 
-// LibraryLogin runs `library login` (PKCE through the system browser, which
-// the CLI opens itself) and returns its final status object. Each NDJSON
-// progress line the CLI writes to stderr is forwarded as a "library:login"
-// event, so the page can show the sign-in URL as a fallback link. Only one
-// login runs at a time; LibraryLoginCancel stops it.
-func (a *App) LibraryLogin() string {
-	cliBin, err := findMonoAgentCLI()
-	if err != nil {
-		return aiError(err)
-	}
-	libraryLoginMu.Lock()
-	if libraryLoginCancel != nil {
-		libraryLoginMu.Unlock()
-		return `{"error":"a monoes.me login is already in progress","code":"busy"}`
-	}
-	ctx, cancel := context.WithTimeout(a.ctx, libraryLoginTimeout)
-	libraryLoginCancel = cancel
-	libraryLoginMu.Unlock()
-	cancelled := false
-	defer func() {
-		libraryLoginMu.Lock()
-		libraryLoginCancel = nil
-		libraryLoginMu.Unlock()
-		cancel()
-	}()
+// The library login is the machine's monoes.me account (one session), so the
+// login bindings below are aliases of the Account* ones (app_account.go).
+// LibraryLogin keeps its own event name, "library:login", which the library
+// dialog listens for.
 
-	cmd := exec.CommandContext(ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "library", "login")
-	hideWindow(cmd)
-	stopGracefully(cmd)
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return aiError(err)
-	}
-	var stdout strings.Builder
-	cmd.Stdout = &stdout
-	if err := cmd.Start(); err != nil {
-		return aiError(err)
-	}
-	var lastLine string
-	sc := bufio.NewScanner(stderr)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var ev map[string]interface{}
-		if json.Unmarshal([]byte(line), &ev) != nil {
-			ev = map[string]interface{}{"kind": "line", "message": line}
-		}
-		lastLine = line
-		emitLibraryEvent(a, "library:login", ev)
-	}
-	waitErr := cmd.Wait()
-	if ctx.Err() == context.Canceled {
-		cancelled = true
-	}
-	if cancelled {
-		return `{"error":"login cancelled","code":"cancelled"}`
-	}
-	if waitErr != nil && strings.TrimSpace(stdout.String()) == "" && lastLine != "" {
-		// The CLI explained itself on stderr only.
-		return aiError(errorString(lastLine))
-	}
-	return cliResultJSON(cliBin, []byte(stdout.String()), waitErr)
-}
+// LibraryLogin signs in through the browser: AccountLogin, reporting as
+// "library:login" events.
+func (a *App) LibraryLogin() string { return a.runAccountLogin("library:login") }
 
-type errorString string
+// LibraryLoginCancel stops a running LibraryLogin or AccountLogin.
+func (a *App) LibraryLoginCancel() string { return a.AccountLoginCancel() }
 
-func (e errorString) Error() string { return string(e) }
+// LibraryLoginEmailSend asks monoes.me to email a sign-in code.
+func (a *App) LibraryLoginEmailSend(email string) string { return a.AccountLoginEmailSend(email) }
 
-// LibraryLoginCancel stops a running LibraryLogin. {"ok":true,"cancelled":bool}.
-func (a *App) LibraryLoginCancel() string {
-	libraryLoginMu.Lock()
-	cancel := libraryLoginCancel
-	libraryLoginMu.Unlock()
-	if cancel == nil {
-		return `{"ok":true,"cancelled":false}`
-	}
-	cancel()
-	return `{"ok":true,"cancelled":true}`
-}
-
-// LibraryLoginEmailSend asks monoes.me to email a sign-in code (the
-// fallback for machines without a usable browser).
-func (a *App) LibraryLoginEmailSend(email string) string {
-	return a.rawCLI(libraryCLITimeout, "library", "login", "--email="+email, "--send")
-}
-
-// LibraryLoginEmailVerify trades the emailed code for a token.
+// LibraryLoginEmailVerify trades the emailed code for a session.
 func (a *App) LibraryLoginEmailVerify(email, code string) string {
-	return a.rawCLI(libraryCLITimeout, "library", "login", "--email="+email, "--code="+strings.TrimSpace(code))
+	return a.AccountLoginEmailVerify(email, code)
 }
 
-// LibraryLogout forgets this profile's monoes.me token.
-func (a *App) LibraryLogout() string {
-	return a.rawCLI(libraryCLITimeout, "library", "logout")
-}
+// LibraryLogout ends this machine's monoes.me session.
+func (a *App) LibraryLogout() string { return a.AccountLogout() }
 
 // LibraryList returns `library list` for one kind and scope
 // (official | public | mine).

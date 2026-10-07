@@ -60,9 +60,9 @@ esac
 		"--profile work --json library update --yes",
 		"--profile work --json library update --yes -- item-9",
 		"--profile work --json library installed --kind=org",
-		"--profile work --json library logout",
-		"--profile work --json library login --email=me@example.com --send",
-		"--profile work --json library login --email=me@example.com --code=123456",
+		"--json account logout",
+		"--json account login --email=me@example.com --send",
+		"--json account login --email=me@example.com --code=123456",
 	}
 	if got := loggedArgs(t, log); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -127,9 +127,9 @@ exec sleep 30
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		libraryLoginMu.Lock()
-		running := libraryLoginCancel != nil
-		libraryLoginMu.Unlock()
+		accountLoginMu.Lock()
+		running := accountLoginCancel != nil
+		accountLoginMu.Unlock()
 		if running {
 			break
 		}
