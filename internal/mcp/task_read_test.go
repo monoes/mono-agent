@@ -2,7 +2,7 @@ package mcp
 
 // The read tools of the task board (spec 8) through the tools themselves, where task_tools_test.go
 // has the fixture and the first tests: what a list cuts and one task does not, the claim task_next
-// offers, a server whose profile was deleted.
+// offers, the shape of task_list's status, a server whose profile was deleted.
 
 import (
 	"context"
