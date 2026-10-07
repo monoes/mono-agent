@@ -115,12 +115,14 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_locks (
 // considered abandoned (its holder crashed or was killed mid-refresh) and
 // safe to steal — a token exchange is a single HTTP round trip and never
 // legitimately takes this long.
-const refreshLockStaleAfter = 30 * time.Second
+// A var so tests can pin it; production code never changes it.
+var refreshLockStaleAfter = 30 * time.Second
 
 // refreshLockWaitTimeout is how long a caller that lost the race waits for
 // the current holder to finish before giving up and just using whatever is
 // on file — a real exchange completes in well under this.
-const refreshLockWaitTimeout = 5 * time.Second
+// A var so tests can pin it; production code never changes it.
+var refreshLockWaitTimeout = 5 * time.Second
 
 // Store provides CRUD operations for connections.
 type Store struct {
