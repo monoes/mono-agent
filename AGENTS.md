@@ -1322,6 +1322,7 @@ a row here):
 |---|---|
 | CLI | `monoagentcli task ...` (this section) |
 | Session-start hook | `monoagentcli --profile <id> task digest`; nothing installs the hook for you |
+| Chrome extension | *Add selection as task*, *Add page as task*, the side panel's box and the `add-task` key send `task.add` over the extension bridge: a capture, Inbox only, in the profile the extension is "Saving into" (README, Chrome Extension) |
 | MCP, any server | `monoagentcli mcp`: `task_list`, `task_get`, `task_next`; with `--allow-mutations` also `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add`, acting on the server's one profile as `agent:<client>#<4 hex>`; text in fields ending in `_untrusted`; no tool approves, edits, moves or archives a task |
 | MCP, the board alone | `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`: the same eight tools and no other, one server per profile; nothing registers it for you |
 | Claude Code skill | `~/.claude/skills/monoagent-tasks/SKILL.md`, written create-only by the next CLI run on a machine with `~/.claude` |

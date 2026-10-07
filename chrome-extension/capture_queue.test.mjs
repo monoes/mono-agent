@@ -196,3 +196,13 @@ test("the queue capture.js wrote is the queue the popup reads", async () => {
   assert.equal(queued[0].title, "Written by capture.js");
   assert.equal(queued[0].key, "a");
 });
+
+test("the badge counts waiting and refused tasks with the captures", () => {
+  assert.equal(Queue.badgeFor({ queued: 0, failed: 0, tasks: 2 }).text, "2");
+  const both = Queue.badgeFor({ queued: 1, failed: 0, tasks: 1 });
+  assert.deepEqual([both.text, both.color, both.title], ["2", "#c98a00", "1 capture and 1 task waiting for the bridge"]);
+  const refused = Queue.badgeFor({ queued: 3, failed: 0, tasks: 4, tasksFailed: 1 });
+  assert.equal(refused.text, "1", "a refusal outranks what waits");
+  assert.equal(refused.color, "#c0392b");
+  assert.match(refused.title, /^1 task was not added/);
+});
