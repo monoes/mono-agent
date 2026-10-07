@@ -10,10 +10,11 @@ import (
 )
 
 // A tripwire for what only Windows, or a race between two system calls, can see.
-// Every job of the CI runs on Linux, and rename_windows.go and its tests are
-// compiled and run on Windows only, so a mutation of the Windows rename (the
+// Every job of the CI but account-os runs on Linux, and rename_windows.go and its
+// tests are compiled and run on Windows only (account-os runs them, informational
+// until it has been green once), so a mutation of the Windows rename (the
 // write-through flag dropped, the two paths swapped, os.Rename back in place of
-// replaceFile) passes every test that runs. So does a type check made by path
+// replaceFile) passes every Linux test. So does a type check made by path
 // instead of on the file that was opened: it passes while nobody swaps the file
 // between the two calls, and on Linux a FIFO swapped in at that moment makes the
 // read wait in the poller for a writer that never comes, which is the hang that

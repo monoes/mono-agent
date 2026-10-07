@@ -10,8 +10,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// These run on Windows only; no CI job runs them (release.yml's Windows job builds
-// and does not test).
+// These run on Windows only; the account-os job in .github/workflows/ci.yml runs
+// them, informational until it has been green once (release.yml's Windows job
+// builds and does not test).
 
 // renameReplacing replaces an existing file, and the temporary file is gone after it.
 func TestRenameReplacingReplacesAnExistingFile(t *testing.T) {
