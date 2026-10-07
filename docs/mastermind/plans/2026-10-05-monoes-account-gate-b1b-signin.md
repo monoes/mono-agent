@@ -37,7 +37,7 @@ The failure modes this software's users are most likely to meet that the happy-p
 1. **A person already logged in to the library must not notice this phase.** `library login` becomes an alias of a machine session they do not have yet, so library reads fall back to the profile's own vault login until a session replaces it, and `library logout` forgets it. Pinned by `TestAnOlderLoginServesReadsUntilASessionExists` (Task 8) and `TestAnOlderLibraryLoginKeepsWorkingAndLogoutForgetsIt` (Task 12). One exception is deliberate (A24, item 8): a library refresh of that login whose outcome is unknown (it went out and the answer was not a complete 4xx: a timeout or a reset after the request was written, a 5xx, a body cut short, a 2xx without a refresh token) may have spent its refresh token, so the vault login is dropped at once and the person logs in again, in this dormant phase too. Before this phase the dead token was kept, and a later refresh could end every install of the account. It happens on those failures, on an answer whose new refresh token the vault did not take (A24(d), `TestOlderLoginRefreshDropsTheLoginWhenTheVaultFailsAfterTheAnswer`) and on `invalid_grant`, after which the login is dead anyway (`TestOlderLoginRefreshDropsADeadLogin`), never on one that cannot have spent the token: the request never written, or a complete 4xx that is not `invalid_grant` (`TestOlderLoginRefreshKeepsTheLoginAfterAKnownFailure`).
 2. **monoes.me answers a sign-in or an adoption with something that cannot be a session** (an opaque token, an emailed code answered without a refresh token as the email route does until plan A's Task 7 ships, a refresh grant that ignores `resource`). Nothing is stored and the user is told what to do. A refresh token the exchange spent is replaced by what monoes.me issued; a dead one (`invalid_grant`) is removed, and so is one whose exchange went out and got an answer that leaves its outcome unknown, anything but a complete 4xx, a 5xx included, or none (monoes.me may have rotated it: A24, item 8), because presenting any of them again, from an older binary say, ends every refresh token of the account on every machine (plan A, spike S2); so adoption and the library's own refresh of an older login take the same lock. Pinned by `TestLoginAnOpaqueAnswerStoresNothing` and `TestEmailSignInAtAServerThatCannotSignTheSession` (Task 5), `TestAdoptNeverReadsAnAnswerAsARefusal` and `TestAdoptReadsAndUpdatesTheOlderLoginUnderTheStoreLock` (Task 6), `TestOlderLoginRefreshWaitsForAnAdoptionAndUsesWhatItLeft` and `TestOlderLoginRefreshDropsADeadLogin` (Task 8), and `TestAdoptNeverReadsAnAnswerAsARefusalAndDropsADeadLogin`, `TestAdoptKeepsTheOlderLoginsAfterATransientFailureAndAsksOnce`, `TestAdoptKeepsTheOlderLoginAliveWithWhatTheExchangeIssued`, `TestAdoptDropsTheOlderLoginWhenTheVaultCannotKeepItAlive` and `TestAdoptDropsADeadLoginAndTriesTheNextProfile` (Task 9).
 3. **monoes.me failing in any way but `invalid_grant`** (a 500 after a bad deploy, `invalid_client`, a malformed body, a dropped connection) locks nobody, and no error text carries a refresh token. The failures whose outcome is unknown (a 500 among them, since it can come after the rotation was committed) keep the grace but cost the refresh token once the guard's 240 seconds have passed (A24): a deploy that answers the refresh grant with a 5xx for longer than that makes each install that tried to refresh meanwhile sign in again within its 24 hours, and revokes nothing. Pinned by `TestRefresherOnlyInvalidGrantIsARefusal` (Task 4) and `TestAccountStatusFollowsMonoesMe` (Task 11); `TestRefresherNeverReturnsATypedNilError` (Task 4) pins that no failure comes back as an error that holds a nil pointer, which the guard would count as an ordinary failure.
-4. **The session token reaches only the host that issued it,** and a refresh token never travels in the clear: a `MONOES_BASE_URL` pointed elsewhere neither receives the token nor lets `library login` sign in there. Pinned by `TestSessionTokenIsSentOnlyToItsHost` (Task 8), `TestLibraryLoginNeedsTheAccountHost` (Task 12), `TestLogoutNeverRevokesOverPlainHTTP` (Task 6) and `TestRefresherUnreachableAndInsecureHosts` (Task 4).
+4. **The session token reaches only the host that issued it,** and a refresh token never travels in the clear: a `MONOES_BASE_URL` pointed elsewhere neither receives the token nor lets `library login` sign in there, and an endpoint that the server's metadata names elsewhere, in any shape (`@evil.example/x` included), is used on the base host (ruling R17). Pinned by `TestSessionTokenIsSentOnlyToItsHost` (Task 8), `TestLibraryLoginNeedsTheAccountHost` (Task 12), `TestLogoutNeverRevokesOverPlainHTTP` (Task 6), `TestRefresherUnreachableAndInsecureHosts` (Task 4) and `TestDiscoverPinsEveryEndpointToTheBaseHost` (Task 1).
 5. **A machine with no session stays untouched, and a broken session can always be cleaned.** Status, logout and adoption create nothing when there is nothing to act on (the clock-guard record that the guard itself writes from the enforcement date, A25, comes from a guard pass, which none of them makes on a machine with no session), logout replaces an unreadable `session.json` by a session with no token (A23) and works offline, and a new sign-in replaces a refused session. Pinned by `TestAccountLoginStatusLogout` (Task 11), `TestAdoptWritesNothingOnAMachineWithoutAnOlderLogin` (Task 9), `TestLogoutWithNothingToForgetLeavesNoFiles`, `TestLogoutNeverRevokesOverPlainHTTP`, `TestLogoutForgetsAnUnreadableSession` and `TestLogoutRevokesAndForgetsEvenOffline` (Task 6), and `TestLoginReplacesARefusedSession` (Task 5).
 6. **A refresh grant the caller abandons mid-call.** monoes.me rotates the refresh token when it answers, and the answer is the only copy of the new one: a Ctrl-C, a SIGTERM or a closing context that aborts the call leaves the dead token on disk, and the next refresh after monoes.me's 300-second reuse window ends every install of the account (spec A20). Every grant this plan sends that rotates a refresh token is therefore completed and stored once it is sent: the adoption exchange, the update of the vault entry it leaves behind, and the library's refresh of a login of its own. Pinned by `TestAdoptStoresTheAnswerWhenTheCallerGivesUpMidCall` (Task 6), `TestOlderLoginRefreshIsStoredWhenTheCallerGivesUp` (Task 8) and `TestAdoptCompletesWhenTheCallerGivesUp` (Task 9).
 7. **A logout that unlocks a machine.** The high-water mark, which makes a clock set back worthless to a user who leaves the account folder alone (spec §4.8), lives in `session.json`. Deleting the file at logout would let an account that monoes.me has blocked sign out (an open command), set the clock before the enforcement date and run again (spec A23). Logout keeps the record, as a session with no token, and revokes the refresh token it reads under the lock, not one that a refresh in another process has rotated since. Pinned by `TestLogoutKeepsTheClockGuardRecord`, `TestASecondLogoutChangesNothing`, `TestLoginAfterLogoutReplacesTheRecord` and `TestLogoutRevokesTheRefreshTokenThatIsOnDiskWhenItHoldsTheLock` (Task 6), and `TestAccountLoginStatusLogout` (Task 11).
@@ -114,6 +114,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -228,6 +229,31 @@ func TestDiscoverPinsEveryEndpointToTheBaseHost(t *testing.T) {
 	if err == nil || ep.TokenEndpoint != dead.URL+"/api/auth/oauth2/token" {
 		t.Fatalf("an unreachable server must set the error and still give the defaults: %+v, %v", ep, err)
 	}
+
+	// url.Parse also takes references that name no host and do not start with a slash.
+	// Appended to the base as they stand, they move the host: "@evil.example/x" turns the
+	// base into a user name, ".evil.example/x" into a sub-domain of the base host. Each
+	// shape, in any of the three endpoints, must come out on the base host.
+	for _, c := range []struct{ name, endpoint, path string }{
+		{"user name", "@evil.example/x", "/@evil.example/x"},
+		{"leading dot", ".evil.example/x", "/.evil.example/x"},
+		{"host without a scheme", "evil.example/x", "/evil.example/x"},
+		{"path without a slash", "oauth/token", "/oauth/token"},
+		{"base host under another scheme", "https://{host}/oauth/token", "/oauth/token"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				e := strings.ReplaceAll(c.endpoint, "{host}", r.Host)
+				json.NewEncoder(w).Encode(map[string]string{"authorization_endpoint": e, "token_endpoint": e, "revocation_endpoint": e})
+			}))
+			defer srv.Close()
+			ep, err := account.DiscoverEndpoints(context.Background(), srv.Client(), srv.URL)
+			want := srv.URL + c.path
+			if err != nil || ep.AuthorizationEndpoint != want || ep.TokenEndpoint != want || ep.RevocationEndpoint != want {
+				t.Errorf("%q: endpoints %+v, %v; want all three at %s", c.endpoint, ep, err, want)
+			}
+		})
+	}
 }
 ```
 
@@ -245,10 +271,10 @@ The output includes lines like (timings differ):
 FAIL	github.com/monoes/mono-agent/internal/account [build failed]
 FAIL
 # github.com/monoes/mono-agent/internal/account_test [github.com/monoes/mono-agent/internal/account.test]
-internal/account/oauth_test.go:49:15: undefined: account.AuthorizeOptions
-internal/account/oauth_test.go:56:22: undefined: account.AuthorizeInBrowser
-internal/account/oauth_test.go:71:15: undefined: account.AuthorizeOptions
-internal/account/oauth_test.go:117:20: too many errors
+internal/account/oauth_test.go:50:15: undefined: account.AuthorizeOptions
+internal/account/oauth_test.go:57:22: undefined: account.AuthorizeInBrowser
+internal/account/oauth_test.go:72:15: undefined: account.AuthorizeOptions
+internal/account/oauth_test.go:118:20: too many errors
 ```
 
 - [ ] **Step 3: Implement the package.**
@@ -318,7 +344,8 @@ func DiscoverEndpoints(ctx context.Context, hc *http.Client, baseURL string) (*O
 	return m, unreachable
 }
 
-// pinToBase keeps endpoint when it is on baseURL's host, and otherwise uses its path on baseURL.
+// pinToBase keeps endpoint when it is on baseURL's host, and otherwise uses its path on baseURL,
+// so whatever endpoint holds, the result is on baseURL's host.
 func pinToBase(baseURL, endpoint, fallback string) string {
 	if endpoint == "" {
 		return baseURL + fallback
@@ -331,7 +358,12 @@ func pinToBase(baseURL, endpoint, fallback string) string {
 	if strings.EqualFold(u.Host, base.Host) && u.Scheme == base.Scheme {
 		return endpoint
 	}
-	p := u.Path
+	// url.Parse also takes references that do not start with a slash ("@evil.example/x",
+	// ".evil.example/x"): joined to the base as they stand, they would move the host.
+	p := u.EscapedPath()
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
 	if u.RawQuery != "" {
 		p += "?" + u.RawQuery
 	}
@@ -489,6 +521,14 @@ git add internal/account/oauth.go internal/account/oauth_test.go
 ```bash
 git commit -m "feat(account): endpoint discovery and the browser sign-in, shared with the library" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
+
+- [ ] **Step 7: Prove that the pinning rows can fail (ruling R17).** `pinToBase` is the one guard that keeps the code verifier and every token on the issuer's host. In `internal/account/oauth.go`, replace the four lines from `p := u.EscapedPath()` to the closing brace of the `if` after it by the single line `p := u.Path` with the `Edit` tool, run the command below, check what fails, and undo the change:
+
+```bash
+go test ./internal/account/ -run '^TestDiscoverPinsEveryEndpointToTheBaseHost$' -count=1
+```
+
+Expected with the change: FAIL, the rows `user_name`, `leading_dot`, `host_without_a_scheme` and `path_without_a_slash`, each with `want all three at` the base URL followed by the row's path (with the change, `@evil.example/x` lands on `http://127.0.0.1:<port>@evil.example/x`, whose host is `evil.example`); `base_host_under_another_scheme` passes, because its path has a slash. With the change undone the command prints `ok`, and `git status --short` shows nothing.
 
 ### Task 2: internal/library delegates its browser sign-in to account
 
@@ -6999,6 +7039,8 @@ The ruling that logout revokes only a token the guard would present (2026-10-06,
 The ruling of the final review of B1a's code on `Settled` (2026-10-07: only a request that was never written, or a complete 4xx that is not `invalid_grant`, is settled; a 2xx that names no refresh token is an unknown outcome; it replaces the rule that the replay of A24 above proved, under which any HTTP status was settled) was replayed on B1a's integrated and reviewed core itself (`feat/account-integration` at `85d1393b`, A24 and A25 included), not on a stand-in: Tasks 1 to 12 exactly as printed here, applied by a script that reads this document, then B2's Tasks 1 to 4 on top. `gofmt -l`, `go build ./...` and `go vet` of `internal/account`, `internal/library/...` and `cmd/monoagentcli` (the first two also with `-tags devaccount`) are clean; `go test -race` of the whole of `internal/account` (B1a's own tests included), `internal/library` and `internal/library/libraryfake` passes, and so does their `-tags devaccount` run; the account and library tests of `cmd/monoagentcli` (Tasks 10 to 12) and B2's gate tests pass under `-race`. The change in B1a's guard that reads a `TokenSet` with an empty `RefreshToken` as an unknown outcome (made in parallel) is not needed by any test here, because this refresher no longer returns such a set. The real core also showed that Task 7's two hooks did not have the form B1a's `TestEveryForTestHookRefusesToRunInAReleaseBinary` reads from the source (they began with `if !testing.Testing()`); they now begin as B1a's hooks do. Nine deliberate breakages each made the named tests fail and were undone: `GrantSettled` reading a 5xx as settled (`TestRefresherSettledIsExactlyWhatTheClientCanKnow` with its 500, 502, 504 and 524 rows, `TestRefresherOnlyInvalidGrantIsARefusal`, `TestAdoptTellsAnUnknownOutcomeFromAKnownOne`, `TestOlderLoginRefreshDropsTheLoginWhenTheOutcomeIsUnknown`, `TestAdoptDropsTheOlderLoginWhenTheAnswerIsLost`), reading a 4xx whose body is cut off as settled (the cut-off rows of `TestRefresherSettledIsExactlyWhatTheClientCanKnow` and `TestOlderLoginRefreshDropsTheLoginWhenTheAnswerHoldsNoTokenSet`) or a request that was never written as unknown (the dial row of the first, the `nobody answers` row of `TestOlderLoginRefreshKeepsTheLoginAfterAKnownFailure`); the refresher's old fallback to the token presented when the answer names no refresh token (`TestRefresherReadsAnAnswerWithoutARefreshTokenAsUnknown` and the matching row); the library keeping a 2xx without a refresh token, reading every non-2xx as settled (its old line) or a cut-off body as whole (`TestOlderLoginRefreshDropsTheLoginWhenTheAnswerHoldsNoTokenSet`, `TestOlderLoginRefreshDropsTheLoginWhenTheOutcomeIsUnknown`); the adoption exchange reading a server error as known (`TestAdoptTellsAnUnknownOutcomeFromAKnownOne`, `TestAdoptDropsTheOlderLoginWhenTheAnswerIsLost`); and Task 7's old hook (`TestEveryForTestHookRefusesToRunInAReleaseBinary`). The Step 2 output of Tasks 4, 8 and 9 was regenerated from the tests as they now stand. Two tests were renamed with what they now pin: `TestRefresherKeepsTheRefreshTokenWhenNotRotated` is `TestRefresherReadsAnAnswerWithoutARefreshTokenAsUnknown`, and `TestOlderLoginRefreshDropsTheLoginWhenTheAnswerCannotBeRead` is `TestOlderLoginRefreshDropsTheLoginWhenTheOutcomeIsUnknown`.
 
 The rulings on the pre-flight of this plan (2026-10-07: R12 to R15, with its findings 3 and 7 and its notes D4 to D10) were replayed on a `git archive` of `feat/account-core` at `02592963`, B1a's final core: Tasks 1 to 12 exactly as printed here, applied by a script that reads this document, each task's test edits first, then its failing step, the rest of the task, and its passing and checking steps. Every failing step failed with the lines printed (regenerated for Tasks 1, 8 and 11), every other step passed, and `gofmt -l` printed nothing; 31 files the tasks create are byte for byte the blocks above. The machine was loaded by other work (a load average of 30 to 120 on 10 cores): at the peaks the whole-package runs of Task 7 and Task 12 went past `go test`'s 10 minutes, and B1a's own timing tests failed for lack of CPU (`TestAStoreWithoutASealerUsesTheQuietKeyringSealer`, whose key store did not answer within its 10 seconds, and four clock tests of the refresher); run again at a load near 30, Task 7's Steps 4 and 5 and Task 12's Steps 7 and 8 pass as printed (Step 8 prints its one summary line), and Task 11's Step 6 and Task 12's Step 5, run with `-timeout 40m`, pass in 248 and 88 seconds. The replay found one test this plan had to change: the old `TestLibraryRead401RefreshesThenAsksForLogin` counted a second presentation of a refresh token that monoes.me had refused, which R13 ends (Task 8, Step 1). Twelve deliberate breakages each made the named tests fail and were undone: Task 6 Step 7's six changes, each with exactly the failures it lists; the library keeping the spent token when the vault fails after the answer (`TestOlderLoginRefreshDropsTheLoginWhenTheVaultFailsAfterTheAnswer`: two token requests, one replay) or keeping a dead login (`TestOlderLoginRefreshDropsADeadLogin`); `keepAlive` keeping the spent token (`TestAdoptDropsTheOlderLoginWhenTheVaultCannotKeepItAlive`); `describeStatus` with its own text for the locked reasons (`TestDescribeStatusOfALockedSessionIsTheRefusalsReasonLine`, six rows); a browser of Task 5's tests that reports after the sign-in has returned, which the tests now report and which used to panic the test binary (Task 1's tests the same way); and a refresher that sends an `Authorization` header (`TestRefreshRequestSendsOnlyTheGrantFields`, which the old fake let pass). Step 8's check prints `[setup failed]` for a package that does not compile. The bound of `Logout` and `Adopt` on the store lock (B1a's `lockWaitTimeout`, 25 seconds) has no test of its own, which would wait 25 seconds: a throwaway test that held the lock saw both give up after 25 seconds with `account: taking the session lock: context deadline exceeded`, the older login unread and the refresh token untouched.
+
+Ruling R17 (2026-10-07, the review of Task 1): `pinToBase` appended the decoded path of an endpoint on another host and assumed it began with a slash, so `@evil.example/x` moved the request to `evil.example` and `.evil.example/x`, `evil.example/x` and `oauth/token` to hosts named after the base host; it now takes the escaped path and gives it a leading slash. Task 1 as amended was replayed on a `git archive` of `02592963`: its failing step prints the lines above, its passing and checking steps pass, Step 7's change fails the four hostile rows and not the scheme row, and its two files are byte for byte those the B1b lane committed (`38b5836d`). Tasks 2, 4, 5, 6 and 8 reach every endpoint through `DiscoverEndpoints`, so their code needs no change, and none of their tests relied on the old join.
 
 Replaying against B1a's code as it then stood found a trap: `internal/secrets` kept the account key it first made for the whole process, while the CLI tests re-make the mock keyring in most tests, so the second sign-in of a test binary sealed a refresh token that the next renewal could not open. B1a's final code reads the key from the key store at every call (`secrets.AccountKEK`), which ends that trap; `account.SetSealerForTest` (Task 7) stays, so that a test's sign-in depends on no key store (the decision on the sealer above).
 
