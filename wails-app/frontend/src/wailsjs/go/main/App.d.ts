@@ -27,6 +27,18 @@ export function APIModels(arg1:string,arg2:string,arg3:string,arg4:string):Promi
 
 export function APIStatus():Promise<main.APIStatusInfo>;
 
+export function AccountLogin():Promise<string>;
+
+export function AccountLoginCancel():Promise<string>;
+
+export function AccountLoginEmailSend(arg1:string):Promise<string>;
+
+export function AccountLoginEmailVerify(arg1:string,arg2:string):Promise<string>;
+
+export function AccountLogout():Promise<string>;
+
+export function AccountStatus():Promise<string>;
+
 export function AddApplication(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<string>;
 
 export function AddAutomationRole(arg1:string,arg2:string):Promise<string>;

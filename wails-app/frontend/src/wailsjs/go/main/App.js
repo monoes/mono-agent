@@ -46,6 +46,30 @@ export function APIStatus() {
   return window['go']['main']['App']['APIStatus']();
 }
 
+export function AccountLogin() {
+  return window['go']['main']['App']['AccountLogin']();
+}
+
+export function AccountLoginCancel() {
+  return window['go']['main']['App']['AccountLoginCancel']();
+}
+
+export function AccountLoginEmailSend(arg1) {
+  return window['go']['main']['App']['AccountLoginEmailSend'](arg1);
+}
+
+export function AccountLoginEmailVerify(arg1, arg2) {
+  return window['go']['main']['App']['AccountLoginEmailVerify'](arg1, arg2);
+}
+
+export function AccountLogout() {
+  return window['go']['main']['App']['AccountLogout']();
+}
+
+export function AccountStatus() {
+  return window['go']['main']['App']['AccountStatus']();
+}
+
 export function AddApplication(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['AddApplication'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

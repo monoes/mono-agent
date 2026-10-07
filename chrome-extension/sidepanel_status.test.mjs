@@ -340,3 +340,49 @@ test("a bridge attached to another browser does not make this one connected", ()
   // And this worker's own attach still outranks everything.
   assert.equal(S.arbitrate({ status: "connected" }, elsewhere).status, "connected");
 });
+
+// ── a bridge that refuses because MonoAgent has no valid monoes.me sign-in ──────
+
+const refusing = (reason = "not_logged_in") => ({ account: { refusing: true, state: "locked", reason } });
+
+test("a connected bridge that refuses says to sign in, with the command", () => {
+  const view = S.describe({ status: "connected", ...refusing() });
+  assert.equal(view.key, "account_locked");
+  assert.equal(view.tone, "warn");
+  assert.equal(view.label, "Sign in to MonoAgent");
+  assert.match(view.title, /signed out/);
+  assert.match(view.body, /needs a monoes.me sign-in/);
+  assert.equal(view.command, S.ACCOUNT_COMMAND);
+  assert.equal(S.ACCOUNT_COMMAND, "monoagentcli account login");
+  assert.equal(view.queues, false, "saving pages still works: the bridge accepts pushes while locked");
+  assert.equal(view.busy, false);
+});
+
+test("a sign-in monoes.me ended says so, and points at another account", () => {
+  const view = S.describe({ status: "connected", ...refusing("refused") });
+  assert.equal(view.key, "account_locked");
+  assert.match(view.title, /ended this sign-in/);
+  assert.match(view.body, /another account/);
+});
+
+test("a bridge that is not refusing, or does not say, is still just connected", () => {
+  for (const account of [null, undefined, { refusing: false, state: "ok", reason: "" }, { refusing: false, state: "locked", reason: "not_logged_in" }, {}]) {
+    const view = S.describe({ status: "connected", account });
+    assert.equal(view.key, "connected", JSON.stringify(account));
+    assert.equal(view.tone, "ok");
+    assert.equal(view.title, "");
+  }
+});
+
+test("only a connected socket can be told it is refused: no other state borrows the message", () => {
+  for (const status of ["waiting", "connecting", "unpaired", "disconnected", ""]) {
+    const view = S.describe({ status, ...refusing() });
+    assert.notEqual(view.key, "account_locked", status);
+  }
+});
+
+test("a refused bridge outranks nothing the arbiter decides: the worker's account survives arbitration", () => {
+  const worker = { status: "connected", ...refusing() };
+  const arbitrated = S.arbitrate(worker, { status: "waiting", reason: "" });
+  assert.equal(S.describe(arbitrated).key, "account_locked");
+});

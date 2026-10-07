@@ -90,6 +90,8 @@ func (a *App) setActiveProfileID(id string) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// The process guard for any layer-2 call this process makes; see app_account_guard.go.
+	a.startAccountGuard()
 	// Installed automation packages, before anything reads actions or forms.
 	if _, err := nodes.BootAutomations(""); err != nil {
 		runtime.LogWarningf(ctx, "automations: %v (using the built-in action set)", err)
@@ -261,6 +263,7 @@ func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB)
 }
 
 func (a *App) shutdown(_ context.Context) {
+	a.stopAccountGuard()
 	if a.chatSup != nil {
 		a.chatSup.stopAll()
 	}
