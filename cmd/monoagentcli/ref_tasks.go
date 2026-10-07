@@ -308,6 +308,26 @@ JSON
   exit 1 with {"error"} alone; an unknown flag, or a number or duration that does not
   parse, is the command parser's exit 1 with no JSON at all.
 
+FROM MCP
+  monoagentcli mcp serves task_list, task_get and task_next in every server (they only
+  read), and with --allow-mutations task_claim (id, or next: true), task_comment,
+  task_finish, task_release and task_add. They act on the server's one profile as the
+  agent agent:<client>#<4 hex digits>, named after the MCP client and the session: two
+  sessions are two claimants, and no argument names you. Text written by people, agents
+  or captures comes back in fields ending in _untrusted. No tool approves, edits, moves
+  or archives a task. To give an agent the board and no workflow tool, register one
+  server per profile (or set MONOAGENT_MCP_TASKS_ONLY=1 for it):
+    claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations
+
+SESSION START
+  task digest prints two short lines when the profile has ready work (the counts and the
+  next task, then the command to take it) and nothing otherwise, so a Claude Code
+  SessionStart hook can tell each new session what is waiting. Nothing installs it: add it
+  to ~/.claude/settings.json (or a project's .claude/settings.json) yourself, merged into
+  any "hooks" you already have:
+    {"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [
+      {"type": "command", "command": "monoagentcli --profile <id> task digest"}]}]}}
+
 SEE ALSO
   monoagentcli ref commands     every task command with its flags
   monoagentcli task --help
