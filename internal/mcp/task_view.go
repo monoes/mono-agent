@@ -101,6 +101,17 @@ func cutListNotes(s string) string {
 	return string([]rune(s)[:listNotesRunes]) + "\n[cut at 1000 characters: task_get has all of it]"
 }
 
+// taskGetEventsMax is how many events task_get returns: the most recent ones. A task may hold
+// hundreds of comments, each up to 64 KiB, which would fill a model's context.
+const taskGetEventsMax = 100
+
+// recentEvents are the last taskGetEventsMax of a history (oldest first), and how many older
+// events were left out.
+func recentEvents(es []tasks.Event) ([]tasks.Event, int) {
+	omitted := max(len(es)-taskGetEventsMax, 0)
+	return es[omitted:], omitted
+}
+
 func eventViews(es []tasks.Event) []eventView {
 	out := make([]eventView, 0, len(es))
 	for _, e := range es {
@@ -111,11 +122,13 @@ func eventViews(es []tasks.Event) []eventView {
 }
 
 // The documents the task tools return. Each names the profile, the one board
-// the server serves, and carries the note.
+// the server serves, and carries the note. Truncated is true when the limit cut
+// the list: more tasks match than are shown.
 type taskListResult struct {
-	Profile tasks.Profile `json:"profile"`
-	Tasks   []taskView    `json:"tasks"`
-	Note    string        `json:"note"`
+	Profile   tasks.Profile `json:"profile"`
+	Tasks     []taskView    `json:"tasks"`
+	Truncated bool          `json:"truncated"`
+	Note      string        `json:"note"`
 }
 
 type taskResult struct {
@@ -125,10 +138,11 @@ type taskResult struct {
 }
 
 type taskGetResult struct {
-	Profile tasks.Profile `json:"profile"`
-	Task    taskView      `json:"task"`
-	Events  []eventView   `json:"events"`
-	Note    string        `json:"note"`
+	Profile       tasks.Profile `json:"profile"`
+	Task          taskView      `json:"task"`
+	Events        []eventView   `json:"events"`
+	EventsOmitted int           `json:"events_omitted"` // older events left out of Events; 0 when it is whole
+	Note          string        `json:"note"`
 }
 
 // taskToolErr is a store error as a task tool returns it: its code first (spec
@@ -205,7 +219,11 @@ func decodeTaskArgs(args json.RawMessage, dst any) error {
 	fields := target.Elem()
 	takes := map[string]int{} // each argument the tool takes, and the field that holds it
 	for i := 0; i < fields.NumField(); i++ {
-		if name := strings.Split(fields.Type().Field(i).Tag.Get("json"), ",")[0]; name != "" && name != "-" {
+		field := fields.Type().Field(i)
+		if !field.IsExported() {
+			continue // it cannot be set, and so is no argument
+		}
+		if name := strings.Split(field.Tag.Get("json"), ",")[0]; name != "" && name != "-" {
 			takes[name] = i
 		}
 	}

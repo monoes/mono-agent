@@ -19,17 +19,18 @@ func taskReadTools() []tool {
 		{
 			name: "task_list",
 			description: taskBoardIntro +
-				"Lists the tasks of this server's profile, by column and then by position: {profile, tasks, note}, each task " +
+				"Lists the tasks of this server's profile, by column and then by position: {profile, tasks, truncated, note}, each task " +
 				"{id, profile_id, title_untrusted, notes_untrusted, status, position, source_kind, source_url_untrusted, source_title_untrusted, " +
 				"source_app_untrusted, claim: {by, until, stale} or null, last_event: {actor, kind, at} or null, created_at, updated_at}. " +
 				"Notes longer than 1000 characters are cut here; task_get has all of them. " +
 				"status: a column or several (inbox, ready, in_progress, review, done, archived), as \"ready,review\" or a list; " +
 				"omitted, it is ready, in_progress and review, and inbox, done and archived are listed only when named. " +
-				"limit: at most this many (default 50, at most 200). " +
+				"limit: at most this many (default 50, at most 200); truncated is true when more tasks match than are listed " +
+				"(columns come in the order above, so a full Ready can hide later columns: name the ones you want in status). " +
 				"Refusals: invalid_input (an unknown status, an argument this tool does not take).",
 			schema: objSchema(map[string]interface{}{
 				"status": strParam("Columns to list, comma-separated: inbox, ready, in_progress, review, done, archived (default: ready, in_progress and review)"),
-				"limit":  intParam("At most this many tasks (default 50, at most 200)"),
+				"limit":  intParam("At most this many tasks (default 50, at most 200); the result says truncated when more match"),
 			}),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolTaskList,
@@ -37,8 +38,9 @@ func taskReadTools() []tool {
 		{
 			name: "task_get",
 			description: taskBoardIntro +
-				"One task of this server's profile with its history: {profile, task, events, note}; the task as task_list describes it, " +
-				"with all of its notes, and events [{id, at, actor, kind, from_status, to_status, note_untrusted}], oldest first " +
+				"One task of this server's profile with its history: {profile, task, events, events_omitted, note}; the task as task_list describes it, " +
+				"with all of its notes, and events [{id, at, actor, kind, from_status, to_status, note_untrusted}], oldest first, " +
+				"the most recent 100 at most (events_omitted counts the older ones left out; monoagentcli task show has them all) " +
 				"(kinds: created, edited, moved, claimed, reclaimed, comment, question, result, released, archived, unarchived). " +
 				"id: the task's number. Refusals: not_found (no such task in this profile; a task of another profile is not found either), invalid_input.",
 			schema: objSchema(map[string]interface{}{
@@ -79,11 +81,16 @@ func toolTaskList(ctx context.Context, s *Server, args json.RawMessage) (interfa
 	if err != nil {
 		return nil, err
 	}
-	ts, err := store.List(ctx, p.ID, tasks.Filter{Statuses: a.Status, Limit: limit}, actor)
+	// One more than the limit is asked for, to see whether the limit cut anything.
+	ts, err := store.List(ctx, p.ID, tasks.Filter{Statuses: a.Status, Limit: limit + 1}, actor)
 	if err != nil {
 		return nil, taskToolErr(err)
 	}
-	return taskListResult{Profile: p, Tasks: listViews(ts), Note: untrustedNote}, nil
+	truncated := len(ts) > limit
+	if truncated {
+		ts = ts[:limit]
+	}
+	return taskListResult{Profile: p, Tasks: listViews(ts), Truncated: truncated, Note: untrustedNote}, nil
 }
 
 func toolTaskGet(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
@@ -105,7 +112,8 @@ func toolTaskGet(ctx context.Context, s *Server, args json.RawMessage) (interfac
 	if err != nil {
 		return nil, taskToolErr(err)
 	}
-	return taskGetResult{Profile: p, Task: viewOf(t), Events: eventViews(events), Note: untrustedNote}, nil
+	recent, omitted := recentEvents(events)
+	return taskGetResult{Profile: p, Task: viewOf(t), Events: eventViews(recent), EventsOmitted: omitted, Note: untrustedNote}, nil
 }
 
 func toolTaskNext(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
