@@ -4,7 +4,7 @@
 
 **Goal:** A Tasks tab right after Documents in the desktop app: the active profile's board as five live columns, with drag, keyboard moves, a detail drawer, quick add, and a sidebar badge, that feels immediate and stays correct while agents work the same board.
 
-**Architecture:** Go bindings in `wails-app` run every action as `monoagentcli --profile <active> --json task …` and return the CLI's stdout verbatim, so the page sees every refusal code. The board itself is read in process (P1's `Store.Board`, in the document `task board --json` prints), because the CLI refuses `task board` to an agent-driven caller and the tab must still show the board read-only there. An in-process watcher polls the board revision (P1's `Store.Watch`) and emits `tasks:changed`; the page answers with one board read. The page keeps the last read plus a list of optimistic operations laid over it: a move shows at once, stays until the read that includes it, and drops out (the card slides back) when the CLI refuses. All rules about order, placement, search and what changed live in one pure module (`lib/taskModel.js`) that the tests drive; the components stay thin.
+**Architecture:** Go bindings in `wails-app` run every action as `monoagentcli --profile <active> --json task …` and return the CLI's stdout verbatim, so the page sees every refusal code. The board itself is read in process (P1's `Store.Board`, asked as the operator, in the document `task board --json` prints), because the CLI refuses `task board` to an agent-driven caller and the tab must still show the board read-only there. An in-process watcher polls the board revision (P1's `Store.Watch`) and emits `tasks:changed`; the page answers with one board read. The page keeps the last read plus a list of optimistic operations laid over it: a move shows at once, stays until the read that includes it, and drops out (the card slides back) when the CLI refuses. All rules about order, placement, search and what changed live in one pure module (`lib/taskModel.js`) that the tests drive; the components stay thin.
 
 **Tech Stack:** Go (Wails v2 bindings, `internal/tasks`), React 19, lucide-react, react-i18next, vitest with jsdom and Testing Library. No new dependency in Go or npm.
 
@@ -16,7 +16,7 @@
 
 - Placement: `NAV_ITEMS` gets `{id: 'tasks', labelKey: 'tasks', icon: SquareKanban, section: 'DATA'}` right after Documents; `persistentPages` gets `tasks: <Tasks isActive={activePage === 'tasks'} />` (an id missing there silently shows the dashboard); `sidebar.nav.tasks` in `en.json` and `es.json`. The badge is Inbox plus Review (tooltip: the split), driven by the `tasks:changed` event, so it is right before the tab was ever opened.
 - Event: `tasks:changed {profile_id, rev, inbox, review}`. The watcher polls the board revision in process every two seconds and is restarted on startup and profile switch and stopped on shutdown, like the document watcher.
-- Data path: actions shell out to `monoagentcli task ... --json`; the whole board is one in-process `Store.Board` read in the `task board --json` document (Ruling: P1 made `task board` operator-only); Done shows the 50 most recent.
+- Data path: actions shell out to `monoagentcli task ... --json`; the whole board is one in-process `Store.Board` read, asked as the operator, in the `task board --json` document (Ruling: P1 made `task board` operator-only); Done shows the 50 most recent.
 - Columns `inbox`, `ready`, `in_progress`, `review`, `done`; `archived` is hidden. A task new to a column goes to the top of Inbox, Review and Done and to the bottom of Ready and In progress.
 - Interaction: drag with the app's mouse ghost drag (no native drag), a glowing drop zone, a drop indicator between cards, column auto-scroll; the move is applied at once and the CLI call follows; a refusal reverts it and says why.
 - Keyboard: Tab reaches cards; Enter opens; Shift+Left and Shift+Right move to the neighbouring column; Alt+Up and Alt+Down reorder; `A` approves an Inbox card; `N` opens quick add; `/` focuses search; Escape closes the drawer; an `aria-live` region announces each move.
@@ -41,7 +41,7 @@
 ## Rulings (where the spec is silent or this phase decides)
 
 - Ruling: the bindings return the CLI's stdout verbatim, `{"error","code"}` included, through a new `taskCLI` helper (stdin-capable, based on `cliResultJSON`) - `runMonoCLI` and `cliJSON` drop the code the page needs to tell `operator_only` from `claimed` - cost if wrong: one helper to swap.
-- Ruling (lead, after P1 made `task board` operator-only): reads in process, writes through the CLI. `TaskBoard` calls `Store.Board(ctx, profileID, doneLimit)` (it takes no actor: the read is the operator's) and returns the `tasks.Board` document `task board --json` prints; every action (add, edit, move, approve, archive, unarchive, comment) still runs the CLI - the CLI now refuses `task board` to an agent-driven caller (the whole board would hand an agent every unreviewed Inbox card, spec §4.1), yet the tab started from an agent's shell must still show its board read-only (§17.3), and the actions keep the CLI's guard, which refuses them there. A deviation from D21 (bindings shell out); Task 12 amends D21 - cost if wrong: one read to put back on the CLI.
+- Ruling (lead, after P1 made `task board` operator-only): reads in process, writes through the CLI. `TaskBoard` calls `Store.Board(ctx, profileID, doneLimit, actor)` with `tasks.Actor{Kind: tasks.Human}`, the operator, and returns the `tasks.Board` document `task board --json` prints; every action (add, edit, move, approve, archive, unarchive, comment) still runs the CLI. The CLI refuses `task board` to an agent-driven caller (the whole board would hand an agent every unreviewed Inbox card, spec §4.1), and the store now refuses every actor but the operator too, before it looks at the profile or reads anything: it enforces what the CLI already did. The tab started from an agent's shell must still show its board read-only (§17.3), so the app asks as the operator there as well: the one who asks is the person at the window, the markers the app inherited only say what started it, the page goes read-only (the Ruling below on an app started from an agent's shell), and the actions keep the CLI's guard, which reads those markers and refuses them. An actor taken from the markers, as the CLI takes it, would leave that tab with a refusal in place of its board. A deviation from D21 (bindings shell out); Task 12 amends D21 - cost if wrong: one read to put back on the CLI, or one line to take the actor from `TaskAgentShell()`.
 - Ruling: the app adds tasks with `--source app` - P1's `sourceKindFor` accepts `app` from the operator, and P1's `--source` help and spec §7 name it (`cli|app|os`) - cost if wrong: app-made cards show "Terminal".
 - Ruling: `TaskPulse()` reads the revision and the counts in process, as the watcher does, for the badge's first value - the watcher's first `tasks:changed` fires during startup before anything listens, and P2's `summary --section tasks` may not be merged when P3 is - a read in process, as amended D21 has every read (the "reads in process" Ruling) - cost: none.
 - Ruling: when the profile a watcher was started on is not there, the watcher writes one warning to the app's log and ends, and does not start over. P1's `Watch` returns an error then (ErrInvalid at once for a profile that never existed, an error wrapping ErrNotFound for one deleted while watched); a restart would only get the same error at once, and the next `SwitchProfile` or start begins a new watcher (neither the CLI nor the app can delete a profile yet) - cost if wrong: after a deleted active profile the badge keeps its last value until the next switch.
@@ -75,7 +75,7 @@ Failure modes the spec implies and no happy-path test would catch; each has a te
 4. A refetch must not undo an optimistic move, a failed confirming read must not drop it, and the operator's own move must not toast. (Task 5: "keeps a move until the read that includes it", "keeps a confirmed move when the confirming read fails", "toasts what an agent did, never the operator's own move")
 5. The badge before the tab was ever opened, and after the window reloads on a profile switch: the first `tasks:changed` was emitted before anything listened, and until `startup` has chosen the profile the app answers for `default`. (Task 2: `TestTaskPulseReadsTheActiveBoard`; Task 11: the two Sidebar badge tests: an older revision of the same profile never overwrites a newer one, the badge asks only once `IsReady` is true, and another profile's value replaces it)
 
-Close runners-up, also pinned: the app started from an agent's shell is read-only up front and still shows its board, although the CLI refuses `task board` there (Task 1: `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker`; Task 10c); `/`, `N` and `A` stay quiet while the page is hidden or a field has the focus (Task 10c); untrusted notes render as markdown without images or unsafe links (Task 9); the Done pulse lasts through the confirming read (Task 10a); a drop below the cut Done column's last card stays visible (Task 8); a profile that is not there ends the board watcher with one warning in the app's log, and `TaskPulse` answers `{}` for it (Task 2).
+Close runners-up, also pinned: the app started from an agent's shell is read-only up front and still shows its board, although the CLI refuses `task board` there and the store refuses every actor but the operator, so the binding asks as the operator (Task 1: `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker`; Task 10c); `/`, `N` and `A` stay quiet while the page is hidden or a field has the focus (Task 10c); untrusted notes render as markdown without images or unsafe links (Task 9); the Done pulse lasts through the confirming read (Task 10a); a drop below the cut Done column's last card stays visible (Task 8); a profile that is not there ends the board watcher with one warning in the app's log, and `TaskPulse` answers `{}` for it (Task 2).
 
 ## The board at a glance (what the code below builds)
 
@@ -115,7 +115,7 @@ Tasks: 0 contract and setup; 1 bindings; 2 watcher and pulse; 3 JS bindings and 
 **Files:** none change. `npm ci` creates `wails-app/frontend/node_modules` and the build creates `wails-app/frontend/dist`, both ignored by git.
 
 **Interfaces:**
-- Consumes (P1, `internal/tasks`): `NewStore(*sql.DB) *Store`; `(*Store).Watch(ctx, profileID string, interval time.Duration, fn func(Change)) error` (it blocks, so the app runs it in a goroutine; it returns nil when `ctx` ends, an ErrInvalid error at once for a profile that does not exist, and an error that wraps ErrNotFound when the profile is deleted while it is watched); `Change{Rev int64; Counts Counts}`; `Counts{Inbox, Ready, InProgress, Review, Done, Stale int}`; `(*Store).Profile(ctx, profileID string) (Profile, error)` (ErrInvalid for an unknown profile); `(*Store).Rev(ctx, profileID) (int64, error)` and `(*Store).Counts(ctx, profileID) (Counts, error)` (neither checks the profile: an unknown one reads revision 0 and no cards); `(*Store).Board(ctx context.Context, profileID string, doneLimit int) (Board, error)` with `Board{Profile, Rev, Counts, Tasks map[Status][]Task}` (JSON `profile`, `rev`, `counts`, `tasks`; a column with no card is `[]`); `(*Store).Add(ctx, profileID string, in AddInput, actor Actor) (Task, bool, error)`; `Actor{Kind, Name}` with `Human`; `AddInput{Title string, ...}`. From `internal/orgsign`: `AgentContextMarker() string`, `AgentContextMarkers() []string`.
+- Consumes (P1, `internal/tasks`): `NewStore(*sql.DB) *Store`; `(*Store).Watch(ctx, profileID string, interval time.Duration, fn func(Change)) error` (it blocks, so the app runs it in a goroutine; it returns nil when `ctx` ends, an ErrInvalid error at once for a profile that does not exist, and an error that wraps ErrNotFound when the profile is deleted while it is watched); `Change{Rev int64; Counts Counts}`; `Counts{Inbox, Ready, InProgress, Review, Done, Stale int}`; `(*Store).Profile(ctx, profileID string) (Profile, error)` (ErrInvalid for an unknown profile); `(*Store).Rev(ctx, profileID) (int64, error)` and `(*Store).Counts(ctx, profileID) (Counts, error)` (neither checks the profile: an unknown one reads revision 0 and no cards); `(*Store).Board(ctx context.Context, profileID string, doneLimit int, actor Actor) (Board, error)` (the operator's whole-board read: every actor but `Actor{Kind: Human}`, the zero `Actor` included, is refused with ErrOperatorOnly before the profile is looked up) with `Board{Profile, Rev, Counts, Tasks map[Status][]Task}` (JSON `profile`, `rev`, `counts`, `tasks`; a column with no card is `[]`); `(*Store).Add(ctx, profileID string, in AddInput, actor Actor) (Task, bool, error)`; `Actor{Kind, Name}` with `Human`; `AddInput{Title string, ...}`. From `internal/orgsign`: `AgentContextMarker() string`, `AgentContextMarkers() []string`.
 - Consumes (P1 CLI, as the app calls it): `task board --done-limit N` (operator-only; the app reads the same document in process, Task 1), `task show ID`, `task add [--source app] [--ready] [--notes=TEXT] [--stdin] -- TITLE`, `task edit ID [--title=T] [--notes=N]`, `task move ID STATUS [--before ID|--after ID|--top|--bottom]`, `task approve ID... [--top]`, `task archive ID...`, `task unarchive ID...`, `task comment ID -- TEXT`; JSON documents `{"profile","task"}`, `{"profile","tasks"}`, `{"profile","task","events"}`, `{"profile","created","task"}`, and the board `{"profile","rev","counts","tasks":{"inbox":[],"ready":[],"in_progress":[],"review":[],"done":[]}}`; a task is `{id, profile_id, title, notes, status, position, source:{kind,url,title,app}, claim:{by,until,stale}|null, last_event:{actor,kind,at}|null, created_at, updated_at}`; an event is `{id, at, actor, kind, from_status, to_status, note}`; the operator's actor label is `"you"`; errors are `{"error","code"}` on stdout with exit 2 or 3.
 - Produces: nothing. If anything below differs from this plan, spec section 6 wins: stop and tell the lead which line differed and what the code says.
 
@@ -127,7 +127,7 @@ Expected: `feat/tasks-board-gui`; the second exits 0; `internal/tasks` lists `cl
 - [ ] **Step 2: The package's names**
 
 Run each: `go doc ./internal/tasks Store.Watch`, `go doc ./internal/tasks Store.Profile`, `go doc ./internal/tasks Change`, `go doc ./internal/tasks Store.Rev`, `go doc ./internal/tasks Store.Counts`, `go doc ./internal/tasks Store.Board`, `go doc ./internal/tasks Board`, `go doc ./internal/tasks Counts`, `go doc ./internal/tasks Store.Add`, `go doc ./internal/tasks NewStore`, `go doc ./internal/tasks Actor`, `go doc ./internal/orgsign AgentContextMarker`, `go doc ./internal/orgsign AgentContextMarkers`, then `grep -n 'reservedNames' internal/tasks/store.go`.
-Expected: the signatures in the Interfaces block above, word for word; `reservedNames` lists `you`, `agent`, `capture`, chrome and os (no agent can call itself `you`, so an event by `you` is always the operator's, which Tasks 4b and 9 rely on).
+Expected: the signatures in the Interfaces block above, word for word, and `go doc ./internal/tasks Store.Board` says that every actor but the operator is refused with ErrOperatorOnly; `reservedNames` lists `you`, `agent`, `capture`, chrome and os (no agent can call itself `you`, so an event by `you` is always the operator's, which Tasks 4b and 9 rely on).
 
 - [ ] **Step 3: The frontend's packages and a first build**
 
@@ -167,7 +167,7 @@ Leave `T` in place (it is a temporary directory; no `rm -r`). Nothing to commit 
 - Test: `wails-app/app_tasks_test.go`
 
 **Interfaces:**
-- Consumes: `tasks.NewStore(*sql.DB)`, `(*tasks.Store).Board(ctx, profileID string, doneLimit int) (tasks.Board, error)` and `(*tasks.Store).Add` (tests), the `tasks.Board` document (Task 0 checks them); `findMonoAgentCLI() (string, error)`, `hideWindow(*exec.Cmd)`, `cliResultJSON(cliBin string, stdout []byte, runErr error) string` (stdout verbatim on success; on failure the CLI's own `{"error",…}` stdout when it printed one), `aiError(err error) string`, `codedError{msg, code string}` (`aiError(&codedError{...})` gives `{"code","error"}`), `(*App).getActiveProfileID()`, `a.ctx`; test helpers `fakeCLI(t, body string) string` (`app_health_stream_test.go`, `!windows`), `loggedArgs(t, path string) []string` (`app_hil_test.go`), `newTestApp(t) *App` (`app_workflows_test.go`); `orgsign.AgentContextMarker()`, `orgsign.AgentContextMarkers()`.
+- Consumes: `tasks.NewStore(*sql.DB)`, `(*tasks.Store).Board(ctx, profileID string, doneLimit int, actor tasks.Actor) (tasks.Board, error)` (it refuses every actor but the operator, `tasks.Actor{Kind: tasks.Human}`, with `tasks.ErrOperatorOnly`) and `(*tasks.Store).Add` (tests), the `tasks.Board` document (Task 0 checks them); `findMonoAgentCLI() (string, error)`, `hideWindow(*exec.Cmd)`, `cliResultJSON(cliBin string, stdout []byte, runErr error) string` (stdout verbatim on success; on failure the CLI's own `{"error",…}` stdout when it printed one), `aiError(err error) string`, `codedError{msg, code string}` (`aiError(&codedError{...})` gives `{"code","error"}`), `(*App).getActiveProfileID()`, `a.ctx`; test helpers `fakeCLI(t, body string) string` (`app_health_stream_test.go`, `!windows`), `loggedArgs(t, path string) []string` (`app_hil_test.go`), `newTestApp(t) *App` (`app_workflows_test.go`); `orgsign.AgentContextMarker()`, `orgsign.AgentContextMarkers()`.
 - Produces (bound to the frontend; Task 3 writes their JS entries):
   - `(*App).TaskBoard(doneLimit int) string`
   - `(*App).TaskShow(id int64) string`
@@ -178,7 +178,7 @@ Leave `T` in place (it is a temporary directory; no `rm -r`). Nothing to commit 
   - `(*App).TaskComment(id int64, text string) string`
   - `(*App).TaskAgentShell() string`
   - unexported: `taskCLI(stdin string, args ...string) string`, `taskRefusal(msg string) string`, `taskIDArgs`, `taskBoardStatuses`, `taskCLITimeout`, `boardDoneLimit` (50), `boardLimit(n int) int`, `maxArgNotes` (30,000), `notesTooLong`; test helper `addTestTask(t, a, profileID, title)` (Task 2 uses it too).
-- `TaskBoard` reads the board in process (`Store.Board`, one snapshot) and returns the `tasks.Board` document, the same one `task board --json` prints, or `{"error"}`: P1 made `task board` operator-only, and an app started from an agent's shell must still show its board (Ruling). Every other binding but `TaskAgentShell` runs the CLI and returns its stdout verbatim, or `{"code":"invalid_input","error":…}` when it refuses its input before running the CLI.
+- `TaskBoard` reads the board in process (`Store.Board`, one snapshot, asked as the operator) and returns the `tasks.Board` document, the same one `task board --json` prints, or `{"error"}`: P1 made `task board` operator-only (the CLI refuses an agent-driven caller, and the store every actor but the operator), and an app started from an agent's shell must still show its board, so it asks as the operator there too (Ruling). Every other binding but `TaskAgentShell` runs the CLI and returns its stdout verbatim, or `{"code":"invalid_input","error":…}` when it refuses its input before running the CLI.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -192,6 +192,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -358,7 +359,10 @@ func TestTaskBindingsReturnTheCLIRefusalVerbatim(t *testing.T) {
 // The board is read in process, in the document `task board --json` prints,
 // because the CLI refuses `task board` to an agent-driven caller: under an
 // inherited CLAUDECODE the app still shows its board, while an action still
-// runs the CLI, whose guard refuses it, and the page shows the banner.
+// runs the CLI, whose guard refuses it, and the page shows the banner. The
+// store refuses a whole-board read to every actor but the operator, so the
+// board coming back here means the binding asks as the operator: the marker
+// says what started the app, not who is looking at its window.
 func TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker(t *testing.T) {
 	refusal := `{"code":"operator_only","error":"CLAUDECODE is set, so an agent is running this command: only the operator can move a task"}`
 	log, _ := taskCLIFake(t, refusal, 3)
@@ -367,6 +371,11 @@ func TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker(t *testing.T) {
 	a.ctx = context.Background()
 	addTestTask(t, a, "default", "first")
 	addTestTask(t, a, "default", "second")
+	// An agent asking for the same board is refused, so the board below was
+	// asked for as the operator, not as the actor the marker would make.
+	if _, err := tasks.NewStore(a.db).Board(a.ctx, "default", 0, tasks.Actor{Kind: tasks.Agent, Name: "bot"}); !errors.Is(err, tasks.ErrOperatorOnly) {
+		t.Fatalf("the store's board for an agent = %v, want ErrOperatorOnly", err)
+	}
 	raw := a.TaskBoard(0)
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &top); err != nil || len(top) != 4 || top["profile"] == nil || top["rev"] == nil || top["counts"] == nil || top["tasks"] == nil {
@@ -515,7 +524,12 @@ func (a *App) taskCLI(stdin string, args ...string) string {
 // skips the CLI because `task board` refuses an agent-driven caller (the
 // whole board would hand an agent every unreviewed Inbox card, spec §4.1),
 // while an app started from an agent's shell must still show its board,
-// read-only. Every action below runs the CLI, whose guard refuses it there.
+// read-only. The store refuses a whole-board read to every actor but the
+// operator, so the read is made as the operator, always, the markers this
+// app inherited included: the one who asks is the person at the window, the
+// markers only say what started the app, and an actor taken from them, as
+// the CLI takes it, would leave that tab with a refusal in place of its
+// board. Every action below runs the CLI, whose guard refuses it there.
 func (a *App) TaskBoard(doneLimit int) string {
 	if a.db == nil {
 		return aiError(errors.New("the database is not open yet"))
@@ -524,7 +538,7 @@ func (a *App) TaskBoard(doneLimit int) string {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	b, err := tasks.NewStore(a.db).Board(ctx, a.getActiveProfileID(), boardLimit(doneLimit))
+	b, err := tasks.NewStore(a.db).Board(ctx, a.getActiveProfileID(), boardLimit(doneLimit), tasks.Actor{Kind: tasks.Human})
 	if err != nil {
 		return aiError(err)
 	}
@@ -743,6 +757,7 @@ Make each change below, run the same test command, see the named test FAIL, then
 5. `boardLimit`: `n <= 0` becomes `n < 0` → `TestTaskBoardLimitIsNeverEveryDoneCard` (0 would read every Done card).
 6. `TaskEdit`: drop the `maxArgNotes` check → `TestTaskBindingsRefuseBadInputWithoutRunningTheCLI`; then the same in `TaskAdd` → the same test.
 7. `TaskBoard`: replace its body after the `a.db` check with `return a.taskCLI("", "board", "--done-limit", strconv.Itoa(boardLimit(doneLimit)))` → `TestTaskBoardIsReadInProcessEvenUnderAnInheritedMarker` (the CLI's refusal comes back instead of the board).
+8. `TaskBoard`: `tasks.Actor{Kind: tasks.Human}` becomes `tasks.Actor{}` → the same test (the store refuses an actor that was never set, so the document is an error); then, separately, the actor becomes `tasks.Actor{Kind: tasks.Agent, Name: "app"}` when `a.TaskAgentShell() != ""` (the CLI's way of telling who runs a command) → the same test (an app started from an agent's shell loses its board).
 
 - [ ] **Step 6: Commit**
 
@@ -6159,7 +6174,7 @@ git commit -m "feat(tasks): the Tasks tab after Documents, with an Inbox plus Re
 Find the anchor with `grep -n "for exit 2, \`invalid_input: …\` for exit 3)." AGENTS.md` (the end of the "OpenAI-compatible API" bullet, just before `## monoes.me library`). Immediately after that bullet's line, add this bullet:
 
 ```markdown
-- **Task board:** `task show <id>`, `task add --source app [--ready] -- <title>` (or `--stdin` for text of several lines, or one line over 120 characters, so the CLI keeps all of it), `task edit <id> --title=… --notes=…`, `task move <id> <status> [--before <id>|--after <id>|--top|--bottom]`, `task approve <id>…`, `task archive <id>…`, `task unarchive <id>…` and `task comment <id> -- <text>`, for the Tasks tab (`wails-app/app_tasks.go`). User text always follows `--` or sits in `--flag=value`, so text that starts with a dash stays text. The board itself is read in process (`internal/tasks` `Store.Board`, the document `task board --json` prints, 50 Done cards), as are its revision every two seconds (`wails-app/app_tasks_watch.go`) and the sidebar badge (Inbox plus Review): `task board` refuses an agent-driven caller. An app started from an AI agent's shell inherits its markers, and the CLI refuses every operator action from it: the tab then shows the board read-only and says to open MonoAgent from the Dock or Finder.
+- **Task board:** `task show <id>`, `task add --source app [--ready] -- <title>` (or `--stdin` for text of several lines, or one line over 120 characters, so the CLI keeps all of it), `task edit <id> --title=… --notes=…`, `task move <id> <status> [--before <id>|--after <id>|--top|--bottom]`, `task approve <id>…`, `task archive <id>…`, `task unarchive <id>…` and `task comment <id> -- <text>`, for the Tasks tab (`wails-app/app_tasks.go`). User text always follows `--` or sits in `--flag=value`, so text that starts with a dash stays text. The board itself is read in process (`internal/tasks` `Store.Board`, the document `task board --json` prints, 50 Done cards), as are its revision every two seconds (`wails-app/app_tasks_watch.go`) and the sidebar badge (Inbox plus Review): `task board` refuses an agent-driven caller, and the store refuses every actor but the operator, so the app asks as the operator, also when it was started from an agent's shell (the page is read-only there). An app started from an AI agent's shell inherits its markers, and the CLI refuses every operator action from it: the tab then shows the board read-only and says to open MonoAgent from the Dock or Finder.
 ```
 
 - [ ] **Step 2: `AGENTS.md`, the surfaces table**
@@ -6199,7 +6214,7 @@ Inbox cards have a one-click "Approve" when the card shows all of their text. On
 ```
 5. In §2, replace the row that starts `| D21 | App data path:` with (the lead's decision, after P1 made `task board` operator-only):
 ```markdown
-| D21 | App data path: reads in process, writes through the CLI. Every action shells out to `monoagentcli task ... --json` (the app's doctrine), so the CLI's operator guard refuses it in an app started from an agent's shell. The board is read in process with `Store.Board` (one snapshot, the document `task board --json` prints), and so are the revision and the counts, because `task board` refuses an agent-driven caller (the whole board would hand an agent every unreviewed Inbox card, §4.1) while the tab must still show the board read-only there (§17.3). An in-process watcher on the board revision emits `tasks:changed`, as the document watcher does; the board refetches on that event. Amended in P3. | lead |
+| D21 | App data path: reads in process, writes through the CLI. Every action shells out to `monoagentcli task ... --json` (the app's doctrine), so the CLI's operator guard refuses it in an app started from an agent's shell. The board is read in process with `Store.Board` (one snapshot, the document `task board --json` prints), and so are the revision and the counts, because `task board` refuses an agent-driven caller (the whole board would hand an agent every unreviewed Inbox card, §4.1) while the tab must still show the board read-only there (§17.3). The store refuses a whole-board read to every actor but the operator, and the app asks as the operator, also when it was started from an agent's shell: the one who asks is the person at the window, the page is read-only there, and every action still runs the CLI, whose guard refuses it. An in-process watcher on the board revision emits `tasks:changed`, as the document watcher does; the board refetches on that event. Amended in P3. | lead |
 ```
 
 - [ ] **Step 5: Verify the app module and the frontend, whole**
