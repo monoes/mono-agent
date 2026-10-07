@@ -126,7 +126,7 @@ func startHelper(t *testing.T, mode string) (cmd *exec.Cmd, tmp string) {
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() }) // in case the test fails before stopDaemon stops it
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(45 * time.Second) // under the helper's own minute
 	for {
 		if hb, ok := daemonhb.Read(); ok && hb.PID == cmd.Process.Pid {
 			return cmd, tmp
@@ -141,9 +141,9 @@ func startHelper(t *testing.T, mode string) (cmd *exec.Cmd, tmp string) {
 // shortGrace shortens how long stopDaemon waits for a SIGTERM'd daemon for the rest of the test.
 func shortGrace(t *testing.T, d time.Duration) {
 	t.Helper()
-	old := daemonStopGrace
-	daemonStopGrace = d
-	t.Cleanup(func() { daemonStopGrace = old })
+	old, oldKill := daemonStopGrace, daemonKillWait
+	daemonStopGrace, daemonKillWait = d, 30*time.Second
+	t.Cleanup(func() { daemonStopGrace, daemonKillWait = old, oldKill })
 }
 
 // A stand-in daemon takes about 0.1 s to exit after SIGTERM, and about 1.2 s under the race
@@ -264,12 +264,22 @@ func TestStopDaemonDoesNotWaitForTheLockOfARespawnedDaemon(t *testing.T) {
 }
 
 func TestStopDaemonForcesADaemonThatIgnoresSIGTERM(t *testing.T) {
-	pid, _ := startStopDaemonHelper(t, "stubborn")
-	shortGrace(t, 300*time.Millisecond)
+	pid, exited := startStopDaemonHelper(t, "stubborn")
+	// The helper ignores SIGTERM before its heartbeat names it, so a grace this short is
+	// deterministic: SIGKILL is the only thing that can stop it, however slow the machine.
+	shortGrace(t, time.Millisecond)
 
 	var lines []string
 	if err := stopDaemon(context.Background(), pid, func(l string) { lines = append(lines, l) }); err != nil {
 		t.Fatalf("stopDaemon: %v", err)
+	}
+	// stopDaemon returns once the lock is free, which is the moment the process dies and
+	// before the reaper goroutine has waited for it: until then it is a zombie, which
+	// `kill -0` still finds. Wait for the reaper instead of racing it.
+	select {
+	case <-exited:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the daemon is still running after SIGKILL")
 	}
 	if daemonhb.ProcessAlive(pid) {
 		t.Fatal("the daemon is still running after SIGKILL")
