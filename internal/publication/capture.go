@@ -2,6 +2,8 @@ package publication
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,6 +14,9 @@ import (
 // belongs to the Store, never to a node's config or a publisher's result.
 type Source struct {
 	WorkflowID, ExecutionID, NodeID, AgentID, OrgID, RoleID string
+	// NodeRunID names one run of the node within the execution (a loop runs a node
+	// many times). It is the same across the retries of that run.
+	NodeRunID string
 }
 
 type Output struct {
@@ -19,11 +24,10 @@ type Output struct {
 	Items  []map[string]interface{}
 }
 type CaptureInput struct {
-	NodeType  string
-	Config    map[string]interface{}
-	Outputs   []Output
-	Source    Source
-	AttemptID string
+	NodeType string
+	Config   map[string]interface{}
+	Outputs  []Output
+	Source   Source
 }
 
 // Normalize only recognizes explicitly inventoried publishing operations. It
@@ -38,7 +42,7 @@ func Normalize(in CaptureInput) []Entry {
 			kind, platform = "post", "bluesky"
 		}
 	case "service.devto":
-		if op == "publish_article" && c["published"] != false {
+		if op == "publish_article" && !notPublished(c["published"]) {
 			kind, platform = "article", "devto"
 		}
 		if op == "create_comment" {
@@ -143,7 +147,7 @@ func Normalize(in CaptureInput) []Entry {
 				if channel == "" {
 					channel = field(c, "channel")
 				}
-				if !slackShared(channel) {
+				if !slackShared(channel) || slackPrivate(result) {
 					continue
 				}
 			}
@@ -290,14 +294,41 @@ func Normalize(in CaptureInput) []Entry {
 			if platform == "youtube" && e.RemoteID != "" && kind == "video" {
 				e.URL = "https://www.youtube.com/watch?v=" + e.RemoteID
 			}
-			e.IdempotencyKey = fmt.Sprintf("publication:%s:%s:%s:%s:%s:%s:%d:%s:%s", e.Platform, e.Account, e.Kind, in.Source.ExecutionID, in.Source.NodeID, out.Handle, i, e.RemoteID, e.URL)
-			if e.RemoteID == "" && e.URL == "" && in.AttemptID != "" {
-				e.IdempotencyKey += ":" + in.AttemptID
+			e.IdempotencyKey = fmt.Sprintf("publication:%s:%s:%s:%s:%s:%s:%s:%d:%s:%s", e.Platform, e.Account, e.Kind, in.Source.ExecutionID, in.Source.NodeID, in.Source.NodeRunID, out.Handle, i, e.RemoteID, e.URL)
+			if e.RemoteID == "" && e.URL == "" {
+				// No remote identity: a retried attempt must derive the same key, so
+				// hash what was published rather than using a per-attempt value.
+				sum := sha256.Sum256([]byte(e.Title + "\x00" + e.Body + "\x00" + strings.Join(e.Media, "\x00")))
+				e.IdempotencyKey += ":" + hex.EncodeToString(sum[:8])
 			}
 			entries = append(entries, e)
 		}
 	}
 	return entries
+}
+
+// notPublished reports an explicit false, including the string "false" that
+// templated config produces.
+func notPublished(v interface{}) bool {
+	if b, ok := v.(bool); ok {
+		return !b
+	}
+	s, ok := v.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(s), "false")
+}
+
+// slackPrivate trusts channel metadata in the response when Slack returns it.
+func slackPrivate(r map[string]interface{}) bool {
+	for _, k := range []string{"is_private", "is_im", "is_mpim"} {
+		if r[k] == true {
+			return true
+		}
+	}
+	switch field(r, "channel_type") {
+	case "im", "mpim", "group", "private_channel":
+		return true
+	}
+	return false
 }
 
 func slackShared(channel string) bool {
