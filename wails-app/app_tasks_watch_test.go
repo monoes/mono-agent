@@ -3,9 +3,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/tasks"
 )
 
 // waitTaskWarning waits until the app's log holds a warning that contains want.
@@ -197,5 +200,51 @@ func TestTaskWatcherStopWaitsForAReportInFlight(t *testing.T) {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
 		t.Fatal("stop did not return once the report was done")
+	}
+}
+
+// The badge is Inbox plus Review: the watcher's report and TaskPulse count a
+// card in Review as Review, and the two columns' counts are not swapped.
+func TestTaskReportsCountInboxAndReviewApart(t *testing.T) {
+	a := newTestApp(t)
+	ctx, store, human := context.Background(), tasks.NewStore(a.db), tasks.Actor{Kind: tasks.Human}
+	card, _, err := store.Add(ctx, "default", tasks.AddInput{Title: "to review"}, human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Move(ctx, "default", card.ID, tasks.StatusReview, tasks.Placement{}, human); err != nil {
+		t.Fatal(err)
+	}
+	addTestTask(t, a, "default", "still in the inbox")
+	addTestTask(t, a, "default", "also in the inbox")
+	rec := &eventRecorder{}
+	stop := a.startTaskWatcher("default", 10*time.Millisecond, rec.emit)
+	defer stop()
+	_, evts := waitEvents(t, rec, 1)
+	if evts[0]["inbox"] != 2 || evts[0]["review"] != 1 {
+		t.Fatalf("the watcher's report = %+v, want inbox 2 and review 1", evts[0])
+	}
+	if got := a.TaskPulse(); got["inbox"] != 2 || got["review"] != 1 {
+		t.Fatalf("TaskPulse = %+v, want inbox 2 and review 1", got)
+	}
+}
+
+// A restart and a stop end the watcher they replace: a switch must not leave
+// the old board's watcher running beside the new one, and shutdown must end
+// it before the database closes.
+func TestRestartAndStopTaskWatcherEndTheWatcherTheyReplace(t *testing.T) {
+	a := newTestApp(t)
+	stopped := 0
+	a.taskWatchStop = func() { stopped++ }
+	a.restartTaskWatcher()
+	defer a.stopTaskWatcher()
+	if stopped != 1 {
+		t.Fatalf("a restart called the old watcher's stop %d times, want once", stopped)
+	}
+	a.stopTaskWatcher() // ends the watcher the restart started
+	a.taskWatchStop = func() { stopped++ }
+	a.stopTaskWatcher()
+	if stopped != 2 {
+		t.Fatalf("stopTaskWatcher called the watcher's stop %d times, want once", stopped-1)
 	}
 }
