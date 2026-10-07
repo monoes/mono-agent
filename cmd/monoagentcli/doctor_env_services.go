@@ -341,7 +341,9 @@ func serviceUnit(pid int) string {
 }
 
 // A cgroup may name a system service, or a child of a user service. Only
-// restart through the user manager when its MainPID is the bridge itself.
+// restart through the user manager when the unit's MainPID is the bridge
+// itself, or (a wrapper shell is MainPID) the bridge sits inside the unit's
+// own cgroup, which must belong to the user manager.
 func bridgeUserService(ctx context.Context, pid int, unit string) string {
 	if runtime.GOOS != "linux" || pid <= 0 || unit == "" {
 		return ""
@@ -349,11 +351,35 @@ func bridgeUserService(ctx context.Context, pid int, unit string) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=MainPID", "--value", "--", unit).Output()
-	if err != nil || strings.TrimSpace(string(out)) != strconv.Itoa(pid) {
+	if err != nil {
 		return ""
 	}
-	return unit
+	if strings.TrimSpace(string(out)) == strconv.Itoa(pid) {
+		return unit
+	}
+	out, err = exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ControlGroup", "--value", "--", unit).Output()
+	if err != nil {
+		return ""
+	}
+	group := strings.TrimSpace(string(out))
+	if !strings.Contains(group, "/user@") || filepath.Base(group) != unit {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/cgroup", procRoot, pid))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 && (parts[2] == group || strings.HasPrefix(parts[2], group+"/")) {
+			return unit
+		}
+	}
+	return ""
 }
+
+// procRoot is where /proc lives; tests point it at a temp dir.
+var procRoot = "/proc"
 
 func unitFromCgroup(cgroup string) string {
 	for _, line := range strings.Split(strings.TrimSpace(cgroup), "\n") {
