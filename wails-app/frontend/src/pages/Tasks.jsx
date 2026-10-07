@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Archive, Check } from 'lucide-react'
+import { Archive, Check, CircleHelp } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
 import { useTaskBoard } from '../lib/useTaskBoard.js'
 import { COLUMNS, findTask, searchBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget } from '../lib/taskModel.js'
 import TaskDrawer from '../components/TaskDrawer.jsx'
+import { useFlip } from '../lib/useFlip.js'
 
 const ARROWS = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
@@ -22,6 +23,22 @@ function QuickAdd({ status, onAdd, t }) {
       <input aria-label={t('tasks.quickAddPlaceholder')} placeholder={t('tasks.quickAddPlaceholder')} value={title} onChange={e => setTitle(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
       <button type="submit" disabled={!title.trim()}>{status === 'ready' ? t('tasks.addToReady') : t('tasks.add')}</button>
     </form>
+  )
+}
+
+const CAPTURE_COMMANDS = ['monoagentcli task add -- "Title"', 'monoagentcli task add --stdin < notes.txt']
+
+function CaptureHelp({ t }) {
+  return (
+    <details>
+      <summary><CircleHelp size={12} /> {t('tasks.capture.title')}</summary>
+      <ul style={{ margin: '4px 0', paddingLeft: 18 }}>
+        <li>{t('tasks.capture.chrome')}</li>
+        <li>{t('tasks.capture.mac')}</li>
+        <li>{t('tasks.capture.cli')} {CAPTURE_COMMANDS.map(c => <code key={c} style={{ display: 'block' }}>{c}</code>)}</li>
+        <li>{t('tasks.capture.agents')}</li>
+      </ul>
+    </details>
   )
 }
 
@@ -62,6 +79,7 @@ export default function Tasks({ isActive = true }) {
   const dragging = useRef(null)
   const root = useRef(null)
 
+  useFlip(root)
   useEffect(() => { tasksApi.agentShell().then(v => setShell(v || '')) }, [])
   const readOnly = shell === null || !!shell
   const shown = useMemo(() => searchBoard(b.board, query), [b.board, query])
@@ -109,6 +127,7 @@ export default function Tasks({ isActive = true }) {
         <h1 style={{ margin: 0 }}>{t('tasks.title')}</h1>
         <input type="search" aria-label={t('tasks.search')} placeholder={t('tasks.search')} value={query} onChange={e => setQuery(e.target.value)} />
       </div>
+      <CaptureHelp t={t} />
       {readOnly && <div role="note">{t('tasks.readOnly')}</div>}
       {b.error && <div role="alert">{t('tasks.loadError')}: {b.error}</div>}
       {b.notice && (
@@ -126,7 +145,7 @@ export default function Tasks({ isActive = true }) {
             >
               <h2 style={{ fontSize: 14, marginTop: 0 }}>{t(`tasks.column.${status}`)} <span>{shown.counts[status] ?? shown.columns[status].length}</span></h2>
               {!readOnly && (status === 'inbox' || status === 'ready') && <QuickAdd status={status} onAdd={b.add} t={t} />}
-              {shown.columns[status].length === 0 && <div style={{ opacity: 0.6 }}>{t('tasks.empty')}</div>}
+              {shown.columns[status].length === 0 && <div style={{ opacity: 0.6 }}>{t(`tasks.emptyBy.${status}`, { defaultValue: t('tasks.empty') })}</div>}
               {shown.columns[status].map(task => (
                 <Card
                   key={task.id} task={task} status={status} readOnly={readOnly} selected={openId === task.id}

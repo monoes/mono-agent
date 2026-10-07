@@ -1315,7 +1315,18 @@
         "released": "released"
       }
     },
-    "refused": "Refused: {{error}}"
+    "refused": "Refused: {{error}}",
+    "emptyBy": {
+      "inbox": "Highlight text in Chrome and choose MonoAgent, Add selection as task, or select text in any app: Services, Add to MonoAgent Tasks",
+      "ready": "Approve tasks from Inbox so agents can pick them up"
+    },
+    "capture": {
+      "title": "How to capture",
+      "chrome": "In Chrome: highlight text, then choose MonoAgent, Add selection as task.",
+      "mac": "On a Mac: select text in any app, then Services, Add to MonoAgent Tasks.",
+      "cli": "In a terminal:",
+      "agents": "Agents add tasks through the task tools; their work shows here within seconds."
+    }
   },
   "publication": {
     "title": "Publication",

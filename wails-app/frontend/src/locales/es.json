@@ -1273,7 +1273,18 @@
         "released": "liberó"
       }
     },
-    "refused": "Rechazado: {{error}}"
+    "refused": "Rechazado: {{error}}",
+    "emptyBy": {
+      "inbox": "Resalta texto en Chrome y elige MonoAgent, Add selection as task, o selecciona texto en cualquier app: Servicios, Add to MonoAgent Tasks",
+      "ready": "Aprueba tareas desde Inbox para que los agentes puedan tomarlas"
+    },
+    "capture": {
+      "title": "Cómo capturar",
+      "chrome": "En Chrome: resalta texto y elige MonoAgent, Add selection as task.",
+      "mac": "En Mac: selecciona texto en cualquier app y elige Servicios, Add to MonoAgent Tasks.",
+      "cli": "En una terminal:",
+      "agents": "Los agentes añaden tareas con las herramientas de tareas; su trabajo aparece aquí en segundos."
+    }
   },
   "publication": {
     "title": "Publicación",
