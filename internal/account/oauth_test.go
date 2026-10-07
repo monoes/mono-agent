@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -117,5 +118,30 @@ func TestDiscoverPinsEveryEndpointToTheBaseHost(t *testing.T) {
 	ep, err = account.DiscoverEndpoints(context.Background(), http.DefaultClient, dead.URL)
 	if err == nil || ep.TokenEndpoint != dead.URL+"/api/auth/oauth2/token" {
 		t.Fatalf("an unreachable server must set the error and still give the defaults: %+v, %v", ep, err)
+	}
+
+	// url.Parse also takes references that name no host and do not start with a slash.
+	// Appended to the base as they stand, they move the host: "@evil.example/x" turns the
+	// base into a user name, ".evil.example/x" into a sub-domain of the base host. Each
+	// shape, in any of the three endpoints, must come out on the base host.
+	for _, c := range []struct{ name, endpoint, path string }{
+		{"user name", "@evil.example/x", "/@evil.example/x"},
+		{"leading dot", ".evil.example/x", "/.evil.example/x"},
+		{"host without a scheme", "evil.example/x", "/evil.example/x"},
+		{"path without a slash", "oauth/token", "/oauth/token"},
+		{"base host under another scheme", "https://{host}/oauth/token", "/oauth/token"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				e := strings.ReplaceAll(c.endpoint, "{host}", r.Host)
+				json.NewEncoder(w).Encode(map[string]string{"authorization_endpoint": e, "token_endpoint": e, "revocation_endpoint": e})
+			}))
+			defer srv.Close()
+			ep, err := account.DiscoverEndpoints(context.Background(), srv.Client(), srv.URL)
+			want := srv.URL + c.path
+			if err != nil || ep.AuthorizationEndpoint != want || ep.TokenEndpoint != want || ep.RevocationEndpoint != want {
+				t.Errorf("%q: endpoints %+v, %v; want all three at %s", c.endpoint, ep, err, want)
+			}
+		})
 	}
 }

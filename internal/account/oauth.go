@@ -60,7 +60,8 @@ func DiscoverEndpoints(ctx context.Context, hc *http.Client, baseURL string) (*O
 	return m, unreachable
 }
 
-// pinToBase keeps endpoint when it is on baseURL's host, and otherwise uses its path on baseURL.
+// pinToBase keeps endpoint when it is on baseURL's host, and otherwise uses its path on baseURL,
+// so whatever endpoint holds, the result is on baseURL's host.
 func pinToBase(baseURL, endpoint, fallback string) string {
 	if endpoint == "" {
 		return baseURL + fallback
@@ -73,7 +74,12 @@ func pinToBase(baseURL, endpoint, fallback string) string {
 	if strings.EqualFold(u.Host, base.Host) && u.Scheme == base.Scheme {
 		return endpoint
 	}
-	p := u.Path
+	// url.Parse also takes references that do not start with a slash ("@evil.example/x",
+	// ".evil.example/x"): joined to the base as they stand, they would move the host.
+	p := u.EscapedPath()
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
 	if u.RawQuery != "" {
 		p += "?" + u.RawQuery
 	}
