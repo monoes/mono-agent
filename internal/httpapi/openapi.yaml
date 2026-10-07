@@ -16,6 +16,15 @@ info:
     The `/v1` paths are a separate surface: an OpenAI-compatible API over the
     local agent runtimes, authenticated by per-profile API keys
     (`monoagentcli api key`) instead of the token above.
+
+    Every route also needs a valid monoes.me login on the machine that serves
+    it. While there is none, every request but `GET` and `HEAD /health` gets
+    `401` with `login_required: true` before the bearer token is looked at,
+    also for a path that is no route. The four `/v1` routes give that `401` in
+    their OpenAI-shaped error, on both listeners and before the API key is
+    looked at; any other path under `/v1`, and a path the dedicated
+    `--v1-addr` listener does not serve, keeps its `404` or `405`.
+    `GET /health` stays open and reports the account state.
   version: "1.0.0"
   license:
     name: MIT
@@ -42,6 +51,7 @@ paths:
                   status: { type: string, example: ok }
                   version: { type: string }
                   allow_mutations: { type: boolean }
+                  account: { $ref: "#/components/schemas/AccountState" }
         "5XX":
           description: Server error resolving runtime state
           content:
@@ -299,7 +309,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
-          description: Missing or wrong credential for an endpoint that has one
+          description: >
+            Missing or wrong credential for an endpoint that has one, or no
+            valid monoes.me login on this machine (`login_required: true`,
+            answered before the endpoint is looked up)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -535,7 +548,7 @@ paths:
         | Status | `type` / `code` | Cause |
         |---|---|---|
         | 400 | `invalid_request_error` / `invalid_json`, `invalid_value`, `missing_required_parameter`, `unsupported_parameter` | Bad body or parameter, or `tools` for a model that does not serve them (the message says which runtimes do) |
-        | 401 | `authentication_error` / `invalid_api_key` | Missing, unknown or revoked key |
+        | 401 | `authentication_error` / `invalid_api_key`, `login_required` | Missing, unknown or revoked key; or no valid monoes.me login on this machine (the message is `Log in to monoes.me first: monoagentcli account login`, answered before the key is looked at) |
         | 403 | `permission_error` / `policy_denied` | The model's confinement class is above the listener's `--confinement`, or above `--context-confinement` (chat-only by default) for a key created with `--context` (`GET /v1/models/{id}` answers 404 for such a model), or the request declares `tools` (and `tool_choice` is not `none`) with a key created with `--context` while the key's cap, the lower of the listener's `--confinement` and `--context-confinement`, is chat-only (answered before anything starts, naming the flag that would change it), or its sandbox could not be applied, or the runtime started with less confinement than the policy allows |
         | 404 | `invalid_request_error` / `model_not_found` | Unknown model, or `auto` while it is not set up for the key's profile (the message says what is missing: the `api_auto` Jev surface, a Jev key, or a model the policy allows) |
         | 413 | `invalid_request_error` / `request_too_large` | Body over 2 MiB |
@@ -734,7 +747,9 @@ components:
       schema: { type: string }
   responses:
     Unauthorized:
-      description: Missing or invalid bearer token
+      description: >
+        Missing or invalid bearer token, or no valid monoes.me login on this
+        machine (`login_required: true`)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -760,6 +775,19 @@ components:
       type: object
       properties:
         error: { type: string }
+        login_required:
+          type: boolean
+          description: True when the error is the refusal of a locked monoes.me account (`error` is then `login_required`).
+        account: { $ref: "#/components/schemas/AccountState" }
+    AccountState:
+      type: object
+      description: The machine's monoes.me login, as GET /health reports it. It never names the user.
+      required: [state, reason]
+      properties:
+        state: { type: string, enum: [ok, grace, locked] }
+        reason: { type: string, description: "Empty when ok. For grace, why the login was not renewed (unreachable, server_error, keyring_unavailable, unconfirmed); for locked, why it is refused (not_logged_in, expired, refused, clock_rollback, clock_skew, key_unknown, unconfirmed, invalid)." }
+        valid_until: { type: string, format: date-time, description: When the access token expires; absent without a session. }
+        enforced: { type: boolean, description: "Whether anything is refused. False while dormant and before the enforcement date, when state can be locked while every route answers. Present in GET /health; absent from a login_required 401, which implies it." }
     WorkflowSummary:
       type: object
       properties:

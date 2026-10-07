@@ -262,9 +262,9 @@ func (s *Server) OnCapture(fn func(*capture.Result, error)) {
 
 // SetAfterWrite registers a hook run for every envelope that lands on disk,
 // requested or flushed, after it is written and before anyone waits on it
-// further. It must return quickly: the summary job (internal/capturesummary)
-// only queues work here, so a capture is acknowledged exactly as fast as it
-// was before summaries existed.
+// further; while the account is locked it is not run (skipAfterWrite). It
+// must return quickly: the summary job (internal/capturesummary) only queues
+// work here, so a capture is acknowledged as fast as before summaries existed.
 func (s *Server) SetAfterWrite(fn func(*capture.Result)) {
 	s.pendMu.Lock()
 	s.afterWrite = fn
@@ -277,7 +277,7 @@ func (s *Server) written(res *capture.Result) {
 	s.pendMu.Lock()
 	fn := s.afterWrite
 	s.pendMu.Unlock()
-	if fn == nil || res == nil {
+	if fn == nil || res == nil || s.skipAfterWrite(res.Path) {
 		return
 	}
 	defer func() {

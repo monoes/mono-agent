@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/apikeys"
 )
 
@@ -46,11 +47,17 @@ func bearer(r *http.Request) string {
 // auth runs next only for a request that carries a valid, unrevoked key. It
 // never consults the vault or the legacy HTTP API token: these are separate
 // credentials for separate routes. Every response, an error included, carries
-// the request's X-Request-Id.
+// the request's X-Request-Id. A locked monoes.me account is refused first, so
+// that every caller gets the same answer and none learns whether a key is good;
+// both listeners mount through Mount, so this is the door of both.
 func (g *Gateway) auth(next func(w http.ResponseWriter, r *http.Request, p Principal)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := newRequestID("req_")
 		w.Header().Set("X-Request-Id", id)
+		if err := account.Require(r.Context()); err != nil {
+			writeError(w, errLoginRequired())
+			return
+		}
 		key, err := g.deps.Keys.Authenticate(r.Context(), bearer(r))
 		switch {
 		case errors.Is(err, apikeys.ErrInvalidKey):

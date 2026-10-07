@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
@@ -155,6 +156,13 @@ func (q *Queue) run(ctx context.Context, done chan struct{}) {
 }
 
 func (q *Queue) pass(ctx context.Context, profileID string, retry bool) {
+	// A locked monoes.me account indexes nothing, whatever asked for this
+	// pass. It is dropped, not retried: the profile's next pass after a
+	// sign-in takes up the captures it leaves.
+	if account.Require(ctx) != nil {
+		q.logf("capture index: %s: skipped, no valid monoes.me login (run: monoagentcli account login)", profileID)
+		return
+	}
 	db, closeDB, err := q.Open()
 	if err != nil {
 		q.logf("capture index: %s: cannot open the database: %v", profileID, err)

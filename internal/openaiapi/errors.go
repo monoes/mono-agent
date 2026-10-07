@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/accountdoor"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -73,6 +75,13 @@ func errTooLarge(limit int64) *apiError {
 func errAuth() *apiError {
 	return &apiError{Status: http.StatusUnauthorized, Type: "authentication_error", Code: "invalid_api_key",
 		Message: "Incorrect API key provided. Send it as `Authorization: Bearer sk-ma-…`."}
+}
+
+// errLoginRequired is the answer while the machine holds no valid monoes.me
+// login: in the envelope an OpenAI SDK parses, and a 401 because those SDKs do
+// not retry one (they retry a 5xx).
+func errLoginRequired() *apiError {
+	return &apiError{Status: http.StatusUnauthorized, Type: "authentication_error", Code: accountdoor.Code, Message: accountdoor.Message}
 }
 
 // autoModelID is the model that lets Jev pick a runtime and model for a request.
@@ -139,6 +148,9 @@ func errInternal(msg string) *apiError {
 func turnError(res *monomind.TurnResult, execErr error) *apiError {
 	if execErr != nil {
 		switch {
+		case account.IsLoginRequired(execErr):
+			// The account locked after the door let the request in: Exec refused.
+			return errLoginRequired()
 		case errors.Is(execErr, errShuttingDown):
 			return errStopping()
 		case monomind.IsAgentNotSetup(execErr):
