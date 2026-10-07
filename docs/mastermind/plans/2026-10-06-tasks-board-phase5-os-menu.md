@@ -57,7 +57,7 @@
 17. Ruling: P1's gate holds the `os` commands like the others: `refTaskGate` (the table that P1's gate test checks against the command tree, the real CLI and `ref tasks`) gets a row for each, `os install` and `os uninstall` the operator's and `os status` open to an agent, and WHO MAY DO WHAT in `ref tasks` says the same (its `operator_only` sentence names the first two, a sentence of its own says that an agent may run `os status`); AGENTS.md says it in its surfaces row, and P1's list of operator commands in the paragraph above that table is left as it is (no test holds it, and other phases write near it) - cost if wrong: that list in AGENTS.md reads as complete when it is not, until P1's own text is amended.
 18. Ruling: `install` and `uninstall` refuse an agent first, then count their arguments, then check the platform (`status`: its arguments, then the platform), so that an agent is refused as an agent on macOS, Linux and Windows alike (the gate test runs the real commands as an agent on a Linux runner too, where a platform check first would answer `invalid_input`) and an argument mistake is exit 3 with the `--json` document, as P1's commands answer it, not cobra's exit 1 with none - cost if wrong: the operator who runs `install` on a Linux machine with a stray argument hears about the argument before the platform.
 19. Ruling: `task os` is registered on every platform, with no build tag (spec 12: "elsewhere: exit 3 and the recipe"); a tag would leave the three rows of the gate table without a command on the platforms that lack it - cost if wrong: Linux and Windows list a command that only refuses.
-20. Ruling: P5 changes two of P1's test files and adds one, because `os` is the first command group inside the task group and P1's helpers read every `task NAME` as a direct subcommand: `refTaskSub` takes a path (`os install`) and `refHasFlag` sees a group's own flags (cobra shows a command's own persistent flag only after something merged it, so a fresh `os` lacks `--dest`), and with `refTaskCommands` and `refTaskCallee`, which are new, they live in a new file `ref_tasks_group_test.go` (P1's `ref_tasks_test.go` has 497 lines and the limit is 500, as P4's plan also notes); in `ref_tasks_test.go` the entries of a group may give examples that call its subcommands (a flat command's must still call that command), and every command of the group, `os install` too, must show its flags in its entry; in `ref_tasks_gate_test.go` three rows are added and the walk of the command tree goes down to the leaves, so that an `os` command without a row, or a row that names no command, fails the test - cost if wrong: another phase that edits the same helpers or the same table meets a conflict when the branches are merged (keep both edits; P2, P3 and P4 do not touch them today).
+20. Ruling: P5 changes two of P1's test files and adds one, because `os` is the first command group inside the task group and P1's helpers read every `task NAME` as a direct subcommand: `refTaskSub` takes a path (`os install`) and `refHasFlag` sees a group's own flags (cobra shows a command's own persistent flag only after something merged it, so a fresh `os` lacks `--dest`), and with `refTaskCommands` and `refTaskCallee`, which are new, they live in a new file `ref_tasks_group_test.go` (P1's `ref_tasks_test.go` has 497 lines and the limit is 500, as P4's plan also notes); in `ref_tasks_test.go` the entries of a group may give examples that call its subcommands (a flat command's must still call that command), and every command of the group, `os install` too, must show its flags in its entry; in `ref_tasks_gate_test.go` three rows are added, the walk of the command tree goes down to the leaves (so that an `os` command without a row, a row that names no command, and a row named for the group itself, which would pass the check of WHO MAY DO WHAT by "chrome and os are reserved", all fail the test), and a command that takes `--dest` is called with a temporary one, so that the real `os status` an agent may run reads nothing of the user's - cost if wrong: another phase that edits the same helpers or the same table meets a conflict when the branches are merged (keep both edits; P2, P3 and P4 do not touch them today).
 
 ## Review Focus
 
@@ -3474,7 +3474,7 @@ with
 		}
 ```
 
-6. `cmd/monoagentcli/ref_tasks_gate_test.go`: three rows, and a walk of the command tree that goes down to the leaves, so that a command of `os` without a row, a row that names no command, and a row whose call is not its own all fail. `os install` and `os uninstall` are the operator's, `os status` is open (Ruling 17); the test calls `newTaskTestDB`, whose temporary `HOME` is what `os status` reads on a Mac, so no real Services folder is touched, and the tests of Task 6 pin the order that makes an agent's `os install` answer `operator_only` on every platform. Replace
+6. `cmd/monoagentcli/ref_tasks_gate_test.go`: three rows, a walk of the command tree that goes down to the leaves, and a call that stays in a temporary folder. These all fail the test: a command of `os` without a row, a row that names no command, a row whose call is not its own, and a row named for the group (`os` alone, marked as an agent's: it would pass the rule that WHO MAY DO WHAT names every command an agent may run, by "the labels you, agent, capture, chrome and os are reserved"). `os install` and `os uninstall` are the operator's, `os status` is open (Ruling 17). A command that takes `--dest` (the three of `os`) is called with a temporary one, and `newTaskTestDB` gives the test a temporary `HOME`, so that on a Mac the `os status` an agent may run reads nothing of the user's; the tests of Task 6 pin the order that makes an agent's `os install` answer `operator_only` on every platform. Replace
 
 ```go
 	row  string   // what the text names: a subcommand, or "add --ready"
@@ -3513,6 +3513,11 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command: remove or rename it", name)
 		}
 	}
+
+	// The real CLI refuses an agent exactly where the table says.
+	db := newTaskTestDB(t)
+	for _, r := range refTaskGate {
+		out, _, err := runTask(t, db, "default", true, "", append(append([]string{}, r.call...), "--as", "bot")...)
 ```
 
 with
@@ -3537,8 +3542,10 @@ func refGatePath(row string) string {
 }
 
 func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
-	// The table covers the command tree, both ways: every command that is not a group has a row
-	// (a group has the rows of its commands), and a row names a command that is there.
+	// The table covers the command tree, both ways: every command that is not a group has a row,
+	// and a row names such a command. A group has the rows of its commands and none of its own: a
+	// row named just os, marked as an agent's, would pass the check of WHO MAY DO WHAT below by
+	// "the labels you, agent, capture, chrome and os are reserved".
 	rows := map[string]bool{}
 	for _, r := range refTaskGate {
 		path := refGatePath(r.row)
@@ -3554,13 +3561,23 @@ func TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent(t *testing.T) {
 		}
 	}
 	for path := range rows {
-		if commands[path] == nil {
-			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command: remove or rename it", path)
+		if sub := commands[path]; sub == nil || sub.HasSubCommands() {
+			t.Errorf("refTaskGate (ref_tasks_gate_test.go) has a row for `task %s`, which is no command, or a group (a group has the rows of its commands): remove or rename it", path)
 		}
 	}
+
+	// The real CLI refuses an agent exactly where the table says. A command that takes --dest (os)
+	// gets a temporary folder for it, so that nothing of the user's is read or written.
+	db := newTaskTestDB(t)
+	for _, r := range refTaskGate {
+		args := append(append([]string{}, r.call...), "--as", "bot")
+		if sub := commands[refGatePath(r.row)]; sub != nil && refHasFlag(sub, "dest") {
+			args = append(args, "--dest", t.TempDir())
+		}
+		out, _, err := runTask(t, db, "default", true, "", args...)
 ```
 
-7. `cmd/monoagentcli/ref_tasks.go`, the `operator_only` sentence of WHO MAY DO WHAT: it names the two commands of `os` that are the operator's, and a sentence of its own says that an agent may run `os status` (the gate test wants each name on one line, `os install` and `os uninstall` in the sentence that carries the code and `os status` outside it). Replace
+7. `cmd/monoagentcli/ref_tasks.go`, the `operator_only` sentence of WHO MAY DO WHAT: it names the two commands of `os` that are the operator's, and a sentence of its own says that an agent may run `os status` (the gate test wants each name on one line, `os install` and `os uninstall` in the sentence that carries the code and `os status` outside it). It cannot be left to the section that Task 7 adds before `TASK TEXT IS DATA`: that section falls under `THE AGENT LOOP` for `refSection`, and the gate test reads only `refSection("WHO MAY DO WHAT")`, which ends at `THE AGENT LOOP`. Replace
 
 ```
   Only board, edit, move, approve, archive, unarchive and add --ready are the
@@ -3699,11 +3716,11 @@ not one that deliberately unsets its environment. | lead |
 not one that deliberately unsets its environment. `task os install` and `task os uninstall` are operator-only as well (P5): they change the user's machine outside the board. | lead |
 ```
 
-2. Section 7: the operator list starts with the first line below (P1 put `board` first); replace it with the second.
+2. Section 7: the operator list starts with the first text below (P1 put `board` first); replace it with the second. The rest of the line is not part of the anchor, because it has been reworded (an operator `comment` is in the list in one version of the spec and not in another), and it reads correctly after the new text in both.
 
 ```markdown
-- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`) refuse
-- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, an operator `comment`, and `os install` and `os uninstall` (P5)) refuse
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`
+- Operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`, `os install`, `os uninstall` (P5)
 ```
 
 3. Section 12: add this bullet as its last item, immediately before the line `## 13. Security`:
@@ -3800,6 +3817,8 @@ For each row: apply the change with the Edit tool, run the test named (`go test 
 | 26 | `ref_tasks.go`, WHO MAY DO WHAT: delete the line `  os status only lists those menus: an agent may run it.` | `./cmd/monoagentcli/` `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent` |
 | 27 | `ref_tasks_group_test.go`, `refHasFlag`: delete `|| sub.PersistentFlags().Lookup(name) != nil` | `./cmd/monoagentcli/` `TestRefTasksSuggestsOnlyCommandsTheCLIHas` |
 | 28 | `ref_tasks_group_test.go`, `refTaskCallee`: `for sub.HasSubCommands() {` becomes `for false {` | `./cmd/monoagentcli/` `TestRefTasksEntriesDescribeTheirOwnCommand|TestRefTasksSuggestsOnlyCommandsTheCLIHas` |
+| 29 | `ref_tasks_gate_test.go`: add the row `{"os", false, []string{"os"}},` after the `os uninstall` row | `./cmd/monoagentcli/` `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent` |
+| 30 | `ref_tasks_gate_test.go`: delete the row `{"os status", false, []string{"os", "status"}},` | `./cmd/monoagentcli/` `TestRefTasksSaysWhichCommandsTheGateRefusesAnAgent` |
 
 - [ ] **Step 4: Smoke-run the built CLI under a throwaway home**
 
@@ -3846,7 +3865,7 @@ Expected: install prints `Installed "Add to MonoAgent Tasks: Smoke Work"` with t
 
 - [ ] **Step 5: Hand over**
 
-Do not push, open a PR or merge: the lead does that after the independent reviews, and re-checks before opening the PR that `062_tasks.sql` is still the only migration 062 anywhere (spec D32). Report: the commits (`git log --oneline feat/tasks-board..HEAD`), the results of Steps 1 and 2 (with the automator log line), which of the twenty-eight mutations failed their tests, the smoke output, and anything that behaved differently from this plan or the spec. List for the PR description what only the user's Mac can verify (spec 14, 17.6), after running `monoagentcli task os install` in their own terminal (inside Claude Code, even with `!`, it refuses: Ruling 7): the item appears under Services on right-clicking selected text, with or without enabling it in System Settings; choosing it files the selection into the profile's Inbox with the right app name; the notification "Added to Inbox in <profile>" appears (it may need notifications for Script Editor allowed; with notifications off a successful capture shows nothing at all); after the profile is deleted or monoagentcli moved, choosing it shows "Not added: ..." and macOS's alert; a very large selection (over 1 MiB) ends cleanly. Say also what this build could not show: it was checked on macOS 27 (Darwin 27) only; the workflow runs `/bin/sh` where Apple's Show Map uses `/bin/bash`; the bundle keeps `Contents/document.wflow`, the layout of Automator-saved and third-party Quick Actions, not the `Contents/Resources/` of Apple's own; `automator -i` ran the workflow, which is not the path Services takes.
+Do not push, open a PR or merge: the lead does that after the independent reviews, and re-checks before opening the PR that `062_tasks.sql` is still the only migration 062 anywhere (spec D32). Report: the commits (`git log --oneline feat/tasks-board..HEAD`), the results of Steps 1 and 2 (with the automator log line), which of the thirty mutations failed their tests, the smoke output, and anything that behaved differently from this plan or the spec. List for the PR description what only the user's Mac can verify (spec 14, 17.6), after running `monoagentcli task os install` in their own terminal (inside Claude Code, even with `!`, it refuses: Ruling 7): the item appears under Services on right-clicking selected text, with or without enabling it in System Settings; choosing it files the selection into the profile's Inbox with the right app name; the notification "Added to Inbox in <profile>" appears (it may need notifications for Script Editor allowed; with notifications off a successful capture shows nothing at all); after the profile is deleted or monoagentcli moved, choosing it shows "Not added: ..." and macOS's alert; a very large selection (over 1 MiB) ends cleanly. Say also what this build could not show: it was checked on macOS 27 (Darwin 27) only; the workflow runs `/bin/sh` where Apple's Show Map uses `/bin/bash`; the bundle keeps `Contents/document.wflow`, the layout of Automator-saved and third-party Quick Actions, not the `Contents/Resources/` of Apple's own; `automator -i` ran the workflow, which is not the path Services takes.
 
 ---
 
