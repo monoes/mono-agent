@@ -623,6 +623,8 @@ label,
 }
 
 input[type="text"],
+#task-text,
+#task-failed-body,
 #binding-profile,
 #rec-save-as {
   width: 100%;
@@ -646,17 +648,20 @@ input[type="text"].mono {
   font-family: var(--mono);
 }
 
-input[type="text"]::placeholder {
+input[type="text"]::placeholder,
+#task-text::placeholder {
   color: var(--ink-2);
 }
 
 input[type="text"]:hover,
+#task-text:hover,
 #binding-profile:hover,
 #rec-save-as:hover {
   border-color: color-mix(in oklch, var(--accent) 40%, var(--line-strong));
 }
 
 input[type="text"]:focus-visible,
+#task-text:focus-visible,
 #binding-profile:focus-visible,
 #rec-save-as:focus-visible {
   outline: none;
@@ -1610,4 +1615,14 @@ progress::-webkit-progress-value {
 #binding-field label[for="binding-label"] {
   display: block;
   margin-top: var(--sp-3);
+}
+
+
+/* The task box and a refused task's text (sidepanel_tasks.js): a few lines,
+   growing only downwards. */
+#task-text,
+#task-failed-body {
+  resize: vertical;
+  min-height: 4.5em;
+  line-height: 1.4;
 }
