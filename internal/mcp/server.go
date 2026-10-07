@@ -126,6 +126,14 @@ type Server struct {
 	// separate goroutines, so concurrent tools/call invocations may race
 	// to build the runtime on first use.
 	rtMu sync.Mutex
+
+	// clientMu guards who this server serves (task_actor.go): the client's
+	// name from initialize, the actor name the task tools fix from it, and
+	// this server's own suffix. Requests run on goroutines of their own.
+	clientMu    sync.Mutex
+	clientName  string
+	actorName   string
+	actorSuffix string
 }
 
 // NewServer creates a Server with the given options.
@@ -139,7 +147,7 @@ func NewServer(opts Options) *Server {
 	if !opts.APIOnly {
 		opts.APIOnly = os.Getenv("MONOAGENT_MCP_API_ONLY") == "1"
 	}
-	return &Server{opts: opts}
+	return &Server{opts: opts, actorSuffix: newActorSuffix()}
 }
 
 // Run serves MCP over stdin/stdout until stdin closes. It is the entry
@@ -338,6 +346,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 
 	switch req.Method {
 	case "initialize":
+		s.recordClient(req.Params)
 		return s.result(req.ID, map[string]interface{}{
 			"protocolVersion": protocolVersion,
 			"capabilities": map[string]interface{}{
