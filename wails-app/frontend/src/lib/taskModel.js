@@ -162,16 +162,134 @@ export function focusTarget(shown, id, key) {
   return null
 }
 
-// searchBoard keeps the cards whose title or notes hold every word of query
-// (case-insensitive); a blank query keeps them all. Counts stay the board's.
-export function searchBoard(board, query) {
+// matches says whether task t answers query: every word must be in its
+// title, notes, source (page, page title, app) or claimant; "#12" means
+// task 12 exactly.
+export function matches(t, query) {
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean)
-  if (!board || words.length === 0) return board
-  const hit = t => {
-    const text = `${t.title || ''}\n${t.notes || ''}`.toLowerCase()
-    return words.every(w => text.includes(w))
-  }
+  const hay = [t.title, t.notes, t.source?.url, t.source?.title, t.source?.app, t.claim?.by]
+    .filter(Boolean).join('\n').toLowerCase()
+  return words.every(w => (/^#\d+$/.test(w) ? t.id === Number(w.slice(1)) : hay.includes(w)))
+}
+
+// filterBoard is the board as a search shows it.
+export function filterBoard(board, query) {
+  if (!board || !String(query || '').trim()) return board
   const columns = {}
-  for (const s of COLUMNS) columns[s] = board.columns[s].filter(hit)
+  for (const s of COLUMNS) columns[s] = board.columns[s].filter(t => matches(t, query))
   return { ...board, columns }
+}
+
+// places maps each card of a board to its column and claimant.
+function places(board) {
+  const m = new Map()
+  for (const s of COLUMNS) for (const t of board.columns[s]) m.set(t.id, { s, by: t.claim?.by || '' })
+  return m
+}
+
+// remoteChanges lists what someone other than the operator did between two
+// reads of one profile's board: a card they moved to another column, a
+// claim they took over, a card they added. Oldest first, the last max. The
+// operator's own actions ("you") never count.
+export function remoteChanges(prev, next, max = 3) {
+  if (!prev || !next || prev.profile.id !== next.profile.id) return []
+  const before = places(prev)
+  const out = []
+  for (const s of COLUMNS) {
+    for (const t of next.columns[s]) {
+      const ev = t.last_event
+      if (!ev || ev.actor === 'you') continue
+      const was = before.get(t.id)
+      if (!was && ev.kind !== 'created') continue
+      if (was && was.s === s && (s !== 'in_progress' || was.by === (t.claim?.by || ''))) continue
+      out.push({ id: t.id, title: t.title, actor: ev.actor, kind: ev.kind, to: s, at: ev.at })
+    }
+  }
+  out.sort((a, b) => String(a.at).localeCompare(String(b.at)))
+  return out.slice(-max)
+}
+
+// transitions are the cards to animate after the board changed: entered
+// (not there before) and done (just moved into Done). Nothing on the first
+// read or after a profile change.
+export function transitions(prev, next) {
+  const entered = new Set()
+  const done = new Set()
+  if (!prev || !next || prev.profile.id !== next.profile.id) return { entered, done }
+  const before = places(prev)
+  for (const s of COLUMNS) {
+    for (const t of next.columns[s]) {
+      const was = before.get(t.id)
+      if (!was) entered.add(t.id)
+      else if (s === 'done' && was.s !== 'done') done.add(t.id)
+    }
+  }
+  return { entered, done }
+}
+
+// hostOf is a URL's host without "www.", or ''.
+export function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
+}
+
+// sourceChip says how a card shows where it came from (spec §10): kind picks
+// the icon (globe, app window, terminal, spark, board); text is the domain
+// for Chrome or the app's name for the OS menu, '' for the kind's own word.
+export function sourceChip(t) {
+  const s = t.source || {}
+  switch (s.kind) {
+    case 'chrome': return { kind: 'chrome', text: hostOf(s.url) || s.title || '' }
+    case 'os': return { kind: 'os', text: s.app || '' }
+    case 'agent': return { kind: 'agent', text: '' }
+    case 'app': return { kind: 'app', text: '' }
+    default: return { kind: 'cli', text: '' }
+  }
+}
+
+// shortAge is a card's age as {unit, n}: now, minutes, hours, days, weeks.
+export function shortAge(from, now) {
+  const ms = now - Date.parse(from)
+  if (!Number.isFinite(ms) || ms < 60000) return { unit: 'now', n: 0 }
+  const m = Math.floor(ms / 60000)
+  if (m < 60) return { unit: 'm', n: m }
+  const h = Math.floor(m / 60)
+  if (h < 24) return { unit: 'h', n: h }
+  const d = Math.floor(h / 24)
+  if (d < 7) return { unit: 'd', n: d }
+  return { unit: 'w', n: Math.floor(d / 7) }
+}
+
+// claimState is a claim as a card shows it at now: who, the initial on the
+// avatar, stale once the store said so or the lease ended (a lease ends
+// with no write, so no read follows: the clock decides; a lease that ends
+// exactly now has ended), and the minutes left or since the end.
+export function claimState(claim, now) {
+  if (!claim?.by) return null
+  const until = Date.parse(claim.until)
+  const stale = !!claim.stale || !Number.isFinite(until) || until <= now
+  const minutes = Number.isFinite(until) ? Math.floor(Math.abs(until - now) / 60000) : 0
+  const initial = (claim.by.match(/[A-Za-z0-9]/)?.[0] || '?').toUpperCase()
+  return { by: claim.by, initial, stale, minutes, until: claim.until }
+}
+
+// splitMinutes is {h, m} for "1h 5m".
+export function splitMinutes(minutes) {
+  return { h: Math.floor(minutes / 60), m: minutes % 60 }
+}
+
+const ACTOR_COLORS = ['var(--purple-light)', 'var(--cyan)', 'var(--teal)', 'var(--orange)', 'var(--instagram)', 'var(--green-neon)']
+
+// actorColor gives each agent name a steady colour, so two agents on one
+// board read apart.
+export function actorColor(name) {
+  let h = 0
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0
+  return ACTOR_COLORS[h % ACTOR_COLORS.length]
+}
+
+// isTypingTarget: a key pressed here belongs to a field (the search, a
+// quick add, the drawer, the assistant's composer), not to the board.
+export function isTypingTarget(el) {
+  if (!el) return false
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable === true
 }
