@@ -711,6 +711,11 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// After the token, so a caller without it learns nothing of the account.
+	if accountRefuses() {
+		writeRelayLocked(w)
+		return
+	}
 	var cmd Command
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, fmt.Sprintf("invalid command: %v", err), http.StatusBadRequest)

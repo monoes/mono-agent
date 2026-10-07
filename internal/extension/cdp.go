@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/monoes/mono-agent/internal/accountdoor"
 )
 
 // The CDP relay: raw Chrome DevTools Protocol over the extension bridge.
@@ -320,6 +322,12 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Before the upgrade: a refused client reads a plain 503, not a socket that
+	// closes for no stated reason.
+	if accountRefuses() { // the upgrade
+		http.Error(w, accountdoor.Message, http.StatusServiceUnavailable)
+		return
+	}
 	target := targetFromQuery(r.URL.Query())
 	if c, err := s.resolve(target); err == nil {
 		target = Target{Instance: c.id}
@@ -377,6 +385,12 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 				ID:    cmd.ID,
 				Error: fmt.Sprintf("the CDP relay carries %s/%s/%s only, not %q", CmdCdp, CmdCdpAttach, CmdCdpDetach, cmd.Type),
 			})
+			continue
+		}
+		if accountRefuses() { // each command
+			// A socket opened before the lock is refused command by command, not
+			// cut: what is in flight finishes, and it works again once a login lands.
+			_ = client.write(&Response{ID: cmd.ID, Type: cmd.Type, Error: accountdoor.Message})
 			continue
 		}
 

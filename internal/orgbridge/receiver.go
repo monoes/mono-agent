@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
+	"github.com/monoes/mono-agent/internal/accountdoor"
 	"github.com/monoes/mono-agent/internal/credfile"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
@@ -104,8 +106,15 @@ func writeJSONStatus(w http.ResponseWriter, status int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// ServeHTTP handles one delivery.
+// ServeHTTP handles one delivery. A locked monoes.me account refuses it first,
+// before the endpoint is looked up or anything is recorded. A delivery accepted
+// earlier whose bus event arrives after the lock is refused where every run is,
+// in the engine.
 func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if err := account.Require(req.Context()); err != nil {
+		accountdoor.WriteUnauthorized(w, err)
+		return
+	}
 	r.mu.Lock()
 	r.init()
 	r.mu.Unlock()

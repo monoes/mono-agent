@@ -87,6 +87,7 @@ const (
 	CodeTimeout       = "timeout"
 	CodeBusy          = "busy"
 	CodeInternal      = "internal"
+	CodeAccountLocked = "account_locked" // no valid monoes.me login: see account_door.go
 )
 
 // requestTimeout bounds a handler that does not set its own. Generous
@@ -247,6 +248,7 @@ func (s *Server) registerBuiltinHandlers() {
 		return map[string]any{
 			"pong":    true,
 			"methods": s.RequestMethods(),
+			"account": accountSummary(),
 		}, nil
 	})
 	registerKnowledgeHandlers(s)
@@ -282,6 +284,11 @@ func (s *Server) serveRequest(c *extConn, msg []byte) {
 		return
 	}
 	req.Origin = c.info()
+
+	if req.Method != MethodPing && accountRefuses() { // before the lookup: see account_door.go
+		s.replyError(c, req.ID, CodeAccountLocked, errAccountLocked)
+		return
+	}
 
 	handler, ok := s.handlerFor(req.Method)
 	if !ok {

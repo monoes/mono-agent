@@ -70,6 +70,9 @@ type WebhookServer struct {
 	// rather than a warning on every request: without the key, loops
 	// through webhooks are not counted.
 	keyErrorOnce sync.Once
+	// lockedLog spaces the log lines of requests refused for a locked
+	// account (webhook_account.go).
+	lockedLog webhookLockedLog
 }
 
 // TraceAdmitter records that a request carrying a verified trace on chain
@@ -271,7 +274,13 @@ func (s *WebhookServer) Deregister(path string) {
 // ServeHTTP handles all incoming webhook requests.
 // Routes: POST/GET /webhook/{path}
 // Returns 404 if path not found, 405 if method doesn't match, 200 on success.
+//
+// A locked monoes.me account refuses every request first (refuseWhileLocked),
+// before the body is read and before admitTrace writes to the org ledger.
 func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.refuseWhileLocked(w, r) {
+		return
+	}
 	// Parse path: must be /webhook/{path}
 	urlPath := r.URL.Path
 	const prefix = "/webhook/"
