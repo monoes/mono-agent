@@ -20,7 +20,7 @@ func (s *AIStore) ListCoderWorkspaces(profileID string, limit int) ([]CoderWorks
 	}
 	rows, err := s.db.Query(`SELECT cwd, MAX(updated_at), COUNT(*) FROM ai_chat_conversations
 		WHERE profile_id = ? AND mode = ? AND cwd != ''
-		GROUP BY cwd ORDER BY MAX(updated_at) DESC LIMIT ?`, profileID, ModeCoder, limit)
+		GROUP BY cwd ORDER BY MAX(updated_at) DESC, cwd DESC LIMIT ?`, profileID, ModeCoder, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list coder workspaces: %w", err)
 	}
