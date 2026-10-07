@@ -21,6 +21,7 @@ const claudeInitMarker = ".claude_init"
 var claudeSkillNames = []string{
 	"action-template-generator.md",
 	"monoagent-workflows.md",
+	"monoagent-tasks/SKILL.md", // <name>/SKILL.md is the layout Claude Code loads; the two above predate it
 }
 
 // newInitCmd returns the `monoagent init` command.
@@ -67,6 +68,9 @@ func installClaudeSkill(verbose bool) error {
 		}
 
 		dest := filepath.Join(skillsDir, name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil { // a skill may be a folder
+			return fmt.Errorf("create skill dir: %w", err)
+		}
 		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return fmt.Errorf("write skill to %s: %w", dest, err)
 		}
@@ -171,7 +175,11 @@ func installMissingClaudeSkills(names []string) error {
 		if err != nil {
 			return err
 		}
-		f, err := os.OpenFile(filepath.Join(skillsDir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		dest := filepath.Join(skillsDir, name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil { // a skill may be a folder
+			return err
+		}
+		f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, os.ErrExist) {
 			continue // appeared meanwhile: it is not ours to replace
 		}
