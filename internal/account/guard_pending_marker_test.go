@@ -3,7 +3,6 @@ package account_test
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -32,7 +31,7 @@ func (e *env) pendingOn() time.Time {
 // rawPending is the text of pending_since in session.json, "" when the file has no such key.
 func (e *env) rawPending() string {
 	e.t.Helper()
-	data, err := os.ReadFile(filepath.Join(e.dir, "session.json"))
+	data, err := readReplaced(filepath.Join(e.dir, "session.json"))
 	if err != nil {
 		e.t.Fatal(err)
 	}

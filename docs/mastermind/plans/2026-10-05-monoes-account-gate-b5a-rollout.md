@@ -4,21 +4,21 @@
 
 **Goal:** Release R: the production signing key is pinned and the enforcement date is set, an older library login is adopted into the machine session on the first run, a daemon that predates the release is restarted or flagged, the project's own CI, scripts and tests survive the date, and a binary built with the `devaccount` tag cannot ship.
 
-**Architecture:** B5a pins the production key, then changes one line of `internal/account` (the date). Around that: the root command makes the one try to adopt an older library login (B1b provides the adoption and leaves the call to this plan); `update` restarts a daemon that runs old code and the `services.daemon` doctor row flags one; `scripts/check-release-tags.sh` gates `release.yml`; the real-binary consumers in the repository are audited (spike S4), adapted, and the day the date arrives is rehearsed. It adds no gate code: the gates are B1 to B4's, and the real-binary smoke that proves them is B5c's, merged before R.
+**Architecture:** B5a pins the production key, then changes one line of `internal/account` (the date). Around that: the root command makes the one try to adopt an older library login (B1b provides the adoption and leaves the call to this plan); `update` restarts a daemon that runs old code and the `services.daemon` doctor row flags one; the service definitions give a stopping daemon time to finish a refresh; `scripts/check-release-tags.sh` gates `release.yml`, which also signs every macOS binary with the hardened runtime; the real-binary consumers in the repository are audited (spike S4), adapted, and the day the date arrives is rehearsed. It adds no gate code: the gates are B1 to B4's, and the real-binary smoke that proves them is B5c's, merged before R.
 
 **Tech Stack:** Go 1.26, cobra, bash, GitHub Actions, `go version -m`.
 
-**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (§1, §4.8, §8, §9, §11, D9, D11, D22, D23, D24, D28; §13 A7, A8, A11, A12) and the index `docs/mastermind/plans/2026-10-05-monoes-account-gate-index.md` (§1, §2, §3.6, §4). Depends on B1a to B4b and on B5c being merged. Release R is this plan and `b5b-docs` merged together as one push; B5d (the license) is independent of R. Where this plan differs from the index (§2, §3.6) or from spec §13, the index and spec §13 win.
 
 ## Global Constraints
 
 - Go is `go 1.26.0`; `internal/account` adds no third-party dependency (D13): `crypto/ed25519` and a small strict JWS parser only. One accepted algorithm (EdDSA); the verifier ignores `jku`, `jwk` and `x5u` headers and never negotiates from the header.
 - Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
-- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace.
+- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace. A grant whose outcome is unknown (the request may have been processed, so monoes.me may have rotated the refresh token) or whose answer could not be saved (A24(d)) is retried within 240 seconds and after that is never presented again: this machine drops its refresh token and the reason is `unconfirmed` (A24, §3.6), a grace reason that ends as `locked(unconfirmed)`; the other installs of the account are untouched.
 - Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard re-checks `session.json`'s mtime lazily inside `Status`, at most once per 5 seconds (no goroutine for a non-refresher guard; spec A8). The refresh request carries `resource=<Audience>`.
 - Storage (§4.6): `~/.monoagent/account/` (directory 0700) with `session.json`, `refresh.enc` and `session.lock` (files 0600). One session per OS user, shared by all profiles, whatever `--db-path` says.
 - Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
-- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `EnsureFresh`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear only on a login or a refresh. The high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
+- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, and neither does a guard pass (`EnsureFresh`, `Refresh`, the background refresher) while the gate is dormant or its date is still ahead, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear on a login or a refresh and, from the enforcement date on (A25), on the first guard pass of a machine that has no session: that pass creates the directory, `session.lock` and a session with no token (`{v, host, hw}`, never `refresh.enc`), the clock-guard record of a machine that never signed in. So a gated command that is refused on an empty HOME leaves exactly `account/session.lock` and `account/session.json` once the date has been reached, and nothing before it. Otherwise the high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
 - Process globals (`enforceFrom`, the trusted keys, the installed guard, the strict flag) are guarded by a `sync.RWMutex` and read only through accessors. The `*ForTest` hooks and `accounttest.Install` are for tests that do not call `t.Parallel()`; CI's Linux jobs run `-race`.
 - A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
 - Open commands (D6): `version`, `help`, `completion`, cobra's hidden `__complete` and `__completeNoDesc`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), `library login`, `library logout`, `library status`. Everything else is gated, except the serving commands:
@@ -38,18 +38,22 @@
 6. **The doctor flag is the existing `services.daemon` row** turning `warn`, with a manual fix: `daemon restart` interrupts runs, so a person decides.
 7. **Real-binary consumers that are not about the gate** (`wails-app`'s `buildTestCLI`, the manual e2e scripts) build with `-tags devaccount` and a date that never arrives, instead of signing in (spec §9 says to sign in, and the smoke does). `scripts/doctor-smoke.sh` stays on the default build and loses one assertion the date would break.
 8. **The warnings belong to B2, B1b and B3a**, and B5c pins them end to end. This plan runs every suite with the date set (Task 2) and rehearses the day it arrives (Task 7): a test that assumed dormancy fails there, not on the day.
-9. **Adoption is wired here, once** (Task 6). B1b provides `library.AdoptIntoAccount` and leaves the call to this plan; the function removes an older login from the vault once monoes.me has given a verdict but keeps one that got no answer, and presenting a refresh token that was already spent, when only the answer was lost, could end every login of the account (spike S2; spec A7), so the wiring claims one try per database before it makes it, in the root command's `PersistentPreRun`: gated and serving commands only, after the CLI gate.
+9. **Adoption is wired here, once** (Task 6). B1b provides `library.AdoptIntoAccount` and leaves the call to this plan; the function removes an older login from the vault once monoes.me has given a verdict, and also when the exchange went out and its outcome is unknown (any answer but a complete 4xx, every 5xx included, or none) or its answer arrived and could not be stored here (spec A24, A24(d): monoes.me may have rotated the token, and presenting it again after the 300-second reuse window would end every login of the account: spike S2, spec A7), and keeps one only when the failure cannot have spent it (nothing was sent, or monoes.me answered with a complete 4xx that is not `invalid_grant`). A retry at every command would make an implicit call before every command of an offline machine, so the wiring claims one try per database before it makes it, in the root command's `PersistentPreRun`: gated and serving commands only, after the CLI gate. Once the exchange is sent it is completed even if the command's context is cancelled meanwhile (spec A20, implemented in B1b's `exchangeOlder`): a Ctrl-C at the first command after the update neither loses the answer nor leaves a spent refresh token in the vault.
 10. **One declaration each in files that other phases own** (index §3.1 and the cmd package): `pinnedKeys` in `keys.go` (B1a: "B5a pins the first key"), the initializer of `enforceFrom` in `rollout.go` (B1a), the `PersistentPreRun` of `root.go` (B1b adds its own line to `AddCommand`). `CONTRIBUTING.md` is B5b's and is not touched.
+11. **The service definitions allow a stopping daemon at least 35 seconds** (Task 4b). The guard's `Close` waits for a refresh grant in flight and then for the key-store write of its answer, about 20 seconds and 30 at the worst, and launchd's default `ExitTimeOut` is 20: a kill inside that window loses the answer (spec A24). One constant, `stopGrace`, sets launchd's `ExitTimeOut` to 35; systemd's `TimeoutStopSec` is written as 90, its own default, so as not to shorten the drain of the runs in flight; on Windows a scheduled task has no stop time, the constant only sets the wait of `Restart`, and a restart inside a refresh remains the A24 case.
+12. **Every macOS binary carries the hardened runtime** (Task 5b). Without it dyld honours `DYLD_INSERT_LIBRARIES`, and a ten-line interposer gives one process a clock of its own (spec §4.8). The signature stays ad hoc: a Developer ID and notarization are a separate decision. No entitlement is added unless the smoke test of a signed build shows one is needed, and never one that lets dyld read `DYLD_` variables again. The task touches nothing of the gate and may merge alone before R.
 
 ## Review Focus
 
-The five failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
+The seven failure modes the spec implies that no phase's tests exercise from outside and that are most likely to bite a person using this software, most likely first. Each is pinned in the task that owns the code.
 
 1. **A daemon that predates R keeps running ungated for months**, warning nobody, or the update that fixes that interrupts a run or restarts a daemon it cannot see into. Pinned by `TestCheckDaemonFlagsAStaleVersion` (Task 3), `TestDaemonAfterUpdate` (its `an execution in flight`, `saved API settings that cannot be used` and `what cannot be told` rows), `TestRestartBlockersReadTheDaemonsRowsAndTheSavedSettings` and `TestUpdateWhenAlreadyCurrentRestartsAStaleDaemon` (Task 4). The first-update gap is a stated limit.
-2. **A try that got no answer is repeated**, and presenting an older refresh token that monoes.me already spent ends every login of the account on every machine; or adoption is never wired and every user who is logged in to the library has to sign in again. Pinned by `TestAdoptFirstRunTriesOnce` and `TestTheRootCommandAdoptsBeforeAGatedCommandRuns` (Task 6).
+2. **A try is repeated at every command**, which makes an implicit call before every command of an offline machine and, were the older login kept after an exchange whose answer was lost, would present a refresh token that monoes.me may have spent and end every login of the account on every machine (B1b drops that login instead: A24); or adoption is never wired and every user who is logged in to the library has to sign in again. Pinned by `TestAdoptFirstRunTriesOnce` and `TestTheRootCommandAdoptsBeforeAGatedCommandRuns` (Task 6).
 3. **The pinned key or claims differ from what monoes.me really signs, and every user is locked on the date.** Pinned by `TestProductionKeyVerifiesAProductionToken` (Task 1: a token signed by the production private key verifies against the pinned set) and by the production dry run of Task 8, which must pass before the merge.
 4. **The date arrives and the project's own CI, scripts and tests lock themselves out**: a `doctor-smoke` that counts the account row as an unhealthy core, a desktop test that spawns a gated CLI, a maintainer's e2e script. Pinned by the rehearsal of Task 7: every suite and `scripts/doctor-smoke.sh` run with the date in the past, compared with the committed tree.
 5. **A binary built with the `devaccount` tag ships**: it trusts a development key anyone can sign with. Pinned by `scripts/check-release-tags-test.sh` (the guard against binaries built with and without the tag, loose and inside the archives the release ships), run by the CI job `release-guard-test`, and by the `release-guard` job that runs the guard on every artifact before the approval gate (Task 5).
+6. **A daemon that its service manager kills in the middle of a refresh** loses the answer of a grant that monoes.me has already rotated: the next attempt is the A24 case, and this machine signs in again (the account survives). launchd's default stop time, 20 seconds, is shorter than the guard's worst case of 30, and a Windows scheduled task has no stop time to set. Pinned by `TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite`, `TestThePlistGivesTheDaemonTimeToFinishARefresh` and `TestTheUnitGivesTheDaemonTimeToFinishARefresh` (Task 4b).
+7. **A macOS release lets dyld load a library into the CLI**, and one process judges the gate on a clock of its own without the system clock changing (spec §4.8); or the hardened runtime breaks a feature of the app. Pinned by the build's checks (the runtime flag on every macOS binary, and no dyld output under `DYLD_PRINT_LIBRARIES`) and by the smoke test of a signed release (Task 5b).
 
 ---
 
@@ -751,6 +755,399 @@ git add cmd/monoagentcli/update_daemon.go cmd/monoagentcli/update_daemon_test.go
 git commit -m "feat(update): restart a daemon that runs old code unless a run is in flight" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 4b: The service definitions give a stopping daemon time to finish a refresh
+
+A24, with A20 and A22. A daemon that its service manager stops (`daemon install` over a registration, `daemon uninstall`, the manager's own restart, a logout or a shutdown) is asked to end and is killed when the manager's stop time runs out. The guard's `Close` waits for a refresh grant that is in flight and then for the key-store write of its answer: about 20 seconds with B1b's refresher, which gives up on a grant after 10, and 30 at the worst. launchd's default `ExitTimeOut` is 20 seconds, so a kill inside that window is possible, and it is the A24 case: the answer is lost, the account survives and this machine signs in again. The definitions this code writes therefore allow at least 35 seconds, the worst case and a margin of five. launchd's `ExitTimeOut` is set to `stopGrace`, 35 seconds. systemd's `TimeoutStopSec` is written as 90 seconds, systemd's own default: the unit says it, so that a distribution or user setting cannot lower it, and does not shorten it, because the daemon also drains the runs in flight when it is stopped (`engine.Stop` in `cmd/monoagentcli/daemon.go`) and a stock system gives that drain 90 seconds. Windows has no counterpart: a scheduled task has no stop time of its own, and the Task Scheduler's own description of ending a task is that it sends `WM_CLOSE` and, unless the task's `AllowHardTerminate` setting is off, terminates a task that does not answer. A console daemon has no window to answer it, so this code does not rely on a graceful stop there, and a Windows restart or uninstall that lands inside a refresh is the A24 case whatever it waits. The one number this code has on Windows is the wait of `Restart` for the daemon to let go of its lock after its task was ended (`daemonStopWait`, 10 seconds until now); it follows `stopGrace`, so that a daemon that does stop by itself is not reported as still running. One constant, `stopGrace`, carries the 35 seconds.
+
+**Files:**
+- Modify: `internal/autostart/autostart.go` (the constant), `internal/autostart/autostart_darwin.go` (the plist template, `renderPlist`, `Install`), `internal/autostart/autostart_linux.go` (the unit template, `renderUnit`), `internal/autostart/autostart_windows.go` (`daemonStopWait`)
+- Create: `internal/autostart/stopgrace_test.go`, `internal/autostart/stop_darwin_test.go`, `internal/autostart/stop_linux_test.go`, `internal/autostart/stop_windows_test.go`
+
+**Interfaces:**
+- Consumes: `darwinPlistTemplate`, `linuxUnitTemplate`, `renderUnit` and `daemonStopWait`, which exist.
+- Produces: `stopGrace`, an unexported `time.Duration` constant of 35 seconds, `systemdStopTimeout` (90 seconds) in the Linux file, and `renderPlist(exe, logs string) (string, error)` in the darwin file, the counterpart of `renderUnit`, so that the plist can be read without installing it.
+
+- [ ] **Step 1: Write the failing tests.**
+
+Create `internal/autostart/stopgrace_test.go` with exactly this content:
+
+```go
+package autostart
+
+import (
+	"testing"
+	"time"
+)
+
+// A daemon that is stopped while its account guard renews the session waits for the refresh grant in flight and
+// then for the key-store write of its answer (A20, A22): B1b's refresher gives up on a grant after 10 seconds and
+// the write is bounded to 10 more, so about 20 seconds, and 30 when the guard's 20-second backstop has to end the
+// grant. A service manager that kills the daemon sooner loses the answer, which is the A24 case. launchd's default
+// ExitTimeOut is 20 seconds, so the definitions say how long they allow.
+func TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite(t *testing.T) {
+	if stopGrace < 35*time.Second {
+		t.Fatalf("stopGrace = %v: a service manager that waits less can kill a daemon that is saving the answer of a refresh", stopGrace)
+	}
+}
+```
+
+Create `internal/autostart/stop_darwin_test.go` with exactly this content:
+
+```go
+//go:build darwin
+
+package autostart
+
+import (
+	"encoding/xml"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+// launchd kills a job that has not ended ExitTimeOut seconds after its SIGTERM, 20 by default: less than a daemon
+// needs to finish a refresh grant and save its answer. The job says how long it may take.
+func TestThePlistGivesTheDaemonTimeToFinishARefresh(t *testing.T) {
+	plist, err := renderPlist("/usr/local/bin/monoagentcli", "/Users/ada/.monoagent/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := xml.Unmarshal([]byte(plist), new(struct{ XMLName xml.Name })); err != nil {
+		t.Fatalf("the plist is not well-formed XML: %v\n%s", err, plist)
+	}
+	m := regexp.MustCompile(`<key>ExitTimeOut</key>\s*<integer>(\d+)</integer>`).FindStringSubmatch(plist)
+	if m == nil {
+		t.Fatalf("the plist sets no ExitTimeOut, so launchd kills a stopping daemon after its default 20 seconds:\n%s", plist)
+	}
+	seconds, _ := strconv.Atoi(m[1])
+	if got := time.Duration(seconds) * time.Second; got < stopGrace {
+		t.Fatalf("ExitTimeOut is %v, want at least %v", got, stopGrace)
+	}
+	for _, want := range []string{"<string>/usr/local/bin/monoagentcli</string>", "<string>daemon</string>", "/Users/ada/.monoagent/logs/daemon.log", "<key>KeepAlive</key>"} {
+		if !strings.Contains(plist, want) {
+			t.Fatalf("the plist lost %q:\n%s", want, plist)
+		}
+	}
+}
+```
+
+Create `internal/autostart/stop_linux_test.go` with exactly this content:
+
+```go
+//go:build linux
+
+package autostart
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+// systemd kills a unit that has not stopped TimeoutStopSec after its SIGTERM. Its default (90 seconds on a stock
+// system) is a distribution and user setting, which a unit that needs time to finish a refresh does not rely on:
+// the unit says how long it allows, in its [Service] section, never less than stopGrace and never less than the
+// stock default, because the daemon also drains the runs in flight when it is stopped.
+func TestTheUnitGivesTheDaemonTimeToFinishARefresh(t *testing.T) {
+	unit, err := renderUnit("/usr/local/bin/monoagentcli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^TimeoutStopSec=(\d+)$`).FindStringSubmatch(unit)
+	if m == nil {
+		t.Fatalf("the unit sets no TimeoutStopSec:\n%s", unit)
+	}
+	seconds, _ := strconv.Atoi(m[1])
+	if got := time.Duration(seconds) * time.Second; got < stopGrace || got < 90*time.Second {
+		t.Fatalf("TimeoutStopSec is %v, want at least %v and no less than systemd's own default of 90s", got, stopGrace)
+	}
+	at := strings.Index(unit, "TimeoutStopSec=")
+	if service, install := strings.Index(unit, "[Service]"), strings.Index(unit, "[Install]"); at < service || at > install {
+		t.Fatalf("TimeoutStopSec is not in the [Service] section:\n%s", unit)
+	}
+}
+```
+
+Create `internal/autostart/stop_windows_test.go` with exactly this content:
+
+```go
+//go:build windows
+
+package autostart
+
+import "testing"
+
+// A scheduled task has no stop time of its own, and a task that is ended may be terminated outright: a restart
+// inside a refresh is the A24 case. How long Restart waits for the daemon to let go of its lock after the task was
+// ended is the one number this code has, and it follows the other managers' stop time, so that a daemon that does
+// stop by itself is not reported as still running.
+func TestRestartWaitsForAStoppingDaemonAsLongAsTheOtherManagersAllowIt(t *testing.T) {
+	if daemonStopWait < stopGrace {
+		t.Fatalf("daemonStopWait = %v, want at least %v", daemonStopWait, stopGrace)
+	}
+}
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+```bash
+go test ./internal/autostart/ -run '^(TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite|TestThePlistGivesTheDaemonTimeToFinishARefresh|TestTheUnitGivesTheDaemonTimeToFinishARefresh)$' -count=1
+```
+
+Expected: FAIL, a build error. On macOS: `undefined: stopGrace` and `undefined: renderPlist`; on Linux: `undefined: stopGrace`; on Windows the Windows test names `undefined: stopGrace` the same way.
+
+- [ ] **Step 3: Implement.**
+
+In `internal/autostart/autostart.go`, replace this text:
+
+```go
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+```
+
+with:
+
+```go
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+)
+```
+
+In `internal/autostart/autostart.go`, replace this text:
+
+```go
+// Installer registers and removes the per-user auto-start entry. Each OS
+```
+
+with:
+
+```go
+// stopGrace is how long a service manager must let the daemon stop before it kills it. A daemon that is
+// stopped while its account guard renews the session waits for the refresh grant in flight and then for the
+// key-store write of its answer (spec A20, A22): about 20 seconds with B1a's and B1b's timeouts, 30 at the
+// worst. A manager that kills it sooner loses the answer, which is the A24 case: the account survives and this
+// machine signs in again. launchd's default ExitTimeOut is 20 seconds, so its definition says how long it
+// allows, and systemd's says at least as much. A scheduled task on Windows has no stop time to set: its Restart
+// waits this long for the daemon to let go of its lock.
+const stopGrace = 35 * time.Second
+
+// Installer registers and removes the per-user auto-start entry. Each OS
+```
+
+In `internal/autostart/autostart_darwin.go`, replace this text:
+
+```go
+	"strconv"
+	"strings"
+	"text/template"
+)
+```
+
+with:
+
+```go
+	"strconv"
+	"strings"
+	"text/template"
+	"time"
+)
+```
+
+In `internal/autostart/autostart_darwin.go`, replace this text:
+
+```go
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+```
+
+with:
+
+```go
+	<key>KeepAlive</key>
+	<true/>
+	<key>ExitTimeOut</key>
+	<integer>{{.ExitTimeOut}}</integer>
+	<key>StandardOutPath</key>
+```
+
+In `internal/autostart/autostart_darwin.go`, replace this text:
+
+```go
+func plistPath() (string, error) {
+```
+
+with:
+
+```go
+// renderPlist returns the launchd job for the binary at exe, logging under logs. ExitTimeOut is how long launchd
+// waits after SIGTERM before it kills the daemon: stopGrace, where launchd's default is 20 seconds.
+func renderPlist(exe, logs string) (string, error) {
+	var b strings.Builder
+	tmpl := template.Must(template.New("plist").Parse(darwinPlistTemplate))
+	err := tmpl.Execute(&b, struct {
+		Label, Exe, LogDir string
+		ExitTimeOut        int
+	}{Label, exe, logs, int(stopGrace / time.Second)})
+	return b.String(), err
+}
+
+func plistPath() (string, error) {
+```
+
+In `internal/autostart/autostart_darwin.go`, replace this text:
+
+```go
+	tmpl := template.Must(template.New("plist").Parse(darwinPlistTemplate))
+	f, err := os.Create(path)
+	if err != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, err)
+	}
+	execErr := tmpl.Execute(f, struct{ Label, Exe, LogDir string }{Label, exe, logs})
+	closeErr := f.Close()
+	if execErr != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, execErr)
+	}
+	if closeErr != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, closeErr)
+	}
+```
+
+with:
+
+```go
+	plist, err := renderPlist(exe, logs)
+	if err != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, err)
+	}
+```
+
+In `internal/autostart/autostart_linux.go`, replace this text:
+
+```go
+	"strings"
+	"text/template"
+)
+```
+
+with:
+
+```go
+	"strings"
+	"text/template"
+	"time"
+)
+```
+
+In `internal/autostart/autostart_linux.go`, replace this text:
+
+```go
+const unitName = "monoagent-daemon.service"
+```
+
+with:
+
+```go
+const unitName = "monoagent-daemon.service"
+
+// systemdStopTimeout is the stop time the unit asks for: systemd's own default, written down so that a
+// distribution's or a user's setting cannot lower it, and never shorter than stopGrace. The daemon drains
+// the runs that are in flight when it is stopped, which may take longer than a refresh needs, so the unit
+// does not shorten the 90 seconds a stock system gives it.
+const systemdStopTimeout = 90 * time.Second
+```
+
+In `internal/autostart/autostart_linux.go`, replace this text:
+
+```go
+Restart=on-failure
+RestartSec=5
+```
+
+with:
+
+```go
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec={{.StopSec}}
+```
+
+In `internal/autostart/autostart_linux.go`, replace this text:
+
+```go
+	if err := tmpl.Execute(&b, struct{ Exe string }{systemdQuote(exe)}); err != nil {
+```
+
+with:
+
+```go
+	if err := tmpl.Execute(&b, struct {
+		Exe     string
+		StopSec int
+	}{systemdQuote(exe), int(systemdStopTimeout / time.Second)}); err != nil {
+```
+
+In `internal/autostart/autostart_windows.go`, replace this text:
+
+```go
+// daemonStopWait is how long Restart waits for the daemon to let go of its lock after its task
+// was ended.
+const daemonStopWait = 10 * time.Second
+```
+
+with:
+
+```go
+// daemonStopWait is how long Restart waits for the daemon to let go of its lock after its task
+// was ended: as long as the other service managers allow a daemon to stop (stopGrace), so that a
+// daemon that stops by itself is not reported as still running. A scheduled task has no stop time of
+// its own, and an ended task may be terminated outright.
+const daemonStopWait = stopGrace
+```
+
+- [ ] **Step 4: Run the tests, expect PASS.**
+
+```bash
+go test ./internal/autostart/ -count=1 -race -v
+```
+
+Expected: `ok`, and `--- PASS` for `TestTheStopGraceCoversTheGrantAndTheKeyStoreWrite` and for the test of the platform the command runs on (`TestThePlistGivesTheDaemonTimeToFinishARefresh` on macOS, `TestTheUnitGivesTheDaemonTimeToFinishARefresh` on Linux); the Windows test is compiled by Step 5 and runs only on Windows.
+
+- [ ] **Step 5: Vet, format and cross-vet.**
+
+```bash
+go vet ./internal/autostart/ && gofmt -l internal/autostart
+GOOS=linux GOARCH=amd64 go vet ./internal/autostart/
+GOOS=windows GOARCH=amd64 go vet ./internal/autostart/
+GOOS=darwin GOARCH=arm64 go vet ./internal/autostart/
+```
+
+Expected: no output. Each cross-vet type-checks the files and the test of that platform, which CI (Linux only) does not run.
+
+- [ ] **Step 6: Say the limits in the report.** (1) A registration made before this change keeps its old definition until `daemon install` runs again (it replaces the registration): `update` restarts the old definition and does not rewrite it, so the longer stop time reaches an existing install only then, and until then a kill inside launchd's 20 seconds is the A24 case. (2) The stop time applies when the manager stops the daemon through its own stop path (`launchctl bootout`, `systemctl --user stop` or `restart`, a logout, a shutdown). `Restart` on macOS is `launchctl kickstart -k`, which launchd documents as killing the running instance, so a restart that lands inside a refresh may not get `ExitTimeOut` at all; the marker covers it. (3) Windows has no counterpart of `ExitTimeOut` in this code. A scheduled task has no stop time, and this code does not rely on a graceful stop there: a restart, an uninstall or a logoff that ends the task inside a refresh is the A24 case, covered by the marker, and `daemonStopWait` only sets how long `Restart` waits for the lock. (4) systemd's stock default is 90 seconds, so the unit writes 90 and not 35: a smaller number would shorten what a stock system already allows and cut the drain of the runs in flight. 90 meets the 35-second floor. (5) Not changed here: the desktop's own grace period for the CLI children it stops (`healthGracePeriod`, 15 seconds, `wails-app/app_health.go`) is not a service definition. A child that is stopped inside a refresh is the same case, and B4 may want the same number.
+
+- [ ] **Step 7: Commit.**
+
+```
+git add internal/autostart/autostart.go internal/autostart/autostart_darwin.go internal/autostart/autostart_linux.go internal/autostart/autostart_windows.go internal/autostart/stopgrace_test.go internal/autostart/stop_darwin_test.go internal/autostart/stop_linux_test.go internal/autostart/stop_windows_test.go
+git commit -m "feat(autostart): give a stopping daemon 35 seconds to finish a refresh before its service manager kills it" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
 ### Task 5: The release guard
 
 **Files:**
@@ -986,9 +1383,204 @@ git add scripts/check-release-tags.sh scripts/check-release-tags-test.sh .github
 git commit -m "ci(release): fail a release whose binaries carry the devaccount tag" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 5b: The macOS binaries carry the hardened runtime
+
+Spec §4.8 (the third security review). `release.yml` signs the two macOS CLI assets ad hoc without the hardened runtime (lines 162-163, `codesign --force --sign -`), and the CLI that line 217 copies into `MonoAgent.app` keeps only Go's linker signature, as does the app's own executable. Without the hardened runtime dyld honours `DYLD_INSERT_LIBRARIES` and every other `DYLD_` variable, so a ten-line `clock_gettime` interposer gives one process a clock of its own without touching the system clock: the review made a release binary with no record on disk judge `enforced: false` that way, and the same binary signed with `codesign --force --options runtime --sign -` ignored the variable and refused. This task signs every macOS binary of the release with the hardened runtime, the bundled CLI before the app whose signature seals it, and fails the build when a signature lacks the runtime flag or when dyld still reads a `DYLD_` variable. It touches nothing of the gate, so it may merge on its own before R (Step 5 needs a release that carries it), and it lands no later than R: from R's date an unhardened macOS release is the per-process clock of spec §4.8. The Linux binaries are static Go, with no dyld to interpose, and the Linux and Windows builds do not change.
+
+**Files:**
+- Modify: `.github/workflows/release.yml` (job `build-cli-macos`: the step `Build CLI for macOS (native)`, lines 162-163, and a new step after it; job `build-macos-arm64`: the step `Bundle CLI into .app and zip`, lines 214-219)
+
+**Interfaces:**
+- Consumes: `codesign --force --options runtime --sign -` (ad hoc, the hardened runtime, no entitlements); `codesign -dv <file>`, which prints on stderr `CodeDirectory v=… flags=0x10002(adhoc,runtime) …` for such a signature, `flags=0x2(adhoc)` for today's CLI assets and `flags=0x20002(adhoc,linker-signed)` for Go's linker signature, and for an app bundle the flags of its main executable; `codesign --verify --strict [--deep]`; dyld's `DYLD_PRINT_LIBRARIES=1`, which prints one `dyld[<pid>]: …` line per loaded image while dyld honours `DYLD_` variables and none under the hardened runtime. `macos-latest` is an arm64 runner.
+- Produces: hardened signatures on `monoagentcli-darwin-amd64` and `monoagentcli-darwin-arm64`, and on `MonoAgent.app` and its `Contents/MacOS/monoagentcli` inside `MonoAgent-darwin-arm64.zip`; the step `Check the hardened runtime (macOS CLI)`; a failing build when any of them lacks the flag.
+
+- [ ] **Step 1: Prove the check on a Mac first.** It must fail today's signatures, pass a hardened binary and a bundle signed inside out, and survive the zip and unzip of the release and of `update --app` (`internal/appupdate`'s `installMacOS` unzips the bundle and swaps it whole). Save as `<scratchpad>/hardened-runtime-check.sh` and run `bash <scratchpad>/hardened-runtime-check.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Proves the hardened-runtime check of release.yml (B5a Task 5b) on a Mac: it passes binaries and an
+# app bundle signed with --options runtime, and fails today's signatures. A stand-in for the real
+# assets: two tiny Go programs in a bundle laid out like MonoAgent.app.
+set -euo pipefail
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+
+printf 'module example.com/hr\n\ngo 1.26.0\n' > "$dir/go.mod"
+printf 'package main\n\nfunc main() {}\n' > "$dir/main.go"
+(cd "$dir" && CGO_ENABLED=0 go build -o linker .)
+
+# The check of the workflow, as one function: the runtime flag, then dyld ignoring DYLD_ variables.
+check() {
+  local f="$1" run="${2:-}"
+  codesign --verify --strict "$f"
+  if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+    echo "not hardened: ${f#"$dir"/}"; return 1
+  fi
+  if [ -n "$run" ] && [ "$(DYLD_PRINT_LIBRARIES=1 "$run" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+    echo "dyld honours DYLD_ variables: ${run#"$dir"/}"; return 1
+  fi
+  echo "hardened: ${f#"$dir"/}"
+}
+
+# Loose binaries: Go's linker signature, today's ad hoc signature, and the hardened runtime.
+cp "$dir/linker" "$dir/adhoc"
+cp "$dir/linker" "$dir/hardened"
+codesign --force --sign - "$dir/adhoc"
+codesign --force --options runtime --sign - "$dir/hardened"
+for f in linker adhoc hardened; do
+  printf '%s: %s, dyld lines %s\n' "$f" "$(codesign -dv "$dir/$f" 2>&1 | grep -o 'flags=0x[0-9a-f]*([^)]*)')" \
+    "$(DYLD_PRINT_LIBRARIES=1 "$dir/$f" 2>&1 | grep -c '^dyld\[' || true)"
+done
+check "$dir/linker" "$dir/linker" && exit 1
+check "$dir/adhoc" "$dir/adhoc" && exit 1
+check "$dir/hardened" "$dir/hardened"
+
+# A bundle laid out like MonoAgent.app, signed inside out as the workflow does, then zipped and
+# unzipped as the release and `update --app` do.
+APP="$dir/build/MonoAgent.app"
+mkdir -p "$APP/Contents/MacOS"
+cat > "$APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>monoagent-ui</string>
+<key>CFBundleIdentifier</key><string>com.example.monoagent-standin</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+PLIST
+cp "$dir/linker" "$APP/Contents/MacOS/monoagent-ui"
+cp "$dir/linker" "$APP/Contents/MacOS/monoagentcli"
+codesign --force --options runtime --sign - "$APP/Contents/MacOS/monoagentcli"
+codesign --force --options runtime --sign - "$APP"
+codesign --verify --strict --deep "$APP"
+check "$APP"
+check "$APP/Contents/MacOS/monoagentcli" "$APP/Contents/MacOS/monoagentcli"
+(cd "$dir/build" && zip -qr "$dir/app.zip" MonoAgent.app)
+mkdir "$dir/unzipped"
+unzip -q "$dir/app.zip" -d "$dir/unzipped"
+codesign --verify --strict --deep "$dir/unzipped/MonoAgent.app"
+check "$dir/unzipped/MonoAgent.app"
+check "$dir/unzipped/MonoAgent.app/Contents/MacOS/monoagentcli" "$dir/unzipped/MonoAgent.app/Contents/MacOS/monoagentcli"
+
+# The CLI copied in after the app was signed, as release.yml does today: the seal no longer
+# matches, and a CLI with only the linker signature is not hardened.
+cp "$dir/linker" "$APP/Contents/MacOS/monoagentcli"
+codesign --verify --strict --deep "$APP" 2>/dev/null && { echo "a bundle whose CLI changed after signing verified"; exit 1; }
+check "$APP/Contents/MacOS/monoagentcli" "$APP/Contents/MacOS/monoagentcli" && exit 1
+echo "hardened-runtime check: ok"
+```
+
+Expected on stdout (the dyld counts vary with the macOS release; `codesign` also prints two `replacing existing signature` lines on stderr):
+
+```
+linker: flags=0x20002(adhoc,linker-signed), dyld lines 81
+adhoc: flags=0x2(adhoc), dyld lines 81
+hardened: flags=0x10002(adhoc,runtime), dyld lines 0
+not hardened: linker
+not hardened: adhoc
+hardened: hardened
+hardened: build/MonoAgent.app
+hardened: build/MonoAgent.app/Contents/MacOS/monoagentcli
+hardened: unzipped/MonoAgent.app
+hardened: unzipped/MonoAgent.app/Contents/MacOS/monoagentcli
+not hardened: build/MonoAgent.app/Contents/MacOS/monoagentcli
+hardened-runtime check: ok
+```
+
+The checks count with `grep -c` and never use `grep -q` in a pipe: `grep -q` stops reading at its first match, `codesign` then dies of SIGPIPE, and under `pipefail` (this script, or a step given `shell: bash`) the pipe fails on a hardened binary. The first draft of this script failed that way.
+
+- [ ] **Step 2: Sign the CLI assets with the hardened runtime, and check them.** Replace `.github/workflows/release.yml` lines 162-163, which read:
+
+```
+          codesign --force --sign - dist/monoagentcli-darwin-amd64
+          codesign --force --sign - dist/monoagentcli-darwin-arm64
+```
+
+with the lines below. The second half is a new step, so it ends the `run:` block of `Build CLI for macOS (native)`; the blank line 164 and the `actions/upload-artifact` step after it stay as they are:
+
+```yaml
+          # The hardened runtime (spec §4.8): without it dyld honours DYLD_INSERT_LIBRARIES, and a
+          # library loaded that way can give the process a clock of its own.
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-amd64
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-arm64
+
+      - name: Check the hardened runtime (macOS CLI)
+        run: |
+          for f in dist/monoagentcli-darwin-amd64 dist/monoagentcli-darwin-arm64; do
+            codesign --verify --strict "$f"
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          # The binary of this runner's architecture runs here: dyld must ignore DYLD_ variables.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; *) arch=arm64 ;; esac
+          if [ "$(DYLD_PRINT_LIBRARIES=1 "dist/monoagentcli-darwin-${arch}" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for monoagentcli-darwin-${arch}"; exit 1
+          fi
+```
+
+`--help` runs no command: cobra answers it before any hook.
+
+- [ ] **Step 3: Sign the bundled CLI, then the app.** Replace `.github/workflows/release.yml` lines 214-219 (line numbers before Step 2's edit; after it they are 230-235), which read:
+
+```
+      - name: Bundle CLI into .app and zip
+        run: |
+          APP="wails-app/build/bin/MonoAgent.app"
+          cp wails-app/monoagentcli "${APP}/Contents/MacOS/monoagentcli"
+          mkdir -p dist
+          (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
+```
+
+with:
+
+```yaml
+      - name: Bundle CLI into .app and zip
+        run: |
+          APP="wails-app/build/bin/MonoAgent.app"
+          cp wails-app/monoagentcli "${APP}/Contents/MacOS/monoagentcli"
+          # The hardened runtime (spec §4.8), inside out: the CLI first, then the app, whose signature
+          # seals the CLI's. No entitlements: a WKWebView app needs none. Never add
+          # allow-dyld-environment-variables or disable-library-validation: they reopen this.
+          codesign --force --options runtime --sign - "${APP}/Contents/MacOS/monoagentcli"
+          codesign --force --options runtime --sign - "${APP}"
+          codesign --verify --strict --deep "${APP}"
+          for f in "${APP}" "${APP}/Contents/MacOS/monoagentcli"; do
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          if [ "$(DYLD_PRINT_LIBRARIES=1 "${APP}/Contents/MacOS/monoagentcli" --help 2>&1 | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for the CLI inside MonoAgent.app"; exit 1
+          fi
+          mkdir -p dist
+          (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
+```
+
+The step keeps its name; no other plan names it (the release guard of Task 5 names jobs, and reads the zip by its file name).
+
+- [ ] **Step 4: Validate the workflow.** It parses, the new step sits after the build, and both `run:` blocks are valid shell:
+
+```
+python3 -c "import yaml; j=yaml.safe_load(open('.github/workflows/release.yml'))['jobs']; print([s.get('name') for s in j['build-cli-macos']['steps']]); print([s.get('name') for s in j['build-macos-arm64']['steps']]); open('/tmp/task5b-check.sh','w').write(j['build-cli-macos']['steps'][3]['run']); open('/tmp/task5b-bundle.sh','w').write(j['build-macos-arm64']['steps'][7]['run'])"
+bash -n /tmp/task5b-check.sh && bash -n /tmp/task5b-bundle.sh && echo "shell ok"
+grep -n 'codesign --force' .github/workflows/release.yml
+```
+
+Expected: `[None, None, 'Build CLI for macOS (native)', 'Check the hardened runtime (macOS CLI)', None]`, then `[None, None, None, 'Install Wails CLI', 'Install frontend dependencies', 'Build CLI (bundled, arm64)', 'Build Wails app (arm64)', 'Bundle CLI into .app and zip', None]`, `shell ok`, and four `codesign --force` lines (164, 165, 237, 238), each with `--options runtime`. When this was written, the two `run:` blocks taken out of a copy of the edited file were run with `bash -e`, as GitHub runs them, on stand-ins built from a tiny Go program: the check passed two hardened assets and failed with `::error::dist/monoagentcli-darwin-amd64 is not signed with the hardened runtime` once that asset was signed as today; the bundle step signed, verified and zipped, and the unzipped app verified with both signatures `flags=0x10002(adhoc,runtime)`.
+
+- [ ] **Step 5: Smoke-test a signed build once, on a Mac.** The hardened runtime can need an entitlement for something a program does at run time. A WKWebView (Wails) app and a Go CLI normally need none, and the tree uses no Apple Events, JIT or capture device (`grep -rl -e osascript -e NSAppleScript -e AppleEvent -e AVCapture cmd internal wails-app/*.go` prints nothing at `f4441a2a`), but only a run proves it. Take the first release that carries this task (hence merging it alone, before R): download `MonoAgent-darwin-arm64.zip` and `monoagentcli-darwin-arm64`, open the app (Gatekeeper asks as it does today for an app that is not notarized) and check that it opens and shows its pages, that a workflow runs from the app and from the CLI, that the extension bridge connects (`monoagentcli extension status` with the extension loaded), and that `update --app` run by the release before it installs this one and the app starts again. Then the point of the task: `DYLD_PRINT_LIBRARIES=1 ./monoagentcli-darwin-arm64 --help 2>&1 | grep -c '^dyld\['` prints `0`. If a feature breaks, add the one entitlement it needs, in an entitlements file passed with `--entitlements` to the `codesign` line of the binary that needs it, and name it in the commit. Never drop `--options runtime`, and never add `com.apple.security.cs.allow-dyld-environment-variables` or `com.apple.security.cs.disable-library-validation`: they reopen exactly this (the build's `DYLD_PRINT_LIBRARIES` check fails on the first).
+
+- [ ] **Step 6: Commit.**
+
+```
+git add .github/workflows/release.yml
+git commit -m "ci(release): sign the macOS binaries with the hardened runtime" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
 ### Task 6: The first run of R adopts an older library login
 
-Spec §8 step 3 and D23: a library login that already exists, on any profile, is exchanged for the machine session on the first run of R, so that nobody who is logged in to the library has to sign in again. B1b provides `library.AdoptIntoAccount` and proves what it does (`internal/library/adopt.go`: a no-op while dormant and when a session exists, never a refusal, a spent refresh token written back) and leaves the call to this plan; nothing else calls it, so without this task adoption never happens. The danger is the one plan A's spike S2 records (spec A7): monoes.me answers a spent refresh token with `invalid_grant` and then ends every refresh token of the account, on every machine. `AdoptIntoAccount` removes an older login from the vault once monoes.me has given a verdict, but one that got no answer stays, and a caller that retried it at every command could present a refresh token that the server had already spent when only the answer was lost, and would make an implicit call before every command of an offline machine: the wiring makes one try per database, ever, claimed before it is made (B1b's Task 9 assumes exactly this).
+Spec §8 step 3 and D23: a library login that already exists, on any profile, is exchanged for the machine session on the first run of R, so that nobody who is logged in to the library has to sign in again. B1b provides `library.AdoptIntoAccount` and proves what it does (`internal/library/adopt.go`: a no-op while dormant and when somebody has signed in, never a refusal, a spent refresh token written back; a session with no token that was not refused, the clock-guard record of A25, is nobody's login) and leaves the call to this plan; nothing else calls it, so without this task adoption never happens. The danger is the one plan A's spike S2 records (spec A7): monoes.me answers a spent refresh token with `invalid_grant` and then ends every refresh token of the account, on every machine. `AdoptIntoAccount` removes an older login from the vault once monoes.me has given a verdict, and also when the exchange went out and its outcome is unknown (A24: any answer but a complete 4xx, every 5xx included, or none; the token may be spent), and keeps one only when the failure cannot have spent it (nothing was sent, or monoes.me answered with a complete 4xx that is not `invalid_grant`); a caller that retried at every command would make an implicit call before every command of an offline machine: the wiring makes one try per database, ever, claimed before it is made (B1b's Task 9 assumes exactly this).
 
 **Files:**
 - Create: `cmd/monoagentcli/account_adopt.go`, `cmd/monoagentcli/account_adopt_test.go`
@@ -1177,14 +1769,21 @@ var adoptOlderLogin = library.AdoptIntoAccount
 // already exists, on any profile, is exchanged for the machine session, so that nobody who is logged
 // in to the library has to sign in again. It runs before a gated or serving command (an open command
 // calls monoes.me only when asked to) and does nothing while the gate is dormant (D22), with no guard
-// installed, when a session exists in any state, or when the database is not there yet (a new
-// machine has no older login, and a command must not create the database for this).
+// installed, when somebody has signed in (the status is not locked, not_logged_in: the clock-guard
+// record that the guard writes from the date on, A25, is that status and does not stop it), or when
+// the database is not there yet (a new machine has no older login, and a command must not create
+// the database for this).
 //
 // It tries once per database, ever. The exchange spends the older login's refresh token, and
 // monoes.me answers a spent one with invalid_grant and then ends every refresh token of the account
-// (plan A, spike S2), so a try that fails is never repeated: the user signs in once more. The try is
+// (plan A, spike S2), so B1b's AdoptIntoAccount removes an older login whose exchange went out and
+// got no complete 4xx, a 5xx included (A24), and a try that fails is never repeated: the user signs in once more. The try is
 // claimed before it is made, with one row inserted only if absent, so two processes that start
-// together make one try between them. Whatever it ends in, the command goes on.
+// together make one try between them. Whatever it ends in, the command goes on. Once the exchange is
+// sent it is completed even if the command's context is cancelled (A20, B1b's exchangeOlder): the
+// session is stored and the vault entry updated, so an interrupted try leaves no spent refresh token
+// behind. A context cancelled before the exchange is sent stops the try with the older login
+// untouched, and the claim stays consumed.
 func adoptFirstRun(cmd *cobra.Command, cfg *globalConfig) {
 	if commandClass(cmd) == classOpen || account.EnforceDate().IsZero() {
 		return
@@ -1240,7 +1839,7 @@ gofmt -l cmd/monoagentcli
 ```
 Expected: the eight subtests of `TestAdoptFirstRun` and the two other tests `--- PASS`; `ok`; no output from vet or gofmt.
 
-- [ ] **Step 5: Say the limits in the report.** (1) The CLI gate runs before anything, this included, so a gated one-shot command that first runs after the date is refused before an adoption can happen: its user signs in (`account login`), and the older library login stays where it is, usable by an older binary. A serving command (`daemon`, `httpapi`, `mcp` and `extension serve`; `org serve` is a launcher and stays gated, spec A1) passes the gate while locked, so one that first runs after the date does adopt. Every machine that updates during the warn period adopts at its first gated or serving command, the restarted daemon included. (2) One try per database: a machine that was offline at its first run is not retried, so its user signs in once. (3) An open command never adopts, so `account status`, `doctor` and `update` stay free of implicit calls. (4) The desktop has no adoption of its own: the first gated command it runs through the CLI adopts. (5) The real-binary check of the wiring is Task 8 Step 4's dry run against production: B5c merges before this plan and cannot test code that is not there. (6) `AdoptIntoAccount` removes the older login from the vault when it is adopted or dead, so an older binary cannot present it later; a login that got no answer stays, and this wiring does not retry it (limit 2).
+- [ ] **Step 5: Say the limits in the report.** (1) The CLI gate runs before anything, this included, so a gated one-shot command that first runs after the date is refused before an adoption can happen: its user signs in (`account login`), and the older library login stays where it is, usable by an older binary. A serving command (`daemon`, `httpapi`, `mcp` and `extension serve`; `org serve` is a launcher and stays gated, spec A1) passes the gate while locked, so one that first runs after the date does adopt (the gate's pass has just written the clock-guard record, A25, and the adoption goes ahead over it: B1b's `signedIn`). Every machine that updates during the warn period adopts at its first gated or serving command, the restarted daemon included. (2) One try per database: a machine that was offline at its first run is not retried, so its user signs in once. (3) An open command never adopts, so `account status`, `doctor` and `update` stay free of implicit calls. (4) The desktop has no adoption of its own: the first gated command it runs through the CLI adopts. (5) The real-binary check of the wiring is Task 8 Step 4's dry run against production: B5c merges before this plan and cannot test code that is not there. (6) `AdoptIntoAccount` removes the older login from the vault when it is adopted, dead, or possibly spent (the exchange went out and got no complete 4xx, a 5xx included, or was answered and its new refresh token could not be stored: A24, A24(d)), so an older binary cannot present it later; a login whose failure cannot have spent it (nothing was sent, or a complete 4xx that is not `invalid_grant`) stays, and this wiring does not retry it (limit 2). (7) A Ctrl-C during the try: the exchange runs on a context that the command's cancellation does not reach (spec A20, B1b's `exchangeOlder`), so once it is sent it is completed, the session stored and the vault entry updated, and the command ends after that: the grant, then the key-store write of the new refresh token, then the vault update, each bounded (the grant at about 10 seconds with B1b's refresher and 20 at the worst, the other two at most 10 seconds each); a Ctrl-C before it is sent stops the try with the older login untouched, and the claim is not given back (limit 2).
 
 - [ ] **Step 6: Commit.**
 
@@ -1419,7 +2018,7 @@ git commit -m "test(account): real-binary consumers that survive the enforcement
 
 No code. Release R is this plan and `b5b-docs` merged together as one push, and merging it releases (every merge to master releases): the first release with a date and with implicit calls to monoes.me. Do not merge until every box is ticked; the owner decides, and nothing here pushes or merges.
 
-- [ ] **Step 1: Everything before R shipped dormant.** `git fetch origin`, then `git log --oneline origin/master` names the merges of B1a, B1b, B2, B3a, B3b, B4, B4b and B5c (index §1, merge order), and `gh release list --limit 12` shows a release after each. `git show origin/master:internal/account/rollout.go | grep -n 'var enforceFrom'` prints `var enforceFrom = time.Time{}`: nothing before R could lock or warn anyone. `grep -rn 'MONOAGENT_DEV_ENFORCE_FROM' internal/account` finds B5c's file, which Task 7 needs, and `grep -n 'func AdoptIntoAccount' internal/library/adopt.go` finds B1b's adoption, which nothing but Task 6 calls.
+- [ ] **Step 1: Everything before R shipped dormant.** `git fetch origin`, then `git log --oneline origin/master` names the merges of B1a, B1b, B2, B3a, B3b, B4, B4b and B5c (index §1, merge order), and `gh release list --limit 12` shows a release after each. `git show origin/master:internal/account/rollout.go | grep -n 'var enforceFrom'` prints `var enforceFrom = time.Time{}`: nothing before R could lock or warn anyone. `grep -rn 'MONOAGENT_DEV_ENFORCE_FROM' internal/account` finds B5c's file, which Task 7 needs, and `grep -n 'func AdoptIntoAccount' internal/library/adopt.go` finds B1b's adoption, which nothing but Task 6 calls. Do not release B1a or B1b without A24 and A25 (index §1 and §3.6, spec §4.6): every writer of `session.json` round-trips `Session`, so a released binary that does not know `pending_since` erases the marker at its next write, and the token it guarded is then presented. So the release that first shipped `internal/account` (B1a's merge), and every release since, carried both: in that release's tag, `git grep -c pending_since <tag> -- internal/account/session.go` counts at least one line, and `git grep -n 'Enforced(now, time.Time{})' <tag> -- internal/account` finds the A25 branch of `touchHW`. If one did not, stop and tell the owner before R: installs of that release can erase the marker that R writes.
 
 - [ ] **Step 2: The server half is live, the key is pinned, the spikes are on record.** Plan A is deployed to production monoes.me: audience-bound JWTs, the `plan` claim, blocking that revokes, the hardened deploy workflow, the owner-run steps O2 (the production migration for the audience row), O3 to O5 (the signing key generated, checked, the rotation runbook rehearsed), and the refresh-token reuse window (`refreshTokenReuseInterval`, 300 seconds: spec A7). Task 1 pinned the key plan A's O3 produced and its test passes: without a pinned key every real token verifies as `key_unknown` and every install would lock, and R must not be cut. `grep -n '^## S[1-6]' docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md` prints a heading for each of S1 to S6 (S4 has two: `S4, layer 2` from B3a's Task 8 and `S4, real-binary consumers` from Task 7), and the constants in `internal/account/claims.go` are the ones S6 recorded.
 
@@ -1451,19 +2050,20 @@ monoagentcli library status
 
 - [ ] **Step 5: CI is green on the branch**, in particular `test`, `test-nosocial`, `wails`, `doctor-smoke`, `release-guard-test` and B5c's `account-smoke`; and B5c's real-binary smoke has passed on this tree on at least one machine (its plan names the command). B5c merged before this plan and **must pass before R**: it is what proves the warn period, a block, an outage, the 24 hours, every door and every entry point with the real binary, and this plan has no test of those.
 
-- [ ] **Step 6: One push, with the documentation.** R is this plan's commits and the commits of `b5b-docs` (claims, `ref`, CHANGELOG naming the date) in one pull request, because `release.yml` takes the release notes from `CHANGELOG.md` at the commit it tags, and D26 puts the documentation no later than the first phase that calls monoes.me implicitly. This plan alone must not be pushed. B5d (the license) is independent and not part of R.
+- [ ] **Step 6: One push, with the documentation.** R is this plan's commits and the commits of `b5b-docs` (claims, `ref`, CHANGELOG naming the date) in one pull request, because `release.yml` takes the release notes from `CHANGELOG.md` at the commit it tags, and D26 puts the documentation no later than the first phase that calls monoes.me implicitly. This plan alone must not be pushed; the one exception is Task 5b, which changes only the signing and may have merged on its own before R. B5d (the license) is independent and not part of R.
 
-- [ ] **Step 7: The release workflow cannot ship the tag.** `grep -n 'devaccount' .github/workflows/release.yml` prints only the lines of the `release-guard` job (B5c adds nothing to `release.yml`); `grep -n -e 'go build' -e 'wails build' .github/workflows/release.yml | grep -c devaccount` prints `0`.
+- [ ] **Step 7: The release workflow cannot ship the tag.** `grep -n 'devaccount' .github/workflows/release.yml` prints only the lines of the `release-guard` job (B5c adds nothing to `release.yml`); `grep -n -e 'go build' -e 'wails build' .github/workflows/release.yml | grep -c devaccount` prints `0`. Every macOS signature carries the hardened runtime: `grep -n 'codesign --force' .github/workflows/release.yml` prints four lines, each with `--options runtime` (Task 5b), and Task 5b's smoke test of a signed release has been done.
 
 - [ ] **Step 8: Releasing.** The `release` job waits for the owner's approval in its environment: approve only with `release-guard` green. After publication, check the real assets once more and try the update path on the owner's own machine:
 
 ```
 gh release download <tag> -R monoes/mono-agent -D "${TMPDIR:-/tmp}/r-assets"
 bash scripts/check-release-tags.sh --min 11 "${TMPDIR:-/tmp}/r-assets"
+codesign -dv "${TMPDIR:-/tmp}/r-assets/monoagentcli-darwin-arm64" 2>&1 | grep -o 'flags=0x[0-9a-f]*([^)]*)'
 monoagentcli update
 monoagentcli doctor --check services.daemon
 ```
-Expected: `none carries the devaccount tag` (the checksum file and the extension zip hold no Go binary and are skipped); `update` prints the update line and, when a daemon is running, the sentence of Task 4 (restarted, or why not); the doctor row is `ok`, or `warn` naming the old version when the update could not restart the daemon (the first update to R is made by the pre-R binary).
+Expected: `none carries the devaccount tag` (the checksum file and the extension zip hold no Go binary and are skipped); `flags=0x10002(adhoc,runtime)` (Task 5b; `codesign` is macOS's, so run this on a Mac); `update` prints the update line and, when a daemon is running, the sentence of Task 4 (restarted, or why not); the doctor row is `ok`, or `warn` naming the old version when the update could not restart the daemon (the first update to R is made by the pre-R binary).
 
 ## Acceptance coverage
 
@@ -1473,11 +2073,11 @@ The real-binary smoke is B5c's (spec A12), so the end-to-end proof of items 1 to
 |---|---|
 | 1. After the date, with no valid session, every gated command exits 4 with `login_required` and does nothing else, and every door refuses | B5c: a machine with no session after the date (a command that would write is refused and leaves HOME empty, an open command works, a sign-in opens it, a logout closes it) and a daemon that starts locked with every door refusing; B2's gate tests and B3b's door tests. B5a: Task 7 makes sure the project's own real-binary consumers are not locked out by it. |
 | 2. Signed in, then blocked: locked within one refresh interval, work in flight cancelled | B5c: the fake answers `invalid_grant`, the run ends `CANCELLED`, the heartbeat says `locked`/`refused`, `refresh.enc` is deleted, the daemon stays up and resumes after one sign-in; B3a's cancel-on-refusal tests. |
-| 3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes | B5c: an outage gives grace with its stderr line, then a token aged past 24 hours gives `locked(expired)` while the job in flight finishes; a 500, `invalid_client`, `invalid_target` or a page that is not JSON keeps the grace (D27). |
+| 3. Signed in, monoes.me unreachable: works until 24 hours after the newest token was issued, then locked; work in flight at that moment finishes the node it is in, and a run ends at its next node (ruling R4) | B5c: an outage gives grace with its stderr line, then a token aged past 24 hours gives `locked(expired)` while the one-node job in flight finishes; B3a's Task 3b ends a run with a next node there; a 500, `invalid_client`, `invalid_target` or a page that is not JSON keeps the grace (D27). |
 | 4. Before the date nothing locks, and once a date is set every surface warns | `TestEnforcedFlipsAtTheDate` and `TestTheClockGuardCannotPostponeTheDate` (Task 2), the whole suite run with the date set (Task 2 Step 5), the rehearsal with the date in the past (Task 7 Step 5), and B5c's warn-period scenario (the stderr line once and never on stdout, `account status`, the doctor row, the heartbeat, work runs). |
 | 5. A release binary built with the `devaccount` tag cannot ship | `scripts/check-release-tags-test.sh` (tagged and untagged, loose, in a tarball, in a zip, `--min`), run by the CI job `release-guard-test`; the `release-guard` job on every artifact before the approval gate (Task 5); Task 8 Steps 7 and 8. |
 
-Other spec items: §8 and D9 (release R, the date, the limits, the warn period) are Tasks 1, 2, 7 and 8; D28 and §8 step 5 (the daemon restart and its doctor flag) are Tasks 3 and 4; §8 step 3 and D23 (an older library login adopted on the first run, once) are Task 6; §9 and D11 (developers, CI, the release guard) are Tasks 5 and 7; D22 (dormant until R) is Task 2's suite run and Task 8 Step 1; §11's release guard is Task 5 (the rest of §11, the real-binary smoke and the signed-in path through every entry point, is B5c's).
+Other spec items: §8 and D9 (release R, the date, the limits, the warn period) are Tasks 1, 2, 7 and 8; D28 and §8 step 5 (the daemon restart and its doctor flag) are Tasks 3 and 4, and A24's stop time for a daemon is Task 4b; §8 step 3 and D23 (an older library login adopted on the first run, once) are Task 6; §9 and D11 (developers, CI, the release guard) are Tasks 5 and 7; §4.8's per-process clock on macOS (the hardened runtime) is Task 5b; D22 (dormant until R) is Task 2's suite run and Task 8 Step 1; §11's release guard is Task 5 (the rest of §11, the real-binary smoke and the signed-in path through every entry point, is B5c's).
 
 ## Contract change requests
 

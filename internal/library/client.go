@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/account"
 )
 
 // MaxArtifactBytes caps a download (the library accepts at most 20 MB).
@@ -34,13 +36,17 @@ type TokenStore interface {
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
-	Store   TokenStore // nil: anonymous only
+	Store   TokenStore // the profile's own login (a release before the machine session); nil: none
+	// Session is the machine-wide monoes.me session (spec D21). It is used before
+	// Store, and only for its own host; nil: Store alone.
+	Session SessionSource
 	Now     func() time.Time
 
-	mu     sync.Mutex
-	token  *Token
-	loaded bool
-	oauth  *oauthMeta
+	mu      sync.Mutex
+	token   *Token
+	loaded  bool
+	session *Token // the session token last handed out
+	oauth   *account.OAuthEndpoints
 }
 
 // NewClient returns a client for baseURL ("" = BaseURL()). Tokens only ever
