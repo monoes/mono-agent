@@ -20,9 +20,10 @@ import (
 // taskSetup says how a fixture differs from the usual one: a server of the default profile with
 // mutations allowed.
 type taskSetup struct {
-	readOnly bool   // without --allow-mutations
-	active   bool   // started without --profile: the server serves the active profile
-	profile  string // the profile it is started with, by id or name (default "default")
+	readOnly  bool   // without --allow-mutations
+	active    bool   // started without --profile: the server serves the active profile
+	profile   string // the profile it is started with, by id or name (default "default")
+	tasksOnly bool   // with --tasks-only
 }
 
 // taskFixture is a server of the task tools, a second handle on its database and the store over
@@ -61,7 +62,7 @@ func (f *taskFixture) server(ts taskSetup, suffix string) *Server {
 	}
 	s := NewServer(Options{
 		DBPath: f.DBPath, Profile: profile, WorkflowsDir: filepath.Join(f.t.TempDir(), "workflows"), Version: "test",
-		AllowMutations: !ts.readOnly,
+		AllowMutations: !ts.readOnly, TasksOnly: ts.tasksOnly,
 	})
 	s.actorSuffix = suffix
 	f.t.Cleanup(s.closeRuntime)

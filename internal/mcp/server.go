@@ -74,6 +74,14 @@ type Options struct {
 	// api_config_set and api_auto_set are still AllowAPIExposure. Also
 	// settable via MONOAGENT_MCP_API_ONLY=="1". Grant mode ignores it.
 	APIOnly bool
+	// TasksOnly serves the user's task board's tools (task_*) and no other: no
+	// workflow, vault, secret, person, org, API or documentation tool, so that an
+	// agent that is to work the board through this server has nothing to run a
+	// command with, which AllowMutations alone does not give. It takes tools away
+	// and changes none that stay: the verbs still need AllowMutations. Also
+	// settable via MONOAGENT_MCP_TASKS_ONLY=="1". Serve refuses it together with
+	// APIOnly; grant mode ignores it.
+	TasksOnly bool
 	// APIEnv is what the API tools (api_status, api_config_get/set/apply) read
 	// of this process: its environment, the daemon's heartbeat, the service
 	// manager (api_config_apply restarts the daemon through it) and the HTTP
@@ -147,6 +155,9 @@ func NewServer(opts Options) *Server {
 	if !opts.APIOnly {
 		opts.APIOnly = os.Getenv("MONOAGENT_MCP_API_ONLY") == "1"
 	}
+	if !opts.TasksOnly {
+		opts.TasksOnly = os.Getenv("MONOAGENT_MCP_TASKS_ONLY") == "1"
+	}
 	return &Server{opts: opts, actorSuffix: newActorSuffix()}
 }
 
@@ -171,6 +182,11 @@ func Run(opts Options) error {
 // nil when in reaches EOF.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	defer s.closeRuntime()
+	// Asked for two narrow families, by flags or by the environment, a server
+	// would serve neither: it refuses at once, reading nothing.
+	if s.opts.Grant == "" && s.opts.TasksOnly && s.opts.APIOnly {
+		return ErrTasksOnlyWithAPIOnly
+	}
 
 	// serveCtx is cancelled as soon as the read loop ends (client closed
 	// stdin) — handlers below receive it, so waitForExecution-style waits
@@ -425,6 +441,9 @@ func (s *Server) closeRuntime() {
 func (s *Server) instructions() string {
 	if s.opts.Grant != "" {
 		return "Tools here run automations your org granted you. Each call starts a workflow run; outputs are redacted and bounded."
+	}
+	if s.opts.TasksOnly {
+		return tasksOnlyInstructions
 	}
 	if s.opts.APIOnly {
 		return "Tools here manage the OpenAI-compatible API: its keys, its models, its status and its settings. Start with api_status or api_config_get."

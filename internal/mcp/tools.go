@@ -95,10 +95,10 @@ func callTool(ctx context.Context, s *Server, name string, args json.RawMessage)
 		}
 		return string(b), nil
 	}
-	if s.opts.APIOnly {
+	if s.opts.APIOnly || s.opts.TasksOnly {
 		for _, t := range allTools() {
 			if t.name == name {
-				return "", notServedByAPIOnly(name) // it exists, and this server does not serve it
+				return "", s.notServed(name) // it exists, and this server does not serve it
 			}
 		}
 	}

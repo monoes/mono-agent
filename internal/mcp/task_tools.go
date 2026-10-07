@@ -36,3 +36,13 @@ func (s *Server) taskBoard(ctx context.Context) (*tasks.Store, tasks.Profile, ta
 	}
 	return store, p, s.taskActor(), nil
 }
+
+// taskToolNames is the family by name: what a server started with --tasks-only
+// serves. A test keeps it and the tools whose names start with task_ in step.
+func taskToolNames() map[string]bool {
+	names := map[string]bool{}
+	for _, t := range taskTools() {
+		names[t.name] = true
+	}
+	return names
+}
