@@ -341,7 +341,9 @@ func serviceUnit(pid int) string {
 }
 
 // A cgroup may name a system service, or a child of a user service. Only
-// restart through the user manager when its MainPID is the bridge itself.
+// restart through the user manager when the unit's MainPID is the bridge
+// itself, or (a wrapper shell is MainPID) the bridge sits inside the unit's
+// own cgroup, which must belong to the user manager.
 func bridgeUserService(ctx context.Context, pid int, unit string) string {
 	if runtime.GOOS != "linux" || pid <= 0 || unit == "" {
 		return ""
@@ -349,11 +351,94 @@ func bridgeUserService(ctx context.Context, pid int, unit string) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=MainPID", "--value", "--", unit).Output()
-	if err != nil || strings.TrimSpace(string(out)) != strconv.Itoa(pid) {
+	if err != nil {
 		return ""
 	}
-	return unit
+	if strings.TrimSpace(string(out)) == strconv.Itoa(pid) {
+		return unit
+	}
+	out, err = exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ControlGroup", "--value", "--", unit).Output()
+	if err != nil {
+		return ""
+	}
+	group := strings.TrimSpace(string(out))
+	if !strings.Contains(group, "/user@") || filepath.Base(group) != unit {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/cgroup", procRoot, pid))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 && parts[2] == group {
+			if bridgeBelongsToUnit(ctx, pid, unit) {
+				return unit
+			}
+			return ""
+		}
+	}
+	return ""
 }
+
+// bridgeBelongsToUnit is true when the unit's MainPID is an ancestor of the
+// bridge, or the unit's ExecStart references the bridge's command. Sitting in
+// the unit's cgroup alone is not enough: a hand-started bridge can land in
+// another service's cgroup (e.g. a terminal server's).
+func bridgeBelongsToUnit(ctx context.Context, pid int, unit string) bool {
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=MainPID", "--value", "--", unit).Output()
+	if err != nil {
+		return false
+	}
+	if main, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && main > 0 && isAncestor(main, pid) {
+		return true
+	}
+	out, err = exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ExecStart", "--value", "--", unit).Output()
+	if err != nil {
+		return false
+	}
+	execStart := string(out)
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/cmdline", procRoot, pid))
+	if err != nil {
+		return false
+	}
+	args := strings.Split(strings.TrimRight(string(b), "\x00"), "\x00")
+	if len(args) > 2 {
+		args = args[:2]
+	}
+	for _, a := range args {
+		if a == "" || !strings.Contains(execStart, a) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAncestor reports whether anc is a (transitive) parent of pid, walking
+// PPid through procRoot.
+func isAncestor(anc, pid int) bool {
+	for i := 0; i < 64 && pid > 1; i++ {
+		b, err := os.ReadFile(fmt.Sprintf("%s/%d/status", procRoot, pid))
+		if err != nil {
+			return false
+		}
+		ppid := 0
+		for _, line := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(line, "PPid:"); ok {
+				ppid, _ = strconv.Atoi(strings.TrimSpace(v))
+				break
+			}
+		}
+		if ppid == anc {
+			return true
+		}
+		pid = ppid
+	}
+	return false
+}
+
+// procRoot is where /proc lives; tests point it at a temp dir.
+var procRoot = "/proc"
 
 func unitFromCgroup(cgroup string) string {
 	for _, line := range strings.Split(strings.TrimSpace(cgroup), "\n") {
