@@ -23,7 +23,7 @@
 - No profile known: nothing is added and the control says "Choose a profile first" (4.5, 11.1).
 - Feedback (11.1): "Added to Inbox in Work", or "Saved: will sync when MonoAgent is running". No `notifications` permission.
 - Manifest version 1.5.0 goes to 1.6.0 (11.5).
-- Files stay under 500 lines; new code goes in new files where the existing file is long (`background.js` 1,352 lines, `sidepanel.js` 1,203, `request.go` 488, `highlight_page.js` 479).
+- Files stay under 500 lines; new code goes in new files where the existing file is long (`background.js` 1,352 lines, `sidepanel.js` 1,203, `request.go` 488, `highlight_page.js` 479, P1's `ref_tasks_test.go` 497).
 - Shared documents get append-only edits (15.3): one row in P1's AGENTS.md surfaces table, one new SECURITY.md bullet before P1's `- **No HTTP route and no new port.** The task board does not listen on the network.` (left as it is), one CHANGELOG bullet.
 - Commits are `feat(tasks): ...` or `docs(tasks): ...`, each ending with the trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
 
@@ -54,6 +54,7 @@ Failure modes the spec implies and no happy-path test would catch; each has a te
 Create:
 - `internal/extension/task_add.go`: `task.add`, `CapturedTask`, `TaskAdded`, `TaskSink`, `SetTaskSink`. Test: `task_add_test.go`.
 - `cmd/monoagentcli/extension_tasks.go`: the sink over `internal/tasks`. Test: `extension_tasks_test.go`.
+- `cmd/monoagentcli/ref_tasks_chrome_test.go`: the `ref tasks` test of this phase, a file of its own because P1's `ref_tasks_test.go` is at the 500-line limit.
 - `chrome-extension/task_outbox.js`: the acked outbox (pure). Test: `task_outbox.test.mjs`.
 - `chrome-extension/task_bridge.js`: the worker's half (messages, sender checks, flush, alarm, feedback). Tests: `task_harness.mjs` (shared fakes), `task_bridge.test.mjs`.
 - `chrome-extension/task_menu.js`: the two menu items' clicks and the `add-task` shortcut. Test: `task_menu.test.mjs`.
@@ -62,7 +63,7 @@ Create:
 - `chrome-extension/sidepanel_tasks.js`: the side panel's "Add a task" section. Test: `sidepanel_tasks.test.mjs`.
 
 Modify:
-- `cmd/monoagentcli/extension_serve.go` (one line), `cmd/monoagentcli/ref_tasks.go` and `ref_tasks_test.go`.
+- `cmd/monoagentcli/extension_serve.go` (one line) and `cmd/monoagentcli/ref_tasks.go`.
 - `chrome-extension/ask.js` (`known()`), `capture_queue.js` (the badge counts tasks), `capture_bridge.js` (`toast` exported), `capture_modes.js` (two menu items), `background.js` (wiring), `manifest.json`, `highlight_page.js`, `highlight_page.browser.test.mjs`, `highlight_page.fixtures.mjs`, `sidepanel.html`, `sidepanel.css`, `sidepanel.js` (two one-line events), `sidepanel_view.js`, and the tests `ask.test.mjs`, `capture_queue.test.mjs`, `capture_modes.test.mjs`, `sidepanel_view.test.mjs`.
 - `README.md`, `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, the spec (11.1 amended, a section 11.6 "As built").
 
@@ -84,6 +85,7 @@ Modify:
 - Ruling: `add()` drops a page title that is only the page's address (`MonoTaskBridge.pageTitle`: one call in the funnel every way in goes through, not one at each place a tab's title is read) - Chrome gives a page with no `<title>` its address as the title, query string included, and only the URL passes the sanitizer, so a session token would reach the task, and `chrome.storage`, through `tab.title`; the sink then names the page by its sanitized address - a title is only the address when it starts with a scheme, or is the page's host (port kept, `www.` ignored) alone or followed by `/`, `?` or `#`; the host only, not host and path, so a title left from before a single-page app moved on is caught and no path escape has to be matched, while a title that merely mentions the host, or starts with it and goes on in words, stays - this behaviour of Chrome is not verified here (no browser), and where Chrome does not behave so the rule is harmless: only a title shaped like an address is dropped, and the task is named by that address; a host that is not plain ASCII is not recognised (the tab's URL has it in punycode, Chrome shows it in Unicode).
 - Ruling: opening the floating panel (the `mouseup`) and every button on it need `isTrusted === true`; closing it (Escape, a press outside) takes any event - a page's script can then only close the panel; a real click the page baits by moving or covering it is still the person's, and adds only an Inbox task the operator reads - the security text claims no more than that.
 - Ruling: the panel's shell moves to a new content script, `highlight_panel.js`, loaded before `highlight_page.js`; `panel()`, `button()` and `dismiss()` stay as one-line wrappers; the menu and the shortcut live in `task_menu.js` - testable in node, and `highlight_page.js` and `task_bridge.js` stay under 500 lines - two more files.
+- Ruling: the `ref tasks` test of this phase goes in a new file, `cmd/monoagentcli/ref_tasks_chrome_test.go`, not appended to P1's `ref_tasks_test.go` - that file is 497 lines and the limit is 500 - it is in package `main` like P1's two ref test files, so their helpers (`refSection`, `refNames`, `refStates`) are in reach, and P2 and P5 write theirs the same way.
 - Ruling: the extension says MonoAgent "needs updating" only when the bridge answered `ping` without `task.add` (`ask.js` gains `known()`); an unanswered probe is offline, so a daemon older than the request channel itself looks offline too - `probe()` answers `[]` in both cases - that oldest daemon gets "will sync" instead of "update".
 
 ---
@@ -119,8 +121,8 @@ Run each and compare:
 
 - [ ] **Step 3: P1's documents this phase appends to**
 
-Run: `grep -n '^COLUMNS$\|^WHO MAY DO WHAT$' cmd/monoagentcli/ref_tasks.go`, `grep -n 'func TestRefTasksNamesTheGateTheLoopAndTheProfile' cmd/monoagentcli/ref_tasks_test.go`, `grep -n '^| Surface | Reaches the board through |$\|^| Session-start hook |' AGENTS.md`, `grep -n -F -- '- **No HTTP route and no new port.** The task board does not listen on the network.' SECURITY.md`, `grep -n '^## \[Unreleased\]' CHANGELOG.md`.
-Expected: each finds its line (the AGENTS.md table is the last thing in P1's `## Task board` section).
+Run: `grep -n '^COLUMNS$\|^WHO MAY DO WHAT$' cmd/monoagentcli/ref_tasks.go`, `ls cmd/monoagentcli/ref_tasks_test.go cmd/monoagentcli/ref_tasks_gate_test.go`, `grep -n '^| Surface | Reaches the board through |$\|^| Session-start hook |' AGENTS.md`, `grep -n -F -- '- **No HTTP route and no new port.** The task board does not listen on the network.' SECURITY.md`, `grep -n '^## \[Unreleased\]' CHANGELOG.md`.
+Expected: each finds its line or file (the AGENTS.md table is the last thing in P1's `## Task board` section; the two test files are P1's ref tests, which the new `FROM CHROME` text has to pass and to which this phase appends nothing).
 
 - [ ] **Step 4: The existing anchors this plan edits**
 
@@ -4151,18 +4153,27 @@ git commit -m "feat(tasks): Add a task in the extension's side panel" -m "Co-Aut
 ### Task 8: Documents, and the whole phase verified
 
 **Files:**
-- Modify: `cmd/monoagentcli/ref_tasks.go`, `cmd/monoagentcli/ref_tasks_test.go`, `README.md`, `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, `docs/mastermind/specs/2026-10-05-task-board-design.md`
+- Create: `cmd/monoagentcli/ref_tasks_chrome_test.go` (a new file: P1's `ref_tasks_test.go` is at the 500-line limit, so nothing is appended to it)
+- Modify: `cmd/monoagentcli/ref_tasks.go`, `README.md`, `AGENTS.md`, `SECURITY.md`, `CHANGELOG.md`, `docs/mastermind/specs/2026-10-05-task-board-design.md`
 - No other source file changes, unless a check below fails and the fix belongs to an earlier task.
 
 **Interfaces:**
-- Consumes: everything above; P1's `refTasksText` (`cmd/monoagentcli/ref_tasks.go`, a raw string with the headings `COLUMNS` and `WHO MAY DO WHAT`) and its `TestRefTasksNamesTheGateTheLoopAndTheProfile`; P1's AGENTS.md surfaces table (header `| Surface | Reaches the board through |`, last row `| Session-start hook | ... |`, the end of the `## Task board` section); P1's SECURITY.md bullet `- **No HTTP route and no new port.** The task board does not listen on the network.`
+- Consumes: everything above; P1's `refTasksText` (`cmd/monoagentcli/ref_tasks.go`, a raw string with the headings `COLUMNS` and `WHO MAY DO WHAT`) and P1's tests of it (`ref_tasks_test.go` and `ref_tasks_gate_test.go`, package `main`: the new text has to pass them, and a test file of this phase can use their helpers, such as `refSection`); P1's AGENTS.md surfaces table (header `| Surface | Reaches the board through |`, last row `| Session-start hook | ... |`, the end of the `## Task board` section); P1's SECURITY.md bullet `- **No HTTP route and no new port.** The task board does not listen on the network.`
 - Produces: the section 15.2 documents for this phase, each an append-only edit to a shared file (P2, P3 and P5 edit the same files; spec 15.3), and the evidence the PR description quotes.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `cmd/monoagentcli/ref_tasks_test.go`:
+Create `cmd/monoagentcli/ref_tasks_chrome_test.go`. It is a new file of package `main`, beside P1's `ref_tasks_test.go` and `ref_tasks_gate_test.go`, whose helpers it could use (it needs none); nothing is appended to P1's files, since `ref_tasks_test.go` is at the 500-line limit.
 
 ```go
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// `ref tasks` says where a task from the Chrome extension lands (task board spec 11, 15.2).
 func TestRefTasksSaysWhereChromeTasksLand(t *testing.T) {
 	for _, want := range []string{"FROM CHROME", "MonoAgent Bridge", "Saving into", "Inbox"} {
 		if !strings.Contains(refTasksText, want) {
@@ -4252,7 +4263,7 @@ In `docs/mastermind/specs/2026-10-05-task-board-design.md`:
 - [ ] **Step 8: Commit the documents**
 
 ```
-git add cmd/monoagentcli/ref_tasks.go cmd/monoagentcli/ref_tasks_test.go README.md AGENTS.md SECURITY.md CHANGELOG.md docs/mastermind/specs/2026-10-05-task-board-design.md
+git add cmd/monoagentcli/ref_tasks.go cmd/monoagentcli/ref_tasks_chrome_test.go README.md AGENTS.md SECURITY.md CHANGELOG.md docs/mastermind/specs/2026-10-05-task-board-design.md
 ```
 then
 ```
