@@ -599,6 +599,28 @@ export function SwitchProfile(arg1:string):Promise<void>;
 
 export function TagApplication(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function TaskAdd(arg1:string):Promise<string>;
+
+export function TaskAgentShell():Promise<string>;
+
+export function TaskApprove(arg1:Array<number>,arg2:boolean):Promise<string>;
+
+export function TaskArchive(arg1:Array<number>):Promise<string>;
+
+export function TaskBoard(arg1:number):Promise<string>;
+
+export function TaskComment(arg1:number,arg2:string):Promise<string>;
+
+export function TaskEdit(arg1:number,arg2:string):Promise<string>;
+
+export function TaskMove(arg1:number,arg2:string,arg3:string,arg4:number):Promise<string>;
+
+export function TaskPulse():Promise<Record<string, any>>;
+
+export function TaskShow(arg1:number):Promise<string>;
+
+export function TaskUnarchive(arg1:Array<number>):Promise<string>;
+
 export function TestAutomation(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function TestConnection(arg1:string):Promise<string>;
