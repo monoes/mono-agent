@@ -344,6 +344,14 @@ func waitForGrantRun(ctx context.Context, rt *runtime, id string, tool *orggrant
 		case <-time.After(grantPollInterval):
 		}
 	}
+	// Measured before the final read, which is not waiting, and never more
+	// than the tool's limit when the limit ended the wait: a slow machine
+	// must not report a 1s limit as "waited 2s".
+	waited := time.Since(start)
+	if limit := time.Duration(tool.Timeout) * time.Second; ctx.Err() == nil && waited > limit {
+		waited = limit
+	}
+	waited = waited.Round(time.Second)
 	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), grantFinalReadTimeout)
 	defer rcancel()
 	view, final, err := executionView(rctx, rt, id, tool.MaxOutputBytes)
@@ -353,7 +361,6 @@ func waitForGrantRun(ctx context.Context, rt *runtime, id string, tool *orggrant
 	if final {
 		return view, nil
 	}
-	waited := time.Since(start).Round(time.Second)
 	if ctx.Err() != nil {
 		view["note"] = fmt.Sprintf("still running after %s; the call stopped waiting because the client closed the connection; check it with automation_status", waited)
 	} else {

@@ -33,10 +33,15 @@
 // Design / Live / Grants switches the centre between the editable canvas,
 // the same canvas recoloured from the org's bus (U15), and the grants matrix.
 
+import { designMeta, sectionsOrgEnabled } from './sectionsRuntimes.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, Search, SlidersHorizontal, ChevronLeft, ChevronRight, Workflow } from 'lucide-react'
 import { api, onOrgDesignUpdated, notify } from '../../services/api.js'
 import { hydrate, tidyTree, validateStructure, buildTree, wouldCycle } from './orgGraph.js'
+import { withSectionErrors, layOutSections, parseSections, sectionsEnabled, documentEdges } from './sectionsGraph.js'
+import useOrgSections from './useOrgSections.js'
+import { SectionInspector, RoleSectionControls } from './SectionInspector.jsx'
+import NamePrompt from './NamePrompt.jsx'
 import { suggestIcon, loadIconManifest, CATEGORY_TYPE, iconUrl } from './roleIcons.js'
 import OrgCanvas from './OrgCanvas.jsx'
 import RolePalette from './RolePalette.jsx'
@@ -53,6 +58,8 @@ import OrgSignatureBanner from '../orgs/OrgSignatureBanner.jsx'
 import { isAutomationNode } from './RoleNode.jsx'
 import useOrgAutomations from './useOrgAutomations.js'
 import useOrgActivity from './useOrgActivity.js'
+import useOrgBudget from './useOrgBudget.js'
+import { bySection, roleBudgets } from './budgetModel.js'
 
 const EDGE_STYLE_KEY = 'od-edge-style'
 const PALETTE_PANEL_OPEN_KEY = 'od-palette-panel-open'
@@ -151,11 +158,11 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     if (!keepSelection) setLoading(true)
     const res = await api.getOrgDesign(orgName)
     if (!res || !res.org) { setOrgMeta(null); setNodes([]); setLoading(false); return }
-    const { roles, ...meta } = res.org
-    setOrgMeta(meta)
+    const { roles } = res.org
+    setOrgMeta(designMeta(res))
     revRef.current = res.rev ?? null
     let hydrated = await hydrateWithIcons(roles || [])
-    hydrated = layOutMissingPositions(hydrated)
+    hydrated = layOutMissingPositions(hydrated, res.org.sections)
     setNodes(hydrated)
     if (!keepSelection) setSelectedId(null)
     setLoading(false)
@@ -186,8 +193,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       setNodes([])
       return
     }
-    const { roles, ...meta } = payload.org
-    setOrgMeta(meta)
+    const { roles } = payload.org
+    setOrgMeta(designMeta(payload))
 
     const incoming = await hydrateWithIcons(roles || [])
     const now = Date.now()
@@ -212,7 +219,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
           _isNew: false,
         }
       })
-      return layOutMissingPositions(next)
+      return layOutMissingPositions(next, payload.org.sections)
     })
   }, [])
 
@@ -235,7 +242,6 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   // carries full-access taint problems) merged into the structural checks.
   const rolesAccess = useRolesAccess(orgName, configStamp)
   const cliValidation = useOrgValidateReport(orgName, configStamp)
-  const validation = useMemo(() => mergeValidation(validateStructure(nodes), cliValidation), [nodes, cliValidation])
   const fullAccessByRole = useMemo(() => withNotGranted(rolesAccess.byRole, cliValidation.unacknowledged), [rolesAccess.byRole, cliValidation.unacknowledged])
 
   // ── Selection / persistence helpers ──────────────────────────────────
@@ -243,18 +249,44 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     if (!res) return
     if (res.rev != null) revRef.current = res.rev
     if (res.org) {
-      const { roles, ...meta } = res.org
-      setOrgMeta(meta)
+      const { roles } = res.org
+      setOrgMeta(designMeta(res))
       const incoming = await hydrateWithIcons(roles || [])
-      setNodes(prev => {
-        const prevById = new Map(prev.map(n => [n.id, n]))
-        return layOutMissingPositions(incoming.map(n => {
-          const old = prevById.get(n.id)
-          return old ? { ...n, x: old.x, y: old.y } : n
-        }))
-      })
+      const prevById = new Map(nodesRef.current.map(n => [n.id, n]))
+      const next = layOutMissingPositions(incoming.map(n => {
+        const old = prevById.get(n.id)
+        return old ? { ...n, x: old.x, y: old.y } : n
+      }), res.org.sections)
+      // Section drag/delete handlers place roles after awaiting this refresh.
+      // React may batch the render until those handlers finish, so publish
+      // the new semantics to the ref before their layout-only changes.
+      nodesRef.current = next
+      setNodes(next)
     }
   }, [])
+
+  // ── Canvas node drag → debounced layout save ──────────────────────────
+  const handleNodesChange = useCallback((updated) => {
+    setNodes(updated)
+    for (const n of updated) {
+      dirtyLayoutRef.current.set(n.id, { x: n.x, y: n.y, icon: n.icon || '', color: n.color || '' })
+    }
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current)
+    layoutSaveTimerRef.current = setTimeout(async () => {
+      if (!orgName || dirtyLayoutRef.current.size === 0) return
+      const layout = Object.fromEntries(dirtyLayoutRef.current)
+      dirtyLayoutRef.current = new Map()
+      const res = await api.saveOrgLayout(orgName, layout)
+      if (res?.rev != null) revRef.current = res.rev
+    }, LAYOUT_SAVE_DEBOUNCE_MS)
+  }, [orgName])
+
+  // ── Sections (useOrgSections.js): membership by drop, section edits ─────────
+  const sec = useOrgSections({
+    orgName, orgMeta, nodes, nodesRef, selectedId, setSelectedId, setInspectorOpen,
+    refreshFromServer, onNodesChange: handleNodesChange,
+  })
+  const validation = useMemo(() => mergeValidation(withSectionErrors(validateStructure(nodes), nodes, sec.list), cliValidation), [nodes, cliValidation, sec.list])
 
   // ── Palette → canvas: add a role ─────────────────────────────────────
   const addRoleFromArchetype = useCallback(async (item, worldX, worldY, droppedOnNodeId) => {
@@ -267,10 +299,10 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       responsibilities: [],
       ui: { x: worldX, y: worldY, icon: item.id },
     }
-    const res = await api.addOrgRole(orgName, role)
+    const res = await sec.createRole(role, droppedOnNodeId, { x: worldX, y: worldY })
     if (!res || res.error) { notify('add role', res?.error || 'failed to add role'); return }
     refreshFromServer(res)
-  }, [orgName, refreshFromServer])
+  }, [orgName, refreshFromServer, sec.createRole]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // resolveDefaultParent picks reports_to for a new role when the caller
   // didn't drop it directly onto an existing card: an explicit target wins,
@@ -312,17 +344,18 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       responsibilities: [],
       ui: { x, y, icon: 'coder' },
     }
-    const res = await api.addOrgRole(orgName, role)
+    const res = await sec.createRole(role, anchor?.id || null, null)
     if (!res || res.error) { notify('add role', res?.error || 'failed to add role'); return }
     refreshFromServer(res)
     // Select the freshly created role so the inspector opens on it right
     // away — the whole point of "define a role directly" is to land in
     // edit mode, not just drop a placeholder card on the canvas.
     if (res.org?.roles) {
-      const created = res.org.roles.find(r => r.title === 'New Role' && r.reports_to === parentId)
+      const known = new Set(nodesRef.current.map(n => n.id))
+      const created = res.org.roles.find(r => r.title === 'New Role' && (sec.on ? !known.has(r.id) : r.reports_to === parentId))
       if (created) setSelectedId(created.id)
     }
-  }, [orgName, selectedId, resolveDefaultParent, refreshFromServer])
+  }, [orgName, selectedId, resolveDefaultParent, refreshFromServer, sec.createRole, sec.on]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const isOverCanvas = useCallback((clientX, clientY) => {
     const el = canvasOuterRef.current
@@ -398,24 +431,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     }
   }, [addRoleFromArchetype, handleAutomationDrop, isOverCanvas])
 
-  // ── Canvas node drag → debounced layout save ──────────────────────────
-  const handleNodesChange = useCallback((updated) => {
-    setNodes(updated)
-    for (const n of updated) {
-      dirtyLayoutRef.current.set(n.id, { x: n.x, y: n.y, icon: n.icon || '', color: n.color || '' })
-    }
-    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current)
-    layoutSaveTimerRef.current = setTimeout(async () => {
-      if (!orgName || dirtyLayoutRef.current.size === 0) return
-      const layout = Object.fromEntries(dirtyLayoutRef.current)
-      dirtyLayoutRef.current = new Map()
-      const res = await api.saveOrgLayout(orgName, layout)
-      if (res?.rev != null) revRef.current = res.rev
-    }, LAYOUT_SAVE_DEBOUNCE_MS)
-  }, [orgName])
-
-  const handleNodeDragStart = useCallback(() => { isInteractingRef.current = true }, [])
-  const handleNodeDragEnd = useCallback(() => { endInteraction() }, [endInteraction])
+  const handleNodeDragStart = useCallback((id) => { isInteractingRef.current = true; sec.onDragStart(id) }, [sec.onDragStart]) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleNodeDragEnd = useCallback(async (id) => { await sec.onDragEnd(id); endInteraction() }, [endInteraction, sec.onDragEnd]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reports-to edge drag ───────────────────────────────────────────────
   const handlePendingEdgeStart = useCallback((childId, sx, sy) => {
@@ -437,9 +454,9 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     endInteraction()
     if (!orgName || childId === parentId) return
     const res = await api.setOrgRoleReportsTo(orgName, childId, parentId || '')
-    if (!res || res.error) { notify('set reports to', res?.error || 'failed'); return }
+    if (!res || res.error) { notify('set reports to', res?.error || 'failed'); if (sec.on) sec.say(res?.error || 'failed'); return }
     refreshFromServer(res)
-  }, [orgName, refreshFromServer, endInteraction])
+  }, [orgName, refreshFromServer, endInteraction, sec.on, sec.say])
 
   const handleEdgeCycleRejected = useCallback((childId, parentId) => {
     setPendingEdgeRaw(null)
@@ -460,6 +477,12 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     const res = await api.updateOrgRole(orgName, roleId, patch)
     if (!res || res.error) { notify('update role', res?.error || 'failed to update role'); return }
     refreshFromServer(res)
+  }, [orgName, refreshFromServer])
+
+  const handleSetSchedule = useCallback(async (schedule) => {
+    const res = await api.setOrgSchedule(orgName, schedule)
+    if (res && !res.error) refreshFromServer(res)
+    return res
   }, [orgName, refreshFromServer])
 
   // Reports-to is NOT one of UpdateOrgRole's patchable fields (see the Go
@@ -548,6 +571,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   useEffect(() => { setLiveSource('live'); setViewMode('design') }, [orgName])
 
   const activity = useOrgActivity({ orgName, nodes, enabled: viewMode === 'live', source: liveSource })
+  const budget = useOrgBudget({ orgName, enabled: viewMode === 'live' && sec.on, run: liveSource === 'live' ? '' : liveSource, live: liveSource === 'live' })
   const engineOffline = automationData.daemonRunning === false
 
   // ── Icon picker ─────────────────────────────────────────────────────────
@@ -568,12 +592,14 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   }
   const handleTidy = useCallback(async () => {
     if (!orgName) return
-    const tidied = tidyTree(nodesRef.current)
+    const tidied = sec.on
+      ? layOutSections(nodesRef.current.map(n => ({ ...n, x: undefined, y: undefined })), sec.list)
+      : tidyTree(nodesRef.current)
     setNodes(tidied)
     const layout = Object.fromEntries(tidied.map(n => [n.id, { x: n.x, y: n.y, icon: n.icon || '', color: n.color || '' }]))
     const res = await api.saveOrgLayout(orgName, layout)
     if (res?.rev != null) revRef.current = res.rev
-  }, [orgName])
+  }, [orgName, sec.on, sec.list])
 
   const subordinateCounts = useMemo(() => {
     const { childrenOf } = buildTree(nodes)
@@ -599,6 +625,9 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <DesignerToolbar
         orgName={orgName}
+        schedule={orgMeta?.schedule}
+        sectionsOrg={sectionsOrgEnabled(orgMeta)}
+        onSetSchedule={handleSetSchedule}
         validation={validation}
         pendingUpdateCount={pendingUpdateCount}
         onApplyPending={endInteraction}
@@ -609,6 +638,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
         onLiveSource={setLiveSource}
         live={activity}
         onAddRole={addCustomRole}
+        onAddSection={sec.openAddSection}
         onTidy={handleTidy}
         edgeStyle={edgeStyle}
         onToggleEdgeStyle={() => setEdgeStylePersist(edgeStyle === 'bezier' ? 'elbow' : 'bezier')}
@@ -696,7 +726,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               edgeStyle={edgeStyle}
               selectedId={selectedId}
               onSelectNode={handleSelectNode}
-              onCanvasClick={() => setSelectedId(null)}
+              onCanvasClick={() => { setSelectedId(null); sec.selectSection(null) }}
               onNodesChange={handleNodesChange}
               onNodeDragStart={handleNodeDragStart}
               onNodeDragEnd={handleNodeDragEnd}
@@ -713,6 +743,15 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               engineOffline={engineOffline}
               onAutomationDrop={handleAutomationDrop}
               fullAccessByRole={fullAccessByRole}
+              sections={sec.list}
+              selectedSection={sec.selected?.name || null}
+              onSelectSection={sec.selectSection}
+              onAddDocEdge={sec.openAddEdge}
+              onRemoveDocEdge={sec.removeEdge}
+              sectionIssues={sec.issues}
+              sectionBudgets={isLive ? bySection(budget.report) : {}}
+              roleCaps={isLive ? roleBudgets(budget.report) : {}}
+              staleRates={isLive ? budget.estimate?.stale_rates || '' : ''}
             />
           )}
         </div>
@@ -723,6 +762,27 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               Collapse <ChevronRight size={11} />
             </button>
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+              {sec.selected ? (
+                <SectionInspector
+                  section={sec.selected}
+                  budget={isLive ? bySection(budget.report)[sec.selected.name] : null}
+                  nodes={nodes}
+                  sections={sec.list}
+                  edges={documentEdges(sec.list)}
+                  onUpdate={(patch) => sec.update(sec.selected.name, patch)}
+                  onPatchRole={handlePatch}
+                  onRemoveEdge={sec.removeEdge}
+                  onDelete={(moveTo) => sec.remove(sec.selected.name, moveTo)}
+                />
+              ) : (<>
+              {sec.on && (
+                <RoleSectionControls
+                  node={selectedNode}
+                  sections={sec.list}
+                  onAssign={(section) => sec.assign(selectedId, section)}
+                  onMakeLead={(section) => sec.update(section, { lead: selectedId })}
+                />
+              )}
               <RoleInspector
                 node={selectedNode}
                 allNodes={nodes}
@@ -741,8 +801,10 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
                 fullAccess={selectedId ? fullAccessByRole[selectedId] || null : null}
                 orgRuntime={orgMeta?.runtime || ''}
+                sectionsOrg={sectionsOrgEnabled(orgMeta)}
                 onAccessChanged={() => { rolesAccess.refresh(); cliValidation.refresh() }}
               />
+              </>)}
             </div>
           </div>
         ) : (
@@ -756,6 +818,20 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
         )}
       </div>
 
+      {sec.prompt && (
+        <NamePrompt
+          key={sec.prompt.kind + (sec.prompt.from || '')}
+          title={sec.prompt.kind === 'section' ? 'New section' : `Document from ${sec.prompt.from} to ${sec.prompt.to}`}
+          hint={sec.prompt.kind === 'section'
+            ? (sec.on ? 'The selected role moves into the new section.' : 'The first section takes every non-root role; the selected role leads it.')
+            : 'Document type: lowercase letters, digits and "-". The root routes it between the sections.'}
+          initial={sec.prompt.kind === 'section' ? sec.suggestName() : ''}
+          submitLabel={sec.prompt.kind === 'section' ? 'Create section' : 'Add edge'}
+          error={sec.prompt.error || ''}
+          onSubmit={sec.submitPrompt}
+          onCancel={() => sec.setPrompt(null)}
+        />
+      )}
       <IconPickerModal
         open={!!iconPickerFor}
         currentIconId={iconPickerNode?.icon}
@@ -832,9 +908,11 @@ function panelStripStyle(borderSide) {
 // user has already placed by hand. Simple approach: if ANY node is missing
 // a position, tidy the whole tree once (cheap for typical org sizes) but
 // only overwrite x/y on the nodes that were actually missing one.
-function layOutMissingPositions(nodes) {
+function layOutMissingPositions(nodes, sectionsObj) {
   const missing = nodes.filter(n => typeof n.x !== 'number' || typeof n.y !== 'number')
   if (missing.length === 0) return nodes
+  const sectionList = parseSections(sectionsObj)
+  if (sectionsEnabled(sectionList)) return layOutSections(nodes, sectionList)
   const tidied = tidyTree(nodes)
   const tidiedById = new Map(tidied.map(n => [n.id, n]))
   return nodes.map(n => {

@@ -100,6 +100,7 @@ func Validate(d *Doc) error {
 	}
 
 	errs = append(errs, validateUnification(d)...)
+	errs = append(errs, validateSections(d)...)
 
 	if len(errs) > 0 {
 		return &ValidationError{Errors: errs}

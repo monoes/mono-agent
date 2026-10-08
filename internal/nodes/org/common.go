@@ -3,8 +3,11 @@ package org
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -117,4 +120,33 @@ func configInt(config map[string]interface{}, key string, def int) int {
 		return v
 	}
 	return def
+}
+
+// monomindOwnsSchedule reports whether this run is a workflow schedule firing
+// for an org that monomind's own `org serve` already schedules: the org has a
+// `schedule` and a live serve daemon for the root is the one firing it. One
+// scheduler owns each org, so the workflow's tick yields — starting it here
+// too would run the org twice per interval. A manual or event-triggered run
+// is an explicit request and is never skipped; with no live serve nothing
+// else fires the schedule, so the workflow stays the owner.
+func monomindOwnsSchedule(ctx context.Context, root, org string) bool {
+	if workflow.TriggerTypeFrom(ctx) != "trigger.schedule" {
+		return false
+	}
+	doc, err := orgdesign.Load(root, org)
+	if err != nil || !hasSchedule(doc.Schedule) {
+		return false
+	}
+	// monomind hands work to a serve whose heartbeat is up to 3 minutes old
+	// while its pid lives, so any live pid counts: a gap here double-fires.
+	return monomind.ServeMaybeLive(root)
+}
+
+// hasSchedule: monomind's schedule is a string or a number; null, "" and 0 mean none.
+func hasSchedule(raw json.RawMessage) bool {
+	switch s := strings.TrimSpace(string(raw)); s {
+	case "", "null", `""`, "0":
+		return false
+	}
+	return true
 }

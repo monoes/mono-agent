@@ -1,0 +1,6 @@
+bad: policy.git below 'push' runs the CLI's own sandbox on these roles — writes confined, but no per-tool gate and no .git deny rules: lead (codex: workspace-write), writer (codex: workspace-write), checker (codex: workspace-write)
+bad: sections.review.mode: no longer needed, remove it (every section is "execution")
+bad: #8 boss role "lead": its prompt does not require self-contained task briefs; workers resumed from a task session know nothing else
+bad: #21 documents.note: no checks declared, so a consumer's org_doc_check has nothing to run; measured, a consumer with per-answer evidence and checks caught 8 of 8 injected inconsistencies where one without caught 3 of 8 (0 of 4 wrong values) — add checks over the evidence the producer attaches (errors that agree with their own evidence still pass any check)
+bad: "loops": removed — sections exchange work only through documents; express a revise cycle with a consumer reject (the runtime relays it to the producer) and cap it with sections.<name>.max_rework_rounds — delete "loops" and move any max_rounds to max_rework_rounds of the producing section
+[ERROR] 1 of 1 org config(s) failed validation

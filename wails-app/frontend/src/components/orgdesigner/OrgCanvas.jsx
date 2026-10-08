@@ -103,6 +103,15 @@
 //   engineOffline    automation roles show the engine-offline warning
 //   onAutomationDrop(automation, worldX, worldY, droppedOnNodeId)
 //                     native-DnD fallback for automation drags from the drawer
+//
+// ── Sections (sectionsGraph.js / SectionLayer.jsx) ──────────────────────────
+//   sections         parsed sections (parseSections()); [] for a plain org —
+//                     then nothing below renders and behaviour is unchanged
+//   selectedSection  name of the selected section container, or null
+//   onSelectSection(name)
+//   onAddDocEdge(from, to)       a document edge was drawn between two headers
+//   onRemoveDocEdge(edge)        {type, from, to}
+//   sectionIssues    extra inline errors (section rules, refused drops)
 //   onViewportResize({width, height})
 //                     fired from a ResizeObserver on the canvas box — the
 //                     canvas re-renders on container resizes, not only on
@@ -119,6 +128,9 @@ import {
 import RoleNode from './RoleNode'
 import { roleActivity, RECENT_EDGE_MS } from './orgActivity.js'
 import { declaresFull } from './fullAccess.jsx'
+import { sectionRects, documentEdges } from './sectionsGraph.js'
+import { roleBadge } from './budgetModel.js'
+import { SectionBoxes, SectionEdges, useSectionDrags } from './SectionLayer.jsx'
 
 /** Curved message edge between two card centres, bowed so A→B and B→A separate. */
 export function messageEdgePath(a, b) {
@@ -173,6 +185,15 @@ export default function OrgCanvas({
   onAutomationDrop,
   onViewportResize,
   fullAccessByRole = {}, // role id -> `org status` roles_access entry (#205)
+  sections = [],
+  selectedSection = null,
+  onSelectSection,
+  onAddDocEdge,
+  onRemoveDocEdge,
+  sectionIssues = [],
+  sectionBudgets = {}, // section name -> org budget report entry (live view only)
+  roleCaps = {}, // role id -> org budget role entry (live view only)
+  staleRates = '', // monomind's own "stale rates" line, verbatim
 }) {
   const wrapperRef = useRef(null)
   const [measured, setMeasured] = useState({ width: 0, height: 0 })
@@ -185,9 +206,18 @@ export default function OrgCanvas({
 
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { cameraRef.current = camera }, [camera])
+  const sectionsRef = useRef(sections)
+  useEffect(() => { sectionsRef.current = sections }, [sections])
+  const secDrag = useSectionDrags({
+    wrapperRef, nodesRef, cameraRef, sectionsRef, onNodesChange, onNodeDragStart, onNodeDragEnd, onAddEdge: onAddDocEdge,
+  })
+  const rects = sectionRects(nodes, sections)
+  const docEdges = documentEdges(sections)
+  const leadIds = new Set(sections.map(s => s.leadId))
 
   const { childrenOf, depthOf, roots } = buildTree(nodes)
   const { valid, errors } = validateStructure(nodes)
+  const issues = [...errors, ...sectionIssues]
 
   const getViewport = useCallback(() => {
     if (viewportSize) return viewportSize
@@ -389,7 +419,7 @@ export default function OrgCanvas({
           and assumes it matches wrapperRef's rect 1:1. A flex-flow banner
           that pushes wrapperRef down would silently shift every subsequent
           drop's computed world position by the banner's height. */}
-      {!valid && errors.length > 0 && (
+      {(!valid || sectionIssues.length > 0) && issues.length > 0 && (
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5,
           // Opaque: the banner sits over the canvas, so a translucent
@@ -400,7 +430,7 @@ export default function OrgCanvas({
           padding: '6px 12px',
           display: 'flex', flexDirection: 'column', gap: 2,
         }}>
-          {errors.map((err, i) => (
+          {issues.map((err, i) => (
             <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)' }}>
               ⚠ {err}
             </div>
@@ -464,6 +494,9 @@ export default function OrgCanvas({
                     <path d={ep.path} stroke={ep.color} strokeWidth={4} fill="none" strokeOpacity={0} style={{ pointerEvents: 'stroke' }} />
                   </g>
                 ))}
+                {sections.length > 0 && (
+                  <SectionEdges rects={rects} edges={docEdges} pending={secDrag.pending} readOnly={readOnly} onRemove={onRemoveDocEdge} />
+                )}
                 {pendingPath && (
                   <path d={pendingPath} stroke={pendingColor} strokeWidth={1.8} fill="none" strokeDasharray="5 4" strokeOpacity={0.8} />
                 )}
@@ -490,12 +523,32 @@ export default function OrgCanvas({
               transformOrigin: '0 0',
               transform: `translate(${camera.x}px,${camera.y}px) scale(${camera.zoom})`,
             }}>
+              {sections.length > 0 && (
+                <SectionBoxes
+                  rects={rects} sections={sections} selectedName={selectedSection} readOnly={readOnly} budgets={sectionBudgets} staleRates={staleRates}
+                  hoverEdgeTarget={secDrag.pending?.target}
+                  onSelect={onSelectSection} onStartMove={secDrag.startMove} onStartEdge={secDrag.startEdge}
+                />
+              )}
               {nodes.map(node => (
                 <div
                   key={node.id}
                   data-od-node-id={node.id}
                   style={{ position: 'absolute', left: node.x, top: node.y }}
                 >
+                  {leadIds.has(node.id) && (
+                    <span data-testid={`lead-badge-${node.id}`} title="Section lead" style={{
+                      position: 'absolute', top: -9, right: 8, zIndex: 3, fontFamily: 'var(--font-mono)', fontSize: 8.5, letterSpacing: 0.6,
+                      padding: '1px 6px', borderRadius: 8, background: 'var(--yellow, #eab308)', color: '#1a1a1a', pointerEvents: 'none',
+                    }}>LEAD</span>
+                  )}
+                  {roleBadge(roleCaps[node.id]) && (
+                    <span data-testid={`role-cap-${node.id}`} title={roleBadge(roleCaps[node.id]).title} style={{
+                      position: 'absolute', top: -9, left: 8, zIndex: 3, fontFamily: 'var(--font-mono)', fontSize: 8.5, letterSpacing: 0.3,
+                      padding: '1px 6px', borderRadius: 8, border: `1px solid ${roleBadge(roleCaps[node.id]).color}`, background: 'var(--bg-card, #0b1220)',
+                      color: roleBadge(roleCaps[node.id]).color, pointerEvents: 'none',
+                    }}>{roleBadge(roleCaps[node.id]).text}</span>
+                  )}
                   <RoleNode
                     node={node}
                     isSelected={selectedId === node.id}

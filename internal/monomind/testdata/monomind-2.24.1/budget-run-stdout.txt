@@ -1,0 +1,13 @@
+
+Cost estimate
+  (roles × max_turns × ~2000 tokens/turn × model rate; estimated at ≤30 turns/message — the runtime default is effectively unlimited; static defaults, will vary with real usage)
+  ⚠ stale rates: no live provider pricing lookup — hardcoded table (edit ~/.monomind/rates.json to override)
+    lead                 grok-4                 ~$0.60
+    writer               grok-4                 ~$0.60
+    checker              grok-4                 ~$0.60
+  Total estimate:              ~$1.80
+monomind: first look at the Claude Code global configs in $SCRATCH/home — trusting none (only the current ~/.claude.json). Any other one that appears later is quarantined.
+[orgrt] No live dashboard (missing/dead $SCRATCH/proj/.monomind/control.json) — org events will not appear on the Neural Control Room. Starting one; or run "monomind ui" manually.
+org bud running (3 agents, run run-20261006054120-l87x) — Ctrl-C or "monomind org stop bud" to stop
+  Dashboard: run `monomind init` to set up .claude/helpers/, then re-run to launch it automatically
+org bud run run-20261006054120-l87x ended — outcome: complete (achieved), wall time 7s, cost $0.14

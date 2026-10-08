@@ -76,6 +76,14 @@ type Options struct {
 	// api_config_set and api_auto_set are still AllowAPIExposure. Also
 	// settable via MONOAGENT_MCP_API_ONLY=="1". Grant mode ignores it.
 	APIOnly bool
+	// TasksOnly serves the user's task board's tools (task_*) and no other: no
+	// workflow, vault, secret, person, org, API or documentation tool, so that an
+	// agent that is to work the board through this server has nothing to run a
+	// command with, which AllowMutations alone does not give. It takes tools away
+	// and changes none that stay: the verbs still need AllowMutations. Also
+	// settable via MONOAGENT_MCP_TASKS_ONLY=="1". Serve refuses it together with
+	// APIOnly; grant mode ignores it.
+	TasksOnly bool
 	// APIEnv is what the API tools (api_status, api_config_get/set/apply) read
 	// of this process: its environment, the daemon's heartbeat, the service
 	// manager (api_config_apply restarts the daemon through it) and the HTTP
@@ -128,6 +136,14 @@ type Server struct {
 	// separate goroutines, so concurrent tools/call invocations may race
 	// to build the runtime on first use.
 	rtMu sync.Mutex
+
+	// clientMu guards who this server serves (task_actor.go): the client's
+	// name from initialize, the actor name the task tools fix from it, and
+	// this server's own suffix. Requests run on goroutines of their own.
+	clientMu    sync.Mutex
+	clientName  string
+	actorName   string
+	actorSuffix string
 }
 
 // NewServer creates a Server with the given options.
@@ -141,7 +157,10 @@ func NewServer(opts Options) *Server {
 	if !opts.APIOnly {
 		opts.APIOnly = os.Getenv("MONOAGENT_MCP_API_ONLY") == "1"
 	}
-	return &Server{opts: opts}
+	if !opts.TasksOnly {
+		opts.TasksOnly = os.Getenv("MONOAGENT_MCP_TASKS_ONLY") == "1"
+	}
+	return &Server{opts: opts, actorSuffix: newActorSuffix()}
 }
 
 // Run serves MCP over stdin/stdout until stdin closes. It is the entry
@@ -165,6 +184,11 @@ func Run(opts Options) error {
 // nil when in reaches EOF.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	defer s.closeRuntime()
+	// Asked for two narrow families, by flags or by the environment, a server
+	// would serve neither: it refuses at once, reading nothing.
+	if s.opts.Grant == "" && s.opts.TasksOnly && s.opts.APIOnly {
+		return ErrTasksOnlyWithAPIOnly
+	}
 
 	// serveCtx is cancelled as soon as the read loop ends (client closed
 	// stdin) — handlers below receive it, so waitForExecution-style waits
@@ -340,6 +364,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 
 	switch req.Method {
 	case "initialize":
+		s.recordClient(req.Params)
 		return s.result(req.ID, map[string]interface{}{
 			"protocolVersion": protocolVersion,
 			"capabilities": map[string]interface{}{
@@ -428,10 +453,13 @@ func (s *Server) instructions() string {
 	if s.opts.Grant != "" {
 		return "Tools here run automations your org granted you. Each call starts a workflow run; outputs are redacted and bounded."
 	}
+	if s.opts.TasksOnly {
+		return tasksOnlyInstructions
+	}
 	if s.opts.APIOnly {
 		return "Tools here manage the OpenAI-compatible API: its keys, its models, its status and its settings. Start with api_status or api_config_get."
 	}
-	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals."
+	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals. The user's task board: task_next shows what is ready to work on."
 }
 
 func (s *Server) result(id json.RawMessage, result interface{}) *rpcResponse {

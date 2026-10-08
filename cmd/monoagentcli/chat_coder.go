@@ -68,7 +68,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		MaxTurns:     settings.MaxTurns,
 		Timeout:      settings.timeout(),
 		BudgetUSD:    settings.BudgetUSD,
-		SystemPrompt: coderSystemPrompt(t.cwd),
+		SystemPrompt: coderSystemPrompt(t.cwd) + "\n\n" + publicationAgentPrompt(cfg),
 	}
 	onEvent := func(ev monomind.Event) {
 		b, _ := json.Marshal(ev)

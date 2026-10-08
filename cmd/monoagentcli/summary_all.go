@@ -80,7 +80,7 @@ var sharedSections = map[string]bool{"services": true, "automations": true}
 func splitSections(want map[string]bool) (perProfile, shared map[string]bool) {
 	perProfile, shared = map[string]bool{}, map[string]bool{}
 	for _, n := range summary.SectionNames {
-		if want != nil && !want[n] {
+		if want != nil && !want[n] || n == "tasks" { // a board is one profile's: no all-profiles view (D9)
 			continue
 		}
 		if sharedSections[n] {

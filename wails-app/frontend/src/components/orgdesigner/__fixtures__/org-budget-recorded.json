@@ -1,0 +1,91 @@
+{
+  "org": "bud",
+  "run": "run-20261006054120-l87x",
+  "sections": [
+    {
+      "kind": "section",
+      "name": "drafting",
+      "lead": "writer",
+      "allocation_usd": 0.05,
+      "role_cap_sum_usd": 0.05,
+      "spent_usd": 0.0725,
+      "remaining_usd": -0.0225,
+      "fraction": 1.4499999999999997,
+      "state": "closed",
+      "roles": [
+        {
+          "id": "writer",
+          "spent_usd": 0.0725,
+          "tokens": 7500,
+          "cap_usd": 0.05,
+          "fraction": 1.4500000000000002,
+          "state": "closed"
+        }
+      ],
+      "warned_at": 1791265281332,
+      "closed_at": 1791265281367,
+      "soft_closed": true,
+      "closed_roles": [
+        "writer"
+      ]
+    },
+    {
+      "kind": "section",
+      "name": "review",
+      "lead": "checker",
+      "allocation_usd": 0.04,
+      "role_cap_sum_usd": 0.04,
+      "spent_usd": 0.051,
+      "remaining_usd": -0.011,
+      "fraction": 1.275,
+      "state": "closed",
+      "roles": [
+        {
+          "id": "checker",
+          "spent_usd": 0.051,
+          "tokens": 9000,
+          "cap_usd": 0.04,
+          "fraction": 1.2750000000000001,
+          "state": "closed"
+        }
+      ],
+      "warned_at": 1791265281435,
+      "closed_at": 1791265281465,
+      "soft_closed": true,
+      "closed_roles": [
+        "checker"
+      ]
+    }
+  ],
+  "reserve": {
+    "kind": "reserve",
+    "allocation_usd": 0.06,
+    "role_cap_sum_usd": 0.06,
+    "spent_usd": 0.016,
+    "remaining_usd": 0.044,
+    "fraction": 0.26666666666666666,
+    "state": "ok",
+    "roles": [
+      {
+        "id": "lead",
+        "spent_usd": 0.016,
+        "tokens": 6000,
+        "cap_usd": 0.06,
+        "fraction": 0.26666666666666666,
+        "state": "ok"
+      }
+    ]
+  },
+  "total": {
+    "kind": "org",
+    "allocation_usd": 0.15,
+    "role_cap_sum_usd": 0.15,
+    "spent_usd": 0.1395,
+    "remaining_usd": 0.0105,
+    "fraction": 0.9300000000000002,
+    "state": "warn",
+    "warned_at": 1791265281472
+  },
+  "total_tokens": 22500,
+  "cost_complete": true
+}

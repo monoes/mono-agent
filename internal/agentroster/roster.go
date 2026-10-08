@@ -30,12 +30,16 @@ type Entry struct {
 
 // RuntimeRoster is one runtime and its models.
 type RuntimeRoster struct {
-	Runtime   string  `json:"runtime"`
-	Installed bool    `json:"installed"`
-	Version   string  `json:"version,omitempty"`
-	LoginHint string  `json:"login_hint,omitempty"`
-	Models    []Entry `json:"models"`
-	Ready     int     `json:"ready"`
+	Runtime   string `json:"runtime"`
+	Installed bool   `json:"installed"`
+	Version   string `json:"version,omitempty"`
+	LoginHint string `json:"login_hint,omitempty"`
+	// ExecutionSupported / ExecutionUnsupportedReason carry `agent scan`'s
+	// fields: false when monomind cannot run the runtime, with its reason.
+	ExecutionSupported         *bool   `json:"execution_supported,omitempty"`
+	ExecutionUnsupportedReason string  `json:"execution_unsupported_reason,omitempty"`
+	Models                     []Entry `json:"models"`
+	Ready                      int     `json:"ready"`
 }
 
 // Build groups results by runtime and computes each model's state. scan may
@@ -97,6 +101,14 @@ func Build(results []Result, scan *monomind.ScanResult, now time.Time, maxAge ti
 	}
 	out := make([]RuntimeRoster, 0, len(order))
 	for _, id := range order {
+		if scan != nil {
+			if e := scan.Find(id); e != nil && e.ExecutionSupported != nil {
+				byRuntime[id].ExecutionSupported = e.ExecutionSupported
+				if reason, ok := e.UnsupportedReason(); ok {
+					byRuntime[id].ExecutionUnsupportedReason = reason
+				}
+			}
+		}
 		out = append(out, *byRuntime[id])
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Runtime < out[j].Runtime })

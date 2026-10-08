@@ -239,6 +239,9 @@ func Verify(root, org string, raw []byte) Status {
 	if p := forbiddenKeyPath(v, ""); p != "" {
 		return Status{State: StateForbiddenKey, Detail: p}
 	}
+	if m := RoleContextMarker(); m != "" {
+		return Status{State: StateUnknown, Detail: roleOperatorDirNote(m)}
+	}
 	path, err := SignaturePath(root, org)
 	if err != nil {
 		return Status{State: StateUnknown, Detail: err.Error()}
@@ -505,10 +508,20 @@ func forbiddenKeyPath(v interface{}, path string) string {
 	return ""
 }
 
+// roleOperatorDirNote says why an org role's process leaves the operator
+// dir alone: monomind hides it from every role sandbox by design.
+func roleOperatorDirNote(marker string) string {
+	return marker + " is set (an org role or agent turn): the operator directory (" +
+		"~/.monomind/orgrt-operator) is protected and not read here; only the operator signs and checks signatures"
+}
+
 // SignedHash is the hash recorded in org's signature sidecar, without
 // checking the HMAC — used right after monomind signs, to confirm what it
 // signed is what mono-agent wrote.
 func SignedHash(root, org string) (string, bool) {
+	if RoleContextMarker() != "" {
+		return "", false
+	}
 	path, err := SignaturePath(root, org)
 	if err != nil {
 		return "", false
@@ -525,6 +538,9 @@ func SignedHash(root, org string) (string, bool) {
 // the org is unsigned: used only when monomind signed bytes other than the
 // ones mono-agent wrote.
 func Withdraw(root, org string) error {
+	if m := RoleContextMarker(); m != "" {
+		return errors.New(roleOperatorDirNote(m))
+	}
 	path, err := SignaturePath(root, org)
 	if err != nil {
 		return err

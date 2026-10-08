@@ -67,6 +67,10 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 	// advertised at all, and the popup quietly saves into the default
 	// profile — see internal/extension/profile_list.go.
 	srv.SetProfileSource(extensionProfileSource(defaultDBPath))
+	// task.add: the extension's task entries file into the board of the
+	// profile they name (extension_tasks.go). Advertised in ping, so a newer
+	// extension knows this bridge takes tasks.
+	srv.SetTaskSink(extensionTaskSink(defaultDBPath))
 	srv.SetVersion(getVersion())
 	// Every bridge that owns the connection writes the summaries its
 	// captures ask for. `extension serve` re-installs this with its own
@@ -80,7 +84,17 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 // same addresses setupExtensionBridge probes, so both agree on what
 // "already running" means.
 func findRunningBridge() (extension.Status, string, bool) {
+	return findRunningBridgeCtx(context.Background())
+}
+
+// findRunningBridgeCtx is findRunningBridge that stops probing once ctx is
+// done, so a caller polling under a deadline cannot outlast it by more than
+// one probe (each is bounded by the status probe timeout).
+func findRunningBridgeCtx(ctx context.Context) (extension.Status, string, bool) {
 	for _, addr := range extensionProbeAddrs() {
+		if ctx.Err() != nil {
+			break
+		}
 		if st, err := extension.FetchStatus(addr); err == nil {
 			return st, addr, true
 		}
