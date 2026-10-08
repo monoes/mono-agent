@@ -1273,6 +1273,82 @@
     "openAsBubble": "Open as bubble",
     "openAsBubbleNamed": "Open {{name}} as a chat bubble"
   },
+  "account": {
+    "checking": "Checking your monoes.me account…",
+    "gate": {
+      "notLoggedIn": {
+        "title": "Sign in to MonoAgent",
+        "body": "MonoAgent needs a monoes.me account. Sign in to keep going; your data stays on this computer."
+      },
+      "expired": {
+        "title": "Your sign-in has expired",
+        "body": "MonoAgent could not reach monoes.me for more than a day. Check your connection, then sign in again."
+      },
+      "refused": {
+        "title": "monoes.me ended this sign-in",
+        "body": "This account can no longer use MonoAgent. If you think that is a mistake, contact monoes.me support. You can sign in with another account."
+      },
+      "clock": {
+        "title": "This computer's clock looks wrong",
+        "body": "MonoAgent saw a time that does not fit monoes.me's clock. Set the date and time right, then sign in again."
+      },
+      "keyUnknown": {
+        "title": "This version cannot verify your sign-in",
+        "body": "monoes.me signs logins with a newer key than this version of MonoAgent knows. Update MonoAgent, then sign in again."
+      },
+      "unconfirmed": {
+        "title": "This computer stopped using its saved sign-in",
+        "body": "monoes.me may have received a refresh whose answer never arrived, so this computer stopped using its saved sign-in to protect your other installs. Sign in again on this computer."
+      },
+      "invalid": {
+        "title": "Your sign-in could not be verified",
+        "body": "The saved sign-in is damaged or was not issued for MonoAgent. Sign in again."
+      },
+      "cliNotFound": {
+        "title": "MonoAgent cannot find its command-line tool",
+        "body": "MonoAgent needs monoagentcli to check your sign-in and cannot find it. Reinstall MonoAgent, or point MONOAGENTCLI_BIN at a current monoagentcli."
+      },
+      "cliTooOld": {
+        "title": "MonoAgent's command-line tool is out of date",
+        "body": "The monoagentcli this app found does not support monoes.me accounts, or speaks a newer version than this app. Update MonoAgent to bring both up to date."
+      },
+      "cliFailed": {
+        "title": "MonoAgent could not check your sign-in",
+        "body": "monoagentcli did not give an answer. Try again, or update MonoAgent."
+      },
+      "details": "Technical details",
+      "retry": "Try again"
+    },
+    "update": {
+      "button": "Update MonoAgent",
+      "available": "Version {{version}} is available.",
+      "working": "Updating…",
+      "done": "Updated. MonoAgent restarts to finish.",
+      "upToDate": "MonoAgent is already up to date.",
+      "failed": "The update failed: {{message}}"
+    },
+    "grace": {
+      "unreachable": "monoes.me is unreachable.",
+      "serverError": "monoes.me is not answering properly.",
+      "keyringUnavailable": "MonoAgent cannot open the key store to refresh your sign-in.",
+      "unconfirmed": "monoes.me may have received a refresh whose answer never arrived, so this computer can no longer renew its sign-in. It works until {{when}} ({{left}}); sign in again before then.",
+      "keepsWorking": "Your sign-in keeps working offline until {{when}} ({{left}})."
+    },
+    "time": {
+      "hours_one": "{{count}} hour left",
+      "hours_other": "{{count}} hours left",
+      "minutes_one": "{{count}} minute left",
+      "minutes_other": "{{count}} minutes left"
+    },
+    "warn": {
+      "text": "A monoes.me sign-in will be required from {{date}}.",
+      "signIn": "Sign in"
+    },
+    "banner": {
+      "dismiss": "Dismiss",
+      "close": "Close"
+    }
+  },
   "tasks": {
     "title": "Tasks",
     "search": "Search tasks",
