@@ -1,0 +1,14 @@
+ORG REPORT — bud / run-20261006054120-l87x
+  Duration: 2s   Events: 103   Messages: 13
+  Tokens: 22500 (budget: 66666/role in+out)   Cost: $0.1395
+  Outcome: achieved (by lead) — note written and accepted
+  Roles:
+    • lead: 3 msgs, 4 tools, 6000 tokens (9% of 66666 in+out)
+    • writer: 0 msgs, 1 tools, 7500 tokens (11% of 66666 in+out)
+    • org-docs: 9 msgs, 0 tools, 0 tokens
+    • checker: 1 msgs, 3 tools, 9000 tokens (14% of 66666 in+out)
+  Section budgets (USD; individual soft stops):
+    section drafting: spent $0.0725 of $0.05 (145%, closed); role caps $0.05
+    section review: spent $0.0510 of $0.04 (128%, closed); role caps $0.04
+    root reserve: spent $0.0160 of $0.06 (27%, ok); role caps $0.06
+    org: spent $0.1395 of $0.15 (93%, warn); role caps $0.15

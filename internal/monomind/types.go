@@ -378,6 +378,11 @@ type ScanEntry struct {
 	Binary      *string `json:"binary"`
 	Version     *string `json:"version"`
 	InstallHint string  `json:"install_hint"`
+	// ExecutionSupported is false for a runtime monomind cannot run headless
+	// (freebuff: no prompt/JSON transport); ExecutionUnsupportedReason is its
+	// own sentence for why. Both are nil from a monomind that predates them.
+	ExecutionSupported         *bool   `json:"execution_supported,omitempty"`
+	ExecutionUnsupportedReason *string `json:"execution_unsupported_reason,omitempty"`
 	// Install is InstallHint as a recipe a caller can run without a shell
 	// (protocol rev 9); nil from an older monomind.
 	Install *InstallRecipe `json:"install,omitempty"`
@@ -419,6 +424,18 @@ type ScanEntry struct {
 	AccessModes               []string `json:"access_modes,omitempty"`
 	CallerTools               bool     `json:"caller_tools,omitempty"`
 	CallerToolsWithFullAccess bool     `json:"caller_tools_with_full_access,omitempty"`
+}
+
+// UnsupportedReason returns monomind's reason when it reports the runtime
+// as not executable ("" and false otherwise, including from an older monomind).
+func (e ScanEntry) UnsupportedReason() (string, bool) {
+	if e.ExecutionSupported == nil || *e.ExecutionSupported {
+		return "", false
+	}
+	if e.ExecutionUnsupportedReason != nil {
+		return *e.ExecutionUnsupportedReason, true
+	}
+	return "", true
 }
 
 // ScanResult is the `agent scan --json` payload (§6).

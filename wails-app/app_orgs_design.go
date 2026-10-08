@@ -44,10 +44,12 @@ func (a *App) GetOrgDesign(orgName string) string {
 	}
 	valid, errs := a.validateDoc(d)
 	b, err := json.Marshal(map[string]interface{}{
-		"v":      1,
-		"org":    d,
-		"valid":  valid,
-		"errors": errs,
+		"v":   1,
+		"org": d,
+		// Go decides whether the org is a sections org (Doc.SectionsEnabled).
+		"sections_enabled": d.SectionsEnabled(),
+		"valid":            valid,
+		"errors":           errs,
 	})
 	if err != nil {
 		return aiError(err)
@@ -376,7 +378,7 @@ func (a *App) saveAndRespondNew(root string, d *orgdesign.Doc, origin string, si
 		return aiError(err)
 	}
 	a.emitOrgDesignUpdated(d.Name, origin, false, d, true, nil)
-	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha, "org": d})
+	b, _ := json.Marshal(map[string]interface{}{"ok": true, "rev": sha, "org": d, "sections_enabled": d.SectionsEnabled()})
 	return string(b)
 }
 
@@ -398,6 +400,11 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc, signNew bool) (sha strin
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
+		if d.LoadedSHA() == "" {
+			// A Doc decoded from JSON has no layout: follow the file's, so
+			// the diff stays reviewable. The re-sign rule is unaffected.
+			d.InheritLayout(existing)
+		}
 	}
 	// Decided before the first write: whether this save may be re-signed.
 	sig := a.orgSignBefore(root, d, signNew)
@@ -509,6 +516,11 @@ func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
 	if res.Org == nil {
 		return fmt.Errorf("reconcile org rows: the CLI returned no document")
 	}
+	// The document the CLI sends back was decoded from JSON, so it knows
+	// nothing of the file it came from: carry the loaded bytes over, or the
+	// write after this reorders the file's keys and the re-sign check loses
+	// its sha.
+	res.Org.InheritLoaded(d)
 	*d = *res.Org
 	return nil
 }
@@ -593,6 +605,7 @@ func (a *App) emitOrgDesignUpdated(orgName, origin string, deleted bool, d *orgd
 	}
 	if d != nil {
 		payload["org"] = d
+		payload["sections_enabled"] = d.SectionsEnabled()
 	} else {
 		payload["org"] = nil
 	}

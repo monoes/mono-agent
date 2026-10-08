@@ -67,3 +67,10 @@ func (a *App) orgValidateReport(root, orgName string) string {
 	}
 	return aiError(fmt.Errorf("org validate %s: unexpected output: %q", orgName, out))
 }
+
+// OrgSectionsRuntimes returns `org sections-runtimes`: {source, runtimes:
+// [{runtime, status: refused|unverified, reason}]}, monomind's own reasons
+// for the runtime picker of a sections org.
+func (a *App) OrgSectionsRuntimes() string {
+	return a.jsonResult("org", "sections-runtimes")
+}

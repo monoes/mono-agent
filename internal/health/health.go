@@ -188,6 +188,12 @@ type Env struct {
 	ExtensionInstalled func() (found, checked bool)
 	ExtensionDir       func() string
 	Bridge             func(ctx context.Context) (BridgeInfo, bool)
+	// BridgeService names the user service that owns the bridge pid, or "".
+	// It is separate from Bridge because resolving it runs systemctl.
+	BridgeService func(ctx context.Context, pid int) string
+	// RestartBridge restarts unit, refusing unless the bridge is still pid
+	// and still owned by unit.
+	RestartBridge func(ctx context.Context, unit string, pid int, progress func(string)) error
 
 	// Background services.
 	Daemon           func(ctx context.Context) DaemonInfo
@@ -249,6 +255,9 @@ type BridgeInfo struct {
 	// Owner says what runs it: the daemon, a service, or an `extension
 	// serve` started by hand ("" when unknown).
 	Owner string
+	// ServiceUnit is set only for a user service verified to own this PID;
+	// see serviceUnit, which resolves it through Env.BridgeService.
+	ServiceUnit string
 }
 
 // DaemonInfo is the workflow daemon's heartbeat.

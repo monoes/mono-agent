@@ -1,0 +1,10 @@
+
+Cost estimate
+  (roles × max_turns × ~2000 tokens/turn × model rate; estimated at ≤30 turns/message — the runtime default is effectively unlimited; static defaults, will vary with real usage)
+  ⚠ stale rates: no live provider pricing lookup — hardcoded table (edit ~/.monomind/rates.json to override)
+    lead                 claude-haiku-4-5-20251001 ~$0.60
+    writer               claude-haiku-4-5-20251001 ~$0.60
+    checker              claude-haiku-4-5-20251001 ~$0.60
+  Total estimate:              ~$1.80
+Estimate $1.80 exceeds --budget-usd $-1. Aborting before any tokens are spent.
+[ERROR] cost estimate exceeded --budget-usd

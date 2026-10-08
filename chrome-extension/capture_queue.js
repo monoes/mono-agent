@@ -193,26 +193,34 @@
 
   /**
    * badgeFor turns the counts into what the toolbar icon shows. Failures
-   * win over queued items: a red count is the one a person has to act on,
-   * and an amber one clears itself the moment the bridge comes back.
+   * win over waiting items: a red count is the one a person has to act on,
+   * and an amber one clears itself the moment the bridge comes back. Tasks
+   * waiting in the task outbox (task_outbox.js) and tasks MonoAgent refused
+   * count here too: two painters of one badge would only paint over each
+   * other.
    */
   function badgeFor(counts) {
     const c = counts || {};
     const failed = c.failed || 0;
+    const refused = c.tasksFailed || 0;
     const queued = c.queued || 0;
-    if (failed) {
+    const tasks = c.tasks || 0;
+    const some = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    if (failed || refused) {
+      const parts = [];
+      if (failed) parts.push(`${some(failed, "capture", "captures")} failed`);
+      if (refused) parts.push(`${some(refused, "task was", "tasks were")} not added`);
       return {
-        text: badgeCount(failed),
+        text: badgeCount(failed + refused),
         color: "#c0392b",
-        title: `${failed} capture${failed === 1 ? "" : "s"} failed — open MonoAgent Bridge to see why`,
+        title: `${parts.join(" and ")} — open MonoAgent Bridge to see why`,
       };
     }
-    if (queued) {
-      return {
-        text: badgeCount(queued),
-        color: "#c98a00",
-        title: `${queued} capture${queued === 1 ? "" : "s"} waiting for the bridge`,
-      };
+    if (queued || tasks) {
+      const parts = [];
+      if (queued) parts.push(some(queued, "capture", "captures"));
+      if (tasks) parts.push(some(tasks, "task", "tasks"));
+      return { text: badgeCount(queued + tasks), color: "#c98a00", title: `${parts.join(" and ")} waiting for the bridge` };
     }
     return { text: "", color: "#2e8b57", title: "MonoAgent Bridge" };
   }
@@ -220,7 +228,12 @@
   /** paintBadge applies badgeFor to the real toolbar icon. */
   async function paintBadge(storage) {
     const { counts } = await pending(storage);
-    const badge = badgeFor(counts);
+    // The task outbox's counts answer 0 when storage cannot be read: a badge
+    // must never fail the capture that asked for it (capture_actions.js).
+    const tasks = root.MonoTaskOutbox;
+    const badge = badgeFor(
+      tasks ? Object.assign({}, counts, { tasks: await tasks.count(storage), tasksFailed: await tasks.failedCount(storage) }) : counts
+    );
     try {
       await chrome.action.setBadgeText({ text: badge.text });
       await chrome.action.setBadgeBackgroundColor({ color: badge.color });

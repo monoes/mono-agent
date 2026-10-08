@@ -80,6 +80,15 @@ func firstSet(keys []string) string {
 // RoleContextMarker names the org-role/agent-exec marker set in this
 // process's env, or "": monomind's own rule for any signature, so it also
 // bounds an explicit `org sign`.
+//
+// This is a courtesy, not the barrier: a role can unset its env, and
+// mono-agent has no second signal that is both reliable and free of false
+// positives for the real operator. Observed in a role sandbox (monomind
+// 2.24.1, bwrap): pid 1 is bwrap, NoNewPrivs is set, and the operator dir is
+// an empty tmpfs; but a Flatpak or container operator has the same pid 1 and
+// a fresh operator has an empty or missing dir. The barrier is the sandbox
+// (it hides the operator dir, so a role has no key to read) and monomind's
+// own refusal, which names that directory even with the markers gone.
 func RoleContextMarker() string { return firstSet(roleContextMarkers) }
 
 // AgentContextMarker names any agent-context marker set, or "": no

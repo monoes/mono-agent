@@ -1,0 +1,4 @@
+sec: policy.git below 'push' runs the CLI's own sandbox on these roles — writes confined, but no per-tool gate and no .git deny rules: lead (codex: workspace-write), writer (codex: workspace-write), checker (codex: workspace-write)
+sec: #8 boss role "lead": its prompt does not require self-contained task briefs; workers resumed from a task session know nothing else
+sec: #21 documents.note: no checks declared, so a consumer's org_doc_check has nothing to run; measured, a consumer with per-answer evidence and checks caught 8 of 8 injected inconsistencies where one without caught 3 of 8 (0 of 4 wrong values) — add checks over the evidence the producer attaches (errors that agree with their own evidence still pass any check)
+sec: valid (3 warning(s))
