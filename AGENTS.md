@@ -63,6 +63,7 @@ monoagentcli --help         # command list; the root help includes an agents not
 | `ref crawling` | Automating sites with no built-in node type |
 | `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping, and the OpenAI-compatible `/v1` API |
 | `ref tasks` | The profile's task board — columns, who may do what, the agent loop, JSON documents and error codes |
+| `ref account` | The monoes.me account — optional today, how to sign in, headless and Docker |
 
 Prefer `ref` over guessing from `--help` alone.
 
