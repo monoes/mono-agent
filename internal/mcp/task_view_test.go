@@ -276,10 +276,59 @@ func TestANumberArgumentMayBeAString(t *testing.T) {
 	}
 }
 
+func TestAnOversizedIntegerIsRefusedWithItsRange(t *testing.T) {
+	for _, raw := range []string{`99999999999999999999`, `"99999999999999999999"`, `-99999999999999999999`} {
+		var n numberArg
+		if err := json.Unmarshal([]byte(raw), &n); err == nil || !strings.Contains(err.Error(), "supported range") {
+			t.Errorf("limit %s: %v, want a refusal that names the supported range", raw, err)
+		}
+		var id taskIDArg
+		if err := json.Unmarshal([]byte(raw), &id); err == nil || !strings.Contains(err.Error(), "supported range") {
+			t.Errorf("id %s: %v, want a refusal that names the supported range", raw, err)
+		}
+	}
+}
+
+// The pinned field lists above are checked against a populated fixture, which cannot show an
+// omitempty field that is empty there. So the lists are also checked against the struct tags.
+func TestThePinnedFieldListsMatchTheStructTags(t *testing.T) {
+	tagKeys := func(v any) []string {
+		rt := reflect.TypeOf(v)
+		var keys []string
+		for i := 0; i < rt.NumField(); i++ {
+			tag := rt.Field(i).Tag.Get("json")
+			if strings.Contains(tag, "omitempty") {
+				t.Errorf("%s.%s is omitempty: a pinned list cannot see it when empty", rt.Name(), rt.Field(i).Name)
+			}
+			if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+				keys = append(keys, name)
+			}
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	for _, c := range []struct {
+		v    any
+		want []string
+	}{
+		{taskView{}, []string{"claim", "created_at", "id", "last_event", "notes_untrusted", "position", "profile_id",
+			"source_app_untrusted", "source_kind", "source_title_untrusted", "source_url_untrusted", "status", "title_untrusted", "updated_at"}},
+		{eventView{}, []string{"actor", "at", "from_status", "id", "kind", "note_untrusted", "to_status"}},
+		{tasks.Claim{}, []string{"by", "stale", "until"}},
+		{tasks.LastEvent{}, []string{"actor", "at", "kind"}},
+	} {
+		if got := tagKeys(c.v); !equalStrings(got, c.want) {
+			t.Errorf("%T has json fields %v, want %v", c.v, got, c.want)
+		}
+	}
+}
+
 func TestAStatusArgumentIsOneColumnOrSeveral(t *testing.T) {
 	for raw, want := range map[string]string{
 		`"ready"`:                 "ready",
 		`"ready, review"`:         "ready review",
+		`"  ready ,\treview  ,"`:  "ready review",
+		`[" ready", " done "]`:    "ready done",
 		`["in-progress", "done"]`: "in_progress done",
 		`"progress"`:              "in_progress",
 		`""`:                      "",
