@@ -5,7 +5,7 @@ import { tasksApi } from '../services/tasks.js'
 
 // The detail drawer of one card: edit title and notes, read its history,
 // comment. Every change goes through the board hook, which shells out to the CLI.
-export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment }) {
+export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment, onArchive, archiving = false, archiveError = '' }) {
   const { t } = useTranslation()
   const [events, setEvents] = useState([])
   const [loadError, setLoadError] = useState('')
@@ -60,6 +60,8 @@ export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment 
         <textarea value={notes} disabled={readOnly} rows={5} onChange={e => setNotes(e.target.value)} style={{ width: '100%' }} />
       </label>
       {!readOnly && <button type="button" disabled={!dirty || !title.trim()} onClick={save}>{t('tasks.drawer.save')}</button>}
+      {!readOnly && onArchive && <button type="button" disabled={archiving} onClick={onArchive} style={{ marginLeft: 8 }}>{archiving ? t('tasks.archiving') : t('tasks.archive')}</button>}
+      {archiveError && <div role="alert">{t('tasks.archiveFailed')}: {archiveError}</div>}
 
       <h3 style={{ marginTop: 16 }}>{t('tasks.drawer.history')}</h3>
       {loadError && <div role="alert">{t('tasks.drawer.loadError')}: {loadError}</div>}

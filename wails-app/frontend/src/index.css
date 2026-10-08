@@ -1860,6 +1860,9 @@ button.dash-row:hover { background: var(--elevated); }
 .tb-card--done-pulse  { animation: tbDoneGlow 900ms ease-out; }
 .tb-card--claim-pulse { animation: tbClaimPulse 2.2s ease-out; }
 
+/* A hidden window runs no pulses. */
+.tb-paused .tb-card--done-pulse, .tb-paused .tb-card--claim-pulse { animation-play-state: paused; }
+
 @media (prefers-reduced-motion: reduce) {
   .tb-card--done-pulse, .tb-card--claim-pulse { animation: none; }
   *, *::before, *::after {

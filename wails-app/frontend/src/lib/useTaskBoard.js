@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tasksApi, onTasksChanged } from '../services/tasks.js'
 import { normalizeBoard, applyOps } from './taskModel.js'
+import { usePageVisible } from './usePageVisible.js'
 
 export function useTaskBoard(active = true) {
   const [base, setBase] = useState(null)
@@ -28,18 +29,30 @@ export function useTaskBoard(active = true) {
     const mine = ++seq.current
     const doc = await tasksApi.board()
     if (mine !== seq.current) return // a newer read answers for this one
-    if (doc?.error) { setError(doc.error); release(mine); return }
+    // A failed read keeps every op laid over the last board: the card stays where
+    // the person put it until a read succeeds.
+    if (doc?.error) { setError(doc.error); return }
     setError('')
     setBase(normalizeBoard(doc))
     release(mine)
   }, [release])
 
+  // A hidden window does not read; the first change it missed is read when it is shown again.
+  const shown = usePageVisible()
+  const shownRef = useRef(shown)
+  const missed = useRef(false)
+  shownRef.current = shown
+
   useEffect(() => {
     if (!active) return undefined
     load()
-    const off = onTasksChanged(() => { load() })
+    const off = onTasksChanged(() => { if (shownRef.current) load(); else missed.current = true })
     return () => { seq.current++; if (typeof off === 'function') off() }
   }, [active, load])
+
+  useEffect(() => {
+    if (active && shown && missed.current) { missed.current = false; load() }
+  }, [active, shown, load])
 
   // mutate lays op (or none) over the board, runs call, and settles.
   const mutate = useCallback(async (op, call) => {
