@@ -268,6 +268,43 @@ MCP exposes `publication_list`, `publication_get`, `publication_stats` read-only
 and `publication_register` behind `--allow-mutations`. Records are profile-scoped;
 history starts with feature installation, with no automatic historical fetch.
 
+## monoes.me account
+
+One monoes.me sign-in per machine, shared by every profile. `account` and the
+`library login|logout|status` aliases manage it:
+
+```bash
+monoagentcli account login                   # browser sign-in (OAuth 2.1 + PKCE, loopback redirect on 127.0.0.1)
+monoagentcli account login --email you@x.com # headless: emails a code, then asks for it (--send / --code split the steps; --no-browser prints the URL; --timeout)
+monoagentcli account status [--offline] [--json]
+monoagentcli account logout                  # revoke and forget this machine's session
+```
+
+- **States.** `account status` reports `ok`, `grace` (monoes.me could not be
+  reached or answered with trouble, so the last signed token is still good,
+  at most 24 hours after it was issued) or `locked`, with a `reason`
+  (`not_logged_in`, `expired`, `refused`, `clock_rollback`, `clock_skew`,
+  `key_unknown`, `invalid`, and in grace `unreachable`, `server_error`,
+  `keyring_unavailable`, `unconfirmed`). Exit 0 for `ok` and `grace`, 4 for
+  `locked`. `--json` adds `enforce_from` and `enforced`.
+- **Dormant today.** The enforcement date is unset, so `enforced` is always
+  `false`: nothing is locked, no command warns, and nothing contacts
+  monoes.me implicitly (only an explicit `account` or `library` command
+  does). The gate code (session verification, the clock guard, the engine,
+  runner and door checks) exists and is exercised by tests, but is switched
+  off. Do not document or rely on a date until one is set in
+  `internal/account/rollout.go`.
+- **Storage.** `~/.monoagent/account/` holds `session.json` (the signed access
+  token and display data), `refresh.enc` (the refresh token, sealed under the
+  OS key store; see `MONOAGENT_ALLOW_FILE_KEYRING` for machines without one)
+  and `session.lock`. It is per OS user, not per profile, and nothing is
+  written to it until a sign-in. A session is tied to the machine: do not copy
+  `~/.monoagent/account` to another machine.
+- **Host.** Always `https://monoes.me` in a default build, which honors
+  `MONOES_BASE_URL` nowhere for the sign-in (`library login` against another
+  host refuses). A local monoes.me dev server needs a binary built with
+  `-tags devaccount` (see CONTRIBUTING.md); never ship one.
+
 ## monoes.me library
 
 monoes.me keeps workflows, orgs and web automations: **official** ones
@@ -300,10 +337,13 @@ monoagentcli library logout
   message. `installed` only reads local records. The app's library dialog
   shows a login gate until `library status` says logged in, and returns to
   it on `login_required`.
-- Host: `https://monoes.me`, or `MONOES_BASE_URL` (plain `http` only for a
-  loopback dev server). The login is stored per profile in the encrypted
-  vault (entry `monoes-library`, one per host) and refreshed
-  automatically; `logout` revokes and forgets it.
+- Host: `https://monoes.me`. The login is the machine-wide
+  [monoes.me account](#monoesme-account) session, shared by every profile and
+  refreshed automatically; `logout` revokes and forgets it (and this
+  profile's older `monoes-library` vault entry, if one remains).
+  `MONOES_BASE_URL` still redirects the library's requests, but the session is
+  sent only to monoes.me; signing in to another host needs a `-tags devaccount`
+  build.
 - `install` checks the download against the `X-Content-SHA256` header and
   the item's sha256 (a mismatch installs nothing, exit 3), then hands it
   over:
@@ -2351,7 +2391,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
 | `MONOAGENT_SUMMARY_RUNTIME` | Agent runtime the extension bridge uses to write `summary.md` for captures saved with "Save page summary" / "Save video summary" (`extension serve --summary-runtime` wins over it). This is the default: a capture can name its own installed runtime and model (the side panel's "AI for summaries" picker, or `capture page --summary-runtime/--summary-model`), and `summary.json` records the pair used. `off` disables summaries; each capture that asked then records why in `summary.json`. Default: unset — `claude`. |
-| `MONOES_BASE_URL` | monoes.me library host for the `library` commands. Default: unset — `https://monoes.me`. Plain `http` is accepted only for a loopback host (a local dev server). |
+| `MONOES_BASE_URL` | monoes.me host for the `library` commands. Default: unset — `https://monoes.me`. Plain `http` is accepted only for a loopback host (a local dev server). A default build refuses to sign in to any other host; that needs `-tags devaccount`. |
 | `MONOMIND_BIN` | Path to the `monomind` binary; checked before `PATH` and the other install locations (see [How AI works in mono-agent](#how-ai-works-in-mono-agent)). Default: unset — discovered. |
 | `MONOAGENT_AI_RUNTIME` | Agent runtime `ai.extract_page` uses to generate selectors. Default: unset — the first installed runtime, `claude` first. |
 | `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |

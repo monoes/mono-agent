@@ -112,6 +112,8 @@ const connection = {
   since: Date.now(),
   everConnected: false,
   wsUrl: "",
+  // What the worker last said about the bridge's account: {refusing, state, reason}.
+  account: null,
 };
 
 /** The last thing describe() returned, so the action button knows its job. */
@@ -147,6 +149,7 @@ function noteStatus(update) {
   connection.status = status;
   connection.reason = reason;
   connection.detail = next.detail || "";
+  connection.account = next.account || null;
   if (typeof next.since === "number" && next.since > 0) {
     connection.since = next.since;
   } else if (changed) {
@@ -167,6 +170,7 @@ function drawStatus() {
     since: connection.since,
     everConnected: connection.everConnected,
     wsUrl: connection.wsUrl || wsUrlInput.value,
+    account: connection.account,
   });
   shown = view;
 

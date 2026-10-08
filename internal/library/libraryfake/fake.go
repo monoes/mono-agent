@@ -48,6 +48,8 @@ type grant struct {
 	scopes                []string
 	revoked               bool
 	accessToken, clientID string
+	resource              string // the audience the client asked for; "" = none
+	spent                 bool   // a refresh token that was rotated or revoked: presenting it again is a replay
 }
 
 // Server is the fake. Its fields may be changed between requests.
@@ -80,6 +82,21 @@ type Server struct {
 	Requests map[string]int
 	// Refreshes counts refresh_token grants.
 	Refreshes int
+	// Replays counts refresh tokens presented after they were rotated or revoked.
+	// monoes.me answers that with invalid_grant and deletes every refresh token of
+	// the account (spike S2), so a client must never cause one.
+	Replays int
+
+	cmu          sync.Mutex // guards clock and tokenHook
+	clock        func() time.Time
+	tokenHook    func() // runs when a token request arrives (OnToken)
+	blocked      map[string]bool
+	refreshMode  RefreshMode
+	opaque       bool   // a server that ignores resource: access tokens stay opaque
+	emailOpaque  bool   // claim/verify answers as today: an opaque token, no refresh token
+	emailTrade   bool   // claim/verify answers an opaque token beside a refresh token to trade
+	lastResource string // the resource of the latest token request
+	tokenReqs    []TokenRequest
 }
 
 // New starts a fake with a "monoes" admin (the official publisher) and
@@ -87,7 +104,7 @@ type Server struct {
 func New() *Server {
 	s := &Server{users: map[string]*User{}, items: map[string]*Item{}, codes: map[string]*grant{},
 		access: map[string]*grant{}, refr: map[string]*grant{}, AccessTTL: time.Hour, EmailCode: "123456",
-		Requests: map[string]int{}}
+		Requests: map[string]int{}, blocked: map[string]bool{}}
 	s.AddUser(&User{ID: "u-monoes", Name: "Monoes", Username: "monoes", Email: "team@monoes.me", Admin: true})
 	s.BrowserUser = s.AddUser(&User{ID: "u-ada", Name: "Ada", Username: "ada", Email: "ada@example.com"})
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -160,12 +177,14 @@ func (s *Server) RevokeAll() {
 	}
 }
 
-// ExpireAccessTokens makes every issued access token expired.
+// ExpireAccessTokens makes every issued access token expired at the fake: it refuses them. A signed
+// token still carries the exp it was minted with, so a client that checks exp itself sees it live;
+// a test that needs a client's own exp check to fire sets the clock of the client past the token's exp instead.
 func (s *Server) ExpireAccessTokens() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, g := range s.access {
-		g.accessExp = time.Now().Add(-time.Minute)
+		g.accessExp = s.now().Add(-time.Minute)
 	}
 }
 
@@ -206,7 +225,7 @@ func (s *Server) caller(r *http.Request) (u *User, scopes []string, bad bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.access[tok]
-	if !ok || g.revoked || time.Now().After(g.accessExp) {
+	if !ok || g.revoked || s.now().After(g.accessExp) {
 		return nil, nil, true
 	}
 	return g.user, g.scopes, false
@@ -229,7 +248,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		s.mu.Lock()
 		if g, ok := s.refr[r.PostForm.Get("token")]; ok {
-			g.revoked = true
+			g.revoked, g.spent = true, true
 		}
 		if g, ok := s.access[r.PostForm.Get("token")]; ok {
 			g.revoked = true

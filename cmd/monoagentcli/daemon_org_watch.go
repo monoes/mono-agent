@@ -29,7 +29,7 @@ func (s *orgServices) watchOrgFiles(ctx context.Context) {
 	if interval <= 0 {
 		interval = watcherResyncInterval
 	}
-	go func() {
+	s.goTracked(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -41,7 +41,7 @@ func (s *orgServices) watchOrgFiles(ctx context.Context) {
 				s.syncWatchers(ctx, true)
 			}
 		}
-	}()
+	})
 }
 
 // syncWatchers makes the running watchers match the profiles as they are

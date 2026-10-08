@@ -121,6 +121,7 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		return err
 	}
 	addServiceHooks(env, cfg)
+	addMonoesAccountHook(env)
 	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
 	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }
 

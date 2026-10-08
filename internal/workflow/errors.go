@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/monoes/mono-agent/internal/account"
 )
 
 // PartialFailureError reports that an execution completed but one or more nodes
@@ -69,7 +71,8 @@ func Permanent(err error) error {
 
 // isNonRetryable reports errors whose outcome a retry cannot change: a
 // Human-in-Loop pause (retrying would re-create the approval), invalid
-// configuration, cancellation, and errors marked Permanent.
+// configuration, cancellation, errors marked Permanent, and a locked monoes.me
+// account (a gate refused the node; backing off for minutes would only hold the run).
 //
 // context.DeadlineExceeded is deliberately NOT here: a node's own timeout
 // (an HTTP call, a slow API) is the classic transient error. When the run's
@@ -79,5 +82,6 @@ func isNonRetryable(err error) bool {
 	return errors.Is(err, ErrNodePaused) ||
 		errors.Is(err, ErrInvalidConfig) ||
 		errors.Is(err, context.Canceled) ||
+		account.IsLoginRequired(err) ||
 		errors.As(err, &pe)
 }

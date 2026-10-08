@@ -56,6 +56,7 @@
   const START_COMMAND = "monoagentcli extension serve";
   const PAIR_COMMAND = "monoagentcli extension pair";
   const PROFILE_COMMAND = "monoagentcli profile create <name>";
+  const ACCOUNT_COMMAND = "monoagentcli account login";
 
   const DEFAULT_WS_URL = "ws://127.0.0.1:9222/monoagent";
 
@@ -116,6 +117,26 @@
         label: "Checking…",
         busy: true,
         queues: false,
+      });
+    }
+
+    // The bridge is up and attached, and turning every request away because
+    // MonoAgent has no valid monoes.me sign-in (account_state.js decides
+    // that). Nothing is wrong with the connection, and the person has one
+    // thing to do, so it is a warning with the way to do it.
+    if (status === "connected" && state.account && state.account.refusing) {
+      const refused = String(state.account.reason || "") === "refused";
+      return frame({
+        key: "account_locked",
+        tone: "warn",
+        label: "Sign in to MonoAgent",
+        title: refused ? "monoes.me ended this sign-in" : "MonoAgent is signed out",
+        body:
+          said ||
+          (refused
+            ? "This account can no longer use MonoAgent. Sign in with another account in the MonoAgent app, or run:"
+            : "The bridge is running, but it needs a monoes.me sign-in before it answers questions or looks up your saved pages. Sign in in the MonoAgent app, or run:"),
+        command: ACCOUNT_COMMAND,
       });
     }
 
@@ -348,6 +369,7 @@
     START_COMMAND,
     PAIR_COMMAND,
     PROFILE_COMMAND,
+    ACCOUNT_COMMAND,
     DEFAULT_WS_URL,
     ACTIONS,
   };

@@ -107,7 +107,7 @@ func newAutoRevalidator(db *sql.DB, logf func(string, ...interface{})) *agentros
 	return &agentroster.AutoScheduler{
 		DB:   db,
 		Now:  time.Now,
-		Busy: func(ctx context.Context) (bool, string) { return appBusy(ctx, db) },
+		Busy: func(ctx context.Context) (bool, string) { return busyOrLocked(ctx, db) },
 		Pick: func(ctx context.Context, maxModels int) (*agentroster.AutoPlan, error) {
 			s, err := monomind.Scan(ctx)
 			if err != nil {

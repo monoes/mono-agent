@@ -1,0 +1,438 @@
+# Mandatory monoes.me Account — Plan Index
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (the execution method the owner chose: multi-agent) to implement the plans listed here task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Read this index first: §3 is the contract every plan is written against.
+
+**Goal:** Nobody uses mono-agent without a monoes.me account signed in on the machine: official builds refuse to run until a valid, server-signed session exists, and stop when monoes.me disables the account or has been unreachable for 24 hours.
+
+**Architecture:** A new package `internal/account` holds one machine-wide session (a signed EdDSA JWT access token plus a keyring-sealed refresh token) verified offline against keys pinned in the binary. One `account.Guard` per process gives every gate a cached verdict. Three layers enforce it: a default-deny CLI gate before cobra runs, checks inside the engine and runners, and refusals at every door (HTTP API, `/v1`, webhook server, extension bridge, MCP). monoes.me (`monoes-landing`) gets a small change set so tokens are audience-bound JWTs and blocking revokes them.
+
+**Tech Stack:** Go 1.26 (stdlib `crypto/ed25519`, no new dependency), cobra, SQLite (existing), Wails + React (desktop), TypeScript with Better-Auth and Drizzle on Cloudflare Workers (server, separate repository).
+
+**Spec:** `docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md` (decisions D1 to D28, §1 to §12). Plans argue from the spec; executors read both.
+
+## 1. The plans
+
+Twelve plans, one file each, all in `docs/mastermind/plans/` and named `2026-10-05-monoes-account-gate-<id>.md`. Each produces working, tested software on its own, and every phase that merges before release R is dormant (spec D22): it changes nothing a user can see, except the new `account` commands, `library login` and `library logout` using the machine session (a legacy per-profile login is still read until adoption), and an additive `account` object in `GET /health` and in the extension bridge's `ping`.
+
+| Id | File suffix | Repository | Depends on | Delivers |
+|---|---|---|---|---|
+| A | `a-server` | `monoes/monoes-landing` | nothing (spikes S1, S2, S3, S6 and S7 first) | audience-bound JWTs, `plan` claim, blocking that revokes tokens, a replay that ends only its refresh-token family (ruling R1), a pinnable signing key, deploy hardening |
+| B1a | `b1a-core` | mono-agent | nothing | `internal/account` offline core: verify, states, clock guard, store, sealer, guard, `accounttest` |
+| B1b | `b1b-signin` | mono-agent | B1a | refresher, login flows, `account` commands, `library` aliases, adoption, `devaccount`, fake-server signing |
+| B2 | `b2-cli-gate` | mono-agent | B1a, B1b | the CLI gate, the inventory test, the `login_required` JSON, the `doctor` row, the late refresher in `run()`, spike S5 |
+| B3a | `b3a-runners` | mono-agent | B1a | layer 2 checks, guard wiring in the serving commands, the daemon's locked mode, heartbeat field |
+| B3b | `b3b-doors` | mono-agent | B1a | refusals at the HTTP API, `/v1`, org receiver, webhook server, extension bridge, MCP |
+| B4 | `b4-desktop` | mono-agent | B1b, B2 | desktop bindings, the `AccountGate` (fails closed), the grace and warn banners, the desktop's read-only guard |
+| B4b | `b4b-extension` | mono-agent | B3b | the Chrome extension side panel's "Sign in to MonoAgent" message |
+| B5a | `b5a-rollout` | mono-agent | B1a to B4b | the enforcement date and the pin of the production key, the warnings, the adoption wiring (`library.AdoptIntoAccount` from the root pre-run, one try per database), update restarts the daemon, the `doctor` stale-daemon row, the stop time of the service definitions (A24), the release guard, the hardened runtime on every macOS binary (spec §4.8), spike S4, the readiness checklist |
+| B5b | `b5b-docs` | mono-agent | B5a (claims text) | the claims rewrite, CHANGELOG, `ref` pages; ships in the same push as B5a |
+| B5c | `b5c-smoke` | mono-agent | B1a to B4b | the real-binary smoke (a `devaccount` build, a fake monoes.me, one operation per entry point) and its CI job |
+| B5d | `b5d-license` | mono-agent | nothing | the license workstream: copyright and dependency audits, then the owner-gated license swap and releases-only repository |
+
+Merge order (every merge to master releases, so order matters): A first, then B1a, B1b, then B2, B3a, B3b, B4, B4b in any order, then B5c (test-only; with `MONOAGENT_DEV_ENFORCE_FROM` it proves the whole gate while production builds are still dormant), then release R: **B5a and B5b merged together as one push**, because `release.yml` takes the release notes from `CHANGELOG.md` at the tagged commit and R must not ship ahead of its docs. B5a's Task 5b, which only signs the macOS binaries with the hardened runtime, may merge alone before R and must not land after it. B1a merges only with A24 and A25 in it, and B1b only on top of that (§3.6, forward compatibility): a released writer of `session.json` that does not know `pending_since` erases the marker at its next write. B5d is independent of R. R is the first release with a date and implicit calls to monoes.me, and it is not cut until plan A is deployed to production (including the owner-run steps O2 to O5) and the production signing key's public half is pinned in `internal/account/keys.go` (`pinnedKeys`; `keys_default.go` only holds `extraKeys()`): without that pinned key every real token verifies as `key_unknown` and every install would lock.
+
+Spikes S1 to S7 (spec §12) and where they run: S1, S2, S3, S6 and S7 in plan A (they need a local server; S7, what names a refresh-token family, was added by ruling R1 of 2026-10-07); S5 in B2; S4 in B5a. Their findings go to `docs/mastermind/specs/2026-10-05-monoes-account-gate-spike-findings.md` (created by plan A's Task 2, since deploy hardening is its first change; later plans append). Where a finding changes a constant, only the one named file changes (`internal/account/claims.go`), never several.
+
+Plan A has an ordering hazard: `monoes-landing`'s `deploy.yml` runs `wrangler deploy` on `pull_request` as well as on `push` to `main`, so any pull request there deploys to production. Hardening that workflow is therefore Plan A's first change, landed alone before any other Plan A pull request is opened. The spikes run against a local server only and nothing they produce is pushed.
+
+## 2. Global constraints
+
+Every task in every plan includes these implicitly. Values are copied from the spec.
+
+- Go is `go 1.26.0`; `internal/account` adds no third-party dependency (D13): `crypto/ed25519` and a small strict JWS parser only. One accepted algorithm (EdDSA); the verifier ignores `jku`, `jwk` and `x5u` headers and never negotiates from the header.
+- Offline grace: 24 hours from the signed `iat` of the newest token (D3, D15). A token with `exp - iat` above 24 hours, or `iat` more than 5 minutes ahead of now, is refused (D14). Clock guard: `now < hw - 5 minutes` locks with `clock_rollback`; a freshly verified token resets `hw` to its `iat` (§4.5).
+- States are `ok`, `grace`, `locked` (§4.3). A refusal is only `invalid_grant` answered to a refresh-token grant (D27); every other failure is `unreachable` or `server_error` and keeps the grace. A grant whose outcome is unknown (the request may have been processed, so monoes.me may have rotated the refresh token) or whose answer could not be saved (A24(d)) is retried within 240 seconds and after that is never presented again: this machine drops its refresh token and the reason is `unconfirmed` (A24, §3.6), a grace reason that ends as `locked(unconfirmed)`; the other installs of the account are untouched.
+- Refresh (§4.4): a CLI process refreshes with under 5 minutes left, or when expired and the last attempt was over 1 minute ago (the negative cache), with a 2-second connect timeout. Long-running processes refresh at half the token lifetime and retry with backoff, 30 seconds doubling to 5 minutes. Other processes start the refresher after 5 minutes of running. The guard re-checks `session.json`'s mtime lazily inside `Status`, at most once per 5 seconds (no goroutine for a non-refresher guard; spec A8). The refresh request carries `resource=<Audience>`.
+- Storage (§4.6): `~/.monoagent/account/` (directory 0700) with `session.json`, `refresh.enc` and `session.lock` (files 0600). One session per OS user, shared by all profiles, whatever `--db-path` says.
+- Dormant (D22): while `account.EnforceDate()` is the zero time nothing locks, nothing warns, and nothing is called implicitly (no adoption, no refresh, no background refresher). Only an explicit `account` or `library` command talks to monoes.me. The one visible trace of a dormant build is the additive `account` object in `GET /health` and the bridge `ping`.
+- Nothing on disk until a write: `OpenStore`, `NewDefaultGuard`, `Status`, `Require`, `CurrentStatus` and `Evaluate` create no file or directory when no session exists, and neither does a guard pass (`EnsureFresh`, `Refresh`, the background refresher) while the gate is dormant or its date is still ahead, because `scripts/doctor-smoke.sh` asserts that `doctor` on a fresh HOME writes nothing and `run()` installs a guard for every command, open ones included. The directory, `session.json`, `refresh.enc` and `session.lock` appear on a login or a refresh and, from the enforcement date on (A25), on the first guard pass of a machine that has no session: that pass creates the directory, `session.lock` and a session with no token (`{v, host, hw}`, never `refresh.enc`), the clock-guard record of a machine that never signed in. So a gated command that is refused on an empty HOME leaves exactly `account/session.lock` and `account/session.json` once the date has been reached, and nothing before it. Otherwise the high-water mark `hw` is written only when a session already exists, by the guard, at most once a minute.
+- Process globals (`enforceFrom`, the trusted keys, the installed guard, the strict flag) are guarded by a `sync.RWMutex` and read only through accessors. The `*ForTest` hooks and `accounttest.Install` are for tests that do not call `t.Parallel()`; CI's Linux jobs run `-race`.
+- A gated command that is refused exits 4 with `login_required` (§6.1). The first line of its message is exactly `Log in to monoes.me first: monoagentcli account login`.
+- Open commands (D6): `version`, `help`, `completion`, cobra's hidden `__complete` and `__completeNoDesc`, `ref`, `update`, `doctor` (with `doctor fix`), `setup`, `account` (all of it), `library login`, `library logout`, `library status`. Everything else is gated, except the serving commands:
+- Serving commands (spec §6.4) start even when locked, because launchd's `KeepAlive` and Docker's `restart: unless-stopped` would respawn a refused daemon in a loop and MCP hosts must see a clear error. The CLI gate's third class `serve` is `daemon`, `httpapi`, `mcp` (with `--grant`) and `extension serve` (also `bridge serve`); layers 2 and 3 do the refusing. `org serve` (a launcher) and `daemon install`, `restart` and `uninstall` stay gated.
+- `devaccount` is a build tag, never set by `release.yml`. Test seams panic unless `testing.Testing()`. No environment variable relaxes the gate in a default build, and in a default build `MONOES_BASE_URL` never reaches the machine session (spec A18): `library login` against another host refuses and names `-tags devaccount`, `library logout` leaves the session alone, and the session token is sent only to the host that issued it. The library itself still follows `MONOES_BASE_URL` (`library.BaseURL()`) for a profile's own older login. A local monoes.me dev server needs a `-tags devaccount` build.
+- Never print, log or put in a test's output a token, a refresh token or a key. Test fixtures use throwaway keys generated in the test.
+- Files stay under 500 lines; split by responsibility. Conventional commit subjects, `type(scope): subject`. Never commit secrets or `.env` files.
+- Only B5b edits `README.md`, `AGENTS.md`, `SECURITY.md`, `SUPPORT.md`, `docs/COMPARISON.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the claim strings in `internal/i18n/locales`, so parallel phases do not conflict. The new desktop strings under `account.*` in `wails-app/frontend/src/locales/{en,es}.json` belong to B4. Other phases add `ref` text, and a minimal `AGENTS.md` line, only where a test requires it.
+
+## 3. The frozen contract
+
+Plans use these names and signatures exactly. A plan may add package-internal helpers freely. A plan that needs a contract change does not make it: it lists the request under a final heading `Contract change requests` (name, reason, proposed signature) and stays consistent with this section as written. B1a and B1b own the package; everyone else only consumes it.
+
+### 3.1 File ownership in `internal/account`
+
+| File | Owner | Holds |
+|---|---|---|
+| `doc.go`, `claims.go`, `state.go`, `rollout.go`, `session.go`, `errors.go` | B1a | constants, states, `Status`, `Evaluate`, `EnforceFrom`, `Session`, errors |
+| `keys.go`, `keys_default.go`, `keys_devaccount.go`, `verify.go` | B1a (the dev key itself is added to `keys_devaccount.go` by B1b) | pinned keys, JWS verification |
+| `store.go`, `readfile.go`, `readfile_unix.go`, `readfile_windows.go`, `rename_unix.go`, `rename_windows.go`, `syncdir_unix.go`, `syncdir_windows.go`, `lock_unix.go`, `lock_windows.go`, `sealer.go`, plus one exported key-store accessor in `internal/secrets` | B1a | the on-disk session, the cross-process lock, the sealer (the keyring primitives in `internal/secrets` are unexported, so B1a adds a small exported accessor there and changes no existing behavior) |
+| `guard.go`, `guard_refresh.go`, `guard_pending.go`, `guard_loop.go`, `globals.go`, `process.go`, `testhooks.go` | B1a | the guard, its refresh algorithm, the marker of a grant in flight and the drop of a token in doubt, the background refresher, the process-wide variables and guard, and the test seams. `Evaluate` lives in `session.go` and `InstallForTest` in `process.go` (§3.2 shows them under other banners); the other three `*ForTest` hooks are in `testhooks.go` |
+| `accounttest/*.go` | B1a | fixtures every other plan's tests use |
+| `refresh.go`, `login.go`, `defaultguard.go`, `host_default.go`, `host_devaccount.go` | B1b | the network side |
+| `rollout_override.go`, `rollout_override_default.go`, `rollout_override_devaccount.go` | B5c | `MONOAGENT_DEV_ENFORCE_FROM`: read only in the file compiled under `-tags devaccount` (the default stub has no `os.Getenv`; a test pins it). These files compile into every release binary, so the table names their owner |
+| `internal/library/adopt.go` | B1b | `library.AdoptIntoAccount`: adoption lives in `internal/library` because it must read the library's vault entry and `internal/account` may not import `internal/library` |
+
+Import rule, to avoid cycles: `internal/account` imports `internal/secrets` (for the sealer) and the standard library, and nothing else of this repository: not `internal/library`, `internal/workflow`, `internal/monomind`, `internal/action`, `internal/httpapi` or `cmd`. Everything else may import `internal/account`, `internal/library` included (its aliases and adapter use the machine session). B1b decides whether the PKCE and email-code flow moves into `account` or into a neutral package both import; `internal/library`'s existing login API stays source-compatible so its tests keep passing.
+
+### 3.2 Go API (package `account`)
+
+```go
+// ---- claims.go (B1a). S6 confirms or corrects these in this one file. ----
+const (
+	HostURL        = "https://monoes.me"
+	Issuer         = "https://monoes.me/api/auth"
+	Audience       = "https://monoes.me/api/monoagent"
+	ClientID       = "monoagent"
+	GraceWindow    = 24 * time.Hour
+	MaxTokenLife   = 24 * time.Hour
+	ClockSkew      = 5 * time.Minute
+	RefreshMargin  = 5 * time.Minute
+	NegativeCache  = time.Minute
+	ConnectTimeout = 2 * time.Second
+	PollInterval   = 5 * time.Second
+	LateRefresher  = 5 * time.Minute // a non-serving process starts its refresher after this
+)
+
+// ---- state.go (B1a) ----
+type State string
+
+const (
+	StateOK     State = "ok"
+	StateGrace  State = "grace"
+	StateLocked State = "locked"
+)
+
+type Reason string
+
+const (
+	ReasonNone               Reason = ""
+	ReasonNotLoggedIn        Reason = "not_logged_in"
+	ReasonExpired            Reason = "expired"
+	ReasonRefused            Reason = "refused"
+	ReasonClockRollback      Reason = "clock_rollback"
+	ReasonClockSkew          Reason = "clock_skew"
+	ReasonKeyUnknown         Reason = "key_unknown"
+	ReasonInvalid            Reason = "invalid"
+	ReasonUnreachable        Reason = "unreachable"         // grace: why it was not refreshed
+	ReasonServerError        Reason = "server_error"        // grace
+	ReasonKeyringUnavailable Reason = "keyring_unavailable" // grace
+	ReasonUnconfirmed        Reason = "unconfirmed"         // grace, then locked: a refresh whose answer never arrived (A24)
+)
+
+type User struct {
+	ID       string `json:"id"`
+	Email    string `json:"email,omitempty"`
+	Username string `json:"username,omitempty"`
+}
+
+// Status is the verdict and the JSON of `account status --json` (spec §7).
+type Status struct {
+	V           int       `json:"v"` // always 1
+	State       State     `json:"state"`
+	Reason      Reason    `json:"reason"`
+	User        *User     `json:"user,omitempty"`
+	Plan        string    `json:"plan"`
+	IssuedAt    time.Time `json:"issued_at,omitzero"`
+	ValidUntil  time.Time `json:"valid_until,omitzero"`  // the access token's exp
+	GraceUntil  time.Time `json:"grace_until,omitzero"`  // iat + GraceWindow
+	EnforceFrom time.Time `json:"enforce_from,omitzero"`
+	Enforced    bool      `json:"enforced"`
+}
+
+// Allowed reports whether work may run: true when !Enforced, or State is ok or grace.
+func (s Status) Allowed() bool
+
+// Evaluate is the pure verdict of a stored session at a time: no I/O.
+// It verifies the token (Verify), applies the clock guard and the grace rule,
+// and fills Enforced and EnforceFrom from rollout.go. A nil session is
+// locked(not_logged_in); a session whose State is "refused" is locked(refused).
+func Evaluate(sess *Session, now time.Time) Status
+
+// ---- rollout.go (B1a defines; B5a sets the date) ----
+// The date lives in an unexported variable in rollout.go (`var enforceFrom = time.Time{}`,
+// the zero time = dormant, D22). B5a edits that one initializer. Everything else
+// reads it through the accessors, which take the globals' lock.
+func EnforceDate() time.Time
+func Enforced(now, hw time.Time) bool // !EnforceDate().IsZero() && max(now, hw) >= EnforceDate()
+
+// ---- session.go / store.go (B1a) ----
+// Every writer decodes session.json into Session and writes all of it back, so a binary drops a
+// field it does not know at its next write: a new security field bumps V (§3.6, forward compatibility).
+// Load refuses a V it does not know; the one write after a failed Load is Logout's token-less record.
+type Session struct {
+	V            int       `json:"v"`
+	Host         string    `json:"host"`
+	AccessToken  string    `json:"access_token"`
+	User         *User     `json:"user,omitempty"`
+	Plan         string    `json:"plan,omitempty"`
+	HW           time.Time `json:"hw,omitzero"`
+	LastAttempt  time.Time `json:"last_attempt,omitzero"`
+	LastResult   string    `json:"last_result,omitempty"` // "ok", "unreachable", "server_error", "keyring_unavailable", "unconfirmed", "refused"
+	State        string    `json:"state,omitempty"`       // "" or "refused"
+	Reason       string    `json:"reason,omitempty"`
+	PendingSince time.Time `json:"pending_since,omitzero"` // A24: the guard's clock when a refresh grant was about to be sent; zero when none is in doubt
+}
+
+// Store is the on-disk session. Mutating methods are safe across processes only under Lock.
+type Store interface {
+	Load() (*Session, error)                              // nil, nil when there is no session.json
+	Save(*Session) error                                  // atomic, 0600
+	LoadRefresh() (string, error)                         // "", nil when none; ErrKeyringUnavailable when the key store cannot be opened
+	SaveRefresh(token string) error
+	DeleteRefresh() error
+	Lock(ctx context.Context) (unlock func(), err error)  // exclusive, cross-process
+	Mtime() (time.Time, error)                            // of session.json; zero time when absent
+	Dir() string
+}
+
+func DefaultDir() (string, error)             // ~/.monoagent/account via os.UserHomeDir
+func OpenStore(dir string, s Sealer) Store    // dir "" means DefaultDir()
+
+// Sealer seals the refresh token under a key from the OS keyring or the file-keyring fallback, as the vault does.
+type Sealer interface {
+	Seal(plain []byte) ([]byte, error)
+	Open(sealed []byte) ([]byte, error)
+}
+
+var ErrKeyringUnavailable = errors.New("account: key store unavailable")
+
+func NewKeyringSealer() Sealer // production
+func NewMemorySealer() Sealer  // tests
+
+// ---- keys.go / verify.go (B1a) ----
+type Key struct {
+	KID    string
+	Public ed25519.PublicKey
+}
+
+func TrustedKeys() []Key // the pinned set; under devaccount also the dev key
+
+type Receipt struct {
+	Sub       string
+	Plan      string // "free" when the token has no plan claim
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+	KID       string
+}
+
+type VerifyError struct{ Reason Reason /* + one unexported detail field: build it with a keyed literal or not at all */ } // ReasonInvalid, ReasonKeyUnknown or ReasonClockSkew
+func (e *VerifyError) Error() string
+
+func Verify(token string, now time.Time) (*Receipt, error)
+
+// ---- errors.go (B1a) ----
+// LoginRequiredError is what every gate returns. Its message starts with
+// "Log in to monoes.me first: monoagentcli account login".
+type LoginRequiredError struct{ Status Status }
+
+func (e *LoginRequiredError) Error() string
+func IsLoginRequired(err error) bool // errors.As
+
+// ---- the refresh seam (B1a defines, B1b implements) ----
+type TokenSet struct{ AccessToken, RefreshToken string } // RefreshToken is the rotated token: never empty in a success; an empty one is an unknown outcome (A24), and one equal to the token presented is "not rotated", which is definitive
+
+// Refresher performs the OAuth refresh-token grant with resource=Audience.
+// It returns *RefusedError only for invalid_grant (D27), *TransientError for every other failure.
+type Refresher interface {
+	Refresh(ctx context.Context, refreshToken string) (*TokenSet, error)
+}
+type RefusedError struct{ Description string }                  // with (*RefusedError).Error
+type TransientError struct { // with (*TransientError).Error and (*TransientError).Unwrap, so errors.Is and errors.As see Err
+	Reason  Reason // ReasonUnreachable or ReasonServerError
+	Settled bool   // A24: true only when the outcome is KNOWN: the request was never written, or the answer is a complete 4xx other than invalid_grant (monoes.me processed nothing); the zero value means UNKNOWN (every 5xx, a 3xx, any failure after the write, a body cut short, a 2xx with no usable token set): the request may have been processed and the refresh token rotated
+	Err     error
+}
+
+// ---- guard.go (B1a) ----
+type GuardOptions struct {
+	Store     Store
+	Refresher Refresher        // nil: never refreshes
+	Now       func() time.Time // default time.Now
+	Poll      time.Duration    // default PollInterval
+}
+
+type Guard struct{ /* unexported */ }
+
+func NewGuard(o GuardOptions) *Guard
+func (g *Guard) Status() Status                              // the current verdict; recomputed from the cached session and Now
+func (g *Guard) Require(ctx context.Context) error           // nil when Status().Allowed(); else *LoginRequiredError
+func (g *Guard) EnsureFresh(ctx context.Context) (Status, error) // implicit refresh when due; a no-op when dormant
+func (g *Guard) Refresh(ctx context.Context) (Status, error)     // explicit refresh when due, even when dormant (used by `account status`)
+func (g *Guard) StartRefresher(ctx context.Context)          // idempotent; a no-op when dormant (not remembered: a later call starts it). A guard starts ONE loop in its life: once the first ctx has ended it never starts again, so pass a ctx that lives as long as the process
+func (g *Guard) OnRefused(fn func(Status))                   // called when the verdict becomes locked(refused), on its own goroutine after the guard's locks are released; a callback registered while the verdict is already refused is called at once, each new refusal calls it again, and in a rare race two Status calls can call it twice for one refusal, so fn must be idempotent
+func (g *Guard) Close()                                      // waits for the REFRESHER's grant in flight, then for the key-store write of its answer (A20, A22). EnsureFresh and Refresh block their own caller until their grant is stored and Close does not wait for them: a caller must not exit before they return
+
+// Process-wide guard.
+func Install(g *Guard)
+func Current() *Guard // nil when none is installed
+// Require uses the installed guard. With none installed it returns a
+// LoginRequiredError(locked, not_logged_in), except inside a test binary
+// (testing.Testing()) unless StrictForTest is active.
+func Require(ctx context.Context) error
+
+// CurrentStatus is nil-safe: the installed guard's Status(), or, with none
+// installed, a locked(not_logged_in) Status with Enforced and EnforceFrom filled
+// in. Doors and `/health` use it; processes that must react to a change (the
+// daemon) poll it every PollInterval.
+func CurrentStatus() Status
+
+// ---- testhooks.go (B1a): each panics unless testing.Testing() ----
+func SetTrustedKeysForTest(t testing.TB, keys []Key)
+func SetEnforceFromForTest(t testing.TB, at time.Time)
+func StrictForTest(t testing.TB)
+func InstallForTest(t testing.TB, g *Guard) // installs and restores on cleanup
+
+// ---- b1b: network side ----
+type LoginOptions struct {
+	Open    func(url string) error // opens the browser; nil does not
+	OnURL   func(url string)       // told the URL before Open runs
+	Timeout time.Duration          // default 5 minutes
+}
+
+func Login(ctx context.Context, o LoginOptions) (Status, error)                   // PKCE + loopback; stores the session
+func SendEmailCode(ctx context.Context, email string) error
+func VerifyEmailCode(ctx context.Context, email, code string) (Status, error)
+func Logout(ctx context.Context) error                                            // revokes best effort, and only a token the guard would present (A24, §3.6), deletes the refresh token, keeps the clock-guard record: a session with no token (A23)
+func NewDefaultGuard() (*Guard, error)                                            // production store, sealer and refresher
+
+// Adoption is not in this package (import rule, §3.1). In internal/library/adopt.go (B1b):
+//   func AdoptIntoAccount(ctx context.Context, db *sql.DB, g *account.Guard) (adopted bool, err error)
+// It reads a profile's `monoes-library` vault entry, tries to exchange its refresh token
+// through g's Refresher for an audience-bound JWT, and saves the session. A no-op while
+// dormant. Whatever the server answers, the outcome is "adopted" or "sign in once more"
+// and never a refusal (D23).
+```
+
+### 3.3 `accounttest` (B1a): the fixtures every other plan's tests use
+
+```go
+package accounttest
+
+type Mode int
+
+const (
+	SignedIn      Mode = iota // enforced, a valid token, state ok
+	InGrace                   // enforced, an expired token inside the 24 hours, state grace(unreachable)
+	LockedNoLogin             // enforced, no session, locked(not_logged_in)
+	LockedRefused             // enforced, session marked refused, locked(refused)
+	Dormant                   // EnforceFrom is the zero time
+)
+
+// Install builds a guard in the given mode over a temp store with a throwaway
+// key, trusts that key, sets EnforceFrom for the mode, installs the guard as
+// the process guard (strict: no test-binary fail-open) and restores all of it
+// on cleanup. It returns the guard.
+func Install(t testing.TB, m Mode) *account.Guard
+
+// Fixture is the lower-level form for B1a's own tests and for fake servers.
+type Fixture struct {
+	Private ed25519.PrivateKey
+	Key     account.Key
+	Clock   *Clock
+}
+
+func New(t testing.TB) *Fixture // trusts Key and sets EnforceFrom in the past
+func (f *Fixture) Token(o TokenOptions) string // a signed JWT valid at Clock.Now() unless o says otherwise
+
+type TokenOptions struct {
+	Sub, Plan, Issuer, ClientClaim string
+	Audience                       []string
+	IssuedAt                       time.Time // zero: Clock.Now()
+	Lifetime                       time.Duration // zero: 1 hour
+	KID                            string
+	Alg                            string // zero: EdDSA
+}
+
+type Clock struct{ /* Now() time.Time, Set(time.Time), Advance(time.Duration) */ }
+
+func DevKeyPair() (ed25519.PublicKey, ed25519.PrivateKey) // the fixed development pair: the public half is trusted by `-tags devaccount` builds (B1b), the private half signs for libraryfake
+```
+
+`accounttest.Install` and the `*ForTest` hooks change process globals: they take the package's lock, and a test that uses them must not call `t.Parallel()`.
+
+### 3.4 JSON, text and wire contracts
+
+The refusal text of every reason is contract, not only the lines quoted below: the six not quoted here (`expired`, `refused`, `clock_rollback`, `clock_skew`, `key_unknown`, `invalid`) are frozen word for word by the B1a plan (its `errors.go` listing) and pinned byte for byte by `internal/account/wire_test.go`, together with the 15 state and reason strings and the key order of the `Status` JSON. A plan that prints, translates or tests one of them (B2's doctor, B4's desktop) takes it from there.
+
+1. `account status --json` prints `account.Status`. Exit 0 for `ok` and `grace`, 4 for `locked`.
+2. A refused gated command (CLI gate or any command that returns `*account.LoginRequiredError`) exits 4. When `--json` appears anywhere in the arguments it also prints on stdout one document: `{"error":"<message>","code":"auth_or_connection","login_required":true,"account":{"state":"locked","reason":"<reason>"}}`. The type `loginRequiredError` moves from `cmd/monoagentcli/library.go` to `cmd/monoagentcli/login_required.go` (B1b), with constructor `newLoginRequiredError(st account.Status) error`, `JSONErrorFields()` carrying `login_required` and `account`, and `isLoginRequired(err)` unchanged in meaning.
+3. Gate text on stderr: locked `Log in to monoes.me first: monoagentcli account login` (plus a reason line); grace `monoes.me is unreachable; this login works offline until <RFC3339 local time>`, except grace with the reason `unconfirmed` (A24), where monoes.me is not the problem and the refresh token is gone: `This login can no longer be renewed on this machine and works until <RFC3339 local time>. Sign in again: monoagentcli account login`; warn `A monoes.me login will be required from <date>: monoagentcli account login`. Never on stdout.
+4. Heartbeat: `daemonhb.Heartbeat` gains `Account *AccountState \`json:"account,omitempty"\`` with `AccountState{State string \`json:"state"\`; Reason string \`json:"reason,omitempty"\`; ValidUntil time.Time \`json:"valid_until,omitzero"\`; Enforced bool \`json:"enforced"\`}` (B3a). The same four-key object `{state, reason, valid_until, enforced}` is what `GET /health` and the bridge `ping` report, so a warn-period `locked` state (nothing refused) can be told from a real lock.
+5. HTTP API and org receiver (B3b): status 401, body `{"error":"login_required","login_required":true,"account":{"state":"…","reason":"…"}}`. `/v1` (B3b) keeps its OpenAI-style envelope (`internal/openaiapi/errors.go`: `apiError` and `writeError`, `{"error":{"message","type","param","code"}}`): status 401, error `code` `login_required`, the fixed message `Log in to monoes.me first: monoagentcli account login`, and never the flat body above, because OpenAI SDKs parse the envelope. `GET /health` stays open and gains `"account":{"state":"…","reason":"…","valid_until":"…","enforced":false}`. B3b gates the whole HTTP mux with a default-deny wrapper, because `ExtraRoutes` (the org receiver and `/v1`) mount outside `Server.auth`.
+6. Webhook server (B3b): 503 `{"error":"login_required"}` with `Retry-After: 60`; no execution is created.
+7. Extension bridge (B3b): every request except `ping` gets a reply frame `{"kind":"reply","id":…,"error":"<LoginRequiredMessage>","code":"account_locked"}` with NO `ok` key (`Reply.OK` is omitempty, `internal/extension/request.go:122`), so readers test `!reply.ok` or the code; `ping` data carries `"account":{"state","reason","valid_until","enforced"}`. The relay answers 503 (its client reads 401 and 403 as a pairing mismatch) and the CDP socket is refused at connect and per command. Pushed captures, recordings and binding pushes stay ACCEPTED while locked: the extension drops its queued copy once the socket takes a frame (`chrome-extension/capture_bridge.js:111-117`) and installed extensions cannot be updated centrally. Nothing runs on that data while locked (ruling R8 of 2026-10-07, B3b Task 7b): the bridge skips the work that follows the write of a capture (its summary, its page-kind classification, which would send the page to TypeSafe Jev, and its indexing, a `monomind` process), its indexing queue drops every pass, so a capture kept while locked is indexed by its profile's next pass after a sign-in, and `record.analyze` is a request, refused like the rest. Tightening this needs an extension release first. Open while locked: `/monoagent/health`, `/auth`, `/pair`, `/pair/exchange`, and behind the token the read-only `/monoagent/browsers` and `/monoagent/resolve` (which browser a profile resolves to). `GET /monoagent/health` carries no account object.
+8. MCP (B3b): `tools/call` returns `isError: true` with the text `Log in to monoes.me first: monoagentcli account login`; `initialize` and `tools/list` still answer.
+9. Layer 2 (B3a): `handleExecution` records `FAILED` with an error text starting `login_required:`; `monomind.Exec` and `ActionExecutor.executeDef` return `*account.LoginRequiredError`; a run in flight ends at its next node once the verdict is locked: `FAILED`, with the error text `login_required: ` and the first line of the refusal, except for a refusal (`invalid_grant`), which ends it `CANCELLED`, as the cancel of everything in flight does (rulings R4 and R18 of 2026-10-07, B3a Task 3b: the node in flight finishes, and `ok` and `grace` never stop a run).
+10. Library compatibility (A and B1b): once `library` commands use the machine session, every `/api/library/*` call carries the audience-bound JWT. The server's token check (`getAuthenticatedUser`) must accept that JWT (scopes `library:read` and `library:write` included) alongside today's opaque tokens; plan A proves it with a server test that mints one and calls `/api/library/me` and a list endpoint. The client's library adapter sends the session's token only when `Session.Host` equals the library base URL, so a `MONOES_BASE_URL` pointed elsewhere never receives it.
+
+### 3.5 The CLI gate (B2)
+
+- `cmd/monoagentcli/account_gate.go` holds one classification table keyed by command path (`"doctor"`, `"doctor fix"`, `"library login"`, …), a command inherits its nearest listed ancestor, the root with no subcommand and `-h`, `--help`, `help` and `completion` are open, everything else is gated. `applyClassification(root)` sets `cmd.Annotations["monoagent.account"]` to `open` or `gated` from the table at start-up (one table, not 41 edited files, so phases do not conflict; D20 asks for annotations, and this produces them).
+- `main()` becomes `func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }` with `run(args []string, stdout, stderr io.Writer) int` so the gate is testable; `run` installs the guard (`account.NewDefaultGuard`, then `account.Install`) and gates before `ExecuteContext`. Tests that call `newRootCmd().Execute()` directly bypass the gate by design; layer 2 still applies to them.
+- The late refresher belongs to B2: `run()` starts the guard's refresher with `time.AfterFunc(account.LateRefresher, …)` for every process still running after five minutes (idempotent with `StartRefresher`). The serving commands (`daemon`, `httpapi`, `mcp`, `extension serve`) start it at once in their own `PreRun` (B3a), so B2 owns `main.go` and B3a never edits it.
+- `account.Require` (and `CurrentStatus`) with no guard installed judges the enforcement date on the clock alone: the clock-guard record (A23, A25) is read only through a guard, so a clock set back before the date un-enforces every gate reached without one. That is why B2 installs a guard in every process before any gate site can run: `run()` installs it before any hook of any command runs (every command, the daemon, the doors) and removes it only after the command has returned, pinned by `TestEveryCommandRunsWithTheProcessGuardInstalled`; a gate site that could run outside a command, or another process (the desktop's guard is B4's), installs one first. A process whose guard cannot be built (no home directory) has no record to read either and is judged on the clock alone, like a machine whose record was deleted (spec §4.8).
+- Classification has three values, `open`, `gated` and `serve` (the annotation `monoagent.account`); the serve set is pinned next to the open set in `TestEveryCommandIsClassified`. B2 also cancels the command context when a gated one-shot command's login is refused (`cancelWhenRefused`) and owns the edit to `cmd/monoagentcli/exitcodes.go` that maps any `*account.LoginRequiredError` to exit 4; `run()` prefers an already-installed guard (tests install their own).
+
+### 3.6 Contract amendments settled during planning
+
+Exact signatures are in the B1a plan; these are the additions and readings agreed with the plan writers.
+
+- `account.Require` with no guard installed returns nil while dormant or before the enforcement date; once enforced it returns `LoginRequiredError(locked, not_logged_in)`, except in a test binary unless `StrictForTest`. D22 wins over the older sentence in §3.2. "Enforced" is then judged on the clock alone, with no stored `hw` (the record is read only through a guard), which is why B2 installs a guard in every process before any gate site runs (§3.5).
+- Added: `account.LoginRequiredMessage`; `account.NewInteractiveKeyringSealer()` (the explicit sign-in uses it; the implicit `NewKeyringSealer` never prompts for the file keyring's passphrase); `account.NewSession(host, accessToken, user, now)`; `secrets.AccountKEK(create, interactive bool)`; `account.Install(nil)` and `account.InstallForTest(t, nil)` (remove the guard, restore on cleanup); `(*LoginRequiredError).JSONErrorFields()` returning `login_required`, `code: auth_or_connection` and `account{state, reason}`; more `accounttest` helpers (`InstallWithFixture`, `NewClock`, `DefaultNow`, `(*Fixture).Sign`, `DevKID`).
+- `Session.LastResult` may be `key_unknown` (a refreshed token with an unpinned `kid` is not stored; the grace shows `server_error` and ends as `locked(key_unknown)`).
+- The CLI path applies the one-minute negative cache to every refresh attempt, and the guard polls lazily inside `Status` (no goroutine for a non-refresher guard).
+- Server facts that bind the client: the provider rotates refresh tokens, and presenting an already-rotated one ends every MonoAgent session of the account (with plan A's Task 3, only that sign-in's refresh-token family, ruling R1). So a refresh writes `refresh.enc` before `session.json`, keeps the old token and the A24 marker if saving the new one fails (A24(d)), adoption deletes the library vault's copy after the exchange, and nothing leaves a stale refresh token behind. The server keeps a reuse window (`refreshTokenReuseInterval`, 300 seconds).
+- `MONOAGENT_DEV_ENFORCE_FROM` is read only in a file compiled under `-tags devaccount` (a default stub has no `os.Getenv`); it can force enforcement or a warn period and never relaxes anything. B5c owns it.
+- B5a's daemon-restart code runs in-process (`autostart.Installer.Restart`), never by spawning the gated `monoagentcli daemon restart`.
+- B1b adds, beyond §3.2 (exact signatures in the B1b plan): the shared browser sign-in moves into `internal/account` (`DiscoverEndpoints`, `AuthorizeInBrowser`; `internal/library` delegates and its public login API stays source-compatible), `account.Host()` (`HostURL`, or `MONOES_BASE_URL` in a `-tags devaccount` build only), `account.SetSealerForTest`, `account.GrantSettled(written bool, status int, complete bool) bool` (the rule of `TransientError.Settled`, which the library's refresh of an older login classifies with too, so the rule lives in one place), and in `libraryfake`: `TokenRequests`, `Replays`, `SetEmailOpaque`, `Block`, `SetClock`, `LastResource`, `OnToken` (a hook that runs while a token request is in flight, so a test can cancel a caller mid-grant: A20) and the refresh-failure switches, one of which, `RefreshLost`, rotates the token and then closes the connection unanswered, the lost answer of A24. A test that signs in through the default store should call `account.SetSealerForTest` with a memory sealer, so that its sign-in depends on no key store: `secrets.AccountKEK` reads the key from the key store at every call, the mock keyring that most CLI tests re-make or, in a test that never installs the mock, the developer's own keychain.
+- The email sign-in needs plan A's Task 7 merged first (the verify route must return a refresh token); until then `account login --email` ends in `ErrEmailSessionUnavailable`. B1b's adoption (`library.AdoptIntoAccount`) tries each profile in order: a dead login moves on to the next profile and its vault copy is deleted; a login that got no verdict stops the call, and its copy stays only when the outcome is known (the request was never written, or monoes.me answered with a complete 4xx that is not `invalid_grant`): when the request may have been processed (A24: any other answer, every 5xx included, or none), or its answer arrived and the new refresh token could not be saved (A24(d)), the older refresh token is spent or may be, so its copy is deleted too and the user signs in once more.
+- Import rule exception (spec A15): `internal/monomind`, and the packages in the same import cycle (`internal/secrets/blob_test.go` imports `internal/storage`, which imports `monomind`; `account` imports `secrets`), cannot import `internal/account`. `Exec` is gated through the hook `monomind.SetAccountGate` (and `monomind.ErrNoAccountGate`) that `cmd/monoagentcli` installs in an `init`; a binary without the hook is refused by `Exec`. `daemonhb.AccountState` uses plain strings for the same reason. Plans must run `go vet ./...` after adding an `internal/account` import to any package.
+- B3a also gates `RetryExecution` and `ResumeExecution` (a paused run waits, with a hold, and does not fail while locked), and the serving commands gate in `PreRun`.
+- A refresh grant, once sent, is always completed and stored (spec A20). The provider rotates the refresh token when it answers and deletes every refresh token of the account when a rotated-away one is presented again outside the 300-second reuse window (with plan A's Task 3, that sign-in's family), so a grant that the client abandons (Ctrl-C, SIGTERM or SIGHUP mid-call, `Close`, a closing context) leaves the dead token on disk and ends every install at the next attempt (with Task 3, this one). The guard gives the `Refresher` a context detached from the caller's cancellation (`context.WithoutCancel`) with a deadline of its own (`refreshCallTimeout`, 20 seconds), so `EnsureFresh`, `Refresh` and `Close` may block after a Ctrl-C while a grant is in flight: for the grant, then for the key-store write of the new refresh token (A22, at most 10 seconds), about 20 seconds in practice (B1b's refresher gives up on a grant after 10 seconds) and 30 at the worst; nothing else cancels one. A service manager that kills the daemon before that ends it loses the answer (the A24 case), so the definitions that `daemon install` writes allow at least 35 seconds: launchd's `ExitTimeOut` (its default is 20) and systemd's `TimeoutStopSec` (written as 90, its own default). A Windows scheduled task has no stop time, so only the wait of `Restart` follows, and a restart inside a refresh remains the A24 case (B5a's Task 4b). Every other grant the product performs that rotates a refresh token does the same: the adoption exchange of an older library login (D23) and the update of the vault entry after it, and any refresh the library adapter makes of a login of its own. A code exchange or an emailed code's trade stores no refresh token and needs no such guarantee. `run()` lets go of the signals before it releases the guard, so a second Ctrl-C ends a shutdown that waits for a grant (B2).
+- After `invalid_grant` the refresh token file is deleted only once the `refused` marker is saved in `session.json` (spec A21). If the marker cannot be written (a full disk, a read-only file) the token stays, so the next process presents the already-refused token, learns the refusal again and retries the marker; a refusal is never forgotten because a write failed.
+- Every key-store call made under the machine-wide session lock is bounded to 10 seconds, and a timeout is `keyring_unavailable`, a grace reason (spec A22). A locked keychain or an unanswered unlock dialog therefore cannot hold the lock, and with it every process's refresh and every sign-in, or hang `Close`. A grant's new refresh token is saved only after the key store answered in time; when it did not, `refresh.enc` and the A24 marker stay and the next attempt recovers the answer (A24(d)). Every call that opens or seals the refresh token (`LoadRefresh`, `SaveRefresh`) is made under that lock (the guard's refresh and B1b's sign-in, logout and adoption take it first): B1a lets at most one call that outlived its bound stay parked, and while one is parked the next call fails at once as `keyring_unavailable`. That bound, and the `SaveRefresh` that follows a grant, are safe only while the lock serializes the calls. One exception, ruled in the review of the security fixes: the sealer of the explicit sign-in (`NewInteractiveKeyringSealer`) is not bounded, because a person types the file keyring's passphrase or answers the unlock dialog and a bound of 10 seconds would fail `account login` while the prompt is still on the terminal. It is for the sign-in only and is never given to a `Guard`: a guard over it would make `LoadRefresh`, `SaveRefresh` and so `Close` unbounded (B1b builds every guard over `NewKeyringSealer`). While that prompt is open another process's refresh waits 25 seconds for the lock, gives up and records nothing, its high-water write gives up after 2 seconds, and the background refresher tries again at every poll.
+- `account logout` never erases the clock-guard record (spec A23). When a session existed it saves a session with no token, `{V: 1, Host, HW: max(its mark, now)}`, instead of deleting `session.json`, so the enforcement date is still judged against `max(now, hw)`: a blocked account that logs out and sets the clock before the date stays `locked(not_logged_in)` and enforced. That holds for a user who leaves the account folder alone; one who deletes the record and then sets the clock back is an accepted case of spec §4.8. A machine with nothing stored still writes nothing, `Logout` reads the refresh token it revokes under the session lock, and the next sign-in replaces the record. A logout revokes only a token the guard would present (ruled 2026-10-06): `session.json` was read, holds no `pending_since` marker, its `LastResult` is not `unconfirmed` and it was not refused. Anything else is forgotten locally only and the revoke endpoint is not called: a file that cannot be read or is of a version this build does not read, a refresh token with no `session.json` behind it, a marker (a refresh whose answer is in doubt, A24), `unconfirmed` with or without a marker, a refusal. Such a token may already be spent, or what a marker would say is hidden; presenting a spent token anywhere, the revoke endpoint included, is what A24 forbids, since revoking a rotated-away token might count as its reuse and sign out every install (measured since, spike S7: on a server without plan A's Task 3 it ends every MonoAgent refresh token of the account; with Task 3 it ends that token's sign-in, a successor this machine never received included, so the rule stays as defence in depth), and on a server without Task 3 it would not revoke a successor this machine never received. A refresh token left at monoes.me that nobody holds is the accepted cost. The local copies go as usual, and the record logout leaves is the same in every case.
+- A refresh whose outcome is unknown is never presented twice (spec A24, adopted by the owner on 2026-10-06; it replaces the proposal of the same number). A20 completes every grant the client sends, but an answer can still be lost after the provider has rotated the token: a process killed or crashed mid-call, a machine that sleeps mid-call, an outage that starts mid-call. The client would then hold a rotated-away token and present it at its next attempt, often after the 300-second reuse window, which ends every install of the account (with plan A's Task 3, this install's sign-in). The guard now saves a marker before it sends a grant and refuses to present a token whose consumption it cannot rule out; one machine signs in again and no other install is touched. The contract is additive (exact signatures in the B1a and B1b plans):
+  - `Session.PendingSince time.Time`, JSON `pending_since,omitzero`: the guard's clock when a refresh grant was about to be sent.
+  - `TransientError.Settled bool`: true only when the outcome is KNOWN, that is when (a) the request was never written (DNS, the dial, TLS, a cancellation before the write, the guard's own refusal to send) or (b) the answer is a complete 4xx response other than `invalid_grant` (monoes.me processed nothing: a rate limit, a malformed request); the refresh token was then not consumed by an answer nobody saw. Everything else is UNKNOWN: every 5xx whatever its body, because a gateway's 502, 504 or 524, or an application's 500, can come after a rotation that really happened; any failure after the request was written (a reset, a timeout, an end of file); a body cut short under any status; a 3xx; and a 2xx whose body is unusable or names no access token or no refresh token. An earlier text read any HTTP status as settled: the guard then took back its marker after a 5xx that followed a rotation, `refresh.enc` held a rotated-away token, and the next attempt after the window revoked every install of the account. The zero value means UNKNOWN (the request may have been processed) and is the fail-safe default: a `Refresher` that does not set it, and any error that is not a `*TransientError`, counts as an unknown outcome. B1b's `httpRefresher` sets it exactly, with `net/http/httptrace`'s `WroteRequest` and `account.GrantSettled`, the one statement of the rule. Its consequence, which narrows D27's "one bad deploy must not log out every online install" and was kept by ruling R2 of 2026-10-07: a monoes.me that answers refresh grants with a 5xx for longer than `pendingRetryWindow` makes every install that tried to refresh meanwhile drop its refresh token (`unconfirmed`), so each signs in again within its 24-hour grace; nothing is revoked, and an install whose retries inside the window reach a monoes.me that answers again loses nothing. The owner's options were: (A) keep this safe rule, as written here: an outage with 5xx answers longer than 240 seconds makes the affected installs sign in again, and nothing is revoked; (B) go back to reading a 5xx as settled: an outage costs nothing, but a 5xx raised after the commit revokes every install of the account (rejected by the review); (C) keep (A) and raise monoes.me's refresh reuse interval (plan A's `refreshTokenReuseInterval`, today 300 seconds) together with `pendingRetryWindow` (today 240 seconds), so that outages up to the new window are ridden out, at the cost that a stolen rotated-away refresh token keeps being answered with the first answer for that long. Decided 2026-10-07 (ruling R2): (A) stays; (C) is not taken now and is revisited after R1 ships. Two fixes outside B1a would also remove this trade-off and close A24's clock residual (rule (9)): (i) plan A: a refresh token reused past the window ends only the family of the reused token (the OAuth security BCP), not every refresh token of the account, which removes the 5xx trade-off and shrinks every residual of A24 to "that install signs itself out"; (ii) B1b: the age measured on monoes.me's clock: the `Refresher` reads the `Date` header of a monoes.me response taken just before the grant (the discovery response if that attempt fetches one, else one extra request), keeps it with the marker, reads another before a retry, and does not send a retry whose age it cannot show to be inside the window. Decided 2026-10-07 (ruling R1): (i) is adopted, the family scope ships with plan A's Task 3 (spike S7 found the family, `authorization_code_id`; a before hook ends only that family on the token and revoke routes, and a revoke ends the whole sign-in of the token presented), and (ii) is not taken while (i) holds; the client keeps A24 and A25 as defence in depth and changes no constant until the owner has measured the deployed server. The hook's own residuals bind the client: the loser of two presentations of one token at the same moment (two refreshes, a logout racing a refresh, a retry while the first request may still be in flight) gets `invalid_grant`, so refresh and logout must be serialised per install and a request that may still be in flight must not be retried (plan A's Task 3; a requirement on B1a and B1b that their owners check). Until (i) is deployed the residual stands (ruling R6).
+  - `ReasonUnconfirmed Reason = "unconfirmed"`, also a `Session.LastResult` value: a grace reason and, once the grace has ended, `locked(unconfirmed)` (the `key_unknown` pattern). Its text names the cause and the action: `monoes.me may have received a refresh whose answer never arrived, so this machine stopped using its saved login to protect your other installs. Sign in again on this machine: monoagentcli account login`.
+  - `pendingRetryWindow = 240 * time.Second`, beside the other timings in `guard.go`: the server's reuse window is 300 seconds, and 240 leaves room for the call's own duration and for clocks that run at different rates.
+- How the guard uses it, in `refreshUnderLock`, with the session read again under the machine-wide lock so that the marker is true across processes. (1) Before a grant is sent the marker is saved with `pending_since` set to now, and only when it was zero: a retry inside the window keeps the first stamp, because the 300 seconds run from the first send that the server may have answered. A failed save sends nothing. (2) After the answer: tokens and `invalid_grant` clear the marker, a `*TransientError` with `Settled` true clears it only when this attempt wrote the stamp (the token was not consumed by this grant, and is presented again later, under the normal negative cache), and every other failure keeps it. Tokens means a `TokenSet` that names a refresh token: a new one, or the one presented (not rotated, which is definitive). A `TokenSet` whose `RefreshToken` is empty is an unknown outcome, because monoes.me rotates at every use and such an answer has spent the token presented without naming its successor: the guard keeps the marker and the old token and records `server_error`, the retry inside the window gets the same answer, and after the window the token is dropped as `unconfirmed` (rule (3)). A retry inside the window that fails settled keeps the original stamp: the earlier grant may have been answered, and this one says nothing about it. (3) At the next attempt in any process, an age beyond `pendingRetryWindow`, or a clock that went back, means that the server's window can no longer recover the answer, or that the age cannot be told. The clock went back when the guard's clock reads before the stamp (a negative age) or before the session's `LastAttempt`, which is always written from the local clock; that reading is conservative on purpose: the unsafe outcome is an account-wide revocation (on a server without plan A's Task 3; with it, this install's sign-in ends, which the drop ends anyway), the safe one a needless sign-in on one machine. The guard then does not present the token but drops it, in this order: `DeleteRefresh` first (`os.ErrNotExist` counts as success), then the session is saved with `LastResult` `unconfirmed` and with the marker cleared only when the delete succeeded; a failed delete keeps the marker, so the next pass drops again and never presents the token. No network call is made and nothing is revoked. The order is the opposite of a refusal's (A21: the marker first, then the delete) on purpose: a refused token presented again only meets `invalid_grant` (plan A: a dead token is punished once), while a token in doubt must never be presented. Inside the window the retry is immediate (`dueForRefresh` is true for a pending session, skipping the negative cache and the margin rules) and the server repeats its answer. (4) A pass that finds no refresh token after a completed drop (`LastResult` is `unconfirmed` and no marker) records nothing, so the grace keeps saying why. A pass that finds no refresh token while the marker is set finishes an interrupted drop, whatever the marker's age: it saves `LastResult` `unconfirmed` with the marker cleared, and calls nobody. No refresh token means no `refresh.enc`. A key store that cannot open `refresh.enc` is `keyring_unavailable` and keeps the marker, as before, while the marker is inside the window; past the window, on a clock that went back, or while `LastResult` is `unconfirmed`, rule (3)'s drop runs first (`os.Remove` needs no key store), so that this branch never records over `unconfirmed` and never lowers `LastAttempt` while a token is on the disk. A pass that finds nothing left to present after a completed drop records nothing and ends as a failed pass, so the background loop backs off as it does for any failure and a daemon does not read the files at every poll. (5) The background loop never holds a session that has a marker: a marker ends a hold (the wait of half a token's lifetime after a refresh), because monoes.me repeats its answer for 300 seconds only. A marker that another process left is due within 30 seconds. A marker the loop starts to follow (a stamp it has not followed before, its own or another process's) restarts the backoff at 30 seconds, whatever earlier failures left it at, so the loop's retries of it land at +30, +90 and +210 seconds from its first send, inside the 240-second window. The loop compares each pass's clock with the previous pass's: a backward step of more than 10 seconds while a grant is in doubt raises `last_attempt` to the previous reading and ends the wait, so that the token is dropped at once. (6) `applyRefusal` also raises `hw` to `max(hw, now)`, so a refused session keeps the enforcement evidence. (7) A24(d), ruled after the review of the security fixes: when a grant was answered with a new refresh token and saving it fails (`ErrKeyringUnavailable`: the key store timed out or refused, or the write failed), `refreshUnderLock` does not delete `refresh.enc` and does not clear the marker. `pending_since` keeps the stamp of the first send, `LastResult` becomes `keyring_unavailable` and the error is returned. The next attempt inside the window presents the same token again (rule (3): at once, and monoes.me answers it again from its 300-second reuse window), which recovers the answer; after the window the age rule drops the token with no call. An earlier text deleted the token at once (A7, A22), which cost the machine its login even when the key store was back a moment later. (8) The guard never presents a refresh token while `LastResult` is `unconfirmed`; only a new sign-in clears that state (`NewSession`). A pass that finds a refresh token in that state repeats the drop of rule (3), whatever the marker's age, because a `refresh.enc` that cannot be deleted (a macOS immutable flag, a Windows handle opened without `FILE_SHARE_DELETE`) must never be presented: after a failed delete that token is still on disk, and the marker of rule (3) and this rule each keep it from being sent. (9) Two accepted residuals. The first is what the drop cannot see: a clock that went back or stood still without a refresher pass seeing it, that is a CLI-only machine, or a guest whose clock stops while it is paused (a WSL2 guest after the host slept, a virtual machine paused without time sync, Docker Desktop's). A clock stepped back by more than about 10 seconds on a machine where no refresher is running goes unseen (nothing runs between the last recorded evidence and the step, so the next command sees an apparent age that is too small by the step), and so does a command within one poll (5 seconds) after the step on a machine that has one. With a refresher running, a backward step of more than 10 seconds is seen at its next pass (it compares each pass's clock with the previous pass's, rule (5)) and the token is dropped; the persisted evidence is also raised at least once a minute while a grant is in doubt (`touchHW`), for the commands of other processes. A step smaller than 10 seconds is ignored: it lies inside the 60-second margin between the guard's 240-second window and monoes.me's 300-second reuse window. A clock that stands still is seen by nothing, with or without a refresher: the paused guest never reads a time that goes back, so neither a pass nor the stored evidence can tell that real time passed; the marker keeps its apparent age, and a retry (due at +30, +90 and +210 seconds of that clock) comes as late in real time as the pause lasted. A pause that carries a retry beyond monoes.me's 300 seconds (more than 270 seconds for the first retry, more than 90 seconds for the last) presents the token outside the window, and monoes.me then ends every refresh token of the account (with plan A's Task 3, only that install's sign-in). The client has no clock that runs through the pause. A boot-time or monotonic reference in the marker would close the CLI-only step (out of scope) but not the pause; what closes both lies outside B1a: ruling R1 of 2026-10-07 adopts a reuse past the window that ends only the family of the reused token (plan A's Task 3, the Settled bullet above), which shrinks it to "that install signs itself out". Until that is deployed it stands (ruling R6); it is recoverable (every install signs in again, and nothing leaks). The second: a process suspended (a lid closed, Ctrl-Z, a paused VM) inside the refresher between the check of the marker's age and the write of the request (endpoint discovery, the dial, TLS) can send an in-window retry after the window. The guard judges the age after it has read the refresh token and just before the send, which closes the key store read, but not the transport's own pre-write phase. Closing that would pass a send deadline to the transport (a context value read by B1b's `httptrace` `GotConn` hook, which cancels a request that has not been written yet): a possible later hardening, not part of the contract.
+- Every other grant that spends a refresh token follows the same rule (A24): the adoption exchange of an older library login (D23) and the library adapter's refresh of a login of its own. When such a grant fails with an unknown outcome (a `*TransientError` whose `Settled` is false; for the library's own refresh, which has no `Refresher`, the same rule through `account.GrantSettled`, a 2xx that names no refresh token included) this machine's copy of that older token is dropped from the vault, never kept: the token may be spent, and presenting it again after the window would end every install. When the failure is settled (the request was never written, or a complete 4xx that is not `invalid_grant`) the copy stays, as before. The adoption exchange also counts as unknown when its answer arrived and the new refresh token could not be saved (A24(d); B1a bounds that write to 10 seconds, A22): there is no marker to carry the state, so the vault copy is dropped, nothing is stored and `Adopt` returns the failure. B1b owns both and tests each row of the failure table.
+- The clock-guard record of a machine that never signed in (spec A25, adopted by the owner on 2026-10-06). `touchHW` is the one place the guard writes `hw`, and with no `session.json` it used to return: a machine that had only ever been refused kept nothing on disk, so setting the clock back before the enforcement date un-enforced the gate (`Enforced` judges `max(now, hw)`). Now, when there is no session, the package is not dormant and `Enforced(now, time.Time{})` is true (a date is set and the clock has reached it), `touchHW` takes the session lock (a bounded wait), reads again under it and, when there is still no session, saves the same session with no token that A23's logout leaves, `{V: 1, Host: HostURL, HW: now}` and nothing else, and adopts it; a session that appeared in the meantime is not overwritten. It is at most one attempt per `hwInterval` per guard and a failure is never reported. `touchHW` runs in a guard pass that finds nothing due (`EnsureFresh`, `Refresh`, the background refresher); `Status`, `Require`, `CurrentStatus` and `Evaluate` still write nothing. `Evaluate` judges the record `locked(not_logged_in)`, enforced from its `hw`, so a clock set back before the date afterwards stays refused. That stops the naive clock change; a user who also deletes or edits the record is an accepted case of spec §4.8.
+- What A25 changes for plans and tests. (1) From the enforcement date on, a gated command refused on an empty HOME leaves exactly `account/session.lock` and `account/session.json` (a session with no token, `hw` equal to the clock) and nothing else. "Nothing is created on an empty HOME" (§2, `scripts/doctor-smoke.sh`) holds while dormant, before the date, and for a command that runs no guard pass (`doctor`, `version`, `completion`): a test that asserts an empty HOME says which of these it is, and a test of a refusal after the date expects those two files and nothing more. (2) A login replaces the record (`NewSession` resets `hw` to the token's `iat`), and B1b's `Client.Adopt` does not count a session with no token that is not refused as a login: otherwise the record that the refusal of a serving command has just written would end the adoption of an older library login (B5a limit 1). (3) A test that depends on the date sets it with `SetEnforceFromForTest`; it never relies on the ambient one.
+- The store and the key after the second security review (B1a; spec §4.6). `Load` and `LoadRefresh` read only a regular file of at most 64 KiB, without waiting for a FIFO's writer. A `Load` failure that means the content is unusable (invalid JSON, an unknown version, not a regular file, too large) wraps the package-internal sentinel `errSessionInvalid`, an I/O failure does not, and the guard drops its cached session on the first and keeps it on the second. On Windows every rename of a write is written through (`MoveFileEx` with `MOVEFILE_WRITE_THROUGH`, in `rename_windows.go`, which the import rule allows beside `lock_windows.go`). The key-encryption key is read at every `Seal` and `Open` and never remembered; only "no entry" makes a key, with the file-keyring opt-in as the one accepted exception; every call that seals a refresh token (a sign-in's, B1b's adoption's, the guard's) holds `session.lock`, which is the only thing that keeps two creators of the first key apart.
+- Forward compatibility of `session.json` (spec §4.6). Every writer round-trips `Session`, so a binary drops at its next write any field it does not know, and mixed versions on one machine are expected (an old desktop app beside a newer CLI, spec §12). `PendingSince` therefore ships in the same release as the first writer of `session.json`: B1a carries A24 and A25 together, and B1a and B1b are never merged, and so never released, without them (§1). A later field that matters to security bumps `V`, or is kept on rewrite by every writer already installed (B1a's `Save` keeps no key it does not know, so for now that means bumping `V`). `Load` refuses a `V` it does not know, and no writer writes after a failed `Load` but one: B1b's `Logout`, which replaces an unreadable file with the token-less record, its mark started from now, and revokes nothing (it cannot see a marker in such a file). The guard's refresh, `touchHW`, the A24 drop and the adoption all stop at a failed `Load`, and a sign-in reads nothing first: it writes a new session over the file.
+
+## 4. Rules for everyone who writes or executes a plan
+
+- **Precedence.** Each plan copied the global constraints of §2 when it was written, and the index and spec were amended afterwards. Where a plan's text, its copied constraints included, differs from this index (§2, §3.6) or from spec §13, the index and spec §13 win. Executors read both before their first task, and the lead re-syncs the copies before a plan is executed.
+- **Repository state.** Plans are written against master `f4441a2a` (v0.106.1), read from the worktree `.claude/worktrees/feat+monoes-account-gate`. Every file path, function and line in a plan must exist; confirm with `grep` or `sed -n` before writing it.
+- **Test commands.** Targeted and explicit: `go test ./internal/account/ -run TestVerify -count=1`. Never a loose `-run 'Doc'` (it also matches `TestAutomationDoctorJSON`, which hangs for minutes under a narrow `-run`). Add `-race` for `internal/account` and the CLI tests the gate touches. Build checks use `go build ./...`, `go vet ./...`, `gofmt -l .`, and for the variants `go build -tags nosocial -o /dev/null ./cmd/monoagentcli` and `go build -tags devaccount -o /dev/null ./cmd/monoagentcli`. **Never** a bare `go build ./cmd/monoagentcli` in the repo root: it overwrites the owner's gitignored `./monoagentcli`.
+- **Known failures on pristine master (macOS).** A red `go test ./...` is judged against this list, not investigated: `cmd/monoagentcli` `TestCaptureTaskFilesOnTheBoard`, `TestCoderRootIsOneSharedFolder`, `TestWorkflowCancelSignalsAndMarks`, `TestCoderConversationFolders`; `internal/capturetask` `TestCreateAttachesEveryArtifact`, `TestCreateRecordsTheRealPathNotASymlink`; `internal/config` `TestGenerateConfigFailsFastWhenMonomindMissing`; `internal/monomind` `TestFindAll_ListsShadowedCopies`. Load flakes that pass alone: `internal/connections` `TestMigrateConnectionsToVault_SkipsRowLockedByAnotherProcess`, `internal/mcp` `TestGrantWaitTimeoutNote` and `TestManyUpdateCallsAtOnceAllLand`, `internal/dynorg` `TestIsolatedWritersRunInParallelInTheirOwnWorktrees`, `internal/monomind` `TestAgentTestGoDeadline`. A failure not on this list is yours until proven otherwise (export `HEAD` with `git archive HEAD | tar -x -C <fresh dir>` and run the test there).
+- **Shell limits in agent worktrees.** The Bash tool refuses chained git (`git add … && git commit …`), `git -C <other dir>`, heredocs, `rm -r` and `rm -rf`. Commit with two separate commands: `git add <files>`, then `git commit -m "<subject>" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"`. Write multi-line files with the Write tool. A refused long command goes into a script file in the scratchpad and runs as `bash script.sh`. Never use bare `git stash`.
+- **Tokens.** Tests and logs never print a token, refresh token or key. Inspect structure (lengths, claim names), not values.
+- **Disk.** Tests use `internal/testhome` (a throwaway `HOME`); do not run shadow-HOME smoke tests that re-download Go caches (about 1.7 GB each).
+- **Pushing.** Nothing is pushed and no pull request is opened unless the owner says so. Nothing merges without the owner. Every merge to master releases.
+- **Every grant that rotates a refresh token is completed once sent (A20).** An abandoned grant leaves the dead refresh token on disk, and presenting it again after the 300-second reuse window ends every install of the account (with plan A's Task 3, this install's sign-in). A plan that sends such a grant (the guard's refresh, the adoption exchange and the vault update after it, the library's refresh of a login of its own) runs it on `context.WithTimeout(context.WithoutCancel(ctx), …)` and stores the answer before anything else; a test cancels the caller while the fake is answering (`libraryfake.OnToken`) and expects the answer stored.
+- **A machine's clock-guard record is never erased by an open command (A23).** The high-water mark in `session.json` is what makes a clock set back worthless to a user who leaves the account folder alone (spec §4.8): `account logout`, `library logout` and every other open command that forgets a login keep it, as a session with no token. A test that logs out checks that the mark survives and that `Evaluate` still enforces the date with the clock set before it.
+- **A grant whose outcome is unknown is never presented twice (A24).** A plan that sends a grant spending a refresh token reports `Settled` exactly (true only when the request was never written or the answer is a complete 4xx that is not `invalid_grant`; every 5xx, a 3xx, a body cut short, a failure after the write and a 2xx without a usable token set, a missing refresh token included, are unknown: `account.GrantSettled`) and, when the outcome is unknown, does not keep a token that the server may have rotated: the guard retries inside the 240-second window and then drops it, the adoption exchange and the library adapter drop their vault copy at once. An answered grant whose new refresh token could not be saved counts as unknown too (A24(d)): the guard keeps the marker and the token for the retry, the adoption exchange drops its vault copy and returns the failure, and a logout revokes only a token the guard would present (§3.6). A test per row of the failure table pins the result: settled, a dial failure, a failed endpoint discovery, a cancellation before the write and a complete 4xx (a rate limit, a malformed request); unknown, a 4xx whose body is cut off, a 500, 502, 504 and 524, a 5xx whose body is cut off, a 3xx, a connection reset after the request was read, a timeout, a 200 with a body that is not a token set and a 200 that names no refresh token. A test per consumer pins what it does with an unknown and with a settled failure, and with a key store that fails after the answer. The guard's drop has five tests of its own (§3.6, rules (2), (3), (4) and (8)): a store whose `DeleteRefresh` fails keeps the marker and no later pass sends a grant; a clock that reads before `LastAttempt` (and after the stamp) drops a marked token unsent; a `refresh.enc` removed while the marker is set makes the next pass record `unconfirmed` with no call; a token found beside `LastResult` `unconfirmed` is dropped unsent; a retry inside the window that fails settled keeps the first stamp.
+- **Once the date has been reached a refusal leaves a record (A25).** A gated command refused on a machine with no session writes the token-less clock-guard record, so a test of that refusal expects exactly `account/session.lock` and `account/session.json`, a session with no token and `hw` equal to the clock, and a second test sets the clock back before the date and expects the refusal again. A test that asserts that nothing is written on an empty HOME is for the dormant gate, a date still ahead, or a command that runs no guard pass, and it sets the date it relies on.
+
+## 5. Execution (multi-agent)
+
+The owner chose multi-agent execution, so superpowers:subagent-driven-development runs this index:
+
+1. **One implementer per plan**, in its own git worktree (`isolation: "worktree"`) cut from master, or from the tip of the plan it depends on (B1b on B1a; B2, B3a, B3b and B4 on B1b once B1 is merged; B5a and B5b on the merged B-phases). Plan A runs in a clone of `monoes-landing`, or is handed to the Claude session that works in that repository.
+2. **A fresh read-only reviewer after each task**, and a whole-branch review per plan. B1a and B3b are security-critical and get a second, independent review that tries to bypass the gate.
+3. **Parallelism.** After B1a merges, B1b, B3a and B3b run at once; after B1b merges, B2 and B4 run at once. A runs from the start (its spikes S1, S2, S3, S6 and S7 are the earliest blocking facts).
+4. **Integration** by rebase in the merge order of §1. The lead runs the full verification (§4 commands, both build variants, `-race` on the account package) before each plan is offered to the owner.
+5. **The owner decides** when to push, open pull requests and merge. B5b's license and distribution tasks 3 and 4 (swap the license, move release assets) wait for the owner's terms and a go; the audits (tasks 1 and 2) can run any time.
+
+## 6. Rules for the plan writers
+
+- Write exactly one file: your own plan. Never touch the spec, this index, another plan or any source file; no commits and no pushes.
+- Use the contract of §3 exactly. If you need a change, add it under a final heading `Contract change requests` (name, reason, proposed signature) and keep your plan consistent with §3 as written.
+- Read the real code at master `f4441a2a` before citing it; every path, function and line you write exists. B1a and B1b prove their code: build and run it in a scratch export (`git archive HEAD | tar -x -C <fresh scratchpad dir>`), so the plan's code compiles and its tests pass as written. Other plans prove their riskiest snippets the same way.
+- Follow the writing-plans format: the header, Global Constraints copied from §2, Review Focus, tasks with Files, Interfaces and steps in TDD order, no placeholders, commits as two separate commands.
+- Final reply: short. The plan's path, the number of tasks, one coverage line per spec section, the contract change requests, and any fact that contradicts the spec or this index, with file:line. Never paste plan text.

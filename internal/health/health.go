@@ -216,6 +216,10 @@ type Env struct {
 	MCPRegistration     func() (claudeFound, registered bool, where string)
 	RegisterMCP         func(ctx context.Context, progress func(string)) error
 
+	// MonoesAccount reads the monoes.me session from this machine (no
+	// network, nothing written).
+	MonoesAccount func(ctx context.Context) AccountInfo
+
 	// Accounts of the active profile.
 	Connections       func(ctx context.Context) ([]ConnectionInfo, error)
 	TestConnection    func(ctx context.Context, id string) error

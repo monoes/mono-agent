@@ -34,6 +34,24 @@ go test -tags nosocial ./...
 CI runs both modes — make sure your change builds and tests green in **both**
 default (social included) and `-tags nosocial` modes.
 
+### The monoes.me account gate
+
+The account gate (`internal/account`) is dormant in every shipped build. A
+`-tags devaccount` build trusts a development signing key and honors
+`MONOAGENT_DEV_ENFORCE_FROM` (an RFC 3339 time) to move the enforcement date,
+so the gate can be exercised against the fake monoes.me in
+`internal/library/libraryfake`:
+
+```bash
+go test -race -tags devaccount ./internal/account/...
+go test -tags devaccount ./internal/accountsmoke/ -count=1 -timeout 25m   # real-binary smoke
+```
+
+Never build a release with that tag: CI's `release-guard` job
+(`scripts/check-release-tags.sh`) fails the release if any shipped Go binary
+lists it. Set `MONOAGENT_DEV_ENFORCE_FROM` for the process under test only; a
+default build ignores it.
+
 ## Code Style
 
 - Format with `gofmt` (or `go fmt ./...`) before submitting — CI and review

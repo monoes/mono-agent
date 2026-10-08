@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/account"
 )
 
 // MaxArtifactBytes caps a download (the library accepts at most 20 MB).
@@ -34,13 +36,17 @@ type TokenStore interface {
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
-	Store   TokenStore // nil: anonymous only
+	Store   TokenStore // the profile's own login (a release before the machine session); nil: none
+	// Session is the machine-wide monoes.me session (spec D21). It is used before
+	// Store, and only for its own host; nil: Store alone.
+	Session SessionSource
 	Now     func() time.Time
 
-	mu     sync.Mutex
-	token  *Token
-	loaded bool
-	oauth  *oauthMeta
+	mu      sync.Mutex
+	token   *Token
+	loaded  bool
+	session *Token // the session token last handed out
+	oauth   *account.OAuthEndpoints
 }
 
 // NewClient returns a client for baseURL ("" = BaseURL()). Tokens only ever
@@ -59,10 +65,24 @@ func NewClient(baseURL string, store TokenStore) (*Client, error) {
 	}
 	return &Client{
 		BaseURL: baseURL,
-		HTTP:    &http.Client{Timeout: 2 * time.Minute},
+		HTTP:    &http.Client{Timeout: 2 * time.Minute, CheckRedirect: noRedirectWithABody},
 		Store:   store,
 		Now:     time.Now,
 	}, nil
+}
+
+// noRedirectWithABody lets a read follow its redirects (an artifact may be served from elsewhere) and
+// stops a request that was sent with a body, the token calls that carry a refresh token, a code
+// verifier or a token to revoke: Go re-sends the body of a 307 or 308 to the host the Location names.
+// The redirect answer is then the answer, which no caller reads as a success.
+func noRedirectWithABody(_ *http.Request, via []*http.Request) error {
+	if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
+		return http.ErrUseLastResponse
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 func isLoopbackHost(h string) bool {

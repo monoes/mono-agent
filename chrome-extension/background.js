@@ -25,7 +25,7 @@ importScripts("capture_form.js", "capture_profile.js", "browser_binding.js", "su
 // The in-page recall group (RCL-02/04/05): the extension→Go request channel
 // and the three things that ride it. ask.js must come first — the others
 // install against it.
-importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
+importScripts("ask.js", "account_state.js", "saved.js", "highlights.js", "recall_bridge.js");
 // Tasks from the browser (the task board): the outbox and the worker's half.
 // After the recall group: tasks are sent over ask.js, which MonoRecall installs.
 importScripts("task_outbox.js", "task_bridge.js", "task_menu.js");
@@ -71,6 +71,9 @@ let connectionReason = "";
 // (a service worker being recycled) from a bridge that is really gone.
 let connectionSince = Date.now();
 let keepAliveInterval = null;
+// What the bridge says about the monoes.me account (account_state.js); the side
+// panel says it to the person.
+const account = MonoAccount.tracker();
 
 const KEEP_ALIVE_INTERVAL = 20000; // 20s ping to prevent WS idle timeout
 const DEFAULT_WS_URL = "ws://127.0.0.1:9222/monoagent";
@@ -446,6 +449,9 @@ async function doConnect() {
     }
     // Ignore pong responses
     if (cmd.type === "pong") return;
+    // What the bridge says about the account rides on its replies (account_state.js).
+    const said = MonoAccount.fromReply(cmd);
+    if (said) account.set(said);
     // A reply to something THIS side asked (ask.js). Claimed before the
     // command dispatch because a reply is not a command and has no handler.
     if (MonoAsk.handleFrame(cmd)) return;
@@ -462,6 +468,8 @@ async function doConnect() {
 
   ws.onclose = (event) => {
     stopKeepAlive();
+    // What the bridge said about the account belonged to that socket.
+    account.set(null);
     // Everything waiting on an answer is settled here. A question outlives
     // its socket by exactly nothing: see ask.js.
     MonoRecall.disconnected("the bridge disconnected");
@@ -539,6 +547,12 @@ function statusPayload() {
     reason: connectionReason,
     since: connectionSince,
     binding: { instance: binding.instance, profile: binding.profile, label: binding.label },
+    // What the bridge said about the monoes.me account; the side panel words it.
+    account: {
+      refusing: account.refusing(),
+      state: (account.get() || {}).state || "",
+      reason: (account.get() || {}).reason || "",
+    },
   };
 }
 
@@ -1334,6 +1348,15 @@ MonoRecall.install({
   storage: chrome.storage.local,
 });
 
+// The side panel hears of a change at once. While the bridge refuses it is asked
+// again every few seconds: its answer to ping (read in ws.onmessage) is how this
+// worker learns the person signed in.
+account.onChange(() => broadcastStatus());
+setInterval(() => {
+  if (account.refusing() && ws?.readyState === WebSocket.OPEN) {
+    MonoAsk.request("ping", {}, { timeoutMs: 4000, idleTimeoutMs: 4000 }).catch(() => {});
+  }
+}, 5000);
 // Tasks from the browser ride the same request channel. The bridge registers
 // its own message and alarm listeners; it never installs ask.js again.
 MonoTaskBridge.install({

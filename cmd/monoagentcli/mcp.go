@@ -141,7 +141,7 @@ variable) and --db-path, exactly like every other command.`,
 		"Serve only the OpenAI-compatible API's tools (api_*) and no other: no workflow, vault, secret, person, org or documentation tool. For a model that is to manage the API and nothing else: --allow-mutations, which the API's mutating tools need, also serves workflow tools that can run a command as you; with --api-only it does not. The mutating API tools still need --allow-mutations, and --allow-api-exposure is still what lets api_config_set widen the server and api_auto_set switch the auto model on; also settable via MONOAGENT_MCP_API_ONLY=1")
 	cmd.Flags().BoolVar(&tasksOnly, "tasks-only", false,
 		"Serve only the user's task board's tools (task_*) and no other: no workflow, vault, secret, person, org, API or documentation tool. For an agent that is to work the board and nothing else: --allow-mutations, which task_claim/comment/finish/release/add need, also serves workflow tools that can run a command as you; with --tasks-only it does not. Cannot be combined with --api-only or --grant; also settable via MONOAGENT_MCP_TASKS_ONLY=1")
-	return cmd
+	return servingCommand(cmd)
 }
 
 // runMCP serves the MCP server on stdin and stdout. A test replaces it to see what the command

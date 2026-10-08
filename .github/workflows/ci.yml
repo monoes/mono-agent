@@ -92,6 +92,45 @@ jobs:
       - name: Run doctor smoke test
         run: scripts/doctor-smoke.sh "$RUNNER_TEMP/monoagentcli"
 
+  # The mandatory monoes.me account (docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md,
+  # section 11): the real binary, built with the devaccount tag, against a fake monoes.me. Locked,
+  # sign in, ok, blocked, unreachable, grace, expired, the warn period, every door and one operation
+  # through every process type and entry point, so a path that forgot to install the guard fails here
+  # and not for signed-in users. It must pass before release R.
+  # continue-on-error until B2 (the command-line gate, #418) and B3a's remaining tasks are merged:
+  # without them the smoke has nothing to drive. Remove the line when they land.
+  account-smoke:
+    name: Account gate smoke (devaccount)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Vet with the dev tag
+        run: go vet -tags devaccount ./internal/account/... ./internal/accountsmoke/... ./cmd/monoagentcli/
+      - name: Account tests with the dev tag
+        run: go test -race -tags devaccount ./internal/account/... -count=1
+      - name: Real-binary smoke
+        run: go test -tags devaccount ./internal/accountsmoke/ -count=1 -timeout 25m -v
+
+  # The release guard (scripts/check-release-tags.sh) keeps the devaccount tag out of releases: this
+  # builds a tiny program with and without the tag, loose and inside a tarball and a zip, and checks
+  # that the guard passes and fails as it should (spec D11, D24).
+  release-guard-test:
+    name: Release guard test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Test the release guard
+        run: bash scripts/check-release-tags-test.sh
+
+
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against
   # the real OpenAPI 3.0 meta-schema (not just YAML syntax) so a hand-edited
@@ -221,6 +260,34 @@ jobs:
 
       - name: Test
         run: go test -timeout 35m ./... -race
+
+  # INFORMATIONAL (continue-on-error): runs internal/account's tests on Windows
+  # and macOS, where no other job here does. The package has Windows-only code
+  # (the LockFileEx file lock, the MOVEFILE_WRITE_THROUGH rename), and its Unix
+  # code (flock, directory fsync) meets another kernel and filesystem on macOS.
+  # Added without a way to run either OS's CI first, so a red first run must not
+  # block a merge: the owner flips it to required (removes continue-on-error)
+  # after the first green run. The tests swap in an in-memory keyring
+  # (TestMain), so the real macOS Keychain and Windows Credential Manager are
+  # not exercised. No -race: Windows may lack cgo, and the `test` job above
+  # already runs this package under -race.
+  account-os:
+    name: Account package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./internal/account/... -count=1 -timeout 20m
 
   # Social platforms are built by default; this job keeps the opt-out
   # (-tags nosocial) build compiling and passing.

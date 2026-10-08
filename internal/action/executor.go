@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/rs/zerolog"
@@ -536,6 +537,11 @@ func (ae *ActionExecutor) ExecuteDef(action *StorageAction, actionDef *ActionDef
 }
 
 func (ae *ActionExecutor) executeDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
+	// A locked monoes.me account drives no browser (spec section 6.2): node run,
+	// login, crawl, capture, apply and every other direct action path end here.
+	if lrErr := account.Require(ae.ctx); lrErr != nil {
+		return nil, lrErr
+	}
 	ae.startTime = time.Now()
 	ae.action = action
 	ae.actionDef = actionDef
