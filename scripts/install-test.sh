@@ -51,9 +51,10 @@ EOF
 # Test key pair, generated here; never committed.
 openssl genpkey -algorithm ed25519 -out "$work/key.pem" 2>/dev/null
 pub="$(openssl pkey -in "$work/key.pem" -pubout -outform DER 2>/dev/null | tail -c 32 | openssl base64 -A)"
+keyid="$(openssl pkey -in "$work/key.pem" -pubout -outform DER 2>/dev/null | tail -c 32 | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \n' | cut -c1-16)"
 sign() {
   openssl pkeyutl -sign -inkey "$work/key.pem" -rawin -in "$web/manifest.json" -out "$work/sig.bin" 2>/dev/null
-  printf '%s test-key\n' "$(openssl base64 -A < "$work/sig.bin")" > "$web/manifest.json.sig"
+  printf '%s %s\n' "$keyid" "$(openssl base64 -A < "$work/sig.bin")" > "$web/manifest.json.sig"
 }
 
 fails=0
@@ -61,7 +62,7 @@ run() { # <name> <expect: ok|fail> <grep-pattern> [env...]; extra args are env a
   name="$1"; want="$2"; pat="$3"; shift 3
   dest="$work/prefix-$name"
   rc=0
-  out="$(env -u MONOAGENT_RELEASE_PUBKEY INSTALL_DIR="$dest" MONOAGENT_MANIFEST_URL="$base/manifest.json" "$@" bash "$installer" 2>&1)" || rc=$?
+  out="$(env -u MONOAGENT_RELEASE_PUBKEY INSTALL_DIR="$dest" MONOAGENT_TEST_ASSET_URL_PREFIX="$base/" MONOAGENT_MANIFEST_URL="$base/manifest.json" "$@" bash "$installer" 2>&1)" || rc=$?
   ok=1
   if [ "$want" = ok ]; then [ "$rc" -eq 0 ] && [ -x "$dest/monoagentcli" ] || ok=0
   else [ "$rc" -ne 0 ] && [ ! -e "$dest/monoagentcli" ] || ok=0; fi
@@ -72,7 +73,7 @@ run() { # <name> <expect: ok|fail> <grep-pattern> [env...]; extra args are env a
 # 1. checksum-only: no key configured, says so and does not claim a signature.
 write_manifest "$asset" "$(sha "$web/$asset")"; sign
 run unsigned-no-key ok "signature verification is SKIPPED"
-out="$(INSTALL_DIR="$work/p-neg" MONOAGENT_MANIFEST_URL="$base/manifest.json" bash "$installer" 2>&1)"
+out="$(INSTALL_DIR="$work/p-neg" MONOAGENT_TEST_ASSET_URL_PREFIX="$base/" MONOAGENT_MANIFEST_URL="$base/manifest.json" bash "$installer" 2>&1)"
 if printf '%s' "$out" | grep -q "signature verified"; then echo "FAIL claimed verification without a key"; fails=$((fails+1)); else echo "PASS no false claim"; fi
 
 # 2. tarball asset.
@@ -99,9 +100,25 @@ run missing-sig fail "signature verification FAILED" MONOAGENT_RELEASE_PUBKEY="$
 # 7. signed by a different key.
 sign_other() { openssl genpkey -algorithm ed25519 -out "$work/o.pem" 2>/dev/null
   openssl pkeyutl -sign -inkey "$work/o.pem" -rawin -in "$web/manifest.json" -out "$work/o.bin" 2>/dev/null
-  openssl base64 -A < "$work/o.bin" > "$web/manifest.json.sig"; }
+  printf '%s %s\n' "$keyid" "$(openssl base64 -A < "$work/o.bin")" > "$web/manifest.json.sig"; }
 sign_other
 run wrong-key fail "signature verification FAILED" MONOAGENT_RELEASE_PUBKEY="$pub"
+
+# 7b. signature carries a key id other than the pinned one.
+write_manifest "$asset" "$(sha "$web/$asset")"; sign
+sed 's/^[0-9a-f]*/0000000000000000/' "$web/manifest.json.sig" > "$work/s2" && cp "$work/s2" "$web/manifest.json.sig"
+run wrong-keyid fail "not the pinned key" MONOAGENT_RELEASE_PUBKEY="$pub"
+
+# 7c. malformed one-field signature file.
+sign; awk '{print $2}' "$web/manifest.json.sig" > "$work/s3" && cp "$work/s3" "$web/manifest.json.sig"
+run one-field-sig fail "malformed manifest.json.sig" MONOAGENT_RELEASE_PUBKEY="$pub"
+
+# 7d. asset url on a disallowed host; the test prefix override is emptied so
+# the real allow-list applies.
+cat > "$web/manifest.json" <<EOF
+{"schema":1,"version":"v9.9.9","assets":[{"os":"$os","arch":"$arch","name":"$asset","url":"https://evil.example.com/$asset","sha256":"00","size":1,"kind":"cli"}]}
+EOF
+run bad-host fail "not https on an allowed host" MONOAGENT_TEST_ASSET_URL_PREFIX=""
 
 # 8. no asset for this platform.
 printf '{"schema":1,"version":"v9.9.9","assets":[]}' > "$web/manifest.json"

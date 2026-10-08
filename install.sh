@@ -89,6 +89,23 @@ json_field() {
   printf '%s' "$1" | sed -n 's/.*"'"$2"'" *: *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' | head -n 1
 }
 
+# asset_url_allowed <url> — the asset must come over https from monoes.me,
+# github.com or GitHub's release-asset hosts (same allow-list as the Go
+# client). MONOAGENT_TEST_ASSET_URL_PREFIX (tests only) additionally allows
+# URLs that start with that exact prefix.
+asset_url_allowed() {
+  if [ -n "${MONOAGENT_TEST_ASSET_URL_PREFIX:-}" ]; then
+    case "$1" in "${MONOAGENT_TEST_ASSET_URL_PREFIX}"*) return 0 ;; esac
+  fi
+  case "$1" in https://*) ;; *) return 1 ;; esac
+  u_host="${1#https://}"
+  u_host="${u_host%%[/?#]*}"
+  case "$u_host" in
+    monoes.me|github.com|objects.githubusercontent.com|release-assets.githubusercontent.com) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # verify_manifest_signature <manifest> <sig-url> <tmp> — returns 0 verified,
 # 2 skipped (no key / no openssl Ed25519; message printed), 1 failed.
 verify_manifest_signature() {
@@ -111,9 +128,21 @@ verify_manifest_signature() {
     return 2
   fi
   curl --retry 3 --fail --location -fsSL -o "${m_tmp}/manifest.json.sig" "$m_sigurl" || return 1
-  # The signature is the first whitespace-separated field (base64); a key id
-  # may follow and is ignored here because only one key is pinned.
-  awk 'NR==1{print $1}' "${m_tmp}/manifest.json.sig" | openssl base64 -d -A > "${m_tmp}/sig.bin" 2>/dev/null || return 1
+  # Contract: ONE line "<keyid> <base64sig>". keyid is the hex of the first 8
+  # bytes of SHA-256 of the raw public key. Anything else is malformed.
+  m_nfields="$(awk 'NR==1{print NF}' "${m_tmp}/manifest.json.sig")"
+  if [ "$m_nfields" != "2" ] || [ "$(wc -l < "${m_tmp}/manifest.json.sig" | tr -d ' ')" -gt 1 ]; then
+    echo "install.sh: malformed manifest.json.sig (expected '<keyid> <base64sig>')" >&2
+    return 1
+  fi
+  m_keyid="$(printf '%s' "$RELEASE_PUBKEY" | openssl base64 -d -A 2>/dev/null \
+    | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \n' | cut -c1-16)"
+  m_sigkeyid="$(awk 'NR==1{print $1}' "${m_tmp}/manifest.json.sig")"
+  if [ -z "$m_keyid" ] || [ "$m_sigkeyid" != "$m_keyid" ]; then
+    echo "install.sh: manifest signed with key id '${m_sigkeyid}', not the pinned key '${m_keyid}'" >&2
+    return 1
+  fi
+  awk 'NR==1{print $2}' "${m_tmp}/manifest.json.sig" | openssl base64 -d -A > "${m_tmp}/sig.bin" 2>/dev/null || return 1
   openssl pkeyutl -verify -pubin -inkey "${m_tmp}/pub.pem" -rawin \
     -in "$m_file" -sigfile "${m_tmp}/sig.bin" >/dev/null 2>&1 || return 1
   return 0
@@ -175,6 +204,8 @@ install_from_manifest() {
   a_url="$(json_field "$entry" url)"
   a_sha="$(json_field "$entry" sha256)"
   [ -n "$a_name" ] && [ -n "$a_url" ] || err "the manifest entry for ${os}/${arch} is incomplete"
+  asset_url_allowed "$a_url" \
+    || err "the manifest asset url '${a_url}' is not https on an allowed host (monoes.me, github.com, GitHub release assets). Nothing was installed."
   case "$a_name" in */*|..*) err "the manifest asset name '${a_name}' is not a plain file name" ;; esac
 
   echo "Downloading ${a_name} (${TAG:-unknown version})..."
