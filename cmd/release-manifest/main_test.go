@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,5 +131,70 @@ func TestSignArgsAndKeys(t *testing.T) {
 	}
 	if _, err := parsePrivateKey(base64.StdEncoding.EncodeToString([]byte("short"))); err == nil {
 		t.Error("short key accepted")
+	}
+}
+
+func TestExpiresDays(t *testing.T) {
+	dir := fixture(t)
+	read := func() Manifest {
+		var m Manifest
+		raw, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "expires_at") != (m.ExpiresAt != "") {
+			t.Fatal("expires_at presence mismatch")
+		}
+		return m
+	}
+	if err := run([]string{"manifest", "-dir", dir, "-version", "v1.2.3"}); err != nil {
+		t.Fatal(err)
+	}
+	if m := read(); m.ExpiresAt != "" {
+		t.Errorf("default must omit expires_at, got %q", m.ExpiresAt)
+	}
+	if err := run([]string{"manifest", "-dir", dir, "-version", "v1.2.3", "-expires-days", "30"}); err != nil {
+		t.Fatal(err)
+	}
+	exp, err := time.Parse(time.RFC3339, read().ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Until(exp); d < 29*24*time.Hour || d > 31*24*time.Hour {
+		t.Errorf("expires_at %v not ~30 days out", exp)
+	}
+	if err := run([]string{"manifest", "-dir", dir, "-version", "v1.2.3", "-expires-days", "-1"}); err == nil {
+		t.Error("negative -expires-days accepted")
+	}
+}
+
+func TestSignFromKeyringSeedAndFullKey(t *testing.T) {
+	for name, mk := range map[string]func(ed25519.PrivateKey) []byte{
+		"full key": func(p ed25519.PrivateKey) []byte { return p },
+		"seed":     func(p ed25519.PrivateKey) []byte { return p.Seed() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			keyring.MockInit()
+			pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+			if err := keyring.Set(keyringService, keyringAccount, base64.StdEncoding.EncodeToString(mk(priv))); err != nil {
+				t.Fatal(err)
+			}
+			dir := fixture(t)
+			if err := run([]string{"manifest", "-dir", dir, "-version", "v1.2.3"}); err != nil {
+				t.Fatal(err)
+			}
+			mpath := filepath.Join(dir, "manifest.json")
+			if err := run([]string{"sign", "-manifest", mpath, "-keyring"}); err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(mpath)
+			sig, _ := os.ReadFile(mpath + ".sig")
+			if strings.Count(string(sig), "\n") != 1 || len(strings.Fields(string(sig))) != 2 {
+				t.Errorf("sig must be one line, got %q", sig)
+			}
+			if err := verifySignature(data, string(sig), []ed25519.PublicKey{pub}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -1,14 +1,15 @@
 // Command release-manifest is a maintainer tool, never shipped in a release.
 //
-//	release-manifest manifest -dir DIR -version vX.Y.Z [-repo OWNER/REPO] [-notes-url URL]
+//	release-manifest manifest -dir DIR -version vX.Y.Z [-repo OWNER/REPO] [-notes-url URL] [-expires-days N]
 //	    writes DIR/SHA256SUMS and DIR/manifest.json (unsigned; safe to run in CI).
+//	    -expires-days N adds the signed "expires_at" field (N days from now); 0 omits it.
 //	release-manifest sign -manifest DIR/manifest.json [-key-file FILE | -keyring]
 //	    writes manifest.json.sig next to it. Run by the owner, locally, never in CI.
 //
 // The signature file is one line, "<key id> <base64 Ed25519 signature>", made over
 // the exact bytes of manifest.json. The key id is the first 8 bytes of the SHA-256
 // of the public key, hex encoded. The private key is the base64 of the 64-byte
-// Ed25519 private key, either in a file or in the OS keyring entry written by
+// Ed25519 private key (a bare 32-byte seed is accepted too), either in a file or in the OS keyring entry written by
 // `monoagentcli release keygen` (service "monoagent-release-signing", account
 // "ed25519-v1").
 package main
@@ -53,6 +54,7 @@ type Manifest struct {
 	Version    string  `json:"version"`
 	ReleasedAt string  `json:"released_at"`
 	NotesURL   string  `json:"notes_url"`
+	ExpiresAt  string  `json:"expires_at,omitempty"`
 	Assets     []Asset `json:"assets"`
 }
 
@@ -80,9 +82,12 @@ func classify(name string) (osName, arch, kind string, ok bool) {
 	return "", "", "", false
 }
 
-func buildManifest(dir, version, repo, notesURL string, now time.Time) (*Manifest, []byte, error) {
+func buildManifest(dir, version, repo, notesURL string, now time.Time, expiresDays int) (*Manifest, []byte, error) {
 	if !versionRe.MatchString(version) {
 		return nil, nil, fmt.Errorf("version %q must look like v1.2.3", version)
+	}
+	if expiresDays < 0 {
+		return nil, nil, errors.New("-expires-days must not be negative")
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -93,6 +98,9 @@ func buildManifest(dir, version, repo, notesURL string, now time.Time) (*Manifes
 		notesURL = fmt.Sprintf("https://github.com/%s/releases/tag/%s", repo, version)
 	}
 	m := &Manifest{Schema: 1, Version: version, ReleasedAt: now.UTC().Format(time.RFC3339), NotesURL: notesURL, Assets: []Asset{}}
+	if expiresDays > 0 {
+		m.ExpiresAt = now.UTC().AddDate(0, 0, expiresDays).Format(time.RFC3339)
+	}
 	var sums strings.Builder
 	var names []string
 	for _, e := range entries {
@@ -130,10 +138,13 @@ func parsePrivateKey(s string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("private key is not base64: %w", err)
 	}
-	if len(raw) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("private key is %d bytes, want %d", len(raw), ed25519.PrivateKeySize)
+	switch len(raw) {
+	case ed25519.PrivateKeySize:
+		return ed25519.PrivateKey(raw), nil
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(raw), nil
 	}
-	return ed25519.PrivateKey(raw), nil
+	return nil, fmt.Errorf("private key is %d bytes, want %d (or a %d-byte seed)", len(raw), ed25519.PrivateKeySize, ed25519.SeedSize)
 }
 
 // signManifest returns the contents of manifest.json.sig for the given bytes.
@@ -179,13 +190,14 @@ func run(args []string) error {
 		version := fs.String("version", "", "release tag, vX.Y.Z")
 		repo := fs.String("repo", defaultRepo, "releases repo (owner/name) the asset URLs point at")
 		notes := fs.String("notes-url", "", "release notes URL (default: the release page in -repo)")
+		expDays := fs.Int("expires-days", 0, "days until the manifest expires (writes expires_at); 0 omits the field")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if *dir == "" || *version == "" {
 			return errors.New("manifest needs -dir and -version")
 		}
-		m, sums, err := buildManifest(*dir, *version, *repo, *notes, time.Now())
+		m, sums, err := buildManifest(*dir, *version, *repo, *notes, time.Now(), *expDays)
 		if err != nil {
 			return err
 		}
