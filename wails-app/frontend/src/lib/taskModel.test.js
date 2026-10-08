@@ -66,6 +66,9 @@ describe('applyMove', () => {
   it('ends the claim of a card that leaves In progress and keeps it inside', () => {
     expect(findTask(applyMove(base(), 5, 'ready', { where: '' }), 5).task.claim).toBeNull()
     expect(findTask(applyMove(base(), 5, 'in_progress', { where: 'top' }), 5).task.claim.by).toBe('bot')
+    // a hand-edited row with a claim outside In progress does not keep it on the way in
+    const odd = base(); odd.columns.ready = [card(9, 'ready', { claim: { by: 'bot', until: '', stale: false } })]
+    expect(findTask(applyMove(odd, 9, 'in_progress', { where: 'top' }), 9).task.claim).toBeNull()
   })
   it('keeps the counts in step, Done by what its column gained', () => {
     const b = applyMove(base(), 6, 'done', { where: '' })
