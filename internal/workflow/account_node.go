@@ -17,7 +17,7 @@ import (
 //
 // A refusal (monoes.me answered invalid_grant) ends the run CANCELLED, as the
 // engine's cancel of everything in flight does, whichever of the two reaches it
-// first: the check returns ErrExecutionCancelled, which handleExecution records
+// first: the check returns a refusedCancelError (an ErrExecutionCancelled), which handleExecution records
 // with the login_required text of cancelledMessage. Every other lock (the 24
 // hours without monoes.me, a clock rollback, an unknown key) ends it FAILED, with
 // a *nodeRefusedError. Require reads the guard's cached verdict: a node pays no
@@ -29,7 +29,7 @@ func requireAccountForNode(ctx context.Context) error {
 	}
 	var lr *account.LoginRequiredError
 	if errors.As(err, &lr) && refusalCancels(lr.Status) {
-		return ErrExecutionCancelled
+		return refusedCancelError{}
 	}
 	return &nodeRefusedError{err: err}
 }

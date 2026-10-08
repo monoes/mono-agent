@@ -159,3 +159,22 @@ func TestOnlyARefusalCancels(t *testing.T) {
 		}
 	}
 }
+
+// TestCancelledMessageFollowsTheCause: the login_required text comes from the
+// cause that travelled with the cancel, not from the verdict at the moment the
+// run ends. A person's cancel that lands after a refusal stays a person's cancel;
+// a refusal's cancel says so whatever the verdict has become by then.
+func TestCancelledMessageFollowsTheCause(t *testing.T) {
+	refusalGuard(t)() // the verdict is refused from here on
+	if st := account.CurrentStatus(); st.Reason != account.ReasonRefused {
+		t.Fatalf("verdict = %s(%s), want refused", st.State, st.Reason)
+	}
+	if got := cancelledMessage(context.Background(), ErrExecutionCancelled); strings.Contains(got, "login_required") {
+		t.Errorf("a cancel without a cause recorded %q, want no mention of the account", got)
+	}
+	rctx, rcancel := context.WithCancelCause(context.Background())
+	rcancel(errAccountRefused)
+	if got := cancelledMessage(rctx, ErrExecutionCancelled); !strings.HasPrefix(got, "login_required: ") {
+		t.Errorf("a cancel caused by a refusal recorded %q, want login_required", got)
+	}
+}

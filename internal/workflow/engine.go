@@ -720,7 +720,7 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		e.persistExecutionFinished(log, req.ExecutionID, "SUCCESS_WITH_ERRORS", runErr.Error())
 	case errors.Is(runErr, ErrExecutionCancelled):
 		log.Warn().Err(runErr).Str("final_status", "CANCELLED").Msg("engine: execution cancelled")
-		e.persistExecutionFinished(log, req.ExecutionID, "CANCELLED", cancelledMessage(runErr))
+		e.persistExecutionFinished(log, req.ExecutionID, "CANCELLED", cancelledMessage(ctx, runErr))
 	default:
 		log.Warn().Err(runErr).Str("final_status", "FAILED").Msg("engine: execution finished with error")
 		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", runErr.Error())
@@ -1075,6 +1075,12 @@ func (e *WorkflowEngine) newManualExecution(ctx context.Context, workflowID stri
 
 // CancelExecution signals an in-flight execution to stop.
 func (e *WorkflowEngine) CancelExecution(executionID string) {
+	e.cancelExecution(executionID, nil)
+}
+
+// cancelExecution is CancelExecution with the cause of the cancel, which the
+// running execution reads from its context (context.Cause).
+func (e *WorkflowEngine) cancelExecution(executionID string, cause error) {
 	// Authoritatively cancel a still-queued execution so it doesn't run once a
 	// worker picks it up (queued requests have no cancel func yet). handleExecution
 	// re-checks status before running, so this makes the cancel stick.
@@ -1093,18 +1099,19 @@ func (e *WorkflowEngine) CancelExecution(executionID string) {
 		e.logger.Info().Str("execution_id", executionID).Msg("engine: queued/waiting execution cancelled")
 	}
 	// Signal cancellation for an already-dispatched (running) execution.
-	e.queue.Cancel(executionID)
+	e.queue.CancelWithCause(executionID, cause)
 	e.logger.Info().Str("execution_id", executionID).Msg("engine: execution cancel requested")
 }
 
 // CancelRunning asks every execution this engine has dispatched and not
 // finished to stop, through CancelExecution, and returns how many it asked.
-// The account guard's refusal handler calls it (spec section 6.4). A WAITING
-// run has no goroutine and is left as it is.
+// The account guard's refusal handler calls it (spec section 6.4), so each run
+// is cancelled with errAccountRefused as its cause. A WAITING run has no
+// goroutine and is left as it is.
 func (e *WorkflowEngine) CancelRunning() int {
 	ids := e.queue.RunningIDs()
 	for _, id := range ids {
-		e.CancelExecution(id)
+		e.cancelExecution(id, errAccountRefused)
 	}
 	return len(ids)
 }

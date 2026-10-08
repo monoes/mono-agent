@@ -75,6 +75,14 @@ func (s *accountSupervisor) run(ctx context.Context) {
 			s.startOrg(orgCtx)
 			return
 		}
+		// The running executions are cancelled before the wait for the org
+		// services, which can last orgStopWait: a refused account runs nothing.
+		if st.Reason == account.ReasonRefused && !cancelled {
+			cancelled = true
+			if n := s.cancelRunning(); n > 0 {
+				s.logf("daemon: monoes.me refused this account: cancelled %d running execution(s)", n)
+			}
+		}
 		if stop != nil {
 			stop()
 			stop = nil
@@ -83,12 +91,6 @@ func (s *accountSupervisor) run(ctx context.Context) {
 		if !reported {
 			reported = true
 			s.logf("%s", daemonLockedLine(st))
-		}
-		if st.Reason == account.ReasonRefused && !cancelled {
-			cancelled = true
-			if n := s.cancelRunning(); n > 0 {
-				s.logf("daemon: monoes.me refused this account: cancelled %d running execution(s)", n)
-			}
 		}
 	}
 

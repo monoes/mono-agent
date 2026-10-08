@@ -31,7 +31,8 @@ type supRig struct {
 	gens    []context.Context // one per start of the org services
 	cancels int               // calls to cancelRunning
 	logs    []string
-	drained bool // what waitOrg answers
+	drained bool     // what waitOrg answers
+	calls   []string // "cancel" and "wait", in the order the supervisor made them
 }
 
 func (r *supRig) with(f func()) { r.mu.Lock(); defer r.mu.Unlock(); f() }
@@ -41,11 +42,14 @@ func newSupRig(t *testing.T, first account.Status) *supRig {
 	r := &supRig{drained: true, done: make(chan struct{})}
 	r.set(first)
 	sup := &accountSupervisor{
-		status:        func() account.Status { return *r.verdict.Load() },
-		poll:          5 * time.Millisecond,
-		startOrg:      func(ctx context.Context) { r.with(func() { r.gens = append(r.gens, ctx) }) },
-		waitOrg:       func(time.Duration) (ended bool) { r.with(func() { ended = r.drained }); return ended },
-		cancelRunning: func() int { r.with(func() { r.cancels++ }); return 2 },
+		status:   func() account.Status { return *r.verdict.Load() },
+		poll:     5 * time.Millisecond,
+		startOrg: func(ctx context.Context) { r.with(func() { r.gens = append(r.gens, ctx) }) },
+		waitOrg: func(time.Duration) (ended bool) {
+			r.with(func() { ended = r.drained; r.calls = append(r.calls, "wait") })
+			return ended
+		},
+		cancelRunning: func() int { r.with(func() { r.cancels++; r.calls = append(r.calls, "cancel") }); return 2 },
 		logf:          func(f string, a ...any) { r.with(func() { r.logs = append(r.logs, fmt.Sprintf(f, a...)) }) },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,6 +128,25 @@ func TestSupervisorFollowsTheAccount(t *testing.T) {
 	supUntil(t, "the org services start again", func() bool { n, live, _ := rig.state(); return n == 3 && live })
 	rig.set(supLocked(account.ReasonRefused))
 	supUntil(t, "the second refusal cancels again", func() bool { _, _, c := rig.state(); return c == 2 })
+}
+
+// A refusal cancels the running executions before the supervisor waits for the
+// org services to end: that wait can last 30 seconds, and a refused account
+// runs nothing in the meantime.
+func TestSupervisorCancelsTheRunningExecutionsBeforeWaitingForTheOrgServices(t *testing.T) {
+	rig := newSupRig(t, supOK)
+	supUntil(t, "the org services start", func() bool { n, live, _ := rig.state(); return n == 1 && live })
+
+	rig.set(supLocked(account.ReasonRefused))
+	supUntil(t, "the org services were waited for", func() (done bool) {
+		rig.with(func() { done = len(rig.calls) >= 2 })
+		return
+	})
+	rig.with(func() {
+		if rig.calls[0] != "cancel" || rig.calls[1] != "wait" {
+			t.Fatalf("calls on a refusal = %v, want cancel before wait", rig.calls)
+		}
+	})
 }
 
 // A daemon that is locked when it starts never starts the org services and says
