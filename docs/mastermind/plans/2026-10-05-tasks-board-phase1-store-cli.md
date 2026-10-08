@@ -1,5 +1,10 @@
 # Task Board, Phase 1 (store and CLI) Implementation Plan
 
+> **Status: shipped; this plan is a historical record, not instructions.** Phase 1 is on master (`internal/tasks`, `monoagentcli task`, migration 062). Where the code and this plan differ, the code and `monoagentcli ref tasks` win. Differences to know about:
+> - Later work extended the surface: `task os` (phase 5), bulk `archive --status`, the busy-retry of `BEGIN IMMEDIATE` (#401), a case-insensitive `--profile` and a wrapped `digest` (#389).
+> - The environment rules and commit trailers below belonged to the original build session. Do not copy them: the repository's commit messages carry no `Co-Authored-By` trailer, and the checkout paths named in Task 1 are one machine's.
+> - Open follow-ups live in issue #364, not in this file.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A profile-scoped task board in monoagent's database with a complete `monoagentcli task` command group, so people and agents can add, arrange, claim and finish tasks from the CLI.
