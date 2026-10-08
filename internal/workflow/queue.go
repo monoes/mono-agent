@@ -251,6 +251,20 @@ func (q *ExecutionQueue) Enqueue(req ExecutionRequest) error {
 	}
 }
 
+// RunningIDs lists the executions this queue has dispatched and not seen
+// finish: the ones running and the ones waiting for a concurrency slot. Each
+// holds a cancel func in cancelFuncs for exactly that long.
+func (q *ExecutionQueue) RunningIDs() []string {
+	var ids []string
+	q.cancelFuncs.Range(func(k, _ any) bool {
+		if id, ok := k.(string); ok {
+			ids = append(ids, id)
+		}
+		return true
+	})
+	return ids
+}
+
 // Cancel signals cancellation for a specific execution.
 func (q *ExecutionQueue) Cancel(executionID string) {
 	if val, ok := q.cancelFuncs.Load(executionID); ok {

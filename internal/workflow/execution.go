@@ -133,6 +133,12 @@ func RunExecution(
 		default:
 		}
 
+		// A locked account ends the run here, before this node starts; the node
+		// before it has finished (account_node.go).
+		if nodeErr := requireAccountForNode(ctx); nodeErr != nil {
+			return nodeErr
+		}
+
 		// Skip disabled nodes; still mark their successors so mergeWaiting
 		// is decremented correctly.
 		if node.Disabled {

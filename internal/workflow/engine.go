@@ -249,6 +249,10 @@ func (e *WorkflowEngine) Start(ctx context.Context) error {
 	go e.resumeLoop(e.ctx)
 	go e.staleReapLoop(e.ctx)
 
+	// 6. Cancel what is in flight when monoes.me refuses the account (spec
+	// section 6.4). Registered here, so every process that runs an engine has it.
+	e.watchAccount()
+
 	e.logger.Info().Msg("workflow engine started")
 	return nil
 }
@@ -716,7 +720,7 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		e.persistExecutionFinished(log, req.ExecutionID, "SUCCESS_WITH_ERRORS", runErr.Error())
 	case errors.Is(runErr, ErrExecutionCancelled):
 		log.Warn().Err(runErr).Str("final_status", "CANCELLED").Msg("engine: execution cancelled")
-		e.persistExecutionFinished(log, req.ExecutionID, "CANCELLED", runErr.Error())
+		e.persistExecutionFinished(log, req.ExecutionID, "CANCELLED", cancelledMessage(runErr))
 	default:
 		log.Warn().Err(runErr).Str("final_status", "FAILED").Msg("engine: execution finished with error")
 		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", runErr.Error())
@@ -1091,6 +1095,18 @@ func (e *WorkflowEngine) CancelExecution(executionID string) {
 	// Signal cancellation for an already-dispatched (running) execution.
 	e.queue.Cancel(executionID)
 	e.logger.Info().Str("execution_id", executionID).Msg("engine: execution cancel requested")
+}
+
+// CancelRunning asks every execution this engine has dispatched and not
+// finished to stop, through CancelExecution, and returns how many it asked.
+// The account guard's refusal handler calls it (spec section 6.4). A WAITING
+// run has no goroutine and is left as it is.
+func (e *WorkflowEngine) CancelRunning() int {
+	ids := e.queue.RunningIDs()
+	for _, id := range ids {
+		e.CancelExecution(id)
+	}
+	return len(ids)
 }
 
 // RetryExecution re-queues a failed execution as a new execution.
