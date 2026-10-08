@@ -43,7 +43,7 @@ To test a release, point the scripts at that release's binary and extension:
 
 ```bash
 git worktree add ~/scratch/wt-e2e-vX.Y.Z vX.Y.Z
-(cd ~/scratch/wt-e2e-vX.Y.Z && go build -o ~/scratch/monoagentcli-vX.Y.Z ./cmd/monoagentcli)
+(cd ~/scratch/wt-e2e-vX.Y.Z && go build -tags devaccount -o ~/scratch/monoagentcli-vX.Y.Z ./cmd/monoagentcli)
 export E2E_BIN=~/scratch/monoagentcli-vX.Y.Z E2E_EXTENSION_DIR=~/scratch/wt-e2e-vX.Y.Z/chrome-extension
 export E2E_WORK=~/scratch/automation-e2e-vX.Y.Z      # a fresh work dir per run
 ./setup.sh && ./regress-cli.sh; ./regress-flow.sh; ./teardown.sh

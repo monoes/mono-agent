@@ -1,8 +1,8 @@
 # mono-agent CLI — minimal production image.
 #
-# This builds the DEFAULT binary (no `-tags social`): Instagram/LinkedIn/X/
-# TikTok engagement nodes are NOT compiled in. To build the opt-in social
-# variant, add `-tags social` to the go build line below.
+# This builds the DEFAULT binary, including social platform nodes.
+# Build with -tags nosocial to leave those nodes out; never use devaccount
+# in a production image. The account gate is currently dormant.
 #
 # Stage 1: build (static, CGO-free → runs on any base image, incl. scratch)
 FROM golang:1.26-alpine AS build
@@ -45,7 +45,10 @@ WORKDIR /app
 
 # Liveness = the CLI answers `version` (exit 0). The daemon is the
 # entrypoint, so any successful subcommand invocation proves the process
-# tree is alive and the binary still executes.
+# tree is alive and the binary still executes. This does not test account
+# readiness: a locked daemon in a future enforced build stays up. Sign in
+# separately per machine, keep /data/.monoagent/account/ in the volume only,
+# and never bake or restore a machine sign-in into an image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD monoagentcli version
 

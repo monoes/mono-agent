@@ -35,8 +35,8 @@ func TestImportWorkflow_RejectsBadInput(t *testing.T) {
 	}
 }
 
-// buildTestCLI builds the repo's monoagentcli into a temp dir so subprocess
-// tests run the same binary the GUI would spawn. Skips when building is not
+// buildTestCLI builds a devaccount CLI into a temp dir so subprocess
+// tests exercise the GUI commands independently of the enforcement date. Skips when building is not
 // possible in this environment.
 func buildTestCLI(t *testing.T) string {
 	t.Helper()
@@ -45,11 +45,13 @@ func buildTestCLI(t *testing.T) string {
 		t.Skipf("repo root with cmd/monoagentcli not found: %v / %v", err, statErr)
 	}
 	bin := filepath.Join(t.TempDir(), "monoagentcli")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/monoagentcli")
+	build := exec.Command("go", "build", "-tags", "devaccount", "-o", bin, "./cmd/monoagentcli")
 	build.Dir = repoRoot
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Skipf("building monoagentcli failed (%v): %s", err, out)
 	}
+	// Keep these subprocess tests about their subject, even after enforcement starts.
+	t.Setenv("MONOAGENT_DEV_ENFORCE_FROM", "2999-01-01T00:00:00Z")
 	return bin
 }
 

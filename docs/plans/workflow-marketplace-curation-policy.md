@@ -132,7 +132,7 @@ Field notes:
   already imported it locally — `workflow import` copies the JSON into the
   user's own database; the marketplace has no ongoing connection to
   already-imported workflows. A takedown removes future discoverability
-  only, consistent with the local-first, no-phone-home design documented
+  only, consistent with the dormant account gate and network disclosures documented
   in SECURITY.md.
 - No auto-publish, ever, for a resubmission triggered by a version bump —
   every version goes back through the full submission review checklist

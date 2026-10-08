@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for the suggestion. Mono Agent values focus — a request that
-        fits the project's shape (local-first, single binary, CLI-drivable)
+        fits the project's shape (runs on your machine, single binary, CLI-drivable)
         lands better than one that fights it. Skim
         [README.md](https://github.com/monoes/mono-agent/blob/main/README.md)
         and [`monoagentcli ref`](https://github.com/monoes/mono-agent/blob/main/AGENTS.md)

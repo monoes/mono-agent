@@ -17,6 +17,9 @@ REPO_ROOT="$(cd "$E2E_DIR/../.." && pwd)"
 : "${E2E_CHROME:=}"                                     # browser binary (default: first found)
 export E2E_DIR REPO_ROOT E2E_WORK E2E_HOME E2E_BIN E2E_BRIDGE_PORT E2E_CDP_PORT E2E_FIXTURE_PORT E2E_EXTENSION_DIR E2E_CHROME
 
+# setup.sh builds with devaccount; rebuild older binaries with E2E_BUILD=1.
+export MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z
+
 # The fixture's login; recordings and runs must never leak it.
 export E2E_PASSWORD='S3cr3t-Pa55word!'
 export E2E_SITE="http://crm.e2e.test:$E2E_FIXTURE_PORT"

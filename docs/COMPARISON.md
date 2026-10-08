@@ -15,7 +15,7 @@ drive, and human approval built into the engine.**
 |---|---|---|---|---|---|
 | **License** | MIT | Sustainable Use ("fair-code", not OSI) + Enterprise | MIT core + commercial EE | AGPL-3.0 / Apache-2.0 (source builds; binary "Community Edition" contains proprietary code) | Apache-2.0 (OpenJS Foundation) |
 | **Runtime** | Single static Go binary. No Node, no Docker, no DB server — SQLite is built in. (AI/agent features delegate to the separate monomind engine, which runs on Node.js; `monoagentcli nodejs install` can fetch a private copy) | Node.js app + database, typically Docker | Node.js/Bun + Postgres + Redis, Docker | Rust backend + **required Postgres**, language runtimes, Docker/K8s | Node.js process (`npm i -g node-red`) |
-| **Local-first data** | SQLite + files under `~/.monoagent/`, works fully offline, no analytics/telemetry (opt-in crash reporting aside — see [SECURITY.md](../SECURITY.md)); a monoes.me account is optional today and will be required from a date announced at monoes.me/mono-agent | Self-hosted or cloud; data stays on your host when self-hosted | Self-hosted or cloud | Self-hosted (needs Postgres) or cloud | Runs local, flows stored as JSON files |
+| **Data and offline operation** | SQLite + files under `~/.monoagent/`, local work needs no account while the gate is dormant; a future enabled gate permits at most 24 hours offline from token issue; no analytics/usage counters (opt-in crash reporting aside — see [SECURITY.md](../SECURITY.md)) | Self-hosted or cloud; data stays on your host when self-hosted | Self-hosted or cloud | Self-hosted (needs Postgres) or cloud | Runs local, flows stored as JSON files |
 | **GUI** | Desktop app (Wails) + web canvas | Web canvas | Web builder | Web IDE + app builder | Web editor |
 | **CLI-first** | 180+ commands, `--json` everywhere, documented exit codes, offline `ref` manual | `n8n` CLI (start/import/export; limited workflow ops) | CLI mainly for piece development | `wmill` CLI (sync, run) | Minimal (admin only) |
 | **AI-agent native** | MCP server over stdio (read-only by default; `--allow-mutations` to run workflows and approve HIL items), `AGENTS.md`, offline reference manual; AI steps run on locally-installed agent CLIs (`agent.ask`) | MCP trigger/client nodes, AI workflow nodes | Pieces exposed as MCP servers (not verified here) | AI code generation; MCP support not verified here | — |
@@ -50,9 +50,12 @@ Choosing n8n here is a correct decision, not a failure.
   Postgres, no Redis — copy one static file, run it. That machine in the
   closet with nothing installed? It works there. (The AI/agent features are
   the exception: they hand off to the monomind engine, which needs Node.js.)
-- **Fully local data, no telemetry by default.** Everything in SQLite and
-  files under `~/.monoagent/`. Nothing phones home on its own; the only
-  network traffic is the API calls your own workflows make, commands you
+- **Workflow state on your machine, no analytics or usage counters.** State is
+  in SQLite and files under `~/.monoagent/`. The account gate is currently dormant;
+  no implicit account
+  requests occur. If enabled in a future release, work needs a machine sign-in
+  and renewal within 24 hours of token issue. Current network traffic is the
+  API calls your own workflows make, commands you
   explicitly invoke that talk to an external service, and opt-in crash
   reporting (see [SECURITY.md](../SECURITY.md)).
 - **CLI- and agent-driven automation.** 180+ commands with `--json` output,
