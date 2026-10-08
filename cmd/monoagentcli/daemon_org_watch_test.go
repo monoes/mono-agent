@@ -161,3 +161,25 @@ func TestReconcileWaitsForRowEditInFlight(t *testing.T) {
 		t.Fatalf("the new grant was revoked by the daemon's reconcile: %d live, err %v", len(live), err)
 	}
 }
+
+func TestReconcileSkipsAnOrgFileDeletedBeforeTheLock(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	onDisk := f.load(t) // what the watcher read
+	if err := orgdesign.Delete(f.root, onDisk.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &orgServices{db: db, logf: t.Logf}
+	res := s.reconcileDoc(context.Background(), orgdecide.ProfileRoot{ProfileID: "default", Root: f.root}, onDisk, true)
+	if res.Error == "" {
+		t.Fatal("reconciling a deleted org file reported no error")
+	}
+	if _, err := orgdesign.Load(f.root, onDisk.Name); err == nil {
+		t.Fatal("the reconcile saved the stale copy back over the deleted org file")
+	}
+}

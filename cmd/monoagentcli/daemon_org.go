@@ -200,9 +200,15 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 		return res
 	}
 	defer release()
-	if fresh, err := orgdesign.Load(pr.Root, d.Name); err == nil {
-		d = fresh
+	fresh, err := orgdesign.Load(pr.Root, d.Name)
+	if err != nil {
+		// Gone or unreadable since it was read: reconciling the stale copy could save it back over a
+		// deleted or half-edited file.
+		s.logf("org services: reconcile %s: reload under the rows lock: %v", d.Name, err)
+		res.Error = "reload under the rows lock: " + err.Error()
+		return res
 	}
+	d = fresh
 	fail := func(format string, err error) orgReconcileOutcome {
 		s.logf(format, d.Name, err)
 		res.Error = err.Error()
