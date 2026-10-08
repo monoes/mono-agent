@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/release"
 	"github.com/monoes/mono-agent/internal/updatecheck"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +22,7 @@ import (
 const sha256SumsAssetName = updatecheck.SumsAssetName
 
 func newUpdateCmd(cfg *globalConfig) *cobra.Command {
-	var check bool
+	var check, force bool
 	var current, app string
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -57,6 +58,7 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "Only report whether a newer release exists; download nothing")
 	cmd.Flags().StringVar(&current, "current", "", "Version to compare against (default: this binary's)")
+	cmd.Flags().BoolVar(&force, "force", false, "Install a release older than the installed one (downgrade)")
 	cmd.Flags().StringVar(&app, "app", "", "Update the desktop app at this executable path (and the CLI bundled with it) instead of this binary")
 	return cmd
 }
@@ -78,7 +80,7 @@ func runUpdateCheck(cmd *cobra.Command, cfg *globalConfig, current string) error
 		current = getVersion()
 	}
 	res := updateCheck{CurrentVersion: current}
-	release, err := fetchLatestRelease(cmd.Context())
+	release, err := fetchLatest(cmd.Context())
 	if err != nil {
 		if !cfg.JSONOutput {
 			return err
@@ -86,18 +88,18 @@ func runUpdateCheck(cmd *cobra.Command, cfg *globalConfig, current string) error
 		res.Error = err.Error()
 		return writeJSONTo(cmd.OutOrStdout(), res)
 	}
-	res.LatestVersion = release.TagName
-	res.ReleaseURL = release.HTMLURL
-	res.UpdateAvailable = newerRelease(release.TagName, current)
+	res.LatestVersion = release.Tag
+	res.ReleaseURL = release.URL
+	res.UpdateAvailable = newerRelease(release.Tag, current)
 	if cfg.JSONOutput {
 		return writeJSONTo(cmd.OutOrStdout(), res)
 	}
 	out := cmd.OutOrStdout()
 	switch {
 	case res.UpdateAvailable:
-		fmt.Fprintf(out, "Update available: %s → %s\n%s\n", current, release.TagName, release.HTMLURL)
+		fmt.Fprintf(out, "Update available: %s → %s\n%s\n", current, release.Tag, release.URL)
 	case isDevVersion(current):
-		fmt.Fprintf(out, "Latest release is %s (this is a dev build)\n", release.TagName)
+		fmt.Fprintf(out, "Latest release is %s (this is a dev build)\n", release.Tag)
 	default:
 		fmt.Fprintf(out, "Already on the latest version (%s)\n", current)
 	}
@@ -144,14 +146,15 @@ func versionPart(parts []string, i int) int {
 
 func runUpdate(cmd *cobra.Command, cfg *globalConfig) error {
 	fmt.Println("Checking for updates...")
+	force, _ := cmd.Flags().GetBool("force")
 
-	release, err := fetchLatestRelease(context.Background())
+	info, err := fetchLatest(context.Background())
 	if err != nil {
 		return err
 	}
 
 	v := getVersion()
-	latest := strings.TrimPrefix(release.TagName, "v")
+	latest := strings.TrimPrefix(info.Tag, "v")
 	current := strings.TrimPrefix(v, "v")
 
 	if v == "dev" {
@@ -166,19 +169,60 @@ func runUpdate(cmd *cobra.Command, cfg *globalConfig) error {
 		}
 		return nil
 	}
-	fmt.Printf("Update available: %s → %s\n", v, release.TagName)
+	if err := release.CheckDowngrade(info.Tag, v, force); err != nil {
+		return fmt.Errorf("%w; the installed binary was kept", err)
+	}
+	fmt.Printf("Update available: %s → %s\n", v, info.Tag)
 
 	assetName := updateAssetName()
+	selfPath, err := selfBinaryPath()
+	if err != nil {
+		return fmt.Errorf("locate binary: %w", err)
+	}
+
+	var data []byte
+	if info.Manifest != nil {
+		// Signed path: the manifest signature already passed; the download
+		// must match its size and sha256 before anything is replaced.
+		a, err := info.Manifest.Asset(assetName, runtime.GOOS, runtime.GOARCH, "cli")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Downloading %s...\n", assetName)
+		if data, err = releaseClient().Download(context.Background(), a); err != nil {
+			return fmt.Errorf("%w; the installed binary was kept", err)
+		}
+		fmt.Printf("Signature and checksum verified: %s SHA256 %s\n", assetName, a.SHA256)
+	} else {
+		if data, err = legacyDownload(info.Legacy, assetName); err != nil {
+			return err
+		}
+	}
+
+	if err := installBinary(data, selfPath); err != nil {
+		return err
+	}
+
+	fmt.Printf("Updated to %s\n", info.Tag)
+	if d := daemonAfterUpdate(cmd.Context(), cfg, info.Tag); d != nil {
+		fmt.Println(d.Message)
+	}
+	return nil
+}
+
+// legacyDownload is the pre-manifest path: the GitHub release's asset checked
+// against the release's SHA256SUMS.txt.
+func legacyDownload(rel *latestRelease, assetName string) ([]byte, error) {
 	var downloadURL string
-	for _, a := range release.Assets {
+	for _, a := range rel.Assets {
 		if a.Name == assetName {
 			downloadURL = a.BrowserDownloadURL
 			break
 		}
 	}
 	if downloadURL == "" {
-		names := make([]string, 0, len(release.Assets))
-		for _, a := range release.Assets {
+		names := make([]string, 0, len(rel.Assets))
+		for _, a := range rel.Assets {
 			names = append(names, a.Name)
 		}
 		available := "(none)"
@@ -187,54 +231,38 @@ func runUpdate(cmd *cobra.Command, cfg *globalConfig) error {
 		}
 		// Hard error, no architecture fallback: silently downloading an
 		// amd64 binary onto an arm64 host bricks the update.
-		return fmt.Errorf("no binary for %s/%s in release %s (wanted %s); available assets: %s",
-			runtime.GOOS, runtime.GOARCH, release.TagName, assetName, available)
-	}
-
-	selfPath, err := selfBinaryPath()
-	if err != nil {
-		return fmt.Errorf("locate binary: %w", err)
+		return nil, fmt.Errorf("no binary for %s/%s in release %s (wanted %s); available assets: %s",
+			runtime.GOOS, runtime.GOARCH, rel.TagName, assetName, available)
 	}
 
 	// Pre-flight: the release must publish a checksum manifest, otherwise
 	// the downloaded binary cannot be verified. Hard-fail like install.sh —
 	// never silently skip integrity verification.
 	sumsURL := ""
-	for _, a := range release.Assets {
+	for _, a := range rel.Assets {
 		if a.Name == sha256SumsAssetName {
 			sumsURL = a.BrowserDownloadURL
 			break
 		}
 	}
 	if sumsURL == "" {
-		return fmt.Errorf("release %s has no %s asset — cannot verify download integrity, refusing to update", release.TagName, sha256SumsAssetName)
+		return nil, fmt.Errorf("release %s has no %s asset — cannot verify download integrity, refusing to update", rel.TagName, sha256SumsAssetName)
 	}
 
 	fmt.Printf("Downloading %s...\n", assetName)
 	data, err := httpGetAll(downloadURL)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	sumsData, err := httpGetAll(sumsURL)
 	if err != nil {
-		return fmt.Errorf("fetch %s: %w", sha256SumsAssetName, err)
+		return nil, fmt.Errorf("fetch %s: %w", sha256SumsAssetName, err)
 	}
-
 	if err := verifyReleaseDigest(data, sumsData, assetName); err != nil {
-		return err
+		return nil, err
 	}
 	fmt.Printf("Checksum verified: %s SHA256 %s\n", assetName, sha256Hex(data))
-
-	if err := installBinary(data, selfPath); err != nil {
-		return err
-	}
-
-	fmt.Printf("Updated to %s\n", release.TagName)
-	if d := daemonAfterUpdate(cmd.Context(), cfg, release.TagName); d != nil {
-		fmt.Println(d.Message)
-	}
-	return nil
+	return data, nil
 }
 
 // httpGetAll fetches url and returns the full response body. Non-200

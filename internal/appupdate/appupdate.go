@@ -1,5 +1,6 @@
 // Package appupdate installs the desktop app — and the CLI bundled with it —
-// from the latest release. `monoagentcli update --app` runs it; the desktop
+// from the latest release (the signed manifest first; the GitHub API and
+// SHA256SUMS.txt only while release.AllowLegacyGitHubUpdates). `monoagentcli update --app` runs it; the desktop
 // app only shells out to that command and shows its progress.
 //
 // Every asset is verified against the release's SHA256SUMS.txt before
@@ -19,6 +20,7 @@ package appupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/release"
 	"github.com/monoes/mono-agent/internal/updatecheck"
 )
 
@@ -34,9 +37,15 @@ import (
 // Everything OS-specific is a field, so tests run every OS path against a
 // fake release server.
 type Updater struct {
-	Context      context.Context // nil: context.Background()
-	Client       *http.Client    // nil: http.DefaultClient
-	APIURL       string          // GitHub's latest-release endpoint
+	Context context.Context // nil: context.Background()
+	Client  *http.Client    // nil: http.DefaultClient
+	APIURL  string          // GitHub's latest-release endpoint (legacy path)
+	// Release is the signed-manifest client; nil: release.DefaultClient().
+	Release *release.Client
+	// Current is the installed version for the downgrade check ("" skips it);
+	// Force allows installing an older release.
+	Current      string
+	Force        bool
 	GOOS, GOARCH string
 	Exe          string // the app binary, symlinks resolved
 	// UpToDate reports whether the release tag is not newer than the app;
@@ -99,12 +108,32 @@ func (u Updater) Run() (Result, error) {
 		return Result{}, fmt.Errorf("app update not supported on %s/%s", u.GOOS, u.GOARCH)
 	}
 	u.Progress("Checking for updates...")
-	rel, err := u.fetchRelease()
-	if err != nil {
-		return Result{}, err
+	rc := u.Release
+	if rc == nil {
+		rc = release.DefaultClient()
 	}
-	if u.UpToDate != nil && u.UpToDate(rel.TagName) {
+	var manifest *release.Manifest
+	var rel *releaseInfo
+	tag := ""
+	m, err := rc.Latest(u.Context)
+	switch {
+	case err == nil:
+		manifest, tag = m, m.Version
+	case !errors.Is(err, release.ErrUnavailable):
+		return Result{}, fmt.Errorf("the signed release manifest was rejected: %w; nothing was installed", err)
+	case !release.AllowLegacyGitHubUpdates:
+		return Result{}, fmt.Errorf("cannot verify an update: %w", err)
+	default:
+		if rel, err = u.fetchRelease(); err != nil {
+			return Result{}, err
+		}
+		tag = rel.TagName
+	}
+	if u.UpToDate != nil && u.UpToDate(tag) {
 		return Result{UpToDate: true}, nil
+	}
+	if err := release.CheckDowngrade(tag, u.Current, u.Force); err != nil {
+		return Result{}, fmt.Errorf("%w; the installed app was kept", err)
 	}
 	u.Progress("Downloading app update...")
 	want := []string{asset}
@@ -117,7 +146,12 @@ func (u Updater) Run() (Result, error) {
 			want = append(want, bundledCLIAssetWindows)
 		}
 	}
-	files, err := u.downloadVerified(rel, want)
+	var files map[string][]byte
+	if manifest != nil {
+		files, err = u.downloadSigned(rc, manifest, want)
+	} else {
+		files, err = u.downloadVerified(rel, want)
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -137,7 +171,7 @@ func (u Updater) Run() (Result, error) {
 		return Result{}, err
 	}
 	u.Progress("Update installed — restarting")
-	return Result{NewVersion: rel.TagName, Restart: restart}, nil
+	return Result{NewVersion: tag, Restart: restart}, nil
 }
 
 func (u Updater) fetchRelease() (*releaseInfo, error) {
@@ -160,6 +194,32 @@ func (u Updater) fetchRelease() (*releaseInfo, error) {
 		return nil, fmt.Errorf("parse error: %v", err)
 	}
 	return &rel, nil
+}
+
+// downloadSigned downloads each named asset listed in the signed manifest; the
+// client returns bytes only after the size and sha256 pass.
+func (u Updater) downloadSigned(rc *release.Client, m *release.Manifest, names []string) (map[string][]byte, error) {
+	assets := map[string]release.Asset{}
+	for _, n := range names {
+		kind := "app"
+		if n == bundledCLIAssetWindows {
+			kind = "cli"
+		}
+		a, err := m.Asset(n, u.GOOS, u.GOARCH, kind)
+		if err != nil {
+			return nil, err
+		}
+		assets[n] = a
+	}
+	out := map[string][]byte{}
+	for _, n := range names {
+		data, err := rc.Download(u.Context, assets[n])
+		if err != nil {
+			return nil, fmt.Errorf("%w; nothing was installed", err)
+		}
+		out[n] = data
+	}
+	return out, nil
 }
 
 // downloadVerified downloads each named asset and checks it against the
