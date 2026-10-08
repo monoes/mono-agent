@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -74,21 +73,64 @@ func main() {
 		}
 	}()
 
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is the command line without the process: it gates args on the monoes.me
+// account (account_gate.go), executes them and returns the exit code, so a
+// test can call it. Tests that call newRootCmd().Execute() skip the gate by
+// design; the engine and the runners judge the account themselves.
+func run(args []string, stdout, stderr io.Writer) int {
+	if args == nil {
+		args = []string{} // cobra reads os.Args for a nil slice
+	}
+
 	// Locale must be resolved before newRootCmd() builds the command tree,
 	// since cobra Short/Long/Example strings are evaluated once at
 	// construction time, before flags are parsed. See internal/i18n and
 	// docs/i18n.md.
-	i18n.SetLocale(i18n.Detect(os.Args[1:]))
+	i18n.SetLocale(i18n.Detect(args))
+
+	// The guard is installed before anything of a command can run, and released after it has returned:
+	// Require and CurrentStatus with no guard judge the enforcement date on the clock alone (the
+	// clock-guard record is read only through a guard), and every gate site of this binary runs inside
+	// a command. It is built before the signals are caught, so that the signals are let go before the
+	// guard is released: deferred calls run last in, first out. release (the guard's Close) waits for a
+	// refresh grant that monoes.me is still answering, up to the guard's call timeout, because a grant
+	// that was sent is never abandoned (A20), and signal.NotifyContext keeps catching the signals
+	// until its stop function runs. With the guard released first, a second Ctrl-C during that wait
+	// would be swallowed and only SIGKILL would end the process.
+	g, release := processGuard()
+	defer release()
 
 	// SIGHUP too: a CLI whose terminal or parent goes away must cancel, so
 	// commands end what they started (monoes/mono-agent#235).
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, cancel := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
-	if err := newRootCmd().ExecuteContext(ctx); err != nil {
-		reportCommandError(os.Args[1:], err, os.Stdout, os.Stderr)
-		os.Exit(exitCodeFor(err))
+	root := newRunRoot()
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs(args)
+	applyClassification(root)
+
+	if g != nil {
+		defer armLateRefresher(ctx, g)()
 	}
+
+	// The gate comes before anything runs: no first-run check, no database.
+	if err := gateCommand(ctx, root, args, g, stderr); err != nil {
+		reportGateRefusal(args, err, stdout, stderr)
+		return exitCodeFor(err)
+	}
+	if g != nil && cancelsOnRefusal(invocationClass(root, args)) {
+		cancelWhenRefused(g, cancel)
+	}
+	if err := root.ExecuteContext(ctx); err != nil {
+		reportCommandError(args, err, stdout, stderr)
+		return exitCodeFor(err)
+	}
+	return 0
 }
 
 // reportCommandError prints a failed command's error on stderr and, where
