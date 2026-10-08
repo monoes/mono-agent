@@ -239,7 +239,7 @@ func startDaemonBridge(ctx context.Context) (addr string, closeFn func(), err er
 // engine, records the address for endpoint URLs, and serves until ctx ends.
 func startDaemonAPI(ctx context.Context, cfg *globalConfig, db *storage.Database, engine *workflow.WorkflowEngine, orgs *orgServices, api *apiRuntime, addr string, allowMutations bool) (string, error) {
 	srv, err := httpapi.NewServer(httpapi.Options{
-		DB: db, Store: newHybridStore(db), Engine: engine, Profile: cfg.ProfileID,
+		DB: db, Store: openWorkflowStore(db), Engine: engine, Profile: cfg.ProfileID,
 		Addr: addr, AllowMutations: allowMutations, Version: getVersion(),
 		// The server has one ExtraRoutes slot: the org receiver and the
 		// OpenAI-compatible API both ride it.

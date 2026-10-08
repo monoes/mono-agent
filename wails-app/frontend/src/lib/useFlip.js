@@ -23,9 +23,9 @@ function layoutPos(el, root) {
   return { x, y }
 }
 
-export function useFlip(rootRef, enabled = true) {
-  const prev = useRef(new Map())
-  const prevSize = useRef(null)
+// useReducedMotion returns a ref that follows prefers-reduced-motion live
+// (true where the preference cannot be read).
+export function useReducedMotion() {
   const reduced = useRef(null)
   if (reduced.current === null) reduced.current = mediaQuery()?.matches ?? true
 
@@ -41,6 +41,13 @@ export function useFlip(rootRef, enabled = true) {
       else mq.removeListener?.(onChange)
     }
   }, [])
+  return reduced
+}
+
+export function useFlip(rootRef, enabled = true) {
+  const prev = useRef(new Map())
+  const prevSize = useRef(null)
+  const reduced = useReducedMotion()
 
   // No dependency list: any render may have moved a card.
   useLayoutEffect(() => {

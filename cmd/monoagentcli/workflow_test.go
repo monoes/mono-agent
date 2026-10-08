@@ -1004,7 +1004,7 @@ func TestWorkflowImportAtomicity_OverwriteRestoresPreviousOnPersistFailure(t *te
 		t.Fatalf("reopen db: %v", err)
 	}
 	defer db2.Close()
-	store := newHybridStore(db2)
+	store := openWorkflowStore(db2)
 	ctx := context.Background()
 
 	restored, err := store.GetWorkflow(ctx, "stable-wf-id")
@@ -1085,7 +1085,7 @@ func TestWorkflowImportAtomicity_SuccessfulOverwriteReplacesContent(t *testing.T
 		t.Fatalf("open db: %v", err)
 	}
 	defer db.Close()
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	ctx := context.Background()
 
 	wf, err := store.GetWorkflow(ctx, "stable-wf-id-2")
@@ -1148,7 +1148,7 @@ func TestWorkflowTemplatesUse_PersistsSuccessfully(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	defer db.Close()
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	wf, err := store.GetWorkflow(context.Background(), created.ID)
 	if err != nil || wf == nil {
 		t.Fatalf("template-instantiated workflow not persisted: %v", err)

@@ -66,7 +66,7 @@ func (a *App) AccountStatus() string {
 	ctx, cancel := context.WithTimeout(a.ctx, accountStatusTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, "--json", "account", "status")
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	out, runErr := cmd.Output()
 	var stderr string
@@ -151,7 +151,7 @@ func (a *App) runAccountLogin(event string) string {
 	}()
 
 	cmd := exec.CommandContext(ctx, cliBin, "--json", "account", "login")
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -222,7 +222,7 @@ func (a *App) accountCLI(args ...string) string {
 	ctx, cancel := context.WithTimeout(a.ctx, accountCLITimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, append([]string{"--json"}, args...)...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, runErr := cmd.Output()
 	return cliResultJSON(cliBin, out, runErr)
 }

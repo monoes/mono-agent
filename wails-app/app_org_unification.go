@@ -545,7 +545,7 @@ func (a *App) runUnifiedCLI(label string, fullArgs []string) string {
 	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(fullArgs, " ")))
 	startedAt := time.Now()
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, runErr := cmd.Output()
 	elapsed := time.Since(startedAt).Round(time.Millisecond)
 	res := cliResultJSON(cliBin, out, runErr)

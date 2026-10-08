@@ -156,7 +156,7 @@ func (e *libEnv) pack(ctx context.Context, kind, local string, o libPublishOptio
 		up.Data, up.Filename, up.ContentType = buf.Bytes(), local+".mpkg", "application/zip"
 		name, desc, version = info.Name, info.Description, info.Version
 	case library.KindWorkflow:
-		store := newHybridStore(e.db)
+		store := openWorkflowStore(e.db)
 		wf := ownedWorkflow(ctx, store, e.db.DB, e.cfg.ProfileID, local)
 		if wf == nil {
 			return up, errNotFound("workflow %q not found in this profile", local)

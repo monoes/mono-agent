@@ -60,32 +60,34 @@ func (b *XBot) LoginURL() string {
 // not on the login flow, and a navigation control only a signed-in session
 // renders.
 func (b *XBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	for _, sel := range []string{
+	// A probe that errors counts as "not present".
+	anyPresent := func(selectors ...string) bool {
+		for _, sel := range selectors {
+			if found, probeErr := p.Has(sel); probeErr == nil && found {
+				return true
+			}
+		}
+		return false
+	}
+	if anyPresent(
 		"input[autocomplete='username']",
 		"[data-testid='LoginForm_Login_Button']",
 		"[data-testid='loginButton']",
-	} {
-		if has, err := p.Has(sel); err == nil && has {
-			return false, nil
-		}
-	}
-	cur, err := p.GetURL()
-	if err != nil {
-		return false, err
-	}
-	if isLoginURL(cur) {
+	) {
 		return false, nil
 	}
-	for _, sel := range []string{
+	pageURL, urlErr := p.GetURL()
+	switch {
+	case urlErr != nil:
+		return false, urlErr
+	case isLoginURL(pageURL):
+		return false, nil
+	}
+	return anyPresent(
 		"[data-testid='SideNav_AccountSwitcher_Button']",
 		"[data-testid='SideNav_NewTweet_Button']",
 		"[data-testid='AppTabBar_Profile_Link']",
-	} {
-		if has, err := p.Has(sel); err == nil && has {
-			return true, nil
-		}
-	}
-	return false, nil
+	), nil
 }
 
 // ResolveURL converts a relative X URL to an absolute URL. If the URL is

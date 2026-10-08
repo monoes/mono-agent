@@ -99,7 +99,7 @@ func (e *libEnv) recordLive(ctx context.Context, li *localIndex, r library.Recor
 func (e *libEnv) localExists(ctx context.Context, kind, id string) bool {
 	switch kind {
 	case library.KindWorkflow:
-		return ownedWorkflow(ctx, newHybridStore(e.db), e.db.DB, e.cfg.ProfileID, id) != nil
+		return ownedWorkflow(ctx, openWorkflowStore(e.db), e.db.DB, e.cfg.ProfileID, id) != nil
 	case library.KindOrg:
 		path, err := orgdesign.ConfigPath(profiledir.Root(e.db.DB, e.cfg.ProfileID), id)
 		if err != nil {

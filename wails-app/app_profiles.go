@@ -187,9 +187,9 @@ func (a *App) profileFolder(profileID string) (string, error) {
 // per-GOOS command selection without spawning a real GUI file manager.
 func revealFolder(dir string) error {
 	name, args := revealFolderCommand(goruntime.GOOS, dir)
-	cmd := exec.Command(name, args...)
-	hideWindow(cmd)
-	err := cmd.Run()
+	opener := exec.Command(name, args...)
+	suppressConsole(opener)
+	err := opener.Run()
 	if err == nil {
 		return nil
 	}
@@ -281,7 +281,7 @@ func (a *App) runProfileMove(args ...string) error {
 	}
 	full := append([]string{"--profile", a.getActiveProfileID(), "--json", "profile", "move"}, args...)
 	cmd := exec.CommandContext(ctx, cliBin, full...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	if _, err := cmd.Output(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {

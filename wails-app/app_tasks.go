@@ -65,7 +65,7 @@ func (a *App) taskCLI(stdin string, args ...string) string {
 	defer cancel()
 	full := append([]string{"--profile", a.getActiveProfileID(), "--json", "task"}, args...)
 	cmd := exec.CommandContext(ctx, cliBin, full...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

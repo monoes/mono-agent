@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { Archive, Check, CircleHelp } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
 import { useTaskBoard } from '../lib/useTaskBoard.js'
-import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget } from '../lib/taskModel.js'
+import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget, claimState } from '../lib/taskModel.js'
 import TaskDrawer from '../components/TaskDrawer.jsx'
 import { useFlip } from '../lib/useFlip.js'
+import { useMarks } from '../lib/useMarks.js'
 
 const ARROWS = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
@@ -42,10 +43,11 @@ function CaptureHelp({ t }) {
   )
 }
 
-function Card({ task, status, readOnly, selected, onOpen, onKey, onDragStart, onApprove, onArchive, t }) {
+function Card({ task, status, readOnly, selected, pulse, now, onOpen, onKey, onDragStart, onApprove, onArchive, t }) {
   return (
     <div
       data-task-id={task.id}
+      className={pulse ? `tb-card--${pulse}` : undefined}
       draggable={!readOnly}
       tabIndex={0}
       role="button"
@@ -57,7 +59,7 @@ function Card({ task, status, readOnly, selected, onOpen, onKey, onDragStart, on
       style={{ padding: 8, marginBottom: 6, border: `1px solid ${selected ? 'var(--accent, #00b4d8)' : 'var(--border)'}`, borderRadius: 6, background: 'var(--elevated)', cursor: 'pointer' }}
     >
       <div style={{ fontWeight: 600 }}>{task.title}</div>
-      {task.claim && <div style={{ fontSize: 11, opacity: 0.8 }}>{task.claim.stale ? t('tasks.stale') : t('tasks.claimedBy', { by: task.claim.by })}</div>}
+      {task.claim && <div style={{ fontSize: 11, opacity: 0.8 }}>{claimState(task.claim, now)?.stale ? t('tasks.stale') : t('tasks.claimedBy', { by: task.claim.by })}</div>}
       {!readOnly && (
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
           {status === 'inbox' && (
@@ -81,6 +83,15 @@ export default function Tasks({ isActive = true }) {
   const refocus = useRef(null) // a card moved by key: a move to another column remounts it
 
   useFlip(root)
+  const marks = useMarks(b.board)
+  // A lease ends with no write, so no read follows: the clock decides.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isActive) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(timer)
+  }, [isActive])
   useEffect(() => { tasksApi.agentShell().then(v => setShell(v || '')) }, [])
   const readOnly = shell === null || !!shell
   const shown = useMemo(() => filterBoard(b.board, query), [b.board, query])
@@ -171,7 +182,8 @@ export default function Tasks({ isActive = true }) {
               {shown.columns[status].length === 0 && <div style={{ opacity: 0.6 }}>{t(`tasks.emptyBy.${status}`, { defaultValue: t('tasks.empty') })}</div>}
               {shown.columns[status].map(task => (
                 <Card
-                  key={task.id} task={task} status={status} readOnly={readOnly} selected={openId === task.id}
+                  key={task.id} task={task} status={status} readOnly={readOnly} selected={openId === task.id} now={now}
+                  pulse={status === 'done' && marks.done.has(task.id) ? 'done-pulse' : status === 'in_progress' && task.claim && marks.claimed.has(task.id) ? 'claim-pulse' : ''}
                   onOpen={setOpenId} onKey={onKey} onDragStart={id => { dragging.current = id }}
                   onApprove={id => b.approve(id)} onArchive={id => { if (openId === id) setOpenId(null); b.archive(id) }} t={t}
                 />

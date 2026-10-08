@@ -44,7 +44,7 @@ func docCarriesEnforcedKeys(d *orgdesign.Doc) bool {
 // Workflows without a profile (legacy, file-store) count as the default
 // profile's.
 func orgWorkflowIn(ctx context.Context, db *storage.Database, profileID, id string) (*workflow.Workflow, error) {
-	wf, err := newHybridStore(db).GetWorkflow(ctx, id)
+	wf, err := openWorkflowStore(db).GetWorkflow(ctx, id)
 	if err != nil {
 		return nil, err
 	}

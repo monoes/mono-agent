@@ -236,7 +236,7 @@ func newPeopleReviewRejectCmd(cfg *globalConfig) *cobra.Command {
 // workflows (files and SQLite alike) and refuses an inactive one, which
 // the engine would not run.
 func pickReviewWorkflow(ctx context.Context, cfg *globalConfig, db *storage.Database, want string) (peoplereview.Workflow, error) {
-	all, err := newHybridStore(db).ListWorkflows(ctx, cfg.ProfileID)
+	all, err := openWorkflowStore(db).ListWorkflows(ctx, cfg.ProfileID)
 	if err != nil {
 		return peoplereview.Workflow{}, fmt.Errorf("listing workflows: %w", err)
 	}

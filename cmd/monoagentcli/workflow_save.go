@@ -53,7 +53,7 @@ func newWorkflowSaveCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("open database: %w", err)
 			}
 			defer db.Close()
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := saveWorkflowDocument(ctx, store, cfg.ProfileID, doc)

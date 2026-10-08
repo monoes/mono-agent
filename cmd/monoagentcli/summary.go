@@ -69,7 +69,7 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
-// readOnlyHybridStore is newHybridStore without its file→SQLite backfill:
+// readOnlyHybridStore is openWorkflowStore without its file→SQLite backfill:
 // summary is polled and must not write workflow rows.
 func readOnlyHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
 	sqlStore := workflow.NewSQLiteWorkflowStore(db.DB)

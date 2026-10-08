@@ -250,6 +250,16 @@ describe('transitions', () => {
     expect([...t.done]).toEqual([6])
     expect(transitions(null, next).entered.size).toBe(0)
   })
+  it('marks a claim taken, not one that is merely renewed', () => {
+    const claim = (by) => ({ claim: { by, until: '2026-10-06T10:00:00Z', stale: false } })
+    const withClaim = (c) => normalizeBoard(doc({ in_progress: [card(5, 'in_progress', c)], ready: [card(3, 'ready')] }))
+    expect([...transitions(withClaim({}), withClaim(claim('bot'))).claimed]).toEqual([5])
+    expect([...transitions(withClaim(claim('bot')), withClaim(claim('other'))).claimed]).toEqual([5])
+    expect(transitions(withClaim(claim('bot')), withClaim(claim('bot'))).claimed.size).toBe(0)
+    expect(transitions(null, withClaim(claim('bot'))).claimed.size).toBe(0)
+    const moved = applyMove(withClaim({}), 3, 'in_progress', {})
+    expect(transitions(withClaim({}), moved).claimed.size).toBe(0) // no claimant yet
+  })
 })
 
 describe('card labels', () => {

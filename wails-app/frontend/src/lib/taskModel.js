@@ -210,21 +210,24 @@ export function remoteChanges(prev, next, max = 3) {
 }
 
 // transitions are the cards to animate after the board changed: entered
-// (not there before) and done (just moved into Done). Nothing on the first
-// read or after a profile change.
+// (not there before), done (just moved into Done) and claimed (an agent just
+// took it: it was not in progress under that agent before). Nothing on the
+// first read or after a profile change.
 export function transitions(prev, next) {
   const entered = new Set()
   const done = new Set()
-  if (!prev || !next || prev.profile.id !== next.profile.id) return { entered, done }
+  const claimed = new Set()
+  if (!prev || !next || prev.profile.id !== next.profile.id) return { entered, done, claimed }
   const before = places(prev)
   for (const s of COLUMNS) {
     for (const t of next.columns[s]) {
       const was = before.get(t.id)
       if (!was) entered.add(t.id)
       else if (s === 'done' && was.s !== 'done') done.add(t.id)
+      if (s === 'in_progress' && t.claim?.by && (!was || was.s !== s || was.by !== t.claim.by)) claimed.add(t.id)
     }
   }
-  return { entered, done }
+  return { entered, done, claimed }
 }
 
 // hostOf is a URL's host without "www.", or ''.

@@ -30,16 +30,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newHybridStore creates a HybridWorkflowStore that reads from both
-// the JSON file store (~/.monoagent/workflows/) and the SQLite database.
-// This ensures workflows created by both the CLI and the Wails GUI are visible.
-func newHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
+// openWorkflowStore returns the workflow store shared by the CLI and the
+// desktop app: JSON files under ~/.monoagent/workflows plus the SQLite
+// database, so a workflow made by either side shows up on the other.
+func openWorkflowStore(db *storage.Database) *workflow.HybridWorkflowStore {
 	sqlStore := workflow.NewSQLiteWorkflowStore(db.DB)
 	dir := expandPath("~/.monoagent/workflows")
 	fileStore, err := workflow.NewWorkflowFileStore(dir)
 	if err != nil {
-		// If file store can't be created, wrap SQLite-only in a hybrid shell
-		// so callers always get the same type.
+		// No usable workflow directory: keep the same return type, backed by
+		// SQLite alone.
 		return withGrantTierRefresh(db, workflow.NewHybridWorkflowStore(nil, sqlStore))
 	}
 	// Workflows saved file-only (the desktop editor, older CLI versions)
@@ -205,7 +205,7 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 		AllowAllProfiles: allowAllProfiles,
 	}
 
-	hybridStore := newHybridStore(db)
+	hybridStore := openWorkflowStore(db)
 	engine := workflow.NewWorkflowEngineWithStore(hybridStore, db.DB, sched, registry, engCfg, logger)
 	return engine, func() {
 		sessionProvider.Close()
@@ -382,7 +382,7 @@ func newWorkflowSearchCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			ctx := context.Background()
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			saved, err := store.ListWorkflows(ctx, cfg.ProfileID)
 			if err != nil {
 				return fmt.Errorf("list workflows: %w", err)
@@ -627,7 +627,7 @@ func newWorkflowTemplatesUseCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 			if err := createOrOverwriteWorkflowAtomically(ctx, store, &wf, false); err != nil {
 				return err
@@ -660,7 +660,7 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			if allProfiles {
@@ -723,7 +723,7 @@ func newWorkflowGetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, args[0])
@@ -1085,7 +1085,7 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			store := newHybridStore(preDB)
+			store := openWorkflowStore(preDB)
 			existing, gerr := store.GetWorkflow(context.Background(), workflowID)
 			if existing != nil && ownedWorkflow(context.Background(), store, preDB.DB, cfg.ProfileID, workflowID) == nil {
 				existing = nil // another profile's: not found here, and its grants untouched
@@ -1193,7 +1193,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 				return w.Flush()
 			}
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			// Load the workflow and enforce the profile boundary before
@@ -1278,7 +1278,7 @@ func newWorkflowCreateCmd(cfg *globalConfig) *cobra.Command {
 				UpdatedAt:   now,
 			}
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 			// Same persistence as import: file store plus the SQLite rows
 			// that `workflow run --json` and executions read.
@@ -1436,7 +1436,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			now := time.Now().UTC()
@@ -1703,7 +1703,7 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, args[0])
@@ -1794,7 +1794,7 @@ func newWorkflowNodeAddCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			// Ensure workflow exists.
@@ -1867,7 +1867,7 @@ func newWorkflowNodeListCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, args[0])
@@ -1916,7 +1916,7 @@ func newWorkflowNodeSetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
@@ -1999,7 +1999,7 @@ func newWorkflowNodeRemoveCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
@@ -2080,7 +2080,7 @@ func newWorkflowConnectCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
@@ -2134,7 +2134,7 @@ func newWorkflowDisconnectCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			store := newHybridStore(db)
+			store := openWorkflowStore(db)
 			ctx := context.Background()
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
