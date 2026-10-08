@@ -1274,7 +1274,7 @@
         "title": "MonoAgent no pudo comprobar tu sesión",
         "body": "monoagentcli no dio una respuesta. Inténtalo de nuevo o actualiza MonoAgent."
       },
-      "details": "Detalles: {{message}}",
+      "details": "Detalles técnicos",
       "retry": "Intentar de nuevo"
     },
     "update": {

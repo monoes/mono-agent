@@ -1316,7 +1316,7 @@
         "title": "MonoAgent could not check your sign-in",
         "body": "monoagentcli did not give an answer. Try again, or update MonoAgent."
       },
-      "details": "Details: {{message}}",
+      "details": "Technical details",
       "retry": "Try again"
     },
     "update": {

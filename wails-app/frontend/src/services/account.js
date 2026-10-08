@@ -3,7 +3,9 @@
 // else {failure: {cause, message, enforced, enforce_from}}. It never rejects and
 // never turns something it could not read into a status: the gate fails closed
 // (spec §6.5). enforced says whether this build already enforces; a failure
-// that cannot say (the binding itself failed) counts as enforced.
+// that cannot say counts as enforced, except when the binding itself is
+// missing, throws or answers a non-object: that build has no Go side to ask
+// (plain browser or vite dev), so it defers to dormant and nothing locks.
 import * as GoApp from '../wailsjs/go/main/App'
 import { subscribeEvent } from './api.js'
 
@@ -11,6 +13,9 @@ const STATES = ['ok', 'grace', 'locked']
 const CAUSES = ['cli_not_found', 'cli_too_old', 'cli_failed'] // wails-app/app_account.go
 
 const failure = (cause, message = '', more = {}) => ({ failure: { cause, message, enforced: true, ...more } })
+
+// unbound: the binding failed, so enforcement is not known to be on (dormant).
+const unbound = (message) => failure('cli_failed', message, { enforced: false })
 
 // answerOf reads what AccountStatus returned: a status document (schema 1, a
 // state this app knows), the Go side's coded failure, or neither.
@@ -31,8 +36,9 @@ const run = (call) => Promise.resolve().then(call).then(r => (typeof r === 'stri
   .catch(e => ({ error: e?.message || String(e) }))
 
 export const account = {
-  status: () => Promise.resolve().then(() => GoApp.AccountStatus()).then(answerOf)
-    .catch(e => failure('cli_failed', e?.message || String(e))),
+  status: () => Promise.resolve().then(() => GoApp.AccountStatus())
+    .then(raw => (typeof raw === 'string' || (raw && typeof raw === 'object') ? answerOf(raw) : unbound('no answer from the binding')))
+    .catch(e => unbound(e?.message || String(e))),
   login: () => run(() => GoApp.AccountLogin()),
   cancelLogin: () => run(() => GoApp.AccountLoginCancel()),
   sendCode: (email) => run(() => GoApp.AccountLoginEmailSend(email)),

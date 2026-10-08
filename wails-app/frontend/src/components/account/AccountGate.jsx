@@ -69,6 +69,7 @@ function UpdateControl({ version }) {
 export default function AccountGate({ gate, view, update }) {
   const { t } = useTranslation()
   const [asking, setAsking] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
   const what = view.failure ? CAUSES[view.failure.cause] : (REASONS[view.status?.reason] ?? REASONS.invalid)
   const message = view.failure?.message || ''
 
@@ -90,7 +91,14 @@ export default function AccountGate({ gate, view, update }) {
         <p style={{ margin: 0, fontFamily: 'var(--font-body)', fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
           {t(what.body)}
         </p>
-        {message && <p style={{ ...mono, margin: 0, color: 'var(--text-muted)', wordBreak: 'break-word' }}>{t('account.gate.details', { message })}</p>}
+        {message && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <button className="btn btn-ghost btn-sm" aria-expanded={showDetails} aria-controls="account-gate-details" onClick={() => setShowDetails(v => !v)}>
+              {t('account.gate.details')}
+            </button>
+            {showDetails && <p id="account-gate-details" style={{ ...mono, margin: 0, color: 'var(--text-muted)', wordBreak: 'break-word' }}>{message}</p>}
+          </div>
+        )}
         {what.signIn && <LogInToMonoesButton service={account} onLogin={onAccountLogin} status={SIGNED_OUT} onStatusChange={() => gate.check('manual')} large />}
         {(what.update || update) && !what.noUpdate && <UpdateControl version={update?.latest_version} />}
         {what.retry && (

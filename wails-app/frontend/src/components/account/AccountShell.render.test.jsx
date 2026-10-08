@@ -200,7 +200,15 @@ describe('failing closed', () => {
     answer({ error: 'monoagentcli binary not found', code: 'cli_not_found' })
     setup()
     const region = within(await gateRegion('MonoAgent cannot find its command-line tool'))
-    expect(region.getByText('Details: monoagentcli binary not found')).toBeInTheDocument()
+    // The raw message (it may carry paths or stderr) sits behind a collapsed toggle.
+    expect(region.queryByText('monoagentcli binary not found')).not.toBeInTheDocument()
+    const toggle = region.getByRole('button', { name: 'Technical details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(region.getByText('monoagentcli binary not found')).toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(region.queryByText('monoagentcli binary not found')).not.toBeInTheDocument()
     expect(region.queryByRole('button', { name: 'Update MonoAgent' })).not.toBeInTheDocument()
     answer(doc())
     fireEvent.click(region.getByRole('button', { name: 'Try again' }))
@@ -254,11 +262,11 @@ describe('failing closed', () => {
     delete window.go; delete window.runtime
   })
 
-  it('locks when the status binding itself fails', async () => {
+  it('does not lock when the status binding itself fails: a build without bindings is dormant', async () => {
     go.AccountStatus.mockImplementation(() => Promise.reject(new Error('binding missing')))
     setup()
-    expect(await gateRegion('MonoAgent could not check your sign-in')).toBeInTheDocument()
-    expect(screen.getByText('Details: binding missing')).toBeInTheDocument()
+    expect(await screen.findByTestId('shell')).toBeInTheDocument()
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
   })
 })
 

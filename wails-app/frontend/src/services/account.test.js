@@ -7,6 +7,7 @@ const go = vi.hoisted(() => ({
 vi.mock('../wailsjs/go/main/App', () => go)
 
 import { account, answerOf } from './account.js'
+import { viewOf } from '../lib/accountGate.js'
 
 const OK = { v: 1, state: 'ok', reason: '', plan: 'free', enforced: true }
 const failure = (cause, message = '', over = {}) => ({ failure: { cause, message, enforced: true, ...over } })
@@ -37,11 +38,31 @@ describe('answerOf: the gate fails closed', () => {
 describe('account', () => {
   beforeEach(() => { Object.values(go).forEach(f => f.mockReset()) })
 
-  it('status resolves to the status of a good answer, and a binding that rejects is a failure', async () => {
+  it('status resolves to the status of a good answer', async () => {
     go.AccountStatus.mockResolvedValue(JSON.stringify(OK))
     expect(await account.status()).toEqual({ status: OK })
+  })
+
+  it('a binding that is missing, throws or answers a non-object defers to dormant: not enforced, so not locked', async () => {
     go.AccountStatus.mockRejectedValue(new Error('bridge down'))
-    expect(await account.status()).toEqual(failure('cli_failed', 'bridge down'))
+    expect(await account.status()).toEqual(failure('cli_failed', 'bridge down', { enforced: false }))
+    go.AccountStatus.mockImplementation(() => { throw new TypeError('AccountStatus is not a function') })
+    expect((await account.status()).failure).toMatchObject({ enforced: false })
+    for (const v of [undefined, null, 42]) {
+      go.AccountStatus.mockResolvedValue(v)
+      const view = viewOf({ phase: 'ready', ...(await account.status()) })
+      expect(view.locked, String(v)).toBe(false)
+      expect(view.warn).toBe(false)
+    }
+  })
+
+  it('a real answer of enforced:true with a state it does not know stays locked (fail closed)', async () => {
+    go.AccountStatus.mockResolvedValue(JSON.stringify({ ...OK, state: 'paused' }))
+    const answer = await account.status()
+    expect(answer.failure.enforced).toBe(true)
+    expect(viewOf({ phase: 'ready', ...answer }).locked).toBe(true)
+    go.AccountStatus.mockResolvedValue(JSON.stringify({ error: 'boom', code: 'cli_failed', enforced: true }))
+    expect(viewOf({ phase: 'ready', ...(await account.status()) }).locked).toBe(true)
   })
 
   it('sign-in calls the Account bindings and returns their JSON, or {error}', async () => {
