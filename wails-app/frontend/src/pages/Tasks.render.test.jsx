@@ -4,10 +4,11 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '../i18n.js'
 
-const { api } = vi.hoisted(() => ({
+const { api, bus } = vi.hoisted(() => ({
+  bus: { fire: () => {} },
   api: { board: vi.fn(), show: vi.fn(), add: vi.fn(), edit: vi.fn(), move: vi.fn(), approve: vi.fn(), archive: vi.fn(), comment: vi.fn(), agentShell: vi.fn() },
 }))
-vi.mock('../services/tasks.js', () => ({ tasksApi: api, onTasksChanged: () => () => {} }))
+vi.mock('../services/tasks.js', () => ({ tasksApi: api, onTasksChanged: (f) => { bus.fire = f; return () => {} } }))
 import Tasks from './Tasks.jsx'
 import TaskDrawer from '../components/TaskDrawer.jsx'
 
@@ -137,5 +138,55 @@ describe('Tasks page', () => {
     api.board.mockResolvedValue({ error: 'no database' })
     render(<Tasks />)
     expect(await screen.findByRole('alert')).toHaveTextContent('no database')
+  })
+
+  it('shows a claim whose lease ended as stale even though the store did not say so', async () => {
+    api.board.mockResolvedValue({ rev: 1, counts: {}, tasks: { in_progress: [
+      card(6, { claim: { by: 'bot', until: '2000-01-01T00:00:00Z', stale: false } }),
+      card(7, { claim: { by: 'bot', until: '2999-01-01T00:00:00Z', stale: false } }),
+    ] } })
+    render(<Tasks />)
+    await screen.findByText('Task 6')
+    expect(screen.getAllByText('Stale claim')).toHaveLength(1)
+    expect(screen.getByText('Claimed by bot')).toBeInTheDocument()
+  })
+
+  describe('pulses', () => {
+    const reviewDoc = () => ({ rev: 1, counts: {}, tasks: { review: [card(5)], in_progress: [card(6)] } })
+    const matchMedia = (matches) => { window.matchMedia = () => ({ matches, addEventListener() {}, removeEventListener() {} }) }
+    const moveToDone = async () => {
+      api.board.mockResolvedValue(reviewDoc())
+      api.move.mockImplementation(async () => {
+        api.board.mockResolvedValue({ rev: 2, counts: {}, tasks: { done: [card(5)], in_progress: [card(6)] } })
+        return { id: 5 }
+      })
+      render(<Tasks />)
+      fireEvent.keyDown(await screen.findByRole('button', { name: 'Task 5' }), { key: 'ArrowRight', shiftKey: true })
+      const done = await screen.findByRole('region', { name: 'Done' })
+      return within(done).findByRole('button', { name: 'Task 5' })
+    }
+    afterEach(() => { delete window.matchMedia })
+
+    it('glows a card that was moved to Done', async () => {
+      matchMedia(false)
+      expect(await moveToDone()).toHaveClass('tb-card--done-pulse')
+    })
+
+    it('pulses a card an agent claimed, and only that card', async () => {
+      matchMedia(false)
+      api.board.mockResolvedValue(reviewDoc())
+      render(<Tasks />)
+      await screen.findByText('Task 6')
+      expect(screen.getByRole('button', { name: 'Task 6' })).not.toHaveClass('tb-card--claim-pulse')
+      api.board.mockResolvedValue({ ...reviewDoc(), rev: 2, tasks: { review: [card(5)], in_progress: [card(6, { claim: { by: 'bot', until: '2099-01-01T00:00:00Z' } })] } })
+      bus.fire()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Task 6' })).toHaveClass('tb-card--claim-pulse'))
+      expect(screen.getByRole('button', { name: 'Task 5' })).not.toHaveClass('tb-card--claim-pulse')
+    })
+
+    it('makes no pulse under reduced motion', async () => {
+      matchMedia(true)
+      expect(await moveToDone()).not.toHaveClass('tb-card--done-pulse')
+    })
   })
 })

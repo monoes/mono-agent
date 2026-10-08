@@ -160,11 +160,29 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
 
   // Tasks: what waits for a person (Inbox plus Review), from the board pulse.
   const [taskWaiting, setTaskWaiting] = useState(0)
+  const appReady = async () => { try { return (await WailsApp.IsReady()) !== false } catch { return true } }
   useEffect(() => {
-    const read = (p) => setTaskWaiting(p && !p.error ? (p.inbox || 0) + (p.review || 0) : 0)
-    tasksApi.pulse().then(read)
+    let cancelled = false
+    let seen = null // {profile_id, rev} of the newest value shown
+    const read = (p) => {
+      if (cancelled) return
+      if (!p || p.error || !p.profile_id) { if (!seen) setTaskWaiting(0); return }
+      // The first read and the watcher's events race: an older revision of
+      // the same profile never replaces a newer one.
+      if (seen && seen.profile_id === p.profile_id && p.rev < seen.rev) return
+      seen = { profile_id: p.profile_id, rev: p.rev }
+      setTaskWaiting((p.inbox || 0) + (p.review || 0))
+    }
     const off = onTasksChanged(read)
-    return () => { if (typeof off === 'function') off() }
+    ;(async () => {
+      // Until startup has chosen the profile the app answers for "default".
+      for (let i = 0; i < 30 && !cancelled; i++) {
+        if (await appReady()) break
+        await new Promise(r => setTimeout(r, 200))
+      }
+      if (!cancelled) read(await tasksApi.pulse())
+    })()
+    return () => { cancelled = true; if (typeof off === 'function') off() }
   }, [])
 
   const getBadge = (id) => {
