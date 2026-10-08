@@ -88,6 +88,23 @@ func waitEvents(t *testing.T, r *eventRecorder, n int) ([]string, []map[string]i
 	return nil, nil
 }
 
+// dropFile puts a file into root in one step. os.WriteFile creates the file
+// empty and then fills it, so a poll between the two sees it twice (size 0,
+// then its content): two syncs for one file, and the extra one can report a
+// change the test did not expect. Renaming from a staging directory outside
+// the watched root makes the file appear complete, as a finished download
+// or save does.
+func dropFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	staged := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(staged, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staged, filepath.Join(root, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const (
 	syncChanged   = `{"profile_id":"work","added":1,"updated":0,"removed":0,"changed":true,"errors":[]}`
 	syncUnchanged = `{"profile_id":"work","added":0,"updated":0,"removed":0,"changed":false,"errors":[]}`
@@ -123,9 +140,7 @@ func TestDocumentWatcherSyncsThroughTheCLIOnlyOnChange(t *testing.T) {
 	}
 
 	// A new file: one sync; it reports no change, so no event.
-	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("b"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dropFile(t, root, "b.txt", "b")
 	waitCalls(t, log, 2)
 	time.Sleep(100 * time.Millisecond)
 	if names, _ := rec.snapshot(); len(names) != 1 {
@@ -133,9 +148,7 @@ func TestDocumentWatcherSyncsThroughTheCLIOnlyOnChange(t *testing.T) {
 	}
 
 	// Another new file: the sync reports a change, so a second event.
-	if err := os.WriteFile(filepath.Join(root, "c.pdf"), []byte("c"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dropFile(t, root, "c.pdf", "c")
 	waitCalls(t, log, 3)
 	waitEvents(t, rec, 2)
 
