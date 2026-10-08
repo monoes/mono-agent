@@ -50,6 +50,9 @@ func newRootCmd() *cobra.Command {
 			nodemgr.Activate(cmd.Context())
 			// Installed automation packages, before anything reads actions.
 			bootAutomationsFor(cmd)
+			// The first run of release R turns an older library login into the machine
+			// session (spec D23); it does nothing before the gate is on.
+			adoptFirstRun(cmd, cfg)
 		},
 	}
 

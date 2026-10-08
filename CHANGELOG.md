@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tasks tab:** a desktop board of the active profile's tasks (Inbox, Ready, In progress, Review, Done) with drag and keyboard moves, search, quick add, a detail drawer with history and comments, and a sidebar badge for what waits on a person. It only renders; every change runs through `monoagentcli task`. Cards slide to their new place (off under reduced motion), and a "How to capture" note and empty-column hints say how tasks arrive.
 
 ### Fixed
+- An older `library login` is now adopted into the monoes.me account session once, at the first gated command after the account gate is on (never before, and never from `account`, `doctor`, `update` or other open commands). Dormant: nothing changes yet.
 - Task MCP tools: `task_list` now sets `truncated` when its limit cut the list, `task_get` returns the latest 100 events with `events_omitted` counting older ones, and an argument struct with an unexported tagged field no longer panics the decoder.
 - Task board writes retry a few times, with a short backoff, when the database stays locked past the busy timeout, instead of failing at once.
 - Applying migrations now fails with a clear error when two migration files share a version number, instead of silently skipping one.
