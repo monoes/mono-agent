@@ -45,6 +45,21 @@ type Heartbeat struct {
 	// Schedules are the registered schedule triggers with the scheduler's
 	// own next fire time, refreshed on every write.
 	Schedules []Schedule `json:"schedules,omitempty"`
+	// Account is the monoes.me account verdict, refreshed on every write. It is
+	// absent while the account gate is dormant, and in a daemon that predates it.
+	Account *AccountState `json:"account,omitempty"`
+}
+
+// AccountState is the account verdict a heartbeat carries: ok, grace or locked,
+// and why. It repeats the fields of internal/account's Status that a reader of
+// this file needs, so that this package depends on nothing else of the repository.
+type AccountState struct {
+	State      string    `json:"state"`
+	Reason     string    `json:"reason,omitempty"`
+	ValidUntil time.Time `json:"valid_until,omitzero"`
+	// Enforced is false in the warn period: the state can say locked while
+	// nothing is refused yet.
+	Enforced bool `json:"enforced"`
 }
 
 // APISetting is one effective setting of the OpenAI-compatible API's server.

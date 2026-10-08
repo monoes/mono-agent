@@ -109,7 +109,7 @@ type ExecutionQueue struct {
 	ch          chan ExecutionRequest
 	gate        *gate
 	wg          sync.WaitGroup
-	cancelFuncs sync.Map // executionID → context.CancelFunc
+	cancelFuncs sync.Map // executionID → context.CancelCauseFunc
 	handler     func(ctx context.Context, req ExecutionRequest)
 	logger      zerolog.Logger
 
@@ -158,14 +158,14 @@ func (q *ExecutionQueue) Start(ctx context.Context) {
 func (q *ExecutionQueue) run(ctx context.Context, req ExecutionRequest) {
 	defer q.wg.Done()
 
-	execCtx, cancel := context.WithCancel(ctx)
+	execCtx, cancel := context.WithCancelCause(ctx)
 	q.cancelFuncs.Store(req.ExecutionID, cancel)
 
 	slot := &gateSlot{g: q.gate}
 	defer func() {
 		q.cancelFuncs.Delete(req.ExecutionID)
 		slot.Release()
-		cancel()
+		cancel(nil)
 		if r := recover(); r != nil {
 			q.logger.Error().
 				Str("execution_id", req.ExecutionID).
@@ -251,11 +251,29 @@ func (q *ExecutionQueue) Enqueue(req ExecutionRequest) error {
 	}
 }
 
+// RunningIDs lists the executions this queue has dispatched and not seen
+// finish: the ones running and the ones waiting for a concurrency slot. Each
+// holds a cancel func in cancelFuncs for exactly that long.
+func (q *ExecutionQueue) RunningIDs() []string {
+	var ids []string
+	q.cancelFuncs.Range(func(k, _ any) bool {
+		if id, ok := k.(string); ok {
+			ids = append(ids, id)
+		}
+		return true
+	})
+	return ids
+}
+
 // Cancel signals cancellation for a specific execution.
-func (q *ExecutionQueue) Cancel(executionID string) {
+func (q *ExecutionQueue) Cancel(executionID string) { q.CancelWithCause(executionID, nil) }
+
+// CancelWithCause cancels an execution and records why in its context, where
+// context.Cause reads it. A nil cause is a plain cancel.
+func (q *ExecutionQueue) CancelWithCause(executionID string, cause error) {
 	if val, ok := q.cancelFuncs.Load(executionID); ok {
-		if cancel, ok := val.(context.CancelFunc); ok {
-			cancel()
+		if cancel, ok := val.(context.CancelCauseFunc); ok {
+			cancel(cause)
 			q.logger.Info().
 				Str("execution_id", executionID).
 				Msg("execution cancellation signalled")

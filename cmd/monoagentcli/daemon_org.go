@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/orgbridge"
@@ -64,6 +65,32 @@ type orgServices struct {
 
 	mu       sync.Mutex
 	watchers map[string]*orgWatch // by profile id; see daemon_org_watch.go
+
+	active atomic.Int32 // goroutines start launched and not yet ended; see wait
+}
+
+// goTracked runs fn on a goroutine that wait can see. (A sync.WaitGroup would
+// do, but the supervisor waits, may give up, and starts again; reusing a
+// WaitGroup while an earlier Wait is still pending is a panic.)
+func (s *orgServices) goTracked(fn func()) {
+	s.active.Add(1)
+	go func() {
+		defer s.active.Add(-1)
+		fn()
+	}()
+}
+
+// wait reports whether every goroutine start launched has ended, waiting up to
+// timeout for them to. They end when the context start was given ends.
+func (s *orgServices) wait(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for s.active.Load() > 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return true
 }
 
 // newOrgServices registers trigger.org with the engine; call before
@@ -98,8 +125,8 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 		RootOf: func(profileID string) string { return profiledir.Root(s.db.DB, profileID) },
 		Logf:   s.logf,
 	}
-	go waker.Run(ctx)
-	go s.receiver.Run(ctx)
+	s.goTracked(func() { waker.Run(ctx) })
+	s.goTracked(func() { s.receiver.Run(ctx) })
 
 	reportUp := &orggroup.ReportUpWatcher{
 		DB: s.db.DB, Mux: s.mux, Logf: s.logf,
@@ -112,7 +139,7 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 			return out, err
 		},
 	}
-	go reportUp.Run(ctx)
+	s.goTracked(func() { reportUp.Run(ctx) })
 
 	svc := orgdecide.NewService(s.db.DB, func(context.Context) ([]orgdecide.ProfileRoot, error) {
 		return profileRoots(s.db.DB)
@@ -122,8 +149,7 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 	svc.WorkflowFacts = func(ctx context.Context, profileID, workflowID string) string {
 		return workflowFacts(ctx, s.db, workflowID)
 	}
-	go svc.Run(ctx)
-
+	s.goTracked(func() { svc.Run(ctx) })
 }
 
 // orgReconcileOutcome is what reconciling one org file did — the daemon

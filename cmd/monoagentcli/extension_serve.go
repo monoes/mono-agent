@@ -141,7 +141,7 @@ func newExtensionServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&summaryRuntimeFlag, "summary-runtime", "",
 		"Agent runtime that writes capture summaries (default: $"+summaryRuntimeEnv+", else claude; \"off\" disables)")
-	return cmd
+	return servingCommand(cmd)
 }
 
 // runExtensionServe is the body of `extension serve`, split out so its
