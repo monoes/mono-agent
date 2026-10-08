@@ -96,6 +96,9 @@ func VerifyWith(keys []Key, manifest, sig []byte) (*Manifest, error) {
 	if err != nil || len(raw) != ed25519.SignatureSize {
 		return nil, untrusted("signature is not a base64 ed25519 signature")
 	}
+	if revokedReleaseKeyIDs[f[0]] {
+		return nil, untrusted("signed by key %s, which this build has revoked", f[0])
+	}
 	var key *Key
 	for i := range keys {
 		if keys[i].ID == f[0] {

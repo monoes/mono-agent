@@ -75,7 +75,13 @@ func NewClient(baseURL string, store TokenStore) (*Client, error) {
 // stops a request that was sent with a body, the token calls that carry a refresh token, a code
 // verifier or a token to revoke: Go re-sends the body of a 307 or 308 to the host the Location names.
 // The redirect answer is then the answer, which no caller reads as a success.
-func noRedirectWithABody(_ *http.Request, via []*http.Request) error {
+//
+// No request follows an https to http redirect, a GET included: the downgrade would send the
+// Authorization header, which Go keeps on a same-host redirect, in the clear.
+func noRedirectWithABody(req *http.Request, via []*http.Request) error {
+	if last := via[len(via)-1]; last.URL.Scheme == "https" && req.URL.Scheme == "http" {
+		return fmt.Errorf("refusing a redirect from https to http (%s)", req.URL.Redacted())
+	}
 	if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
 		return http.ErrUseLastResponse
 	}

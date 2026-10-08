@@ -51,10 +51,26 @@ func TestAccountBindingsShellOut(t *testing.T) {
 	a.LibraryLogout()
 
 	want := "--json account status|--json account login --email=me@example.com --send|" +
-		"--json account login --email=me@example.com --code=123456|--json account logout|" +
-		"--json account login --email=-odd@example.com --send|--json account login --email=me@example.com --code=654321|--json account logout"
+		"--json account login --email=me@example.com --code-stdin|--json account logout|" +
+		"--json account login --email=-odd@example.com --send|--json account login --email=me@example.com --code-stdin|--json account logout"
 	if got := strings.Join(loggedArgs(t, log), "|"); got != want {
 		t.Fatalf("CLI calls:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The emailed one-time code reaches the CLI on stdin: it is in no argument, so ps
+// cannot show it.
+func TestAccountLoginEmailVerifyCodeOnStdin(t *testing.T) {
+	enforceFrom(t, time.Now().Add(-time.Hour))
+	dir := t.TempDir()
+	args, in := filepath.Join(dir, "args.log"), filepath.Join(dir, "stdin.log")
+	t.Setenv("MONOAGENTCLI_BIN", fakeCLI(t, `echo "$*" >> '`+args+"'\ncat >> '"+in+"'\necho '{\"ok\":true}'\n"))
+	accountApp(t).AccountLoginEmailVerify("me@example.com", " 987654 ")
+	if got := strings.Join(loggedArgs(t, args), "|"); strings.Contains(got, "987654") {
+		t.Fatalf("the code is on the command line: %s", got)
+	}
+	if got, err := os.ReadFile(in); err != nil || string(got) != "987654\n" {
+		t.Fatalf("stdin = %q, %v; want the code and a newline", got, err)
 	}
 }
 

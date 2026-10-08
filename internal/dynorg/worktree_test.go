@@ -62,11 +62,14 @@ type fileExec struct {
 	// meet, when set, makes each run wait until that many runs are in flight
 	// at once, so a test about parallelism does not depend on how fast the
 	// machine spawns the second worker.
-	meet    int32
-	mu      sync.Mutex
-	cwds    []string
-	running int32
-	maxRun  int32
+	meet     int32
+	metOnce  sync.Once
+	metClose sync.Once
+	met      chan struct{}
+	mu       sync.Mutex
+	cwds     []string
+	running  int32
+	maxRun   int32
 }
 
 func (e *fileExec) exec(ctx context.Context, o monomind.ExecOptions, on func(monomind.Event)) (*monomind.TurnResult, error) {
@@ -82,8 +85,18 @@ func (e *fileExec) exec(ctx context.Context, o monomind.ExecOptions, on func(mon
 		}
 	}
 	on(monomind.Event{Type: monomind.EventStart})
-	for dl := time.Now().Add(30 * time.Second); e.meet > 0 && atomic.LoadInt32(&e.running) < e.meet && time.Now().Before(dl) && ctx.Err() == nil; {
-		time.Sleep(2 * time.Millisecond)
+	if e.meet > 0 {
+		// A latch: closed the first time that many runs are in flight together, so a
+		// worker that arrives late still sees it closed and cannot wait out the deadline.
+		e.metOnce.Do(func() { e.met = make(chan struct{}) })
+		if n >= e.meet {
+			e.metClose.Do(func() { close(e.met) })
+		}
+		select {
+		case <-e.met:
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+		}
 	}
 	f := strings.Fields(o.Prompt)
 	if len(f) == 3 && f[0] == "checkout" {

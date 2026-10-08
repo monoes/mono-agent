@@ -205,16 +205,20 @@ func (a *App) AccountLoginEmailSend(email string) string {
 	return a.accountCLI("account", "login", "--email="+email, "--send")
 }
 
-// AccountLoginEmailVerify trades the emailed code for a session.
+// AccountLoginEmailVerify trades the emailed code for a session. The code goes to
+// the CLI on stdin (--code-stdin), not on its command line where ps would show it.
 func (a *App) AccountLoginEmailVerify(email, code string) string {
-	return a.accountCLI("account", "login", "--email="+email, "--code="+strings.TrimSpace(code))
+	return a.accountCLIStdin(strings.TrimSpace(code)+"\n", "account", "login", "--email="+email, "--code-stdin")
 }
 
 // AccountLogout ends this machine's monoes.me session.
 func (a *App) AccountLogout() string { return a.accountCLI("account", "logout") }
 
 // accountCLI is rawCLI without the --profile.
-func (a *App) accountCLI(args ...string) string {
+func (a *App) accountCLI(args ...string) string { return a.accountCLIStdin("", args...) }
+
+// accountCLIStdin is accountCLI with stdin fed to the child.
+func (a *App) accountCLIStdin(stdin string, args ...string) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return aiError(err)
@@ -223,6 +227,9 @@ func (a *App) accountCLI(args ...string) string {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, append([]string{"--json"}, args...)...)
 	suppressConsole(cmd)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	out, runErr := cmd.Output()
 	return cliResultJSON(cliBin, out, runErr)
 }

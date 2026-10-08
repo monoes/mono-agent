@@ -62,7 +62,7 @@ esac
 		"--profile work --json library installed --kind=org",
 		"--json account logout",
 		"--json account login --email=me@example.com --send",
-		"--json account login --email=me@example.com --code=123456",
+		"--json account login --email=me@example.com --code-stdin",
 	}
 	if got := loggedArgs(t, log); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("CLI calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

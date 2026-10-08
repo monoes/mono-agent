@@ -16,6 +16,11 @@ import (
 // unavailable, never trusted.
 var pinnedReleaseKeys = []string{}
 
+// revokedReleaseKeyIDs lists key ids whose signatures are refused even while the key is still in
+// pinnedReleaseKeys, so a release can ship with the old and the new key both pinned and the old
+// one revoked: a client that has this list rejects anything the old key signs.
+var revokedReleaseKeyIDs = map[string]bool{}
+
 // Key is a pinned public key.
 type Key struct {
 	ID     string

@@ -17,13 +17,15 @@ import (
 type signInFlags struct {
 	email, code     string
 	send, noBrowser bool
+	codeStdin       bool
 	timeout         time.Duration
 }
 
 func (f *signInFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.email, "email", "", "Log in with a code sent to this address instead of the browser")
 	cmd.Flags().BoolVar(&f.send, "send", false, "With --email: only send the code (then run again with --code)")
-	cmd.Flags().StringVar(&f.code, "code", "", "With --email: the code from the email")
+	cmd.Flags().StringVar(&f.code, "code", "", "With --email: the code from the email (visible in the process list; prefer --code-stdin)")
+	cmd.Flags().BoolVar(&f.codeStdin, "code-stdin", false, "With --email: read the code from stdin, so it never appears in the process list")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "Print the sign-in URL instead of opening the browser")
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "How long to wait for the browser sign-in")
 }
@@ -31,8 +33,8 @@ func (f *signInFlags) add(cmd *cobra.Command) {
 // signIn runs the sign-in the flags ask for and returns the session's status. sent
 // is true when it only emailed the code. name is the command, for the hints.
 func signIn(cmd *cobra.Command, cfg *globalConfig, f *signInFlags, name string) (st account.Status, sent bool, err error) {
-	if f.email == "" && (f.send || f.code != "") {
-		return st, false, errInvalidInput("--send and --code need --email")
+	if f.email == "" && (f.send || f.code != "" || f.codeStdin) {
+		return st, false, errInvalidInput("--send, --code and --code-stdin need --email")
 	}
 	if f.email != "" {
 		return emailSignIn(cmd, cfg, f, name)
@@ -60,6 +62,18 @@ func signIn(cmd *cobra.Command, cfg *globalConfig, f *signInFlags, name string) 
 func emailSignIn(cmd *cobra.Command, cfg *globalConfig, f *signInFlags, name string) (st account.Status, sent bool, err error) {
 	ctx := cmd.Context()
 	code := f.code
+	if f.codeStdin {
+		if f.code != "" || f.send {
+			return st, false, errInvalidInput("--code-stdin cannot be combined with --code or --send")
+		}
+		line, err := readLine(cmd.InOrStdin())
+		if err != nil {
+			return st, false, fmt.Errorf("read the code from stdin: %w", err)
+		}
+		if code = line; code == "" {
+			return st, false, errInvalidInput("no code given on stdin")
+		}
+	}
 	if code == "" {
 		if err := account.SendEmailCode(ctx, f.email); err != nil {
 			return st, false, signInErr(err)
