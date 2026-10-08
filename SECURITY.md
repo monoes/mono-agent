@@ -247,6 +247,39 @@ repo settings — until then it is a no-op:
 3. **Settings → Tags → New rule**: protect `v*` so a published release tag
    cannot be silently moved or replaced.
 
+### Update manifest signing key
+
+The Ed25519 key that signs the update manifest (`manifest.json.sig`) is stored
+as the `RELEASE_SIGNING_KEY` secret of the `release` environment, and CI signs
+the manifest. This replaces the earlier model in which only the owner signed
+locally; local signing (`release-manifest sign -keyring`) remains as a
+documented break-glass path. See `docs/release-runbook.md` for setup,
+rotation and incident steps.
+
+How the key is held: GitHub releases an environment secret only to a job that
+targets that environment and passes its protection rules. The `sign-manifest`
+job runs only for a push to `master`, has `contents: read` only, exposes the key
+to a single step, and signs only after recomputing the sha256 and size of every
+built asset and checking that the version is the one being released and not
+lower than the latest published release. Clients pin the public key; the
+release workflow never prints the key.
+
+What this protects against: a compromised build or dependency step that tampers
+with an asset after the manifest is generated (the signing job refuses on a
+checksum mismatch), a forked or pull-request workflow (no access to environment
+secrets), a push from another branch, a replay of an older version, and a
+leaked workflow log (the key is never printed).
+
+What it does not protect against: anyone who can change the workflow on
+`master` **and** approve the `release` environment can sign anything, because
+the key is available to that job by design. The controls are therefore the
+branch protection on `master` (item 2 above) and **required reviewers on the
+`release` environment with deployment branches limited to `master`** (item 1).
+Do not add a reviewer you would not trust with the signing key, and do not turn
+off self-review prevention if there is more than one maintainer. If the secret
+may have leaked, rotate it and ship a release that unpins the old key
+(runbook, "Incident").
+
 ## Verifying a release
 
 Every release publishes `SHA256SUMS.txt` alongside the binaries, and the

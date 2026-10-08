@@ -28,16 +28,22 @@ func newReleaseCmd() *cobra.Command {
 }
 
 func newReleaseKeygenCmd() *cobra.Command {
-	var force bool
+	var force, stdoutPrivate bool
 	cmd := &cobra.Command{
 		Use:   "keygen",
 		Short: "Generate the release signing key; the private key goes to the OS keychain",
 		Long: "Generates an Ed25519 release signing key. The private key is stored in the OS keychain (service monoagent-release-signing, " +
 			"account ed25519-v1) and never printed. The public key line is printed: paste it into pinnedReleaseKeys in " +
 			"internal/release/keys.go and rebuild; clients trust only the keys pinned there. Run it in your own terminal.\n\n" +
-			"An existing key is never replaced unless --force (releases signed with the old key stop verifying in builds that pin only the new one).",
-		Args: cobra.NoArgs,
+			"An existing key is never replaced unless --force (releases signed with the old key stop verifying in builds that pin only the new one).\n\n" +
+			"--stdout-private is for CI signing: nothing is stored in the keychain, the private key (standard base64 of the 64-byte key, one line) goes to STDOUT and the public line to STDERR, " +
+			"so it can be piped straight into a secret without showing on screen or in shell history. It refuses to print the private key to a terminal.",
+		Example: "  monoagentcli release keygen --stdout-private | gh secret set RELEASE_SIGNING_KEY --env release --repo OWNER/REPO",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if stdoutPrivate {
+				return keygenStdoutPrivate(cmd, force)
+			}
 			if _, err := secrets.ReleaseSigningKey(); err == nil && !force {
 				return errInvalidInput("a release signing key already exists in the keychain; --force replaces it")
 			} else if err != nil && !errors.Is(err, secrets.ErrNoReleaseKey) {
@@ -58,7 +64,30 @@ func newReleaseKeygenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing key")
+	cmd.Flags().BoolVar(&stdoutPrivate, "stdout-private", false, "Do not store the key: print the private key to stdout and the public line to stderr (pipe to gh secret set)")
 	return cmd
+}
+
+func keygenStdoutPrivate(cmd *cobra.Command, force bool) error {
+	if force {
+		return errInvalidInput("--force does not apply with --stdout-private (nothing is stored)")
+	}
+	out := cmd.OutOrStdout()
+	if f, ok := out.(*os.File); ok {
+		if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
+			return errInvalidInput("stdout is a terminal; pipe it, e.g. | gh secret set RELEASE_SIGNING_KEY --env release --repo OWNER/REPO")
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, base64.StdEncoding.EncodeToString(priv))
+	errOut := cmd.ErrOrStderr()
+	fmt.Fprintln(errOut, "Private key written to stdout only (not stored anywhere else).")
+	fmt.Fprintln(errOut, "Paste this line into pinnedReleaseKeys in internal/release/keys.go:")
+	fmt.Fprintf(errOut, "\t%q,\n", release.KeyLine(pub))
+	return nil
 }
 
 func newReleaseVerifyCmd() *cobra.Command {
