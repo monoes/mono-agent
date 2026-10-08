@@ -326,6 +326,7 @@ func (r *rig) env(extra ...string) []string {
 	}
 	return append([]string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + r.home,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + filepath.Join(r.dir, "no-bus"), // no Secret Service: the vault uses the file keyring, as on a headless host
 		"MONOES_BASE_URL=" + r.fake.URL,
 		"MONOAGENT_ALLOW_FILE_KEYRING=1", "MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=" + filepath.Join(r.dir, "passphrase"),
 		"MONOMIND_BIN=" + filepath.Join(r.dir, "monomind"), "FAKE_MONOMIND_LOG=" + filepath.Join(r.dir, "monomind.log"),
