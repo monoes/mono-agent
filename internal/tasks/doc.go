@@ -6,5 +6,9 @@
 // app are thin callers. Every method takes the profile id: there is no task
 // outside a profile and no query without one.
 //
+// A profile's board belongs to the profile row (ON DELETE CASCADE): deleting a
+// profile, or rebuilding the profiles table with foreign keys on, deletes its
+// tasks, events and revision.
+//
 // Spec: docs/mastermind/specs/2026-10-05-task-board-design.md.
 package tasks

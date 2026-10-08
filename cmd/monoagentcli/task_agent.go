@@ -299,7 +299,7 @@ func newTaskReleaseCmd(cfg *globalConfig) *cobra.Command {
 func newTaskDigestCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "digest",
-		Short: "A short line about the ready tasks, for a session-start hook (in text, prints nothing when there are none)",
+		Short: "A line for a session-start hook (in text, prints nothing when there are none)",
 		Long: `In text, prints nothing when the profile has no ready task, otherwise two short
 lines: the counts, the next task and the command to take it. With --json it prints
 its document on success, even when nothing is ready. It always exits 0 whatever goes

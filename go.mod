@@ -22,7 +22,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
-	github.com/slack-go/slack v0.29.0
+	github.com/slack-go/slack v0.30.1
 	github.com/spf13/cobra v1.10.2
 	github.com/yalue/onnxruntime_go v1.36.0
 	github.com/ysmood/gson v0.7.3

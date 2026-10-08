@@ -27,6 +27,7 @@ import ImageVault from './pages/ImageVault.jsx'
 import Vault from './pages/Vault.jsx'
 import Applications from './pages/Applications.jsx'
 import Documents from './pages/Documents.jsx'
+import Tasks from './pages/Tasks.jsx'
 import FileViewerModal, { fileViewerKind } from './components/FileViewerModal.jsx'
 import * as WailsApp from './wailsjs/go/main/App'
 import { api, notify, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
@@ -279,6 +280,7 @@ export default function App() {
     secretsVault: <Vault isActive={activePage === 'secretsVault'} />,
     applications: <Applications isActive={activePage === 'applications'} />,
     documents: <Documents isActive={activePage === 'documents'} />,
+    tasks: <Tasks isActive={activePage === 'tasks'} />,
     ai: <Agents onOpenChat={openGlobalChat} />,
     orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,

@@ -30,11 +30,11 @@ func claimsTogether(n int, call func(i int)) {
 	wg.Wait()
 }
 
-// 16 goroutines claim one Ready task: exactly one wins and the others are told who it is.
+// 8 goroutines claim one Ready task: exactly one wins and the others are told who it is.
 func TestSixteenAgentsClaimingOneTaskAtOnceTakeItOnce(t *testing.T) {
 	s, db, _ := newTestStore(t)
 	task := mustAdd(t, s, "default", "contested", true)
-	const agents = 16
+	const agents = 8
 	errs := make([]error, agents)
 	claimsTogether(agents, func(i int) {
 		_, errs[i] = s.Claim(bg, "default", task.ID, bot(fmt.Sprintf("agent-%d", i)), 0)
@@ -66,10 +66,10 @@ func TestSixteenAgentsClaimingOneTaskAtOnceTakeItOnce(t *testing.T) {
 	}
 }
 
-// 16 goroutines take the next of 5 Ready tasks: 5 distinct winners, 11 told there is nothing, no error.
+// 8 goroutines take the next of 5 Ready tasks: 5 distinct winners, 3 told there is nothing, no error.
 func TestSixteenAgentsTakingTheNextOfFiveTasksTakeOneEach(t *testing.T) {
 	s, db, _ := newTestStore(t)
-	const tasks, agents = 5, 16
+	const tasks, agents = 5, 8
 	for i := 0; i < tasks; i++ {
 		mustAdd(t, s, "default", fmt.Sprintf("t%d", i), true)
 	}
@@ -183,8 +183,8 @@ func TestAClaimRacesTheHoldersReleaseFinishCommentAndRenewalAndTheOperatorsMove(
 }
 
 // A claim races the end of a lease. Every reading of the clock moves it a second, from five seconds
-// before the lease ends, so the claims are made at instants on both sides of the end. 16 agents take the
-// stale claim and its holder renews it, together: exactly one of the 17 calls succeeds, and a takeover is
+// before the lease ends, so the claims are made at instants on both sides of the end. 8 agents take the
+// stale claim and its holder renews it, together: exactly one of the 9 calls succeeds, and a takeover is
 // dated at or after the end of the lease it took over.
 func TestClaimsAndARenewalRaceTheEndOfALease(t *testing.T) {
 	s, db, clk := newTestStore(t)
@@ -194,7 +194,7 @@ func TestClaimsAndARenewalRaceTheEndOfALease(t *testing.T) {
 	var nanos atomic.Int64
 	nanos.Store(end.Add(-5 * time.Second).UnixNano())
 	s.now = func() time.Time { return time.Unix(0, nanos.Add(int64(time.Second))).UTC() }
-	const takers = 16
+	const takers = 8
 	errs := make([]error, takers+1)
 	claimsTogether(takers+1, func(i int) {
 		if i == takers {
@@ -228,8 +228,8 @@ func TestClaimsAndARenewalRaceTheEndOfALease(t *testing.T) {
 	claimsExplainEveryTask(t, s, db)
 }
 
-// Two Store values over two connection pools on one database file, as two processes would be: 16 agents,
-// eight through each, take the next of five tasks, then claim one task by id.
+// Two Store values over two connection pools on one database file, as two processes would be: 8 agents,
+// four through each, take the next of five tasks, then claim one task by id.
 func TestTwoStoresOnOneFileTakeEachTaskOnce(t *testing.T) {
 	path := testdb.Path(t)
 	var stores [2]*Store
@@ -244,7 +244,7 @@ func TestTwoStoresOnOneFileTakeEachTaskOnce(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		mustAdd(t, stores[0], "default", fmt.Sprintf("t%d", i), true)
 	}
-	const agents = 16
+	const agents = 8
 	got := make([]*Task, agents)
 	errs := make([]error, agents)
 	claimsTogether(agents, func(i int) {

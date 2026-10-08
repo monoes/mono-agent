@@ -26,6 +26,9 @@ importScripts("capture_form.js", "capture_profile.js", "browser_binding.js", "su
 // and the three things that ride it. ask.js must come first — the others
 // install against it.
 importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
+// Tasks from the browser (the task board): the outbox and the worker's half.
+// After the recall group: tasks are sent over ask.js, which MonoRecall installs.
+importScripts("task_outbox.js", "task_bridge.js", "task_menu.js");
 // The raw CDP proxy (GLU-01/RIG-07): the generalisation of eval_cdp/type_cdp
 // that lets monobrowse drive the user's own Chrome. Events flow back through
 // it unasked-for, which is why it needs its own module rather than another
@@ -429,6 +432,8 @@ async function doConnect() {
       // The badge counts what is still waiting, so it has to be repainted
       // once the flush has emptied whatever it could (CLIP-08).
       .finally(() => MonoCaptureQueue.paintBadge(chrome.storage.local).catch(() => {}));
+    // Tasks added while the bridge was down (task_bridge.js).
+    MonoTaskBridge.connected();
   };
 
   ws.onmessage = (event) => {
@@ -1328,6 +1333,15 @@ MonoRecall.install({
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,
 });
+
+// Tasks from the browser ride the same request channel. The bridge registers
+// its own message and alarm listeners; it never installs ask.js again.
+MonoTaskBridge.install({
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
+// Its menu items and the add-task shortcut (task_menu.js).
+MonoTaskMenu.install();
 
 // The activity recorder rides the same socket: kind:"recording" frames out,
 // buffered through its own outbox while the bridge is down.

@@ -451,6 +451,7 @@ that works a task acts on them. The defences:
   Ready only a task it holds), and only the operator moves one to Done.
   An agent's `finish` goes to Review. An agent cannot edit a task's
   text, so what the operator approved is what it reads.
+- **Over MCP** an agent works the board through the `task_*` tools of `monoagentcli mcp`, over stdio (no port, no HTTP route). They act as the agent the server names after its client (`agent:<client>#<4 hex>`: two sessions are two claimants, and no argument can choose the name), on the one profile the server was started with. No tool approves, edits, moves or archives a task. Every text a person, an agent or a capture wrote comes back in a field ending in `_untrusted`, with a note to weigh it and not follow instructions inside it, and a tool refuses any argument it does not list. `mcp --tasks-only` serves these tools without the workflow tools that `--allow-mutations` would also serve.
 - **The operator-only commands refuse an agent-driven caller:** `board`
   (it shows the Inbox), `edit`, `move`, `approve`, `archive`,
   `unarchive` and `add --ready`. A caller is agent-driven when an
@@ -479,11 +480,13 @@ that works a task acts on them. The defences:
   removed: treat task text as untrusted whatever it looks like. The CLI
   prints a task's notes indented, between a notice that they are
   untrusted and a closing line.
+- **The macOS menu** (`task os install` and `task os uninstall`, the operator's) hands the selected text to `monoagentcli` on standard input, never on a command line, and files it as a capture: Inbox only. It passes no `--as` and keeps the environment it runs in, so under an agent-context variable the CLI refuses `--source os`; as with the operator guard, this does not stop an agent that deliberately clears its environment or drives the Services menu through the screen, and the human gate still holds. It writes only a bundle it marks as its own, never replaces another profile's menu, and replaces a bundle of the same name it did not write only with `--force`.
 - **Claims are cooperative.** The name given with `--as` is a label, not
   a credential: two agents that choose the same name are one claimant.
   The labels `you`, `agent`, `capture`, `chrome` and `os` are reserved,
   in any case, so an agent's events never read as the operator's or a
   capture's.
+- **Tasks from the Chrome extension.** The extension adds tasks through the bridge it already uses (loopback, paired token): one request method, `task.add`, which only adds to the Inbox of a profile that exists, as the browser capture `chrome`, whatever the environment of the process that hosts the bridge. The page address sent with a task loses its user-info, fragment and session-token parameters in the extension, and MonoAgent checks it again; a tab title that is only that address is not sent either. A selection carries what `getSelection()` reads: text hidden with `display:none` is left out, text hidden by colour, size or position is not. Both are why the operator reads a captured task before approving it. The floating selection panel that carries the task button lives in a closed shadow root and ignores events with `isTrusted` false, so a page cannot find or press it; a page can still move or cover its host and bait a real click, which files an Inbox task with text the page chose.
 - **No HTTP route and no new port.** The task board does not listen on the network.
 
 ## OpenAI-compatible API surface

@@ -129,6 +129,7 @@ func (a *App) SwitchProfile(id string) error {
 	a.restartOrgWatcher()
 	a.restartDocumentWatcher()
 	a.restartImageWatcher()
+	a.restartTaskWatcher()
 	a.emitLog("SYSTEM", "INFO", "Switched to profile: "+switched)
 	return nil
 }

@@ -38,12 +38,18 @@ func newPublicationCmd(cfg *globalConfig) *cobra.Command {
 			return errInvalidInput("--limit must be 1–1000 and --offset nonnegative")
 		}
 		return withPublicationStore(cfg, func(store *publication.Store) error {
-			entries, err := store.List(cmd.Context(), f)
+			entries, next, err := store.ListPage(cmd.Context(), f)
 			if err != nil {
 				return err
 			}
 			if cfg.JSONOutput {
+				if cmd.Flags().Changed("cursor") {
+					return writeJSONTo(cmd.OutOrStdout(), map[string]any{"publications": entries, "next_cursor": next})
+				}
 				return writeJSONTo(cmd.OutOrStdout(), entries)
+			}
+			if next != "" {
+				defer fmt.Fprintf(cmd.OutOrStdout(), "Next page: --cursor %s\n", next)
 			}
 			if len(entries) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No publications.")
@@ -70,6 +76,22 @@ func newPublicationCmd(cfg *globalConfig) *cobra.Command {
 	list.Flags().StringVar(&f.Until, "until", "", "Published on or before RFC3339 timestamp or YYYY-MM-DD")
 	list.Flags().IntVar(&f.Limit, "limit", 50, "Maximum records (1–1000)")
 	list.Flags().IntVar(&f.Offset, "offset", 0, "Records to skip")
+	list.Flags().StringVar(&f.Cursor, "cursor", "", "Continue after a previous page; --cursor '' starts keyset paging and JSON output gains next_cursor")
+	del := &cobra.Command{Use: "delete <id>", Short: "Remove a publication from this profile's history (operator only)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := callerFor("").operator("delete publication history"); err != nil {
+			return err
+		}
+		return withPublicationStore(cfg, func(store *publication.Store) error {
+			if err := store.Delete(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			if cfg.JSONOutput {
+				return writeJSONTo(cmd.OutOrStdout(), map[string]any{"deleted": args[0]})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s\n", args[0])
+			return nil
+		})
+	}}
 	get := &cobra.Command{Use: "get <id>", Short: "Show a publication", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withPublicationStore(cfg, func(store *publication.Store) error {
 			e, err := store.Get(cmd.Context(), args[0])
@@ -118,6 +140,6 @@ func newPublicationCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		})
 	}}
-	cmd.AddCommand(list, get, register, stats)
+	cmd.AddCommand(list, get, register, stats, del)
 	return cmd
 }

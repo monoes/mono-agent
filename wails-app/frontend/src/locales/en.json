@@ -14,6 +14,7 @@
       "secretsVault": "Vault",
       "applications": "Applications",
       "documents": "Documents",
+      "tasks": "Tasks",
       "logs": "Live Logs",
       "settings": "Settings"
     },
@@ -1271,6 +1272,61 @@
     "couldNotSend": "Could not send: {{error}}",
     "openAsBubble": "Open as bubble",
     "openAsBubbleNamed": "Open {{name}} as a chat bubble"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "search": "Search tasks",
+    "loading": "Loading the board…",
+    "loadError": "Could not read the board",
+    "readOnly": "Read-only: this app was started by an agent, so only people change the board.",
+    "column": {
+      "inbox": "Inbox",
+      "ready": "Ready",
+      "in_progress": "In progress",
+      "review": "Review",
+      "done": "Done"
+    },
+    "empty": "Nothing here",
+    "quickAddPlaceholder": "New task title",
+    "addToReady": "Add to Ready",
+    "add": "Add",
+    "approve": "Approve to Ready",
+    "archive": "Archive",
+    "claimedBy": "Claimed by {{by}}",
+    "stale": "Stale claim",
+    "close": "Close",
+    "drawer": {
+      "title": "Title",
+      "notes": "Notes",
+      "save": "Save",
+      "history": "History",
+      "comment": "Add a comment",
+      "send": "Comment",
+      "loadError": "Could not read the task",
+      "kind": {
+        "created": "created",
+        "edited": "edited",
+        "moved": "moved",
+        "claimed": "claimed",
+        "reclaimed": "took over",
+        "comment": "commented",
+        "question": "asked",
+        "result": "reported",
+        "released": "released"
+      }
+    },
+    "refused": "Refused: {{error}}",
+    "emptyBy": {
+      "inbox": "Highlight text in Chrome and choose MonoAgent, Add selection as task, or select text in any app: Services, Add to MonoAgent Tasks",
+      "ready": "Approve tasks from Inbox so agents can pick them up"
+    },
+    "capture": {
+      "title": "How to capture",
+      "chrome": "In Chrome: highlight text, then choose MonoAgent, Add selection as task.",
+      "mac": "On a Mac: select text in any app, then Services, Add to MonoAgent Tasks.",
+      "cli": "In a terminal:",
+      "agents": "Agents add tasks through the task tools; their work shows here within seconds."
+    }
   },
   "publication": {
     "title": "Publication",

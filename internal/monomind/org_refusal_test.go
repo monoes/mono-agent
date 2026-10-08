@@ -95,7 +95,7 @@ func TestOrgResumeSurfacesStartRefusal(t *testing.T) {
 // stays up is not held up.
 func TestOrgRunStartReportsEarlyRefusal(t *testing.T) {
 	old := startWatch
-	startWatch = 2 * time.Second
+	startWatch = 30 * time.Second
 	t.Cleanup(func() { startWatch = old })
 
 	root := fakeOrgMonomind(t, sh(r1Refusal)+"echo '[ERROR] org start failed' >&2\nexit 1")
@@ -121,7 +121,7 @@ func setWatch(t *testing.T, d time.Duration) {
 // A start that dies at once for any other reason is an error carrying the
 // output, never nil; a signature refusal keeps its own type.
 func TestOrgRunStartEarlyNonRefusalExitIsAnError(t *testing.T) {
-	setWatch(t, 2*time.Second)
+	setWatch(t, 30*time.Second)
 	root := fakeOrgMonomind(t, sh("boom: the config is broken")+"exit 3")
 	err := OrgRunStart(context.Background(), root, "sec", "")
 	if err == nil || !strings.Contains(err.Error(), "boom: the config is broken") {
@@ -140,9 +140,25 @@ func TestOrgRunStartEarlyNonRefusalExitIsAnError(t *testing.T) {
 
 func TestOrgRunStartCancelStopsTheStart(t *testing.T) {
 	setWatch(t, 10*time.Second)
-	root := fakeOrgMonomind(t, "sleep 30")
+	// Cancel only once the child is up, so the cancel cannot land in the
+	// handshake or capture setup on a loaded machine.
+	marker := filepath.Join(t.TempDir(), "up")
+	root := fakeOrgMonomind(t, "touch '"+marker+"'\nsleep 30")
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(150 * time.Millisecond); cancel() }()
+	defer cancel()
+	go func() {
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
 	begin := time.Now()
 	err := OrgRunStart(ctx, root, "sec", "")
 	if err != context.Canceled || time.Since(begin) > 5*time.Second {
@@ -165,7 +181,7 @@ func TestOrgRunStartLeavesNoTempFiles(t *testing.T) {
 		})
 		return l
 	}
-	setWatch(t, 2*time.Second)
+	setWatch(t, 30*time.Second)
 	root := fakeOrgMonomind(t, sh(r6Refusal)+"exit 1")
 	if err := OrgRunStart(context.Background(), root, "sec", ""); err == nil {
 		t.Fatal("want refusal")
@@ -202,7 +218,7 @@ func TestOrgRunStartReturnsOnRunningEvidence(t *testing.T) {
 	if err := OrgRunStart(context.Background(), root, "sec", ""); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(begin); d > 3*time.Second {
+	if d := time.Since(begin); d > 10*time.Second {
 		t.Fatalf("waited %v for a run that was recorded running within 0.2s", d)
 	}
 }

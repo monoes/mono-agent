@@ -197,6 +197,12 @@ func TestMigrateConnectionsToVault_SkipsRowLockedByAnotherProcess(t *testing.T) 
 	}
 	defer store.releaseRefreshLock(ctx, "locked-row")
 
+	// Pin the lock timing: the lock can never go stale under machine load
+	// and the migration does not sit out the real wait before giving up.
+	oldStale, oldWait := refreshLockStaleAfter, refreshLockWaitTimeout
+	refreshLockStaleAfter, refreshLockWaitTimeout = time.Hour, 50*time.Millisecond
+	t.Cleanup(func() { refreshLockStaleAfter, refreshLockWaitTimeout = oldStale, oldWait })
+
 	migrated, total, err := MigrateConnectionsToVault(ctx, db)
 	if err != nil {
 		t.Fatalf("MigrateConnectionsToVault: %v", err)

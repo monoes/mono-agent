@@ -1848,7 +1848,20 @@ button.dash-row:hover { background: var(--elevated); }
   animation: odLiveWorking 1.6s ease-in-out infinite;
 }
 
+/* Tasks board: a card that reached Done glows once; a card an agent just claimed pulses softly. */
+@keyframes tbDoneGlow {
+  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); border-color: var(--green); }
+  100% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+}
+@keyframes tbClaimPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(0, 180, 216, 0.45); }
+  100% { box-shadow: 0 0 0 12px rgba(0, 180, 216, 0); }
+}
+.tb-card--done-pulse  { animation: tbDoneGlow 900ms ease-out; }
+.tb-card--claim-pulse { animation: tbClaimPulse 2.2s ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
+  .tb-card--done-pulse, .tb-card--claim-pulse { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

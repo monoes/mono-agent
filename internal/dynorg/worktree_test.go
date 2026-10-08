@@ -58,7 +58,11 @@ func newRepo(t *testing.T) string {
 // fileExec is a fake agent exec: a brief "write <file> <text>" writes text
 // to file in the run's folder, then it holds for `hold`.
 type fileExec struct {
-	hold    time.Duration
+	hold time.Duration
+	// meet, when set, makes each run wait until that many runs are in flight
+	// at once, so a test about parallelism does not depend on how fast the
+	// machine spawns the second worker.
+	meet    int32
 	mu      sync.Mutex
 	cwds    []string
 	running int32
@@ -78,6 +82,9 @@ func (e *fileExec) exec(ctx context.Context, o monomind.ExecOptions, on func(mon
 		}
 	}
 	on(monomind.Event{Type: monomind.EventStart})
+	for dl := time.Now().Add(30 * time.Second); e.meet > 0 && atomic.LoadInt32(&e.running) < e.meet && time.Now().Before(dl) && ctx.Err() == nil; {
+		time.Sleep(2 * time.Millisecond)
+	}
 	f := strings.Fields(o.Prompt)
 	if len(f) == 3 && f[0] == "checkout" {
 		// A worker that leaves its branch, then writes.
@@ -156,7 +163,7 @@ func realPath(t *testing.T, p string) string {
 
 func TestIsolatedWritersRunInParallelInTheirOwnWorktrees(t *testing.T) {
 	repo := newRepo(t)
-	ex := &fileExec{hold: 300 * time.Millisecond}
+	ex := &fileExec{hold: 10 * time.Millisecond, meet: 2}
 	c, em := newWriterConductor(t, ex, repo, WritersIsolated, "t1")
 	defer c.Close()
 	if !c.Isolated() {
@@ -167,7 +174,7 @@ func TestIsolatedWritersRunInParallelInTheirOwnWorktrees(t *testing.T) {
 	if w1.Branch != "monoagent/t1/w1" || w2.Branch != "monoagent/t1/w2" {
 		t.Errorf("branches = %q, %q", w1.Branch, w2.Branch)
 	}
-	c.Wait(context.Background(), nil, 10*time.Second)
+	c.Wait(context.Background(), nil, 60*time.Second)
 	if ex.maxRun != 2 {
 		t.Errorf("max running = %d, want both writers at once", ex.maxRun)
 	}

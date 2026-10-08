@@ -336,3 +336,18 @@ test("a backend that refuses the probe outright is believed", async () => {
   assert.deepEqual(await MonoAsk.probe(), []);
   assert.equal(socket.sent.length, before, "an explicit refusal is an answer, and is cached");
 });
+
+test("known says whether the bridge answered the probe, not just what probe returned", async () => {
+  const { MonoAsk, socket } = freshAsk();
+  assert.equal(MonoAsk.known(), null, "nothing asked yet");
+  const probing = MonoAsk.probe();
+  MonoAsk.handleFrame(reply(socket.last().id, { ok: true, data: { pong: true, methods: ["ping"] } }));
+  assert.deepEqual(await probing, ["ping"]);
+  assert.deepEqual(MonoAsk.known(), ["ping"]);
+  MonoAsk.disconnected("gone");
+  assert.equal(MonoAsk.known(), null, "a closed socket forgets the answer");
+
+  socket.disconnect();
+  assert.deepEqual(await MonoAsk.probe(), [], "an offline probe resolves empty");
+  assert.equal(MonoAsk.known(), null, "and is not mistaken for a bridge with no methods");
+});
