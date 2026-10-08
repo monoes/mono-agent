@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`install.sh` installs from a release manifest** (`manifest.json`, default `https://monoes.me/mono-agent/releases/latest/manifest.json`, override with `MONOAGENT_MANIFEST_URL`): it picks the CLI asset for your OS/arch, verifies its SHA256, and verifies the manifest's Ed25519 signature when `openssl` is available and a signing key is configured (until then it says the signature check is skipped). It falls back to the GitHub release path when the manifest is unreachable or `MONOAGENT_ALLOW_LEGACY_GITHUB=1`. `scripts/install-test.sh` tests it in CI.
 - **Tasks page cards** show the source, age, `#id`, lease countdown and a Question/Result tag; cards no longer nest buttons in a button (the title is the control; the move keys work from it). A card stays where you moved it if the next board read fails, archiving from the drawer closes it only once the CLI agrees (a refusal shows in the drawer), and a hidden window stops reading, ticking and pulsing.
 
 ### Added
