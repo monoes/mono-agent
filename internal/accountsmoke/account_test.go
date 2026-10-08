@@ -146,7 +146,13 @@ func (r *rig) backdate(age time.Duration) {
 func (r *rig) assertLocked(res result, reason string, wantJSON bool) {
 	r.t.Helper()
 	mustExit(r.t, res, 4)
-	if first, _, _ := strings.Cut(res.stderr, "\n"); first != loginLine {
+	// The rig keeps the key in a file, which makes the CLI warn about it first; that line is the
+	// rig's, not the gate's.
+	stderr := strings.TrimPrefix(res.stderr, "WARN: file-based keyring fallback in use")
+	if stderr != res.stderr {
+		_, stderr, _ = strings.Cut(stderr, "\n")
+	}
+	if first, _, _ := strings.Cut(stderr, "\n"); first != loginLine {
 		r.t.Fatalf("the first line on stderr is %q, want %q", first, loginLine)
 	}
 	if !wantJSON {
