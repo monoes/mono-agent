@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/orgdecide"
@@ -185,6 +187,29 @@ func reconcileOrgRows(ctx context.Context, db *storage.Database, profileID strin
 		rep.Findings = append(rep.Findings, orggrant.Finding{Kind: "autonomy_raise_ignored", Detail: auto.Ignored})
 	}
 	return rep, nil
+}
+
+// orgRowsLockWait bounds how long a writer waits for the org rows lock; a holder keeps it for one
+// load-write-save, so a longer wait means a stuck process, and failing beats hanging.
+const orgRowsLockWait = 15 * time.Second
+
+// lockOrgRows serialises the commands that write an enforcement row and then the org file with the
+// daemon's reconcile of that file (reconcileDoc). Without it the daemon can read the file between
+// the two writes, see a live row the file does not back yet, and revoke it (C-3): `org grant add`
+// then reports a grant that is already gone. Held until release is called.
+func lockOrgRows(root string) (release func(), err error) {
+	path := filepath.Join(root, ".monomind", "org-rows.lock")
+	deadline := time.Now().Add(orgRowsLockWait)
+	for {
+		release, err = daemonhb.LockFile(path)
+		if !errors.Is(err, daemonhb.ErrHeld) {
+			return release, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another process is writing this profile's org files (lock %s); try again", path)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // printJSONValue marshals v and prints it as one line.

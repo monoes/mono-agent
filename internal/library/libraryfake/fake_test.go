@@ -1,6 +1,8 @@
 package libraryfake_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -219,5 +221,33 @@ func TestEmailVerifyAnswersLikeTheTokenEndpointWhenTheAudienceIsAsked(t *testing
 	status, body = verify(map[string]string{"resource": account.Audience})
 	if signed, refresh := shape(body); status != 200 || signed || refresh {
 		t.Fatalf("the route of today: HTTP %d, signed token %v, refresh token %v", status, signed, refresh)
+	}
+}
+
+// Block ends the user's sign-ins, and a code that was issued before the block is a sign-in too:
+// exchanging it afterwards must not mint tokens for a blocked user.
+func TestBlockRefusesTheExchangeOfACodeIssuedBeforeIt(t *testing.T) {
+	fake := libraryfake.New()
+	defer fake.Close()
+	verifier := "a-verifier-of-the-test"
+	sum := sha256.Sum256([]byte(verifier))
+	redirect := "http://127.0.0.1:1/callback"
+	q := url.Values{"client_id": {"monoagent"}, "redirect_uri": {redirect}, "response_type": {"code"}, "state": {"s"},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}, "resource": {account.Audience}}
+	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := hc.Get(fake.URL + "/api/auth/oauth2/authorize?" + q.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || loc.Query().Get("code") == "" {
+		t.Fatalf("no code issued: HTTP %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	fake.Block("u-ada")
+	status, body := postToken(t, fake.URL, url.Values{"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")},
+		"redirect_uri": {redirect}, "client_id": {"monoagent"}, "code_verifier": {verifier}, "resource": {account.Audience}})
+	if status != 400 || body["error"] != "invalid_grant" || body["access_token"] != nil {
+		t.Fatalf("a blocked user's code was exchanged: HTTP %d, token issued %v", status, body["access_token"] != nil)
 	}
 }

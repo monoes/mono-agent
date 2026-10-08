@@ -127,7 +127,7 @@ func newHTTPAPICmd(cfg *globalConfig) *cobra.Command {
 	api.bind(cmd)
 	cmd.Flags().BoolVar(&allowMutations, "allow-mutations", false,
 		"Serve mutating endpoints (workflow run/activate/deactivate, hil approve/reject); also settable via MONOAGENT_HTTPAPI_ALLOW_MUTATIONS=1")
-	return cmd
+	return servingCommand(cmd)
 }
 
 func mutationsLabel(allowed bool) string {

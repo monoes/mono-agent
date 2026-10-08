@@ -79,10 +79,8 @@ func TestRefresherOnlyInvalidGrantIsARefusal(t *testing.T) {
 }
 
 func TestRefresherUnreachableAndInsecureHosts(t *testing.T) {
-	dead := httptest.NewServer(nil)
-	dead.Close()
 	var transient *account.TransientError
-	_, err := account.NewRefresher(dead.URL).Refresh(context.Background(), "rt")
+	_, err := account.NewRefresher(refusedURL(t)).Refresh(context.Background(), "rt")
 	if !errors.As(err, &transient) || transient.Reason != account.ReasonUnreachable {
 		t.Fatalf("no server: %T %v", err, err)
 	}
@@ -150,9 +148,7 @@ func TestRefresherSettledIsExactlyWhatTheClientCanKnow(t *testing.T) {
 		settled bool
 	}{
 		{"nothing listens, so the endpoint discovery fails", func(t *testing.T) error {
-			dead := httptest.NewServer(nil)
-			dead.Close()
-			return refreshAt(context.Background(), dead.URL)
+			return refreshAt(context.Background(), refusedURL(t))
 		}, account.ReasonUnreachable, true},
 		{"the caller is gone before the grant is sent", func(t *testing.T) error {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -309,8 +305,6 @@ func TestRefresherNeverReturnsATypedNilError(t *testing.T) {
 	fake := libraryfake.New()
 	defer fake.Close()
 	_, rt := fake.NewGrant("ada")
-	dead := httptest.NewServer(nil)
-	dead.Close()
 	live := account.NewRefresher(fake.URL)
 	for _, p := range []struct {
 		name string
@@ -323,7 +317,7 @@ func TestRefresherNeverReturnsATypedNilError(t *testing.T) {
 		{"http 500", live, libraryfake.RefreshServerError},
 		{"malformed body", live, libraryfake.RefreshMalformed},
 		{"dropped connection", live, libraryfake.RefreshDrop},
-		{"no server", account.NewRefresher(dead.URL), libraryfake.RefreshOK},
+		{"no server", account.NewRefresher(refusedURL(t)), libraryfake.RefreshOK},
 		{"plain http to a remote host", account.NewRefresher("http://monoes.example"), libraryfake.RefreshOK},
 	} {
 		fake.SetRefreshMode(p.mode)

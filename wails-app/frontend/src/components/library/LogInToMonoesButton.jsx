@@ -5,6 +5,8 @@
 // state comes from `library status`; pass status/onStatusChange to share it
 // with a surrounding dialog, or leave them out and the button loads its own.
 // large: the library's login gate — a big button, the email code as a link.
+// service/onLogin: where signing in goes (default: the library's; the account
+// gate passes services/account.js, the same session through its own bindings).
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LogIn, LogOut, Loader, Mail } from 'lucide-react'
@@ -14,7 +16,7 @@ import { api } from '../../services/api.js'
 const mono = { fontFamily: 'var(--font-mono)', fontSize: 10.5 }
 const errStyle = { ...mono, color: 'var(--red)', maxWidth: 320 }
 
-export default function LogInToMonoesButton({ status: statusProp, onStatusChange, compact = false, large = false }) {
+export default function LogInToMonoesButton({ status: statusProp, onStatusChange, compact = false, large = false, service = library, onLogin = onLibraryLogin }) {
   const { t } = useTranslation()
   const [ownStatus, setOwnStatus] = useState(null)
   const controlled = statusProp !== undefined
@@ -30,11 +32,11 @@ export default function LogInToMonoesButton({ status: statusProp, onStatusChange
   useEffect(() => {
     if (controlled) return
     let live = true
-    library.status(true).then(s => { if (live) setOwnStatus(s?.error ? { logged_in: false } : s) })
+    service.status(true).then(s => { if (live) setOwnStatus(s?.error ? { logged_in: false } : s) })
     return () => { live = false }
   }, [controlled])
 
-  useEffect(() => onLibraryLogin(ev => { if (ev?.kind === 'url' && ev.url) setUrl(ev.url) }), [])
+  useEffect(() => onLogin(ev => { if (ev?.kind === 'url' && ev.url) setUrl(ev.url) }), [])
 
   const finish = (res) => {
     if (res?.error) {
@@ -48,26 +50,26 @@ export default function LogInToMonoesButton({ status: statusProp, onStatusChange
 
   const loginBrowser = async () => {
     setError(''); setUrl(''); setPhase('browser')
-    const res = await library.login()
+    const res = await service.login()
     if (!finish(res)) setPhase('idle')
   }
   const cancel = async () => {
-    if (phase === 'browser') await library.cancelLogin()
+    if (phase === 'browser') await service.cancelLogin()
     setPhase('idle'); setError('')
   }
   const sendCode = async () => {
     setError(''); setPhase('busy')
-    const res = await library.sendCode(email.trim())
+    const res = await service.sendCode(email.trim())
     if (res?.error) { setError(res.error); setPhase('email'); return }
     setPhase('code')
   }
   const verify = async () => {
     setError(''); setPhase('busy')
-    const res = await library.verifyCode(email.trim(), code)
+    const res = await service.verifyCode(email.trim(), code)
     if (!finish(res)) setPhase('code')
   }
   const logout = async () => {
-    const res = await library.logout()
+    const res = await service.logout()
     if (res?.error) { setError(res.error); return }
     setStatus({ ...(status || {}), logged_in: false, user: null })
   }

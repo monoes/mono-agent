@@ -61,6 +61,24 @@ func orgWorkflowIn(ctx context.Context, db *storage.Database, profileID, id stri
 	return wf, nil
 }
 
+// loadOrgForRowEdit is loadOrgForEdit for a command that writes a row and then the file: it takes
+// the org rows lock first, so the doc it loads is the one the daemon has finished reconciling, and
+// holds the lock until release.
+func loadOrgForRowEdit(env *orgEnv, name string) (db *storage.Database, profileID, root string, doc *orgdesign.Doc, release func(), err error) {
+	db, profileID, root, err = env.Profile()
+	if err != nil {
+		return nil, "", "", nil, nil, err
+	}
+	if release, err = lockOrgRows(root); err != nil {
+		return nil, "", "", nil, nil, err
+	}
+	if db, profileID, root, doc, err = loadOrgForEdit(env, name); err != nil {
+		release()
+		return nil, "", "", nil, nil, err
+	}
+	return db, profileID, root, doc, release, nil
+}
+
 func loadOrgForEdit(env *orgEnv, name string) (*storage.Database, string, string, *orgdesign.Doc, error) {
 	db, profileID, root, err := env.Profile()
 	if err != nil {
@@ -183,10 +201,11 @@ func newOrgGrantAddCmd(env *orgEnv) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			db, profileID, root, doc, err := loadOrgForEdit(env, args[0])
+			db, profileID, root, doc, release, err := loadOrgForRowEdit(env, args[0])
 			if err != nil {
 				return err
 			}
+			defer release()
 			r, _ := doc.FindRole(role)
 			if r == nil {
 				return fmt.Errorf("org %q has no role %q", doc.Name, role)
@@ -287,10 +306,11 @@ func newOrgGrantRemoveCmd(env *orgEnv) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			db, profileID, root, doc, err := loadOrgForEdit(env, args[0])
+			db, profileID, root, doc, release, err := loadOrgForRowEdit(env, args[0])
 			if err != nil {
 				return err
 			}
+			defer release()
 			store := orggrant.NewStore(db.DB)
 			if err := store.RevokeGrant(ctx, profileID, doc.Name, role, alias); err != nil {
 				if errors.Is(err, orggrant.ErrNotFound) {

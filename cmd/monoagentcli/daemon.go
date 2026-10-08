@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/httpapi"
 	"github.com/monoes/mono-agent/internal/scheduler"
@@ -160,13 +161,15 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			go daemonhb.RunWith(ctx, apiRT.heartbeat(servingAddr, bridgeServingAddr, v1ServingAddr),
-				func(hb *daemonhb.Heartbeat) { hb.Schedules = heartbeatSchedules(engine.ScheduledRuns()) })
-			orgs.start(ctx, engine)
+				daemonHeartbeatRefresh(engine))
+			// The org services run only while the account is valid (daemon_account.go);
+			// the daemon itself never exits because of a lock.
+			go newAccountSupervisor(orgs, engine).run(ctx)
 			// Automatic roster re-validation (#230): off unless the user
 			// turned it on; waited for so a run stops before the db closes.
 			defer startAutoRevalidation(ctx, db.DB, orgs.logf)()
 
-			msg := "Daemon running. Active workflows' triggers are live."
+			msg := daemonRunningLine(account.CurrentStatus())
 			if servingAddr != "" {
 				msg += " HTTP API on " + servingAddr + "."
 			}
@@ -191,7 +194,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 	api.bind(c)
 	c.Flags().BoolVar(&bridgeOn, "bridge", true, "Hold the Chrome extension bridge open in this process (same bridge `extension serve` runs standalone)")
 	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd(), newDaemonRestartCmd(cfg))
-	return c
+	return servingCommand(c)
 }
 
 // startDaemonBridge starts the Chrome extension bridge (see

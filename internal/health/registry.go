@@ -4,6 +4,7 @@ package health
 func Default() *Registry {
 	var checks []Check
 	checks = append(checks, coreChecks()...)
+	checks = append(checks, monoesAccountChecks()...)
 	checks = append(checks, monomindChecks()...)
 	checks = append(checks, monomindDoctorChecks()...)
 	checks = append(checks, runtimeChecks()...)
@@ -15,6 +16,7 @@ func Default() *Registry {
 	checks = append(checks, automationChecks()...)
 	var fixes []Fix
 	fixes = append(fixes, coreFixes()...)
+	fixes = append(fixes, monoesAccountFixes()...)
 	fixes = append(fixes, monomindFixes()...)
 	fixes = append(fixes, monomindDoctorFixes()...)
 	fixes = append(fixes, runtimeFixes()...)

@@ -65,10 +65,24 @@ func NewClient(baseURL string, store TokenStore) (*Client, error) {
 	}
 	return &Client{
 		BaseURL: baseURL,
-		HTTP:    &http.Client{Timeout: 2 * time.Minute},
+		HTTP:    &http.Client{Timeout: 2 * time.Minute, CheckRedirect: noRedirectWithABody},
 		Store:   store,
 		Now:     time.Now,
 	}, nil
+}
+
+// noRedirectWithABody lets a read follow its redirects (an artifact may be served from elsewhere) and
+// stops a request that was sent with a body, the token calls that carry a refresh token, a code
+// verifier or a token to revoke: Go re-sends the body of a 307 or 308 to the host the Location names.
+// The redirect answer is then the answer, which no caller reads as a success.
+func noRedirectWithABody(_ *http.Request, via []*http.Request) error {
+	if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
+		return http.ErrUseLastResponse
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 func isLoopbackHost(h string) bool {
