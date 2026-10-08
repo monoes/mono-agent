@@ -428,9 +428,9 @@ jobs:
 
   # ─── 2h. Unsigned update manifest ──────────────────────────────────────────
   # Writes SHA256SUMS and manifest.json (cmd/release-manifest, a maintainer tool that is not in
-  # any release). It is UNSIGNED: the signing key never lives in CI. The owner signs the
-  # downloaded manifest.json locally (`release-manifest sign`) and uploads manifest.json.sig;
-  # see docs/release-runbook.md.
+  # any release). It is UNSIGNED and this job never sees the signing key. It is signed by the
+  # `sign-manifest` job below, after checking it against the built assets; see
+  # docs/release-runbook.md.
   release-manifest:
     needs: [version, release-guard, build-chrome-extension]
     runs-on: ubuntu-latest
@@ -450,8 +450,8 @@ jobs:
 
       - name: Generate unsigned manifest and SHA256SUMS
         run: |
-          mkdir -p bundle out
-          find artifacts/ -type f | while read -r f; do cp "$f" "bundle/$(basename "$f")"; done
+          mkdir -p out
+          bash scripts/release-flatten.sh artifacts bundle
           # NOTICE ships with every release as a loose file; the manifest checksums it but does not classify it.
           cp NOTICE bundle/NOTICE
           go run ./cmd/release-manifest manifest -dir bundle -version "${TAG}" -repo "${RELEASES_REPO:-monoes/mono-agent-releases}"
@@ -459,7 +459,7 @@ jobs:
           {
             echo "### Unsigned update manifest for ${TAG}"
             echo ""
-            echo "Download the \`unsigned-manifest\` artifact, sign it locally with \`release-manifest sign\`, then upload \`manifest.json.sig\` (docs/release-runbook.md)."
+            echo "The \`sign-manifest\` job (environment \`release\`) verifies this manifest against the built assets and signs it (docs/release-runbook.md)."
             echo ""
             echo '```'
             cat out/SHA256SUMS
@@ -508,10 +508,9 @@ jobs:
 
       - name: Flatten and checksum all release files
         run: |
-          mkdir -p release-files
           # unsigned-manifest/ belongs to the releases-repo flow below, not to this release.
-          find artifacts/ -type f -not -path 'artifacts/unsigned-manifest/*' | while read f; do cp "$f" "release-files/$(basename "$f")"; done
-          # Loose CLI/Windows assets share the release's notice; archives carry their own copy.
+          # The script fails on two files with the same name instead of overwriting one.
+          bash scripts/release-flatten.sh artifacts release-files unsigned-manifest
           cp NOTICE release-files/NOTICE
           cmp NOTICE <(tar -xOf release-files/MonoAgent-linux-amd64.tar.gz NOTICE)
           cmp NOTICE <(unzip -p release-files/MonoAgent-darwin-arm64.zip MonoAgent.app/Contents/Resources/NOTICE)
@@ -626,12 +625,19 @@ jobs:
           body: ${{ steps.notes.outputs.NOTES }}
           files: release-files/*
 
-  # ─── 4. Optional: mirror assets + unsigned manifest to the releases-only repo ──
-  # Runs only after the `release` environment approval, and does nothing unless the secrets
-  # RELEASES_REPO and RELEASES_REPO_TOKEN both exist. The manifest.json.sig is attached later by
-  # the owner (the signing key is never in CI); until then the client treats the manifest as
-  # unavailable and falls back to the GitHub API path.
-  publish-releases-repo:
+  # ─── 4. Sign the manifest ──────────────────────────────────────────────────
+  # The release signing key lives ONLY as the `release` environment secret RELEASE_SIGNING_KEY.
+  # GitHub hands an environment secret to a job only after the environment's protection rules
+  # pass (required reviewer approval, deployment branch = master), and this job additionally
+  # runs only for a push to master. The key is put in the env of the single signing step; no
+  # other step, and no job-level env, has it. Before signing, release-manifest recomputes the
+  # sha256 and size of every built asset and refuses on any mismatch, on a version that is not
+  # the tag being released, or on a version lower than the latest published release.
+  # What this does NOT stop: anyone who can change this workflow on master AND approve the
+  # `release` environment can sign what they like. Branch protection on master and required
+  # reviewers on the environment are the controls (SECURITY.md, "Release governance").
+  sign-manifest:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: [version, release-manifest, release]
     runs-on: ubuntu-latest
     environment: release
@@ -641,29 +647,227 @@ jobs:
       TAG: ${{ needs.version.outputs.tag }}
       RELEASES_REPO: ${{ secrets.RELEASES_REPO }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Is a releases repo configured
+        id: gate
+        run: |
+          set +x
+          if [ -z "${RELEASES_REPO}" ]; then
+            echo "::notice::RELEASES_REPO is not set: no signed manifest is produced."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts/
 
+      # The min-version floor comes from the RELEASES repo, not from this repo: the `release` job
+      # has already published ${TAG} here, so this repo's latest release is always the one being
+      # signed. An API failure fails the job (closed); an empty list is accepted only for the very
+      # first release.
+      - name: Latest published release in the releases repo
+        if: steps.gate.outputs.enabled == 'true'
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          list=$(gh release list --repo "${RELEASES_REPO}" --limit 1000 --json tagName -q '.[].tagName')
+          others=$(printf '%s\n' "${list}" | grep -vxF "${TAG}" | grep -v '^$' || true)
+          if [ -z "${others}" ]; then
+            echo "::notice::No earlier release in ${RELEASES_REPO}: first release, no version floor."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest=$(printf '%s\n' "${others}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -z "${latest}" ]; then
+            echo "::error::${RELEASES_REPO} has releases but none is a vX.Y.Z tag: refusing to sign without a version floor."
+            exit 1
+          fi
+          echo "Latest published release in ${RELEASES_REPO}: ${latest}"
+          echo "tag=${latest}" >> "$GITHUB_OUTPUT"
+
+      # Compile the tool and flatten the inputs in steps that do NOT have the key. The signing step
+      # below only runs the finished binary, so no `go build`/`go run` (module download, build
+      # scripts, generate directives) executes with the key in its environment.
+      - name: Build the signing tool and gather the built files
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          go build -o "${RUNNER_TEMP}/release-manifest" ./cmd/release-manifest
+          bash scripts/release-flatten.sh artifacts bundle unsigned-manifest
+          cp NOTICE bundle/NOTICE
+          mkdir -p signed
+          cp artifacts/unsigned-manifest/manifest.json signed/manifest.json
+
+      - name: Sign the manifest after checking it against the built assets
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          LATEST: ${{ steps.latest.outputs.tag }}
+        run: |
+          set +x
+          min_args=()
+          if [ -n "${LATEST}" ]; then min_args=(-min-version "${LATEST}"); fi
+          "${RUNNER_TEMP}/release-manifest" sign \
+            -manifest signed/manifest.json \
+            -key-env RELEASE_SIGNING_KEY \
+            -assets-dir bundle \
+            -expect-version "${TAG}" \
+            -url-prefix "https://github.com/${RELEASES_REPO}/releases/download/${TAG}/" \
+            "${min_args[@]}" \
+            -pubkey-out signed/signing-pubkey.txt
+
+      # Fails unless the signing key is pinned in internal/release/keys.go (so clients will trust
+      # it). The only exception is the repository variable RELEASE_SIGNING_BOOTSTRAP=true, which
+      # the owner sets for the one release that first ships the pin (docs/release-runbook.md).
+      - name: Self-check the signature
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}
+        run: |
+          set +x
+          keyid=$(cut -d' ' -f1 signed/signing-pubkey.txt)
+          if grep -q "\"${keyid} " internal/release/keys.go; then
+            if [ "${BOOTSTRAP}" = "true" ]; then
+              echo "::error::Signing key ${keyid} is already pinned in internal/release/keys.go, but RELEASE_SIGNING_BOOTSTRAP is still true. Owner: delete the variable (gh variable delete RELEASE_SIGNING_BOOTSTRAP) and re-run."
+              exit 1
+            fi
+            go run ./cmd/monoagentcli release verify signed/manifest.json signed/manifest.json.sig
+          elif [ "${BOOTSTRAP}" = "true" ]; then
+            echo "::warning::Bootstrap: signing key ${keyid} is NOT pinned in internal/release/keys.go; verifying against the key derived from the secret. Unset RELEASE_SIGNING_BOOTSTRAP after this release."
+            go run ./cmd/monoagentcli release verify --pubkey "$(cat signed/signing-pubkey.txt)" signed/manifest.json signed/manifest.json.sig
+          else
+            echo "::error::Signing key ${keyid} is not pinned in internal/release/keys.go, so no client would trust this signature. Pin it, or (first release only) set the repository variable RELEASE_SIGNING_BOOTSTRAP=true."
+            exit 1
+          fi
+
+      - name: Upload the signed manifest
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-manifest
+          path: |
+            signed/manifest.json
+            signed/manifest.json.sig
+            signed/signing-pubkey.txt
+
+  # ─── 5. Optional: mirror assets + signed manifest to the releases-only repo ──
+  # Runs only after the `release` environment approval and a successful sign-manifest, and does
+  # nothing unless the secrets RELEASES_REPO and RELEASES_REPO_TOKEN both exist. Assets,
+  # manifest.json and manifest.json.sig go up together, so the unsigned manifest never sits
+  # alone in the public release.
+  publish-releases-repo:
+    needs: [version, release-manifest, release, sign-manifest]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      RELEASES_REPO: ${{ secrets.RELEASES_REPO }}
+    steps:
+      - name: Is a releases repo configured
+        id: gate
+        run: |
+          set +x
+          if [ -z "${RELEASES_REPO}" ]; then
+            echo "::notice::RELEASES_REPO is not set: nothing to publish."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts/
+
+      # This job re-downloads the artifacts, so nothing it uploads may rest on the earlier jobs'
+      # checks alone. It re-verifies the signature, then recomputes the sha256 and size of every
+      # file it will upload against the SIGNED manifest and aborts on any mismatch. Only files the
+      # manifest lists are uploaded, and SHA256SUMS is regenerated from those verified files.
+      - name: Re-verify the signed manifest and every file to upload
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}
+        run: |
+          set -euo pipefail
+          signed=artifacts/signed-manifest
+          for f in manifest.json manifest.json.sig signing-pubkey.txt; do
+            [ -f "${signed}/${f}" ] || { echo "::error::signed-manifest artifact lacks ${f}; refusing to publish."; exit 1; }
+          done
+          go build -o "${RUNNER_TEMP}/release-manifest" ./cmd/release-manifest
+          go build -o "${RUNNER_TEMP}/monoagentcli" ./cmd/monoagentcli
+
+          keyid=$(cut -d' ' -f1 "${signed}/manifest.json.sig")
+          if grep -q "\"${keyid} " internal/release/keys.go; then
+            if [ "${BOOTSTRAP}" = "true" ]; then
+              echo "::error::Signing key ${keyid} is already pinned in internal/release/keys.go, but RELEASE_SIGNING_BOOTSTRAP is still true. Owner: delete the variable (gh variable delete RELEASE_SIGNING_BOOTSTRAP) and re-run."
+              exit 1
+            fi
+            "${RUNNER_TEMP}/monoagentcli" release verify "${signed}/manifest.json" "${signed}/manifest.json.sig"
+          elif [ "${BOOTSTRAP}" = "true" ]; then
+            echo "::warning::Bootstrap: key ${keyid} is not pinned; verifying against the key derived by sign-manifest."
+            "${RUNNER_TEMP}/monoagentcli" release verify --pubkey "$(cat "${signed}/signing-pubkey.txt")" "${signed}/manifest.json" "${signed}/manifest.json.sig"
+          else
+            echo "::error::Signing key ${keyid} is not pinned in internal/release/keys.go and RELEASE_SIGNING_BOOTSTRAP is not true."
+            exit 1
+          fi
+
+          bash scripts/release-flatten.sh artifacts pool unsigned-manifest signed-manifest
+          mkdir -p upload
+          jq -r '.assets[].name' "${signed}/manifest.json" | while IFS= read -r name; do
+            case "${name}" in
+              ''|*[!A-Za-z0-9._-]*) echo "::error::unsafe asset name in the manifest: '${name}'"; exit 1 ;;
+            esac
+            [ -f "pool/${name}" ] || { echo "::error::manifest lists ${name} but it was not built"; exit 1; }
+            cp "pool/${name}" "upload/${name}"
+          done
+          cp "${signed}/manifest.json" "${signed}/manifest.json.sig" upload/
+          # NOTICE ships as a loose file; it is not a manifest asset, so it comes from this checkout
+          # (the release job already proved it equals the copies inside the archives).
+          cp NOTICE upload/NOTICE
+          "${RUNNER_TEMP}/release-manifest" check \
+            -manifest "${signed}/manifest.json" \
+            -assets-dir upload \
+            -expect-version "${TAG}" \
+            -url-prefix "https://github.com/${RELEASES_REPO}/releases/download/${TAG}/" \
+            -strict
+          # SHA256SUMS comes from the verified files, never from the unsigned artifact.
+          (cd upload && { jq -r '.assets[].name' manifest.json; echo NOTICE; } | sort | xargs sha256sum > SHA256SUMS)
+
       - name: Upload to the releases repo
+        if: steps.gate.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
-          if [ -z "${RELEASES_REPO}" ] || [ -z "${GH_TOKEN}" ]; then
-            echo "RELEASES_REPO / RELEASES_REPO_TOKEN not set: skipping the releases-repo publish."
+          set +x
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "RELEASES_REPO_TOKEN not set: skipping the releases-repo publish."
             exit 0
           fi
-          mkdir -p upload
-          find artifacts/ -type f -not -path 'artifacts/unsigned-manifest/*' | while read -r f; do cp "$f" "upload/$(basename "$f")"; done
-          cp artifacts/unsigned-manifest/manifest.json artifacts/unsigned-manifest/SHA256SUMS upload/
-          cp NOTICE upload/NOTICE
-          [ -f artifacts/unsigned-manifest/manifest.json.sig ] && cp artifacts/unsigned-manifest/manifest.json.sig upload/
           if gh release view "${TAG}" --repo "${RELEASES_REPO}" >/dev/null 2>&1; then
             # A different version always makes a new release, so an existing one is a re-run.
-            # Never replace a manifest the owner has already signed.
+            # Never replace a manifest that is already signed.
             if gh release view "${TAG}" --repo "${RELEASES_REPO}" --json assets -q '.assets[].name' | grep -qx 'manifest.json.sig'; then
               echo "::error::${RELEASES_REPO} release ${TAG} already has manifest.json.sig; refusing to overwrite manifest.json. Delete the signature deliberately first if this re-run is intended."
               exit 1
