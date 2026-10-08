@@ -102,7 +102,7 @@ func TestNoPinnedKeyIsUnavailableWithoutNetwork(t *testing.T) {
 	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUntrusted) {
 		t.Fatalf("want unavailable, got %v", err)
 	}
-	if _, err := Verify([]byte("{}"), []byte("x y")); !errors.Is(err, ErrUnavailable) {
+	if _, err := VerifyWith(nil, []byte("{}"), []byte("x y")); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("Verify with empty pinned list: %v", err)
 	}
 }
@@ -224,8 +224,21 @@ func TestPinnedKeyLine(t *testing.T) {
 	if _, err := ParseKey("only-one-field"); err == nil {
 		t.Error("malformed line accepted")
 	}
-	if len(PinnedKeys()) != 0 {
-		t.Error("this build must pin no key until the owner pastes one")
+	// Every pinned line must parse, its id must match its key, and ids must be unique: a malformed
+	// line is skipped silently by PinnedKeys, which would quietly leave the build with no key.
+	seen := map[string]bool{}
+	for _, line := range pinnedReleaseKeys {
+		k, err := ParseKey(line)
+		if err != nil {
+			t.Fatalf("pinned line %q: %v", line, err)
+		}
+		if seen[k.ID] {
+			t.Errorf("key %s is pinned twice", k.ID)
+		}
+		seen[k.ID] = true
+	}
+	if len(PinnedKeys()) != len(pinnedReleaseKeys) {
+		t.Errorf("PinnedKeys() returned %d keys for %d pinned lines", len(PinnedKeys()), len(pinnedReleaseKeys))
 	}
 }
 
