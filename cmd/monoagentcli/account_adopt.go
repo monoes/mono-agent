@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"io"
 	"os"
 	"time"
 
@@ -54,6 +57,14 @@ func adoptFirstRun(cmd *cobra.Command, cfg *globalConfig) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Read first: a database that has had its try must not take the write lock on every command.
+	var had string
+	switch err := db.DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, adoptionSetting).Scan(&had); {
+	case err == nil:
+		return
+	case !errors.Is(err, sql.ErrNoRows):
+		return
+	}
 	claim, err := db.DB.ExecContext(ctx, `INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
 		adoptionSetting, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
@@ -62,4 +73,32 @@ func adoptFirstRun(cmd *cobra.Command, cfg *globalConfig) {
 	if n, _ := claim.RowsAffected(); n == 1 { // otherwise this database has had its try, or another process is making it
 		_, _ = adoptOlderLogin(ctx, db.DB, g)
 	}
+}
+
+// adoptBeforeGate runs the adoption ahead of the gate, which judges before cobra runs any command
+// hook. The command and the database path are found on a throwaway tree, as asksForHelp does, so
+// that the real tree's flags are parsed only once, by its own run. A help request is an open
+// invocation and is skipped.
+func adoptBeforeGate(ctx context.Context, args []string) {
+	probe := newRootCmd()
+	applyClassification(probe)
+	probe.SetOut(io.Discard)
+	probe.SetErr(io.Discard)
+	cmd, flags, err := probe.Find(args)
+	if err != nil || cmd == nil || cmd == probe {
+		return
+	}
+	cmd.InitDefaultHelpFlag()
+	if cmd.ParseFlags(flags) != nil {
+		return
+	}
+	if help, _ := cmd.Flags().GetBool("help"); help {
+		return
+	}
+	dbPath, err := cmd.Flags().GetString("db-path")
+	if err != nil {
+		return
+	}
+	cmd.SetContext(ctx)
+	adoptFirstRun(cmd, &globalConfig{DBPath: dbPath})
 }

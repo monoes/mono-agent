@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -131,25 +130,65 @@ func TestAdoptFirstRunFailureIsClaimedAndSwallowed(t *testing.T) {
 	}
 }
 
-// The wiring itself: the root command makes the try before a gated command runs and not before an
-// open one. Fails when the call in root.go is removed.
-func TestTheRootCommandAdoptsBeforeAGatedCommandRuns(t *testing.T) {
+// The wiring itself, through run() as main does: the gate judges before cobra runs any hook, so the
+// older login must be adopted ahead of it. With the enforce date past and no session, a gated command
+// is refused unless the adoption made one first; an open command makes no try. Fails when the call
+// in main.go is removed.
+func TestRunAdoptsBeforeTheGateJudges(t *testing.T) {
+	f := accounttest.New(t) // trusts its key, enforces from a date in the past
+	freshHome(t)
+	store := account.OpenStore(t.TempDir(), account.NewMemorySealer())
+	prevGuard := newDefaultGuard
+	newDefaultGuard = func() (*account.Guard, error) {
+		return account.NewGuard(account.GuardOptions{Store: store, Now: f.Clock.Now}), nil
+	}
+	t.Cleanup(func() { newDefaultGuard = prevGuard })
+	dbPath := testdb.Path(t)
+	var calls atomic.Int32
+	was := adoptOlderLogin
+	adoptOlderLogin = func(context.Context, *sql.DB, *account.Guard) (bool, error) {
+		calls.Add(1)
+		now := f.Clock.Now()
+		sess, err := account.NewSession(account.HostURL, f.Token(accounttest.TokenOptions{IssuedAt: now}),
+			&account.User{ID: "u", Email: "u@example.test", Username: "u"}, now)
+		if err != nil {
+			t.Error(err)
+			return false, err
+		}
+		return true, store.Save(sess)
+	}
+	t.Cleanup(func() { adoptOlderLogin = was })
+
+	if code, _, _ := runMain(t, "--db-path", dbPath, "version"); code != 0 || calls.Load() != 0 {
+		t.Fatalf("an open command: code %d, %d tries, want 0 and 0", code, calls.Load())
+	}
+	code, _, errb := runMain(t, "--db-path", dbPath, "workflow", "list")
+	if calls.Load() != 1 {
+		t.Fatalf("the adoption was called %d times, want 1", calls.Load())
+	}
+	if code != 0 {
+		t.Fatalf("the gated command was refused after the adoption (code %d): %s", code, errb)
+	}
+	runMain(t, "--db-path", dbPath, "workflow", "list")
+	if calls.Load() != 1 {
+		t.Fatalf("a second command tried again: %d calls", calls.Load())
+	}
+}
+
+// A machine that has had its try, or has no login to adopt, is not written to by later commands.
+func TestAdoptFirstRunReadsBeforeItClaims(t *testing.T) {
 	r := newAdoptRig(t, accounttest.LockedNoLogin, false)
-	for _, c := range []struct {
-		args []string
-		want int32
-	}{{[]string{"version"}, 0}, {[]string{"workflow", "list"}, 1}, {[]string{"workflow", "list"}, 1}} {
-		root := newRootCmd()
-		applyClassification(root)
-		root.SetOut(io.Discard)
-		root.SetErr(io.Discard)
-		root.SetArgs(append([]string{"--db-path", r.dbPath}, c.args...))
-		if err := root.Execute(); err != nil {
-			t.Fatalf("%v: %v", c.args, err)
-		}
-		if got := r.calls.Load(); got != c.want {
-			t.Fatalf("after %v the adoption was called %d times, want %d", c.args, got, c.want)
-		}
+	db, err := storage.NewDatabase(r.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(adoptionSetting, "earlier"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	adoptFirstRun(adoptionCommand(t, "workflow", "list"), &globalConfig{DBPath: r.dbPath})
+	if r.calls.Load() != 0 {
+		t.Fatal("a database that had its try was tried again")
 	}
 }
 
