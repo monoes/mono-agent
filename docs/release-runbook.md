@@ -37,7 +37,7 @@ The signing key is the owner's. **CI never holds it.**
    gh release download vX.Y.Z --repo monoes/mono-agent-releases --pattern manifest.json
    go run ./cmd/release-manifest sign -manifest manifest.json -keyring
    gh release upload vX.Y.Z manifest.json.sig --repo monoes/mono-agent-releases
-   monoagentcli release verify --repo monoes/mono-agent-releases --tag vX.Y.Z
+   monoagentcli release verify manifest.json manifest.json.sig   # keys pinned in this binary; add --pubkey "<id> <b64>" to try another
    ```
 
    Check `manifest.json` against the run's checksums (or the `unsigned-manifest` artifact)
