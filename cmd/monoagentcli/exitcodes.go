@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -55,6 +56,12 @@ func exitCodeFor(err error) int {
 	var ce *cliError
 	if errors.As(err, &ce) {
 		return ce.code
+	}
+	// A layer-2 refusal that comes out of a command (the engine, an agent turn,
+	// a browser action) is the same login_required failure the CLI gate reports.
+	var lr *account.LoginRequiredError
+	if errors.As(err, &lr) {
+		return 4
 	}
 	// A chat turn's terminal *monomind.ProtocolError carries the specific
 	// protocol/process exit code (e.g. 124 timeout, 130 cancelled) that
