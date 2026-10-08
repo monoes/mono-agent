@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
@@ -110,5 +112,52 @@ func TestDaemonWatchersFollowProfiles(t *testing.T) {
 	s.syncWatchers(ctx, true)
 	if got := watchedRoot(s, "p-new"); got != "" {
 		t.Fatalf("removed profile still watched at %q", got)
+	}
+}
+
+// A grant row is written before the org file carries its display copy. The daemon's reconcile
+// must wait for that command to finish, or it revokes the new grant as one the file does not
+// back: `org grant add` then reports a grant that is already gone.
+func TestReconcileWaitsForRowEditInFlight(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	f.mustRun(t, "automation", "add", "growth", "--workflow", f.outboundWF, "--alias", "publish_post")
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := orggrant.NewStore(db.DB)
+
+	release, err := lockOrgRows(f.root) // the `org grant add` in flight
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertGrant(ctx, orggrant.GrantInput{ProfileID: "default", OrgName: "growth", RoleID: "writer",
+		Tool: orggrant.Tool{Alias: "publish_post", WorkflowID: f.outboundWF, Wait: true}}); err != nil {
+		t.Fatal(err)
+	}
+	onDisk := f.load(t) // what the watcher read: the row has no display copy yet
+
+	s := &orgServices{db: db, logf: t.Logf}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.reconcileDoc(ctx, orgdecide.ProfileRoot{ProfileID: "default", Root: f.root}, onDisk, false)
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	d := f.load(t) // the command saves the display copy, then lets go
+	r, _ := d.FindRole("writer")
+	r.Automations = append(r.Automations, orgdesign.GrantSpec{Alias: "publish_post"})
+	if _, err := orgdesign.Save(f.root, d); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	<-done
+
+	live, err := store.ListGrants(ctx, "default", "growth", "writer")
+	if err != nil || len(live) != 1 {
+		t.Fatalf("the new grant was revoked by the daemon's reconcile: %d live, err %v", len(live), err)
 	}
 }
