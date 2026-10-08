@@ -27,6 +27,17 @@ Remove a record from history (operator only; refused inside an agent session; it
 does not touch the remote post):
   monoagentcli publication delete <id>
 
+Blank out the content but keep the record (operator only; refused inside an agent
+session; the entry, URL, kind, platform and timestamps stay, the body becomes
+"[redacted]", nothing of the old text is kept; --title redacts the title too;
+it does not touch the remote post):
+  monoagentcli publication redact <id> [--title]
+
+The MCP tools publication_delete and publication_redact (with --allow-mutations)
+and the chat tools delete_publication and redact_publication do the same for the
+profile they serve. They are refused after synced communications were read into
+the session and inside an agent session (an org run or an agent-context marker).
+
 Built-in publishing operations record automatically through workflows, agent-granted
 automations and direct node runs. Reads, likes, follows, drafts and private messages
 do not create records. History starts when this feature is installed.
