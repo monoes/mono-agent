@@ -9,6 +9,21 @@ import (
 	"github.com/monoes/mono-agent/internal/account"
 )
 
+// enforcementClaims are phrases that would present the dormant gate or the
+// unpinned signature check as active today.
+var enforcementClaims = []string{"gate is enforced", "account is required", "signatures are verified", "verified by ed25519 signature", "verified by sha256 and ed25519 signature"}
+
+// assertNoEnforcementClaims fails for each phrase in text that claims enforcement.
+func assertNoEnforcementClaims(t *testing.T, name, text string) {
+	t.Helper()
+	text = strings.ToLower(text)
+	for _, bad := range enforcementClaims {
+		if strings.Contains(text, bad) {
+			t.Errorf("%s claims enforcement or active verification: %q", name, bad)
+		}
+	}
+}
+
 // These shipped claims deliberately describe a dormant rollout. Enabling the
 // date or pinning production keys needs a simultaneous release-doc review,
 // rather than silently leaving the front doors describing yesterday's build.
@@ -22,6 +37,7 @@ func TestAccountDocsMatchDormantRollout(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := strings.ToLower(string(data))
+		assertNoEnforcementClaims(t, name, text)
 		if !strings.Contains(text, "dormant") {
 			t.Errorf("%s hides current dormant rollout", name)
 		}

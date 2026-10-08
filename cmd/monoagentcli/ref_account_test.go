@@ -19,6 +19,7 @@ func TestRefAccountDocumentsDormantBuild(t *testing.T) {
 			t.Errorf("ref account omits %q", want)
 		}
 	}
+	assertNoEnforcementClaims(t, "ref account", out.String())
 }
 
 // The examples must remain usable if command flags or aliases change.

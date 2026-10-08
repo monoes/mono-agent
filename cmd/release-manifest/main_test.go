@@ -72,6 +72,9 @@ func TestManifestGeneration(t *testing.T) {
 		t.Errorf("bad asset: %+v", a)
 	}
 	sums, _ := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
+	if !strings.Contains(string(sums), "  NOTICE\n") {
+		t.Error("NOTICE is not an asset but must still be checksummed in SHA256SUMS")
+	}
 	if !strings.Contains(string(sums), a.SHA256+"  monoagentcli-linux-amd64\n") || strings.Count(string(sums), "\n") != len(releaseNames) {
 		t.Errorf("SHA256SUMS wrong:\n%s", sums)
 	}

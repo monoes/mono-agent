@@ -219,7 +219,7 @@ proof, and, on renewal, the refresh token. With `--email`, the address you type
 is sent too. Revocation sends the token and client id. monoes.me sees the account,
 request time and source IP address. Account requests send no device identifier,
 workflow contents or usage counters. Update requests fetch the signed release manifest
-and download the assets it lists (verified by SHA256 and Ed25519 signature);
+and download the assets it lists (verified by SHA256, and by Ed25519 signature once a signing key is pinned);
 without a pinned signing key they refuse to install, or fall back to GitHub's
 release metadata only where the build still allows it. A library upload sends the artifact you choose to publish.
 
@@ -298,7 +298,7 @@ unidentified-developer warning until that lands.
 
 ### Code signing (in progress)
 
-The macOS CLI binary is currently signed ad-hoc (`codesign --sign -`), which
+The macOS CLI binary is currently signed ad hoc with the hardened runtime (`codesign --options runtime --sign -`), which
 satisfies Gatekeeper's local-execution requirement but carries no verifiable
 publisher identity, and Windows binaries are not yet Authenticode-signed.
 Real Developer ID signing + notarization, and Authenticode signing, are
