@@ -191,7 +191,7 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 	api.bind(c)
 	c.Flags().BoolVar(&bridgeOn, "bridge", true, "Hold the Chrome extension bridge open in this process (same bridge `extension serve` runs standalone)")
 	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd(), newDaemonRestartCmd(cfg))
-	return c
+	return servingCommand(c)
 }
 
 // startDaemonBridge starts the Chrome extension bridge (see

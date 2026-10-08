@@ -116,7 +116,7 @@ variable) and --db-path, exactly like every other command.`,
 		"Let api_config_set save a change that makes the OpenAI-compatible API's server reach further, which it otherwise refuses: a dedicated listener that reaches further than the saved one (beyond this machine, another host beyond it, or every interface where it was one host), a higher confinement class, a runtime list that gains a runtime it did not have, none left (tool calling or image generation switched on again), and removing a saved row that cannot be read (saved_settings); needs --allow-mutations; it guards that tool only (--allow-mutations also serves workflow tools that can run a command as you); also settable via MONOAGENT_MCP_ALLOW_API_EXPOSURE=1")
 	cmd.Flags().BoolVar(&apiOnly, "api-only", false,
 		"Serve only the OpenAI-compatible API's tools (api_*) and no other: no workflow, vault, secret, person, org or documentation tool. For a model that is to manage the API and nothing else: --allow-mutations, which the API's mutating tools need, also serves workflow tools that can run a command as you; with --api-only it does not. The mutating API tools still need --allow-mutations, and --allow-api-exposure is still what lets api_config_set widen the server and api_auto_set switch the auto model on; also settable via MONOAGENT_MCP_API_ONLY=1")
-	return cmd
+	return servingCommand(cmd)
 }
 
 // runMCP serves the MCP server on stdin and stdout. A test replaces it to see what the command

@@ -62,7 +62,7 @@ func newOrgServeCmd(env *orgEnv) *cobra.Command {
 	}
 	c.Flags().BoolVar(&foreground, "foreground", false, "Run in this terminal until interrupted")
 	c.Flags().BoolVar(&stop, "stop", false, "Stop the folder's running orgs and its org daemon instead of starting one")
-	return c
+	return servingCommand(c, servesInForeground)
 }
 
 func newOrgLifecycleCmd(env *orgEnv, verb, short string, fn func(ctx context.Context, root, name string) (string, error)) *cobra.Command {
