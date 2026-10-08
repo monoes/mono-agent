@@ -78,6 +78,22 @@ func TestEveryCommandIsClassified(t *testing.T) {
 	}
 }
 
+// A subcommand of a serving parent would inherit serve from it. Under mcp and
+// httpapi that must be a decision made in accountClasses, not a default.
+func TestServingParentsListEverySubcommand(t *testing.T) {
+	root := newRootCmd()
+	for _, c := range allCommands(root) {
+		for p := c.Parent(); p != nil && p.HasParent(); p = p.Parent() {
+			if k := commandKey(p); k != "mcp" && k != "httpapi" {
+				continue
+			}
+			if _, ok := accountClasses[commandKey(c)]; !ok {
+				t.Errorf("%q is a subcommand of %q and is not listed in accountClasses: it would inherit serve", commandKey(c), commandKey(p))
+			}
+		}
+	}
+}
+
 // A table entry that names no command would silently classify nothing.
 func TestAccountClassesNameRealCommands(t *testing.T) {
 	root := newRootCmd()
