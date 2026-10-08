@@ -95,6 +95,7 @@ func newRootCmd() *cobra.Command {
 		newSecretCmd(cfg),
 		newApplicationCmd(cfg),
 		newDocumentsCmd(cfg),
+		newTaskCmd(cfg),
 		newHILCmd(cfg),
 		newAgentCmd(cfg),
 		newChatCmd(cfg),
@@ -107,6 +108,7 @@ func newRootCmd() *cobra.Command {
 		newAutomationCmd(cfg),
 		newRecordCmd(cfg),
 		newImageCmd(cfg),
+		newPublicationCmd(cfg),
 		newLibraryCmd(cfg),
 		newAccountCmd(cfg),
 	)
@@ -302,7 +304,7 @@ func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 	if err := db.QueryRow(`SELECT id FROM profiles WHERE id = ?`, idOrName).Scan(&id); err == nil {
 		return id, nil
 	}
-	if err := db.QueryRow(`SELECT id FROM profiles WHERE name = ?`, idOrName).Scan(&id); err == nil {
+	if err := db.QueryRow(`SELECT id FROM profiles WHERE LOWER(name) = LOWER(?)`, idOrName).Scan(&id); err == nil {
 		return id, nil
 	}
 	return "", errInvalidInput("profile %q not found (checked both id and name)", idOrName)

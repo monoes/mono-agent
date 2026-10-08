@@ -1,0 +1,50 @@
+# Add to MonoAgent Tasks: files the text selected in any app into the Inbox of
+# one profile. Written by "monoagentcli task os install" (which rewrites it);
+# "monoagentcli task os uninstall" removes it. The text arrives on standard
+# input and reaches monoagentcli on its standard input, never on a command line.
+cli={{sh .CLI}}
+db={{sh .DBPath}}
+profile={{sh .ProfileID}}
+name={{sh .Name}}
+osa={{sh .Osascript}}
+
+notify() {
+	if [ -x "$osa" ]; then
+		"$osa" -e 'on run argv' -e 'display notification (item 2 of argv) with title (item 1 of argv)' -e 'end run' 'MonoAgent Tasks' "$1" </dev/null >/dev/null 2>&1
+	fi
+}
+
+# fail reads the rest of the text, so that the program writing it never meets
+# a closed pipe, says why nothing was added, and exits with status $2: a
+# failed action also makes macOS show its own alert.
+fail() {
+	cat >/dev/null 2>&1
+	notify "Not added: $1"
+	printf 'Not added to MonoAgent Tasks: %s\n' "$1" >&2
+	exit "$2"
+}
+
+if [ ! -x "$cli" ]; then
+	fail "monoagentcli is not at $cli any more. Run monoagentcli task os install again, or remove this menu with monoagentcli task os uninstall." 1
+fi
+
+app=
+if [ -x "$osa" ]; then
+	app=$("$osa" -e 'POSIX path of (path to frontmost application)' </dev/null 2>/dev/null)
+	app=${app%/}
+	app=${app##*/}
+	app=${app%.app}
+fi
+
+err=$("$cli" --db-path="$db" --profile="$profile" task add --stdin --source os --app="$app" 2>&1 >/dev/null)
+code=$?
+if [ "$code" -eq 0 ]; then
+	cat >/dev/null 2>&1
+	notify "Added to Inbox in $name"
+	exit 0
+fi
+nl='
+'
+err=${err##*"$nl"}
+[ -n "$err" ] || err="monoagentcli stopped with status $code"
+fail "$err" "$code"

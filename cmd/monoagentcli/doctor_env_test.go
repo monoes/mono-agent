@@ -177,3 +177,29 @@ func TestUnitFromCgroup(t *testing.T) {
 		}
 	}
 }
+
+func TestBridgeUserServiceVerifiesMainPID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd is Linux only")
+	}
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "systemctl")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n[ \"$*\" = '--user show --property=MainPID --value -- monoagent-bridge.service' ] || exit 1\nprintf '123\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	for _, tc := range []struct {
+		pid        int
+		unit, want string
+	}{
+		{123, "monoagent-bridge.service", "monoagent-bridge.service"},
+		{124, "monoagent-bridge.service", ""}, // child or stale PID
+		{123, "system-bridge.service", ""},    // not in the user manager
+		{0, "monoagent-bridge.service", ""},
+		{123, "", ""}, // started by hand
+	} {
+		if got := bridgeUserService(context.Background(), tc.pid, tc.unit); got != tc.want {
+			t.Errorf("bridgeUserService(%d, %q) = %q, want %q", tc.pid, tc.unit, got, tc.want)
+		}
+	}
+}

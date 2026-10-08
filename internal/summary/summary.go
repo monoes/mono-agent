@@ -17,7 +17,7 @@ import (
 
 // SectionNames lists every section in output order; `--section` accepts these.
 var SectionNames = []string{"workflows", "executions", "schedules", "hil", "people", "activity",
-	"applications", "services", "automations", "recordings", "jev", "accounts", "vault"}
+	"applications", "services", "automations", "recordings", "jev", "accounts", "vault", "tasks"}
 
 // Options carries the stores the sections read. A nil source makes its
 // section report an error instead of failing the whole summary.
@@ -61,6 +61,7 @@ type Summary struct {
 	Jev          *JevSection          `json:"jev,omitempty"`
 	Accounts     *AccountsSection     `json:"accounts,omitempty"`
 	Vault        *VaultSection        `json:"vault,omitempty"`
+	Tasks        *TasksSection        `json:"tasks,omitempty"`
 	Profiles     []ProfileHeadline    `json:"profiles,omitempty"`
 }
 
@@ -111,6 +112,9 @@ func Build(ctx context.Context, o Options) Summary {
 	}
 	if o.want("vault") {
 		s.Vault = vaultSection(ctx, o)
+	}
+	if o.want("tasks") {
+		s.Tasks = tasksSection(ctx, o)
 	}
 	return s
 }

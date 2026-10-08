@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   X, RefreshCw, Building2, Circle, Network, Maximize2, Plus,
   Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
-  ChevronLeft, ChevronRight, Inbox, MessageCircle,
+  ChevronLeft, ChevronRight, Inbox, MessageCircle, FileText,
 } from 'lucide-react'
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
@@ -15,6 +15,8 @@ import MonomindInitPrompt from './MonomindInitPrompt.jsx'
 import AutonomyBar from './orgs/AutonomyBar.jsx'
 import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
 import DecisionsFeed from './orgs/DecisionsFeed.jsx'
+import DocumentsPanel from './orgdesigner/DocumentsPanel.jsx'
+import ScheduleAuditPanel from './orgdesigner/ScheduleAuditPanel.jsx'
 import GroupView from './orgs/GroupView.jsx'
 import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
@@ -23,6 +25,7 @@ import { Badge, Chip } from './orgs/ui.jsx'
 import FullAccessSummary from './orgs/FullAccessSummary.jsx'
 import OrgSignatureBanner, { isSignatureRefusal, requestSignatureRefresh } from './orgs/OrgSignatureBanner.jsx'
 import OrgToolActivity from './orgs/OrgToolActivity.jsx'
+import SectionBudgetPanel from './orgs/SectionBudgetPanel.jsx'
 import { isToolActivity } from './orgs/orgToolActivity.js'
 
 // Fold button shown atop the expanded org-list panel — mirrors
@@ -61,6 +64,7 @@ const TABS = [
   { id: 'needs',      labelKey: 'orgs.tabs.needs',      icon: UserCheck },
   { id: 'queued',     labelKey: 'orgs.tabs.queued',     icon: Inbox },
   { id: 'decisions',  labelKey: 'orgs.tabs.decisions',  icon: Gavel },
+  { id: 'documents',  labelKey: 'orgs.tabs.documents',  icon: FileText },
   { id: 'logs',       labelKey: 'orgs.tabs.logs',       icon: ScrollText },
   { id: 'costs',      labelKey: 'orgs.tabs.costs',      icon: Coins },
   { id: 'flow',       labelKey: 'orgs.tabs.flow',       icon: GitBranch },
@@ -297,7 +301,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     // calls api.getOrgDesign itself, live-patched via onOrgDesignUpdated) —
     // it doesn't use this generic JSON-dump-per-tab path at all.
     // Needs you, Decisions, and Group likewise load and poll on their own.
-    if (tabId === 'design' || tabId === 'needs' || tabId === 'decisions' || tabId === 'group') return
+    if (tabId === 'design' || tabId === 'needs' || tabId === 'decisions' || tabId === 'documents' || tabId === 'group') return
     setTabLoading(true)
     try {
       let payload = null
@@ -935,6 +939,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                           outcome={runsList.find(r => r.live)?.summary?.outcome}
                           finalMessage={extractFinalMessage(events, runsList.find(r => r.live)?.summary?.outcome)}
                         />
+                        <SectionBudgetPanel orgName={selected} live />
                         <details>
                           <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Raw status</summary>
                           <Card><KVBlock obj={data.overview} /></Card>
@@ -963,6 +968,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                             outcome={runDetail.report?.outcome}
                             finalMessage={extractFinalMessage(runDetail.logs, runDetail.report?.outcome)}
                           />
+                          <SectionBudgetPanel orgName={selected} run={selectedRun} />
                           <details>
                             <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Raw report</summary>
                             <Card><KVBlock obj={runDetail.report} /></Card>
@@ -997,9 +1003,15 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                   <DecisionsFeed orgName={selected} run={selectedRun && selectedRun !== 'live' ? selectedRun : ''} />
                 )}
 
+                {tab === 'documents' && (
+                  <DocumentsPanel orgName={selected} run={selectedRun && selectedRun !== 'live' ? selectedRun : ''} live={selectedRun === 'live'} />
+                )}
+
                 {tab === 'group' && isHolding && (
                   <GroupView holding={selected} onOpenOrg={(name) => selectOrg(name)} />
                 )}
+
+                {tab === 'logs' && <ScheduleAuditPanel orgName={selected} live={selectedRun === 'live'} />}
 
                 {!tabLoading && tab === 'logs' && (
                   itemsOf(data.logs).length === 0

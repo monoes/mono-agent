@@ -1,0 +1,17 @@
+{
+  "name": "rework",
+  "goal": "Synthetic: documents with a rework cycle and an exhausted cap",
+  "sections": {
+    "drafting": { "members": ["writer"], "publishes": ["note"] },
+    "review": { "members": ["checker"], "consumes": ["note"], "max_rework_rounds": 2 }
+  },
+  "documents": {
+    "note": {
+      "schema": { "type": "object" },
+      "deliverable_files": [
+        { "file": "out/note.json", "select": { "array": "items", "key": "id", "value": "a" }, "compare": ["text"] }
+      ]
+    }
+  },
+  "roles": []
+}

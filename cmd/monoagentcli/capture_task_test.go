@@ -43,6 +43,12 @@ func TestCaptureTaskFilesOnTheBoard(t *testing.T) {
 		t.Fatalf("seed: %v %v", entries, err)
 	}
 
+	// The command records the symlink-resolved capture path (macOS temp dirs
+	// are /var -> /private/var), so compare against the real one.
+	if real, err := filepath.EvalSymlinks(entries[0].Path); err == nil {
+		entries[0].Path = real
+	}
+
 	stdout, stderr, err := runGlueCmd(t, &globalConfig{JSONOutput: true},
 		"task", entries[0].Path, "--project", root, "--board", "acme",
 		"--title", "Answer this", "--priority", "high")

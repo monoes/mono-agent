@@ -60,6 +60,10 @@ type App struct {
 
 	imgWatchMu sync.Mutex
 	imgWatcher *imagescan.Watcher // polls the active profile's whole folder for images; see restartImageWatcher
+
+	taskWatchMu      sync.Mutex
+	taskWatchStop    func() // stops the active profile's task board watcher; see restartTaskWatcher
+	taskWatchProfile string // the profile that watcher watches
 }
 
 // NewApp creates the App instance.
@@ -156,6 +160,7 @@ func (a *App) startup(ctx context.Context) {
 	a.restartOrgWatcher()
 	a.restartDocumentWatcher()
 	a.restartImageWatcher()
+	a.restartTaskWatcher()
 
 	a.emitLog("SYSTEM", "INFO", "Mono Agent UI connected to "+a.dbPath)
 
@@ -292,6 +297,8 @@ func (a *App) shutdown(_ context.Context) {
 		a.imgWatcher = nil
 	}
 	a.imgWatchMu.Unlock()
+
+	a.stopTaskWatcher()
 
 	a.stopRunningCmds()
 	if a.db != nil {
