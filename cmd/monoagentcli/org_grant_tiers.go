@@ -20,7 +20,7 @@ func grantWorkflowLoader(db *storage.Database) orggrant.WorkflowLoader {
 	var once sync.Once
 	var store *workflow.HybridWorkflowStore
 	return func(ctx context.Context, id string) (*workflow.Workflow, error) {
-		once.Do(func() { store = newHybridStore(db) })
+		once.Do(func() { store = openWorkflowStore(db) })
 		return store.GetWorkflow(ctx, id)
 	}
 }

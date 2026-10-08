@@ -58,7 +58,7 @@ func loadWorkflowDefinition(ctx context.Context, cfg *globalConfig, workflowID s
 	}
 	defer db.Close()
 
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	wf, err := store.GetWorkflow(ctx, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("get workflow: %w", err)

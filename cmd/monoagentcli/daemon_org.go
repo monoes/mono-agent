@@ -78,7 +78,7 @@ func newOrgServices(db *storage.Database, engine *workflow.WorkflowEngine) *orgS
 	engine.RegisterTriggerSource(orgbridge.TriggerNodeType, s.trigger)
 	engine.SetTraceAdmitter(s.admitWebhookTrace)
 	s.receiver = &orgbridge.Receiver{
-		DB: db.DB, Store: newHybridStore(db), Mux: mux, Resume: engine.ResumeExecution, Logf: s.logf,
+		DB: db.DB, Store: openWorkflowStore(db), Mux: mux, Resume: engine.ResumeExecution, Logf: s.logf,
 		RootOf: func(profileID string) string { return profiledir.Root(db.DB, profileID) },
 	}
 	return s
@@ -209,7 +209,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 
 // workflowFacts describes a workflow for the decider prompt from the DB.
 func workflowFacts(ctx context.Context, db *storage.Database, workflowID string) string {
-	wf, err := newHybridStore(db).GetWorkflow(ctx, workflowID)
+	wf, err := openWorkflowStore(db).GetWorkflow(ctx, workflowID)
 	if err != nil || wf == nil {
 		return "workflow " + workflowID + " (not found)"
 	}
@@ -235,7 +235,7 @@ func workflowFacts(ctx context.Context, db *storage.Database, workflowID string)
 // orgbridge.TriggerRepeats whatever the org says.
 func (s *orgServices) admitWebhookTrace(ctx context.Context, workflowID, chain string, hop int) (int, string, error) {
 	profile := "default"
-	if wf, err := newHybridStore(s.db).GetWorkflow(ctx, workflowID); err == nil && wf != nil && wf.ProfileID != "" {
+	if wf, err := openWorkflowStore(s.db).GetWorkflow(ctx, workflowID); err == nil && wf != nil && wf.ProfileID != "" {
 		profile = wf.ProfileID
 	}
 	ledger := orgbridge.NewLedger(s.db.DB)

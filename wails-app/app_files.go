@@ -80,9 +80,9 @@ func (a *App) OpenPathWithOS(path string) error {
 	// stay open indefinitely, so this only reports launch failures (missing
 	// binary, ...), not the opened app's own exit code — same fire-and-forget
 	// shape as app_update.go's install scripts.
-	cmd := exec.Command(name, args...)
-	hideWindow(cmd)
-	return cmd.Start()
+	opener := exec.Command(name, args...)
+	suppressConsole(opener)
+	return opener.Start()
 }
 
 // openFileCommand returns the OS-appropriate command name and arguments to

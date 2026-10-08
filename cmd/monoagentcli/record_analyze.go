@@ -314,7 +314,7 @@ func recordWorkflowCreator(cfg *globalConfig) recordanalyze.WorkflowCreator {
 		// Persist exactly as `workflow import` does (workflow row, then nodes
 		// and connections), so SQLite readers such as `workflow run --json`
 		// see the node types too.
-		if err := createOrOverwriteWorkflowAtomically(ctx, newHybridStore(db), wf, false); err != nil {
+		if err := createOrOverwriteWorkflowAtomically(ctx, openWorkflowStore(db), wf, false); err != nil {
 			return "", err
 		}
 		return wf.ID, nil

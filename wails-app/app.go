@@ -547,7 +547,7 @@ func (a *App) ExportData() (*ExportResult, error) {
 		return &ExportResult{Cancelled: true}, nil
 	}
 	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "export", "--output-dir", dir)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -624,7 +624,7 @@ func (a *App) bootstrapProfileMonograph(profileID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		cmd := monomind.CommandContext(ctx, bin, "monograph", "build", "--path", profiledir.MonomindDir(db, profileID))
-		hideWindow(cmd)
+		suppressConsole(cmd)
 		if err := cmd.Run(); err != nil {
 			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: monograph bootstrap: %v", profileID, err))
 		}

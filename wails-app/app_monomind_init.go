@@ -94,7 +94,7 @@ func (a *App) InitializeMonomindProfile() string {
 // runMonomindInit runs the fix and relays its NDJSON events.
 func (a *App) runMonomindInit(ctx context.Context, cliBin string, args []string) {
 	cmd := exec.CommandContext(ctx, cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

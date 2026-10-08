@@ -45,7 +45,7 @@ func (a *App) jsonCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), chatCLITimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, append(full, args...)...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

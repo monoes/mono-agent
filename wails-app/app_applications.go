@@ -32,7 +32,7 @@ func (a *App) runMonoCLI(stdin string, result interface{}, args ...string) error
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

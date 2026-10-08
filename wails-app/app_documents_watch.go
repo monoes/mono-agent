@@ -165,7 +165,7 @@ func (a *App) runProfileCLI(profileID string, timeout time.Duration, result inte
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, append([]string{"--profile", profileID, "--json"}, args...)...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stdout, runErr := cmd.Output()
 	out := cliResultJSON(cliBin, stdout, runErr)
 	var e struct {

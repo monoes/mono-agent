@@ -327,7 +327,7 @@ func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "workflow", "import")
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	cmd.Stdin = bytes.NewReader(raw)
 	out, err := cmd.Output()
 	if err != nil {
@@ -368,7 +368,7 @@ func (a *App) GetWorkflowTriggerInputs(id string) string {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin,
 		"--profile", a.getActiveProfileID(), "--json", "workflow", "inputs", id)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, runErr := cmd.Output()
 	return cliResultJSON(cliBin, out, runErr)
 }
@@ -435,7 +435,7 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, cliBin, runArgs...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 

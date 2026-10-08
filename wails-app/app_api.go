@@ -151,7 +151,7 @@ func (a *App) runAPICLI(result interface{}, args ...string) error {
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, cliBin, append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError

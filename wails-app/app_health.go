@@ -112,7 +112,7 @@ func (a *App) RunHealthCheck(mode string) string {
 	}
 	defer endHealthRun(key, run)
 	cmd := exec.CommandContext(ctx, cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	out, runErr := cmd.Output()
 	if run.cancelled.Load() {
@@ -311,7 +311,7 @@ func (a *App) emitFixEvent(ev healthFixEvent) {
 func (a *App) streamHealthFix(ctx context.Context, run *healthRun, cliBin, fixID string, args []string, emit func(healthFixEvent)) healthFixEvent {
 	a.emitLog("HEALTH", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.CommandContext(ctx, cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

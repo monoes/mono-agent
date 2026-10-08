@@ -541,7 +541,7 @@ func (a *App) cliValidate(root, name string) error {
 		args = append(args, "--project", root)
 	}
 	cmd := exec.Command(cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()

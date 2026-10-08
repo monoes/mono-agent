@@ -418,7 +418,7 @@ func TestWorkflowSaveRaisesGrantTier(t *testing.T) {
 		t.Fatalf("before: stored %s, display %s", s, d)
 	}
 
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	wf, err := store.GetWorkflow(ctx, f.plainWF)
 	if err != nil || wf == nil {
 		t.Fatalf("workflow: %v", err)

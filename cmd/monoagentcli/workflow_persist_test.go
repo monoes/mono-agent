@@ -341,7 +341,7 @@ func workflowNodeConfig(t *testing.T, cfg *globalConfig, wfID, nodeName string) 
 		t.Fatal(err)
 	}
 	defer db.Close()
-	wf, err := newHybridStore(db).GetWorkflow(context.Background(), wfID)
+	wf, err := openWorkflowStore(db).GetWorkflow(context.Background(), wfID)
 	if err != nil || wf == nil {
 		t.Fatalf("workflow %s: %v", wfID, err)
 	}
@@ -404,7 +404,7 @@ func TestWorkflowImportKeepsLocalEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	wf, _ := store.GetWorkflow(context.Background(), first.ID)
 	for i := range wf.Nodes {
 		if wf.Nodes[i].Name == "Set" {

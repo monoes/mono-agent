@@ -52,7 +52,7 @@ func (a *App) runAutomationCLI(timeout time.Duration, sub []string, buildErr err
 	a.emitLog("AUTOMATION", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(redactArgs(fullArgs), " ")))
 	startedAt := time.Now()
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, runErr := cmd.Output()
 	elapsed := time.Since(startedAt).Round(time.Millisecond)
 	res := automationResultJSON(cliBin, out, runErr)

@@ -17,7 +17,7 @@ func editWorkflowLocally(t *testing.T, cfg *globalConfig, id string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := newHybridStore(db)
+	store := openWorkflowStore(db)
 	wf, err := store.GetWorkflow(context.Background(), id)
 	if err != nil || wf == nil {
 		t.Fatalf("get %s: %v", id, err)

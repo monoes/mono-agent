@@ -183,7 +183,7 @@ func (a *App) ImportWorkflowFull(input, optsJSON string) string {
 	args := workflowImportArgs(a.getActiveProfileID(), file, opts)
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.CommandContext(ctx, cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -214,7 +214,7 @@ func (a *App) removeImportCopy(ctx context.Context, cliBin, res, copyID string) 
 	args := workflowDeleteArgs(a.getActiveProfileID(), copyID)
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.CommandContext(ctx, cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))

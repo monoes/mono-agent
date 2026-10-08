@@ -48,7 +48,7 @@ func (a *App) startAgentValidation(cliBin string, args []string, emit func(strin
 	a.emitLog("AI", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.Command(cliBin, args...)
 	setChatProcessGroup(cmd)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return aiError(err)
