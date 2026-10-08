@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/release"
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -66,7 +67,7 @@ func newReleaseVerifyCmd() *cobra.Command {
 		Use:   "verify <manifest> <sig>",
 		Short: "Verify a manifest.json against its manifest.json.sig",
 		Long: "Checks the signature file (\"<key-id> <base64 signature>\") over the exact bytes of the manifest against the keys pinned " +
-			"in this binary, or against --pubkey \"<key-id> <base64 public key>\" (for trying a key before it is pinned). Exit 3 when it does not verify.",
+			"in this binary, or against --pubkey \"<key-id> <base64 public key>\" (for trying a key before it is pinned). A manifest past its expires_at is refused too. Exit 3 when it does not verify.",
 		Example: "  monoagentcli release verify manifest.json manifest.json.sig",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,6 +92,9 @@ func newReleaseVerifyCmd() *cobra.Command {
 			}
 			m, err := release.VerifyWith(keys, manifest, sig)
 			if err != nil {
+				return errInvalidInput("%v", err)
+			}
+			if err := m.CheckExpiry(time.Now()); err != nil {
 				return errInvalidInput("%v", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "OK: %s, %d assets, signature valid\n", m.Version, len(m.Assets))
