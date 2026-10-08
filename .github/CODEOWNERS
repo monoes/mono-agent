@@ -18,4 +18,6 @@
 /internal/release/               @nokhodian
 /scripts/check-release-tags*.sh  @nokhodian
 /scripts/release-flatten.sh      @nokhodian
+/cmd/monoagentcli/release*.go    @nokhodian
+/internal/secrets/release_key.go @nokhodian
 /docs/release-runbook.md         @nokhodian

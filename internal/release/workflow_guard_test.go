@@ -18,12 +18,13 @@ import (
 const signingSecret = "RELEASE_SIGNING_KEY"
 
 type wfStep struct {
-	Name string         `yaml:"name"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	If   string         `yaml:"if"`
-	Env  map[string]any `yaml:"env"`
-	With map[string]any `yaml:"with"`
+	Name  string         `yaml:"name"`
+	Uses  string         `yaml:"uses"`
+	Run   string         `yaml:"run"`
+	Shell string         `yaml:"shell"`
+	If    string         `yaml:"if"`
+	Env   map[string]any `yaml:"env"`
+	With  map[string]any `yaml:"with"`
 }
 
 type wfJob struct {
@@ -31,20 +32,33 @@ type wfJob struct {
 	Secrets     any            `yaml:"secrets"`
 	Environment any            `yaml:"environment"`
 	Env         map[string]any `yaml:"env"`
+	Defaults    wfDefaults     `yaml:"defaults"`
 	Steps       []wfStep       `yaml:"steps"`
 }
 
+type wfDefaults struct {
+	Run struct {
+		Shell string `yaml:"shell"`
+	} `yaml:"run"`
+}
+
 type wfFile struct {
-	On   any              `yaml:"on"`
-	Env  map[string]any   `yaml:"env"`
-	Jobs map[string]wfJob `yaml:"jobs"`
+	Defaults wfDefaults       `yaml:"defaults"`
+	On       any              `yaml:"on"`
+	Env      map[string]any   `yaml:"env"`
+	Jobs     map[string]wfJob `yaml:"jobs"`
 }
 
 var (
-	pinnedUsesRe  = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
-	xtraceRe      = regexp.MustCompile(`(?m)(\bset\s+-[A-Za-z]*x|\b(ba|z|da)?sh\s+-[A-Za-z]*x|xtrace)`)
-	envDumpRe     = regexp.MustCompile(`(?m)(^\s*(env|printenv|export\s+-p|declare\s+-[xp]+|set)\s*($|[|;>&])|\bprintenv\b|\benv\s*[|>])`)
-	echoSecretRe  = regexp.MustCompile(`(?m)\b(echo|printf)\b[^\n]*\$\{?` + signingSecret)
+	pinnedUsesRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
+	xtraceRe     = regexp.MustCompile(`(?m)(\bset\s+-[A-Za-z]*x|\b(ba|z|da)?sh\s+-[A-Za-z]*x|xtrace)`)
+	envDumpRe    = regexp.MustCompile(`(?m)(^\s*(env|printenv|export\s+-p|declare\s+-[xp]+|set)\s*($|[|;>&])|\bprintenv\b|\benv\s*[|>])`)
+	echoSecretRe = regexp.MustCompile(`(?m)\b(echo|printf)\b[^\n]*\$\{?` + signingSecret)
+	// Case-insensitive, whitespace-tolerant references to the signing secret, dotted or bracketed.
+	secretRefRe = regexp.MustCompile(`(?i)secrets\s*\.\s*release_signing_key|secrets\s*\[\s*['"]release_signing_key['"]\s*\]`)
+	// A shell invocation or option string that turns tracing on: -x, -ex, -xe, -o xtrace, xtrace.
+	shellTraceRe  = regexp.MustCompile(`(?i)(^|\s)-[a-z]*x[a-z]*(\s|$)|xtrace`)
+	traceEnvKeys  = []string{"SHELLOPTS", "BASH_ENV", "BASH_XTRACEFD"}
 	secretIndexRe = regexp.MustCompile(`secrets\s*\[|toJSON\(\s*secrets|secrets\s*:\s*inherit`)
 )
 
@@ -112,7 +126,7 @@ func workflowViolations(raw []byte) []string {
 	// The secret and secret-wide patterns across the whole document.
 	secretRefs := 0
 	walkStrings(tree, func(s string) {
-		secretRefs += strings.Count(s, "secrets."+signingSecret)
+		secretRefs += len(secretRefRe.FindAllString(s, -1))
 		if secretIndexRe.MatchString(s) {
 			bad("workflow uses secrets[...], toJSON(secrets) or 'secrets: inherit': %q", s)
 		}
@@ -120,6 +134,22 @@ func workflowViolations(raw []byte) []string {
 	if secretRefs != 1 {
 		bad("secrets.%s is referenced %d times, want exactly 1 (the signing step's env)", signingSecret, secretRefs)
 	}
+	if shellTraceRe.MatchString(wf.Defaults.Run.Shell) {
+		bad("workflow defaults.run.shell enables tracing: %q", wf.Defaults.Run.Shell)
+	}
+	badTraceEnv := func(where string, env map[string]any) {
+		for k, v := range env {
+			for _, tk := range traceEnvKeys {
+				if strings.EqualFold(k, tk) {
+					bad("%s: env sets %s=%v", where, k, v)
+				}
+			}
+			if shellTraceRe.MatchString(fmt.Sprint(v)) && strings.Contains(strings.ToUpper(k), "SHELL") {
+				bad("%s: env %s enables tracing: %v", where, k, v)
+			}
+		}
+	}
+	badTraceEnv("workflow", wf.Env)
 	if envMentions(wf.Env, signingSecret) || envMentions(wf.Env, "secrets[") {
 		bad("workflow-level env references the signing key")
 	}
@@ -129,6 +159,10 @@ func workflowViolations(raw []byte) []string {
 		if job.Secrets != nil {
 			bad("job %s passes secrets to a called workflow (%v)", jobName, job.Secrets)
 		}
+		if shellTraceRe.MatchString(job.Defaults.Run.Shell) {
+			bad("job %s: defaults.run.shell enables tracing: %q", jobName, job.Defaults.Run.Shell)
+		}
+		badTraceEnv("job "+jobName, job.Env)
 		if job.Uses != "" {
 			bad("job %s calls a reusable workflow (%s)", jobName, job.Uses)
 		}
@@ -143,6 +177,10 @@ func workflowViolations(raw []byte) []string {
 			if st.Uses != "" && !pinnedUsesRe.MatchString(st.Uses) {
 				bad("%s: uses %q is not pinned by a 40-hex commit SHA", where, st.Uses)
 			}
+			if shellTraceRe.MatchString(st.Shell) {
+				bad("%s: shell enables tracing: %q", where, st.Shell)
+			}
+			badTraceEnv(where, st.Env)
 			if xtraceRe.MatchString(st.Run) {
 				bad("%s: run enables shell tracing", where)
 			}
@@ -255,6 +293,39 @@ func TestReleaseWorkflowGuardCatchesViolations(t *testing.T) {
 		},
 		"second step gets the key": func(t *testing.T, s string) string {
 			return nth(t, s, "          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}\n", "          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}\n"+signEnvKey, 0)
+		},
+		"step shell bash -x": func(t *testing.T, s string) string {
+			return nth(t, s, "        run: |\n          set +x\n          min_args=()", "        shell: bash -x {0}\n        run: |\n          set +x\n          min_args=()", 0)
+		},
+		"step shell bash -ex": func(t *testing.T, s string) string {
+			return nth(t, s, "        run: |\n          set +x\n          min_args=()", "        shell: bash -ex {0}\n        run: |\n          set +x\n          min_args=()", 0)
+		},
+		"workflow default shell traces": func(t *testing.T, s string) string {
+			return nth(t, s, "permissions:\n  contents: write\n", "defaults:\n  run:\n    shell: bash -x {0}\npermissions:\n  contents: write\n", 0)
+		},
+		"job default shell traces": func(t *testing.T, s string) string {
+			return nth(t, s, jobEnvAnchor+"    env:\n", jobEnvAnchor+"    defaults:\n      run:\n        shell: bash -x {0}\n    env:\n", 0)
+		},
+		"env SHELLOPTS xtrace": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          SHELLOPTS: xtrace\n", 0)
+		},
+		"env BASH_XTRACEFD": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          BASH_XTRACEFD: '2'\n", 0)
+		},
+		"workflow env BASH_ENV": func(t *testing.T, s string) string {
+			return nth(t, s, "permissions:\n  contents: write\n", "env:\n  BASH_ENV: /tmp/x\npermissions:\n  contents: write\n", 0)
+		},
+		"second lowercase secret reference": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          COPY: ${{ secrets.release_signing_key }}\n", 0)
+		},
+		"second spaced secret reference": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          COPY: ${{ secrets . Release_Signing_Key }}\n", 0)
+		},
+		"second bracket secret reference double quote": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          COPY: ${{ secrets[\"RELEASE_SIGNING_KEY\"] }}\n", 0)
+		},
+		"second bracket secret reference single quote": func(t *testing.T, s string) string {
+			return nth(t, s, "          LATEST: ${{ steps.latest.outputs.tag }}\n", "          LATEST: ${{ steps.latest.outputs.tag }}\n          COPY: ${{ secrets['release_signing_key'] }}\n", 0)
 		},
 		"set -x":  func(t *testing.T, s string) string { return nth(t, s, "set +x", "set -x", 0) },
 		"set -ex": func(t *testing.T, s string) string { return nth(t, s, "set -euo pipefail", "set -ex", 0) },

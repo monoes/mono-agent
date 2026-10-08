@@ -739,6 +739,10 @@ jobs:
           set +x
           keyid=$(cut -d' ' -f1 signed/signing-pubkey.txt)
           if grep -q "\"${keyid} " internal/release/keys.go; then
+            if [ "${BOOTSTRAP}" = "true" ]; then
+              echo "::error::Signing key ${keyid} is already pinned in internal/release/keys.go, but RELEASE_SIGNING_BOOTSTRAP is still true. Owner: delete the variable (gh variable delete RELEASE_SIGNING_BOOTSTRAP) and re-run."
+              exit 1
+            fi
             go run ./cmd/monoagentcli release verify signed/manifest.json signed/manifest.json.sig
           elif [ "${BOOTSTRAP}" = "true" ]; then
             echo "::warning::Bootstrap: signing key ${keyid} is NOT pinned in internal/release/keys.go; verifying against the key derived from the secret. Unset RELEASE_SIGNING_BOOTSTRAP after this release."
@@ -816,6 +820,10 @@ jobs:
 
           keyid=$(cut -d' ' -f1 "${signed}/manifest.json.sig")
           if grep -q "\"${keyid} " internal/release/keys.go; then
+            if [ "${BOOTSTRAP}" = "true" ]; then
+              echo "::error::Signing key ${keyid} is already pinned in internal/release/keys.go, but RELEASE_SIGNING_BOOTSTRAP is still true. Owner: delete the variable (gh variable delete RELEASE_SIGNING_BOOTSTRAP) and re-run."
+              exit 1
+            fi
             "${RUNNER_TEMP}/monoagentcli" release verify "${signed}/manifest.json" "${signed}/manifest.json.sig"
           elif [ "${BOOTSTRAP}" = "true" ]; then
             echo "::warning::Bootstrap: key ${keyid} is not pinned; verifying against the key derived by sign-manifest."
@@ -826,7 +834,6 @@ jobs:
           fi
 
           bash scripts/release-flatten.sh artifacts pool unsigned-manifest signed-manifest
-          cp NOTICE pool/NOTICE
           mkdir -p upload
           jq -r '.assets[].name' "${signed}/manifest.json" | while IFS= read -r name; do
             case "${name}" in
@@ -836,6 +843,9 @@ jobs:
             cp "pool/${name}" "upload/${name}"
           done
           cp "${signed}/manifest.json" "${signed}/manifest.json.sig" upload/
+          # NOTICE ships as a loose file; it is not a manifest asset, so it comes from this checkout
+          # (the release job already proved it equals the copies inside the archives).
+          cp NOTICE upload/NOTICE
           "${RUNNER_TEMP}/release-manifest" check \
             -manifest "${signed}/manifest.json" \
             -assets-dir upload \
@@ -843,7 +853,7 @@ jobs:
             -url-prefix "https://github.com/${RELEASES_REPO}/releases/download/${TAG}/" \
             -strict
           # SHA256SUMS comes from the verified files, never from the unsigned artifact.
-          (cd upload && jq -r '.assets[].name' manifest.json | sort | xargs sha256sum > SHA256SUMS)
+          (cd upload && { jq -r '.assets[].name' manifest.json; echo NOTICE; } | sort | xargs sha256sum > SHA256SUMS)
 
       - name: Upload to the releases repo
         if: steps.gate.outputs.enabled == 'true'

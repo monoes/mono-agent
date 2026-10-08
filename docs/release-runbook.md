@@ -132,7 +132,11 @@ cannot self-verify against a pin. The owner opens that one gap by hand:
    `gh variable delete RELEASE_SIGNING_BOOTSTRAP --repo OWNER/REPO`.
 
 While the variable is true, an unpinned key passes the self-check, so leave it set only for
-that one release. Any later release with an unpinned key fails the job.
+that one release. Once the key is pinned, a run with the variable still true fails with a message
+telling you to delete it. Known limit: in bootstrap mode the publish job verifies against the
+`signing-pubkey.txt` produced by sign-manifest and does not recompute the key from the secret,
+because the secret is referenced in exactly one step by design; the environment approval and
+branch rule are what protect that one release. Any later release with an unpinned key fails the job.
 
 ## Rotation
 
@@ -193,7 +197,7 @@ revokes it. Move fast, in the same order as a rotation but pinning only the new 
 ## Code owners
 
 `.github/CODEOWNERS` assigns the release path (`/.github/`, `/cmd/release-manifest/`,
-`/internal/release/`, `/scripts/check-release-tags*.sh`, `/scripts/release-flatten.sh`,
+`/internal/release/`, `/cmd/monoagentcli/release*.go`, `/internal/secrets/release_key.go`, `/scripts/check-release-tags*.sh`, `/scripts/release-flatten.sh`,
 `/docs/release-runbook.md`) to the owner. **It only takes effect when branch protection on
 master requires code-owner review**; without that rule it is a label. Enable it (owner runs
 this, it replaces the rule's review settings, so check Settings -> Branches afterwards):
@@ -206,6 +210,12 @@ gh api -X PATCH repos/OWNER/REPO/branches/master/protection/required_pull_reques
 (`PATCH` needs the branch protection rule to already exist; create it first in Settings ->
 Branches if it does not. CODEOWNERS entries must name a user or team: an organization name
 alone is not a valid owner.)
+
+GitHub does not count the author's own approval toward code-owner review. With a single owner,
+a PR the owner opened cannot satisfy the rule alone. Choose one deliberately: (a) **recommended
+until a second maintainer exists: use admin bypass** (leave "Do not allow bypassing the above
+settings" off and merge as repository admin, which is an explicit, logged act), or (b) add a
+second reviewer who is a code owner. Do not weaken the rule to avoid the choice.
 
 ## Break-glass: sign locally
 

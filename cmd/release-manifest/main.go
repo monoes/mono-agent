@@ -31,8 +31,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -206,11 +208,20 @@ func validateNotesURL(raw, repo string) error {
 	if err != nil || u.Scheme != "https" || u.User != nil {
 		return fmt.Errorf("notes_url %q must be a plain https URL", raw)
 	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == ".." {
+			return fmt.Errorf("notes_url %q must not contain .. segments", raw)
+		}
+	}
+	cleaned := path.Clean("/" + u.Path)
+	if strings.HasSuffix(u.Path, "/") && cleaned != "/" {
+		cleaned += "/"
+	}
 	switch u.Host {
 	case "monoes.me":
 		return nil
 	case "github.com":
-		if strings.HasPrefix(u.Path, "/"+repo+"/") {
+		if strings.HasPrefix(cleaned, "/"+repo+"/") {
 			return nil
 		}
 	}
@@ -225,8 +236,23 @@ func decodeManifestStrict(data []byte) (*Manifest, error) {
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("manifest is not valid: %w", err)
 	}
-	if dec.More() {
+	// A second Decode must hit a clean EOF; anything else (an extra } or ], a second object) is junk.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("manifest has trailing data after the JSON object")
+	}
+	// encoding/json matches keys case-insensitively, so {"version":..,"Version":..} would parse
+	// with the last one winning while other parsers may take the first. Reject such duplicates.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("manifest is not valid: %w", err)
+	}
+	seen := map[string]bool{}
+	for k := range top {
+		lk := strings.ToLower(k)
+		if seen[lk] {
+			return nil, fmt.Errorf("manifest has duplicate key %q (keys are compared case-insensitively)", k)
+		}
+		seen[lk] = true
 	}
 	return &m, nil
 }
@@ -328,6 +354,9 @@ func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion, url
 	}
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
+			if strict {
+				return fmt.Errorf("%s is not a regular file (%s); the upload dir may hold only regular files", e.Name(), e.Type())
+			}
 			continue
 		}
 		if listed[e.Name()] {
@@ -336,7 +365,7 @@ func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion, url
 		if _, _, _, ok := classify(e.Name()); ok {
 			return fmt.Errorf("built file %s is missing from the manifest", e.Name())
 		}
-		if strict && e.Name() != "SHA256SUMS" && !strings.HasPrefix(e.Name(), "manifest.json") {
+		if strict && e.Name() != "SHA256SUMS" && e.Name() != "NOTICE" && !strings.HasPrefix(e.Name(), "manifest.json") {
 			return fmt.Errorf("file %s is not listed in the manifest", e.Name())
 		}
 	}

@@ -205,6 +205,8 @@ func TestSignManifestFieldValidation(t *testing.T) {
 		"notes url other host": func(m map[string]any) { m["notes_url"] = "https://evil.example/notes" },
 		"notes url http":       func(m map[string]any) { m["notes_url"] = "http://monoes.me/notes" },
 		"notes url other repo": func(m map[string]any) { m["notes_url"] = "https://github.com/evil/x/releases/tag/v1.2.3" },
+		"notes url dotdot":     func(m map[string]any) { m["notes_url"] = "https://github.com/" + testRepo + "/../evil/x/releases" },
+		"notes url dotdot end": func(m map[string]any) { m["notes_url"] = "https://github.com/" + testRepo + "/releases/.." },
 		"unknown field":        func(m map[string]any) { m["extra"] = true },
 		"expired":              func(m map[string]any) { m["expires_at"] = past },
 		"expires not RFC3339":  func(m map[string]any) { m["expires_at"] = "tomorrow" },
@@ -275,5 +277,64 @@ func TestCheckStrict(t *testing.T) {
 	}
 	if err := run(args); err != nil {
 		t.Errorf("non-strict check failed: %v", err)
+	}
+}
+
+func TestDecodeManifestStrictRejectsJunk(t *testing.T) {
+	dir := manifestFixture(t, "v1.2.3")
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeManifestStrict(raw); err != nil {
+		t.Fatalf("clean manifest refused: %v", err)
+	}
+	trimmed := strings.TrimRight(string(raw), " \n")
+	bad := map[string]string{
+		"extra brace":       trimmed + "}",
+		"extra bracket":     trimmed + "]",
+		"second object":     trimmed + "\n" + trimmed,
+		"garbage":           trimmed + " x",
+		"case-variant dupe": strings.Replace(trimmed, `"version"`, `"Version": "v9.9.9", "version"`, 1),
+		"upper-case dupe":   strings.Replace(trimmed, `"schema"`, `"SCHEMA": 2, "schema"`, 1),
+	}
+	for name, doc := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeManifestStrict([]byte(doc)); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+}
+
+func TestCheckStrictRejectsNonRegularEntries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := manifestFixture(t, "v1.2.3")
+	mpath := filepath.Join(dir, "manifest.json")
+	args := []string{"check", "-manifest", mpath, "-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3")}
+	if err := os.Remove(filepath.Join(dir, "monoagent-chrome-extension.zip")); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(append(args, "-strict")); err != nil {
+		t.Fatalf("strict check of a clean upload dir (NOTICE is allowed): %v", err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	err := run(append(args, "-strict"))
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("strict check with a symlink: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = run(append(args, "-strict"))
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("strict check with a directory: %v", err)
 	}
 }
