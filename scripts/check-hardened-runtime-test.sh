@@ -10,6 +10,13 @@ printf 'module example.com/hr\n\ngo 1.26.0\n' > "$dir/go.mod"
 printf 'package main\n\nfunc main() {}\n' > "$dir/main.go"
 (cd "$dir" && CGO_ENABLED=0 go build -o linker .)
 
+# dyld strips DYLD_ variables from hardened binaries only where SIP is enforced; CI runner VMs relax
+# it, so the behavioural check runs only when `csrutil status` reports SIP enabled. The runtime flag
+# is always checked statically.
+sip_enabled=0
+if csrutil status 2>&1 | grep -q 'System Integrity Protection status: enabled'; then sip_enabled=1; fi
+[ "$sip_enabled" -eq 1 ] || echo "SKIP: SIP is not enforced here; DYLD stripping cannot be observed, hardened flag verified statically only"
+
 # The check of the workflow, as one function: the runtime flag, then dyld ignoring DYLD_ variables.
 check() {
   local f="$1" run="${2:-}"
@@ -17,7 +24,7 @@ check() {
   if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
     echo "not hardened: ${f#"$dir"/}"; return 1
   fi
-  if [ -n "$run" ]; then
+  if [ -n "$run" ] && [ "$sip_enabled" -eq 1 ]; then
     local output
     output="$(DYLD_PRINT_LIBRARIES=1 "$run" --help 2>&1)" || return 1
     if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then

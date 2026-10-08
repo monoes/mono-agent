@@ -175,9 +175,13 @@ jobs:
             fi
           done
           arch="$(uname -m)"; [ "$arch" != x86_64 ] || arch=amd64
-          output="$(DYLD_PRINT_LIBRARIES=1 "dist/monoagentcli-darwin-${arch}" --help 2>&1)"
-          if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
-            echo "::error::dyld honours DYLD_ variables for monoagentcli-darwin-${arch}"; exit 1
+          if csrutil status 2>&1 | grep -q 'System Integrity Protection status: enabled'; then
+            output="$(DYLD_PRINT_LIBRARIES=1 "dist/monoagentcli-darwin-${arch}" --help 2>&1)"
+            if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
+              echo "::error::dyld honours DYLD_ variables for monoagentcli-darwin-${arch}"; exit 1
+            fi
+          else
+            echo "::notice::SIP is not enforced on this runner, so DYLD stripping cannot be observed; the hardened runtime flag was verified statically only"
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -244,9 +248,13 @@ jobs:
               echo "::error::$f is not signed with the hardened runtime"; exit 1
             fi
           done
-          output="$(DYLD_PRINT_LIBRARIES=1 "${APP}/Contents/MacOS/monoagentcli" --help 2>&1)"
-          if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
-            echo "::error::dyld honours DYLD_ variables for the bundled CLI"; exit 1
+          if csrutil status 2>&1 | grep -q 'System Integrity Protection status: enabled'; then
+            output="$(DYLD_PRINT_LIBRARIES=1 "${APP}/Contents/MacOS/monoagentcli" --help 2>&1)"
+            if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
+              echo "::error::dyld honours DYLD_ variables for the bundled CLI"; exit 1
+            fi
+          else
+            echo "::notice::SIP is not enforced on this runner, so DYLD stripping cannot be observed; the hardened runtime flag was verified statically only"
           fi
           mkdir -p dist
           (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
