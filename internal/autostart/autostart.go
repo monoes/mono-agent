@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Label identifies the installed service across every backend: the launchd
@@ -16,6 +17,12 @@ import (
 // name all derive from it, so install and uninstall always agree on what
 // they're touching.
 const Label = "com.monoagent.daemon"
+
+// stopGrace is how long a service manager must let a stopping daemon end by itself. Its account
+// guard waits for a refresh grant in flight (20 s, refreshCallTimeout) and then for the key-store
+// write of the answer (10 s, keyStoreTimeout): 30 s at the worst, plus a margin. A kill inside that
+// window loses the answer of a grant that monoes.me has already rotated.
+const stopGrace = 35 * time.Second
 
 // Installer registers and removes the per-user auto-start entry. Each OS
 // implements exactly one, selected by build tag (autostart_darwin.go,

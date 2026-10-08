@@ -61,7 +61,7 @@ func addServiceHooks(env *health.Env, cfg *globalConfig) {
 
 	env.Daemon = func(context.Context) health.DaemonInfo {
 		hb, live := daemonhb.Read()
-		return health.DaemonInfo{Running: live, PID: hb.PID, APIAddr: hb.APIAddr, BridgeAddr: hb.BridgeAddr, AgeMS: time.Since(hb.TS).Milliseconds()}
+		return health.DaemonInfo{Running: live, PID: hb.PID, APIAddr: hb.APIAddr, BridgeAddr: hb.BridgeAddr, Version: hb.Version, AgeMS: time.Since(hb.TS).Milliseconds()}
 	}
 	env.APIHealth = func(ctx context.Context, addr string) error {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)

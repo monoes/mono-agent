@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 )
 
 func newPlatformInstaller() Installer { return linuxInstaller{} }
@@ -27,10 +28,16 @@ After=default.target
 ExecStart={{.Exe}} daemon
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec={{.StopSec}}
 
 [Install]
 WantedBy=default.target
 `
+
+// systemdStopTimeout is the unit's TimeoutStopSec: systemd's own default of 90 s, written so a
+// distribution or user setting cannot lower it below stopGrace. It is not shortened to stopGrace,
+// because a stopping daemon also drains the workflow runs in flight.
+const systemdStopTimeout = 90 * time.Second
 
 // renderUnit returns the unit file for the binary at exe. The path is
 // quoted for systemd, which splits ExecStart on spaces and expands % and $:
@@ -38,7 +45,10 @@ WantedBy=default.target
 func renderUnit(exe string) (string, error) {
 	var b strings.Builder
 	tmpl := template.Must(template.New("unit").Parse(linuxUnitTemplate))
-	if err := tmpl.Execute(&b, struct{ Exe string }{systemdQuote(exe)}); err != nil {
+	if err := tmpl.Execute(&b, struct {
+		Exe     string
+		StopSec int
+	}{systemdQuote(exe), int(systemdStopTimeout / time.Second)}); err != nil {
 		return "", err
 	}
 	return b.String(), nil
