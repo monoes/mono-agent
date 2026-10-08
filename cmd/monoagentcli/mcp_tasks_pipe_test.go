@@ -75,6 +75,15 @@ func plainTaskDoc(t *testing.T, text string) map[string]any {
 		t.Errorf("the document has no note: %s", text)
 	}
 	delete(d, "note")
+	// The tools alone bound their results (the commands print everything): they say so under
+	// truncated (task_list) and events_omitted (task_get). Nothing here is cut, so both must say
+	// "nothing left out" before they are dropped from the comparison.
+	for key, none := range map[string]any{"truncated": false, "events_omitted": float64(0)} {
+		if v, ok := d[key]; ok && v != none {
+			t.Errorf("%s = %v in a result that is not cut", key, v)
+		}
+		delete(d, key)
+	}
 	if tk, ok := d["task"].(map[string]any); ok {
 		d["task"] = plainTask(tk)
 	}

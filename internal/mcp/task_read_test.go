@@ -6,12 +6,66 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/tasks"
 )
+
+// task_list says when its limit cut the result, so a model does not take a full page for the whole
+// board; a list that fits is not flagged, nor is one that holds exactly the limit.
+func TestTaskListSaysWhenItsLimitCutTheResult(t *testing.T) {
+	f := newTaskFixture(t, taskSetup{})
+	for i := 0; i < 3; i++ {
+		f.add("default", fmt.Sprintf("task %d", i), true)
+	}
+	for _, c := range []struct {
+		limit     any
+		wantLen   int
+		wantTrunc bool
+	}{{2, 2, true}, {3, 3, false}, {10, 3, false}, {nil, 3, false}} {
+		args := map[string]any{}
+		if c.limit != nil {
+			args["limit"] = c.limit
+		}
+		d := f.doc("task_list", args)
+		if got := len(d["tasks"].([]any)); got != c.wantLen || d["truncated"] != c.wantTrunc {
+			t.Errorf("limit %v: %d tasks, truncated = %v, want %d and %v", c.limit, got, d["truncated"], c.wantLen, c.wantTrunc)
+		}
+	}
+}
+
+// task_get returns the most recent taskGetEventsMax events, oldest first, and says how many older
+// ones it left out; the CLI's task show has them all.
+func TestTaskGetBoundsItsHistoryToTheMostRecentEvents(t *testing.T) {
+	f := newTaskFixture(t, taskSetup{})
+	tk := f.add("default", "long history", true)
+	human := tasks.Actor{Kind: tasks.Human}
+	for i := 1; i < taskGetEventsMax+20; i++ {
+		if _, err := f.Store.Comment(context.Background(), "default", tk.ID, fmt.Sprintf("comment %d", i), human); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := f.doc("task_get", map[string]any{"id": tk.ID})
+	events := d["events"].([]any)
+	_, all, err := f.Store.Get(context.Background(), "default", tk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	omitted := len(all) - taskGetEventsMax
+	if omitted <= 0 || len(events) != taskGetEventsMax || d["events_omitted"] != float64(omitted) {
+		t.Fatalf("%d events, events_omitted = %v, want %d and %d", len(events), d["events_omitted"], taskGetEventsMax, omitted)
+	}
+	if first, last := events[0].(map[string]any), events[len(events)-1].(map[string]any); first["id"] != float64(all[omitted].ID) || last["id"] != float64(all[len(all)-1].ID) {
+		t.Errorf("the events are not the most recent ones, oldest first: first %v, last %v", first["id"], last["id"])
+	}
+	short := f.add("default", "short", true)
+	if d := f.doc("task_get", map[string]any{"id": short.ID}); d["events_omitted"] != float64(0) {
+		t.Errorf("a short history: events_omitted = %v, want 0", d["events_omitted"])
+	}
+}
 
 // A list cuts each task's notes where the view says and names task_get for the rest, since two
 // hundred tasks with 64 KiB of notes each would fill a model's context; one task, by task_get or

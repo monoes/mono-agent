@@ -221,6 +221,24 @@ func TestDecodeTaskArgsRefusesWhatATaskToolDoesNotTake(t *testing.T) {
 	}
 }
 
+// A struct with an unexported field that carries a json tag must not panic the decoder: the field is
+// not an argument, so naming it is refused like any other unknown one.
+func TestDecodeTaskArgsSkipsUnexportedFields(t *testing.T) {
+	// Built with reflect, since go vet refuses a json tag on an unexported field in source.
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "ID", Type: reflect.TypeOf(taskIDArg(0)), Tag: `json:"id"`},
+		{Name: "hidden", PkgPath: "mcp", Type: reflect.TypeOf(""), Tag: `json:"hidden"`},
+	})
+	dst := reflect.New(typ)
+	if err := decodeTaskArgs(json.RawMessage(`{"id": 3}`), dst.Interface()); err != nil || dst.Elem().Field(0).Int() != 3 {
+		t.Fatalf("the exported argument: %v, %v", dst.Elem(), err)
+	}
+	err := decodeTaskArgs(json.RawMessage(`{"hidden": "x"}`), dst.Interface())
+	if err == nil || !strings.HasPrefix(err.Error(), "invalid_input: ") || !strings.Contains(err.Error(), `"hidden"`) {
+		t.Errorf("an unexported field is not an argument: %v", err)
+	}
+}
+
 func TestATaskIDIsANumberAsAModelWritesIt(t *testing.T) {
 	for _, raw := range []string{`12`, `"12"`, `"#12"`, `" #12 "`} {
 		var id taskIDArg

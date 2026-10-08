@@ -340,7 +340,9 @@ FROM MCP
   task_finish, task_release and task_add. They act on the server's one profile as the
   agent agent:<client>#<4 hex digits>, named after the MCP client and the session: two
   sessions are two claimants, and no argument names you. Text written by people, agents
-  or captures comes back in fields ending in _untrusted. No tool approves, edits, moves
+  or captures comes back in fields ending in _untrusted. task_list sets truncated when
+  its limit cut the list; task_get returns the latest 100 events and events_omitted
+  counts the older ones (task show has them all). No tool approves, edits, moves
   or archives a task. To give an agent the board and no workflow tool, register one
   server per profile (or set MONOAGENT_MCP_TASKS_ONLY=1 for it):
     claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations
