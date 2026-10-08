@@ -28,7 +28,8 @@ const base = () => normalizeBoard(doc({
 describe('normalizeBoard', () => {
   it('keeps the five columns, each in position order, empty ones too', () => {
     const b = normalizeBoard(doc({ inbox: [card(2, 'inbox'), card(1, 'inbox')] }))
-    expect(Object.keys(b.columns)).toEqual(COLUMNS)
+    expect(Object.keys(b.columns)).toEqual(['inbox', 'ready', 'in_progress', 'review', 'done'])
+    expect(COLUMNS).toEqual(['inbox', 'ready', 'in_progress', 'review', 'done'])
     expect(ids(b, 'inbox')).toEqual([1, 2])
     expect(b.columns.done).toEqual([])
     expect(b.profile.id).toBe('default')
@@ -66,6 +67,16 @@ describe('applyMove', () => {
   it('ends the claim of a card that leaves In progress and keeps it inside', () => {
     expect(findTask(applyMove(base(), 5, 'ready', { where: '' }), 5).task.claim).toBeNull()
     expect(findTask(applyMove(base(), 5, 'in_progress', { where: 'top' }), 5).task.claim.by).toBe('bot')
+  })
+
+  it('ends a claim a hand-edited row holds outside In progress when the card enters In progress', () => {
+    const b = normalizeBoard(doc({ ready: [card(3, 'ready', { claim: { by: 'bot', until: '', stale: false } })] }))
+    expect(findTask(applyMove(b, 3, 'in_progress', { where: '' }), 3).task.claim).toBeNull()
+  })
+
+  it('does not show the last event of before the move', () => {
+    const b = normalizeBoard(doc({ ready: [card(3, 'ready', { last_event: { actor: 'bot', kind: 'created', at: '2026-10-06T09:00:00Z' } })] }))
+    expect(findTask(applyMove(b, 3, 'review', { where: '' }), 3).task.last_event).toBeNull()
   })
   it('keeps the counts in step, Done by what its column gained', () => {
     const b = applyMove(base(), 6, 'done', { where: '' })
@@ -161,6 +172,7 @@ describe('focusTarget', () => {
     const b = applyRemove(base(), 6) // Review is empty now
     expect(focusTarget(b, 3, 'down')).toBe(4)
     expect(focusTarget(b, 3, 'up')).toBeNull()
+    expect(focusTarget(b, 3, 'Tab')).toBeNull() // an unknown key is not a step to the right
     expect(focusTarget(b, 2, 'right')).toBe(4)
     expect(focusTarget(b, 5, 'right')).toBe(7)
     expect(focusTarget(b, 1, 'left')).toBeNull()
