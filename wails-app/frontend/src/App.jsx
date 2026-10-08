@@ -36,7 +36,8 @@ import { isAgentNotSetup } from './lib/agentSetup.js'
 // exporting a shared constant for one other call site.
 const maxInlinePreviewBytes = 25 * 1024 * 1024
 
-export default function App() {
+// banners: the account notices AccountApp hands the app to wear (components/account).
+export default function App({ banners = null }) {
   const [activePage, setActivePage] = useState('dashboard')
   const [navData, setNavData] = useState(null) // extra data passed to a page (e.g., executionId)
   const [profileId, setProfileId] = useState(null)
@@ -306,6 +307,7 @@ export default function App() {
       />
       <div style={{ display: 'flex', flexDirection: 'row', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         <main className="main-content">
+          {banners}
           <ErrorBoundary>
             {Object.entries(persistentPages)
               .filter(([id]) => visitedPages.has(id))
