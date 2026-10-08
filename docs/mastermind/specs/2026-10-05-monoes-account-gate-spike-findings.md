@@ -189,3 +189,30 @@ Consequence: the family is `authorization_code_id`, which exists, is indexed, an
 2. The email-code route (Task 7) is the one server change beyond spec §5. For the MonoAgent client's `offline_access` claim it returns a `refresh_token`, which the client trades at the token endpoint with `resource` (B1b's design), and it honors a `resource` in the verify body (one call, the token endpoint's own answer). Without `resource` the opaque access token is unchanged; a blocked account is refused.
 3. Extras approved: `disableSettingJwtHeader`; deleting a blocked account's web sessions; the optional previous-key secret for a rotation; the audience as a database row plus a client link (migration 0017). Spec §5 item 1 says `oauthProvider` "accepts the resource"; it is a row and a link, not an option.
 4. Refresh-token families (ruling R1 of 2026-10-07): a replay of a rotated-away refresh token after the reuse window ends only that token's family, not every MonoAgent refresh token of the account, which removes the 5xx trade-off of the client's A24 and shrinks each of its residuals to "that install signs itself out". S7 measures what names a family; the lead writes Task 3's steps for it from S7's findings before Task 3 is dispatched. The client keeps A24 and A25 as defence in depth and changes no constant until the server has shipped and been measured.
+
+## S5 — how `root.Find` resolves the target (plan B2)
+
+Run against cobra v1.10.2 and the real command tree at `feat/monoes-account-gate` `6b608932` (404 commands below the root, 376 gated, 24 open, 4 serving, 486 spellings counting aliases). `findCases` in `cmd/monoagentcli/account_gate_find_test.go` is the full table (53 rows). `TestGateNeverDowngradesWhatCobraWouldRun` executes those arguments, and 1,320 combinations of flags around 15 commands, on a tree whose commands record themselves, and fails if cobra ever runs a command of a stricter class than the gate assigns (325 of those invocations ran a command that is not open).
+
+| Form | Example | `Find` resolves | Gate |
+|---|---|---|---|
+| bool global flag first | `--json workflow list` | `workflow list` | gated |
+| value global flag first | `--profile work workflow list`, `--db-path /x workflow list` | `workflow list`; the flag and its value stay in the leftover arguments | gated |
+| a command name as a flag's value | `--profile doctor workflow list` | `workflow list` | gated |
+| unknown flag first | `--no-such-flag workflow list` | `list` (the flag swallows `workflow`; cobra then rejects the flag) | gated |
+| flags between the words | `workflow --json list` | `workflow list` | gated |
+| alias | `bridge serve`, `person list`, `image rm x` | `extension serve`, `people list`, `image delete` | the real command's |
+| hidden command | any command with `Hidden = true` | found like any other | unchanged |
+| `--` | `workflow -- list`; `-- doctor` | `workflow`, `-- list` left over; the root | gated; open |
+| `help`, `completion`, `__complete`, `__completeNoDesc` | `help workflow run` | the root: cobra adds these inside `ExecuteC`, after the gate has looked | open |
+| abbreviation, other case, unknown command | `wor`, `WORKFLOW list`, `nosuch` | the root (no prefix matching, names are case-sensitive); cobra prints its own error | open |
+| help flag | `workflow list -h`, `-vh workflow list` | `workflow list` | open |
+| help switched off or not a flag | `workflow list --help=false`, `workflow run -- --help`, `--profile --help workflow list` | `workflow list` or `workflow run` | gated |
+| help before the command | `--help workflow list` | `list`: the help flag does not exist yet, so `--help` swallows `workflow`; cobra prints `list`'s help | open |
+
+What the gate takes from it:
+
+1. `root.Find(args)` on the tree that will execute is the command cobra runs, so the gate asks it before `ExecuteContext` (`invocationClass`). Aliases and hidden commands need nothing extra.
+2. `help`, `completion` and `__complete` do not exist when the gate looks, and an unknown command is cobra's error: all resolve to the root with leftovers, which prints help or an error and runs nothing, so the root is open.
+3. Whether the help flag is set cannot be read from `Find` or by scanning words (`--profile --help`, `--help=false`, `--`): `asksForHelp` parses the flags on a throwaway tree, because parsing the real one twice would collect a repeated string-slice flag twice.
+4. A locked `daemon`, `httpapi`, `mcp` or `extension serve` must start (spec §6.4), so they get their own class, `serve`. `org serve` is a launcher that starts the external monomind process and returns, so it stays gated.
