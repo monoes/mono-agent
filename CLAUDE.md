@@ -2,8 +2,7 @@
 
 ## Project
 
-mono-agent (`github.com/monoes/mono-agent`) — local-first workflow
-automation engine (n8n alternative) in a single Go binary: `monoagentcli`.
+mono-agent (`github.com/monoes/mono-agent`) — workflow automation engine that runs on your machine (n8n alternative) in a single Go binary: `monoagentcli`.
 Full agent guidance lives in **AGENTS.md** (root) — read that first.
 
 ## Build / test / lint

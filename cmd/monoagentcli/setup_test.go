@@ -11,9 +11,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/monoes/mono-agent/internal/account"
 	"github.com/monoes/mono-agent/internal/health"
 )
 
@@ -216,6 +218,8 @@ func runCLI(t *testing.T, home string, args ...string) (stdout, stderr string, e
 // run, announcing each stage and fix on stderr, and its first check sees
 // the HOME as it was (no pre-run made the data folder first).
 func TestSetupEmptyHomeToHealthyCore(t *testing.T) {
+	// These checks exercise local setup fixes independently of account enforcement.
+	account.SetEnforceFromForTest(t, time.Time{})
 	keyring.MockInit()
 	home := t.TempDir()
 
@@ -307,6 +311,8 @@ func TestSetupEmptyHomeToHealthyCore(t *testing.T) {
 // doctor --fix's loop against the real core checks: each fix unblocks the
 // next check (data folder → database → profile folder), across passes.
 func TestFixUntilStableRealChecks(t *testing.T) {
+	// These checks exercise local setup fixes independently of account enforcement.
+	account.SetEnforceFromForTest(t, time.Time{})
 	keyring.MockInit()
 	home := t.TempDir()
 	t.Setenv("HOME", home)

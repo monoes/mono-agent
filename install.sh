@@ -309,3 +309,4 @@ $SUDO mv "$SRC" "${INSTALL_DIR}/${BIN}" || err "cannot install into ${INSTALL_DI
 
 echo "Installed: ${INSTALL_DIR}/${BIN} (${TAG:-unknown version}, ${os}/${arch})"
 echo "Verify with:  ${INSTALL_DIR}/${BIN} version"
+echo "Account and offline behavior:  ${INSTALL_DIR}/${BIN} ref account"

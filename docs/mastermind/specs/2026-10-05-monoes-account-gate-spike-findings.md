@@ -216,3 +216,22 @@ What the gate takes from it:
 2. `help`, `completion` and `__complete` do not exist when the gate looks, and an unknown command is cobra's error: all resolve to the root with leftovers, which prints help or an error and runs nothing, so the root is open.
 3. Whether the help flag is set cannot be read from `Find` or by scanning words (`--profile --help`, `--help=false`, `--`): `asksForHelp` parses the flags on a throwaway tree, because parsing the real one twice would collect a repeated string-slice flag twice.
 4. A locked `daemon`, `httpapi`, `mcp` or `extension serve` must start (spec §6.4), so they get their own class, `serve`. `org serve` is a launcher that starts the external monomind process and returns, so it stays gated.
+
+
+## S4, real-binary consumers (B5a, audited 2026-10-08)
+
+Audit of the issue-363-370-365 worktree, based on master `ab14b469`: search all test sources for real `go build` calls and self-execution, and scripts, tests, Makefile, Dockerfile, installer and CI for CLI build/run consumers.
+
+| Consumer | Gate exposure | Result |
+|---|---|---|
+| `wails-app/app_workflow_io_test.go` shared `buildTestCLI`, `app_chat_e2e_test.go` | Imports/saves workflows, image sync, chat via a real CLI subprocess | Build with `devaccount`; set `MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z` in each test. |
+| `scripts/e2e/capture-ask.sh`, `org-unification.sh`, `per-profile-browsers.sh`; `tests/e2e-automation/setup.sh` and sourced `env.sh`; `scripts/library-official.sh` | Capture, daemon/org/bridge, packaging commands | Same devaccount/future-date isolation; older e2e binaries need `E2E_BUILD=1`. |
+| `scripts/tasks-mcp-smoke.sh` (added since the original plan audit) | Real tasks-only MCP server; `env -i` drops inherited overrides | Document a devaccount build and carry the future-date variable explicitly in `run()`. |
+| CI `doctor-smoke` / `scripts/doctor-smoke.sh` | Doctor/setup are open; the account row fails after the date in a fresh HOME | Keep the default build and all schema assertions; exclude only `core.monoes_account` from the healthy-core assertion. |
+| `internal/accountsmoke/rig_test.go` | Deliberately tests the real gate | Already builds with `devaccount` and scenario-controlled dates; unchanged. |
+| Test helper subprocesses in account, daemonhb, capturetask, monomind, tasks, CLI doctor/update and desktop process/update tests | Re-execute test binaries or resolve their own path, rather than CLI main | Unchanged; layer 2 intentionally fails open without a real guard. |
+| CI schema/OpenAPI, scanners, extension tests, monomind handshake/validation | No execution gate call | Unchanged. |
+| `Dockerfile`, `docker-compose.yml` | Daemon starts locked after enforcement, health remains open | Production builds remain untagged; an account sign-in is required when enforcement is activated. |
+| Release workflow, Makefile production targets, `install.sh` | Build/download production assets | Remain untagged; release guard checks shipped binaries. |
+
+The date remains dormant in this worktree. These isolated consumers remain usable when an owner later sets a production date; account smoke is the deliberate end-to-end enforcement proof. Full-suite baseline/past-date rehearsal is recorded in the issue handoff rather than asserted from this static audit.

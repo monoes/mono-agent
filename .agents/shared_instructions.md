@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-- **Repo:** `github.com/monoes/mono-agent` — local-first workflow automation engine (n8n alternative), single Go binary `monoagentcli`
+- **Repo:** `github.com/monoes/mono-agent` — workflow automation engine that runs on your machine (n8n alternative), single Go binary `monoagentcli`
 - **Language:** Go (no npm — any `npm install` instructions are stale; ignore them)
 - **Source:** root `cmd/`, `internal/`, `data/` packages
 - **Tests:** co-located (`*_test.go`)

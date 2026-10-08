@@ -87,8 +87,9 @@ code=$?
 set -e
 [ "$code" -eq 0 ] || fail "setup --group core --yes: exit $code, want 0"
 [ ! -e "$core_home/.claude" ] || fail "setup --group core wrote ~/.claude"
-jq -e 'all(.results[]; .group == "core" and .status != "fail")' "$out/setup-core.json" >/dev/null \
-  || fail "setup --group core left a failing or non-core row: $(jq -c '[.results[] | select(.status == "fail" or .group != "core") | .id]' "$out/setup-core.json")"
+# The account row may fail after the date on this deliberately unsigned-in HOME.
+jq -e 'all(.results[] | select(.id != "core.monoes_account"); .group == "core" and .status != "fail")' "$out/setup-core.json" >/dev/null \
+  || fail "setup --group core left a failing or non-core row: $(jq -c '[.results[] | select(.id != "core.monoes_account") | select(.status == "fail" or .group != "core") | .id]' "$out/setup-core.json")"
 # core.home.create applied proves the first check saw the empty HOME (no pre-run made the folder first).
 jq -e '[.fixes[] | select(.outcome == "applied") | .id] == ["core.home.create","core.db.migrate","core.profile.layout"]' "$out/setup-core.json" >/dev/null \
   || fail "setup --group core applied $(jq -c '[.fixes[] | select(.outcome == "applied") | .id]' "$out/setup-core.json")"

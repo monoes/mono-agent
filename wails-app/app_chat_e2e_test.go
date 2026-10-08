@@ -24,11 +24,12 @@ func TestChatEndToEndWithTheRealCLI(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cli := filepath.Join(dir, "monoagentcli")
-	build := exec.Command("go", "build", "-o", cli, "./cmd/monoagentcli")
+	build := exec.Command("go", "build", "-tags", "devaccount", "-o", cli, "./cmd/monoagentcli")
 	build.Dir = ".."
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building monoagentcli: %v\n%s", err, out)
 	}
+	t.Setenv("MONOAGENT_DEV_ENFORCE_FROM", "2999-01-01T00:00:00Z")
 	monomind := filepath.Join(dir, "monomind")
 	os.WriteFile(monomind, []byte(`#!/bin/sh
 if [ "$1" = "--version" ]; then

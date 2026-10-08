@@ -22,7 +22,9 @@ mkdir -p "$W" "$H" "$W/site" "$TMPDIR"
 case "$H" in "$HOME"/scratch/*) ;; *) echo "refusing HOME=$H" >&2; exit 97 ;; esac
 
 CLI="$W/monoagentcli"
-(cd "$REPO" && go build -o "$CLI" ./cmd/monoagentcli)
+(cd "$REPO" && go build -tags devaccount -o "$CLI" ./cmd/monoagentcli)
+# Keep this devaccount build independent of the production enforcement date.
+export MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z
 PATH_FOR_RUN="${MONOMIND_PATH:+$MONOMIND_PATH:}$PATH"
 mc() { env HOME="$H" PATH="$PATH_FOR_RUN" MONOAGENT_EXTENSION_PORT="$PORT" MONOAGENT_SUMMARY_RUNTIME=off "$CLI" "$@"; }
 echo "monomind: $(env HOME="$H" PATH="$PATH_FOR_RUN" monomind --version)"

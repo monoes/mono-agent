@@ -153,14 +153,32 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Prove hardened runtime checks reject unhardened assets
+        run: bash scripts/check-hardened-runtime-test.sh
+
       - name: Build CLI for macOS (native)
         run: |
           LD="-X main.version=${TAG} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-darwin-amd64 ./cmd/monoagentcli
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-darwin-arm64 ./cmd/monoagentcli
-          codesign --force --sign - dist/monoagentcli-darwin-amd64
-          codesign --force --sign - dist/monoagentcli-darwin-arm64
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-amd64
+          codesign --force --options runtime --sign - dist/monoagentcli-darwin-arm64
+
+      - name: Check the hardened runtime (macOS CLI)
+        shell: bash
+        run: |
+          for f in dist/monoagentcli-darwin-*; do
+            codesign --verify --strict "$f"
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          arch="$(uname -m)"; [ "$arch" != x86_64 ] || arch=amd64
+          output="$(DYLD_PRINT_LIBRARIES=1 "dist/monoagentcli-darwin-${arch}" --help 2>&1)"
+          if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for monoagentcli-darwin-${arch}"; exit 1
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -215,6 +233,21 @@ jobs:
         run: |
           APP="wails-app/build/bin/MonoAgent.app"
           cp wails-app/monoagentcli "${APP}/Contents/MacOS/monoagentcli"
+          mkdir -p "${APP}/Contents/Resources"
+          cp NOTICE "${APP}/Contents/Resources/NOTICE"
+          # Sign inside out: the app signature seals the bundled CLI.
+          codesign --force --options runtime --sign - "${APP}/Contents/MacOS/monoagentcli"
+          codesign --force --options runtime --sign - "${APP}"
+          codesign --verify --strict --deep "${APP}"
+          for f in "${APP}" "${APP}/Contents/MacOS/monoagentcli"; do
+            if [ "$(codesign -dv "$f" 2>&1 | grep -c 'flags=0x[0-9a-f]*([^)]*runtime')" -eq 0 ]; then
+              echo "::error::$f is not signed with the hardened runtime"; exit 1
+            fi
+          done
+          output="$(DYLD_PRINT_LIBRARIES=1 "${APP}/Contents/MacOS/monoagentcli" --help 2>&1)"
+          if [ "$(printf '%s\n' "$output" | grep -c '^dyld\[')" -ne 0 ]; then
+            echo "::error::dyld honours DYLD_ variables for the bundled CLI"; exit 1
+          fi
           mkdir -p dist
           (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
 
@@ -346,7 +379,8 @@ jobs:
           cp dist/MonoAgent-linux-amd64 dist/linux-pkg/MonoAgent-linux-amd64
           cp wails-app/monoagentcli-linux dist/linux-pkg/monoagentcli
           chmod +x dist/linux-pkg/monoagentcli
-          tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist/linux-pkg MonoAgent-linux-amd64 monoagentcli
+          cp NOTICE dist/linux-pkg/NOTICE
+          tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist/linux-pkg MonoAgent-linux-amd64 monoagentcli NOTICE
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -364,6 +398,7 @@ jobs:
       - name: Zip chrome extension
         run: |
           mkdir -p dist
+          cp NOTICE chrome-extension/NOTICE
           zip -r dist/monoagent-chrome-extension.zip chrome-extension -x '*.DS_Store' '*.test.mjs'
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -417,6 +452,8 @@ jobs:
         run: |
           mkdir -p bundle out
           find artifacts/ -type f | while read -r f; do cp "$f" "bundle/$(basename "$f")"; done
+          # NOTICE ships with every release as a loose file; the manifest checksums it but does not classify it.
+          cp NOTICE bundle/NOTICE
           go run ./cmd/release-manifest manifest -dir bundle -version "${TAG}" -repo "${RELEASES_REPO:-monoes/mono-agent-releases}"
           cp bundle/manifest.json bundle/SHA256SUMS out/
           {
@@ -474,6 +511,11 @@ jobs:
           mkdir -p release-files
           # unsigned-manifest/ belongs to the releases-repo flow below, not to this release.
           find artifacts/ -type f -not -path 'artifacts/unsigned-manifest/*' | while read f; do cp "$f" "release-files/$(basename "$f")"; done
+          # Loose CLI/Windows assets share the release's notice; archives carry their own copy.
+          cp NOTICE release-files/NOTICE
+          cmp NOTICE <(tar -xOf release-files/MonoAgent-linux-amd64.tar.gz NOTICE)
+          cmp NOTICE <(unzip -p release-files/MonoAgent-darwin-arm64.zip MonoAgent.app/Contents/Resources/NOTICE)
+          cmp NOTICE <(unzip -p release-files/monoagent-chrome-extension.zip chrome-extension/NOTICE)
           cd release-files
           sha256sum * > SHA256SUMS.txt
           echo "--- Release files ---"
@@ -599,6 +641,9 @@ jobs:
       TAG: ${{ needs.version.outputs.tag }}
       RELEASES_REPO: ${{ secrets.RELEASES_REPO }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts/
@@ -614,6 +659,7 @@ jobs:
           mkdir -p upload
           find artifacts/ -type f -not -path 'artifacts/unsigned-manifest/*' | while read -r f; do cp "$f" "upload/$(basename "$f")"; done
           cp artifacts/unsigned-manifest/manifest.json artifacts/unsigned-manifest/SHA256SUMS upload/
+          cp NOTICE upload/NOTICE
           [ -f artifacts/unsigned-manifest/manifest.json.sig ] && cp artifacts/unsigned-manifest/manifest.json.sig upload/
           if gh release view "${TAG}" --repo "${RELEASES_REPO}" >/dev/null 2>&1; then
             # A different version always makes a new release, so an existing one is a re-run.

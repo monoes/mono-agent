@@ -17,7 +17,7 @@ var releaseNames = []string{
 	"monoagentcli-linux-amd64", "monoagentcli-linux-arm64", "monoagentcli-windows-amd64.exe",
 	"monoagentcli-darwin-amd64", "monoagentcli-darwin-arm64",
 	"MonoAgent-darwin-arm64.zip", "MonoAgent-windows-amd64.exe", "monoagentcli-windows-amd64-bundled.exe",
-	"MonoAgent-linux-amd64.tar.gz", "monoagent-chrome-extension.zip",
+	"MonoAgent-linux-amd64.tar.gz", "monoagent-chrome-extension.zip", "NOTICE",
 }
 
 func fixture(t *testing.T) string {
@@ -50,8 +50,8 @@ func TestManifestGeneration(t *testing.T) {
 	for _, a := range m.Assets {
 		got[a.Name] = a
 	}
-	if _, ok := got["monoagent-chrome-extension.zip"]; ok {
-		t.Fatal("extension zip has no platform and must not be an asset")
+	if _, ok := got["monoagent-chrome-extension.zip"]; ok || got["NOTICE"].Name != "" {
+		t.Fatal("extension zip and NOTICE have no platform and must not be assets")
 	}
 	cases := map[string][3]string{
 		"monoagentcli-windows-amd64.exe": {"windows", "amd64", "cli"},
@@ -72,6 +72,9 @@ func TestManifestGeneration(t *testing.T) {
 		t.Errorf("bad asset: %+v", a)
 	}
 	sums, _ := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
+	if !strings.Contains(string(sums), "  NOTICE\n") {
+		t.Error("NOTICE is not an asset but must still be checksummed in SHA256SUMS")
+	}
 	if !strings.Contains(string(sums), a.SHA256+"  monoagentcli-linux-amd64\n") || strings.Count(string(sums), "\n") != len(releaseNames) {
 		t.Errorf("SHA256SUMS wrong:\n%s", sums)
 	}

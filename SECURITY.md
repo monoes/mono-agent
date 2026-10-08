@@ -1,6 +1,6 @@
 # Security Policy
 
-Mono Agent is a local-first workflow automation tool. This document explains
+Mono Agent is a workflow automation tool that runs on your machine. This document explains
 how to report vulnerabilities, what is in scope, and how your data is handled.
 
 ## Reporting a Vulnerability
@@ -176,10 +176,13 @@ recommendation is to keep tools off (the default) when chatting over
 mail synced from sources you do not trust, and to enable `runs` only in
 trusted sessions.
 
-## Telemetry and crash reporting
+## Network use, telemetry and crash reporting
 
-**Default: no telemetry.** There are no analytics, phone-home checks, or
-usage counters, and Mono Agent makes no outbound calls on its own behalf.
+**No analytics or usage counters.** The account gate is dormant: it makes no
+implicit adoption, refresh or background account requests. Explicit account and
+library commands still contact monoes.me, and workflows contact their configured
+services. This does not promise that a future enforced build works offline
+without a limit.
 
 **Crash reporting is local by default.** If the CLI crashes, it writes a
 crash report to a file under `~/.monoagent/crashes/` on your machine —
@@ -205,6 +208,20 @@ makes network requests:
    library: browsing, downloads you ask for, and uploads you publish; the
    host is `MONOES_BASE_URL` or https://monoes.me)
 3. Opt-in crash reporting as described above
+4. If a future release enables the account gate: renewing the machine session
+   as work runs (long-running processes refresh at half the token lifetime), and
+   a one-time exchange of an older library login when eligible. These implicit
+   account requests are disabled in this build.
+
+Sign-in sends OAuth client id `monoagent`, the requested scopes and resource
+`https://monoes.me/api/monoagent`, the authorization-code/PKCE or emailed-code
+proof, and, on renewal, the refresh token. With `--email`, the address you type
+is sent too. Revocation sends the token and client id. monoes.me sees the account,
+request time and source IP address. Account requests send no device identifier,
+workflow contents or usage counters. Update requests fetch the signed release manifest
+and download the assets it lists (verified by SHA256, and by Ed25519 signature once a signing key is pinned);
+without a pinned signing key they refuse to install, or fall back to GitHub's
+release metadata only where the build still allows it. A library upload sends the artifact you choose to publish.
 
 Everything else — workflow definitions, execution history, the secrets
 vault, CRM data, and crash reports — stays on your machine.
@@ -224,12 +241,25 @@ that signed in on their own keep working). Nothing is written there until you
 sign in.
 
 The access token is verified on this machine against signing keys built into
-the binary, without a network call. The account gate that uses it is currently
-dormant: no enforcement date is set, so nothing is locked or warned about, and
+the binary, without a network call. The production key set is currently empty;
+a production machine session cannot be verified until those keys are pinned.
+The account gate that uses it is currently dormant: no enforcement date is set, so nothing is locked or warned about, and
 no command contacts monoes.me implicitly. A binary built with `-tags
 devaccount` trusts a development signing key that anyone can sign with; it is
 for testing only, and CI's release guard (`scripts/check-release-tags.sh`) fails
 a release whose binaries carry that tag.
+
+### If the gate is enabled in a future release
+
+Before the enforcement date, gated commands warn; from that date, locked commands
+exit 4 with `login_required`. A token supports at most 24 hours offline from its
+signed issue time. Only `invalid_grant` in answer to a refresh means refusal;
+other errors preserve grace while the token remains valid. An unknown refresh
+outcome is retried for 240 seconds; then this machine drops its refresh token
+and reports `unconfirmed`, preserving its other independent installs. Clock
+rollback can lock work; a fresh verified sign-in resets the clock guard.
+The product check is not a boundary against the OS user, who can rebuild code.
+The current MIT license remains unchanged.
 
 ## Release governance
 
@@ -268,7 +298,7 @@ unidentified-developer warning until that lands.
 
 ### Code signing (in progress)
 
-The macOS CLI binary is currently signed ad-hoc (`codesign --sign -`), which
+The macOS CLI binary is currently signed ad hoc with the hardened runtime (`codesign --options runtime --sign -`), which
 satisfies Gatekeeper's local-execution requirement but carries no verifiable
 publisher identity, and Windows binaries are not yet Authenticode-signed.
 Real Developer ID signing + notarization, and Authenticode signing, are

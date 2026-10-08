@@ -14,7 +14,9 @@ export TMPDIR="$HOME/scratch/agent-tmp" GOTMPDIR="$HOME/scratch/agent-tmp"
 mkdir -p "$W" "$H" "$W/site" "$TMPDIR"
 
 CLI="$W/monoagentcli"
-(cd "$REPO" && go build -o "$CLI" ./cmd/monoagentcli)
+(cd "$REPO" && go build -tags devaccount -o "$CLI" ./cmd/monoagentcli)
+# Keep this devaccount build independent of the production enforcement date.
+export MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z
 mc() { HOME="$H" MONOAGENT_EXTENSION_PORT="$PORT" "$CLI" "$@"; }
 
 cleanup() {

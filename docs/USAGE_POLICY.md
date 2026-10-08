@@ -8,8 +8,14 @@ responsibility sits. This isn't legalese — it's the honest version.
 Mono Agent automates your own accounts, inbox, and tools — it is not a growth,
 engagement, or outreach service for accounts you don't own.
 
-It's a local-first workflow engine: you build automations that run on your
-machine, against services and accounts that are yours, at a pace you control.
+It's a workflow engine that runs on your machine: you build automations
+against services and accounts that are yours, at a pace you control.
+
+The online library requires a monoes.me sign-in; the account gate for local work
+is currently dormant. A future enabled gate will limit offline operation to at
+most 24 hours from a signed token's issue time. See [SECURITY.md](../SECURITY.md).
+
+You control when those workflows run and which services they contact.
 
 ## Your own accounts only
 
