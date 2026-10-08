@@ -311,6 +311,16 @@ func wholeNumber(text string) (int64, bool) {
 	return r.Num().Int64(), true
 }
 
+// outOfRange says whether text is a whole number too large (or small) for an int64, so that
+// the refusal can say the range rather than ask again for a whole number.
+func outOfRange(text string) bool {
+	if !floatForm.MatchString(text) {
+		return false
+	}
+	r, ok := new(big.Rat).SetString(text)
+	return ok && r.IsInt() && !r.Num().IsInt64()
+}
+
 // taskIDArg is a task's number: 12, or "12" or "#12" as a model may write it, or
 // a float that holds it (12.0).
 type taskIDArg int64
@@ -324,6 +334,9 @@ func (id *taskIDArg) UnmarshalJSON(b []byte) error {
 		raw = strings.TrimPrefix(strings.TrimSpace(unquoted), "#")
 	}
 	n, ok := wholeNumber(raw)
+	if !ok && outOfRange(raw) {
+		return errors.New("expected a task's number, such as 12, that fits the supported range")
+	}
 	if !ok || n <= 0 {
 		return errors.New("expected a task's number, such as 12")
 	}
@@ -353,6 +366,9 @@ func (n *numberArg) UnmarshalJSON(b []byte) error {
 		raw = strings.TrimSpace(unquoted)
 	}
 	v, ok := wholeNumber(raw)
+	if !ok && outOfRange(raw) {
+		return errors.New("expected a whole number, such as 20, that fits the supported range")
+	}
 	if !ok {
 		return errors.New("expected a whole number, such as 20")
 	}
