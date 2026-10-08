@@ -325,6 +325,34 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// RedactedMarker replaces the content Redact removes.
+const RedactedMarker = "[redacted]"
+
+// Redact replaces the body (and the title when title is true) of one publication
+// of this profile with RedactedMarker. The entry, URL, kind, platform and
+// timestamps stay; nothing about the old content is kept.
+func (s *Store) Redact(ctx context.Context, id string, title bool) (*Entry, error) {
+	if s.db == nil {
+		return nil, errors.New("publication database unavailable")
+	}
+	q := "UPDATE publications SET body=?, media='[]' WHERE profile_id=? AND id=?"
+	args := []any{RedactedMarker, s.profileID, id}
+	if title {
+		q = "UPDATE publications SET body=?, title=?, media='[]' WHERE profile_id=? AND id=?"
+		args = []any{RedactedMarker, RedactedMarker, s.profileID, id}
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Get(ctx, id)
+}
 func (s *Store) Stats(ctx context.Context) (map[string]interface{}, error) {
 	if s.db == nil {
 		return nil, errors.New("publication database unavailable")
