@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   COLUMNS, normalizeBoard, findTask, applyMove, applyRemove, applyOps, placeFor, isNoopDrop, dropIndex,
-  keyMove, focusTarget, searchBoard,
+  keyMove, focusTarget, matches, filterBoard, remoteChanges, transitions, hostOf, sourceChip, shortAge,
+  claimState, splitMinutes, actorColor, isTypingTarget,
 } from './taskModel.js'
 
 const T0 = Date.parse('2026-10-06T09:00:00Z')
@@ -170,18 +171,130 @@ describe('focusTarget', () => {
   })
 })
 
-describe('searchBoard', () => {
-  const board = normalizeBoard({ tasks: {
-    inbox: [{ id: 1, position: 1, title: 'Fix Login', notes: '' }],
-    ready: [{ id: 2, position: 1, title: 'Write docs', notes: 'about login flow' }],
-  } })
-  it('keeps cards holding every word, in title or notes', () => {
-    const r = searchBoard(board, 'LOGIN fix')
-    expect(r.columns.inbox.map(t => t.id)).toEqual([1])
-    expect(r.columns.ready).toEqual([])
-    expect(searchBoard(board, 'login').columns.ready.map(t => t.id)).toEqual([2])
+describe('keyMove with a search', () => {
+  it('passes only the cards a search shows', () => {
+    const b = normalizeBoard(doc({ ready: [card(3, 'ready'), card(8, 'ready', { title: 'hidden' }), card(4, 'ready')] }))
+    expect(keyMove(filterBoard(b, 't'), 4, 'up')).toEqual({ to: 'ready', place: { where: 'before', ref: 3 } })
   })
-  it('returns the board untouched for a blank query', () => {
-    expect(searchBoard(board, '  ')).toBe(board)
+})
+
+describe('search', () => {
+  const t = card(12, 'inbox', {
+    title: 'Fix the Login test', notes: 'flaky on CI',
+    source: { kind: 'chrome', url: 'https://github.com/x/y', title: 'PR 41', app: '' },
+    claim: { by: 'claude-code#a3f9', until: '', stale: false },
+  })
+  it('needs every word, in any field, in any case', () => {
+    expect(matches(t, 'login FLAKY')).toBe(true)
+    expect(matches(t, 'login missing')).toBe(false)
+    expect(matches(t, 'github.com')).toBe(true)
+    expect(matches(t, 'a3f9')).toBe(true)
+    expect(matches(t, '')).toBe(true)
+  })
+  it('reads #12 as that task only', () => {
+    expect(matches(t, '#12')).toBe(true)
+    expect(matches(t, '#1')).toBe(false)
+  })
+  it('leaves the board as it is without a query', () => {
+    const b = base()
+    expect(filterBoard(b, '  ')).toBe(b)
+    expect(ids(filterBoard(b, '#3'), 'ready')).toEqual([3])
+    expect(ids(filterBoard(b, '#3'), 'inbox')).toEqual([])
+  })
+})
+
+describe('remoteChanges', () => {
+  it('names what an agent did, never what you did', () => {
+    const next = normalizeBoard(doc({
+      inbox: [card(1, 'inbox'), card(2, 'inbox')],
+      ready: [card(4, 'ready')],
+      in_progress: [card(3, 'in_progress', { ...by('bot', 'claimed'), claim: { by: 'bot', until: '', stale: false } })],
+      review: [card(5, 'review', by('bot', 'result'))],
+      done: [card(6, 'done', by('you', 'moved')), card(7, 'done')],
+    }))
+    expect(remoteChanges(base(), next).map(c => [c.id, c.actor, c.kind, c.to])).toEqual([
+      [3, 'bot', 'claimed', 'in_progress'], [5, 'bot', 'result', 'review']])
+  })
+  it('names a card someone added and a claim taken over', () => {
+    const prev = normalizeBoard(doc({ in_progress: [card(5, 'in_progress', { claim: { by: 'bot', until: '', stale: true } })] }))
+    const next = normalizeBoard(doc({
+      inbox: [card(9, 'inbox', by('chrome', 'created', '2026-10-06T09:11:00Z'))],
+      in_progress: [card(5, 'in_progress', { ...by('other', 'reclaimed', '2026-10-06T09:12:00Z'), claim: { by: 'other', until: '', stale: false } })],
+    }))
+    expect(remoteChanges(prev, next).map(c => [c.id, c.actor, c.kind])).toEqual([[9, 'chrome', 'created'], [5, 'other', 'reclaimed']])
+    expect(remoteChanges(null, next)).toEqual([])
+  })
+  it('ignores a comment and a card that only came back into view', () => {
+    const held = { claim: { by: 'bot', until: '', stale: false } }
+    const prev = normalizeBoard(doc({ in_progress: [card(5, 'in_progress', held)] }))
+    const next = normalizeBoard(doc({
+      in_progress: [card(5, 'in_progress', { ...held, ...by('bot', 'comment') })],
+      done: [card(8, 'done', by('bot', 'result'))],
+    }))
+    expect(remoteChanges(prev, next)).toEqual([])
+  })
+  it('keeps the newest three, and nothing across profiles', () => {
+    const prev = normalizeBoard(doc({}))
+    const next = normalizeBoard(doc({ inbox: [1, 2, 3, 4].map(i => card(i, 'inbox', by('chrome', 'created', `2026-10-06T09:1${i}:00Z`))) }))
+    expect(remoteChanges(prev, next).map(c => c.id)).toEqual([2, 3, 4])
+    expect(remoteChanges({ ...prev, profile: { id: 'work', name: 'Work' } }, next)).toEqual([])
+  })
+})
+
+describe('transitions', () => {
+  it('marks new cards and cards just done, and nothing on the first read', () => {
+    const moved = applyMove(base(), 6, 'done', {})
+    const next = { ...moved, columns: { ...moved.columns, inbox: [card(9, 'inbox'), ...moved.columns.inbox] } }
+    const t = transitions(base(), next)
+    expect([...t.entered]).toEqual([9])
+    expect([...t.done]).toEqual([6])
+    expect(transitions(null, next).entered.size).toBe(0)
+  })
+})
+
+describe('card labels', () => {
+  it('shows the domain, the app, or the kind', () => {
+    expect(hostOf('https://www.github.com/x')).toBe('github.com')
+    expect(hostOf('not a url')).toBe('')
+    expect(sourceChip({ source: { kind: 'chrome', url: 'https://www.github.com/x', title: 'PR' } })).toEqual({ kind: 'chrome', text: 'github.com' })
+    expect(sourceChip({ source: { kind: 'chrome', url: '', title: 'Saved page' } })).toEqual({ kind: 'chrome', text: 'Saved page' })
+    expect(sourceChip({ source: { kind: 'os', app: 'Safari' } })).toEqual({ kind: 'os', text: 'Safari' })
+    expect(sourceChip({ source: { kind: 'agent' } })).toEqual({ kind: 'agent', text: '' })
+    expect(sourceChip({ source: { kind: 'app' } })).toEqual({ kind: 'app', text: '' })
+    expect(sourceChip({})).toEqual({ kind: 'cli', text: '' })
+  })
+  it('gives an age in the largest whole unit', () => {
+    const M = 60000
+    const H = 60 * M
+    const D = 24 * H
+    const at = (ms) => shortAge('2026-10-06T09:00:00Z', T0 + ms)
+    expect(at(59 * 1000)).toEqual({ unit: 'now', n: 0 })
+    expect(at(M)).toEqual({ unit: 'm', n: 1 })
+    expect(at(59 * M)).toEqual({ unit: 'm', n: 59 })
+    expect(at(H)).toEqual({ unit: 'h', n: 1 })
+    expect(at(D - 1)).toEqual({ unit: 'h', n: 23 })
+    expect(at(D)).toEqual({ unit: 'd', n: 1 })
+    expect(at(7 * D)).toEqual({ unit: 'w', n: 1 })
+    expect(shortAge('garbage', T0)).toEqual({ unit: 'now', n: 0 })
+  })
+  it('shows a claim live until its lease ends, then stale', () => {
+    const claim = { by: 'claude-code#a3f9', until: '2026-10-06T09:30:00Z', stale: false }
+    expect(claimState(claim, T0)).toMatchObject({ by: 'claude-code#a3f9', initial: 'C', stale: false, minutes: 30 })
+    expect(claimState(claim, Date.parse('2026-10-06T09:30:00Z'))).toMatchObject({ stale: true, minutes: 0 }) // ending exactly now is ended
+    expect(claimState(claim, Date.parse('2026-10-06T09:34:10Z'))).toMatchObject({ stale: true, minutes: 4 })
+    expect(claimState({ ...claim, stale: true }, T0).stale).toBe(true)
+    expect(claimState({ by: '#42', until: '' }, T0)).toMatchObject({ initial: '4', stale: true })
+    expect(claimState(null, T0)).toBeNull()
+    expect(splitMinutes(65)).toEqual({ h: 1, m: 5 })
+  })
+  it('keeps one colour per agent', () => {
+    expect(actorColor('claude-code#a3f9')).toBe(actorColor('claude-code#a3f9'))
+    expect(actorColor('a')).toMatch(/^var\(--/)
+  })
+  it('knows a field from the board', () => {
+    expect(isTypingTarget({ tagName: 'TEXTAREA' })).toBe(true)
+    expect(isTypingTarget({ tagName: 'DIV', isContentEditable: true })).toBe(true)
+    expect(isTypingTarget({ tagName: 'LI' })).toBe(false)
+    expect(isTypingTarget(null)).toBe(false)
   })
 })

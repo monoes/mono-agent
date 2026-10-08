@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Archive, Check, CircleHelp } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
 import { useTaskBoard } from '../lib/useTaskBoard.js'
-import { COLUMNS, findTask, searchBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget } from '../lib/taskModel.js'
+import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget } from '../lib/taskModel.js'
 import TaskDrawer from '../components/TaskDrawer.jsx'
 import { useFlip } from '../lib/useFlip.js'
 
@@ -78,12 +78,35 @@ export default function Tasks({ isActive = true }) {
   const [shell, setShell] = useState(null) // null until agentShell() answers
   const dragging = useRef(null)
   const root = useRef(null)
+  const refocus = useRef(null) // a card moved by key: a move to another column remounts it
 
   useFlip(root)
   useEffect(() => { tasksApi.agentShell().then(v => setShell(v || '')) }, [])
   const readOnly = shell === null || !!shell
-  const shown = useMemo(() => searchBoard(b.board, query), [b.board, query])
+  const shown = useMemo(() => filterBoard(b.board, query), [b.board, query])
   const open = openId && b.board ? findTask(b.board, openId)?.task : null
+
+  // No dependency list: any render may have remounted the card the keys moved.
+  useLayoutEffect(() => {
+    const id = refocus.current
+    if (!id) return
+    const el = root.current?.querySelector(`[data-task-id="${id}"]`)
+    if (!el) return
+    refocus.current = null
+    if (document.activeElement !== el) el.focus()
+  })
+
+  useEffect(() => {
+    if (!openId) return undefined
+    // Escape in a field only leaves it (an edit in progress is not lost); elsewhere it closes the drawer.
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return
+      if (isTypingTarget(e.target)) e.target.blur()
+      else setOpenId(null)
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [openId])
 
   const focusCard = (id) => root.current?.querySelector(`[data-task-id="${id}"]`)?.focus()
 
@@ -96,7 +119,7 @@ export default function Tasks({ isActive = true }) {
     if (e.shiftKey || e.altKey) {
       if (readOnly) return
       const m = keyMove(shown, task.id, key)
-      if (m && !m.blocked) b.move(task.id, m.to, m.place)
+      if (m && !m.blocked) { refocus.current = task.id; b.move(task.id, m.to, m.place) }
       return
     }
     const next = focusTarget(shown, task.id, key)

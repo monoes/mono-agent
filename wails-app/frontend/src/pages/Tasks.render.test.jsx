@@ -51,6 +51,30 @@ describe('Tasks page', () => {
     await waitFor(() => expect(api.move).toHaveBeenCalledWith(2, 'ready', { where: '' }))
   })
 
+  it('keeps the focus on a card moved to another column by key', async () => {
+    api.move.mockImplementation(async () => {
+      api.board.mockResolvedValue({ rev: 2, counts: {}, tasks: { inbox: [card(1)], ready: [card(2, { notes: 'needle' }), card(3)] } })
+      return { id: 2 }
+    })
+    render(<Tasks />)
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Task 2' }), { key: 'ArrowRight', shiftKey: true })
+    const ready = await screen.findByRole('region', { name: 'Ready' })
+    await waitFor(() => expect(within(ready).getByRole('button', { name: 'Task 2' })).toHaveFocus())
+  })
+
+  it('closes the drawer on Escape, but only leaves a field it is typed in', async () => {
+    render(<Tasks />)
+    fireEvent.click(await screen.findByText('Task 1'))
+    const drawer = await screen.findByRole('dialog')
+    const title = within(drawer).getByLabelText('Title')
+    title.focus()
+    fireEvent.keyDown(title, { key: 'Escape' })
+    expect(title).not.toHaveFocus()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
   it('quick-adds to Ready straight into Ready', async () => {
     render(<Tasks />)
     const ready = await screen.findByRole('region', { name: 'Ready' })
