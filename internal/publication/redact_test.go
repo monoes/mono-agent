@@ -10,7 +10,7 @@ func TestRedactKeepsEntryAndIsProfileScoped(t *testing.T) {
 	mine := testStore(t)
 	other := NewStore(mine.db, "other")
 	ctx := context.Background()
-	e, err := mine.Register(ctx, Entry{Platform: "blog", Kind: "post", Title: "Secret title", Body: "secret body", URL: "https://example.com/p"})
+	e, err := mine.Register(ctx, Entry{Platform: "blog", Kind: "post", Title: "Secret title", Body: "secret body", URL: "https://example.com/p", Media: []string{"/tmp/secret-photo.png"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,6 +21,9 @@ func TestRedactKeepsEntryAndIsProfileScoped(t *testing.T) {
 		t.Fatal("other profile changed the entry")
 	}
 	r, err := mine.Redact(ctx, e.ID, false)
+	if err == nil && len(r.Media) != 0 {
+		t.Fatalf("media survived a redact: %v", r.Media)
+	}
 	if err != nil || r.Body != RedactedMarker || r.Title != "Secret title" || r.URL != e.URL || r.PublishedAt != e.PublishedAt || r.RecordedAt != e.RecordedAt {
 		t.Fatalf("body redact: %+v %v", r, err)
 	}

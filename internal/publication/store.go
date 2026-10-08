@@ -336,10 +336,10 @@ func (s *Store) Redact(ctx context.Context, id string, title bool) (*Entry, erro
 	if s.db == nil {
 		return nil, errors.New("publication database unavailable")
 	}
-	q := "UPDATE publications SET body=? WHERE profile_id=? AND id=?"
+	q := "UPDATE publications SET body=?, media='[]' WHERE profile_id=? AND id=?"
 	args := []any{RedactedMarker, s.profileID, id}
 	if title {
-		q = "UPDATE publications SET body=?, title=? WHERE profile_id=? AND id=?"
+		q = "UPDATE publications SET body=?, title=?, media='[]' WHERE profile_id=? AND id=?"
 		args = []any{RedactedMarker, RedactedMarker, s.profileID, id}
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
