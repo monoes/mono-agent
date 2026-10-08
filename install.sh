@@ -191,6 +191,19 @@ install_from_manifest() {
 
   flat="$(tr '\n\r\t' '   ' < "${TMP_DIR}/manifest.json")"
   TAG="$(json_field "$flat" version)"
+  # expires_at (optional, covered by the signature): RFC 3339 UTC as written by
+  # cmd/release-manifest. Same UTC layout, so a string compare orders it. Any
+  # other layout is refused rather than guessed at.
+  if [ "$NO_VERIFY" -ne 1 ]; then
+    m_exp="$(json_field "$flat" expires_at)"
+    if [ -n "$m_exp" ]; then
+      printf '%s' "$m_exp" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+        || err "the manifest expires_at '${m_exp}' is not a UTC RFC 3339 time. Nothing was installed."
+      m_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      [ "$m_exp" \> "$m_now" ] \
+        || err "the manifest expired at ${m_exp}; ask the maintainers for a fresh release. Nothing was installed."
+    fi
+  fi
   # Asset objects hold no nested braces, so each is a {...} with no inner { or }.
   entry=""
   while IFS= read -r obj; do

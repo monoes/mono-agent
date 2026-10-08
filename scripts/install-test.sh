@@ -120,6 +120,11 @@ cat > "$web/manifest.json" <<EOF
 EOF
 run bad-host fail "not https on an allowed host" MONOAGENT_TEST_ASSET_URL_PREFIX=""
 
+# 7e. validly signed but expired manifest.
+write_manifest "$asset" "$(sha "$web/$asset")"
+sed 's/"schema":1,/"schema":1,"expires_at":"2020-01-01T00:00:00Z",/' "$web/manifest.json" > "$work/m3" && cp "$work/m3" "$web/manifest.json"; sign
+run expired fail "expired" MONOAGENT_RELEASE_PUBKEY="$pub"
+
 # 8. no asset for this platform.
 printf '{"schema":1,"version":"v9.9.9","assets":[]}' > "$web/manifest.json"
 run no-asset fail "no CLI asset"
