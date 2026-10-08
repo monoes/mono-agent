@@ -92,6 +92,27 @@ jobs:
       - name: Run doctor smoke test
         run: scripts/doctor-smoke.sh "$RUNNER_TEMP/monoagentcli"
 
+  # The mandatory monoes.me account (docs/mastermind/specs/2026-10-05-monoes-account-gate-design.md,
+  # section 11): the real binary, built with the devaccount tag, against a fake monoes.me. Locked,
+  # sign in, ok, blocked, unreachable, grace, expired, the warn period, every door and one operation
+  # through every process type and entry point, so a path that forgot to install the guard fails here
+  # and not for signed-in users. It must pass before release R.
+  account-smoke:
+    name: Account gate smoke (devaccount)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Vet with the dev tag
+        run: go vet -tags devaccount ./internal/account/... ./internal/accountsmoke/... ./cmd/monoagentcli/
+      - name: Account tests with the dev tag
+        run: go test -race -tags devaccount ./internal/account/... -count=1
+      - name: Real-binary smoke
+        run: go test -tags devaccount ./internal/accountsmoke/ -count=1 -timeout 25m -v
+
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against
   # the real OpenAPI 3.0 meta-schema (not just YAML syntax) so a hand-edited
