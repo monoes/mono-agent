@@ -295,8 +295,14 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     if (!isOpen || hasScannedRef.current) return
     hasScannedRef.current = true
     setRuntimesLoading(true)
+    setScanError('')
+    setMonomindMissing(false)
     cachedAgentScan().then(res => {
       if (!res || res.error) {
+        // A scan that failed is tried again the next time the panel opens: monomind can be
+        // killed by a timeout while the machine is overloaded, and the cause is usually
+        // gone by then. A scan that worked is not repeated.
+        hasScannedRef.current = false
         const msg = res?.error || ''
         if (isMonomindNotFound(msg)) setMonomindMissing(true)
         else setScanError(msg || 'the agent runtime scan failed')

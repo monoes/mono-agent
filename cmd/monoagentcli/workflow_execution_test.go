@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestWorkflowExecutionDetail(t *testing.T) {
 	}
 }
 
-// startMonoagentLookalike runs a copy of sleep whose command line contains
+// startMonoagentLookalike runs a symlink to sleep whose command line contains
 // "monoagent", so signalWorkflowPID accepts it as one of ours.
 func startMonoagentLookalike(t *testing.T) *exec.Cmd {
 	t.Helper()
@@ -86,12 +87,10 @@ func startMonoagentLookalike(t *testing.T) *exec.Cmd {
 	if err != nil {
 		t.Skip("no sleep binary")
 	}
-	raw, err := os.ReadFile(sleepBin)
-	if err != nil {
-		t.Skip(err)
-	}
 	bin := filepath.Join(t.TempDir(), "monoagentcli-lookalike")
-	if err := os.WriteFile(bin, raw, 0o755); err != nil {
+	// Keep the system binary intact: copying a signed executable can be
+	// rejected by macOS while a symlink retains our identifying command line.
+	if err := os.Symlink(sleepBin, bin); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "30")
@@ -99,21 +98,26 @@ func startMonoagentLookalike(t *testing.T) *exec.Cmd {
 		t.Skipf("cannot start %s: %v", bin, err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	waitForExec(t, cmd.Process.Pid)
+	waitForExec(t, cmd.Process.Pid, filepath.Base(bin))
 	return cmd
 }
 
-// waitForExec blocks until pid's command line is readable: Start returns
-// after fork but possibly before exec, when it still reads back empty.
-func waitForExec(t *testing.T, pid int) {
+// waitForExec blocks until pid's command line contains want. Readable alone
+// is not enough: between fork and exec the child reads back as a copy of
+// this test binary, whose name also contains "monoagent". The wait is
+// bounded by a deadline, not an iteration count, so a loaded machine only
+// makes it slower. Only Linux reads the full argv, so elsewhere (where `ps
+// comm=` shows whatever the OS reports) readable is all that is checked.
+func waitForExec(t *testing.T, pid int, want string) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
-		if _, alive, err := readProcessCommandLine(pid); err == nil && alive {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if cmd, alive, err := readProcessCommandLine(pid); err == nil && alive && (runtime.GOOS != "linux" || strings.Contains(cmd, want)) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("pid %d never became inspectable", pid)
+	t.Fatalf("pid %d never showed %q in its command line", pid, want)
 }
 
 func addRunningExecution(t *testing.T, db *storage.Database, id string, pid int) {
@@ -164,11 +168,17 @@ func TestWorkflowCancelSignalsAndMarks(t *testing.T) {
 	if st, hil := executionStatus(t, db, "e-run"); st != "CANCELLED" || hil != "rejected" {
 		t.Fatalf("status %q, review %q", st, hil)
 	}
+	// Wait is the only way to observe the exit (a dead child stays a zombie
+	// until reaped); the bound is generous so a loaded machine can't flake it.
 	done := make(chan error, 1)
 	go func() { done <- proc.Wait() }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+		ws, ok := proc.ProcessState.Sys().(syscall.WaitStatus)
+		if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+			t.Fatalf("the process was not ended by SIGTERM: %v", proc.ProcessState)
+		}
+	case <-time.After(30 * time.Second):
 		t.Fatal("the execution's process was not stopped")
 	}
 }
@@ -208,7 +218,7 @@ func TestWorkflowCancelRefusesForeignProcess(t *testing.T) {
 		t.Skip(err)
 	}
 	t.Cleanup(func() { _ = sleep.Process.Kill(); _ = sleep.Wait() })
-	waitForExec(t, sleep.Process.Pid)
+	waitForExec(t, sleep.Process.Pid, "sleep")
 	addRunningExecution(t, db, "e-reused", sleep.Process.Pid)
 
 	if _, err := cancelJSON(t, cfg, "e-reused"); err == nil || !strings.Contains(err.Error(), "refusing to signal non-monoagent process") {

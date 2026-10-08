@@ -8,7 +8,7 @@ import { api } from '../../services/api.js'
 import RoleAutomationsSection, { EffectiveTools } from './RoleAutomationsSection.jsx'
 import RoleFullAccessSection from './RoleFullAccessSection.jsx'
 import { declaresFull } from './fullAccess.jsx'
-import { runtimeLabel } from '../../lib/runtimeLabels.js'
+import RuntimeSelect from './RuntimeSelect.jsx'
 
 const RUNTIME_OPTIONS = [
   'claude', 'kimicode', 'opencode', 'vercel', 'codex', 'antigravity',
@@ -100,7 +100,7 @@ export default function RoleInspector({
   // Full access (#205): this role's `org status` roles_access entry, if any.
   // orgRuntime is the org's default runtime, which a role without its own
   // runs on.
-  fullAccess = null, onAccessChanged, orgRuntime = '',
+  fullAccess = null, onAccessChanged, orgRuntime = '', sectionsOrg = false,
 }) {
   const [title, setTitle] = useState(node?.title || '')
   const [label, setLabel] = useState('')
@@ -452,14 +452,12 @@ export default function RoleInspector({
       {/* Runtime */}
       <section>
         <div className="form-label">Runtime</div>
-        <select
-          className="form-select"
+        <RuntimeSelect
           value={node.rest?.runtime ?? ''}
-          onChange={e => onPatch({ runtime: e.target.value })}
-        >
-          <option value="">(inherit org default)</option>
-          {RUNTIME_OPTIONS.map(r => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
-        </select>
+          options={RUNTIME_OPTIONS}
+          sectionsOrg={sectionsOrg}
+          onChange={runtime => onPatch({ runtime })}
+        />
       </section>
 
       {/* Model / provider name / budgets */}

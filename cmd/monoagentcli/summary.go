@@ -28,7 +28,7 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "summary",
 		Short: "At-a-glance roll-up of everything that needs attention (read-only, local, fast)",
 		Long: "Counts across workflows, runs, schedules, approvals, people, captures, applications, " +
-			"automation packages, recordings, Jev usage, logins, the vault and the background services. " +
+			"automation packages, recordings, Jev usage, logins, the vault, the profile's task board and the background services. " +
 			"Read-only and local: it never calls Jev, monomind or the network, so it is safe to poll. " +
 			"A section that fails reports \"error\" inside itself; the command still succeeds. " +
 			"The vault section is counts only. For orgs, use `org summary`.",
@@ -40,6 +40,9 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 			want, err := parseSummarySections(sections)
 			if err != nil {
 				return err
+			}
+			if allProfiles && want["tasks"] {
+				return errInvalidInput("a task board is one profile's, so --all-profiles has no tasks section: use --profile with --section tasks")
 			}
 			db, err := initDB(cfg)
 			if err != nil {
@@ -185,6 +188,13 @@ func printSummaryText(out io.Writer, s summary.Summary) {
 	}
 	if v := s.Vault; v != nil {
 		fmt.Fprintf(out, "vault         %d secrets, %d images\n", v.Secrets, v.Images)
+	}
+	if tk := s.Tasks; tk != nil && tk.Inbox+tk.Ready+tk.InProgress+tk.Review > 0 { // a line only when there is open work
+		line := fmt.Sprintf("tasks         %d inbox, %d ready, %d in progress (%d stale), %d to review", tk.Inbox, tk.Ready, tk.InProgress, tk.Stale, tk.Review)
+		if tk.Next != nil {
+			line += fmt.Sprintf(" · next #%d %s", tk.Next.ID, taskCut(tk.Next.Title, 60))
+		}
+		fmt.Fprintln(out, line)
 	}
 	if sv := s.Services; sv != nil {
 		fmt.Fprintf(out, "services      daemon %s · bridge %s · org serve %s\n",

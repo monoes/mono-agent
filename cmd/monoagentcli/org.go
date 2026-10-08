@@ -43,6 +43,8 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgLogsCmd(root),
 		newOrgReportCmd(root),
 		newOrgCostsCmd(root),
+		newOrgBudgetCmd(root),
+		newOrgEstimateCmd(root),
 		newOrgFlowCmd(root),
 		newOrgQuestionsCmd(root),
 		newOrgApprovalsCmd(root),
@@ -56,6 +58,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgGateRejectCmd(root),
 		newOrgEventsCmd(root),
 		newOrgValidateCmd(root),
+		newOrgSectionsRuntimesCmd(),
 		newOrgReloadCmd(root),
 		newOrgRoleCmd(root),
 		newOrgCreateJSONCmd(env),
@@ -73,6 +76,8 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgSendCmd(env),
 		newOrgChatCmd(env),
 		newOrgQueuedCmd(env),
+		newOrgDocumentsCmd(env),
+		newOrgScheduleAuditCmd(env),
 		newOrgRenameCmd(env),
 		newOrgDeleteCmd(env),
 		newOrgAutomationRoleCmd(env),
@@ -196,6 +201,57 @@ func newOrgCostsCmd(root func() string) *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: most recent run)")
+	return c
+}
+
+func newOrgEstimateCmd(root func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "estimate <name>",
+		Short: "Show monomind's pre-run cost estimate, with its \"stale rates\" note, without starting a run",
+		Long: "monomind prints the estimate only at the start of `org run`. This reads it with " +
+			"`org run --yes --budget-usd=-1`, which aborts before any session starts, and refuses " +
+			"first when an `org serve` daemon is live (any heartbeat age with a live pid), the org is " +
+			"unsigned or fails `org validate`, or monomind is older than the tested version (each would " +
+			"give no estimate or start a real run). `org run` may reconcile a stale run first, which can " +
+			"rewrite the org's runtime.json. The text is monomind's, verbatim.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			est, err := monomind.OrgCostEstimate(cmd.Context(), root(), args[0])
+			if err != nil {
+				return err
+			}
+			out, err := json.Marshal(est)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(out)
+		},
+	}
+}
+
+func newOrgBudgetCmd(root func() string) *cobra.Command {
+	var run string
+	c := &cobra.Command{
+		Use:   "budget <name>",
+		Short: "Show per-section spend against allocation, role caps and soft closure",
+		Long: "monomind 2.24 reports no per-section spend, so this derives it in one place " +
+			"(internal/monomind.SectionBudgets) from the org definition and the run's usage and " +
+			"section-budget audit events. The org total equals the sum of the usage events' cost_usd, " +
+			"the figure `org report` prints.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rep, err := monomind.OrgBudget(cmd.Context(), root(), args[0], run)
+			if err != nil {
+				return err
+			}
+			out, err := json.Marshal(rep)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(out)
+		},
+	}
+	c.Flags().StringVar(&run, "run", "", "Specific run id (default: current run)")
 	return c
 }
 

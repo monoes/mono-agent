@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,21 @@ func (a *App) GetOrgCosts(name, run string) string {
 		return a.runOrgCLI("costs", name, "--run", run)
 	}
 	return a.runOrgCLI("costs", name)
+}
+
+// GetOrgBudget is the per-section spend, allocation, role caps and soft
+// closure of a run (`monoagentcli org budget`); run empty = current run.
+func (a *App) GetOrgBudget(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("budget", name, "--run", run)
+	}
+	return a.runOrgCLI("budget", name)
+}
+
+// GetOrgEstimate is monomind's pre-run cost estimate with its "stale rates"
+// note (`monoagentcli org estimate`); an error payload when unavailable.
+func (a *App) GetOrgEstimate(name string) string {
+	return a.runOrgCLI("estimate", name)
 }
 
 func (a *App) GetOrgFlow(name, run string) string {
@@ -416,10 +432,7 @@ func (a *App) RunOrg(orgName, task string) string {
 		message := ""
 		if waitErr != nil {
 			status = "error"
-			message = stderrTail.String()
-			if message == "" {
-				message = waitErr.Error()
-			}
+			message = orgRunFailureMessage(stderrTail.String(), waitErr)
 			a.emitLog("ORG", "ERROR", fmt.Sprintf("org run %s exited: %s", orgName, message))
 		} else {
 			a.emitLog("ORG", "INFO", fmt.Sprintf("org run %s finished", orgName))
@@ -428,6 +441,33 @@ func (a *App) RunOrg(orgName, task string) string {
 	}()
 
 	return `{"ok":true}`
+}
+
+// goLogLine matches the Go log lines (timestamped) monoagentcli's startup
+// writes to stderr before anything the command itself reports.
+var goLogLine = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} `)
+
+// orgRunFailureMessage is what the toast says when `org run` exits with an
+// error: what the command reported last, without the startup log lines
+// before it. For a start monomind refused (host preflight R6, daemon lock
+// R1) that is monomind's own line and the CLI's hint on what to do (the CLI
+// prints exactly that, internal/monomind OrgStartRefusal); else the exit
+// error.
+func orgRunFailureMessage(tail string, waitErr error) string {
+	lines := strings.Split(tail, "\n")
+	last := -1
+	for i, l := range lines {
+		if goLogLine.MatchString(l) {
+			last = i
+		}
+	}
+	if msg := strings.TrimSpace(strings.Join(lines[last+1:], "\n")); msg != "" {
+		return msg
+	}
+	if tail != "" {
+		return tail
+	}
+	return waitErr.Error()
 }
 
 // tailCapture keeps the last few KB written to it — used to capture a

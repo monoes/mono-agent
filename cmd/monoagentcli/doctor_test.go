@@ -12,8 +12,45 @@ import (
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/health"
 )
+
+// Skills move from flat <name>.md files to <name>/SKILL.md folders. The old
+// flat file goes only when it is exactly what a release wrote; an edited
+// one stays.
+func TestClaudeSkillsMigrateFromFlatFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	skills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	same, edited := claudeSkillNames[0], claudeSkillNames[1]
+	want, err := data.SkillsFS.ReadFile("skills/" + same + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skills, same+".md"), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skills, edited+".md"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runClaudeFirstRunCheck()
+	for _, name := range claudeSkillNames {
+		if _, err := os.Stat(claudeSkillFile(skills, name)); err != nil {
+			t.Errorf("%s/SKILL.md not installed: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(skills, same+".md")); !os.IsNotExist(err) {
+		t.Errorf("identical flat file should be removed: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(skills, edited+".md")); string(b) != "mine" {
+		t.Errorf("edited flat file must stay, got %q", b)
+	}
+}
 
 // runDoctor runs `monoagentcli <args>` against a throwaway HOME.
 func runDoctor(t *testing.T, home string, args ...string) (string, error) {
@@ -161,7 +198,7 @@ func TestClaudeSkillsStateAndMCPRegistration(t *testing.T) {
 	if err := installClaudeSkill(false); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(home, ".claude", "skills", claudeSkillNames[0]), []byte("old"), 0o644)
+	os.WriteFile(claudeSkillFile(filepath.Join(home, ".claude", "skills"), claudeSkillNames[0]), []byte("old"), 0o644)
 	if _, missing, stale := claudeSkillsState(); len(missing) != 0 || len(stale) != 1 {
 		t.Fatalf("missing %v stale %v", missing, stale)
 	}
@@ -252,7 +289,10 @@ func TestFirstRunCheckKeepsExistingSkills(t *testing.T) {
 	if err := os.MkdirAll(skills, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	edited := filepath.Join(skills, claudeSkillNames[0])
+	edited := claudeSkillFile(skills, claudeSkillNames[0])
+	if err := os.MkdirAll(filepath.Dir(edited), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(edited, []byte("my own notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +301,7 @@ func TestFirstRunCheckKeepsExistingSkills(t *testing.T) {
 		t.Fatalf("an existing skill was rewritten: %q", b)
 	}
 	for _, name := range claudeSkillNames[1:] {
-		if _, err := os.Stat(filepath.Join(skills, name)); err != nil {
+		if _, err := os.Stat(claudeSkillFile(skills, name)); err != nil {
 			t.Errorf("missing skill %s was not installed: %v", name, err)
 		}
 	}
