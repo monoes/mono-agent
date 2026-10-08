@@ -1227,5 +1227,81 @@
     "couldNotSend": "No se pudo enviar: {{error}}",
     "openAsBubble": "Abrir como burbuja",
     "openAsBubbleNamed": "Abrir {{name}} como burbuja de chat"
+  },
+  "account": {
+    "checking": "Comprobando tu cuenta de monoes.me…",
+    "gate": {
+      "notLoggedIn": {
+        "title": "Inicia sesión en MonoAgent",
+        "body": "MonoAgent necesita una cuenta de monoes.me. Inicia sesión para continuar; tus datos siguen en este equipo."
+      },
+      "expired": {
+        "title": "Tu sesión ha caducado",
+        "body": "MonoAgent no pudo conectar con monoes.me durante más de un día. Revisa tu conexión y vuelve a iniciar sesión."
+      },
+      "refused": {
+        "title": "monoes.me cerró esta sesión",
+        "body": "Esta cuenta ya no puede usar MonoAgent. Si crees que es un error, contacta con el soporte de monoes.me. Puedes iniciar sesión con otra cuenta."
+      },
+      "clock": {
+        "title": "El reloj de este equipo parece incorrecto",
+        "body": "MonoAgent vio una hora que no encaja con el reloj de monoes.me. Ajusta la fecha y la hora y vuelve a iniciar sesión."
+      },
+      "keyUnknown": {
+        "title": "Esta versión no puede verificar tu sesión",
+        "body": "monoes.me firma las sesiones con una clave más nueva que la que conoce esta versión de MonoAgent. Actualiza MonoAgent y vuelve a iniciar sesión."
+      },
+      "unconfirmed": {
+        "title": "Este equipo dejó de usar su sesión guardada",
+        "body": "Es posible que monoes.me recibiera una renovación cuya respuesta nunca llegó, así que este equipo dejó de usar su sesión guardada para proteger tus otras instalaciones. Vuelve a iniciar sesión en este equipo."
+      },
+      "invalid": {
+        "title": "No se pudo verificar tu sesión",
+        "body": "La sesión guardada está dañada o no se emitió para MonoAgent. Vuelve a iniciar sesión."
+      },
+      "cliNotFound": {
+        "title": "MonoAgent no encuentra su herramienta de línea de comandos",
+        "body": "MonoAgent necesita monoagentcli para comprobar tu sesión y no lo encuentra. Reinstala MonoAgent o apunta MONOAGENTCLI_BIN a un monoagentcli actual."
+      },
+      "cliTooOld": {
+        "title": "La herramienta de línea de comandos de MonoAgent está desactualizada",
+        "body": "El monoagentcli que encontró la aplicación no admite cuentas de monoes.me o habla una versión más nueva que la aplicación. Actualiza MonoAgent para poner ambos al día."
+      },
+      "cliFailed": {
+        "title": "MonoAgent no pudo comprobar tu sesión",
+        "body": "monoagentcli no dio una respuesta. Inténtalo de nuevo o actualiza MonoAgent."
+      },
+      "details": "Detalles: {{message}}",
+      "retry": "Intentar de nuevo"
+    },
+    "update": {
+      "button": "Actualizar MonoAgent",
+      "available": "Hay una versión {{version}} disponible.",
+      "working": "Actualizando…",
+      "done": "Actualizado. MonoAgent se reinicia para terminar.",
+      "upToDate": "MonoAgent ya está al día.",
+      "failed": "La actualización falló: {{message}}"
+    },
+    "grace": {
+      "unreachable": "No se puede conectar con monoes.me.",
+      "serverError": "monoes.me no responde como debe.",
+      "keyringUnavailable": "MonoAgent no puede abrir el almacén de claves para renovar tu sesión.",
+      "unconfirmed": "Es posible que monoes.me recibiera una renovación cuya respuesta nunca llegó, así que este equipo ya no puede renovar su sesión. Funciona hasta el {{when}} ({{left}}); vuelve a iniciar sesión antes.",
+      "keepsWorking": "Tu sesión sigue funcionando sin conexión hasta el {{when}} ({{left}})."
+    },
+    "time": {
+      "hours_one": "queda {{count}} hora",
+      "hours_other": "quedan {{count}} horas",
+      "minutes_one": "queda {{count}} minuto",
+      "minutes_other": "quedan {{count}} minutos"
+    },
+    "warn": {
+      "text": "Desde el {{date}} hará falta una sesión de monoes.me.",
+      "signIn": "Iniciar sesión"
+    },
+    "banner": {
+      "dismiss": "Descartar",
+      "close": "Cerrar"
+    }
   }
 }
