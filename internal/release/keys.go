@@ -11,10 +11,12 @@ import (
 
 // pinnedReleaseKeys are the release signing public keys this build trusts,
 // one "<key-id> <base64 ed25519 public key>" line each (the line
-// `monoagentcli release keygen` prints). It is EMPTY until the owner generates
-// the key and pastes the line here; with no key the signed-manifest path is
-// unavailable, never trusted.
-var pinnedReleaseKeys = []string{}
+// `monoagentcli release keygen` prints). With no key the signed-manifest path
+// is unavailable, never trusted. The private half is the RELEASE_SIGNING_KEY
+// secret of the release environment (docs/release-runbook.md).
+var pinnedReleaseKeys = []string{
+	"3b3e972f459a3151 /GDrvFCQb64EBe+tYDkFWNFXeiwysdr4sAB8kc+b2kU=",
+}
 
 // revokedReleaseKeyIDs lists key ids whose signatures are refused even while the key is still in
 // pinnedReleaseKeys, so a release can ship with the old and the new key both pinned and the old
