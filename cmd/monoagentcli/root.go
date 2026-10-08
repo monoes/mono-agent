@@ -85,6 +85,7 @@ func newRootCmd() *cobra.Command {
 		newNodejsCmd(cfg),
 		newVersionCmd(),
 		newUpdateCmd(cfg),
+		newReleaseCmd(),
 		newWorkflowCmd(cfg),
 		newDaemonCmd(cfg),
 		newExtensionCmd(cfg),

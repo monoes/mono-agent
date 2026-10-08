@@ -193,7 +193,7 @@ the full run list, use `monoagentcli --json workflow executions --all --limit N`
 - `monoagentcli update` replaces this binary with the latest release.
 - `update --check [--current <v>]` only reports whether a newer release exists.
 - `update --app <exe> [--current <v>]` updates the desktop app at that path. On Linux it also updates the `monoagentcli` bundled next to the app.
-- Every download must match the release's `SHA256SUMS.txt`, or nothing is installed.
+- Every download must match the release's signed `manifest.json` (Ed25519 signature by a key pinned in `internal/release/keys.go`, then the asset's size and SHA-256), or nothing is installed. While no key is pinned and `release.AllowLegacyGitHubUpdates` is true, the GitHub release's `SHA256SUMS.txt` is used instead; a manifest that fails a check never falls back. Older releases are refused unless `update --force`. Maintainers: `release keygen` stores the private key in the OS keychain and prints the line to pin; `release verify <manifest> <sig> [--pubkey]` checks a signature.
 - With `--json`, progress is NDJSON on stderr and the result goes to stdout.
 
 ### What the desktop app calls

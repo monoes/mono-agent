@@ -47,6 +47,7 @@ var accountClasses = map[string]string{
 	"doctor":         classOpen,
 	"doctor fix":     classOpen,
 	"setup":          classOpen,
+	"release":        classOpen,
 	"account":        classOpen,
 	"library login":  classOpen,
 	"library logout": classOpen,

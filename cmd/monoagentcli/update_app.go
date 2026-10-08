@@ -41,7 +41,8 @@ func runUpdateApp(cmd *cobra.Command, cfg *globalConfig, appPath, current string
 			fmt.Fprintln(cmd.OutOrStdout(), msg)
 		}
 	}
-	res, err := updateApp(cmd, appPath, current, progress)
+	force, _ := cmd.Flags().GetBool("force")
+	res, err := updateApp(cmd, appPath, current, force, progress)
 	if err != nil {
 		if !cfg.JSONOutput {
 			return err
@@ -64,7 +65,7 @@ func runUpdateApp(cmd *cobra.Command, cfg *globalConfig, appPath, current string
 	return nil
 }
 
-func updateApp(cmd *cobra.Command, appPath, current string, progress func(string)) (appUpdateResult, error) {
+func updateApp(cmd *cobra.Command, appPath, current string, force bool, progress func(string)) (appUpdateResult, error) {
 	if appPath == "" {
 		return appUpdateResult{}, errInvalidInput("--app needs the path of the desktop app's executable")
 	}
@@ -75,6 +76,9 @@ func updateApp(cmd *cobra.Command, appPath, current string, progress func(string
 		Context:       cmd.Context(),
 		Client:        http.DefaultClient,
 		APIURL:        latestReleaseURL,
+		Release:       releaseClient(),
+		Current:       current,
+		Force:         force,
 		GOOS:          runtime.GOOS,
 		GOARCH:        runtime.GOARCH,
 		Exe:           appPath,

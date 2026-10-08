@@ -23,6 +23,7 @@ var (
 		"library login", "library logout", "library status",
 		"ref", "ref account", "ref api", "ref commands", "ref connections", "ref crawling", "ref examples", "ref expressions",
 		"ref node", "ref nodes", "ref org", "ref publication", "ref tasks", "ref templates", "ref workflow",
+		"release", "release keygen", "release verify",
 		"setup", "update", "version",
 	}
 	pinnedServe = []string{"daemon", "extension serve", "httpapi", "mcp"}
