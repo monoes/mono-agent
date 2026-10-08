@@ -89,6 +89,11 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "invalid_grant", "error_description": "bad code or verifier"})
 			return
 		}
+		if g.user != nil && s.blocked[g.user.ID] {
+			// A code issued before Block is a sign-in Block ends, like every token the user holds.
+			writeJSON(w, 400, map[string]string{"error": "invalid_grant", "error_description": "the account is blocked"})
+			return
+		}
 		if res := f.Get("resource"); res != "" {
 			g.resource = res
 		}

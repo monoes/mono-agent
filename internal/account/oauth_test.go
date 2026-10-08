@@ -113,10 +113,9 @@ func TestDiscoverPinsEveryEndpointToTheBaseHost(t *testing.T) {
 		ep.RevocationEndpoint != srv.URL+"/api/auth/oauth2/revoke" {
 		t.Fatalf("endpoints %+v, %v", ep, err)
 	}
-	dead := httptest.NewServer(nil)
-	dead.Close()
-	ep, err = account.DiscoverEndpoints(context.Background(), http.DefaultClient, dead.URL)
-	if err == nil || ep.TokenEndpoint != dead.URL+"/api/auth/oauth2/token" {
+	dead := refusedURL(t)
+	ep, err = account.DiscoverEndpoints(context.Background(), http.DefaultClient, dead)
+	if err == nil || ep.TokenEndpoint != dead+"/api/auth/oauth2/token" {
 		t.Fatalf("an unreachable server must set the error and still give the defaults: %+v, %v", ep, err)
 	}
 

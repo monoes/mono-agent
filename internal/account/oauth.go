@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // OAuthEndpoints is the part of the authorization server metadata (RFC 8414) MonoAgent uses.
@@ -91,7 +93,7 @@ func pinToBase(baseURL, endpoint, fallback string) string {
 type AuthorizeOptions struct {
 	Open        func(string) error // opens the authorization URL (the system browser); nil = don't
 	OnURL       func(string)       // told the authorization URL before Open runs
-	Timeout     time.Duration      // how long to wait for the redirect; default 5 minutes
+	Timeout     time.Duration      // how long to wait for the redirect back from the browser (only that wait, not the token exchange after it); default 5 minutes
 	Label       string             // prefixes the errors, e.g. "library login"; default "sign-in"
 	SuccessText string             // what the browser tab says once the sign-in went through
 }
@@ -110,6 +112,7 @@ func AuthorizeInBrowser(ctx context.Context, endpoint string, params url.Values,
 	if o.Label == "" {
 		o.Label = "sign-in"
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -148,12 +151,17 @@ func AuthorizeInBrowser(ctx context.Context, endpoint string, params url.Values,
 		v := r.URL.Query()
 		var res result
 		switch {
-		case v.Get("state") != state:
+		case subtle.ConstantTimeCompare([]byte(v.Get("state")), []byte(state)) != 1:
 			callbackPage(w, false, "This sign-in link is not for this login attempt.", "")
 			return // keep waiting for the real redirect
 		case v.Get("error") != "":
-			res.err = fmt.Errorf("%s: monoes.me refused: %s %s", o.Label, v.Get("error"), v.Get("error_description"))
-			callbackPage(w, false, "monoes.me did not authorize MonoAgent: "+v.Get("error"), "")
+			// Both come off the URL of a request: what reaches the terminal is plain text only.
+			code, desc := oauthCode(v.Get("error")), printable(v.Get("error_description"))
+			if code == "" {
+				code = "error"
+			}
+			res.err = fmt.Errorf("%s: monoes.me refused: %s %s", o.Label, code, desc)
+			callbackPage(w, false, "monoes.me did not authorize MonoAgent: "+code, "")
 		case v.Get("code") == "":
 			res.err = fmt.Errorf("%s: the redirect carried no code", o.Label)
 			callbackPage(w, false, "The sign-in redirect carried no code.", "")
@@ -179,8 +187,11 @@ func AuthorizeInBrowser(ctx context.Context, endpoint string, params url.Values,
 	if o.OnURL != nil {
 		o.OnURL(authURL)
 	}
+	var openErr error
 	if o.Open != nil {
-		_ = o.Open(authURL) // the URL was shown; the user can open it by hand
+		// The URL was shown, so the user can open it by hand and the wait goes on; a wait that
+		// ends without an answer says that the browser could not be opened.
+		openErr = o.Open(authURL)
 	}
 	select {
 	case res := <-done:
@@ -189,8 +200,30 @@ func AuthorizeInBrowser(ctx context.Context, endpoint string, params url.Values,
 		}
 		return &AuthorizeResult{Code: res.code, Redirect: redirect, Verifier: verifier}, nil
 	case <-ctx.Done():
-		return nil, errors.New(o.Label + ": no answer from the browser within " + o.Timeout.String())
+		note := ""
+		if openErr != nil {
+			note = " (the browser could not be opened: " + printable(openErr.Error()) + ")"
+		}
+		if perr := parent.Err(); perr != nil {
+			// The caller gave up (Ctrl-C, its own deadline): that is not the browser's silence.
+			return nil, fmt.Errorf("%s: stopped waiting for the browser%s: %w", o.Label, note, perr)
+		}
+		return nil, errors.New(o.Label + ": no answer from the browser within " + o.Timeout.String() + note)
 	}
+}
+
+// printable drops control characters and cuts s to 200 runes, for text that came off the network.
+func printable(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if !unicode.IsControl(r) {
+			out = append(out, r)
+		}
+		if len(out) == 200 {
+			break
+		}
+	}
+	return string(out)
 }
 
 func callbackPage(w http.ResponseWriter, ok bool, msg, success string) {

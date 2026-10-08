@@ -177,7 +177,9 @@ func (s *Server) RevokeAll() {
 	}
 }
 
-// ExpireAccessTokens makes every issued access token expired.
+// ExpireAccessTokens makes every issued access token expired at the fake: it refuses them. A signed
+// token still carries the exp it was minted with, so a client that checks exp itself sees it live;
+// a test that needs a client's own exp check to fire sets the clock of the client past the token's exp instead.
 func (s *Server) ExpireAccessTokens() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

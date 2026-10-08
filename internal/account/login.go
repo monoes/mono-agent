@@ -34,7 +34,7 @@ var (
 type LoginOptions struct {
 	Open    func(url string) error // opens the browser; nil does not
 	OnURL   func(url string)       // told the URL before Open runs
-	Timeout time.Duration          // default 5 minutes
+	Timeout time.Duration          // how long to wait for the browser sign-in to come back (the wait only); default 5 minutes
 }
 
 // Client talks to one monoes.me host: the sign-in flows, logout and adoption. The
