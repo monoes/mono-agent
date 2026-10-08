@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,8 +14,9 @@ const (
 	CheckAutostart = "services.autostart"
 	CheckDaemon    = "services.daemon"
 
-	FixAutostart   = "services.autostart.install"
-	FixDaemonStart = "services.daemon.start"
+	FixAutostart     = "services.autostart.install"
+	FixDaemonStart   = "services.daemon.start"
+	FixDaemonRestart = "services.daemon.restart"
 )
 
 var daemonFeatures = []string{"schedules and triggers", "org automations", "extension bridge"}
@@ -37,6 +39,8 @@ func serviceFixes() []Fix {
 		}},
 		{FixInfo: FixInfo{ID: FixDaemonStart, Label: "Start the workflow daemon", Safety: SafetyConfirm,
 			Command: "monoagentcli daemon (in the background)"}, Apply: fixDaemonStart},
+		{FixInfo: FixInfo{ID: FixDaemonRestart, Label: "Restart the workflow daemon on this version", Safety: SafetyConfirm,
+			Command: "monoagentcli daemon restart"}, Apply: fixDaemonRestart},
 	}
 }
 
@@ -68,7 +72,44 @@ func checkDaemon(ctx context.Context, env *Env) Result {
 		}
 		summary += ", API " + d.APIAddr
 	}
+	if DaemonVersionStale(d.Version, env.Version) {
+		running := d.Version
+		if running == "" {
+			running = "a version from before heartbeats carried one"
+		}
+		return Result{Status: StatusWarn, Summary: fmt.Sprintf("%s - it runs %s, this binary is %s", summary, running, env.Version),
+			Detail: "a running daemon keeps the code it started with: it does not have this version's changes until it restarts. " +
+				"Restarting interrupts whatever the daemon is running",
+			FixID: FixDaemonRestart}
+	}
 	return Result{Status: StatusOK, Summary: summary}
+}
+
+// DaemonVersionStale reports whether a running daemon predates binaryVersion, the version of the
+// binary that asks. A development build on either side has no version to compare, so it is never
+// stale; a heartbeat with no version is a daemon from before the field existed, so it is.
+func DaemonVersionStale(daemonVersion, binaryVersion string) bool {
+	norm := func(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
+	dev := func(v string) bool { return v == "dev" || strings.Contains(v, "-g") }
+	bin, d := norm(binaryVersion), norm(daemonVersion)
+	if bin == "" || dev(bin) || dev(d) {
+		return false
+	}
+	return d != bin
+}
+
+// fixDaemonRestart stops this home's daemon (StopDaemon refuses a pid its heartbeat does not name,
+// so a daemon of another home or profile is never touched) and starts it on the current binary.
+func fixDaemonRestart(ctx context.Context, env *Env, progress func(string)) error {
+	if env.Daemon == nil || env.StopDaemon == nil || env.StartDaemon == nil {
+		return fmt.Errorf("restarting the daemon is not available here")
+	}
+	if d := env.Daemon(ctx); d.Running {
+		if err := env.StopDaemon(ctx, d.PID, progress); err != nil {
+			return err
+		}
+	}
+	return fixDaemonStart(ctx, env, progress)
 }
 
 // fixDaemonStart starts the daemon unless it already runs: through the

@@ -31,7 +31,10 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 			"version instead of this binary's — the desktop app asks about its own version this way.\n\n" +
 			"--app updates the desktop app at that executable path, and the CLI bundled with it, instead of this binary: " +
 			"every asset is verified against SHA256SUMS.txt and the files are swapped all-or-nothing. With --json, progress is " +
-			"NDJSON on stderr ({\"kind\":\"line\",\"message\":…}) and the result is one JSON object on stdout.",
+			"NDJSON on stderr ({\"kind\":\"line\",\"message\":…}) and the result is one JSON object on stdout.\n\n" +
+			"A running daemon keeps the code it started with, so update restarts one that runs another version, through the " +
+			"service manager it is registered with, unless an execution is in flight or the saved `api config` settings cannot be used: " +
+			"it then says so and leaves the restart to `monoagentcli daemon restart`.",
 		Example: `  monoagentcli update
   monoagentcli --json update --check
   monoagentcli --json update --check --current v0.72.0
@@ -49,7 +52,7 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 			if current != "" {
 				return errInvalidInput("--current goes with --check or --app")
 			}
-			return runUpdate(cmd, args)
+			return runUpdate(cmd, cfg)
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "Only report whether a newer release exists; download nothing")
@@ -139,7 +142,7 @@ func versionPart(parts []string, i int) int {
 	return n
 }
 
-func runUpdate(_ *cobra.Command, _ []string) error {
+func runUpdate(cmd *cobra.Command, cfg *globalConfig) error {
 	fmt.Println("Checking for updates...")
 
 	release, err := fetchLatestRelease(context.Background())
@@ -157,6 +160,10 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	if latest == current {
 		fmt.Printf("Already on latest version (%s)\n", v)
+		// A daemon started before this binary was installed still runs the old code.
+		if d := daemonAfterUpdate(cmd.Context(), cfg, v); d != nil {
+			fmt.Println(d.Message)
+		}
 		return nil
 	}
 	fmt.Printf("Update available: %s → %s\n", v, release.TagName)
@@ -224,6 +231,9 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("Updated to %s\n", release.TagName)
+	if d := daemonAfterUpdate(cmd.Context(), cfg, release.TagName); d != nil {
+		fmt.Println(d.Message)
+	}
 	return nil
 }
 

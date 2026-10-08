@@ -27,7 +27,10 @@ type appUpdateResult struct {
 	// replaced; quit and start again) or "relaunch" (a script starts the
 	// app again after it quits).
 	Restart string `json:"restart,omitempty"`
-	Error   string `json:"error,omitempty"`
+	// Daemon is what the update did about a running daemon (daemonUpdate); absent when none ran
+	// or it already ran this version.
+	Daemon *daemonUpdate `json:"daemon,omitempty"`
+	Error  string        `json:"error,omitempty"`
 }
 
 func runUpdateApp(cmd *cobra.Command, cfg *globalConfig, appPath, current string) error {
@@ -44,6 +47,11 @@ func runUpdateApp(cmd *cobra.Command, cfg *globalConfig, appPath, current string
 			return err
 		}
 		res.Error = err.Error()
+	} else if !res.UpToDate {
+		// The files are replaced; a daemon still runs the old ones. The app relays this line.
+		if res.Daemon = daemonAfterUpdate(cmd.Context(), cfg, res.NewVersion); res.Daemon != nil {
+			progress(res.Daemon.Message)
+		}
 	}
 	if cfg.JSONOutput {
 		return writeJSONTo(cmd.OutOrStdout(), res)

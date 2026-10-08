@@ -80,8 +80,8 @@ var schtasks = func(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 // daemonStopWait is how long Restart waits for the daemon to let go of its lock after its task
-// was ended.
-const daemonStopWait = 10 * time.Second
+// was ended. A scheduled task has no stop time of its own; this follows the other managers' stopGrace.
+const daemonStopWait = stopGrace
 
 // waitDaemonStopped waits for no daemon to hold the home's lock; tests replace it.
 var waitDaemonStopped = func(ctx context.Context) error {
@@ -104,3 +104,6 @@ func (windowsInstaller) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+// MainPID: a scheduled task does not report its process in a form that is checked here.
+func (windowsInstaller) MainPID(context.Context) (int, error) { return 0, ErrPIDUnverifiable }

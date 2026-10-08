@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 )
 
 func newPlatformInstaller() Installer { return darwinInstaller{} }
@@ -32,6 +34,8 @@ const darwinPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>ExitTimeOut</key>
+	<integer>{{.ExitTimeOut}}</integer>
 	<key>StandardOutPath</key>
 	<string>{{.LogDir}}/daemon.log</string>
 	<key>StandardErrorPath</key>
@@ -39,6 +43,18 @@ const darwinPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 `
+
+// renderPlist returns the launchd job for the binary at exe, logging under logs. ExitTimeOut is
+// stopGrace: launchd's default of 20 s is shorter than a daemon needs to finish a refresh.
+func renderPlist(exe, logs string) (string, error) {
+	var b strings.Builder
+	tmpl := template.Must(template.New("plist").Parse(darwinPlistTemplate))
+	err := tmpl.Execute(&b, struct {
+		Label, Exe, LogDir string
+		ExitTimeOut        int
+	}{Label, exe, logs, int(stopGrace / time.Second)})
+	return b.String(), err
+}
 
 func plistPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -73,18 +89,12 @@ func (darwinInstaller) Install(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
 
-	tmpl := template.Must(template.New("plist").Parse(darwinPlistTemplate))
-	f, err := os.Create(path)
+	plist, err := renderPlist(exe, logs)
 	if err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", path, err)
 	}
-	execErr := tmpl.Execute(f, struct{ Label, Exe, LogDir string }{Label, exe, logs})
-	closeErr := f.Close()
-	if execErr != nil {
-		return Result{}, fmt.Errorf("write %s: %w", path, execErr)
-	}
-	if closeErr != nil {
-		return Result{}, fmt.Errorf("write %s: %w", path, closeErr)
+	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, err)
 	}
 
 	domain := launchdDomain()
@@ -162,4 +172,19 @@ func (darwinInstaller) Start(ctx context.Context) error {
 		return fmt.Errorf("launchctl kickstart %s: %w: %s", target, err, string(out))
 	}
 	return nil
+}
+
+var launchdPIDLine = regexp.MustCompile(`(?m)^\s*pid = (\d+)\s*$`)
+
+// MainPID is the pid launchd reports for the daemon's job (`launchctl print`); 0 when it has none.
+func (darwinInstaller) MainPID(ctx context.Context) (int, error) {
+	target := launchdDomain() + "/" + Label
+	out, err := launchctl(ctx, "print", target)
+	if err != nil {
+		return 0, fmt.Errorf("launchctl print %s: %w", target, err)
+	}
+	if m := launchdPIDLine.FindSubmatch(out); m != nil {
+		return strconv.Atoi(string(m[1]))
+	}
+	return 0, nil
 }

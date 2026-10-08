@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
+	"time"
 )
 
 func newPlatformInstaller() Installer { return linuxInstaller{} }
@@ -27,10 +29,16 @@ After=default.target
 ExecStart={{.Exe}} daemon
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec={{.StopSec}}
 
 [Install]
 WantedBy=default.target
 `
+
+// systemdStopTimeout is the unit's TimeoutStopSec: systemd's own default of 90 s, written so a
+// distribution or user setting cannot lower it below stopGrace. It is not shortened to stopGrace,
+// because a stopping daemon also drains the workflow runs in flight.
+const systemdStopTimeout = 90 * time.Second
 
 // renderUnit returns the unit file for the binary at exe. The path is
 // quoted for systemd, which splits ExecStart on spaces and expands % and $:
@@ -38,7 +46,10 @@ WantedBy=default.target
 func renderUnit(exe string) (string, error) {
 	var b strings.Builder
 	tmpl := template.Must(template.New("unit").Parse(linuxUnitTemplate))
-	if err := tmpl.Execute(&b, struct{ Exe string }{systemdQuote(exe)}); err != nil {
+	if err := tmpl.Execute(&b, struct {
+		Exe     string
+		StopSec int
+	}{systemdQuote(exe), int(systemdStopTimeout / time.Second)}); err != nil {
 		return "", err
 	}
 	return b.String(), nil
@@ -188,4 +199,17 @@ func (linuxInstaller) Start(ctx context.Context) error {
 		return fmt.Errorf("systemctl --user start %s: %w: %s", unitName, err, string(out))
 	}
 	return nil
+}
+
+// MainPID is the main pid systemd reports for the daemon's unit; 0 when it is not running.
+func (linuxInstaller) MainPID(ctx context.Context) (int, error) {
+	out, err := systemctl(ctx, "--user", "show", "-p", "MainPID", "--value", unitName)
+	if err != nil {
+		return 0, fmt.Errorf("systemctl --user show %s: %w", unitName, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("systemctl reported main pid %q", strings.TrimSpace(string(out)))
+	}
+	return pid, nil
 }

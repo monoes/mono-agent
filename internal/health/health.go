@@ -273,6 +273,9 @@ type DaemonInfo struct {
 	// BridgeAddr is the extension bridge it serves; "" when it runs with
 	// --bridge=false or its bridge failed to start.
 	BridgeAddr string
+	// Version is the version the daemon started with, from its heartbeat; ""
+	// for a daemon that predates the field (v0.46.0).
+	Version string
 }
 
 // Report is the `doctor --json` payload.
