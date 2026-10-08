@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Archive, Check, CircleHelp } from 'lucide-react'
+import { AppWindow, Archive, Check, CircleHelp, Globe, LayoutGrid, Sparkles, Terminal } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
 import { useTaskBoard } from '../lib/useTaskBoard.js'
-import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget, claimState } from '../lib/taskModel.js'
+import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget, claimState, sourceChip, shortAge, splitMinutes, actorColor } from '../lib/taskModel.js'
 import TaskDrawer from '../components/TaskDrawer.jsx'
 import { useFlip } from '../lib/useFlip.js'
 import { useMarks } from '../lib/useMarks.js'
+import { usePageVisible } from '../lib/usePageVisible.js'
 
 const ARROWS = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
@@ -43,29 +44,61 @@ function CaptureHelp({ t }) {
   )
 }
 
+const SOURCE_ICONS = { chrome: Globe, os: AppWindow, agent: Sparkles, app: LayoutGrid, cli: Terminal }
+
+function span(minutes, t) {
+  const { h, m } = splitMinutes(minutes)
+  return h ? t('tasks.span.hm', { h, m }) : t('tasks.span.m', { m })
+}
+
+// The card is a plain container: the title is its one control that opens it
+// (and takes the move keys), and the approve and archive buttons are siblings
+// of it, so no control sits inside another.
 function Card({ task, status, readOnly, selected, pulse, now, onOpen, onKey, onDragStart, onApprove, onArchive, t }) {
+  const chip = sourceChip(task)
+  const Icon = SOURCE_ICONS[chip.kind] || Terminal
+  const age = shortAge(task.created_at, now)
+  const cs = claimState(task.claim, now)
+  const tag = status === 'review' && (task.last_event?.kind === 'question' || task.last_event?.kind === 'result') ? task.last_event.kind : null
+  const meta = { fontSize: 11, opacity: 0.8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontFamily: 'var(--mono, monospace)' }
   return (
     <div
       data-task-id={task.id}
       className={pulse ? `tb-card--${pulse}` : undefined}
       draggable={!readOnly}
-      tabIndex={0}
-      role="button"
-      aria-label={task.title}
-      aria-pressed={selected}
-      onClick={() => onOpen(task.id)}
-      onKeyDown={e => onKey(e, task)}
+      onClick={e => { if (!e.target.closest('button')) onOpen(task.id) }}
       onDragStart={e => { e.dataTransfer?.setData('text/plain', String(task.id)); onDragStart(task.id) }}
-      style={{ padding: 8, marginBottom: 6, border: `1px solid ${selected ? 'var(--accent, #00b4d8)' : 'var(--border)'}`, borderRadius: 6, background: 'var(--elevated)', cursor: 'pointer' }}
+      style={{ padding: 8, marginBottom: 6, border: `1px solid ${selected ? 'var(--accent, #00b4d8)' : cs?.stale ? 'var(--orange, #f59e0b)' : 'var(--border)'}`, borderRadius: 6, background: 'var(--elevated)', cursor: 'pointer' }}
     >
-      <div style={{ fontWeight: 600 }}>{task.title}</div>
-      {task.claim && <div style={{ fontSize: 11, opacity: 0.8 }}>{claimState(task.claim, now)?.stale ? t('tasks.stale') : t('tasks.claimedBy', { by: task.claim.by })}</div>}
+      <button
+        type="button"
+        data-card-open
+        aria-pressed={selected}
+        onClick={() => onOpen(task.id)}
+        onKeyDown={e => onKey(e, task)}
+        style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, padding: 0, color: 'inherit', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}
+      >{task.title}</button>
+      <div style={{ ...meta, marginTop: 4 }}>
+        <span title={t(`tasks.source.${chip.kind}`)} style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}>
+          <Icon size={11} aria-hidden="true" /><span>{chip.text || t(`tasks.source.${chip.kind}`)}</span>
+        </span>
+        {task.created_at && <span data-testid="age">{t(`tasks.age.${age.unit}`, { n: age.n })}</span>}
+        <span>#{task.id}</span>
+        {tag && <span data-testid="tag" style={{ color: tag === 'question' ? 'var(--orange, #f59e0b)' : 'var(--green, #10b981)' }}>{t(`tasks.tag.${tag}`)}</span>}
+      </div>
+      {cs && (
+        <div style={{ ...meta, marginTop: 4 }} title={cs.stale ? t('tasks.leaseEnded') : undefined}>
+          <span aria-hidden="true" style={{ width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, border: `1.5px ${cs.stale ? 'dashed var(--orange, #f59e0b)' : `solid ${actorColor(cs.by)}`}` }}>{cs.initial}</span>
+          <span>{cs.stale ? t('tasks.stale') : t('tasks.claimedBy', { by: cs.by })}</span>
+          <span data-testid="lease">{cs.stale ? t('tasks.ended', { time: span(cs.minutes, t) }) : t('tasks.left', { time: span(cs.minutes, t) })}</span>
+        </div>
+      )}
       {!readOnly && (
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
           {status === 'inbox' && (
-            <button type="button" title={t('tasks.approve')} aria-label={`${t('tasks.approve')}: ${task.title}`} onClick={e => { e.stopPropagation(); onApprove(task.id) }}><Check size={12} /></button>
+            <button type="button" title={t('tasks.approve')} aria-label={`${t('tasks.approve')}: ${task.title}`} onClick={() => onApprove(task.id)}><Check size={12} /></button>
           )}
-          <button type="button" title={t('tasks.archive')} aria-label={`${t('tasks.archive')}: ${task.title}`} onClick={e => { e.stopPropagation(); onArchive(task.id) }}><Archive size={12} /></button>
+          <button type="button" title={t('tasks.archive')} aria-label={`${t('tasks.archive')}: ${task.title}`} onClick={() => onArchive(task.id)}><Archive size={12} /></button>
         </div>
       )}
     </div>
@@ -86,22 +119,29 @@ export default function Tasks({ isActive = true }) {
   const marks = useMarks(b.board)
   // A lease ends with no write, so no read follows: the clock decides.
   const [now, setNow] = useState(() => Date.now())
+  const visible = usePageVisible()
   useEffect(() => {
-    if (!isActive) return undefined
+    if (!isActive || !visible) return undefined // a hidden window does not tick
     setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(timer)
-  }, [isActive])
+  }, [isActive, visible])
   useEffect(() => { tasksApi.agentShell().then(v => setShell(v || '')) }, [])
   const readOnly = shell === null || !!shell
   const shown = useMemo(() => filterBoard(b.board, query), [b.board, query])
-  const open = openId && b.board ? findTask(b.board, openId)?.task : null
+  const [archiving, setArchiving] = useState(null)
+  const [archiveError, setArchiveError] = useState('')
+  const lastOpen = useRef(null)
+  const found = openId && b.board ? findTask(b.board, openId)?.task : null
+  if (found) lastOpen.current = found
+  const open = found || (archiving && archiving === openId ? lastOpen.current : null)
+  useEffect(() => { setArchiveError('') }, [openId])
 
   // No dependency list: any render may have remounted the card the keys moved.
   useLayoutEffect(() => {
     const id = refocus.current
     if (!id) return
-    const el = root.current?.querySelector(`[data-task-id="${id}"]`)
+    const el = root.current?.querySelector(`[data-task-id="${id}"] [data-card-open]`)
     if (!el) return
     refocus.current = null
     if (document.activeElement !== el) el.focus()
@@ -119,7 +159,19 @@ export default function Tasks({ isActive = true }) {
     return () => window.removeEventListener('keydown', onEsc)
   }, [openId])
 
-  const focusCard = (id) => root.current?.querySelector(`[data-task-id="${id}"]`)?.focus()
+  const focusCard = (id) => root.current?.querySelector(`[data-task-id="${id}"] [data-card-open]`)?.focus()
+
+  // Archive closes the drawer only once the CLI has said yes. While it works the
+  // drawer stays on the card as last shown (the optimistic removal takes the
+  // card off the board); a refusal brings the card back and the drawer says why.
+  const archiveRes = async (id) => {
+    const inDrawer = openId === id
+    if (inDrawer) { setArchiving(id); setArchiveError('') }
+    const res = await b.archive(id)
+    setArchiving(null)
+    if (res?.error) { if (inDrawer) setArchiveError(res.error) } else setOpenId(cur => (cur === id ? null : cur))
+    return res
+  }
 
   const onKey = (e, task) => {
     if (e.target !== e.currentTarget) return
@@ -156,7 +208,7 @@ export default function Tasks({ isActive = true }) {
   }
 
   return (
-    <div className="page" ref={root} style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16, gap: 8 }}>
+    <div className={visible ? 'page' : 'page tb-paused'} ref={root} style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16, gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h1 style={{ margin: 0 }}>{t('tasks.title')}</h1>
         <input type="search" aria-label={t('tasks.search')} placeholder={t('tasks.search')} value={query} onChange={e => setQuery(e.target.value)} />
@@ -185,13 +237,13 @@ export default function Tasks({ isActive = true }) {
                   key={task.id} task={task} status={status} readOnly={readOnly} selected={openId === task.id} now={now}
                   pulse={status === 'done' && marks.done.has(task.id) ? 'done-pulse' : status === 'in_progress' && task.claim && marks.claimed.has(task.id) ? 'claim-pulse' : ''}
                   onOpen={setOpenId} onKey={onKey} onDragStart={id => { dragging.current = id }}
-                  onApprove={id => b.approve(id)} onArchive={id => { if (openId === id) setOpenId(null); b.archive(id) }} t={t}
+                  onApprove={id => b.approve(id)} onArchive={archiveRes} t={t}
                 />
               ))}
             </section>
           ))}
         </div>
-        {open && <TaskDrawer task={open} readOnly={readOnly} onClose={() => setOpenId(null)} onEdit={b.edit} onComment={b.comment} />}
+        {open && <TaskDrawer task={open} readOnly={readOnly} onClose={() => setOpenId(null)} onEdit={b.edit} onComment={b.comment} onArchive={() => archiveRes(open.id)} archiving={archiving === open.id} archiveError={archiveError} />}
       </div>
     </div>
   )

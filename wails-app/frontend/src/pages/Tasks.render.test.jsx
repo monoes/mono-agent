@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '../i18n.js'
 
 const { api, bus } = vi.hoisted(() => ({
@@ -163,7 +163,7 @@ describe('Tasks page', () => {
       render(<Tasks />)
       fireEvent.keyDown(await screen.findByRole('button', { name: 'Task 5' }), { key: 'ArrowRight', shiftKey: true })
       const done = await screen.findByRole('region', { name: 'Done' })
-      return within(done).findByRole('button', { name: 'Task 5' })
+      return (await within(done).findByRole('button', { name: 'Task 5' })).closest('[data-task-id]')
     }
     afterEach(() => { delete window.matchMedia })
 
@@ -177,16 +177,118 @@ describe('Tasks page', () => {
       api.board.mockResolvedValue(reviewDoc())
       render(<Tasks />)
       await screen.findByText('Task 6')
-      expect(screen.getByRole('button', { name: 'Task 6' })).not.toHaveClass('tb-card--claim-pulse')
+      expect(screen.getByRole('button', { name: 'Task 6' }).closest('[data-task-id]')).not.toHaveClass('tb-card--claim-pulse')
       api.board.mockResolvedValue({ ...reviewDoc(), rev: 2, tasks: { review: [card(5)], in_progress: [card(6, { claim: { by: 'bot', until: '2099-01-01T00:00:00Z' } })] } })
       bus.fire()
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Task 6' })).toHaveClass('tb-card--claim-pulse'))
-      expect(screen.getByRole('button', { name: 'Task 5' })).not.toHaveClass('tb-card--claim-pulse')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Task 6' }).closest('[data-task-id]')).toHaveClass('tb-card--claim-pulse'))
+      expect(screen.getByRole('button', { name: 'Task 5' }).closest('[data-task-id]')).not.toHaveClass('tb-card--claim-pulse')
     })
 
     it('makes no pulse under reduced motion', async () => {
       matchMedia(true)
       expect(await moveToDone()).not.toHaveClass('tb-card--done-pulse')
+    })
+  })
+
+  describe('card content', () => {
+    it('shows the source chip, age, #id, lease countdown and the Question tag', async () => {
+      const ago = new Date(Date.now() - 3 * 3600 * 1000).toISOString()
+      const until = new Date(Date.now() + 12 * 60000 + 30000).toISOString()
+      api.board.mockResolvedValue({ rev: 1, counts: {}, tasks: {
+        in_progress: [card(6, { created_at: ago, source: { kind: 'chrome', url: 'https://www.example.com/x' }, claim: { by: 'bot', until } })],
+        review: [card(7, { created_at: ago, last_event: { kind: 'question', actor: 'bot' } }), card(8, { last_event: { kind: 'result', actor: 'bot' } })],
+      } })
+      render(<Tasks />)
+      await screen.findByText('Task 6')
+      const c6 = screen.getByText('Task 6').closest('[data-task-id]')
+      expect(within(c6).getByText('example.com')).toBeInTheDocument()
+      expect(within(c6).getByTestId('age')).toHaveTextContent('3h')
+      expect(within(c6).getByText('#6')).toBeInTheDocument()
+      expect(within(c6).getByTestId('lease')).toHaveTextContent('12m left')
+      expect(within(screen.getByText('Task 7').closest('[data-task-id]')).getByTestId('tag')).toHaveTextContent('Question')
+      expect(within(screen.getByText('Task 8').closest('[data-task-id]')).getByTestId('tag')).toHaveTextContent('Result')
+    })
+
+    it('says a lease that ended, in Spanish too', async () => {
+      const until = new Date(Date.now() - 4 * 60000 - 5000).toISOString()
+      api.board.mockResolvedValue({ rev: 1, counts: {}, tasks: { in_progress: [card(6, { claim: { by: 'bot', until } })] } })
+      render(<Tasks />)
+      await screen.findByText('Task 6')
+      expect(screen.getByTestId('lease')).toHaveTextContent('ended 4m ago')
+      const en = (await import('../locales/en.json')).default.tasks
+      const es = (await import('../locales/es.json')).default.tasks
+      for (const k of ['left', 'ended', 'leaseEnded', 'archiveFailed', 'archiving']) expect(es[k]).toBeTruthy()
+      expect(Object.keys(es.tag)).toEqual(Object.keys(en.tag))
+      expect(Object.keys(es.age)).toEqual(Object.keys(en.age))
+      expect(Object.keys(es.source)).toEqual(Object.keys(en.source))
+    })
+  })
+
+  describe('structure and keys', () => {
+    it('has no control nested in another, and the card itself is not a button', async () => {
+      render(<Tasks />)
+      await screen.findByText('Task 1')
+      const c = screen.getByText('Task 1').closest('[data-task-id]')
+      expect(c).not.toHaveAttribute('role')
+      expect(c).not.toHaveAttribute('tabindex')
+      for (const btn of screen.getAllByRole('button')) expect(btn.parentElement.closest('button, [role="button"]')).toBeNull()
+    })
+
+    it('opens the card from the title with Enter and moves it with the keys', async () => {
+      render(<Tasks />)
+      const title = await screen.findByRole('button', { name: 'Task 2' })
+      fireEvent.keyDown(title, { key: 'Enter' })
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      fireEvent.keyDown(title, { key: 'ArrowRight', shiftKey: true })
+      await waitFor(() => expect(api.move).toHaveBeenCalled())
+    })
+  })
+
+  describe('archive from the drawer', () => {
+    it('keeps the drawer open until the CLI says yes, then closes it', async () => {
+      let answer
+      api.archive.mockReturnValue(new Promise(r => { answer = r }))
+      render(<Tasks />)
+      fireEvent.click(await screen.findByText('Task 1'))
+      const drawer = await screen.findByRole('dialog')
+      fireEvent.click(within(drawer).getByText('Archive'))
+      await waitFor(() => expect(api.archive).toHaveBeenCalledWith([1]))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      api.board.mockResolvedValue({ rev: 2, counts: {}, tasks: { inbox: [card(2)], ready: [card(3)] } })
+      answer({ id: 1 })
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    })
+
+    it('keeps the drawer and shows the error when the archive is refused', async () => {
+      api.archive.mockResolvedValue({ error: 'not allowed', code: 'x' })
+      render(<Tasks />)
+      fireEvent.click(await screen.findByText('Task 1'))
+      const drawer = await screen.findByRole('dialog')
+      fireEvent.click(within(drawer).getByText('Archive'))
+      expect(await within(await screen.findByRole('dialog')).findByText('Could not archive: not allowed')).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'Inbox' })).getByText('Task 1')).toBeInTheDocument()
+    })
+  })
+
+  describe('hidden window', () => {
+    const setVisibility = (v) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => v === 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    afterEach(() => { delete document.hidden })
+
+    it('does not read on a change while hidden, reads once when shown, and pauses pulses', async () => {
+      render(<Tasks />)
+      await screen.findByText('Task 1')
+      const root = screen.getByText('Tasks').closest('.page')
+      act(() => setVisibility('hidden'))
+      expect(root).toHaveClass('tb-paused')
+      const reads = api.board.mock.calls.length
+      act(() => { bus.fire(); bus.fire() })
+      expect(api.board.mock.calls.length).toBe(reads)
+      act(() => setVisibility('visible'))
+      await waitFor(() => expect(api.board.mock.calls.length).toBe(reads + 1))
+      expect(root).not.toHaveClass('tb-paused')
     })
   })
 })

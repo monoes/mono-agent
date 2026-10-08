@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Tasks page cards** show the source, age, `#id`, lease countdown and a Question/Result tag; cards no longer nest buttons in a button (the title is the control; the move keys work from it). A card stays where you moved it if the next board read fails, archiving from the drawer closes it only once the CLI agrees (a refusal shows in the drawer), and a hidden window stops reading, ticking and pulsing.
+
 ### Added
 - **`monoagentcli account login|logout|status`** (#366). Signs in to monoes.me once per machine; `library login`, `logout` and `status` are now aliases of that session, and an older library login keeps working for reads. Dormant: nothing is enforced.
 - **Task board from Chrome.** The MonoAgent Bridge extension adds tasks to the board: *Add selection as task* and *Add page as task* in the MonoAgent right-click menu, an *Add a task* box in the side panel and an *add-task* shortcut (Ctrl+Shift+K, Cmd+Shift+K on a Mac), and a *task* button on the floating panel that appears beside selected text (the panel now answers real clicks only). Tasks land in the Inbox of the profile the side panel is "Saving into", wait in the extension while MonoAgent is not running, and are never added twice. New request method `task.add` on the extension bridge; no new permission, port or HTTP route. Extension 1.6.0: reload it from `chrome://extensions` after updating.

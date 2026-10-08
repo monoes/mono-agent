@@ -72,6 +72,51 @@ describe('useTaskBoard', () => {
     expect(result.current.board.columns.inbox).toHaveLength(0)
   })
 
+  it('keeps the card where it was put when the read after a successful action fails', async () => {
+    api.board.mockResolvedValueOnce(doc([t(1, 'inbox')]))
+    const { result } = renderHook(() => useTaskBoard())
+    await waitFor(() => expect(result.current.board).toBeTruthy())
+    api.move.mockResolvedValue({ id: 1 })
+    api.board.mockResolvedValue({ error: 'busy' })
+    await act(async () => { await result.current.move(1, 'ready', { where: '' }) })
+    expect(result.current.error).toBe('busy')
+    expect(result.current.board.columns.ready.map(x => x.id)).toEqual([1])
+    api.board.mockResolvedValue(doc([], [t(1, 'ready')]))
+    await act(async () => { handlers.forEach(h => h()) })
+    await waitFor(() => expect(result.current.error).toBe(''))
+    expect(result.current.board.columns.ready.map(x => x.id)).toEqual([1])
+    expect(result.current.board.columns.inbox).toHaveLength(0)
+  })
+
+  it('drops the shown move once a later read succeeds with the server board', async () => {
+    api.board.mockResolvedValueOnce(doc([t(1, 'inbox')]))
+    const { result } = renderHook(() => useTaskBoard())
+    await waitFor(() => expect(result.current.board).toBeTruthy())
+    api.move.mockResolvedValue({ id: 1 })
+    api.board.mockResolvedValue({ error: 'busy' })
+    await act(async () => { await result.current.move(1, 'ready', { where: '' }) })
+    api.board.mockResolvedValue(doc([t(1, 'inbox')])) // the server did not apply it
+    await act(async () => { handlers.forEach(h => h()) })
+    await waitFor(() => expect(result.current.board.columns.inbox.map(x => x.id)).toEqual([1]))
+  })
+
+  it('does not read on a change while the window is hidden, and reads once when it is shown', async () => {
+    api.board.mockResolvedValue(doc([t(1, 'inbox')]))
+    const { result } = renderHook(() => useTaskBoard())
+    await waitFor(() => expect(result.current.board).toBeTruthy())
+    const vis = (v) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => v === 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    act(() => vis('hidden'))
+    const n = api.board.mock.calls.length
+    act(() => { handlers.forEach(h => h()); handlers.forEach(h => h()) })
+    expect(api.board.mock.calls.length).toBe(n)
+    act(() => vis('visible'))
+    await waitFor(() => expect(api.board.mock.calls.length).toBe(n + 1))
+    delete document.hidden
+  })
+
   it('reports a failed read', async () => {
     api.board.mockResolvedValue({ error: 'no database' })
     const { result } = renderHook(() => useTaskBoard())
