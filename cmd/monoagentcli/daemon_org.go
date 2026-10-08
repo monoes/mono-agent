@@ -191,6 +191,24 @@ func (s *orgServices) reconcileProfile(ctx context.Context, pr orgdecide.Profile
 
 func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot, d *orgdesign.Doc, force bool) orgReconcileOutcome {
 	res := orgReconcileOutcome{Org: d.Name, Findings: []orggrant.Finding{}}
+	// A command writing a row and then this file holds the rows lock until both are written. d was
+	// read before the lock, so it can be the file without that command's display copy; read it again.
+	release, err := lockOrgRows(pr.Root)
+	if err != nil {
+		s.logf("org services: reconcile %s: %v", d.Name, err)
+		res.Error = err.Error()
+		return res
+	}
+	defer release()
+	fresh, err := orgdesign.Load(pr.Root, d.Name)
+	if err != nil {
+		// Gone or unreadable since it was read: reconciling the stale copy could save it back over a
+		// deleted or half-edited file.
+		s.logf("org services: reconcile %s: reload under the rows lock: %v", d.Name, err)
+		res.Error = "reload under the rows lock: " + err.Error()
+		return res
+	}
+	d = fresh
 	fail := func(format string, err error) orgReconcileOutcome {
 		s.logf(format, d.Name, err)
 		res.Error = err.Error()
