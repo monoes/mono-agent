@@ -116,6 +116,21 @@ jobs:
       - name: Real-binary smoke
         run: go test -tags devaccount ./internal/accountsmoke/ -count=1 -timeout 25m -v
 
+  # The release guard (scripts/check-release-tags.sh) keeps the devaccount tag out of releases: this
+  # builds a tiny program with and without the tag, loose and inside a tarball and a zip, and checks
+  # that the guard passes and fails as it should (spec D11, D24).
+  release-guard-test:
+    name: Release guard test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Test the release guard
+        run: bash scripts/check-release-tags-test.sh
+
+
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against
   # the real OpenAPI 3.0 meta-schema (not just YAML syntax) so a hand-edited
