@@ -516,3 +516,26 @@ func TestBuildPlanSkipsAliases(t *testing.T) {
 		t.Fatalf("roster lookup of the alias = %+v", opus)
 	}
 }
+
+func TestBuildCarriesExecutionSupport(t *testing.T) {
+	no, yes := false, true
+	reason := "interactive-only"
+	scan := scanOf(
+		monomind.ScanEntry{ID: "freebuff", Installed: true, ExecutionSupported: &no, ExecutionUnsupportedReason: &reason},
+		monomind.ScanEntry{ID: "claude", Installed: true, ExecutionSupported: &yes},
+		monomind.ScanEntry{ID: "codex", Installed: true},
+	)
+	by := map[string]RuntimeRoster{}
+	for _, rr := range Build(nil, scan, time.Now(), 0) {
+		by[rr.Runtime] = rr
+	}
+	if f := by["freebuff"]; f.ExecutionSupported == nil || *f.ExecutionSupported || f.ExecutionUnsupportedReason != reason {
+		t.Errorf("freebuff = %+v", f)
+	}
+	if c := by["claude"]; c.ExecutionSupported == nil || !*c.ExecutionSupported || c.ExecutionUnsupportedReason != "" {
+		t.Errorf("claude = %+v", c)
+	}
+	if by["codex"].ExecutionSupported != nil {
+		t.Errorf("codex carries a value monomind did not send")
+	}
+}

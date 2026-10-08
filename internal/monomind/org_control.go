@@ -84,7 +84,8 @@ func OrgPause(ctx context.Context, projectRoot, name string) (string, error) {
 
 // OrgResume resumes a paused org.
 func OrgResume(ctx context.Context, projectRoot, name string) (string, error) {
-	return runOrgText(ctx, projectRoot, "resume", name)
+	out, err := runOrgText(ctx, projectRoot, "resume", name)
+	return out, startRefusal(name, out, err)
 }
 
 // OrgDelete deletes an org and all its data; force deletes even when it
@@ -123,6 +124,24 @@ func ReadServeHeartbeat(projectRoot string) (*ServeHeartbeat, bool) {
 		return &hb, false
 	}
 	return &hb, daemonhb.ProcessAlive(hb.PID)
+}
+
+// ServeMaybeLive reports whether a serve heartbeat exists whose pid is alive,
+// of any age. monomind 2.24.x (liveServeDaemonPid) hands `org run` to a serve
+// daemon whose heartbeat is up to three minutes old, so a caller that must
+// never reach a real run (the cost estimate) or must not double-fire a
+// schedule cannot use the stricter ReadServeHeartbeat verdict: it errs on the
+// side of "serve owns it", including a recycled pid and a very stale file.
+func ServeMaybeLive(projectRoot string) bool {
+	b, err := os.ReadFile(filepath.Join(projectRoot, ".monomind", "serve-heartbeat.json"))
+	if err != nil {
+		return false
+	}
+	var hb ServeHeartbeat
+	if err := json.Unmarshal(b, &hb); err != nil {
+		return false
+	}
+	return hb.PID > 0 && daemonhb.ProcessAlive(hb.PID)
 }
 
 // OrgRunLive reports whether a standalone `monomind org run` (no serve

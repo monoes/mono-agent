@@ -95,10 +95,10 @@ func callTool(ctx context.Context, s *Server, name string, args json.RawMessage)
 		}
 		return string(b), nil
 	}
-	if s.opts.APIOnly {
+	if s.opts.APIOnly || s.opts.TasksOnly {
 		for _, t := range allTools() {
 			if t.name == name {
-				return "", notServedByAPIOnly(name) // it exists, and this server does not serve it
+				return "", s.notServed(name) // it exists, and this server does not serve it
 			}
 		}
 	}
@@ -209,7 +209,7 @@ func allTools() []tool {
 		},
 		{
 			name:        "docs",
-			description: "Built-in reference docs (same facts as the `monoagentcli ref` command). Topics: commands, nodes, expressions, workflow, templates, connections, org. Omit topic for the index.",
+			description: "Built-in reference docs (same facts as the `monoagentcli ref` command). Topics: commands, nodes, expressions, workflow, templates, connections, org, publication. Omit topic for the index.",
 			schema: objSchema(map[string]interface{}{
 				"topic": strParam("Topic name (optional)"),
 			}),
@@ -218,7 +218,9 @@ func allTools() []tool {
 		},
 	}
 	native = append(native, monoagentAdaptedTools()...)
+	native = append(native, taskTools()...)
 	native = append(native, apiTools()...)
+	native = append(native, publicationTools()...)
 	return append(native, apiConfigTools()...)
 }
 

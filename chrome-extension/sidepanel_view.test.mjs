@@ -238,3 +238,21 @@ test("no brain status (shared inbox, older bridge) keeps the old line", () => {
   const s = V.askStatus({ answers: [], brain: { captures: 4, indexed: 4, pending: 0, failed: 0 } }, "work");
   assert.equal(s.text, "Nothing in your captures in work matches that yet.");
 });
+
+// --- the task box ---
+
+test("the task button names the profile, and refuses the shared inbox", () => {
+  assert.deepEqual(V.taskButton({ id: "p-work", name: "Work" }), { text: "Add to Work", enabled: true });
+  assert.deepEqual(V.taskButton({ id: "", name: V.SHARED_INBOX }), { text: "Choose a profile first", enabled: false });
+  assert.deepEqual(V.taskButton(null), { text: "Choose a profile first", enabled: false });
+});
+
+test("the refused tasks line says how many and names the latest", () => {
+  assert.equal(V.taskFailures([]), "");
+  assert.equal(V.taskFailures(undefined), "");
+  assert.equal(
+    V.taskFailures([{ title: "Reply to Sam", reason: 'unknown profile "gone"' }]),
+    'MonoAgent did not add 1 task. Latest: "Reply to Sam": unknown profile "gone"'
+  );
+  assert.equal(V.taskFailures([{ title: "a", reason: "r" }, { title: "b", reason: "s" }]), 'MonoAgent did not add 2 tasks. Latest: "b": s');
+});

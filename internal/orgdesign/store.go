@@ -142,6 +142,7 @@ func LoadPath(path string) (*Doc, error) {
 	}
 	sum := sha256.Sum256(b)
 	d.loadedSHA = hex.EncodeToString(sum[:])
+	d.loadedRaw = b
 	return &d, nil
 }
 
@@ -176,7 +177,11 @@ func Save(profileRoot string, d *Doc) (sha string, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("creating orgs directory: %w", err)
 	}
-	data, err := json.MarshalIndent(d, "", "  ")
+	next, err := encodeNoHTML(d)
+	if err != nil {
+		return "", fmt.Errorf("encoding org config: %w", err)
+	}
+	data, err := reflowLike(d.loadedRaw, next)
 	if err != nil {
 		return "", fmt.Errorf("encoding org config: %w", err)
 	}
@@ -193,6 +198,7 @@ func Save(profileRoot string, d *Doc) (sha string, err error) {
 
 	sum := sha256.Sum256(data)
 	d.loadedSHA = hex.EncodeToString(sum[:])
+	d.loadedRaw = data
 	return d.loadedSHA, nil
 }
 
@@ -209,4 +215,22 @@ func Delete(profileRoot, name string) error {
 		return err
 	}
 	return nil
+}
+
+// InheritLoaded makes d describe the same file state as from: the bytes (and
+// their sha) the next Save lays out and the re-sign rule compares against.
+// For a caller that replaces a Doc it has just saved with an equivalent one
+// built another way (decoded from a CLI's JSON): without it the replacement
+// has no file layout to follow, and the next Save would reorder the file.
+// Only call it when d is from's content as reconciled, not a different file.
+func (d *Doc) InheritLoaded(from *Doc) {
+	d.loadedSHA, d.loadedRaw = from.loadedSHA, from.loadedRaw
+}
+
+// InheritLayout lets d's next Save lay the file out like from's bytes without
+// claiming d was loaded from them: LoadedSHA stays as it is (empty for a Doc
+// decoded from JSON), so the re-sign rule, which trusts only a Doc loaded from
+// the exact signed bytes, is unchanged.
+func (d *Doc) InheritLayout(from *Doc) {
+	d.loadedRaw = from.loadedRaw
 }

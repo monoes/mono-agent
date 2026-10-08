@@ -71,7 +71,9 @@ export const HELPERS = `
     const f = first.getBoundingClientRect(), l = last.getBoundingClientRect();
     return { x1: f.left + 1, y1: f.top + f.height / 2, x2: l.right - 1, y2: l.top + l.height / 2 };
   };
-  window.__buttons = () => [...document.querySelectorAll("#monoagent-highlight-ui button")].map((b) => {
+  // The panel's buttons sit in a closed shadow root: the bootstrap kept a
+  // handle on the newest one (window.__ui), which no page could have.
+  window.__buttons = () => [...(window.__ui ? window.__ui.querySelectorAll("button") : [])].filter((b) => b.isConnected).map((b) => {
     const r = b.getBoundingClientRect();
     return { label: b.textContent, title: b.title, x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });

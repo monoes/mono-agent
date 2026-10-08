@@ -132,7 +132,11 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 			"the last signature) and, on a terminal, asks before signing; otherwise it signs nothing. " +
 			"--yes signs (with --expect-hash, only the definition that was reviewed, instructions files " +
 			"included). --status prints " +
-			"the signature state alone.",
+			"the signature state alone.\n\n" +
+			"Only the operator signs: an org role or agent turn (MONOMIND_ORG_ROLE and the like) can never " +
+			"sign, and monomind's refusal is shown as it gives it. The operator's key and signatures live in " +
+			"~/.monomind/orgrt-operator, a protected directory hidden from every role; mono-agent does not " +
+			"read it from a role either.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -189,6 +193,10 @@ func newOrgSignCmd(env *orgEnv) *cobra.Command {
 				expect = res.Hash // sign exactly what was just reviewed
 			}
 			if m := orgsign.RoleContextMarker(); m != "" {
+				// monomind's own refusal, verbatim, when it gives one.
+				if _, rerr := monomind.OrgSignReview(ctx, root, name); rerr != nil {
+					return errInvalidInput("%s", rerr.Error())
+				}
 				return errInvalidInput("refusing to sign: %s is set — this is an org role or agent turn, and only the operator signs org definitions", m)
 			}
 			// A coding agent (the chat assistant included) runs commands with

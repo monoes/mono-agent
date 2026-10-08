@@ -82,8 +82,20 @@ export function AddOrgAutomation(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddOrgAutomation'](arg1, arg2, arg3);
 }
 
+export function AddOrgDocumentEdge(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['AddOrgDocumentEdge'](arg1, arg2, arg3, arg4);
+}
+
 export function AddOrgRole(arg1, arg2) {
   return window['go']['main']['App']['AddOrgRole'](arg1, arg2);
+}
+
+export function AddOrgRoleToSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddOrgRoleToSection'](arg1, arg2, arg3);
+}
+
+export function AddOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddOrgSection'](arg1, arg2, arg3);
 }
 
 export function AddPersonMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
@@ -130,6 +142,10 @@ export function AnalyzeRecording(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2, arg3);
 }
 
+export function AnswerAgentQuestion(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AnswerAgentQuestion'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function AnswerOrgChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerOrgChat'](arg1, arg2, arg3);
 }
@@ -156,6 +172,10 @@ export function ApproveOrgAction(arg1, arg2, arg3) {
 
 export function ApprovePendingPerson(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePendingPerson'](arg1, arg2, arg3);
+}
+
+export function AssignOrgRole(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AssignOrgRole'](arg1, arg2, arg3);
 }
 
 export function BindBrowser(arg1, arg2) {
@@ -276,6 +296,14 @@ export function DeleteChatConversation(arg1) {
 
 export function DeleteOrgDesign(arg1) {
   return window['go']['main']['App']['DeleteOrgDesign'](arg1);
+}
+
+export function DeleteOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteOrgSection'](arg1, arg2, arg3);
+}
+
+export function DeletePeople(arg1) {
+  return window['go']['main']['App']['DeletePeople'](arg1);
 }
 
 export function DeleteProfileDocument(arg1) {
@@ -458,6 +486,10 @@ export function GetOrgAutonomy(arg1) {
   return window['go']['main']['App']['GetOrgAutonomy'](arg1);
 }
 
+export function GetOrgBudget(arg1, arg2) {
+  return window['go']['main']['App']['GetOrgBudget'](arg1, arg2);
+}
+
 export function GetOrgChatHistory(arg1, arg2) {
   return window['go']['main']['App']['GetOrgChatHistory'](arg1, arg2);
 }
@@ -470,8 +502,16 @@ export function GetOrgDecisions(arg1, arg2) {
   return window['go']['main']['App']['GetOrgDecisions'](arg1, arg2);
 }
 
+export function GetOrgDocuments(arg1, arg2) {
+  return window['go']['main']['App']['GetOrgDocuments'](arg1, arg2);
+}
+
 export function GetOrgDesign(arg1) {
   return window['go']['main']['App']['GetOrgDesign'](arg1);
+}
+
+export function GetOrgEstimate(arg1) {
+  return window['go']['main']['App']['GetOrgEstimate'](arg1);
 }
 
 export function GetOrgFlow(arg1, arg2) {
@@ -498,6 +538,10 @@ export function GetOrgReport(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetOrgReport'](arg1, arg2, arg3);
 }
 
+export function GetOrgScheduleAudit(arg1) {
+  return window['go']['main']['App']['GetOrgScheduleAudit'](arg1);
+}
+
 export function GetOrgStatus(arg1) {
   return window['go']['main']['App']['GetOrgStatus'](arg1);
 }
@@ -512,10 +556,6 @@ export function GetPendingPeopleApprovals() {
 
 export function GetPeople(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetPeople'](arg1, arg2, arg3, arg4);
-}
-
-export function DeletePeople(arg1) {
-  return window['go']['main']['App']['DeletePeople'](arg1);
 }
 
 export function GetPeopleCount(arg1, arg2) {
@@ -898,6 +938,10 @@ export function OrgGroupStatus(arg1) {
   return window['go']['main']['App']['OrgGroupStatus'](arg1);
 }
 
+export function OrgSectionsRuntimes() {
+  return window['go']['main']['App']['OrgSectionsRuntimes']();
+}
+
 export function OrgRoleSetAccess(arg1, arg2, arg3) {
   return window['go']['main']['App']['OrgRoleSetAccess'](arg1, arg2, arg3);
 }
@@ -956,6 +1000,10 @@ export function RemoveConnection(arg1) {
 
 export function RemoveOrgAutomation(arg1, arg2) {
   return window['go']['main']['App']['RemoveOrgAutomation'](arg1, arg2);
+}
+
+export function RemoveOrgDocumentEdge(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RemoveOrgDocumentEdge'](arg1, arg2, arg3, arg4);
 }
 
 export function RemoveOrgGrant(arg1, arg2, arg3) {
@@ -1082,6 +1130,10 @@ export function SetAutomationTrust(arg1, arg2) {
   return window['go']['main']['App']['SetAutomationTrust'](arg1, arg2);
 }
 
+export function SetChatOrgMode(arg1, arg2) {
+  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
+}
+
 export function SetOAuthCredentials(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOAuthCredentials'](arg1, arg2, arg3);
 }
@@ -1096,6 +1148,10 @@ export function SetOrgGrant(arg1, arg2) {
 
 export function SetOrgRoleReportsTo(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOrgRoleReportsTo'](arg1, arg2, arg3);
+}
+
+export function SetOrgSchedule(arg1, arg2) {
+  return window['go']['main']['App']['SetOrgSchedule'](arg1, arg2);
 }
 
 export function SetWorkflowActive(arg1, arg2) {
@@ -1158,6 +1214,50 @@ export function TagApplication(arg1, arg2, arg3) {
   return window['go']['main']['App']['TagApplication'](arg1, arg2, arg3);
 }
 
+export function TaskAdd(arg1) {
+  return window['go']['main']['App']['TaskAdd'](arg1);
+}
+
+export function TaskAgentShell() {
+  return window['go']['main']['App']['TaskAgentShell']();
+}
+
+export function TaskApprove(arg1, arg2) {
+  return window['go']['main']['App']['TaskApprove'](arg1, arg2);
+}
+
+export function TaskArchive(arg1) {
+  return window['go']['main']['App']['TaskArchive'](arg1);
+}
+
+export function TaskBoard(arg1) {
+  return window['go']['main']['App']['TaskBoard'](arg1);
+}
+
+export function TaskComment(arg1, arg2) {
+  return window['go']['main']['App']['TaskComment'](arg1, arg2);
+}
+
+export function TaskEdit(arg1, arg2) {
+  return window['go']['main']['App']['TaskEdit'](arg1, arg2);
+}
+
+export function TaskMove(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TaskMove'](arg1, arg2, arg3, arg4);
+}
+
+export function TaskPulse() {
+  return window['go']['main']['App']['TaskPulse']();
+}
+
+export function TaskShow(arg1) {
+  return window['go']['main']['App']['TaskShow'](arg1);
+}
+
+export function TaskUnarchive(arg1) {
+  return window['go']['main']['App']['TaskUnarchive'](arg1);
+}
+
 export function TestAutomation(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestAutomation'](arg1, arg2, arg3);
 }
@@ -1176,6 +1276,10 @@ export function UninstallAutomation(arg1) {
 
 export function UpdateOrgRole(arg1, arg2, arg3) {
   return window['go']['main']['App']['UpdateOrgRole'](arg1, arg2, arg3);
+}
+
+export function UpdateOrgSection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateOrgSection'](arg1, arg2, arg3);
 }
 
 export function UpdateSecret(arg1, arg2, arg3, arg4, arg5, arg6) {
@@ -1210,10 +1314,14 @@ export function VerifyDraft(arg1, arg2, arg3) {
   return window['go']['main']['App']['VerifyDraft'](arg1, arg2, arg3);
 }
 
-export function SetChatOrgMode(arg1, arg2) {
-  return window['go']['main']['App']['SetChatOrgMode'](arg1, arg2);
+export function ListPublications(search, platform, kind, workflow, agent, since, until, limit, offset) {
+  return window['go']['main']['App']['ListPublications'](search, platform, kind, workflow, agent, since, until, limit, offset);
 }
 
-export function AnswerAgentQuestion(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['AnswerAgentQuestion'](arg1, arg2, arg3, arg4, arg5);
+export function GetPublication(id) {
+  return window['go']['main']['App']['GetPublication'](id);
+}
+
+export function GetPublicationStats() {
+  return window['go']['main']['App']['GetPublicationStats']();
 }

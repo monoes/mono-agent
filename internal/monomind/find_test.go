@@ -127,8 +127,28 @@ func TestFindAll_ListsShadowedCopies(t *testing.T) {
 	t.Setenv("PATH", sys)
 
 	all := FindAll()
-	if len(all) != 2 || all[0] != old || all[1] != managed {
+	// macOS temp dirs sit behind a /var -> /private/var symlink, and FindAll
+	// may report either spelling; compare the real paths.
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	// System fallback locations may contain additional real installations.
+	if len(all) < 2 || real(all[0]) != real(old) || real(all[1]) != real(managed) {
 		t.Fatalf("FindAll() = %v, want [%s %s]", all, old, managed)
+	}
+	seen := make(map[string]bool)
+	for _, path := range all {
+		rp, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[rp] {
+			t.Fatalf("FindAll lists the same binary twice: %v", all)
+		}
+		seen[rp] = true
 	}
 	if got, _ := Find(); got != all[0] {
 		t.Fatalf("Find() = %s, want FindAll's first %s", got, all[0])

@@ -208,3 +208,38 @@ func JSONBody(out []byte) []byte {
 	}
 	return out
 }
+
+// KnownGoodMonomindVersion is the oldest monomind mono-agent is tested
+// against end to end (the golden fixtures in testdata/monomind-2.24.1 are
+// recorded from it). MinMonomindVersion is what the client needs to work at
+// all and stays a hard requirement; an older monomind between the two still
+// runs, with the gaps KnownGoodDegrades names.
+const KnownGoodMonomindVersion = "2.24.1"
+
+// KnownGoodDegrades says what is lost below KnownGoodMonomindVersion.
+const KnownGoodDegrades = "org sections (documents handed between sections), the schedule audit lines of " +
+	"scheduled runs, and runtime-isolation findings are only validated and reported from monomind " +
+	KnownGoodMonomindVersion + "; with an older monomind, `org validate` can accept or reject definitions " +
+	"differently (the removed \"loops\" key, constant keys) and those parts of an org's state are absent " +
+	"from what the app shows"
+
+// BelowKnownGood reports whether version is older than
+// KnownGoodMonomindVersion. An empty or unparseable version is not "below":
+// nothing is known about it, so nothing is warned.
+func BelowKnownGood(version string) bool {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if v == "" || v[0] < '0' || v[0] > '9' {
+		return false
+	}
+	return !versionAtLeast(v, KnownGoodMonomindVersion)
+}
+
+// KnownGoodAdvisory is the warning for a monomind older than
+// KnownGoodMonomindVersion, "" when version is not.
+func KnownGoodAdvisory(version string) string {
+	if !BelowKnownGood(version) {
+		return ""
+	}
+	return fmt.Sprintf("monomind %s is older than %s, the version mono-agent is tested with: %s — update it: npm install -g @monoes/monomindcli@latest",
+		strings.TrimPrefix(strings.TrimSpace(version), "v"), KnownGoodMonomindVersion, KnownGoodDegrades)
+}

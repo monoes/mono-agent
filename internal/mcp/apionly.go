@@ -17,16 +17,23 @@ func apiToolNames() map[string]bool {
 	return names
 }
 
-// servedTools is what this server serves: every tool, or with Options.APIOnly the API's alone. A model
-// that is to manage the API through a server does not need a workflow, vault, secret, person, org or
-// documentation tool, and --allow-mutations, which the API's mutating tools need, also serves workflow
-// tools that can run a command as the OS user: this is how an operator gives it the one without the other.
+// servedTools is what this server serves: every tool, or with Options.TasksOnly the task board's alone,
+// or with Options.APIOnly the API's alone. A model that is to work the board or manage the API through a
+// server does not need a workflow, vault, secret, person, org or documentation tool, and
+// --allow-mutations, which the mutating tools of both families need, also serves workflow tools that can
+// run a command as the OS user: this is how an operator gives it the one without the other. Serve
+// refuses a server asked for both.
 func (s *Server) servedTools() []tool {
 	all := allTools()
-	if !s.opts.APIOnly {
+	var keep map[string]bool
+	switch {
+	case s.opts.TasksOnly:
+		keep = taskToolNames()
+	case s.opts.APIOnly:
+		keep = apiToolNames()
+	default:
 		return all
 	}
-	keep := apiToolNames()
 	out := make([]tool, 0, len(keep))
 	for _, t := range all {
 		if keep[t.name] {
@@ -40,4 +47,13 @@ func (s *Server) servedTools() []tool {
 // serve because it was started with --api-only.
 func notServedByAPIOnly(name string) error {
 	return fmt.Errorf("%s is not served: this MCP server was started with --api-only (or MONOAGENT_MCP_API_ONLY=1), which serves only the OpenAI-compatible API's tools (api_*)", name)
+}
+
+// notServed is the answer to a call, by name, of a tool that exists and that a
+// narrowed server does not serve: it names the switch that narrowed it.
+func (s *Server) notServed(name string) error {
+	if s.opts.TasksOnly {
+		return notServedByTasksOnly(name)
+	}
+	return notServedByAPIOnly(name)
 }
