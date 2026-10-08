@@ -202,13 +202,19 @@ func TestStdinIsTerminalRejectsDevNull(t *testing.T) {
 // stderr apart.
 func runCLI(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return runCLIIn(t, home, "", args...)
+}
+
+// runCLIIn is runCLI with stdin as the command's input.
+func runCLIIn(t *testing.T, home, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	root := newRootCmd()
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(append(args, "--db-path", filepath.Join(home, ".monoagent", "monoagent.db")))
 	err = root.Execute()
 	return out.String(), errOut.String(), err

@@ -207,6 +207,28 @@ func TestLibraryEmailLogin(t *testing.T) {
 	}
 }
 
+// --code-stdin takes the emailed code from stdin, so it is never an argument.
+func TestAccountEmailLoginCodeStdin(t *testing.T) {
+	f := newLibFixture(t)
+	_, _, err := runCLIIn(t, f.home, "999999\n", "--json", "account", "login", "--email", "ada@example.com", "--code-stdin")
+	if exitCodeFor(err) != 4 {
+		t.Fatalf("wrong code on stdin: %v", err)
+	}
+	out, errOut, err := runCLIIn(t, f.home, " 123456 \n", "--json", "account", "login", "--email", "ada@example.com", "--code-stdin")
+	if err != nil {
+		t.Fatalf("right code on stdin: %v\n%s\n%s", err, out, errOut)
+	}
+	if _, _, err := runCLIIn(t, f.home, "123456\n", "--json", "account", "login", "--code-stdin"); exitCodeFor(err) != 3 {
+		t.Fatalf("--code-stdin without --email: %v", err)
+	}
+	if _, _, err := runCLIIn(t, f.home, "123456\n", "--json", "account", "login", "--email", "ada@example.com", "--code-stdin", "--code", "1"); exitCodeFor(err) != 3 {
+		t.Fatalf("--code-stdin with --code: %v", err)
+	}
+	if _, _, err := runCLIIn(t, f.home, "\n", "--json", "account", "login", "--email", "ada@example.com", "--code-stdin"); exitCodeFor(err) != 3 {
+		t.Fatalf("empty code on stdin: %v", err)
+	}
+}
+
 func TestLibraryInstallAutomationTrust(t *testing.T) {
 	noSeed(t)
 	f := newLibFixture(t)

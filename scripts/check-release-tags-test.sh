@@ -77,4 +77,18 @@ mkdir "$work/empty"
 if guard "$work/empty" > "$work/out" 2>&1; then fail "a folder with no binary passed"; fi
 echo "ok: --min"
 
+# A file that looks like an executable but carries no Go build info is an error, unless allowed.
+mkdir "$work/nongo"
+printf '\x7fELF\x02\x01\x01\x00 not really go' > "$work/nongo/fakeelf"
+printf 'MZ\x90\x00 not really go' > "$work/nongo/fake.exe"
+printf '\xcf\xfa\xed\xfe not really go' > "$work/nongo/fakemacho"
+cp "$work/bin/plain" "$work/nongo/gobin"
+expect_fail "a non-Go ELF" "fakeelf looks like an executable" "$work/nongo"
+expect_fail "a non-Go PE" "fake.exe looks like an executable" "$work/nongo"
+expect_fail "a non-Go Mach-O" "fakemacho looks like an executable" "$work/nongo"
+expect_ok "allow-listed non-Go executables" --allow-non-go fakeelf --allow-non-go fake.exe --allow-non-go fakemacho "$work/nongo"
+expect_fail "only the allow-listed one passes" "fake.exe looks like an executable" --allow-non-go fakeelf "$work/nongo"
+mkdir "$work/text"; printf 'hello\n' > "$work/text/README"; cp "$work/bin/plain" "$work/text/cli"
+expect_ok "plain text files stay ignored" "$work/text"
+
 echo "check-release-tags test: ok"

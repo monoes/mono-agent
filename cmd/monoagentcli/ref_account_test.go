@@ -29,9 +29,9 @@ func TestRefAccountFlagsExistOnCommands(t *testing.T) {
 		path  []string
 		flags []string
 	}{
-		{[]string{"account", "login"}, []string{"email", "send", "code", "no-browser", "timeout"}},
+		{[]string{"account", "login"}, []string{"email", "send", "code", "code-stdin", "no-browser", "timeout"}},
 		{[]string{"account", "status"}, []string{"offline"}},
-		{[]string{"library", "login"}, []string{"email", "send", "code", "no-browser", "timeout"}},
+		{[]string{"library", "login"}, []string{"email", "send", "code", "code-stdin", "no-browser", "timeout"}},
 		{[]string{"library", "status"}, []string{"offline"}},
 	} {
 		cmd, _, err := root.Find(tc.path)

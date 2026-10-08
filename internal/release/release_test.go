@@ -228,3 +228,22 @@ func TestPinnedKeyLine(t *testing.T) {
 		t.Error("this build must pin no key until the owner pastes one")
 	}
 }
+
+// A manifest signed by a revoked key id is rejected even though the key is still pinned; the
+// key that replaces it keeps working.
+func TestRevokedKeyIsRejected(t *testing.T) {
+	r := newRig(t)
+	newPub, newPriv, _ := ed25519.GenerateKey(rand.Reader)
+	keys := []Key{{ID: KeyID(r.pub), Public: r.pub}, {ID: KeyID(newPub), Public: newPub}}
+	if _, err := VerifyWith(keys, r.manifest, r.sig); err != nil {
+		t.Fatalf("before revocation: %v", err)
+	}
+	revokedReleaseKeyIDs[KeyID(r.pub)] = true
+	t.Cleanup(func() { delete(revokedReleaseKeyIDs, KeyID(r.pub)) })
+	if _, err := VerifyWith(keys, r.manifest, r.sig); !errors.Is(err, ErrUntrusted) || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("a revoked key's manifest: %v", err)
+	}
+	if _, err := VerifyWith(keys, r.manifest, sign(newPriv, newPub, r.manifest)); err != nil {
+		t.Fatalf("the replacement key: %v", err)
+	}
+}
