@@ -104,3 +104,6 @@ func (windowsInstaller) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+// MainPID: a scheduled task does not report its process in a form that is checked here.
+func (windowsInstaller) MainPID(context.Context) (int, error) { return 0, ErrPIDUnverifiable }

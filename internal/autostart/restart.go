@@ -2,6 +2,7 @@ package autostart
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -93,7 +94,31 @@ func endThenRun(ctx context.Context, schtasks func(context.Context, ...string) (
 	}
 	out, err := schtasks(ctx, "/run", "/tn", task)
 	if err != nil {
-		return fmt.Errorf("schtasks /run: %w: %s", err, strings.TrimSpace(string(out)))
+		return &StoppedError{Err: fmt.Errorf("schtasks /run: %w: %s", err, strings.TrimSpace(string(out)))}
 	}
 	return nil
 }
+
+// ErrPIDUnverifiable means this platform's service manager cannot say which process it runs, so
+// a caller cannot tell whether the registered service is the daemon it has in mind.
+var ErrPIDUnverifiable = errors.New("the service manager does not report the daemon's process id here")
+
+// PIDReporter is implemented by an Installer that can name the main process of the registered
+// service. 0 means the service has no running process.
+type PIDReporter interface {
+	MainPID(ctx context.Context) (int, error)
+}
+
+// ServiceMainPID is the pid of the process the registered service runs, or ErrPIDUnverifiable.
+func ServiceMainPID(ctx context.Context, in Installer) (int, error) {
+	if r, ok := in.(PIDReporter); ok {
+		return r.MainPID(ctx)
+	}
+	return 0, ErrPIDUnverifiable
+}
+
+// StoppedError is a restart that ended the daemon but could not start it again: it is down.
+type StoppedError struct{ Err error }
+
+func (e *StoppedError) Error() string { return e.Err.Error() }
+func (e *StoppedError) Unwrap() error { return e.Err }

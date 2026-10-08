@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -198,4 +199,17 @@ func (linuxInstaller) Start(ctx context.Context) error {
 		return fmt.Errorf("systemctl --user start %s: %w: %s", unitName, err, string(out))
 	}
 	return nil
+}
+
+// MainPID is the main pid systemd reports for the daemon's unit; 0 when it is not running.
+func (linuxInstaller) MainPID(ctx context.Context) (int, error) {
+	out, err := systemctl(ctx, "--user", "show", "-p", "MainPID", "--value", unitName)
+	if err != nil {
+		return 0, fmt.Errorf("systemctl --user show %s: %w", unitName, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("systemctl reported main pid %q", strings.TrimSpace(string(out)))
+	}
+	return pid, nil
 }

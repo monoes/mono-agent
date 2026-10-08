@@ -88,6 +88,7 @@ type fakeAutostart struct {
 	started    int
 	restarted  int
 	restartErr error
+	onRestart  func()
 }
 
 func (f *fakeAutostart) Install(context.Context) (autostart.Result, error) {
@@ -100,6 +101,9 @@ func (f *fakeAutostart) Status(context.Context) (bool, string) {
 func (f *fakeAutostart) Start(context.Context) error { f.started++; return nil }
 func (f *fakeAutostart) Restart(context.Context) error {
 	f.restarted++
+	if f.onRestart != nil && f.restartErr == nil {
+		f.onRestart()
+	}
 	return f.restartErr
 }
 

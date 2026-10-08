@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/monoes/mono-agent/internal/autostart"
 	"github.com/monoes/mono-agent/internal/daemonhb"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/testdb"
@@ -32,6 +34,20 @@ func fakeBlockers(t *testing.T, inFlight int, settingsErr, err error) {
 	was := restartBlockers
 	restartBlockers = func(context.Context, *globalConfig, int) (int, error, error) { return inFlight, settingsErr, err }
 	t.Cleanup(func() { restartBlockers = was })
+}
+
+// servicePIDIs stubs the registered service's main pid for one test, and shortens the verify wait.
+func servicePIDIs(t *testing.T, pid int, err error) {
+	t.Helper()
+	was, w, tk := servicePID, restartVerifyWait, restartVerifyTick
+	servicePID = func(context.Context, autostart.Installer) (int, error) { return pid, err }
+	restartVerifyWait, restartVerifyTick = 300*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { servicePID, restartVerifyWait, restartVerifyTick = was, w, tk })
+}
+
+// beatsNewVersion makes a restart bring the daemon back with a heartbeat of version.
+func beatsNewVersion(version string) func() {
+	return func() { _ = daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), Version: version}) }
 }
 
 func TestDaemonAfterUpdate(t *testing.T) {
@@ -67,6 +83,8 @@ func TestDaemonAfterUpdate(t *testing.T) {
 			fakeBlockers(t, c.inFlight, c.settings, c.count)
 			fake := &fakeAutostart{installed: c.registered, restartErr: c.restartErr}
 			useInstaller(t, fake)
+			servicePIDIs(t, os.Getpid(), nil)
+			fake.onRestart = beatsNewVersion("v0.108.0")
 			d := daemonAfterUpdate(context.Background(), &globalConfig{}, "v0.108.0")
 			if c.action == "" {
 				if d != nil || fake.restarted != 0 {
@@ -81,6 +99,41 @@ func TestDaemonAfterUpdate(t *testing.T) {
 				if !strings.Contains(d.Message, want) {
 					t.Errorf("message %q should say %q", d.Message, want)
 				}
+			}
+		})
+	}
+}
+
+// The service is per user: one that does not run this home's daemon is never restarted, and a
+// restart is only reported once a live heartbeat of the new version follows.
+func TestDaemonAfterUpdateChecksTheServiceAndVerifiesTheRestart(t *testing.T) {
+	cases := []struct {
+		name      string
+		pid       int
+		pidErr    error
+		beats     bool // the restarted daemon writes a heartbeat of the new version
+		action    string
+		restarted int
+		says      string
+	}{
+		{"the service runs another pid", os.Getpid() + 1, nil, true, "not_managed", 0, "not this daemon"},
+		{"the pid cannot be told", 0, autostart.ErrPIDUnverifiable, true, "not_managed", 0, "manually"},
+		{"the service runs this daemon", os.Getpid(), nil, true, "restarted", 1, "Restarted the daemon"},
+		{"no heartbeat follows", os.Getpid(), nil, false, "failed", 1, "monoagentcli daemon start"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runningDaemon(t, "v0.105.0")
+			fakeBlockers(t, 0, nil, nil)
+			fake := &fakeAutostart{installed: true}
+			if c.beats {
+				fake.onRestart = beatsNewVersion("v0.108.0")
+			}
+			useInstaller(t, fake)
+			servicePIDIs(t, c.pid, c.pidErr)
+			d := daemonAfterUpdate(context.Background(), &globalConfig{}, "v0.108.0")
+			if d == nil || d.Action != c.action || fake.restarted != c.restarted || !strings.Contains(d.Message, c.says) {
+				t.Fatalf("d = %+v, restarted %d; want %s / %d / %q", d, fake.restarted, c.action, c.restarted, c.says)
 			}
 		})
 	}
@@ -135,8 +188,9 @@ func TestUpdateWhenAlreadyCurrentRestartsAStaleDaemon(t *testing.T) {
 	t.Cleanup(func() { latestReleaseURL = old })
 	runningDaemon(t, "v9.8.0")
 	fakeBlockers(t, 0, nil, nil)
-	fake := &fakeAutostart{installed: true}
+	fake := &fakeAutostart{installed: true, onRestart: beatsNewVersion("v9.9.9")}
 	useInstaller(t, fake)
+	servicePIDIs(t, os.Getpid(), nil)
 	if err := runUpdate(newUpdateCmd(&globalConfig{}), &globalConfig{}); err != nil || fake.restarted != 1 {
 		t.Fatalf("err %v, the stale daemon was restarted %d times, want 1", err, fake.restarted)
 	}
@@ -152,8 +206,9 @@ func TestUpdateAppRestartsTheDaemonAndReportsIt(t *testing.T) {
 	app, _ := appInstallDir(t)
 	runningDaemon(t, "v1.0.0")
 	fakeBlockers(t, 0, nil, nil)
-	fake := &fakeAutostart{installed: true}
+	fake := &fakeAutostart{installed: true, onRestart: func() { _ = daemonhb.Write(daemonhb.Heartbeat{PID: os.Getpid(), Version: "v9.9.9"}) }}
 	useInstaller(t, fake)
+	servicePIDIs(t, os.Getpid(), nil)
 	res, progress := runUpdateAppCmd(t, "--app", app, "--current", "v1.0.0")
 	if !res.Success || res.Daemon == nil || res.Daemon.Action != "restarted" || fake.restarted != 1 || !strings.Contains(progress, "Restarted the daemon") {
 		t.Fatalf("res = %+v, daemon %+v, restarted %d, progress %q", res, res.Daemon, fake.restarted, progress)

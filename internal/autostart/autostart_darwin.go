@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -171,4 +172,19 @@ func (darwinInstaller) Start(ctx context.Context) error {
 		return fmt.Errorf("launchctl kickstart %s: %w: %s", target, err, string(out))
 	}
 	return nil
+}
+
+var launchdPIDLine = regexp.MustCompile(`(?m)^\s*pid = (\d+)\s*$`)
+
+// MainPID is the pid launchd reports for the daemon's job (`launchctl print`); 0 when it has none.
+func (darwinInstaller) MainPID(ctx context.Context) (int, error) {
+	target := launchdDomain() + "/" + Label
+	out, err := launchctl(ctx, "print", target)
+	if err != nil {
+		return 0, fmt.Errorf("launchctl print %s: %w", target, err)
+	}
+	if m := launchdPIDLine.FindSubmatch(out); m != nil {
+		return strconv.Atoi(string(m[1]))
+	}
+	return 0, nil
 }
