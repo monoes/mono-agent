@@ -43,7 +43,11 @@ func ParseKey(line string) (Key, error) {
 	if err != nil || len(raw) != ed25519.PublicKeySize {
 		return Key{}, fmt.Errorf("release key %s: not a base64 ed25519 public key", f[0])
 	}
-	return Key{ID: f[0], Public: ed25519.PublicKey(raw)}, nil
+	pub := ed25519.PublicKey(raw)
+	if f[0] != KeyID(pub) {
+		return Key{}, fmt.Errorf("release key %s: the id does not match the key (want %s)", f[0], KeyID(pub))
+	}
+	return Key{ID: f[0], Public: pub}, nil
 }
 
 // PinnedKeys returns the keys compiled into this build. A malformed line is

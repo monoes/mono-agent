@@ -37,7 +37,7 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		LoginPath:  shellpath.LoginPath,
 		FreeBytes:  health.FreeBytes,
 		LatestVersion: func(ctx context.Context) (string, error) {
-			info, err := fetchLatest(ctx)
+			info, err := fetchLatest(ctx, false)
 			if err != nil {
 				return "", err
 			}

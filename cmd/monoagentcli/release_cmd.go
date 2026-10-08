@@ -31,8 +31,8 @@ func newReleaseKeygenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keygen",
 		Short: "Generate the release signing key; the private key goes to the OS keychain",
-		Long: "Generates an Ed25519 release signing key. The private key is stored in the OS keychain (service monoagent-release, " +
-			"account signing-key) and never printed. The public key line is printed: paste it into pinnedReleaseKeys in " +
+		Long: "Generates an Ed25519 release signing key. The private key is stored in the OS keychain (service monoagent-release-signing, " +
+			"account ed25519-v1) and never printed. The public key line is printed: paste it into pinnedReleaseKeys in " +
 			"internal/release/keys.go and rebuild; clients trust only the keys pinned there. Run it in your own terminal.\n\n" +
 			"An existing key is never replaced unless --force (releases signed with the old key stop verifying in builds that pin only the new one).",
 		Args: cobra.NoArgs,
@@ -46,11 +46,11 @@ func newReleaseKeygenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := secrets.StoreReleaseSigningKey(base64.StdEncoding.EncodeToString(priv.Seed())); err != nil {
+			if err := secrets.StoreReleaseSigningKey(base64.StdEncoding.EncodeToString(priv)); err != nil {
 				return fmt.Errorf("store the private key in the OS keychain: %w", err)
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintln(out, "Private key stored in the OS keychain (monoagent-release / signing-key).")
+			fmt.Fprintln(out, "Private key stored in the OS keychain (monoagent-release-signing / ed25519-v1).")
 			fmt.Fprintln(out, "Paste this line into pinnedReleaseKeys in internal/release/keys.go:")
 			fmt.Fprintf(out, "\t%q,\n", release.KeyLine(pub))
 			return nil

@@ -51,7 +51,7 @@ func signedLatest(t *testing.T, tamper bool) {
 
 func TestFetchLatestPrefersSignedManifest(t *testing.T) {
 	signedLatest(t, false)
-	info, err := fetchLatest(context.Background())
+	info, err := fetchLatest(context.Background(), false)
 	if err != nil || info.Tag != "v2.0.0" || info.Manifest == nil {
 		t.Fatalf("got %+v, %v", info, err)
 	}
@@ -59,7 +59,7 @@ func TestFetchLatestPrefersSignedManifest(t *testing.T) {
 
 func TestFetchLatestTamperedManifestDoesNotFallBack(t *testing.T) {
 	signedLatest(t, true)
-	info, err := fetchLatest(context.Background())
+	info, err := fetchLatest(context.Background(), false)
 	if err == nil || info != nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("tampered manifest must fail, not fall back: %+v, %v", info, err)
 	}
@@ -68,13 +68,13 @@ func TestFetchLatestTamperedManifestDoesNotFallBack(t *testing.T) {
 func TestFetchLatestNoPinnedKeyFallsBackToLegacy(t *testing.T) {
 	signedLatest(t, false)
 	releaseClient = func() *release.Client { return &release.Client{} }
-	info, err := fetchLatest(context.Background())
+	info, err := fetchLatest(context.Background(), false)
 	if err != nil || info.Tag != "v1.0.0" || info.Legacy == nil {
 		t.Fatalf("got %+v, %v", info, err)
 	}
 	release.AllowLegacyGitHubUpdates = false
 	t.Cleanup(func() { release.AllowLegacyGitHubUpdates = true })
-	if _, err := fetchLatest(context.Background()); err == nil {
+	if _, err := fetchLatest(context.Background(), false); err == nil {
 		t.Fatal("legacy disabled and no key must fail")
 	}
 }
@@ -98,6 +98,19 @@ func TestReleaseKeygenAndVerify(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "PRIVATE") {
 		t.Fatal("private key printed")
+	}
+	// Shared contract: service monoagent-release-signing, account ed25519-v1,
+	// value = base64 of the 64-byte private key, whose public half is the printed key.
+	stored, err := keyring.Get("monoagent-release-signing", "ed25519-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(stored)
+	if err != nil || len(raw) != ed25519.PrivateKeySize {
+		t.Fatalf("stored key is %d bytes (%v), want %d", len(raw), err, ed25519.PrivateKeySize)
+	}
+	if got := release.KeyLine(ed25519.PrivateKey(raw).Public().(ed25519.PublicKey)); got != line {
+		t.Fatalf("printed %q, stored key is %q", line, got)
 	}
 	// A second keygen refuses to replace the key.
 	cmd = newReleaseCmd()

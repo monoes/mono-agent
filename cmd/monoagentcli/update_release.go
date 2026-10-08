@@ -25,8 +25,10 @@ type latestInfo struct {
 // fetchLatest prefers the signed manifest. Only "unavailable" (no pinned key,
 // manifest not reachable) falls back; a manifest that fails a check is an
 // error, never a reason to try the weaker path.
-func fetchLatest(ctx context.Context) (*latestInfo, error) {
-	m, err := releaseClient().Latest(ctx)
+func fetchLatest(ctx context.Context, force bool) (*latestInfo, error) {
+	rc := releaseClient()
+	rc.Force = rc.Force || force
+	m, err := rc.Latest(ctx)
 	if err == nil {
 		return &latestInfo{Tag: m.Version, URL: m.NotesURL, Manifest: m}, nil
 	}

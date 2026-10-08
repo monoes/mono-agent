@@ -7,15 +7,16 @@ import (
 )
 
 const (
-	releaseKeyService = "monoagent-release"
-	releaseKeyAccount = "signing-key"
+	releaseKeyService = "monoagent-release-signing"
+	releaseKeyAccount = "ed25519-v1"
 )
 
 // ErrNoReleaseKey means no release signing key is stored in the OS keychain.
 var ErrNoReleaseKey = errors.New("no release signing key in the OS keychain")
 
 // StoreReleaseSigningKey saves the release signing private key (base64 text)
-// in the OS keychain, through the same keyring package vars as the vault.
+// in the OS keychain (value: standard base64 of the 64-byte Ed25519
+// private key, seed||pub), through the same keyring package vars as the vault.
 func StoreReleaseSigningKey(b64 string) error {
 	keyringIOMu.Lock()
 	defer keyringIOMu.Unlock()

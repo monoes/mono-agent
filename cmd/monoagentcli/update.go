@@ -80,7 +80,8 @@ func runUpdateCheck(cmd *cobra.Command, cfg *globalConfig, current string) error
 		current = getVersion()
 	}
 	res := updateCheck{CurrentVersion: current}
-	release, err := fetchLatest(cmd.Context())
+	force, _ := cmd.Flags().GetBool("force")
+	release, err := fetchLatest(cmd.Context(), force)
 	if err != nil {
 		if !cfg.JSONOutput {
 			return err
@@ -148,7 +149,7 @@ func runUpdate(cmd *cobra.Command, cfg *globalConfig) error {
 	fmt.Println("Checking for updates...")
 	force, _ := cmd.Flags().GetBool("force")
 
-	info, err := fetchLatest(context.Background())
+	info, err := fetchLatest(context.Background(), force)
 	if err != nil {
 		return err
 	}

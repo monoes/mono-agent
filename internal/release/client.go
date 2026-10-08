@@ -2,11 +2,14 @@ package release
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -26,6 +29,12 @@ type Client struct {
 	Hosts         []string
 	RedirectHosts []string
 	MaxAssetBytes int64 // 0: 512 MiB
+	// StatePath is a JSON file holding the highest manifest version and
+	// released_at ever accepted; a manifest below either is refused as a
+	// rollback unless Force. "" disables the check (tests).
+	StatePath string
+	Force     bool             // allow a version/released_at below the recorded highest
+	Now       func() time.Time // nil: time.Now
 }
 
 // DefaultClient is the production client: pinned keys, monoes.me first and
@@ -33,6 +42,7 @@ type Client struct {
 func DefaultClient() *Client {
 	return &Client{
 		Keys:          PinnedKeys(),
+		StatePath:     DefaultStatePath(),
 		ManifestURLs:  []string{ManifestURL, RepoManifestURL},
 		Hosts:         []string{"monoes.me", "github.com"},
 		RedirectHosts: []string{"monoes.me", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"},
@@ -117,7 +127,14 @@ func (c *Client) Latest(ctx context.Context) (*Manifest, error) {
 			last = err
 			continue
 		}
-		return VerifyWith(c.Keys, body, sig)
+		m, err := VerifyWith(c.Keys, body, sig)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.checkFresh(m); err != nil {
+			return nil, err
+		}
+		return m, nil
 	}
 	return nil, fmt.Errorf("%w: %v", ErrUnavailable, last)
 }
@@ -148,4 +165,65 @@ func (c *Client) Download(ctx context.Context, a Asset) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+// DefaultStatePath is ~/.monoagent/release-state.json, the CLI's global
+// (profile-independent) state directory; "" when the home is unknown.
+func DefaultStatePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".monoagent", "release-state.json")
+}
+
+type state struct {
+	Version    string `json:"version"`
+	ReleasedAt string `json:"released_at"`
+}
+
+// checkFresh enforces expires_at, refuses a rollback below the highest
+// accepted version / released_at, and records the new highest values.
+func (c *Client) checkFresh(m *Manifest) error {
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	if err := m.CheckExpiry(now()); err != nil {
+		return err
+	}
+	if c.StatePath == "" {
+		return nil
+	}
+	var st state
+	if b, err := os.ReadFile(c.StatePath); err == nil {
+		if json.Unmarshal(b, &st) != nil {
+			st = state{} // unreadable state must not brick updates
+		}
+	}
+	rel, _ := time.Parse(time.RFC3339, m.ReleasedAt)
+	seen, seenErr := time.Parse(time.RFC3339, st.ReleasedAt)
+	if !c.Force {
+		if st.Version != "" && Compare(m.Version, st.Version) < 0 {
+			return untrusted("manifest version %s is older than %s, which was already accepted; refusing a rollback (--force overrides)", m.Version, st.Version)
+		}
+		if seenErr == nil && rel.Before(seen) {
+			return untrusted("manifest released_at %s is older than %s, which was already accepted; refusing a rollback (--force overrides)", m.ReleasedAt, st.ReleasedAt)
+		}
+	}
+	next := st
+	if st.Version == "" || Compare(m.Version, st.Version) > 0 {
+		next.Version = m.Version
+	}
+	if seenErr != nil || rel.After(seen) {
+		next.ReleasedAt = m.ReleasedAt
+	}
+	if next != st {
+		if b, err := json.Marshal(next); err == nil {
+			if os.MkdirAll(filepath.Dir(c.StatePath), 0o755) == nil {
+				_ = os.WriteFile(c.StatePath, b, 0o644)
+			}
+		}
+	}
+	return nil
 }

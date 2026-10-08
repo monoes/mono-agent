@@ -115,6 +115,9 @@ func (u Updater) Run() (Result, error) {
 	var manifest *release.Manifest
 	var rel *releaseInfo
 	tag := ""
+	rcc := *rc
+	rcc.Force = rcc.Force || u.Force
+	rc = &rcc
 	m, err := rc.Latest(u.Context)
 	switch {
 	case err == nil:
@@ -201,11 +204,9 @@ func (u Updater) fetchRelease() (*releaseInfo, error) {
 func (u Updater) downloadSigned(rc *release.Client, m *release.Manifest, names []string) (map[string][]byte, error) {
 	assets := map[string]release.Asset{}
 	for _, n := range names {
-		kind := "app"
-		if n == bundledCLIAssetWindows {
-			kind = "cli"
-		}
-		a, err := m.Asset(n, u.GOOS, u.GOARCH, kind)
+		// Every desktop asset, including the Windows bundled CLI exe, is
+		// kind "app" in the manifest.
+		a, err := m.Asset(n, u.GOOS, u.GOARCH, "app")
 		if err != nil {
 			return nil, err
 		}

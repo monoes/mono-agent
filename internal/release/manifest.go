@@ -31,7 +31,10 @@ const RepoManifestURL = "https://github.com/" + ReleasesRepo + "/releases/latest
 // AllowLegacyGitHubUpdates lets the updaters fall back to the GitHub API
 // (the releases' SHA256SUMS.txt over TLS) when the signed manifest is
 // unavailable. Treat it as a build constant: true now, false at the
-// repo-private release. (A var only so tests can flip it.)
+// repo-private release. The fallback is unsigned (TLS plus SHA256SUMS.txt
+// only) and has no expiry or downgrade protection, so it MUST be disabled
+// (AllowLegacyGitHubUpdates = false) at the repo-private release; otherwise
+// anyone who can block the signed manifest can force the weaker path. (A var only so tests can flip it.)
 var AllowLegacyGitHubUpdates = true
 
 // SchemaVersion is the only manifest schema this client understands.
@@ -64,11 +67,14 @@ type Asset struct {
 
 // Manifest is manifest.json.
 type Manifest struct {
-	Schema     int     `json:"schema"`
-	Version    string  `json:"version"`
-	ReleasedAt string  `json:"released_at"`
-	NotesURL   string  `json:"notes_url"`
-	Assets     []Asset `json:"assets"`
+	Schema     int    `json:"schema"`
+	Version    string `json:"version"`
+	ReleasedAt string `json:"released_at"`
+	NotesURL   string `json:"notes_url"`
+	// ExpiresAt (RFC 3339, optional, signed with the rest) is the time after
+	// which clients reject this manifest.
+	ExpiresAt string  `json:"expires_at,omitempty"`
+	Assets    []Asset `json:"assets"`
 }
 
 // Verify checks sig (a "<key-id> <base64 signature>" line) over the exact
@@ -83,7 +89,7 @@ func VerifyWith(keys []Key, manifest, sig []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("%w: this build pins no release key", ErrUnavailable)
 	}
 	f := strings.Fields(string(sig))
-	if len(f) != 2 {
+	if len(f) != 2 || len(f[0]) != 16 {
 		return nil, untrusted("signature file must be \"<key-id> <base64 signature>\"")
 	}
 	raw, err := base64.StdEncoding.DecodeString(f[1])
@@ -119,7 +125,27 @@ func parseManifest(b []byte) (*Manifest, error) {
 	if _, err := time.Parse(time.RFC3339, m.ReleasedAt); err != nil {
 		return nil, untrusted("manifest released_at is not RFC 3339")
 	}
+	if m.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, m.ExpiresAt); err != nil {
+			return nil, untrusted("manifest expires_at is not RFC 3339")
+		}
+	}
 	return &m, nil
+}
+
+// CheckExpiry rejects a manifest whose expires_at is in the past.
+func (m *Manifest) CheckExpiry(now time.Time) error {
+	if m.ExpiresAt == "" {
+		return nil
+	}
+	exp, err := time.Parse(time.RFC3339, m.ExpiresAt)
+	if err != nil {
+		return untrusted("manifest expires_at is not RFC 3339")
+	}
+	if now.After(exp) {
+		return untrusted("manifest expired at %s; ask the maintainers for a fresh release", m.ExpiresAt)
+	}
+	return nil
 }
 
 // Asset returns the asset with this name for os/arch/kind.
