@@ -213,7 +213,7 @@ func (sup *chatSupervisor) cli(profileID string, result any, args ...string) err
 	ctx, cancel := context.WithTimeout(context.Background(), chatCLITimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, full...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

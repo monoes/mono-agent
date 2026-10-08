@@ -30,7 +30,7 @@ func (a *App) rawCLI(timeout time.Duration, args ...string) string {
 	defer cancel()
 	full := append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)
 	cmd := exec.CommandContext(ctx, cliBin, full...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, err := cmd.Output()
 	return cliResultJSON(cliBin, out, err)
 }

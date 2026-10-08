@@ -136,7 +136,7 @@ func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
 		args = append(args, "--credential", credID)
 	}
 	cmd := exec.Command(cliBin, args...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	cmd.Stdin = bytes.NewReader(payload)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

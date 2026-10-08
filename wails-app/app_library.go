@@ -74,7 +74,7 @@ func (a *App) LibraryLogin() string {
 	}()
 
 	cmd := exec.CommandContext(ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "library", "login")
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	stopGracefully(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

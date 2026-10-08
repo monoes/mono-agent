@@ -94,7 +94,7 @@ func (a *App) runOrgCLI(args ...string) string {
 	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(fullArgs, " "), logSuffix))
 	startedAt := time.Now()
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	out, err := cmd.Output()
 	elapsed := time.Since(startedAt).Round(time.Millisecond)
 	if err != nil {

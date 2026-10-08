@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// hideWindow is a no-op on non-Windows platforms.
-func hideWindow(cmd *exec.Cmd) {}
+// suppressConsole does nothing outside Windows: only Windows pops up a
+// console window for a child process.
+func suppressConsole(*exec.Cmd) {}
 
 // setChatProcessGroup isolates the chat subprocess (monoagentcli → monomind
 // → agent CLI) in its own process group so a UI stop reaps the whole tree.

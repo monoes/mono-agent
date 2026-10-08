@@ -231,7 +231,7 @@ func (a *App) ConnectPlatformOAuth(platformID string) string {
 // progress line it writes to stderr, and returns the saved connection.
 func (a *App) runOAuthConnect(cliBin, platformID string, emit func(msg, kind string)) (*connections.SafeConnection, error) {
 	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "connect", "oauth", platformID)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	var stdout strings.Builder
 	cmd.Stdout = &stdout
 	stderr, err := cmd.StderrPipe()
@@ -296,7 +296,7 @@ func (a *App) LoginSocial(platform string) string {
 
 	go func() {
 		cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "login", pid)
-		hideWindow(cmd)
+		suppressConsole(cmd)
 		stderr, _ := cmd.StderrPipe()
 
 		if startErr := cmd.Start(); startErr != nil {
@@ -343,7 +343,7 @@ func (a *App) ConfirmSocialLogin(platform string) string {
 
 	go func() {
 		cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "login", "confirm", pid)
-		hideWindow(cmd)
+		suppressConsole(cmd)
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
 
@@ -365,7 +365,7 @@ func (a *App) ConfirmSocialLogin(platform string) string {
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "username: ") {
-				username = strings.TrimPrefix(line, "username: ")
+				username, _ = strings.CutPrefix(line, "username: ")
 			}
 		}
 
@@ -422,7 +422,7 @@ func (a *App) runConnCLI(stdin string, result interface{}, args ...string) error
 		return err
 	}
 	cmd := exec.CommandContext(a.ctx, cliBin, append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)...)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

@@ -13,8 +13,8 @@ import (
 // WorkflowFileStore (JSON files) and all execution/credential operations to a
 // SQLiteWorkflowStore.
 //
-// If the file store is nil, all workflow CRUD falls back to SQLite only.
-// This is the canonical store — used by both the CLI and the Wails GUI.
+// A nil file store means workflow definitions live in SQLite alone. This is
+// the store both the CLI and the desktop app go through.
 type HybridWorkflowStore struct {
 	files   *WorkflowFileStore
 	sql     *SQLiteWorkflowStore
@@ -35,68 +35,81 @@ func (h *HybridWorkflowStore) saved(ctx context.Context, workflowID string, err 
 	return err
 }
 
-// NewHybridWorkflowStore creates a HybridWorkflowStore.
-// files may be nil, in which case all workflow CRUD uses SQLite only.
+// NewHybridWorkflowStore builds a HybridWorkflowStore over the two backends;
+// pass nil files to keep definitions in SQLite only.
 func NewHybridWorkflowStore(files *WorkflowFileStore, sql *SQLiteWorkflowStore) *HybridWorkflowStore {
 	return &HybridWorkflowStore{files: files, sql: sql}
 }
 
 // ---------------------------------------------------------------------------
-// Workflow CRUD — file store preferred, SQLite fallback
+// Workflow CRUD — the file store wins, SQLite covers what it lacks
 // ---------------------------------------------------------------------------
 
+// persist writes w through whichever backend holds definitions. With a file
+// store it saves the file and mirrors the result into SQLite; without one it
+// runs sqlWrite against SQLite directly. The OnSaved hook fires on success.
+func (h *HybridWorkflowStore) persist(ctx context.Context, w *Workflow, sqlWrite func(context.Context, *Workflow) error) error {
+	if h.files == nil {
+		return h.saved(ctx, w.ID, sqlWrite(ctx, w))
+	}
+	if err := h.files.SaveWorkflow(ctx, w); err != nil {
+		return err
+	}
+	return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
+}
+
+// fileWorkflows lists the file store's workflows; none when there is no file
+// store.
+func (h *HybridWorkflowStore) fileWorkflows(ctx context.Context) ([]*Workflow, error) {
+	if h.files == nil {
+		return nil, nil
+	}
+	return h.files.ListWorkflows(ctx)
+}
+
 func (h *HybridWorkflowStore) CreateWorkflow(ctx context.Context, w *Workflow) error {
-	if h.files != nil {
-		if err := h.files.SaveWorkflow(ctx, w); err != nil {
-			return err
-		}
-		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
-	}
-	return h.saved(ctx, w.ID, h.sql.CreateWorkflow(ctx, w))
+	return h.persist(ctx, w, h.sql.CreateWorkflow)
 }
 
+// GetWorkflow looks in the file store first and then in SQLite, where
+// imported and older workflows are kept.
 func (h *HybridWorkflowStore) GetWorkflow(ctx context.Context, id string) (*Workflow, error) {
-	// Try file store first (Wails-created workflows live here).
-	if h.files != nil {
-		wf, err := h.files.GetWorkflow(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if wf != nil {
-			return wf, nil
-		}
+	if h.files == nil {
+		return h.sql.GetWorkflow(ctx, id)
 	}
-	// Fall back to SQLite (imported/legacy workflows).
-	return h.sql.GetWorkflow(ctx, id)
-}
-
-func (h *HybridWorkflowStore) ListWorkflows(ctx context.Context, profileID string) ([]Workflow, error) {
-	seen := make(map[string]bool)
-	var result []Workflow
-
-	// Collect file-store workflows first (file store has no profile concept).
-	if h.files != nil {
-		filePtrs, err := h.files.ListWorkflows(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, wf := range filePtrs {
-			seen[wf.ID] = true
-			result = append(result, *wf)
-		}
-	}
-
-	// Append SQLite workflows not already present in the file store.
-	sqlWFs, err := h.sql.ListWorkflows(ctx, profileID)
+	wf, err := h.files.GetWorkflow(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	for _, wf := range sqlWFs {
-		if !seen[wf.ID] {
-			result = append(result, wf)
+	if wf == nil {
+		return h.sql.GetWorkflow(ctx, id)
+	}
+	return wf, nil
+}
+
+// ListWorkflows returns every file-store workflow (the file store knows no
+// profiles) followed by the profile's SQLite workflows the files don't cover.
+func (h *HybridWorkflowStore) ListWorkflows(ctx context.Context, profileID string) ([]Workflow, error) {
+	fromFiles, err := h.fileWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fromSQL, err := h.sql.ListWorkflows(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	covered := make(map[string]struct{}, len(fromFiles))
+	var out []Workflow
+	for _, wf := range fromFiles {
+		covered[wf.ID] = struct{}{}
+		out = append(out, *wf)
+	}
+	for _, wf := range fromSQL {
+		if _, dup := covered[wf.ID]; !dup {
+			out = append(out, wf)
 		}
 	}
-	return result, nil
+	return out, nil
 }
 
 // NodeCounts returns each workflow's node count, keyed by workflow id,
@@ -106,14 +119,12 @@ func (h *HybridWorkflowStore) ListWorkflows(ctx context.Context, profileID strin
 // SQLite half needs a query.
 func (h *HybridWorkflowStore) NodeCounts(ctx context.Context, profileID string) (map[string]int, error) {
 	counts := make(map[string]int)
-	if h.files != nil {
-		filePtrs, err := h.files.ListWorkflows(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, wf := range filePtrs {
-			counts[wf.ID] = len(wf.Nodes)
-		}
+	fromFiles, err := h.fileWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, wf := range fromFiles {
+		counts[wf.ID] = len(wf.Nodes)
 	}
 	sqlCounts, err := h.sql.NodeCounts(ctx, profileID)
 	if err != nil {
@@ -128,26 +139,14 @@ func (h *HybridWorkflowStore) NodeCounts(ctx context.Context, profileID string) 
 }
 
 func (h *HybridWorkflowStore) UpdateWorkflow(ctx context.Context, w *Workflow) error {
-	if h.files != nil {
-		if err := h.files.SaveWorkflow(ctx, w); err != nil {
-			return err
-		}
-		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
-	}
-	return h.saved(ctx, w.ID, h.sql.UpdateWorkflow(ctx, w))
+	return h.persist(ctx, w, h.sql.UpdateWorkflow)
 }
 
 // SaveWorkflow writes a workflow to the file store (create or update) and
 // mirrors it — metadata, nodes, connections — to SQLite, which executions,
 // profile scoping and `workflow run --json` read.
 func (h *HybridWorkflowStore) SaveWorkflow(ctx context.Context, w *Workflow) error {
-	if h.files != nil {
-		if err := h.files.SaveWorkflow(ctx, w); err != nil {
-			return err
-		}
-		return h.saved(ctx, w.ID, h.mirrorToSQL(ctx, w))
-	}
-	return h.saved(ctx, w.ID, h.sql.UpdateWorkflow(ctx, w))
+	return h.persist(ctx, w, h.sql.UpdateWorkflow)
 }
 
 // ErrSharedIDs reports a workflow whose node or connection ids belong to
@@ -241,31 +240,42 @@ func (s *SQLiteWorkflowStore) checkOwnIDs(ctx context.Context, w *Workflow) erro
 // know whether cleanup actually happened would be told "success" even when
 // the workflow (or its rows) are still sitting there.
 func (h *HybridWorkflowStore) DeleteWorkflow(ctx context.Context, id string) error {
-	var errs []error
+	var fileErr, sqlErr error
 	if h.files != nil {
 		if err := h.files.DeleteWorkflow(ctx, id); err != nil {
-			errs = append(errs, fmt.Errorf("file store: %w", err))
+			fileErr = fmt.Errorf("file store: %w", err)
 		}
 	}
 	if err := h.sql.DeleteWorkflow(ctx, id); err != nil && !errors.Is(err, ErrWorkflowNotFound) {
-		errs = append(errs, fmt.Errorf("sql store: %w", err))
+		sqlErr = fmt.Errorf("sql store: %w", err)
 	}
-	return errors.Join(errs...)
+	return errors.Join(fileErr, sqlErr)
 }
 
+// SetWorkflowActive flips the flag on the file-store copy when there is one
+// (mirroring it to SQLite), and otherwise on the SQLite row alone.
 func (h *HybridWorkflowStore) SetWorkflowActive(ctx context.Context, id string, active bool) error {
-	// Try to update in file store.
-	if h.files != nil {
-		wf, err := h.files.GetWorkflow(ctx, id)
-		if err == nil && wf != nil {
-			wf.IsActive = active
-			if err := h.files.SaveWorkflow(ctx, wf); err != nil {
-				return err
-			}
-			return h.mirrorToSQL(ctx, wf)
+	if wf := h.fileCopy(ctx, id); wf != nil {
+		wf.IsActive = active
+		if err := h.files.SaveWorkflow(ctx, wf); err != nil {
+			return err
 		}
+		return h.mirrorToSQL(ctx, wf)
 	}
 	return h.sql.SetWorkflowActive(ctx, id, active)
+}
+
+// fileCopy returns the file store's workflow for id, or nil when there is no
+// file store, no such workflow, or the read failed.
+func (h *HybridWorkflowStore) fileCopy(ctx context.Context, id string) *Workflow {
+	if h.files == nil {
+		return nil
+	}
+	wf, err := h.files.GetWorkflow(ctx, id)
+	if err != nil {
+		return nil
+	}
+	return wf
 }
 
 // ---------------------------------------------------------------------------

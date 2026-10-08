@@ -66,7 +66,7 @@ func runAppUpdate(ctx context.Context, cliBin, exe, current string, progress fun
 	ctx, cancel := context.WithTimeout(ctx, appUpdateTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, "--json", "update", "--app", exe, "--current", current)
-	hideWindow(cmd)
+	suppressConsole(cmd)
 	var stdout strings.Builder
 	cmd.Stdout = &stdout
 	stderr, err := cmd.StderrPipe()

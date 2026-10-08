@@ -94,7 +94,7 @@ func newOrgAutomationUnassignedCmd(env *orgEnv) *cobra.Command {
 					member[a.WorkflowID] = true
 				}
 			}
-			wfs, err := newHybridStore(db).ListWorkflows(cmd.Context(), profileID)
+			wfs, err := openWorkflowStore(db).ListWorkflows(cmd.Context(), profileID)
 			if err != nil {
 				return err
 			}

@@ -15,31 +15,37 @@ import (
 // group, so nothing waits on it here; it must still exist for app.go.
 var chatKillGrace = 15 * time.Second
 
-// hideWindow configures cmd so that no visible console window is created on Windows.
-func hideWindow(cmd *exec.Cmd) {
+// createNoWindow is the CREATE_NO_WINDOW process-creation flag.
+const createNoWindow = 0x08000000
+
+// suppressConsole keeps cmd from opening a console window when it starts.
+func suppressConsole(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
 	}
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	attr := cmd.SysProcAttr
+	if attr == nil {
+		attr = new(syscall.SysProcAttr)
+		cmd.SysProcAttr = attr
 	}
-	cmd.SysProcAttr.HideWindow = true
-	cmd.SysProcAttr.CreationFlags |= 0x08000000 // CREATE_NO_WINDOW
+	attr.HideWindow = true
+	attr.CreationFlags |= createNoWindow
 }
 
-// setChatProcessGroup configures the chat subprocess to run without showing
-// a console window on Windows. For a command made with exec.CommandContext
-// it also replaces the default ctx cancel, which kills only the direct
-// child: the chat supervisor cancels the turn's ctx before it calls Kill,
-// and once monoagentcli is gone taskkill /T can no longer find the
-// monomind and agent-CLI processes under it.
+// setChatProcessGroup prepares the chat subprocess: no console window. A
+// command built with exec.CommandContext also gets its cancel hook swapped
+// for a full tree kill, because the default only kills the direct child and
+// the chat supervisor cancels the turn's ctx before calling Kill. Once
+// monoagentcli is gone taskkill /T can no longer find the monomind and
+// agent-CLI processes under it.
 func setChatProcessGroup(cmd *exec.Cmd) {
-	hideWindow(cmd)
-	if cmd.Cancel != nil {
-		cmd.Cancel = func() error {
-			killChatProcessGroup(cmd)
-			return nil
-		}
+	suppressConsole(cmd)
+	if cmd.Cancel == nil {
+		return
+	}
+	cmd.Cancel = func() error {
+		killChatProcessGroup(cmd)
+		return nil
 	}
 }
 
