@@ -1977,7 +1977,8 @@ Subcommands:
   api                   HTTP/REST API surface (monoagentcli httpapi) and the OpenAI-compatible /v1 API — endpoints, auth, status codes
   org                   Orgs, automations, grants, automation roles, autonomy, holding orgs
   publication           Published content history and automatic registration
-  tasks                 The profile's task board: columns, who may do what, the agent loop`,
+  tasks                 The profile's task board: columns, who may do what, the agent loop
+  account               Machine sign-in, the dormant account gate, and headless setup`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("monoagentcli ref — built-in reference")
 			fmt.Println()
@@ -1996,12 +1997,14 @@ Subcommands:
 			fmt.Fprintln(w, "  org\tOrgs, automations, grants, automation roles, autonomy, holding orgs")
 			fmt.Fprintln(w, "  publication\tPublished content history and automatic registration")
 			fmt.Fprintln(w, "  tasks\tThe profile's task board: columns, who may do what, the agent loop")
+			fmt.Fprintln(w, "  account\tMachine sign-in, the dormant account gate, and headless setup")
 			w.Flush()
 			fmt.Println()
 			fmt.Println("Example:  monoagentcli ref templates")
 			fmt.Println("Example:  monoagentcli ref crawling")
 			fmt.Println("Example:  monoagentcli ref connections")
 			fmt.Println("Example:  monoagentcli ref api")
+			fmt.Println("Example:  monoagentcli ref account")
 			fmt.Println("Example:  monoagentcli ref node gemini.generate_text")
 			return nil
 		},
@@ -2021,6 +2024,7 @@ Subcommands:
 		refOrgCmd(),
 		refPublicationCmd(),
 		refTasksCmd(),
+		refAccountCmd(),
 	)
 	return root
 }

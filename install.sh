@@ -146,3 +146,4 @@ $SUDO mv "${TMP_DIR}/${ASSET}" "${INSTALL_DIR}/${BIN}" || err "cannot install in
 
 echo "Installed: ${INSTALL_DIR}/${BIN} (${TAG}, ${os}/${arch})"
 echo "Verify with:  ${INSTALL_DIR}/${BIN} version"
+echo "Account and offline behavior:  ${INSTALL_DIR}/${BIN} ref account"

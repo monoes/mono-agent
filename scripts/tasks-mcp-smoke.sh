@@ -5,7 +5,7 @@
 # non-task tool refused by name, the CLI showing what the agent did, and the
 # --api-only combination refused. Never touches the real ~/.monoagent.
 #
-#   go build -o /tmp/monoagentcli ./cmd/monoagentcli && scripts/tasks-mcp-smoke.sh /tmp/monoagentcli
+#   go build -tags devaccount -o /tmp/monoagentcli ./cmd/monoagentcli && scripts/tasks-mcp-smoke.sh /tmp/monoagentcli
 set -euo pipefail
 
 cli="${1:?usage: tasks-mcp-smoke.sh <path to monoagentcli>}"
@@ -17,9 +17,10 @@ trap 'rm -r "$root" 2>/dev/null || true' EXIT
 export HOME="$home" USERPROFILE="$home" TMPDIR="$root/tmp" \
   XDG_CONFIG_HOME="$home/.config" XDG_CACHE_HOME="$home/.cache" XDG_DATA_HOME="$home/.local/share" XDG_STATE_HOME="$home/.local/state"
 db="$home/.monoagent/monoagent.db"
+# Use the devaccount build above: this smoke exercises task tools, independently of the gate.
 # A clean environment, as in the operator's own terminal: the "straight to Ready" gate refuses when an
 # agent marker (CLAUDECODE, AI_AGENT, ...) is set, and this script may itself run inside an agent's shell.
-run() { env -i "PATH=$PATH" "HOME=$home" "TMPDIR=$root/tmp" "$cli" --db-path "$db" "$@"; }
+run() { env -i "PATH=$PATH" "MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z" "HOME=$home" "TMPDIR=$root/tmp" "$cli" --db-path "$db" "$@"; }
 fail() { echo "tasks mcp smoke: $*" >&2; exit 1; }
 
 # rpc <extra mcp flags> : reads request lines on stdin, prints responses

@@ -23,7 +23,9 @@ CLI="$E2E/monoagentcli"
 pass=0; fail=0
 check() { if [ "$1" = ok ]; then pass=$((pass+1)); echo "PASS $2"; else fail=$((fail+1)); echo "FAIL $2 :: $3"; fi; }
 
-(cd "$REPO" && go build -o "$CLI" ./cmd/monoagentcli) || { echo "build failed"; exit 1; }
+(cd "$REPO" && go build -tags devaccount -o "$CLI" ./cmd/monoagentcli) || { echo "build failed"; exit 1; }
+# Keep this devaccount build independent of the production enforcement date.
+export MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z
 "$MONOMIND_BIN" --version --json | grep -q org-tool-providers && check ok "local monomind advertises org-tool-providers" || check no "monomind capabilities" "$("$MONOMIND_BIN" --version --json)"
 
 cat > "$E2E/wf.json" <<'EOF'

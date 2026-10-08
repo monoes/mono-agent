@@ -21,7 +21,9 @@ cd "$root"
 
 # Keep the Go caches where they were before HOME changes below.
 export GOCACHE="${GOCACHE:-$(go env GOCACHE)}" GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
-go build -o "$work/monoagentcli" ./cmd/monoagentcli
+go build -tags devaccount -o "$work/monoagentcli" ./cmd/monoagentcli
+# Keep this devaccount build independent of the production enforcement date.
+export MONOAGENT_DEV_ENFORCE_FROM=2999-01-01T00:00:00Z
 
 mkdir -p "$work/home"
 for dir in automations/*/; do

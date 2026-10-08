@@ -10,7 +10,7 @@ source "$(dirname "$0")/env.sh"
 mkdir -p "$E2E_WORK/pids" "$E2E_WORK/logs"
 
 if [ "${E2E_BUILD:-}" = 1 ] || [ ! -x "$E2E_BIN" ]; then
-  (cd "$REPO_ROOT" && go build -o "$E2E_BIN" ./cmd/monoagentcli)
+  (cd "$REPO_ROOT" && go build -tags devaccount -o "$E2E_BIN" ./cmd/monoagentcli)
 fi
 
 busy() { ss -ltn 2>/dev/null | grep -q "127.0.0.1:$1 \|\[::1\]:$1 \|\*:$1 "; }

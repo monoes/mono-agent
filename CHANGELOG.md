@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Account documentation** describes the currently dormant gate, machine sign-in, headless file-keyring setup and future conditional enforcement. New offline `ref account` documents recovery commands and serving behavior. No enforcement date is set and no production signing keys are pinned; local work still requires no account. The MIT license is unchanged.
 - **Tasks page cards** show the source, age, `#id`, lease countdown and a Question/Result tag; cards no longer nest buttons in a button (the title is the control; the move keys work from it). A card stays where you moved it if the next board read fails, archiving from the drawer closes it only once the CLI agrees (a refusal shows in the drawer), and a hidden window stops reading, ticking and pulsing.
 
 ### Added

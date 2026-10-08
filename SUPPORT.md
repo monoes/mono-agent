@@ -47,7 +47,9 @@ See [SECURITY.md](SECURITY.md) for private reporting instructions
 
 Out of scope for this repo's support channels. Mono Agent's core (the
 `monoagentcli` binary, the workflow engine, the CLI/MCP surface, the Wails
-GUI, the Chrome extension bridge) is entirely local-first and does not
-depend on any hosted backend — see SECURITY.md's "Telemetry and crash
-reporting" section for the complete, honest list of the only situations in
-which it makes network requests.
+GUI, the Chrome extension bridge) runs on your machine. The account gate is
+currently dormant, so local work does not need a monoes.me account. The online
+library requires a sign-in. A future enabled gate will require a machine sign-in
+and permit at most 24 hours offline from the signed token's issue time; no date
+is announced here. See SECURITY.md's "Network use, telemetry and crash reporting"
+section for network requests and the data they send.

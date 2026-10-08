@@ -7,7 +7,7 @@ this file — it ships with the binary and cannot drift.
 
 ## What this is
 
-**mono-agent** is a local-first workflow automation engine — an n8n
+**mono-agent** is a workflow automation engine that runs on your machine — an n8n
 alternative packed into a single Go binary (`monoagentcli`). Build workflows
 from nodes (triggers, HTTP, databases, AI, comms, services), run them on
 schedule/webhook/manual, and manage everything from the CLI or an optional
@@ -18,7 +18,7 @@ desktop GUI (`wails-app/`).
   exception: `monoagentcli init` also copies skill files into
   `~/.claude/skills/` when `~/.claude` exists (a local file copy; no
   network).
-- No telemetry: no analytics, phone-home checks, or usage counters. What
+- No analytics or usage counters. The account gate is dormant (see below). What
   can leave the machine (see [SECURITY.md](SECURITY.md) for the full
   statement): the API calls your workflows make, commands you explicitly
   invoke that talk to an external service (e.g. `login`, `update`,
@@ -61,6 +61,7 @@ monoagentcli --help         # command list; the root help includes an agents not
 | `ref templates` | The bundled ready-to-run workflow templates |
 | `ref connections` | Profiles, OAuth, credential resolution — **read before touching `--profile` or credentials** |
 | `ref crawling` | Automating sites with no built-in node type |
+| `ref account` | Machine sign-in, dormant/future gate behavior, headless and Docker |
 | `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping, and the OpenAI-compatible `/v1` API |
 | `ref tasks` | The profile's task board — columns, who may do what, the agent loop, JSON documents and error codes |
 
@@ -294,6 +295,29 @@ monoagentcli account logout                  # revoke and forget this machine's 
   runner and door checks) exists and is exercised by tests, but is switched
   off. Do not document or rely on a date until one is set in
   `internal/account/rollout.go`.
+- **Future enabled gate.** Before its enforcement date gated commands warn;
+  from that date a locked command exits 4 with `login_required`. A signed token
+  permits at most 24 hours offline from its issue time. Open commands are
+  `version`, `help`, `completion` (including `__complete` and `__completeNoDesc`),
+  `ref`, `update`, `doctor` (including `doctor fix`), `setup`, all `account`
+  commands and `library login|logout|status`. Serving commands (`daemon`,
+  `httpapi`, `mcp` including `--grant`, `extension serve` / `bridge serve`)
+  start even while locked and refuse work; `daemon install|restart|uninstall`
+  and `org serve` remain gated. Branch on exit 4 and `login_required`, and ask
+  the user to run `account login`; never look for or paste tokens. See
+  `ref account` for states, reasons and door responses. Production signing
+  keys are not pinned yet; production machine-session verification awaits
+  the server/key rollout.
+- **Headless and Docker.** Run `account login --email` as the daemon's OS user.
+  Containers need `MONOAGENT_ALLOW_FILE_KEYRING=1` and a private passphrase file
+  named by `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` (or
+  `~/.monoagent/keyring-passphrase`) before sign-in. The daemon has no terminal;
+  without that source an enabled gate shows `grace` / `keyring_unavailable`
+  then locks at token expiry. `secret keyring set-passphrase` is itself gated.
+  README's Docker section has the commands. Keep the sign-in in the volume,
+  never an image, never copied or restored from an old backup: a stale refresh
+  token can revoke the original sign-in and its copies. Sign in separately
+  per machine. Docker's `version` health check only tests liveness.
 - **Storage.** `~/.monoagent/account/` holds `session.json` (the signed access
   token and display data), `refresh.enc` (the refresh token, sealed under the
   OS key store; see `MONOAGENT_ALLOW_FILE_KEYRING` for machines without one)

@@ -45,6 +45,10 @@ services:
     #     CORS headers, so cross-origin browser requests are blocked.
     environment:
       MONOAGENT_WEBHOOK_ADDR: "0.0.0.0:9321"
+      # No OS keychain in the container. Before explicit account login, create
+      # this private passphrase file (mode 0600) in the persistent volume.
+      MONOAGENT_ALLOW_FILE_KEYRING: "1"
+      MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE: "/data/.monoagent/keyring-passphrase"
       # MONOAGENT_WEBHOOK_ALLOWED_ORIGINS: "https://app.example.com"
       # Real certificate instead of the auto-generated self-signed one
       # (paths inside the container — mount the cert/key via `volumes`):
@@ -61,6 +65,11 @@ services:
 
     # Usage:
     #   docker compose up -d --build
+    #   # Local work needs no account while the gate is dormant.
+    #   # For explicit sign-in: prepare the passphrase file first (README Docker),
+    #   # then docker compose exec monoagent monoagentcli account login --email you@example.com
+    #   # Never copy /data/.monoagent/account/ or bake it into an image.
+    #   # HEALTHCHECK version is liveness only, not account readiness.
     #   # import a workflow from the repo checkout:
     #   docker exec monoagent monoagentcli workflow import --file /dev/stdin \
     #     < examples/http-to-slack.json

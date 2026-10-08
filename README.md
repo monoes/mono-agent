@@ -2,7 +2,7 @@
   <img src="assets/banner.png" alt="Mono Agent" width="600" />
 </p>
 
-<h3 align="center">Local-first n8n alternative in a single Go binary<br/>— visual workflows, CLI, human-in-the-loop.</h3>
+<h3 align="center">n8n alternative that runs on your machine in a single Go binary<br/>— visual workflows, CLI, human-in-the-loop.</h3>
 
 <div align="center">
 
@@ -17,12 +17,12 @@
 
 ## What is Mono Agent?
 
-**Mono Agent** is a local-first automation platform for humans **and** AI agents:
+**Mono Agent** is an automation platform that runs on your machine for humans **and** AI agents:
 
 > **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
 - 🔁 **DAG workflow engine** — 167 built-in node types, social platform actions included: services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
-- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry (AI steps hand off to the separate monomind runner — see [How AI works](#how-ai-works-in-mono-agent)). All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
+- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no analytics or usage counters (AI steps hand off to the separate monomind runner — see [How AI works](#how-ai-works-in-mono-agent)). Workflow state stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
 - 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
@@ -43,6 +43,24 @@ Think of it as an honest, self-hosted n8n you can carry in a single file — wit
 > Mono Agent is an independent, unofficial, MIT-licensed project. It is not affiliated with, endorsed by, or connected to any of the platforms it can talk to.
 
 ---
+
+### monoes.me sign-in and the dormant account gate
+
+The account gate is **dormant**: no enforcement date is set, no command warns or
+requires an account for local work, and no account refresh or adoption happens
+implicitly. The monoes.me library already needs a sign-in for its online reads.
+`monoagentcli account login` (browser) or `account login --email you@example.com`
+manages the same machine session as `library login`; `account status --offline
+--json` inspects it locally. Default builds have no production signing keys yet,
+so a working production machine sign-in requires the future server/key rollout.
+
+If a future release enables the gate, it will warn before its enforcement date
+(`enforce_from` in `account status`) and require a valid sign-in from that date.
+A signed token supports at most 24 hours offline from its issue time; locked work
+exits 4 with `login_required`. The offline `ref` manual, recovery commands and
+sign-in commands remain open. Serving commands stay up and refuse work while
+locked. See `monoagentcli ref account` and [SECURITY.md](SECURITY.md) for details.
+No enforcement date is announced by this build.
 
 ## Quick Start
 
@@ -627,6 +645,29 @@ Profile folders (per-profile vault and data) and the assistant-tools toggle are 
 
 ### Docker
 
+The image runs as user `monoagent` with `HOME=/data`; the volume preserves
+`/data/.monoagent/`, including any machine sign-in. Local daemon work currently
+needs no account because the gate is dormant. For explicit sign-in, or before a
+future enforced release, prepare a file keyring before logging in:
+
+```bash
+docker compose up -d --build
+docker compose exec -T monoagent sh -c 'umask 077; mkdir -p /data/.monoagent; cat > /data/.monoagent/keyring-passphrase' < /path/to/private-passphrase-file
+docker compose exec monoagent monoagentcli account login --email you@example.com
+docker compose exec monoagent monoagentcli account status --offline --json
+```
+
+The passphrase source is a private file you create on the host; do not put a
+passphrase or token into Compose, an environment variable, or an image. Compose
+enables `MONOAGENT_ALLOW_FILE_KEYRING=1` and names the passphrase file. Without
+that file a daemon cannot unseal the refresh token, and an enabled gate will show
+`grace` / `keyring_unavailable` before locking at token expiry. Create it before
+sign-in: `secret keyring set-passphrase` is itself gated in an enforced build.
+Never copy or restore `~/.monoagent/account/` or bake it into an image. Sign in
+separately on each machine. The Docker health check only runs `version`; it tests
+binary liveness, not whether the account permits work.
+
+
 ```bash
 docker compose up -d --build   # daemon + persistent /data volume
 
@@ -645,19 +686,22 @@ in your OS keychain (Keychain Access / Secret Service) for any secrets stored
 there instead of the vault. To remove Mono Agent completely:
 
 ```bash
+monoagentcli account logout          # revoke a machine sign-in, if present
 rm /usr/local/bin/monoagentcli        # or wherever you installed it
 rm -rf ~/.monoagent                   # workflows, vault, sessions, crash reports
 ```
 
 Then remove the Chrome extension from `chrome://extensions`, and delete the
-`monoagent-vault` entry from Keychain Access / Secret Service / Windows
+`monoagent-vault` entries from Keychain Access / Secret Service / Windows
 Credential Manager manually — that's where the vault's OS-keychain-backed
 encryption key lives, and the CLI never deletes it on uninstall since there's
 no install hook to run it from.
 
 **Personal data:** everything Mono Agent stores (contacts, message history,
 exported followers, connection credentials) stays in `~/.monoagent/` on your
-machine — nothing is sent to us, and there's no telemetry to opt out of.
+machine. There are no analytics or usage counters to opt out of. Explicit
+monoes.me sign-in/library commands and update checks contact external services;
+[SECURITY.md](SECURITY.md) describes what is sent and the dormant account gate.
 If you use the `people` / social nodes to import or export data about other
 people, you're the one responsible for having a lawful basis to hold it
 (GDPR, CCPA, or your local equivalent) — deleting the profile above purges
@@ -723,7 +767,7 @@ mono-agent/
 | [docs/planning/FEATURE_n8n.md](docs/planning/FEATURE_n8n.md) | detailed n8n feature map used as our porting reference |
 | [examples/](examples/) | Ready-to-run workflow JSONs with webhook trigger examples |
 | [install.sh](install.sh) | One-line installer (macOS / Linux) |
-| [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |
+| [SECURITY.md](SECURITY.md) | Reporting, supported versions, network use & crash reporting |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build/test commands (incl. `-tags nosocial`), PR guidelines |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/screenshots/](docs/screenshots/) | GUI screenshots, including a [walkthrough of the Org page](docs/screenshots/org-walkthrough/README.md) |
