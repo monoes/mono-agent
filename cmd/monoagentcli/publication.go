@@ -92,6 +92,20 @@ func newPublicationCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		})
 	}}
+	var redactTitle bool
+	redact := &cobra.Command{Use: "redact <id>", Short: "Replace a publication's body with [redacted], keeping the entry (operator only)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := callerFor("").operator("redact publication history"); err != nil {
+			return err
+		}
+		return withPublicationStore(cfg, func(store *publication.Store) error {
+			e, err := store.Redact(cmd.Context(), args[0], redactTitle)
+			if err != nil {
+				return err
+			}
+			return printPublication(cmd, cfg, e)
+		})
+	}}
+	redact.Flags().BoolVar(&redactTitle, "title", false, "Redact the title too")
 	get := &cobra.Command{Use: "get <id>", Short: "Show a publication", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withPublicationStore(cfg, func(store *publication.Store) error {
 			e, err := store.Get(cmd.Context(), args[0])
@@ -140,6 +154,6 @@ func newPublicationCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		})
 	}}
-	cmd.AddCommand(list, get, register, stats, del)
+	cmd.AddCommand(list, get, register, stats, del, redact)
 	return cmd
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/monoes/mono-agent/internal/orgsign"
 	"github.com/monoes/mono-agent/internal/publication"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -24,13 +25,15 @@ func publicationToolDefs() []ToolDef {
 		makeDef("list_publications", "List published content in this profile, newest first.", publication.FilterSchema()),
 		makeDef("get_publication", "Read a publication's content, destination and publishing source.", map[string]interface{}{"id": strParam("Publication ID")}, "id"),
 		makeDef("publication_stats", "Count this profile's publications by platform and kind.", nil),
+		makeDef("delete_publication", "Remove a publication from this profile's history; the remote post is untouched. Operator sessions only.", map[string]interface{}{"id": strParam("Publication ID")}, "id"),
+		makeDef("redact_publication", "Replace a publication's body (and title if title is true) with [redacted], keeping the entry. Operator sessions only.", map[string]interface{}{"id": strParam("Publication ID"), "title": map[string]interface{}{"type": "boolean", "description": "Also redact the title"}}, "id"),
 		makeDef("register_publication", "Record content already successfully published with an external tool. This does not publish. Built-in publishing nodes record automatically. Supply exact content, destination, remote URL/ID and your agent identity; use an idempotency key to avoid duplicate registration.", publication.EntrySchema(), "platform", "kind"),
 	}
 }
 
 func (mt *MonoagentTools) executePublication(ctx context.Context, name, args string) (string, bool, error) {
 	switch name {
-	case "list_publications", "get_publication", "publication_stats", "register_publication":
+	case "list_publications", "get_publication", "publication_stats", "register_publication", "delete_publication", "redact_publication":
 	default:
 		return "", false, nil
 	}
@@ -56,6 +59,26 @@ func (mt *MonoagentTools) executePublication(ctx context.Context, name, args str
 		}
 	case "publication_stats":
 		result, err = store.Stats(ctx)
+	case "delete_publication", "redact_publication":
+		var a struct {
+			ID    string `json:"id"`
+			Title bool   `json:"title"`
+		}
+		if err = mt.checkOperatorPublicationEdit(ctx, name); err != nil {
+			break
+		}
+		if err = json.Unmarshal([]byte(args), &a); err != nil {
+			break
+		}
+		if a.ID == "" {
+			err = fmt.Errorf("id is required")
+		} else if name == "delete_publication" {
+			if err = store.Delete(ctx, a.ID); err == nil {
+				result = map[string]any{"deleted": a.ID}
+			}
+		} else {
+			result, err = store.Redact(ctx, a.ID, a.Title)
+		}
 	case "register_publication":
 		if err = mt.checkInjectionGate(name); err != nil {
 			break
@@ -79,4 +102,20 @@ func (mt *MonoagentTools) executePublication(ctx context.Context, name, args str
 	}
 	b, err := json.Marshal(result)
 	return string(b), true, err
+}
+
+// checkOperatorPublicationEdit keeps deleting and redacting history with the
+// operator, as the CLI does: refused once untrusted communications entered the
+// session, and inside an agent session (an org run, or an agent-context marker).
+func (mt *MonoagentTools) checkOperatorPublicationEdit(ctx context.Context, tool string) error {
+	if err := mt.checkInjectionGate(tool); err != nil {
+		return err
+	}
+	if src := workflow.PublicationSource(ctx, workflow.NodeInput{}); src.OrgID != "" || src.RoleID != "" || src.AgentID != "" {
+		return fmt.Errorf("%s refused: only the operator can change publication history, not an agent running for an org; ask the operator to run `monoagentcli publication`", tool)
+	}
+	if m := orgsign.AgentContextMarker(); m != "" {
+		return fmt.Errorf("%s refused: %s is set, so an agent is running this; only the operator can change publication history", tool, m)
+	}
+	return nil
 }

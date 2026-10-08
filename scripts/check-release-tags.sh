@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Fails when a Go binary that is about to ship was built with the devaccount tag (spec D11, D24):
-# the tag trusts a development signing key anyone can sign with. It reads the build settings every
+# Fails when a Go binary that is about to ship was built with the devaccount or releasee2e tag
+# (spec D11, D24): devaccount trusts a development signing key anyone can sign with, releasee2e pins
+# a test update key and redirects the update client to a loopback server. It reads the build settings every
 # Go binary carries (`go version -m`), whatever OS it was built for.
 #
 #   scripts/check-release-tags.sh [--min N] <file-or-folder>...
@@ -11,7 +12,7 @@
 # pass by checking nothing.
 set -euo pipefail
 
-forbidden="devaccount"
+forbidden_tags="devaccount releasee2e"
 min=1
 if [ "${1:-}" = "--min" ]; then
   min="${2:?--min needs a number}"
@@ -41,13 +42,17 @@ check() {
   [ -n "$info" ] || return 0
   checked=$((checked + 1))
   tags="$(printf '%s\n' "$info" | awk -F'\t' '$2 == "build" && $3 ~ /^-tags=/ { sub(/^-tags=/, "", $3); print $3 }')"
-  case ",$tags," in
-    *",$forbidden,"*)
-      echo "::error::$label was built with the $forbidden tag (-tags=$tags): a release must never carry it" >&2
-      bad=$((bad + 1))
-      ;;
-    *) echo "ok: $label (tags: ${tags:-none})" ;;
-  esac
+  hit=""
+  for t in $forbidden_tags; do
+    case ",$tags," in *",$t,"*) hit="$t" ;; esac
+  done
+  if [ -n "$hit" ]; then
+    echo "::error::$label was built with the $hit tag (-tags=$tags): a release must never carry it" >&2
+    bad=$((bad + 1))
+  else
+    echo "ok: $label (tags: ${tags:-none})"
+  fi
+
 }
 
 for arg in "$@"; do
@@ -69,4 +74,4 @@ if [ "$checked" -lt "$min" ]; then
   echo "::error::check-release-tags: found $checked Go binaries, expected at least $min: the release layout changed, or an archive did not unpack" >&2
   exit 1
 fi
-echo "check-release-tags: $checked Go binaries, none carries the $forbidden tag"
+echo "check-release-tags: $checked Go binaries, none carries a forbidden tag ($forbidden_tags)"

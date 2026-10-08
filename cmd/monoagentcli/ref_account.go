@@ -1,6 +1,10 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
 
 const refAccountText = `monoagentcli — monoes.me account
 
@@ -8,6 +12,8 @@ CURRENT BUILD
   The account gate is dormant: no enforcement date is set, nothing locks or
   warns, and no implicit adoption, refresh or background refresher runs. Local
   work needs no account. The online library still requires a sign-in for reads.
+  Releases are published on monoes.me. No command contacts monoes.me unless
+  you run account or library yourself.
   Production signing keys are not pinned yet; a production machine session
   cannot be verified until the server/key rollout. No enforcement date is
   announced here. The behavior below applies if a future release enables it.
@@ -23,7 +29,8 @@ COMMANDS (explicit account requests may contact monoes.me)
   library login, library logout and library status manage the same machine
   session. status --offline reads locally without refreshing. An explicit
   status can return locked / not_logged_in and exit 4 even while the gate is
-  dormant; that does not prevent local work. Never paste a token into a command,
+  dormant (exit 0 while the session is good, including offline grace; add
+  --json for machine-readable output); that does not prevent local work. Never paste a token into a command,
   workflow or chat; ask the user to run account login.
 
 STORAGE AND NETWORK
@@ -100,6 +107,6 @@ func refAccountCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "account", Short: "Machine sign-in, the dormant account gate, and headless setup",
 		Args: cobra.NoArgs,
-		Run:  func(cmd *cobra.Command, args []string) { cmd.Print(refAccountText) },
+		Run:  func(cmd *cobra.Command, args []string) { fmt.Fprint(cmd.OutOrStdout(), refAccountText) },
 	}
 }

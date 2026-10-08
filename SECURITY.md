@@ -218,8 +218,10 @@ Sign-in sends OAuth client id `monoagent`, the requested scopes and resource
 proof, and, on renewal, the refresh token. With `--email`, the address you type
 is sent too. Revocation sends the token and client id. monoes.me sees the account,
 request time and source IP address. Account requests send no device identifier,
-workflow contents or usage counters. Update requests contact GitHub for release
-metadata/downloads. A library upload sends the artifact you choose to publish.
+workflow contents or usage counters. Update requests fetch the signed release manifest
+and download the assets it lists (verified by SHA256 and Ed25519 signature);
+without a pinned signing key they refuse to install, or fall back to GitHub's
+release metadata only where the build still allows it. A library upload sends the artifact you choose to publish.
 
 Everything else — workflow definitions, execution history, the secrets
 vault, CRM data, and crash reports — stays on your machine.

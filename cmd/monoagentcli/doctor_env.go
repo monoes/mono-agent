@@ -37,11 +37,11 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		LoginPath:  shellpath.LoginPath,
 		FreeBytes:  health.FreeBytes,
 		LatestVersion: func(ctx context.Context) (string, error) {
-			rel, err := fetchLatestRelease(ctx)
+			info, err := fetchLatest(ctx, false)
 			if err != nil {
 				return "", err
 			}
-			return rel.TagName, nil
+			return info.Tag, nil
 		},
 		Migrate: func(_ context.Context, progress func(string)) error {
 			// The migration runner reports through the standard logger;

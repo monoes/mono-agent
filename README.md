@@ -86,7 +86,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 ./monoagentcli daemon
 ```
 
-Prefer a prebuilt binary? `curl -fsSL https://raw.githubusercontent.com/monoes/mono-agent/master/install.sh | bash` installs the latest release (macOS arm64/amd64, Linux amd64/arm64; SHA256-verified), or grab a CLI / desktop build from [releases](https://github.com/monoes/mono-agent/releases/latest). There's also [Docker](Dockerfile).
+Prefer a prebuilt binary? `curl -fsSL https://raw.githubusercontent.com/monoes/mono-agent/master/install.sh | bash` installs the latest release from its release manifest (macOS arm64/amd64, Linux amd64/arm64; SHA256-verified, and signature-verified once a release signing key is published), or grab a CLI / desktop build from [releases](https://github.com/monoes/mono-agent/releases/latest). There's also [Docker](Dockerfile).
 
 ### Flagship example — "Morning Briefing"
 
@@ -630,7 +630,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 go build -tags nosocial -o monoagentcli ./cmd/monoagentcli
 ```
 
-Prebuilt: `install.sh` (macOS arm64/amd64, Linux amd64/arm64), or download from [releases](https://github.com/monoes/mono-agent/releases/latest) — CLI binaries for macOS, Linux (amd64/arm64), and Windows, plus desktop-app builds for macOS (arm64), Linux (amd64), and Windows.
+Prebuilt: [install.sh](install.sh) (macOS arm64/amd64, Linux amd64/arm64; reads the release manifest, verifies its SHA256, and verifies the manifest signature when a signing key is configured; `MONOAGENT_MANIFEST_URL` points it at a mirror, `scripts/install-test.sh` tests it), or download from [releases](https://github.com/monoes/mono-agent/releases/latest) — CLI binaries for macOS, Linux (amd64/arm64), and Windows, plus desktop-app builds for macOS (arm64), Linux (amd64), and Windows.
 
 ### Desktop GUI
 
@@ -676,7 +676,30 @@ docker compose up -d --build   # daemon + persistent /data volume
 MONOAGENT_WEBHOOK_ADDR=0.0.0.0:9321 docker compose up -d --build
 ```
 
+To install a prebuilt CLI inside your own image instead of building from source: `curl -fsSL https://raw.githubusercontent.com/monoes/mono-agent/master/install.sh | INSTALL_DIR=/usr/local/bin bash`.
+
 Browser-based webhook callers additionally need `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated CORS allowlist; unset by default — no CORS headers are sent). See [docker-compose.yml](docker-compose.yml) and the env-var table in [AGENTS.md](AGENTS.md).
+
+A headless container has no browser, so sign in to monoes.me with the emailed-code flow once it is running (see [monoes.me account](#monoesme-account)); the session is written to the `/data` volume:
+
+```bash
+docker compose exec monoagent monoagentcli account login --email you@example.com
+```
+
+Where the image has no OS key store, set `MONOAGENT_ALLOW_FILE_KEYRING=1` so the sign-in can be sealed. Don't copy `~/.monoagent/account` between machines or into an image.
+
+### monoes.me account
+
+A monoes.me account is **optional today**; it will be required from a date announced at [monoes.me/mono-agent](https://monoes.me/mono-agent). Until then nothing is locked and no command warns. Releases are published on monoes.me. You sign in once per machine, shared by every profile:
+
+```bash
+monoagentcli account login                     # opens the browser
+monoagentcli account login --email you@x.com   # a code by email, for a machine without a browser
+monoagentcli account status [--offline]        # who is logged in, and until when
+monoagentcli account logout                    # revoke and forget the session
+```
+
+`monoagentcli ref account` has the same text offline.
 
 ### Uninstall & data
 
