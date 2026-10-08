@@ -22,7 +22,7 @@
 > **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
 - 🔁 **DAG workflow engine** — 167 built-in node types, social platform actions included: services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
-- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry (AI steps hand off to the separate monomind runner — see [How AI works](#how-ai-works-in-mono-agent)). All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
+- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry (AI steps hand off to the separate monomind runner — see [How AI works](#how-ai-works-in-mono-agent)). All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md)). A [monoes.me account](#monoesme-account) is optional today and will be required from a date announced at monoes.me/mono-agent
 - 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
@@ -636,6 +636,27 @@ MONOAGENT_WEBHOOK_ADDR=0.0.0.0:9321 docker compose up -d --build
 ```
 
 Browser-based webhook callers additionally need `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated CORS allowlist; unset by default — no CORS headers are sent). See [docker-compose.yml](docker-compose.yml) and the env-var table in [AGENTS.md](AGENTS.md).
+
+A headless container has no browser, so sign in to monoes.me with the emailed-code flow once it is running (see [monoes.me account](#monoesme-account)); the session is written to the `/data` volume:
+
+```bash
+docker compose exec monoagent monoagentcli account login --email you@example.com
+```
+
+Where the image has no OS key store, set `MONOAGENT_ALLOW_FILE_KEYRING=1` so the sign-in can be sealed. Don't copy `~/.monoagent/account` between machines or into an image.
+
+### monoes.me account
+
+A monoes.me account is **optional today**; it will be required from a date announced at [monoes.me/mono-agent](https://monoes.me/mono-agent). Until then nothing is locked and no command warns. Releases are published on monoes.me. You sign in once per machine, shared by every profile:
+
+```bash
+monoagentcli account login                     # opens the browser
+monoagentcli account login --email you@x.com   # a code by email, for a machine without a browser
+monoagentcli account status [--offline]        # who is logged in, and until when
+monoagentcli account logout                    # revoke and forget the session
+```
+
+`monoagentcli ref account` has the same text offline.
 
 ### Uninstall & data
 
