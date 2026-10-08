@@ -27,22 +27,45 @@ GitHub environment. It exists nowhere else in CI.
    (unsigned; it never sees the key).
 2. `sign-manifest` runs only for a push to master, with `environment: release` (so it waits
    for the reviewer approval and the branch rule below) and `permissions: contents: read`.
-   The secret is set in the env of the one signing step only. Before signing,
-   `go run ./cmd/release-manifest sign -key-env RELEASE_SIGNING_KEY -assets-dir ... ` checks
-   the manifest against the actual built files and refuses to sign if:
-   - any listed asset is missing, or its sha256 or size differs from the built file;
-   - a built per-platform file is not listed, or an asset URL is not under this release;
-   - the manifest version is not exactly the tag CI is releasing;
-   - the version is lower than the latest published release of this repo.
+   Steps run in this order, and only the last signing one has the key:
+   - it reads the latest release in the **releases repo** (`gh release list --repo
+     "$RELEASES_REPO"`, the current tag excluded). The release job has already published the
+     tag in this repo, so only the releases repo gives a real version floor. An API failure
+     fails the job; an empty list is accepted only for the very first release;
+   - it compiles `cmd/release-manifest` into `$RUNNER_TEMP` and flattens the artifacts (a
+     duplicate file name fails the job instead of one file silently replacing the other);
+   - the signing step runs only that binary, `release-manifest sign -key-env RELEASE_SIGNING_KEY
+     -assets-dir ... -url-prefix https://github.com/$RELEASES_REPO/releases/download/$TAG/`. The
+     secret is in the env of this one step. The tool refuses to sign if:
+     - the manifest has an unknown field, or `expires_at` is present and is not RFC3339 or not
+       in the future;
+     - any asset url is not exactly the url prefix plus the asset name, or `notes_url` is not
+       https under `github.com/$RELEASES_REPO/` or on `monoes.me`;
+     - an asset name is listed twice, is missing, or its sha256 or size differs from the built file;
+     - a built per-platform file is not listed;
+     - the manifest version is not exactly the tag CI is releasing;
+     - the version is lower than the latest release in the releases repo.
+   - it runs `monoagentcli release verify` as a self-check against the pinned keys. If the
+     signing key is **not** pinned in `internal/release/keys.go` the step **fails**, unless
+     the repository variable `RELEASE_SIGNING_BOOTSTRAP` is `true` (see "Bootstrap" below).
+   `manifest.json`, `manifest.json.sig` and the derived public key (`signing-pubkey.txt`, public)
+   go up as the `signed-manifest` artifact.
+3. `publish-releases-repo` (also `environment: release`) downloads the artifacts again and
+   therefore **re-verifies everything before uploading**: `manifest.json.sig` against the pinned
+   key (or, in bootstrap, the derived one); every manifest-listed file's sha256 and size
+   against the signed `manifest.json` (`release-manifest check -strict`); and it uploads only
+   the files the manifest lists, plus the manifest, the signature and a `SHA256SUMS`
+   regenerated from those verified files (the unsigned `SHA256SUMS` is never uploaded). Any
+   mismatch aborts. It runs only when the secrets `RELEASES_REPO` (`owner/name`) and
+   `RELEASES_REPO_TOKEN` exist, and fails rather than upload without the signature.
+   `sign-manifest` is a no-op when `RELEASES_REPO` is unset.
 
-   It then runs `monoagentcli release verify` as a self-check, against the pinned keys if the
-   signing key is pinned in `internal/release/keys.go`, otherwise against the public key
-   derived from the secret together with a workflow warning that the pin is missing.
-   `manifest.json` and `manifest.json.sig` go up as the `signed-manifest` artifact.
-3. `publish-releases-repo` (also `environment: release`) uploads assets, `SHA256SUMS`,
-   `manifest.json` and `manifest.json.sig` in one command, only when the secrets
-   `RELEASES_REPO` (`owner/name`) and `RELEASES_REPO_TOKEN` exist. It fails rather than
-   upload without the signature. `sign-manifest` is a no-op when `RELEASES_REPO` is unset.
+What these checks do and do not prove: the pre-sign check proves the manifest **matches the
+build artifacts** that the workflow produced. It does not prove the build itself was not
+compromised: a malicious change to the workflow or a build step produces artifacts and a
+matching manifest that pass every check. The real controls are the `release` environment
+approval and branch protection on master with code-owner review (see "Code owners" below).
+Read the diff of `.github/`, `cmd/release-manifest/` and `internal/release/` before approving.
 
 CI never overwrites `manifest.json` once `manifest.json.sig` exists on the release: the
 upload step fails with a message instead. A new version always makes a new release, so this
@@ -72,8 +95,8 @@ GitHub API path (while `AllowLegacyGitHubUpdates` is true).
    Create the environment first (step 3) if it does not exist, since `gh secret set --env`
    needs it. Nothing is stored in your keyring in this mode.
 2. Copy the printed public line (`<keyid> <base64pub>`) into `pinnedReleaseKeys` in
-   `internal/release/keys.go` and ship it in a release. Until a key is pinned no manifest is
-   trusted by clients; CI warns while the pin is missing.
+   `internal/release/keys.go` and ship it in a release (see "Bootstrap"). Until a key is
+   pinned no manifest is trusted by clients, and the CI self-check fails.
 3. Protect the `release` environment. Find your numeric user id, then set the required
    reviewer and limit deployments to master:
 
@@ -92,28 +115,61 @@ GitHub API path (while `AllowLegacyGitHubUpdates` is true).
    `PUT` replaces the environment's settings, so run it once and then check
    Settings -> Environments -> release. Also keep branch protection on master (SECURITY.md).
 
+## Bootstrap: the first release that ships the pin
+
+Clients trust only keys pinned in their own build, and the CI self-check requires the signing
+key to be pinned in the commit being released. For the very first signed release the key
+exists (secret) before any build pins it, so that release is signed with the new key but
+cannot self-verify against a pin. The owner opens that one gap by hand:
+
+1. Set the repository variable (not a secret): `gh variable set RELEASE_SIGNING_BOOTSTRAP
+   --body true --repo OWNER/REPO`.
+2. Push the commit that pins the key. If the pin is already in that commit, the self-check
+   passes on the pin and the variable is not needed; if the key is not pinned yet, the
+   self-check and the publish job verify against the public key CI derived from the secret and
+   print a warning.
+3. Approve the `release` environment, let the release ship, then **unset the variable**:
+   `gh variable delete RELEASE_SIGNING_BOOTSTRAP --repo OWNER/REPO`.
+
+While the variable is true, an unpinned key passes the self-check, so leave it set only for
+that one release. Any later release with an unpinned key fails the job.
+
 ## Rotation
 
 Clients only trust manifests signed by a key pinned in their own build, so the release that
 introduces the new key must still be signed by the old one. Stage the new key first; do not
 overwrite the secret yet.
 
-1. Generate the new key into a private file and note its public line (printed to stderr).
-   This is the one place a private key touches disk; delete the file in step 4:
+Rotation is **not** done in the workflow: the staged key never enters CI before step 3, so
+there is no workflow step to clean up. The staged key is a file on the owner's machine, the one
+place a private key touches disk. Keep it in a directory only you can read, and delete it with
+a trap so it goes away even if a step fails. Never commit it, attach it to an artifact or paste
+it anywhere. (If rotation is ever automated in CI, the staged-key file must live in
+`$RUNNER_TEMP`, be created under `umask 077`, be removed by an `if: always()` cleanup step and
+never be uploaded.)
+
+1. Generate the new key into a private file and note its public line (printed to stderr):
 
    ```bash
-   (umask 077; monoagentcli release keygen --stdout-private > "$HOME/scratch/release-key-next")
+   umask 077
+   keydir=$(mktemp -d "$HOME/scratch/release-key.XXXXXX")   # mode 0700
+   trap 'rm -f "$keydir/next"; rmdir "$keydir"' EXIT        # delete on any exit
+   monoagentcli release keygen --stdout-private > "$keydir/next"
    ```
+
+   `keygen` warns on stderr that the redirect leaves the key on disk. Because the trap only
+   lasts for this shell, run steps 1 and 3 in one session, or repeat the `umask`/`mktemp`
+   in a new shell and delete the directory by hand at step 4.
 
 2. Ship a release that pins BOTH keys (old and new) in `pinnedReleaseKeys`. CI signs it with
    the old key (still in the secret), which clients already trust.
 3. Once that release is out, promote the new key and make it the signer:
 
    ```bash
-   gh secret set RELEASE_SIGNING_KEY --env release --repo OWNER/REPO < "$HOME/scratch/release-key-next"
+   gh secret set RELEASE_SIGNING_KEY --env release --repo OWNER/REPO < "$keydir/next"
    ```
 
-4. Delete `$HOME/scratch/release-key-next`.
+4. Delete the staged key: `rm -f "$keydir/next"; rmdir "$keydir"` (the trap does this on exit).
 5. Later, when clients have moved past builds that only know the old key, ship a release
    (signed by the new key) that removes the old line from `pinnedReleaseKeys`.
 
@@ -134,6 +190,23 @@ revokes it. Move fast, in the same order as a rotation but pinning only the new 
    compromise, fix that first: revoke the offending access, re-check the environment's
    required reviewers and deployment branches.
 
+## Code owners
+
+`.github/CODEOWNERS` assigns the release path (`/.github/`, `/cmd/release-manifest/`,
+`/internal/release/`, `/scripts/check-release-tags*.sh`, `/scripts/release-flatten.sh`,
+`/docs/release-runbook.md`) to the owner. **It only takes effect when branch protection on
+master requires code-owner review**; without that rule it is a label. Enable it (owner runs
+this, it replaces the rule's review settings, so check Settings -> Branches afterwards):
+
+```bash
+gh api -X PATCH repos/OWNER/REPO/branches/master/protection/required_pull_request_reviews \
+  -F require_code_owner_reviews=true -F required_approving_review_count=1
+```
+
+(`PATCH` needs the branch protection rule to already exist; create it first in Settings ->
+Branches if it does not. CODEOWNERS entries must name a user or team: an organization name
+alone is not a valid owner.)
+
 ## Break-glass: sign locally
 
 The local path still works and is the fallback if CI signing is unavailable or untrusted:
@@ -148,10 +221,11 @@ gh release upload vX.Y.Z manifest.json.sig --repo monoes/mono-agent-releases
 monoagentcli release verify manifest.json manifest.json.sig   # add --pubkey "<id> <b64>" to try another key
 ```
 
-`-keyring` reads the entry written by keygen (service `monoagent-release-signing`, account
+`-key-file` is refused unless its mode is 0600 or tighter (a symlink is judged by its target;
+the check is skipped on Windows, which has no POSIX mode bits). `-keyring` reads the entry written by keygen (service `monoagent-release-signing`, account
 `ed25519-v1`, value the base64 of the 64-byte private key; a bare 32-byte seed is accepted
-too). Add `-assets-dir DIR -expect-version vX.Y.Z -min-version vA.B.C` to get the same
-asset checks as CI. Check `manifest.json` against the run's checksums before signing.
+too). Add `-assets-dir DIR -expect-version vX.Y.Z -url-prefix https://github.com/OWNER/REPO/releases/download/vX.Y.Z/
+-min-version vA.B.C` to get the same asset checks as CI. Check `manifest.json` against the run's checksums before signing.
 
 ## Making this repo private
 

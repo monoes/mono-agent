@@ -4,11 +4,15 @@
 //	    writes DIR/SHA256SUMS and DIR/manifest.json (unsigned; safe to run in CI).
 //	    -expires-days N adds the signed "expires_at" field (N days from now); 0 omits it.
 //	release-manifest sign -manifest DIR/manifest.json [-key-file FILE | -keyring | -key-env NAME]
-//	    [-assets-dir DIR -expect-version vX.Y.Z [-min-version vX.Y.Z]] [-pubkey-out FILE]
+//	    [-assets-dir DIR -expect-version vX.Y.Z [-url-prefix URL] [-min-version vX.Y.Z]] [-pubkey-out FILE]
 //	    writes manifest.json.sig next to it. -keyring and -key-file are the owner's local
 //	    break-glass path. -key-env NAME is the CI path: it reads the base64 private key from
-//	    that environment variable (never a flag value), and then requires -assets-dir and
-//	    -expect-version so the manifest is checked against the real assets before signing.
+//	    that environment variable (never a flag value), and then requires -assets-dir,
+//	    -expect-version and -url-prefix so the manifest is checked against the real assets
+//	    (and against where its URLs may point) before signing.
+//	release-manifest check -manifest M -assets-dir DIR -expect-version vX.Y.Z -url-prefix URL
+//	    runs the same checks on an already signed manifest, and with -strict also requires that
+//	    DIR holds nothing but the listed assets (plus manifest.json, manifest.json.sig, SHA256SUMS).
 //
 // The signature file is one line, "<key id> <base64 Ed25519 signature>", made over
 // the exact bytes of manifest.json. The key id is the first 8 bytes of the SHA-256
@@ -27,9 +31,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,13 +198,49 @@ func parseSemver(v string) ([3]int, error) {
 	return out, nil
 }
 
+var urlPrefixRe = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/releases/download/(v\d+\.\d+\.\d+)/$`)
+
+// validateNotesURL requires an https URL under github.com/<repo>/ or on monoes.me.
+func validateNotesURL(raw, repo string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return fmt.Errorf("notes_url %q must be a plain https URL", raw)
+	}
+	switch u.Host {
+	case "monoes.me":
+		return nil
+	case "github.com":
+		if strings.HasPrefix(u.Path, "/"+repo+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("notes_url %q must be under https://github.com/%s/ or https://monoes.me/", raw, repo)
+}
+
+// decodeManifestStrict parses the manifest, rejecting unknown fields and trailing data.
+func decodeManifestStrict(data []byte) (*Manifest, error) {
+	var m Manifest
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return nil, fmt.Errorf("manifest is not valid: %w", err)
+	}
+	if dec.More() {
+		return nil, errors.New("manifest has trailing data after the JSON object")
+	}
+	return &m, nil
+}
+
 // checkManifestAgainstAssets is the pre-sign gate: the manifest must describe exactly the
 // files in dir (sha256 and size recomputed), carry the version being released, and not be
-// older than minVersion (the latest published release; empty skips that check).
-func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion string) error {
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return fmt.Errorf("manifest is not valid JSON: %w", err)
+// older than minVersion (the latest published release; empty skips that check). With a non-empty
+// urlPrefix (https://github.com/OWNER/REPO/releases/download/TAG/) every asset url must be that
+// prefix plus the asset name, and notes_url must sit under that repo or on monoes.me. With strict,
+// dir may hold nothing but the listed assets and the manifest/signature/checksum files.
+func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion, urlPrefix string, strict bool, now time.Time) error {
+	m, err := decodeManifestStrict(data)
+	if err != nil {
+		return err
 	}
 	if m.Schema != 1 {
 		return fmt.Errorf("manifest schema %d, want 1", m.Schema)
@@ -209,6 +251,27 @@ func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion stri
 	}
 	if m.Version != expectVersion {
 		return fmt.Errorf("manifest version %s is not the version being released (%s)", m.Version, expectVersion)
+	}
+	if m.ExpiresAt != "" {
+		exp, err := time.Parse(time.RFC3339, m.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("expires_at %q is not RFC3339: %w", m.ExpiresAt, err)
+		}
+		if !exp.After(now) {
+			return fmt.Errorf("expires_at %s is not in the future", m.ExpiresAt)
+		}
+	}
+	if urlPrefix != "" {
+		pm := urlPrefixRe.FindStringSubmatch(urlPrefix)
+		if pm == nil {
+			return fmt.Errorf("url prefix %q must be https://github.com/OWNER/REPO/releases/download/vX.Y.Z/", urlPrefix)
+		}
+		if pm[2] != expectVersion {
+			return fmt.Errorf("url prefix tag %s is not the version being released (%s)", pm[2], expectVersion)
+		}
+		if err := validateNotesURL(m.NotesURL, pm[1]); err != nil {
+			return err
+		}
 	}
 	if minVersion != "" {
 		min, err := parseSemver(minVersion)
@@ -236,7 +299,11 @@ func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion stri
 		if a.Name != filepath.Base(a.Name) || a.Name == "" {
 			return fmt.Errorf("asset name %q is not a plain file name", a.Name)
 		}
-		if !strings.HasSuffix(a.URL, "/releases/download/"+m.Version+"/"+a.Name) {
+		if urlPrefix != "" {
+			if a.URL != urlPrefix+a.Name {
+				return fmt.Errorf("asset %s: url %q is not %s%s", a.Name, a.URL, urlPrefix, a.Name)
+			}
+		} else if !strings.HasSuffix(a.URL, "/releases/download/"+m.Version+"/"+a.Name) {
 			return fmt.Errorf("asset %s: url does not point at release %s", a.Name, m.Version)
 		}
 		o, ar, k, ok := classify(a.Name)
@@ -260,11 +327,37 @@ func checkManifestAgainstAssets(data []byte, dir, expectVersion, minVersion stri
 		return err
 	}
 	for _, e := range entries {
-		if e.Type().IsRegular() {
-			if _, _, _, ok := classify(e.Name()); ok && !listed[e.Name()] {
-				return fmt.Errorf("built file %s is missing from the manifest", e.Name())
-			}
+		if !e.Type().IsRegular() {
+			continue
 		}
+		if listed[e.Name()] {
+			continue
+		}
+		if _, _, _, ok := classify(e.Name()); ok {
+			return fmt.Errorf("built file %s is missing from the manifest", e.Name())
+		}
+		if strict && e.Name() != "SHA256SUMS" && !strings.HasPrefix(e.Name(), "manifest.json") {
+			return fmt.Errorf("file %s is not listed in the manifest", e.Name())
+		}
+	}
+	return nil
+}
+
+// checkKeyFileMode refuses a key file that other users could read. Stat follows symlinks, so a
+// link to a looser file is judged by its target.
+func checkKeyFileMode(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil // Windows has no POSIX mode bits to judge; the file's ACL is the owner's job.
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("key file %s is not a regular file", path)
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("key file %s has mode %04o: it must be 0600 or tighter (chmod 600)", path, st.Mode().Perm())
 	}
 	return nil
 }
@@ -314,6 +407,7 @@ func run(args []string) error {
 		keyEnv := fs.String("key-env", "", "NAME of an environment variable holding the base64 private key (64-byte key or 32-byte seed)")
 		assetsDir := fs.String("assets-dir", "", "directory of the built release files; the manifest is checked against them before signing")
 		expectVer := fs.String("expect-version", "", "version being released; the manifest must carry exactly this")
+		urlPrefix := fs.String("url-prefix", "", "https://github.com/OWNER/REPO/releases/download/TAG/ that every asset url must start with (required with -key-env)")
 		minVer := fs.String("min-version", "", "latest published version; the manifest must not be lower (empty skips)")
 		pubOut := fs.String("pubkey-out", "", "write the public key line '<id> <base64>' (public, safe to log) to this file")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -328,8 +422,11 @@ func run(args []string) error {
 		if *path == "" || sources != 1 {
 			return errors.New("sign needs -manifest and exactly one of -key-file, -keyring or -key-env")
 		}
-		if *keyEnv != "" && (*assetsDir == "" || *expectVer == "") {
-			return errors.New("-key-env requires -assets-dir and -expect-version: a CI-held key only signs a manifest verified against the real assets")
+		if *keyEnv != "" && (*assetsDir == "" || *expectVer == "" || *urlPrefix == "") {
+			return errors.New("-key-env requires -assets-dir, -expect-version and -url-prefix: a CI-held key only signs a manifest verified against the real assets and the expected release url")
+		}
+		if *urlPrefix != "" && *assetsDir == "" {
+			return errors.New("-url-prefix needs -assets-dir and -expect-version")
 		}
 		if (*assetsDir == "") != (*expectVer == "") {
 			return errors.New("-assets-dir and -expect-version go together")
@@ -348,6 +445,9 @@ func run(args []string) error {
 			}
 			secret = s
 		} else {
+			if err := checkKeyFileMode(*keyFile); err != nil {
+				return err
+			}
 			b, err := os.ReadFile(*keyFile)
 			if err != nil {
 				return err
@@ -363,7 +463,7 @@ func run(args []string) error {
 			return err
 		}
 		if *assetsDir != "" {
-			if err := checkManifestAgainstAssets(data, *assetsDir, *expectVer, *minVer); err != nil {
+			if err := checkManifestAgainstAssets(data, *assetsDir, *expectVer, *minVer, *urlPrefix, false, time.Now()); err != nil {
 				return fmt.Errorf("refusing to sign: %w", err)
 			}
 		}
@@ -378,6 +478,28 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Printf("signed %s with key %s\n", *path, keyID(priv.Public().(ed25519.PublicKey)))
+		return nil
+	case "check":
+		fs := flag.NewFlagSet("check", flag.ContinueOnError)
+		path := fs.String("manifest", "", "path to the (signed) manifest.json")
+		assetsDir := fs.String("assets-dir", "", "directory of the files about to be uploaded")
+		expectVer := fs.String("expect-version", "", "version being released")
+		urlPrefix := fs.String("url-prefix", "", "https://github.com/OWNER/REPO/releases/download/TAG/")
+		strict := fs.Bool("strict", false, "also require that -assets-dir holds nothing but the listed assets")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *path == "" || *assetsDir == "" || *expectVer == "" || *urlPrefix == "" {
+			return errors.New("check needs -manifest, -assets-dir, -expect-version and -url-prefix")
+		}
+		data, err := os.ReadFile(*path)
+		if err != nil {
+			return err
+		}
+		if err := checkManifestAgainstAssets(data, *assetsDir, *expectVer, "", *urlPrefix, *strict, time.Now()); err != nil {
+			return fmt.Errorf("check failed: %w", err)
+		}
+		fmt.Printf("%s matches the files in %s\n", *path, *assetsDir)
 		return nil
 	}
 	return fmt.Errorf("unknown mode %q", args[0])

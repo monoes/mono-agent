@@ -1,71 +1,316 @@
 package release
 
 import (
+	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-// The release workflow now holds the signing key as an environment secret. These checks pin the
-// properties that keep that safe, so a later edit cannot quietly widen where the key goes.
-func TestReleaseWorkflowSigningKeyHandling(t *testing.T) {
+// The release workflow holds the signing key as an environment secret. These checks parse the
+// workflow and pin the properties that keep that safe, so a later edit cannot quietly widen where
+// the key goes. workflowViolations is exercised against mutated copies below, so each rule is
+// proven to fail when it is broken.
+
+const signingSecret = "RELEASE_SIGNING_KEY"
+
+type wfStep struct {
+	Name string         `yaml:"name"`
+	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
+	If   string         `yaml:"if"`
+	Env  map[string]any `yaml:"env"`
+	With map[string]any `yaml:"with"`
+}
+
+type wfJob struct {
+	Uses        string         `yaml:"uses"`
+	Secrets     any            `yaml:"secrets"`
+	Environment any            `yaml:"environment"`
+	Env         map[string]any `yaml:"env"`
+	Steps       []wfStep       `yaml:"steps"`
+}
+
+type wfFile struct {
+	On   any              `yaml:"on"`
+	Env  map[string]any   `yaml:"env"`
+	Jobs map[string]wfJob `yaml:"jobs"`
+}
+
+var (
+	pinnedUsesRe  = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
+	xtraceRe      = regexp.MustCompile(`(?m)(\bset\s+-[A-Za-z]*x|\b(ba|z|da)?sh\s+-[A-Za-z]*x|xtrace)`)
+	envDumpRe     = regexp.MustCompile(`(?m)(^\s*(env|printenv|export\s+-p|declare\s+-[xp]+|set)\s*($|[|;>&])|\bprintenv\b|\benv\s*[|>])`)
+	echoSecretRe  = regexp.MustCompile(`(?m)\b(echo|printf)\b[^\n]*\$\{?` + signingSecret)
+	secretIndexRe = regexp.MustCompile(`secrets\s*\[|toJSON\(\s*secrets|secrets\s*:\s*inherit`)
+)
+
+func walkStrings(v any, f func(string)) {
+	switch t := v.(type) {
+	case string:
+		f(t)
+	case []any:
+		for _, e := range t {
+			walkStrings(e, f)
+		}
+	case map[string]any:
+		for k, e := range t {
+			f(k)
+			walkStrings(e, f)
+		}
+	}
+}
+
+func envMentions(env map[string]any, needle string) bool {
+	for k, v := range env {
+		if strings.Contains(k, needle) || strings.Contains(fmt.Sprint(v), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func environmentName(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case map[string]any:
+		if n, ok := t["name"].(string); ok {
+			return n
+		}
+	}
+	return ""
+}
+
+// workflowViolations returns every broken rule in the workflow YAML.
+func workflowViolations(raw []byte) []string {
+	var out []string
+	bad := func(format string, a ...any) { out = append(out, fmt.Sprintf(format, a...)) }
+
+	var wf wfFile
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		return []string{"workflow does not parse: " + err.Error()}
+	}
+	var tree any
+	if err := yaml.Unmarshal(raw, &tree); err != nil {
+		return []string{"workflow does not parse: " + err.Error()}
+	}
+
+	// Triggers: exactly a push to master.
+	on, ok := wf.On.(map[string]any)
+	if !ok || len(on) != 1 {
+		bad("on: must be exactly a push to master, got %v", wf.On)
+	} else if push, ok := on["push"].(map[string]any); !ok {
+		bad("on: has no push trigger (got %v)", on)
+	} else if br, _ := push["branches"].([]any); len(push) != 1 || len(br) != 1 || br[0] != "master" {
+		bad("on.push must be only branches: [master], got %v", push)
+	}
+
+	// The secret and secret-wide patterns across the whole document.
+	secretRefs := 0
+	walkStrings(tree, func(s string) {
+		secretRefs += strings.Count(s, "secrets."+signingSecret)
+		if secretIndexRe.MatchString(s) {
+			bad("workflow uses secrets[...], toJSON(secrets) or 'secrets: inherit': %q", s)
+		}
+	})
+	if secretRefs != 1 {
+		bad("secrets.%s is referenced %d times, want exactly 1 (the signing step's env)", signingSecret, secretRefs)
+	}
+	if envMentions(wf.Env, signingSecret) || envMentions(wf.Env, "secrets[") {
+		bad("workflow-level env references the signing key")
+	}
+
+	keySteps := 0
+	for jobName, job := range wf.Jobs {
+		if job.Secrets != nil {
+			bad("job %s passes secrets to a called workflow (%v)", jobName, job.Secrets)
+		}
+		if job.Uses != "" {
+			bad("job %s calls a reusable workflow (%s)", jobName, job.Uses)
+		}
+		if envMentions(job.Env, signingSecret) || envMentions(job.Env, "secrets[") {
+			bad("job %s: job-level env references the signing key", jobName)
+		}
+		if (jobName == "sign-manifest" || jobName == "publish-releases-repo") && environmentName(job.Environment) != "release" {
+			bad("job %s must declare environment: release", jobName)
+		}
+		for i, st := range job.Steps {
+			where := fmt.Sprintf("job %s step %d (%s)", jobName, i+1, st.Name)
+			if st.Uses != "" && !pinnedUsesRe.MatchString(st.Uses) {
+				bad("%s: uses %q is not pinned by a 40-hex commit SHA", where, st.Uses)
+			}
+			if xtraceRe.MatchString(st.Run) {
+				bad("%s: run enables shell tracing", where)
+			}
+			if envDumpRe.MatchString(st.Run) {
+				bad("%s: run dumps the environment", where)
+			}
+			if echoSecretRe.MatchString(st.Run) {
+				bad("%s: run echoes the signing key variable", where)
+			}
+			if strings.Contains(st.Run, "${{") && strings.Contains(st.Run, "secrets.") {
+				bad("%s: run interpolates a secret expression directly", where)
+			}
+			withKey := envMentions(st.Env, signingSecret)
+			if withKey {
+				keySteps++
+				if jobName != "sign-manifest" {
+					bad("%s: only sign-manifest may carry the signing key", where)
+				}
+				if got := fmt.Sprint(st.Env[signingSecret]); got != "${{ secrets."+signingSecret+" }}" {
+					bad("%s: env must be exactly %s: ${{ secrets.%s }}, got %q", where, signingSecret, signingSecret, got)
+				}
+				if !strings.Contains(st.Run, "-key-env "+signingSecret) {
+					bad("%s: has the key but its run does not invoke '-key-env %s'", where, signingSecret)
+				}
+				for _, banned := range []string{"go run", "go build", "go test", "go generate", "go install", "npm ", "pip "} {
+					if strings.Contains(st.Run, banned) {
+						bad("%s: runs %q with the key in its environment; compile first, run only the binary", where, banned)
+					}
+				}
+				if strings.Contains(st.Run, "$"+signingSecret) || strings.Contains(st.Run, "${"+signingSecret) {
+					bad("%s: run expands the key variable", where)
+				}
+			} else if strings.Contains(st.Run, "-key-env") {
+				bad("%s: invokes -key-env but its env does not carry %s", where, signingSecret)
+			}
+			for k, v := range st.With {
+				if strings.Contains(fmt.Sprint(v), signingSecret) {
+					bad("%s: with.%s references the signing key", where, k)
+				}
+			}
+			if strings.Contains(st.If, signingSecret) {
+				bad("%s: if references the signing key", where)
+			}
+		}
+	}
+	if keySteps != 1 {
+		bad("%d steps carry %s, want exactly 1", keySteps, signingSecret)
+	}
+	return out
+}
+
+func readReleaseWorkflow(t *testing.T) string {
+	t.Helper()
 	raw, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wf := string(raw)
+	return string(raw)
+}
 
-	if n := strings.Count(wf, "secrets.RELEASE_SIGNING_KEY"); n != 1 {
-		t.Fatalf("secrets.RELEASE_SIGNING_KEY referenced %d times, want exactly 1 (the signing step's env)", n)
+func TestReleaseWorkflowSigningKeyHandling(t *testing.T) {
+	for _, v := range workflowViolations([]byte(readReleaseWorkflow(t))) {
+		t.Error(v)
 	}
-	for _, bad := range []string{"set -x", "set -o xtrace", "printenv", "toJSON(secrets", "toJson(secrets"} {
-		if strings.Contains(wf, bad) {
-			t.Errorf("workflow contains %q", bad)
-		}
-	}
+}
 
-	start := strings.Index(wf, "\n  sign-manifest:\n")
-	end := strings.Index(wf, "\n  publish-releases-repo:\n")
-	if start < 0 || end < start {
-		t.Fatal("sign-manifest / publish-releases-repo jobs not found")
-	}
-	job := wf[start:end]
-	for _, want := range []string{
-		"if: github.event_name == 'push' && github.ref == 'refs/heads/master'",
-		"environment: release",
-		"needs: [version, release-manifest, release]",
-		"permissions:\n      contents: read\n",
-		"persist-credentials: false",
-		"-key-env RELEASE_SIGNING_KEY",
-		"-assets-dir bundle",
-		"-expect-version \"${TAG}\"",
-		"-min-version",
-		"release verify",
-	} {
-		if !strings.Contains(job, want) {
-			t.Errorf("sign-manifest lacks %q", want)
+// nth replaces the n-th (0-based) occurrence of old; the mutation must apply or the test is void.
+func nth(t *testing.T, s, old, new string, n int) string {
+	t.Helper()
+	idx := -1
+	from := 0
+	for i := 0; i <= n; i++ {
+		j := strings.Index(s[from:], old)
+		if j < 0 {
+			t.Fatalf("mutation anchor not found (occurrence %d): %q", n, old)
 		}
+		idx = from + j
+		from = idx + len(old)
 	}
-	// The key is set in the env of one step, never at job level.
-	jobEnv := job[strings.Index(job, "    env:\n"):strings.Index(job, "    steps:\n")]
-	if strings.Contains(jobEnv, "RELEASE_SIGNING_KEY") {
-		t.Error("RELEASE_SIGNING_KEY is set at job level")
+	return s[:idx] + new + s[idx+len(old):]
+}
+
+func TestReleaseWorkflowGuardCatchesViolations(t *testing.T) {
+	const jobEnvAnchor = "    environment: release\n    permissions:\n      contents: read\n"
+	const signEnvKey = "          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}\n"
+	mutations := map[string]func(t *testing.T, s string) string{
+		"pull_request trigger": func(t *testing.T, s string) string {
+			return nth(t, s, "on:\n  push:", "on:\n  pull_request:\n  push:", 0)
+		},
+		"pull_request_target trigger": func(t *testing.T, s string) string {
+			return nth(t, s, "on:\n  push:", "on:\n  pull_request_target:\n  push:", 0)
+		},
+		"workflow_dispatch trigger": func(t *testing.T, s string) string {
+			return nth(t, s, "on:\n  push:", "on:\n  workflow_dispatch:\n  push:", 0)
+		},
+		"workflow_run trigger": func(t *testing.T, s string) string {
+			return nth(t, s, "on:\n  push:", "on:\n  workflow_run:\n    workflows: [x]\n  push:", 0)
+		},
+		"push to another branch": func(t *testing.T, s string) string {
+			return nth(t, s, "branches: [master]", "branches: [master, dev]", 0)
+		},
+		"job-level env has the key": func(t *testing.T, s string) string {
+			return nth(t, s, jobEnvAnchor+"    env:\n", jobEnvAnchor+"    env:\n      LEAK: ${{ secrets.RELEASE_SIGNING_KEY }}\n", 0)
+		},
+		"workflow-level env has the key": func(t *testing.T, s string) string {
+			return nth(t, s, "permissions:\n  contents: write\n", "env:\n  LEAK: ${{ secrets.RELEASE_SIGNING_KEY }}\npermissions:\n  contents: write\n", 0)
+		},
+		"workflow-level env indexes secrets": func(t *testing.T, s string) string {
+			return nth(t, s, "permissions:\n  contents: write\n", "env:\n  LEAK: ${{ secrets['RELEASE_SIGNING_KEY'] }}\npermissions:\n  contents: write\n", 0)
+		},
+		"second step gets the key": func(t *testing.T, s string) string {
+			return nth(t, s, "          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}\n", "          BOOTSTRAP: ${{ vars.RELEASE_SIGNING_BOOTSTRAP }}\n"+signEnvKey, 0)
+		},
+		"set -x":  func(t *testing.T, s string) string { return nth(t, s, "set +x", "set -x", 0) },
+		"set -ex": func(t *testing.T, s string) string { return nth(t, s, "set -euo pipefail", "set -ex", 0) },
+		"bash -x": func(t *testing.T, s string) string {
+			return nth(t, s, "bash scripts/release-flatten.sh", "bash -x scripts/release-flatten.sh", 0)
+		},
+		"xtrace": func(t *testing.T, s string) string { return nth(t, s, "set +x", "set -o xtrace", 0) },
+		"env dump": func(t *testing.T, s string) string {
+			return nth(t, s, "          min_args=()\n", "          env\n          min_args=()\n", 0)
+		},
+		"printenv": func(t *testing.T, s string) string {
+			return nth(t, s, "          min_args=()\n", "          printenv | sort\n          min_args=()\n", 0)
+		},
+		"echo of the variable": func(t *testing.T, s string) string {
+			return nth(t, s, "          min_args=()\n", "          echo \"$RELEASE_SIGNING_KEY\"\n          min_args=()\n", 0)
+		},
+		"printf of the variable": func(t *testing.T, s string) string {
+			return nth(t, s, "          min_args=()\n", "          printf '%s' \"${RELEASE_SIGNING_KEY}\"\n          min_args=()\n", 0)
+		},
+		"secret interpolated into run": func(t *testing.T, s string) string {
+			return nth(t, s, "          min_args=()\n", "          x=${{ secrets.RELEASES_REPO_TOKEN }}\n          min_args=()\n", 0)
+		},
+		"secrets: inherit": func(t *testing.T, s string) string {
+			return nth(t, s, "  test:\n    runs-on: ubuntu-latest\n", "  test:\n    secrets: inherit\n    runs-on: ubuntu-latest\n", 0)
+		},
+		"unpinned action": func(t *testing.T, s string) string {
+			return nth(t, s, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4", 0)
+		},
+		"short sha action": func(t *testing.T, s string) string {
+			return nth(t, s, "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "actions/setup-go@b7ad1da", 0)
+		},
+		"sign-manifest lacks environment": func(t *testing.T, s string) string {
+			return nth(t, s, jobEnvAnchor, "    permissions:\n      contents: read\n", 0)
+		},
+		"publish lacks environment": func(t *testing.T, s string) string {
+			return nth(t, s, jobEnvAnchor, "    permissions:\n      contents: read\n", 1)
+		},
+		"key step compiles with the key": func(t *testing.T, s string) string {
+			return nth(t, s, "\"${RUNNER_TEMP}/release-manifest\" sign", "go run ./cmd/release-manifest sign", 0)
+		},
+		"key step without -key-env": func(t *testing.T, s string) string {
+			return nth(t, s, "-key-env RELEASE_SIGNING_KEY", "-key-file k", 0)
+		},
+		"key removed from the signing step": func(t *testing.T, s string) string {
+			return nth(t, s, signEnvKey, "", 0)
+		},
 	}
-	if !strings.Contains(job, "        env:\n          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}\n") {
-		t.Error("RELEASE_SIGNING_KEY is not in a step-level env")
+	base := readReleaseWorkflow(t)
+	if v := workflowViolations([]byte(base)); len(v) != 0 {
+		t.Fatalf("unmutated workflow already violates: %v", v)
 	}
-	// Only the publish job gets the releases-repo token, and only in its upload step.
-	pub := wf[end:]
-	if strings.Count(wf, "secrets.RELEASES_REPO_TOKEN") != 1 || !strings.Contains(pub, "GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}") {
-		t.Error("RELEASES_REPO_TOKEN must appear once, in the publish upload step")
-	}
-	if !strings.Contains(pub, "needs: [version, release-manifest, release, sign-manifest]") {
-		t.Error("publish-releases-repo must need sign-manifest")
-	}
-	if !strings.Contains(pub, "already has manifest.json.sig") {
-		t.Error("the never-overwrite-a-signed-manifest protection is gone")
-	}
-	if strings.Contains(pub, "artifacts/unsigned-manifest/manifest.json ") {
-		t.Error("publish must not upload the unsigned manifest.json")
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if v := workflowViolations([]byte(mutate(t, base))); len(v) == 0 {
+				t.Error("guard did not flag this violation")
+			}
+		})
 	}
 }

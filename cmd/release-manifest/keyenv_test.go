@@ -7,13 +7,21 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newKeyEnv(t *testing.T, raw []byte) {
 	t.Helper()
 	t.Setenv("TEST_RELEASE_KEY", base64.StdEncoding.EncodeToString(raw))
+}
+
+const testRepo = "monoes/mono-agent-releases"
+
+func prefixFor(version string) string {
+	return "https://github.com/" + testRepo + "/releases/download/" + version + "/"
 }
 
 func manifestFixture(t *testing.T, version string) string {
@@ -37,7 +45,7 @@ func TestSignKeyEnvRoundTrip(t *testing.T) {
 			mpath := filepath.Join(dir, "manifest.json")
 			pubOut := filepath.Join(t.TempDir(), "pub.txt")
 			err := run([]string{"sign", "-manifest", mpath, "-key-env", "TEST_RELEASE_KEY",
-				"-assets-dir", dir, "-expect-version", "v1.2.3", "-min-version", "v1.2.2", "-pubkey-out", pubOut})
+				"-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3"), "-min-version", "v1.2.2", "-pubkey-out", pubOut})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,19 +73,22 @@ func TestSignKeyEnvRefusals(t *testing.T) {
 	with := func(extra ...string) []string { return append(append([]string{}, base...), extra...) }
 
 	t.Setenv("TEST_RELEASE_KEY", "")
-	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3")); err == nil || !strings.Contains(err.Error(), "empty") {
+	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3"))); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("empty variable accepted: %v", err)
 	}
 	newKeyEnv(t, priv)
 	if err := run(base); err == nil {
 		t.Error("-key-env without -assets-dir/-expect-version accepted")
 	}
-	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3", "-keyring")); err == nil {
+	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3")); err == nil || !strings.Contains(err.Error(), "url-prefix") {
+		t.Errorf("-key-env without -url-prefix accepted: %v", err)
+	}
+	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3"), "-keyring")); err == nil {
 		t.Error("two key sources accepted")
 	}
 	// An error must never echo the key.
 	t.Setenv("TEST_RELEASE_KEY", "not-base64-!!!secretsecret")
-	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3")); err == nil || strings.Contains(err.Error(), "secretsecret") {
+	if err := run(with("-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3"))); err == nil || strings.Contains(err.Error(), "secretsecret") {
 		t.Errorf("bad key error missing or leaks: %v", err)
 	}
 	if _, err := os.Stat(mpath + ".sig"); err == nil {
@@ -90,7 +101,7 @@ func TestSignRefusesBadManifest(t *testing.T) {
 	sign := func(dir, ver, min string) error {
 		newKeyEnv(t, priv) // sign unsets the variable once it has read it
 		args := []string{"sign", "-manifest", filepath.Join(dir, "manifest.json"), "-key-env", "TEST_RELEASE_KEY",
-			"-assets-dir", dir, "-expect-version", ver}
+			"-assets-dir", dir, "-expect-version", ver, "-url-prefix", prefixFor(ver)}
 		if min != "" {
 			args = append(args, "-min-version", min)
 		}
@@ -158,4 +169,111 @@ func TestSignRefusesBadManifest(t *testing.T) {
 			t.Error("manifest with an off-release url signed")
 		}
 	})
+}
+
+// rewriteManifest edits manifest.json in the fixture dir and signs through the CI path.
+func signRewritten(t *testing.T, edit func(m map[string]any)) error {
+	t.Helper()
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	newKeyEnv(t, priv)
+	dir := manifestFixture(t, "v1.2.3")
+	mpath := filepath.Join(dir, "manifest.json")
+	raw, _ := os.ReadFile(mpath)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	edit(m)
+	out, _ := json.Marshal(m)
+	os.WriteFile(mpath, out, 0o644)
+	return run([]string{"sign", "-manifest", mpath, "-key-env", "TEST_RELEASE_KEY",
+		"-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3")})
+}
+
+func TestSignManifestFieldValidation(t *testing.T) {
+	soon := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	past := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	asset0 := func(m map[string]any) map[string]any { return m["assets"].([]any)[0].(map[string]any) }
+	bad := map[string]func(m map[string]any){
+		"asset url on another repo": func(m map[string]any) {
+			asset0(m)["url"] = "https://github.com/evil/x/releases/download/v1.2.3/" + asset0(m)["name"].(string)
+		},
+		"asset url http": func(m map[string]any) {
+			asset0(m)["url"] = "http://github.com/" + testRepo + "/releases/download/v1.2.3/" + asset0(m)["name"].(string)
+		},
+		"asset url other tag":  func(m map[string]any) { asset0(m)["url"] = prefixFor("v1.2.2") + asset0(m)["name"].(string) },
+		"notes url other host": func(m map[string]any) { m["notes_url"] = "https://evil.example/notes" },
+		"notes url http":       func(m map[string]any) { m["notes_url"] = "http://monoes.me/notes" },
+		"notes url other repo": func(m map[string]any) { m["notes_url"] = "https://github.com/evil/x/releases/tag/v1.2.3" },
+		"unknown field":        func(m map[string]any) { m["extra"] = true },
+		"expired":              func(m map[string]any) { m["expires_at"] = past },
+		"expires not RFC3339":  func(m map[string]any) { m["expires_at"] = "tomorrow" },
+		"duplicate asset": func(m map[string]any) {
+			a := m["assets"].([]any)
+			m["assets"] = append(a, a[0])
+		},
+	}
+	for name, edit := range bad {
+		t.Run(name, func(t *testing.T) {
+			if err := signRewritten(t, edit); err == nil {
+				t.Error("signed")
+			}
+		})
+	}
+	good := map[string]func(m map[string]any){
+		"unchanged":          func(m map[string]any) {},
+		"future expiry":      func(m map[string]any) { m["expires_at"] = soon },
+		"notes on monoes.me": func(m map[string]any) { m["notes_url"] = "https://monoes.me/releases/v1.2.3" },
+	}
+	for name, edit := range good {
+		t.Run(name, func(t *testing.T) {
+			if err := signRewritten(t, edit); err != nil {
+				t.Errorf("refused: %v", err)
+			}
+		})
+	}
+}
+
+func TestSignKeyFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX mode bits")
+	}
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	dir := manifestFixture(t, "v1.2.3")
+	mpath := filepath.Join(dir, "manifest.json")
+	keyDir := t.TempDir()
+	key := filepath.Join(keyDir, "key")
+	os.WriteFile(key, []byte(base64.StdEncoding.EncodeToString(priv)), 0o600)
+	link := filepath.Join(keyDir, "link")
+	if err := os.Symlink(key, link); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(path string) error { return run([]string{"sign", "-manifest", mpath, "-key-file", path}) }
+	if err := sign(key); err != nil {
+		t.Fatalf("0600 refused: %v", err)
+	}
+	if err := sign(link); err != nil {
+		t.Fatalf("symlink to 0600 refused: %v", err)
+	}
+	for _, mode := range []os.FileMode{0o644, 0o640, 0o604} {
+		os.Chmod(key, mode)
+		if err := sign(key); err == nil || !strings.Contains(err.Error(), "0600") {
+			t.Errorf("mode %04o accepted: %v", mode, err)
+		}
+		if err := sign(link); err == nil {
+			t.Errorf("symlink to a %04o file accepted", mode)
+		}
+	}
+}
+
+func TestCheckStrict(t *testing.T) {
+	dir := manifestFixture(t, "v1.2.3")
+	mpath := filepath.Join(dir, "manifest.json")
+	args := []string{"check", "-manifest", mpath, "-assets-dir", dir, "-expect-version", "v1.2.3", "-url-prefix", prefixFor("v1.2.3")}
+	if err := run(append(args, "-strict")); err == nil || !strings.Contains(err.Error(), "not listed") {
+		t.Errorf("strict check passed with the unlisted fixture file(s): %v", err)
+	}
+	if err := run(args); err != nil {
+		t.Errorf("non-strict check failed: %v", err)
+	}
 }

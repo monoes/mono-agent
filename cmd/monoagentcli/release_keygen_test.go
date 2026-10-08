@@ -35,6 +35,9 @@ func TestReleaseKeygenStdoutPrivate(t *testing.T) {
 	if !strings.Contains(errOut.String(), line) {
 		t.Errorf("stderr lacks the public line %q:\n%s", line, errOut.String())
 	}
+	if !strings.Contains(errOut.String(), "file now holds the private key on disk") {
+		t.Errorf("stderr lacks the redirect-to-file warning:\n%s", errOut.String())
+	}
 	if strings.Contains(errOut.String(), strings.TrimSpace(out.String())) {
 		t.Error("private key leaked to stderr")
 	}

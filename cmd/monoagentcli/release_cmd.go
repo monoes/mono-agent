@@ -85,6 +85,7 @@ func keygenStdoutPrivate(cmd *cobra.Command, force bool) error {
 	fmt.Fprintln(out, base64.StdEncoding.EncodeToString(priv))
 	errOut := cmd.ErrOrStderr()
 	fmt.Fprintln(errOut, "Private key written to stdout only (not stored anywhere else).")
+	fmt.Fprintln(errOut, "WARNING: if you redirected stdout to a file, that file now holds the private key on disk. Delete it as soon as it is in the secret, and create it with umask 077.")
 	fmt.Fprintln(errOut, "Paste this line into pinnedReleaseKeys in internal/release/keys.go:")
 	fmt.Fprintf(errOut, "\t%q,\n", release.KeyLine(pub))
 	return nil

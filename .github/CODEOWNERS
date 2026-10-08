@@ -10,3 +10,12 @@
 /chrome-extension/      @nokhodian
 /.github/workflows/     @nokhodian
 /.mcp.json              @nokhodian
+
+# Release signing path: the workflow, the signing tool, the verifier and its pinned keys, the
+# guard scripts and the runbook. Whoever can change these can change what gets signed.
+/.github/                        @nokhodian
+/cmd/release-manifest/           @nokhodian
+/internal/release/               @nokhodian
+/scripts/check-release-tags*.sh  @nokhodian
+/scripts/release-flatten.sh      @nokhodian
+/docs/release-runbook.md         @nokhodian

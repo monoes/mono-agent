@@ -270,6 +270,13 @@ checksum mismatch), a forked or pull-request workflow (no access to environment
 secrets), a push from another branch, a replay of an older version, and a
 leaked workflow log (the key is never printed).
 
+The pre-sign check proves the manifest matches the build artifacts; it does not prove the
+build was not compromised, since a tampered build step yields artifacts and a manifest that
+agree with each other. The `publish-releases-repo` job re-verifies the signature and every
+uploaded file against the signed manifest, which stops tampering between jobs but not a
+compromised build. The environment approval and branch protection (with code-owner review
+for `.github/CODEOWNERS` paths) are the real controls.
+
 What it does not protect against: anyone who can change the workflow on
 `master` **and** approve the `release` environment can sign anything, because
 the key is available to that job by design. The controls are therefore the
