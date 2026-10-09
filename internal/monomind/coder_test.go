@@ -171,6 +171,25 @@ func TestInitWorkspaceWithoutTargetWritesOnlyAgentsMD(t *testing.T) {
 	}
 }
 
+func TestWorkspaceInitArgsAddPacksToFreshFolders(t *testing.T) {
+	has := func(args []string, want ...string) bool {
+		return strings.Contains(" "+strings.Join(args, " ")+" ", " "+strings.Join(want, " ")+" ")
+	}
+	fresh := t.TempDir()
+	if a := workspaceInitArgs(fresh, "claude"); !has(a, "--packs", WorkspacePacks) {
+		t.Errorf("fresh folder argv %v lacks --packs", a)
+	}
+	if a := workspaceInitArgs(fresh, "agents"); has(a, "--packs", WorkspacePacks) {
+		t.Errorf("agents target argv %v has --packs", a)
+	}
+	set := t.TempDir()
+	os.MkdirAll(filepath.Join(set, ".monomind"), 0o755)
+	os.WriteFile(filepath.Join(set, ".monomind", "config.yaml"), nil, 0o644)
+	if a := workspaceInitArgs(set, "claude"); has(a, "--packs", WorkspacePacks) {
+		t.Errorf("initialized folder argv %v has --packs", a)
+	}
+}
+
 func TestCoderRuntimes(t *testing.T) {
 	codex, agents := "codex", "agents"
 	scan := &ScanResult{Agents: []ScanEntry{

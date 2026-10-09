@@ -104,6 +104,9 @@ type Check struct {
 	// Network marks checks that call out to the network; they only run
 	// with Options.Deep.
 	Network bool
+	// OfflineCapable marks a Network check that also runs without Deep,
+	// and then keeps off the network: its Run reads Online(ctx).
+	OfflineCapable bool
 	// OnDemand checks only run with Options.OnDemand or when named by ID
 	// (e.g. per-project monomind checks: `doctor --projects`).
 	OnDemand bool
@@ -171,6 +174,11 @@ type Env struct {
 	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
 	InstallMonomind     func(ctx context.Context, progress func(string)) error
 	InitMonomindProfile func(ctx context.Context, root string, progress func(string)) error
+	// RepinMonomindProfile re-runs `monomind init --force` in a profile
+	// folder that is already set up, so .mcp.json pins the installed
+	// version. InstallMonomindDeps runs `monomind deps install`.
+	RepinMonomindProfile func(ctx context.Context, root string, progress func(string)) error
+	InstallMonomindDeps  func(ctx context.Context, progress func(string)) error
 	// MonomindDoctor runs `monomind doctor --json` in dir (rev 9); nil
 	// when unavailable. MonomindProjects lists the monomind projects to
 	// check inside the active profile's folder (paths relative to it).

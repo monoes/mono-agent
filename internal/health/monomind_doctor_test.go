@@ -45,7 +45,7 @@ func sampleDoctor() *monomind.DoctorReport {
 
 func TestMonomindDoctorRows(t *testing.T) {
 	env, calls := doctorEnv(t, []string{monomind.CapDoctorJSON}, sampleDoctor())
-	res := checkMonomindDoctor(context.Background(), env)
+	res := checkMonomindDoctor(onlineCtx(), env)
 	if res.Status != StatusFail || res.Source != "monomind" || len(res.Children) != 4 {
 		t.Fatalf("parent: %+v", res)
 	}
@@ -138,13 +138,55 @@ func TestMonomindDoctorSkipsAFolderNotSetUp(t *testing.T) {
 	}
 }
 
-// Plain `doctor` doesn't run monomind's doctor (it writes and uses the
-// network); --deep does.
+func onlineCtx() context.Context {
+	return context.WithValue(context.Background(), onlineKey{}, true)
+}
+
+// Plain `doctor` runs monomind's doctor only when it is read-only and has
+// --offline (and then offline); --deep runs it whole.
 func TestMonomindDoctorOnlyWithDeep(t *testing.T) {
 	for _, c := range monomindDoctorChecks() {
 		if !c.Network {
 			t.Errorf("%s must be a --deep check", c.ID)
 		}
+		if c.OfflineCapable != (c.ID == CheckMonomindDoctor) {
+			t.Errorf("%s: OfflineCapable = %v", c.ID, c.OfflineCapable)
+		}
+	}
+}
+
+func TestMonomindDoctorRunsOfflineWithoutDeep(t *testing.T) {
+	both := []string{monomind.CapDoctorJSON, monomind.CapDoctorReadOnly, monomind.CapDoctorOffline}
+	env, calls := doctorEnv(t, both, sampleDoctor())
+	if res := checkMonomindDoctor(context.Background(), env); res.Status == StatusSkip || len(*calls) != 1 || !(*calls)[0].Offline {
+		t.Fatalf("plain run: %+v, calls %+v, want one --offline run", res, *calls)
+	}
+	if checkMonomindDoctor(onlineCtx(), env); (*calls)[1].Offline {
+		t.Error("--deep run must not be --offline")
+	}
+	// Without read-only + offline, plain doctor leaves monomind's doctor out.
+	for _, caps := range [][]string{{monomind.CapDoctorJSON}, {monomind.CapDoctorJSON, monomind.CapDoctorOffline}, {monomind.CapDoctorJSON, monomind.CapDoctorReadOnly}} {
+		env, calls := doctorEnv(t, caps, sampleDoctor())
+		if res := checkMonomindDoctor(context.Background(), env); res.Status != StatusSkip || len(*calls) != 0 {
+			t.Errorf("caps %v: %+v, monomind ran %d times", caps, res, len(*calls))
+		}
+	}
+	// The runner selects it without --deep; the projects check still needs it.
+	for _, c := range monomindDoctorChecks() {
+		if got, want := (Options{}).selects(c), c.ID == CheckMonomindDoctor; got != want {
+			t.Errorf("%s selected without --deep = %v, want %v", c.ID, got, want)
+		}
+	}
+	var online []bool
+	reg := NewRegistry([]Check{{ID: "c", Group: "g", Network: true, OfflineCapable: true, Run: func(ctx context.Context, _ *Env) Result {
+		online = append(online, Online(ctx))
+		return Result{Status: StatusOK}
+	}}}, nil)
+	for _, o := range []Options{{}, {Deep: true}, {Monomind: true}} {
+		reg.Run(context.Background(), &Env{}, o)
+	}
+	if len(online) != 3 || online[0] || !online[1] || !online[2] {
+		t.Errorf("Online per run (plain, --deep, --projects) = %v, want [false true true]", online)
 	}
 }
 
