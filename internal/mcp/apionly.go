@@ -29,11 +29,20 @@ func (s *Server) servedTools() []tool {
 	switch {
 	case s.opts.TasksOnly:
 		keep = taskToolNames()
+		// task_approve is served only while the operator allows it for the profile (read now).
+		if s.approveDelegated() {
+			return append(narrow(all, keep), taskApproveTool())
+		}
 	case s.opts.APIOnly:
 		keep = apiToolNames()
 	default:
 		return all
 	}
+	return narrow(all, keep)
+}
+
+// narrow keeps the tools of all whose names are in keep.
+func narrow(all []tool, keep map[string]bool) []tool {
 	out := make([]tool, 0, len(keep))
 	for _, t := range all {
 		if keep[t.name] {

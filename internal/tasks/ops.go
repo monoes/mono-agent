@@ -314,8 +314,20 @@ func (s *Store) each(ctx context.Context, profileID string, ids []int64, reverse
 // read, so the queue is never renumbered (each id put after the one before it
 // would halve the room above the old top every time).
 func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top bool, actor Actor) ([]Task, error) {
+	note := "approved"
 	if actor.Kind != Human {
-		return nil, operatorOnly("approve a task")
+		// A delegate approves only what it can see: approve needs view as well.
+		if !s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.Approve && a.View }) {
+			return nil, operatorOnly("approve a task")
+		}
+		// The history must say which agent approved: a delegated approval needs a name.
+		if err := needName(actor); err != nil {
+			return nil, err
+		}
+		if len(ids) > MaxDelegatedApprove {
+			return nil, invalid("an agent approves at most %d tasks in one call (got %d): the operator approves more", MaxDelegatedApprove, len(ids))
+		}
+		note = DelegatedApprovalNote
 	}
 	p := Placement{Bottom: true}
 	if top {
@@ -326,10 +338,13 @@ func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top 
 			if cur.Status != StatusInbox {
 				return invalid("task #%d is %s, not inbox: only an inbox task is approved", cur.ID, cur.Status)
 			}
+			if actor.Kind != Human {
+				return s.refuseAgentCreated(ctx, cur)
+			}
 			return nil
 		},
 		func(x dbx, cur Task) error {
-			return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", "approved")
+			return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", note)
 		})
 }
 

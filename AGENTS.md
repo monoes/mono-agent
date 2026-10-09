@@ -1335,9 +1335,10 @@ which the app changes when the user switches.
 Archived tasks are hidden and kept (`task list --status archived`).
 
 Only the user approves a task into Ready, moves one to Done or archives
-one (an agent's `release` can put back into Ready only a task it holds).
-The operator commands (`board`, `edit`, `move`, `approve`, `archive`,
-`unarchive` and `add --ready`) refuse an agent: a caller counts as an
+one (an agent's `release` can put back into Ready only a task it holds),
+unless the user delegates two abilities (below). The operator commands
+(`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`,
+`agents allow` and `agents deny`) refuse an agent: a caller counts as an
 agent when an agent-context environment variable such as `CLAUDECODE` is
 set, or `--as` is given, or `MONOAGENT_ACTOR` is set, and the refusal is
 exit 3 with code `operator_only`. Ask the user; do not look for a way
@@ -1349,6 +1350,22 @@ task they hold), `finish`, `release` and `digest`, and may `add` to the
 Inbox (20 tasks an hour). `digest` has no gate: it runs the same in any
 context, so a session-start hook can call it. A `comment` run under an
 agent context is an agent's comment: it needs a name.
+
+**Delegating to agents (off by default).** The user can let agents see the
+board and approve, per profile, in a terminal of their own: `monoagentcli
+--profile work task agents allow --view` (agents get `task board`, and the
+Inbox in `task list` and `task_list` without naming it) and `task agents allow
+--view --approve` (a named agent, `--as NAME`, may `task approve ID...`; a
+`--tasks-only` MCP server then also serves `task_approve`). `task agents deny
+[--view] [--approve]` takes them back at once (no flag takes back both) and
+`task agents show` says what is allowed. Only the user can change it: `allow`
+and `deny` refuse an agent-driven caller, `allow` also needs a terminal on
+standard input, and no MCP tool changes it. It is one row of the `settings`
+table, `task_agent_access:<profile id>`, read at each call. An agent's approval
+moves Inbox tasks to Ready only, and the history records it under the agent's
+name, marked as delegated (`task show`). Three rules bound a delegated approval. (1) It needs view as well: an agent approves only what it can see, and `allow --approve` is refused unless view is on or given with it. (2) An agent never approves a task an agent created (source agent, or filed by an agent session, whichever agent it was), so the loop "an agent adds an injected task, then approves it" is closed; it approves only tasks the operator wrote or a capture (Chrome, the OS menu) filed. (3) An agent approves at most 10 tasks in one call; the operator has no cap. `task agents allow` also refuses to run unless standard input is a terminal, so a non-interactive tool call cannot turn it on; `deny` runs anywhere, since taking access back is always safe. The residual risk stays: an agent can still approve operator or captured tasks whose text may carry injected instructions (the operator accepted that by turning it on), and none of this is a sandbox against an agent with shell or database access. Think before you
+allow `--approve`: the Inbox holds text from web pages and other apps, which
+can be written to steer an AI.
 
 ```bash
 monoagentcli --profile work task next                                         # what is next (only looks)
@@ -1396,8 +1413,8 @@ a row here):
 | CLI | `monoagentcli task ...` (this section) |
 | Session-start hook | `monoagentcli --profile <id> task digest`; nothing installs the hook for you |
 | Chrome extension | *Add selection as task*, *Add page as task*, the side panel's box and the `add-task` key send `task.add` over the extension bridge: a capture, Inbox only, in the profile the extension is "Saving into" (README, Chrome Extension) |
-| MCP, any server | `monoagentcli mcp`: `task_list`, `task_get`, `task_next`; with `--allow-mutations` also `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add`, acting on the server's one profile as `agent:<client>#<4 hex>`; text in fields ending in `_untrusted`; no tool approves, edits, moves or archives a task |
-| MCP, the board alone | `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`: the same eight tools and no other, one server per profile; nothing registers it for you |
+| MCP, any server | `monoagentcli mcp`: `task_list`, `task_get`, `task_next`; with `--allow-mutations` also `task_claim`, `task_comment`, `task_finish`, `task_release`, `task_add`, acting on the server's one profile as `agent:<client>#<4 hex>`; text in fields ending in `_untrusted`; no tool edits, moves or archives a task, and none approves unless the user delegated it (next row) |
+| MCP, the board alone | `claude mcp add monoagent-tasks-<profile> -- monoagentcli --profile <id or name> mcp --tasks-only --allow-mutations`: the same eight tools and no other, one server per profile; nothing registers it for you. While the user has run `task agents allow --approve` for the profile (default: off), it also serves `task_approve`; no tool changes that setting |
 | Claude Code skill | `~/.claude/skills/monoagent-tasks/SKILL.md`, written create-only by the next CLI run on a machine with `~/.claude` |
 | Dashboard summary | `monoagentcli --profile <id> --json summary --section tasks`: one profile's counts and its next task (not in `--all-profiles`) |
 | Desktop app | The Tasks tab after Documents: the active profile's board, drag and keyboard moves, a "How to capture" note, a sidebar badge; it renders and runs `monoagentcli task ...`, and slides cards by FLIP unless `prefers-reduced-motion` is set |
@@ -2446,7 +2463,7 @@ regardless of where the binary runs from.
 | `MONOMIND_BIN` | Path to the `monomind` binary; checked before `PATH` and the other install locations (see [How AI works in mono-agent](#how-ai-works-in-mono-agent)). Default: unset — discovered. |
 | `MONOAGENT_AI_RUNTIME` | Agent runtime `ai.extract_page` uses to generate selectors. Default: unset — the first installed runtime, `claude` first. |
 | `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |
-| `MONOAGENT_ACTOR` | The agent's name for the task board's agent commands (`task next --claim`, `claim`, `comment`, `finish`, `release`) when `--as` is not given (`--as` wins). Setting it also makes the caller an agent, so the operator-only commands (`board`, `edit`, `move`, `approve`, `archive`, `unarchive`, `add --ready`) refuse it. Set but blank, a value of only spaces, it counts as an agent without a name, like a blank `--as` (an empty value counts as unset). Default: unset — a caller with no `--as`, no `MONOAGENT_ACTOR` and no agent-context variable such as `CLAUDECODE` is the operator. |
+| `MONOAGENT_ACTOR` | The agent's name for the task board's agent commands (`task next --claim`, `claim`, `comment`, `finish`, `release`) when `--as` is not given (`--as` wins). Setting it also makes the caller an agent, so the operator-only commands (`board` and `approve` unless delegated, `edit`, `move`, `archive`, `unarchive`, `add --ready`, `agents allow`, `agents deny`) refuse it. Set but blank, a value of only spaces, it counts as an agent without a name, like a blank `--as` (an empty value counts as unset). Default: unset — a caller with no `--as`, no `MONOAGENT_ACTOR` and no agent-context variable such as `CLAUDECODE` is the operator. |
 | `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
 | `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
 | `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
