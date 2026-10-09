@@ -81,6 +81,9 @@ func TestParseToolsFlagKeepsPageReadSeparate(t *testing.T) {
 	if !isPageReadTools("monoagent:read") || !isPageReadTools(" monoagent:read ") {
 		t.Error("monoagent:read must select the page-read mode")
 	}
+	if mono, runs, err := parseToolsMode("monoagent:read", true); err != nil || !mono || runs {
+		t.Errorf("parseToolsMode(page-read) = (%v, %v, %v), want monoagent tools without runs", mono, runs, err)
+	}
 	for _, in := range []string{"", "monoagent", "monoagent,runs", "monoagent:read,runs", "runs,monoagent:read", "monoagent,monoagent:read"} {
 		if isPageReadTools(in) {
 			t.Errorf("isPageReadTools(%q) = true", in)

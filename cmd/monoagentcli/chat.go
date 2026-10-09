@@ -333,7 +333,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				// Page text is in this turn: only the read tools exist, there
 				// is no shell, no --cwd, no knowledge-graph search (see
 				// toolsPageRead).
-				toolSpecs = monoagentToolSpecs(monoTools)
+				toolSpecs = append(toolSpecs, monoagentToolSpecs(monoTools)...)
 				systemPromptParts = append(systemPromptParts, pageReadSystemPrompt)
 			} else if monoTools != nil {
 				// MONOMIND_CWD scopes monograph_search/memory_kg_search
