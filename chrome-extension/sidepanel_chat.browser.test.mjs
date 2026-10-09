@@ -34,9 +34,11 @@ const DAEMON = `(() => {
   self.__held = null;
   ws = { readyState: WebSocket.OPEN, send() {} };
   const reply = (id, data) => MonoAsk.handleFrame({ kind: "reply", id, ok: true, data });
+  self.__turn = 0;
+  // The real chatevents records; seq is per turn, and the progress wrapper names conversation and turn.
   const progress = (id, seq, stage, payload) => {
-    self.__events.push({ seq, type: stage, payload });
-    MonoAsk.handleFrame({ kind: "reply", id, progress: { stage, detail: JSON.stringify({ seq, payload }) } });
+    self.__events.push({ turn: self.__turn, seq, type: stage, payload });
+    MonoAsk.handleFrame({ kind: "reply", id, progress: { stage, detail: JSON.stringify({ seq, conversation: "c-test", turn: String(self.__turn), payload }) } });
   };
   MonoAsk.install({
     isConnected: () => true,
@@ -47,25 +49,34 @@ const DAEMON = `(() => {
         if (frame.method === "ping") return reply(id, { methods: self.__methods });
         if (frame.method === "chat.events") {
           const after = frame.params.after_seq || 0;
-          return reply(id, { events: self.__events.filter((e) => e.seq > after), turn_active: self.__active });
+          const turn = frame.params.turn ? Number(frame.params.turn) : self.__turn;
+          return reply(id, { turn, events: self.__events.filter((e) => e.turn === turn && e.seq > after).map(({ seq, type, payload }) => ({ seq, type, payload })), turn_active: self.__active && turn === self.__turn });
         }
         if (frame.method === "chat.stop") {
           if (self.__held) self.__held();
           return reply(id, {});
         }
         if (frame.method === "chat.send") {
-          let seq = self.__events.length;
-          progress(id, ++seq, "session.bound", { conversation: "c-test" });
-          progress(id, ++seq, "tool.started", { id: "t1", name: "read_page" });
-          progress(id, ++seq, "assistant.delta", { text: "Hello " });
+          const turn = ++self.__turn;
+          let seq = 0;
+          progress(id, ++seq, "turn.started", { text: frame.params.message });
+          progress(id, ++seq, "session.bound", { runtime: "claude", sessionId: "s-1" });
+          progress(id, ++seq, "tool.started", { callId: "t1", name: "read_page", arguments: {} });
+          progress(id, ++seq, "assistant.delta", { partId: "p1", text: "Hello " });
           if (String(frame.params.message).includes("SLOW")) {
             self.__active = true;
-            self.__held = () => { self.__active = false; self.__held = null; reply(id, { conversation: "c-test", turn: 2, text: "Hello " }); };
+            self.__held = () => {
+              self.__active = false;
+              self.__held = null;
+              progress(id, ++seq, "turn.finished", { status: "cancelled" });
+              reply(id, { conversation: "c-test", turn, text: "Hello " });
+            };
             return;
           }
-          progress(id, ++seq, "assistant.delta", { text: "**world** <img src=x onerror=window.__pwn=1> [bad](javascript:window.__pwn=2) [ok](https://example.com/a)" });
-          progress(id, ++seq, "tool.completed", { id: "t1" });
-          setTimeout(() => reply(id, { conversation: "c-test", turn: 1, text: "" }), 120);
+          progress(id, ++seq, "assistant.delta", { partId: "p1", text: "**world** <img src=x onerror=window.__pwn=1> [bad](javascript:window.__pwn=2) [ok](https://example.com/a)" });
+          progress(id, ++seq, "tool.completed", { callId: "t1", ok: true, result: "done" });
+          progress(id, ++seq, "turn.finished", { status: "completed" });
+          setTimeout(() => reply(id, { conversation: "c-test", turn, text: "Hello world" }), 120);
         }
       }, 10);
       return true;
@@ -226,7 +237,8 @@ describe("the side panel chat", { skip: browser ? false : why, concurrency: 1 },
     const events = await reqs("chat.events");
     const last = events.at(-1).params;
     assert.equal(last.conversation, "c-test");
-    assert.ok(last.after_seq >= 6, `replay after the last seen event, got ${last.after_seq}`);
+    assert.ok(last.after_seq >= 7, `replay after the last seen event, got ${last.after_seq}`);
+    assert.equal(last.turn, "2", "seq is per turn, so the replay names the turn");
   });
 
   it("Stop ends a running turn, and a reopened panel finds a turn still running", async () => {

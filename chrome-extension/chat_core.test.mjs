@@ -210,3 +210,123 @@ test("a profile id with a path in it is not a key of its own", () => {
   assert.equal(C.validProfile("p-work"), true);
   assert.equal(C.validProfile("a/b"), false);
 });
+
+// ── the real chatevents records (internal/ai/chatevents/event.go) ──
+
+test("real tool records: callId pairs started with completed; ok:false, denied and cancelled fail", () => {
+  const s = C.newState(null);
+  C.startTurn(s, "q");
+  C.applyEvent(s, ev(1, "tool.started", { callId: "a", name: "read_page", arguments: { x: 1 } }));
+  C.applyEvent(s, ev(2, "tool.started", { callId: "b", name: "write", arguments: {} }));
+  C.applyEvent(s, ev(3, "tool.started", { callId: "c", name: "rm", arguments: {} }));
+  C.applyEvent(s, ev(4, "tool.started", { callId: "d", name: "x", arguments: {}, agentId: "w1" }));
+  C.applyEvent(s, ev(5, "tool.completed", { callId: "a", ok: true, result: "fine" }));
+  C.applyEvent(s, ev(6, "tool.completed", { callId: "b", ok: false, result: "err" }));
+  C.applyEvent(s, ev(7, "tool.completed", { callId: "c", denied: true }));
+  C.applyEvent(s, ev(8, "tool.completed", { callId: "d", cancelled: true }));
+  assert.deepEqual(s.messages.at(-1).tools.map((t) => [t.id, t.status]), [["a", "done"], ["b", "failed"], ["c", "failed"], ["d", "failed"]]);
+});
+
+test("a completed tool with no ok field is not a failure", () => {
+  const s = C.newState(null);
+  C.startTurn(s, "q");
+  C.applyEvent(s, ev(1, "tool.started", { callId: "a", name: "n" }));
+  C.applyEvent(s, ev(2, "tool.completed", { callId: "a", result: "r" }));
+  assert.equal(s.messages.at(-1).tools[0].status, "done");
+});
+
+test("real deltas: partId text streams; a worker's (agentId) is ignored", () => {
+  const s = C.newState(null);
+  C.startTurn(s, "q");
+  C.applyEvent(s, ev(1, "assistant.delta", { partId: "p1", text: "Hi " }));
+  C.applyEvent(s, ev(2, "assistant.delta", { partId: "p2", text: "WORKER", agentId: "w1" }));
+  C.applyEvent(s, ev(3, "assistant.delta", { partId: "p1", text: "there" }));
+  assert.equal(s.messages.at(-1).text, "Hi there");
+});
+
+test("real notice {code,message,severity} and session.bound {runtime,sessionId}", () => {
+  const s = C.newState(null);
+  C.applyEvent(s, ev(1, "session.bound", { runtime: "claude", sessionId: "sess-1" }));
+  C.applyEvent(s, ev(2, "notice", { code: "rate_limited", message: "Slow down", severity: "warn" }));
+  C.applyEvent(s, ev(3, "notice", { code: "boom", message: "Broke", severity: "error" }));
+  assert.equal(s.conversation, "", "session.bound names no conversation");
+  assert.deepEqual(s.messages.map((m) => [m.text, !!m.error]), [["Slow down", false], ["Broke", true]]);
+});
+
+test("turn.finished closes the reply; a failure says why; a cancel says Stopped", () => {
+  const s = C.newState(null);
+  C.startTurn(s, "q");
+  C.applyEvent(s, ev(1, "assistant.delta", { text: "part" }));
+  C.applyEvent(s, ev(2, "turn.finished", { status: "completed" }));
+  assert.equal(s.messages.at(-1).open, false);
+  assert.equal(s.messages.length, 2, "a normal finish adds no line");
+
+  const f = C.newState(null);
+  C.startTurn(f, "q");
+  C.applyEvent(f, ev(1, "turn.finished", { status: "failed", code: "runtime_exit" }));
+  assert.deepEqual([f.messages.at(-1).role, f.messages.at(-1).error], ["notice", true]);
+  assert.match(f.messages.at(-1).text, /runtime_exit/);
+
+  const c = C.newState(null);
+  C.startTurn(c, "q");
+  C.applyEvent(c, ev(1, "turn.finished", { status: "cancelled" }));
+  assert.equal(c.messages.at(-1).text, "Stopped.");
+});
+
+test("turn.started carries the user's text: a replay rebuilds the bubble, a live turn does not double it", () => {
+  const replay = C.newState(null);
+  C.applyEvent(replay, { ...ev(1, "turn.started", { text: "what is this?" }), turn: "t-9" });
+  C.applyEvent(replay, { ...ev(2, "assistant.delta", { text: "a page" }), turn: "t-9" });
+  assert.deepEqual(replay.messages.map((m) => [m.role, m.text]), [["user", "what is this?"], ["assistant", "a page"]]);
+
+  const live = C.newState(null);
+  C.startTurn(live, "what is this?");
+  C.applyEvent(live, ev(1, "turn.started", { text: "what is this?" }));
+  assert.equal(live.messages.filter((m) => m.role === "user").length, 1);
+});
+
+test("seq restarts every turn: a new turn's events are not mistaken for seen ones", () => {
+  const s = C.newState(null);
+  C.startTurn(s, "one");
+  C.applyEvent(s, { ...ev(1, "assistant.delta", { text: "a" }), turn: "t-1" });
+  C.applyEvent(s, { ...ev(2, "assistant.delta", { text: "b" }), turn: "t-1" });
+  C.finishTurn(s, "ab", "t-1");
+  assert.deepEqual([s.turn, s.lastSeq], ["t-1", 2]);
+
+  C.startTurn(s, "two"); // no turn id known yet: live frames carry no wrapper
+  assert.deepEqual([s.turn, s.lastSeq], ["", 0]);
+  assert.equal(C.applyEvent(s, ev(1, "assistant.delta", { text: "c" })), true);
+  assert.equal(C.applyEvent(s, ev(1, "assistant.delta", { text: "c" })), false);
+  C.finishTurn(s, "c", "t-2");
+  assert.equal(s.turn, "t-2");
+
+  // a replay of the same turn skips what was seen; a different turn starts over
+  assert.equal(C.applyEvent(s, { ...ev(1, "assistant.delta", { text: "c" }), turn: "t-2" }), false);
+  assert.equal(C.applyEvent(s, { ...ev(1, "assistant.delta", { text: "d" }), turn: "t-3" }), true);
+  assert.equal(s.turn, "t-3");
+});
+
+test("the wrapper's conversation and turn are read from a progress frame, as strings or numbers", () => {
+  const e = C.parseProgress({ stage: "assistant.delta", detail: JSON.stringify({ seq: 1, conversation: "c-5", turn: 7, payload: { text: "x" } }) });
+  assert.deepEqual([e.conversation, e.turn], ["c-5", "7"]);
+  const s = C.newState(null);
+  C.startTurn(s, "q");
+  C.applyEvent(s, e);
+  assert.deepEqual([s.conversation, s.turn], ["c-5", "7"], "Stop can name the conversation before the turn ends");
+});
+
+test("the turn is stored with the transcript", async () => {
+  const st = fakeStorage();
+  const s = C.newState(null);
+  s.conversation = "c-1";
+  C.startTurn(s, "q");
+  C.applyEvent(s, { ...ev(3, "assistant.delta", { text: "a" }), turn: "t-2" });
+  await C.saveState(st, "p", s);
+  const back = await C.loadState(st, "p");
+  assert.deepEqual([back.turn, back.lastSeq], ["t-2", 3]);
+});
+
+test("events from chat.events are stamped with the reply's turn", () => {
+  const out = C.normalizeEvents([{ seq: 2, type: "assistant.delta", payload: {} }], 4);
+  assert.equal(out[0].turn, "4");
+});

@@ -253,7 +253,7 @@ test("a worker older than the panel is reported as stale rather than breaking", 
 test("reopening replays what happened after the last seen event, and keeps polling while a turn runs", async () => {
   const stored = {
     "chatConv:p-work": "c-1",
-    "chatLog:p-work": { conversation: "c-1", lastSeq: 2, nextId: 3, messages: [{ id: "m1", role: "user", text: "q" }, { id: "m2", role: "assistant", text: "Par", tools: [], open: true }] },
+    "chatLog:p-work": { conversation: "c-1", turn: "t-1", lastSeq: 2, nextId: 3, messages: [{ id: "m1", role: "user", text: "q" }, { id: "m2", role: "assistant", text: "Par", tools: [], open: true }] },
   };
   let calls = 0;
   const t = setup({
@@ -270,7 +270,7 @@ test("reopening replays what happened after the last seen event, and keeps polli
   });
   await settle(40);
   const ev = t.sent.find((m) => m.type === "chat_events");
-  assert.deepEqual([ev.conversation, ev.after_seq, ev.profile], ["c-1", 2, "p-work"]);
+  assert.deepEqual([ev.conversation, ev.after_seq, ev.turn, ev.profile], ["c-1", 2, "t-1", "p-work"]);
   assert.equal(t.els["chat-stop"].hidden, false, "a turn is still running there");
   await settle(1700);
   assert.equal(t.log().at(-1).textContent, "Partial done", "the replay filled in the rest once, without doubling seq 2");

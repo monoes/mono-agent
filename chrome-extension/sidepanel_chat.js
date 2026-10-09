@@ -196,7 +196,7 @@
       draw();
     };
     if (!chat.conversation) return giveUp();
-    const answer = await ask({ type: "chat_events", profile, conversation: chat.conversation, after_seq: chat.lastSeq });
+    const answer = await ask({ type: "chat_events", profile, conversation: chat.conversation, after_seq: chat.lastSeq, turn: chat.turn });
     if (mine !== loadSeq || active) return;
     if (!answer.ok) return giveUp();
     if (applyAll(answer.events || [])) save();
@@ -274,7 +274,7 @@
         if (chat.conversation && chat.conversation !== data.conversation) chat.lastSeq = 0;
         chat.conversation = data.conversation;
       }
-      Core.finishTurn(chat, data.text);
+      Core.finishTurn(chat, data.text, data.turn);
     } else {
       Core.failTurn(chat, describeFailure(answer));
     }
