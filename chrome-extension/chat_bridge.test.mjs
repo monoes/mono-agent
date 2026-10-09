@@ -289,6 +289,23 @@ test("captions are only used for the page the person was shown: if the tab moved
   assert.equal("context" in out, false);
 });
 
+test("video A to video B is a different page though both addresses strip to /watch: while captions download, and against the chip", async () => {
+  const B = "https://www.youtube.com/watch?v=bbbbbbbbbbb";
+  let moved = false;
+  const t = setup({
+    tab: ytTab,
+    scripts: ytPage,
+    tabNow: () => (moved ? { id: 7, url: B, title: "B" } : ytTab),
+    transcript: { collect: async () => { moved = true; return { fields: {}, transcript: { cues }, warnings: [] }; } },
+  });
+  const out = await t.send({ type: "chat_page_context", expect: { tabId: 7, url: YT } });
+  assert.deepEqual([out.ok, out.code, "context" in out], [false, "page_changed", false]);
+  // The chip showed video B; the tab is on A.
+  const stale = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: async () => ({ fields: {}, transcript: { cues }, warnings: [] }) } });
+  const refused = await stale.send({ type: "chat_page_context", expect: { tabId: 7, url: B } });
+  assert.deepEqual([refused.ok, refused.code], [false, "page_changed"]);
+});
+
 test("a long transcript is cut to the byte cap before it is sent", async () => {
   const many = Array.from({ length: 6000 }, (_, i) => ({ start: i, text: `line ${i} 字字字字字字字字字字` }));
   const t = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: async () => ({ fields: {}, transcript: { cues: many }, warnings: [] }) } });

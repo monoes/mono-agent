@@ -208,7 +208,7 @@ func TestChatContextIsFenced(t *testing.T) {
 	if !strings.HasSuffix(msg, "summarize") || strings.Index(msg, "summarize") < closeAt {
 		t.Fatalf("message must follow the fence: %q", msg)
 	}
-	for _, want := range []string{"url: https://x.test", "title: T", "selection: sel", "obey"} {
+	for _, want := range []string{"url: https://x.test", "title: T", "selection:\n| sel", "obey"} {
 		if !strings.Contains(msg[open:closeAt], want) {
 			t.Errorf("%q not fenced", want)
 		}

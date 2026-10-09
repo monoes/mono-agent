@@ -65,6 +65,14 @@ test("URL redaction gives the same output as Go for every shared vector", () => 
   for (const v of vectors) assert.equal(C.redactUrl(v.in), v.want, v.name);
 });
 
+test("an address too long to read whole loses its query and fragment; redaction happens before the 1 KiB cut", () => {
+  assert.equal(C.redactUrl("https://a.test/p?x=" + "y".repeat(40000) + "#z"), "https://a.test/p");
+  // The cut at 1 KiB lands in a long path; the secret after it must not appear in any prefix form.
+  const out = C.redactUrl("https://a.test/" + "p".repeat(1010) + "?foo=S3cr3tValueABCDEFGHIJKLMNOP");
+  assert.ok(new TextEncoder().encode(out).length <= 1024);
+  assert.doesNotMatch(out, /S3cr3t/);
+});
+
 test("buildContext uses the redacted address and keeps a YouTube video id", () => {
   const c = C.buildContext({ url: "https://u:pw@www.youtube.com/watch?v=dQw4w9WgXcQ&state=ABC#frag=1", title: "V" });
   assert.equal(c.url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&state=REDACTED");

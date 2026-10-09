@@ -67,7 +67,7 @@ func TestChatFieldsAreOneLineAndPageTextComesLast(t *testing.T) {
 	}, "summarize")
 	in := fenced(t, msg)
 	lines := strings.Split(strings.TrimSpace(in), "\n")
-	if !strings.HasPrefix(lines[0], "url: ") || !strings.HasPrefix(lines[1], "title: ") || !strings.HasPrefix(lines[2], "selection: ") || !strings.HasPrefix(lines[3], "text: ") {
+	if !strings.HasPrefix(lines[0], "url: ") || !strings.HasPrefix(lines[1], "title: ") || lines[2] != "selection:" || lines[3] != "| sel" || lines[4] != "text:" || lines[5] != "| page body" || lines[6] != "| second line" {
 		t.Fatalf("fields out of order or split over lines: %q", lines)
 	}
 	if strings.ContainsAny(lines[0]+lines[1], "\r\u0007\u0000\u200b") {
@@ -138,7 +138,11 @@ func TestChatContextTruncatesAtRuneBoundary(t *testing.T) {
 			t.Errorf("%s: invalid UTF-8 reached the model", c.name)
 		}
 		for key, max := range map[string]int{"title": chatMaxCtxTitle, "selection": chatMaxCtxSel, "text": chatMaxCtxText} {
-			m := regexp.MustCompile(`(?m)^` + key + `: (.*)$`).FindStringSubmatch(msg)
+			pat := `(?m)^` + key + `: (.*)$`
+			if key != "title" {
+				pat = `(?m)^` + key + `:\n\| (.*)$`
+			}
+			m := regexp.MustCompile(pat).FindStringSubmatch(msg)
 			if m == nil {
 				t.Errorf("%s: no %s line", c.name, key)
 				continue

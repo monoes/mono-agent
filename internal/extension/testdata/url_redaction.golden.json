@@ -80,9 +80,9 @@
     "want": "https://x.test/p?foo=abcdefghijklmnop"
   },
   {
-    "name": "allowlisted long value kept",
+    "name": "allowlisted opaque value redacted",
     "in": "https://x.test/s?q=0123456789abcdef0123456789abcdef01234567",
-    "want": "https://x.test/s?q=0123456789abcdef0123456789abcdef01234567"
+    "want": "https://x.test/s?q=REDACTED"
   },
   {
     "name": "name matching is case insensitive",
@@ -123,6 +123,71 @@
     "name": "unicode query value",
     "in": "https://a.test/p?q=日本\u0026foo=é",
     "want": "https://a.test/p?q=%E6%97%A5%E6%9C%AC\u0026foo=%C3%A9"
+  },
+  {
+    "name": "allowlisted id with an opaque value",
+    "in": "https://x.test/p?id=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdef",
+    "want": "https://x.test/p?id=REDACTED"
+  },
+  {
+    "name": "allowlisted q with a long passphrase",
+    "in": "https://x.test/p?q=myPhrase123456789012",
+    "want": "https://x.test/p?q=REDACTED"
+  },
+  {
+    "name": "allowlisted q over 64 characters",
+    "in": "https://x.test/p?q=ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20ab%20",
+    "want": "https://x.test/p?q=REDACTED"
+  },
+  {
+    "name": "ordinary search kept",
+    "in": "https://x.test/s?q=how%20to%20bake%20bread\u0026page=2",
+    "want": "https://x.test/s?q=how%20to%20bake%20bread\u0026page=2"
+  },
+  {
+    "name": "semicolon separates parameters",
+    "in": "https://x.test/p?a=1;token=abc;b=2",
+    "want": "https://x.test/p?a=1;token=REDACTED;b=2"
+  },
+  {
+    "name": "opaque path segment",
+    "in": "https://x.test/reset/abcdef0123456789abcdef",
+    "want": "https://x.test/reset/REDACTED"
+  },
+  {
+    "name": "slug path kept",
+    "in": "https://x.test/blog/top-10-things-to-do-in-paris",
+    "want": "https://x.test/blog/top-10-things-to-do-in-paris"
+  },
+  {
+    "name": "eleven character video id kept in path",
+    "in": "https://www.youtube.com/shorts/abcDEF12345",
+    "want": "https://www.youtube.com/shorts/abcDEF12345"
+  },
+  {
+    "name": "jwt prefix fragment dropped",
+    "in": "https://x.test/p#eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "want": "https://x.test/p"
+  },
+  {
+    "name": "three part dotted fragment dropped",
+    "in": "https://x.test/p#aaaaaaaaaa.bbbbbbbbbb.cccccccccc",
+    "want": "https://x.test/p"
+  },
+  {
+    "name": "version fragment kept",
+    "in": "https://x.test/p#v1.2.3",
+    "want": "https://x.test/p#v1.2.3"
+  },
+  {
+    "name": "double encoded name",
+    "in": "https://x.test/p?to%256Ben=abc",
+    "want": "https://x.test/p?to%256Ben=REDACTED"
+  },
+  {
+    "name": "cut would land inside a secret",
+    "in": "https://x.test/p?pad=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\u0026foo=S3cr3tValueABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "want": "https://x.test/p?pad=REDACTED\u0026foo=REDACTED"
   },
   {
     "name": "capped at 1 KiB by bytes",

@@ -138,7 +138,10 @@
    */
   const sameAddress = (a, b) => {
     const x = Core().stripUrl(a);
-    return !!x && x === Core().stripUrl(b);
+    if (!x || x !== Core().stripUrl(b)) return false;
+    // Two videos share /watch: the id in the query tells them apart.
+    const V = root.MonoYouTubeVideo;
+    return !V || V.videoIdOf(a) === V.videoIdOf(b);
   };
   const pageChanged = () => ({
     ok: false,

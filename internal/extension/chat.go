@@ -48,7 +48,6 @@ const (
 	chatSendTimeout  = 10 * time.Minute
 	chatQueryTimeout = 30 * time.Second
 	chatMaxMessage   = 16 * 1024
-	chatMaxCtxURL    = 2048
 	chatMaxCtxTitle  = 512
 	chatMaxCtxText   = 24 * 1024
 	chatMaxCtxSel    = 8 * 1024
@@ -198,7 +197,7 @@ func chatContext(req *Request) (pageContext, error) {
 		return truncateUTF8(s, max), nil
 	}
 	var err error
-	if pc.URL, err = read("url", chatMaxCtxURL); err != nil {
+	if pc.URL, err = read("url", chatMaxRawURL+1); err != nil {
 		return pc, err
 	}
 	if pc.Title, err = read("title", chatMaxCtxTitle); err != nil {

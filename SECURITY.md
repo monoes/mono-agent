@@ -202,15 +202,25 @@ widen what an earlier page reached the model with):
   where the person's own words begin; the panel uses it to show only what
   was typed). The address keeps scheme, host, path and query, with the same
   rules in the extension and again in MonoAgent: credentials are dropped; a
-  query value is kept only when its name is one of `v list index t q query
-  search_query p page id tab sort lang hl`, or the value is at most 16
-  characters and the name does not contain (any case) `token code key
+  query (parameters separated by `&` or `;`; names are decoded up to three
+  times) value is kept only when it is not opaque (20 or more base64, hex or
+  url-safe characters, except a playlist `list`) and either its name is one of
+  `v list index t q query search_query p page id tab sort lang hl` and the
+  value is at most 64 characters, or the value is at most 16 characters and
+  the name does not contain (any case) `token code key
   secret pass pwd auth session sid sig signature credential otp nonce state
   csrf reset verify magic ticket jwt bearer hmac expires x-amz x-goog
   access refresh id_token api apikey`; every other value becomes
-  `REDACTED`; the fragment is kept only as a plain anchor (letters, digits,
-  `.`, `_`, `-`, at most 64), so OAuth fragments are dropped; the whole
-  address is at most 1 KiB. Residual risk: a secret in a parameter with an
+  `REDACTED`; a path segment of 20 or more url-safe characters with a digit,
+  a letter and at most one `-` or `_` becomes `REDACTED`; the fragment is
+  kept only as a plain anchor (letters, digits, `.`, `_`, `-`, at most 64)
+  that does not look like a token (starts with `eyJ`, or three dotted parts
+  of 8 or more characters), so OAuth fragments are dropped; the whole
+  address is read and redacted before it is cut to 1 KiB (an address over
+  32 KiB loses its query and fragment). Every line of page-written text
+  inside the fence (text, selection, description, transcript) starts with
+  `| `, so a line the page forges cannot look like a field of the fence.
+  Residual risk: a secret in a parameter with an
   innocent name, a short value (16 characters or fewer) or an allowlisted
   name can still reach the model; turn page sharing off for such a page.
   On a YouTube video page the captions, channel and description are read

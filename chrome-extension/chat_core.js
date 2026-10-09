@@ -187,47 +187,95 @@
   const sensitiveName = (lower) => SENSITIVE_NAMES.some((n) => lower.includes(n));
   const opaqueSecret = (v) => /^[A-Za-z0-9+/=_-]{20,}$/.test(v);
 
+  /** Decodes a name until it stops changing (three times at most): a double-encoded name cannot dodge the denylist. */
+  function urlDecodeFully(s) {
+    for (let i = 0; i < 3; i++) {
+      const d = urlDecode(s);
+      if (d === s) break;
+      s = d;
+    }
+    return s;
+  }
+  const KEPT_VALUE_MAX = 64; // longest value kept under an allowlisted name
+  const RAW_URL_MAX = 32 * 1024; // longest address redacted whole
+
+  /**
+   * Parameters are separated by & or ;. A value is kept only when it is short
+   * and not opaque: at most 64 characters under an allowlisted name (and a
+   * playlist id may look opaque), at most 16 under any other name that is not
+   * sensitive.
+   */
   function redactQuery(search) {
-    const out = [];
-    for (const pair of search.replace(/^\?/, "").split("&")) {
+    let out = "";
+    let sep = "&";
+    const rq = search.replace(/^\?/, "");
+    let start = 0;
+    for (let i = 0; i <= rq.length; i++) {
+      if (i < rq.length && rq[i] !== "&" && rq[i] !== ";") continue;
+      const pair = rq.slice(start, i);
+      const thisSep = sep;
+      start = i + 1;
+      if (i < rq.length) sep = rq[i];
       if (!pair) continue;
+      if (out) out += thisSep;
       const eq = pair.indexOf("=");
       const rawName = eq < 0 ? pair : pair.slice(0, eq);
-      const name = urlDecode(rawName);
+      const name = urlDecodeFully(rawName);
       const lower = name.toLowerCase();
       if (eq < 0) {
-        out.push(sensitiveName(lower) || opaqueSecret(name) ? URL_REDACTED : rawName);
+        out += sensitiveName(lower) || opaqueSecret(name) ? URL_REDACTED : rawName;
         continue;
       }
       const rawVal = pair.slice(eq + 1);
-      const keep = KEEP_NAMES.has(lower) || (!sensitiveName(lower) && [...urlDecode(rawVal)].length <= 16);
-      out.push(rawName + "=" + (keep ? rawVal : URL_REDACTED));
+      const val = urlDecodeFully(rawVal);
+      const limit = KEEP_NAMES.has(lower) ? KEPT_VALUE_MAX : sensitiveName(lower) ? -1 : 16;
+      const keep = limit >= 0 && [...val].length <= limit && (lower === "list" || !opaqueSecret(val));
+      out += rawName + "=" + (keep ? rawVal : URL_REDACTED);
     }
-    return out.join("&");
+    return out;
+  }
+
+  /** A path segment of 20+ url-safe characters with a digit, a letter and at most one - or _ (a reset link, not a slug). */
+  function pathSecret(seg) {
+    if (!/^[A-Za-z0-9_-]{20,}$/.test(seg)) return false;
+    return /\d/.test(seg) && /[A-Za-z]/.test(seg) && (seg.match(/[-_]/g) || []).length < 2;
+  }
+
+  /** A fragment that starts like a token header or has three long dot-separated parts. */
+  function jwtLike(frag) {
+    return frag.startsWith("eyJ") || frag.split(".").filter((p) => p.length >= 8).length >= 3;
   }
 
   /**
    * redactUrl is the address the model gets: scheme, host, path and query,
-   * where a query value that may be a secret is REDACTED; user-info is
-   * dropped; the fragment survives only as a plain anchor; a file address
-   * keeps its path only; at most 1 KiB. "" for anything that is not
-   * http(s) or file.
+   * where a query value or path segment that may be a secret is REDACTED;
+   * user-info is dropped; the fragment survives only as a plain anchor; a
+   * file address keeps its path only; at most 1 KiB, cut AFTER redacting (a
+   * cut inside a secret would leave a harmless-looking prefix of it). "" for
+   * anything that is not http(s) or file.
    */
   function redactUrl(raw) {
+    let text = str(raw).trim();
+    if (utf8Bytes(text) > RAW_URL_MAX) {
+      // Too long to read whole: its query and fragment go.
+      const i = text.search(/[?#]/);
+      text = i >= 0 ? text.slice(0, i) : clipBytes(text, RAW_URL_MAX);
+    }
     let u;
     try {
-      u = new URL(clipBytes(raw, URL_CAP));
+      u = new URL(text);
     } catch {
       return "";
     }
     if (!/^(https?|file):$/.test(u.protocol)) return "";
     const file = u.protocol === "file:";
     if (!file && !u.hostname) return "";
-    let out = `${u.protocol}//${file ? "" : u.host}${u.pathname}`;
+    const path = file ? u.pathname : u.pathname.split("/").map((seg) => (pathSecret(seg) ? URL_REDACTED : seg)).join("/");
+    let out = `${u.protocol}//${file ? "" : u.host}${path}`;
     if (!file) {
       const q = redactQuery(u.search);
       if (q) out += "?" + q;
-      if (/^#[A-Za-z0-9._-]{1,64}$/.test(u.hash)) out += u.hash;
+      if (/^#[A-Za-z0-9._-]{1,64}$/.test(u.hash) && !jwtLike(u.hash.slice(1))) out += u.hash;
     }
     return clipBytes(out, URL_MAX_BYTES);
   }
