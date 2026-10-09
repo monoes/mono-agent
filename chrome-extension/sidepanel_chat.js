@@ -171,7 +171,7 @@
     pageChip.disabled = !shareable;
     pageChip.setAttribute("aria-pressed", String(shareable && usePage));
     const title = (pageNow() && pageNow().title) || "";
-    pageChip.textContent = !shareable ? "No page to share" : usePage ? `Using this page: ${title}` : "Not sharing this page";
+    pageChip.textContent = !shareable ? "No page to share" : usePage ? `Using this page: ${title}${pageNow() && Core.isVideoPage(pageNow().url) ? " (with captions, if available)" : ""}` : "Not sharing this page";
     pageChip.title = shareable ? (usePage ? "Click to leave this page out of the next message" : "Click to share this page with the next message") : "";
   }
 
@@ -291,7 +291,7 @@
     }
     if (!active || active.tag !== tag) return;
 
-    Core.startTurn(chat, message, context ? context.title || context.url : "");
+    Core.startTurn(chat, message, Core.pageLabel(context));
     await save();
     draw();
 

@@ -28,7 +28,8 @@
 
   const Core = () => root.MonoChatCore;
   const CONTEXT_TIMEOUT_MS = 8000;
-  const PAGE_FILES = ["markdown.js", "readable.js"];
+  const CAPTIONS_TIMEOUT_MS = 20000; // a caption track, and the mobile-client retry when the first comes back empty
+  const PAGE_FILES =["markdown.js", "readable.js"];
 
   let deps = null;
   // One turn at a time per profile: a second send while one is running would
@@ -69,6 +70,57 @@
       selection = "";
     }
     return { url: location.href, title: document.title, text, selection };
+  }
+
+  /** Runs `func` in the page's own world (YouTube's globals and its cookies live there). */
+  async function mainWorld(tabId, func, args) {
+    const results = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func, args });
+    if (!results || !results.length) throw new Error("the page did not answer");
+    return results[0].result;
+  }
+
+  /** Serialized into the page: closes over nothing (same as capture_bridge.js). */
+  async function pageFetchText(url, init) {
+    const res = await fetch(url, Object.assign({ credentials: "include" }, init || {}));
+    return { status: res.status, text: await res.text() };
+  }
+
+  /**
+   * The video summary's own reader (youtube_transcript.js collect), reused:
+   * the video's record and its caption track, fetched from the person's tab
+   * with the requests the player itself makes. Never throws; when there are
+   * no captions, or they do not come in time, `transcript` is "" and the
+   * server tells the model it is unavailable. The cues become plain text
+   * within the size cap (Core().buildTranscript).
+   */
+  async function readCaptions(tab) {
+    const V = root.MonoYouTubeVideo;
+    const T = root.MonoYouTubeTranscript;
+    const out = { video: true, video_id: V.videoIdOf(tab.url), transcript: "" };
+    if (!T) return out;
+    const limit = (deps && deps.captionsTimeoutMs) || CAPTIONS_TIMEOUT_MS;
+    let timer = null;
+    try {
+      const run = T.collect({
+        url: tab.url,
+        readPage: () => mainWorld(tab.id, V.readPageState, []),
+        fetchText: (url, init) => mainWorld(tab.id, pageFetchText, [url, init || null]),
+      });
+      run.catch(() => {});
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("the captions did not come")), limit);
+      });
+      const got = await Promise.race([run, timeout]);
+      const f = (got && got.fields) || {};
+      out.channel = f.channel || "";
+      out.description = f.description || "";
+      out.transcript = Core().buildTranscript(got && got.transcript && got.transcript.cues);
+    } catch {
+      // Not fatal: the page text is still sent.
+    } finally {
+      clearTimeout(timer);
+    }
+    return out;
   }
 
   async function targetTab(msg) {
@@ -115,7 +167,14 @@
       // The page may have navigated by itself (history API) since the tab
       // was queried: what was read must still be the page that was shown.
       if (msg.expect && res && res.result && !sameAddress(res.result.url, msg.expect.url)) return pageChanged();
-      return { ok: true, context: Core().buildContext(res && res.result) || fallback, tab: tabInfo };
+      let raw = res && res.result;
+      if (raw && root.MonoYouTubeVideo && root.MonoYouTubeVideo.isVideoUrl(tab.url)) {
+        raw = Object.assign({}, raw, await readCaptions(tab));
+        // The captions took a while: they belong to the page that was shown.
+        const now = await chrome.tabs.get(tab.id).catch(() => null);
+        if (!now || !sameAddress(now.url, tab.url)) return pageChanged();
+      }
+      return { ok: true, context: Core().buildContext(raw) || fallback, tab: tabInfo };
     } catch {
       return { ok: true, context: fallback, tab: tabInfo };
     } finally {

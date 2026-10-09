@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 
-function setup({ methods = ["chat.send", "chat.stop", "chat.events"], connected = true, known = true, reply, choice = { runtime: "", model: "" }, tab, scripts } = {}) {
+function setup({ methods = ["chat.send", "chat.stop", "chat.events"], connected = true, known = true, reply, choice = { runtime: "", model: "" }, tab, scripts, transcript, captionsTimeoutMs, tabNow } = {}) {
   const calls = [];
   const relayed = [];
   const stored = {};
@@ -31,17 +31,18 @@ function setup({ methods = ["chat.send", "chat.stop", "chat.events"], connected 
       },
     },
     storage: { local: { get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in stored).map((x) => [x, stored[x]])), set: async (o) => Object.assign(stored, o) } },
-    tabs: { query: async () => (tab === undefined ? [{ id: 7, url: "https://a.example/p", title: "Page" }] : tab ? [tab] : []) },
+    tabs: { query: async () => (tab === undefined ? [{ id: 7, url: "https://a.example/p", title: "Page" }] : tab ? [tab] : []), get: async () => (tabNow ? tabNow() : tab === undefined ? { id: 7, url: "https://a.example/p", title: "Page" } : tab) },
     scripting: { executeScript: scripts || (async () => [{ result: { url: "https://a.example/p", title: "Page", text: "body", selection: "sel" } }]) },
   };
-  const env = loadExtensionScripts(["chat_core.js", "chat_bridge.js"], {
+  const env = loadExtensionScripts(["youtube_video.js", "chat_core.js", "chat_bridge.js"], {
+    ...(transcript ? { MonoYouTubeTranscript: transcript } : {}),
     chrome,
     MonoAsk,
     MonoSummaryAI: { sticky: async () => choice },
   });
   env.MonoAsk = MonoAsk;
   env.MonoSummaryAI = { sticky: async () => choice };
-  env.MonoChat.install({ isConnected: () => connected, storage: chrome.storage.local });
+  env.MonoChat.install({ isConnected: () => connected, storage: chrome.storage.local, captionsTimeoutMs });
   const send = (msg) =>
     new Promise((resolve) => {
       assert.equal(listener(msg, {}, resolve), true);
@@ -216,15 +217,84 @@ test("page context falls back to the tab's own address when the page cannot be r
   assert.equal((await internal.send({ type: "chat_page_context" })).context, null);
 });
 
-test("page context never carries the query, fragment or credentials, read or fallback", async () => {
-  const hot = "https://u:pw@a.example/p?token=SECRET#frag";
+test("page context redacts secrets in the address but keeps its identity, read or fallback", async () => {
+  const hot = "https://u:pw@a.example/p?token=SECRET&v=abc#frag";
+  const want = "https://a.example/p?token=REDACTED&v=abc#frag";
   const read = setup({ tab: { id: 7, url: hot, title: "Page" }, scripts: async () => [{ result: { url: hot, title: "Page", text: "body", selection: "" } }] });
-  assert.equal((await read.send({ type: "chat_page_context" })).context.url, "https://a.example/p");
+  assert.equal((await read.send({ type: "chat_page_context" })).context.url, want);
   // The executeScript-failure fallback uses the tab's own address.
   const fallback = setup({ tab: { id: 7, url: hot, title: "Page" }, scripts: async () => { throw new Error("blocked"); } });
   const out = await fallback.send({ type: "chat_page_context" });
-  assert.equal(out.context.url, "https://a.example/p");
-  assert.doesNotMatch(JSON.stringify(out), /SECRET|frag|pw@/);
+  assert.equal(out.context.url, want);
+  assert.doesNotMatch(JSON.stringify(out), /SECRET|pw@/);
+});
+
+const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL1";
+const ytTab = { id: 7, url: YT, title: "Never Gonna - YouTube" };
+const ytPage = async () => [{ result: { url: YT, title: "Never Gonna - YouTube", text: "visible page text", selection: "" } }];
+const cues = [{ start: 0, text: "we're no strangers" }, { start: 4, text: "to love" }];
+const withCaptions = () => {
+  const calls = [];
+  return { calls, collect: async (io) => { calls.push(io.url); return { fields: { title: "Never Gonna", channel: "Rick", description: "official video" }, transcript: { cues }, warnings: [] }; } };
+};
+
+test("a video page sends its captions, channel, description and id with the page; the address keeps v=", async () => {
+  const tr = withCaptions();
+  const t = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: tr.collect } });
+  const { context } = await t.send({ type: "chat_page_context" });
+  assert.equal(context.url, YT);
+  assert.equal(context.video, true);
+  assert.equal(context.video_id, "dQw4w9WgXcQ");
+  assert.equal(context.channel, "Rick");
+  assert.equal(context.description, "official video");
+  assert.equal(context.transcript, "we're no strangers to love");
+  assert.equal(context.text, "visible page text");
+  assert.deepEqual(tr.calls, [YT]);
+});
+
+test("a video without captions, or whose captions fail or hang, still sends the page and says the transcript is unavailable", async () => {
+  const none = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: async () => ({ fields: { title: "T", channel: "C", description: "D" }, transcript: null, warnings: ["no captions"] }) } });
+  const a = (await none.send({ type: "chat_page_context" })).context;
+  assert.deepEqual([a.video, a.transcript, a.text, a.channel], [true, "", "visible page text", "C"]);
+  const boom = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: async () => { throw new Error("network"); } } });
+  const b = (await boom.send({ type: "chat_page_context" })).context;
+  assert.deepEqual([b.video, b.transcript, b.text], [true, "", "visible page text"]);
+  const hang = setup({ tab: ytTab, scripts: ytPage, captionsTimeoutMs: 30, transcript: { collect: () => new Promise(() => {}) } });
+  const c = (await hang.send({ type: "chat_page_context" })).context;
+  assert.deepEqual([c.video, c.transcript, c.text], [true, "", "visible page text"]);
+});
+
+test("a page that is not a video never touches the captions code; neither does a page that cannot be read", async () => {
+  const tr = withCaptions();
+  const plain = setup({ transcript: { collect: tr.collect } });
+  const out = (await plain.send({ type: "chat_page_context" })).context;
+  assert.equal("video" in out, false);
+  const unread = setup({ tab: ytTab, scripts: async () => { throw new Error("blocked"); }, transcript: { collect: tr.collect } });
+  const fb = (await unread.send({ type: "chat_page_context" })).context;
+  assert.equal(fb.url, YT);
+  assert.deepEqual(tr.calls, []);
+});
+
+test("captions are only used for the page the person was shown: if the tab moved while they downloaded, nothing is sent", async () => {
+  let moved = false;
+  const t = setup({
+    tab: ytTab,
+    scripts: ytPage,
+    tabNow: () => (moved ? { id: 7, url: "https://other.example/", title: "x" } : ytTab),
+    transcript: { collect: async () => { moved = true; return { fields: {}, transcript: { cues }, warnings: [] }; } },
+  });
+  const out = await t.send({ type: "chat_page_context", expect: { tabId: 7, url: YT } });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, "page_changed");
+  assert.equal("context" in out, false);
+});
+
+test("a long transcript is cut to the byte cap before it is sent", async () => {
+  const many = Array.from({ length: 6000 }, (_, i) => ({ start: i, text: `line ${i} 字字字字字字字字字字` }));
+  const t = setup({ tab: ytTab, scripts: ytPage, transcript: { collect: async () => ({ fields: {}, transcript: { cues: many }, warnings: [] }) } });
+  const { context } = await t.send({ type: "chat_page_context" });
+  assert.ok(new TextEncoder().encode(context.transcript).length <= 24 * 1024);
+  assert.match(context.transcript, /^line 0 /);
 });
 
 test("a local file page contributes no text, even when it can be read", async () => {

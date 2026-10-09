@@ -45,14 +45,18 @@ const (
 )
 
 const (
-	chatSendTimeout   = 10 * time.Minute
-	chatQueryTimeout  = 30 * time.Second
-	chatMaxMessage    = 16 * 1024
-	chatMaxCtxURL     = 2048
-	chatMaxCtxTitle   = 512
-	chatMaxCtxText    = 24 * 1024
-	chatMaxCtxSel     = 8 * 1024
-	chatMaxModelBytes = 128
+	chatSendTimeout  = 10 * time.Minute
+	chatQueryTimeout = 30 * time.Second
+	chatMaxMessage   = 16 * 1024
+	chatMaxCtxURL    = 2048
+	chatMaxCtxTitle  = 512
+	chatMaxCtxText   = 24 * 1024
+	chatMaxCtxSel    = 8 * 1024
+
+	chatMaxCtxTranscript = 24 * 1024
+	chatMaxCtxDesc       = 4 * 1024
+	chatMaxCtxChannel    = 256
+	chatMaxModelBytes    = 128
 )
 
 // chatIDPattern is what a conversation or turn id must look like before it
@@ -160,7 +164,15 @@ func chatConversation(req *Request, must bool) (string, error) {
 }
 
 // pageContext is the optional page the person is looking at.
-type pageContext struct{ URL, Title, Text, Selection string }
+type pageContext struct {
+	URL, Title, Text, Selection string
+	// A video page: Video says the extension tried to read the captions;
+	// Transcript is empty when there were none.
+	Video                                     bool
+	VideoID, Channel, Description, Transcript string
+}
+
+var videoIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
 
 func chatContext(req *Request) (pageContext, error) {
 	var pc pageContext
@@ -198,9 +210,24 @@ func chatContext(req *Request) (pageContext, error) {
 	if pc.Selection, err = read("selection", chatMaxCtxSel); err != nil {
 		return pc, err
 	}
-	pc.URL = stripURL(plainField(pc.URL, false))
+	if v, ok := m["video"].(bool); ok && v {
+		pc.Video = true
+		if id, _ := m["video_id"].(string); videoIDPattern.MatchString(id) {
+			pc.VideoID = id
+		}
+		if pc.Channel, err = read("channel", chatMaxCtxChannel); err != nil {
+			return pc, err
+		}
+		if pc.Description, err = read("description", chatMaxCtxDesc); err != nil {
+			return pc, err
+		}
+		if pc.Transcript, err = read("transcript", chatMaxCtxTranscript); err != nil {
+			return pc, err
+		}
+	}
+	pc.URL = redactURL(plainField(pc.URL, false))
 	if isFileURL(pc.URL) {
-		pc.Text, pc.Selection = "", ""
+		pc = pageContext{URL: pc.URL, Title: pc.Title}
 	}
 	return pc, nil
 }

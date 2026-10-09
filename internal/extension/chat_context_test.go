@@ -83,14 +83,14 @@ func TestChatFieldsAreOneLineAndPageTextComesLast(t *testing.T) {
 	}
 }
 
-func TestChatContextURLKeepsSchemeHostPathOnly(t *testing.T) {
+func TestChatContextURLRedactsSecretsKeepsIdentity(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"https://a.test/p?token=secret&x=1#frag", "https://a.test/p"},
-		{"https://user:pw@a.test:8443/p/q?x=1", "https://a.test:8443/p/q"},
+		{"https://a.test/p?token=secret&x=1#frag", "https://a.test/p?token=REDACTED&x=1#frag"},
+		{"https://user:pw@a.test:8443/p/q?x=1", "https://a.test:8443/p/q?x=1"},
 		{"http://a.test/#/route?token=1", "http://a.test/"},
-		{"https://a.test", "https://a.test"},
+		{"https://a.test", "https://a.test/"},
 		{"https://a.test/p?", "https://a.test/p"},
-		{"https://a.test/%7Euser/p?q=%0A", "https://a.test/%7Euser/p"},
+		{"https://a.test/%7Euser/p?q=%0A", "https://a.test/%7Euser/p?q=%0A"},
 	}
 	for _, c := range cases {
 		msg := sendWithContext(t, map[string]any{"url": c.in, "text": "x"}, "hi")
@@ -98,7 +98,7 @@ func TestChatContextURLKeepsSchemeHostPathOnly(t *testing.T) {
 		if line != "url: "+c.want {
 			t.Errorf("url %q -> %q, want %q", c.in, line, "url: "+c.want)
 		}
-		for _, leak := range []string{"secret", "token", "pw@", "frag"} {
+		for _, leak := range []string{"secret", "pw@"} {
 			if strings.Contains(msg, leak) && strings.Contains(c.in, leak) && !strings.Contains(c.want, leak) {
 				t.Errorf("url %q leaked %q", c.in, leak)
 			}

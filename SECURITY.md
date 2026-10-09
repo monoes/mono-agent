@@ -197,10 +197,27 @@ widen what an earlier page reached the model with):
 - The page is delivered inside a fence the page cannot close (no bracket
   characters survive in page fields; zero-width and control characters are
   dropped; url and title are one line each; the page text comes last, and a
-  line after the fence says it has ended). The address keeps scheme, host
-  and path only (no query, fragment or credentials, in the extension and
-  again in MonoAgent); the text of a `file://` page is never sent; caps are
-  in UTF-8 bytes and cut at a character boundary.
+  line after the fence says it has ended, and a fixed last line,
+  `[the person's message follows]`, which no page field can spell, marks
+  where the person's own words begin; the panel uses it to show only what
+  was typed). The address keeps scheme, host, path and query, with the same
+  rules in the extension and again in MonoAgent: credentials are dropped; a
+  query value is kept only when its name is one of `v list index t q query
+  search_query p page id tab sort lang hl`, or the value is at most 16
+  characters and the name does not contain (any case) `token code key
+  secret pass pwd auth session sid sig signature credential otp nonce state
+  csrf reset verify magic ticket jwt bearer hmac expires x-amz x-goog
+  access refresh id_token api apikey`; every other value becomes
+  `REDACTED`; the fragment is kept only as a plain anchor (letters, digits,
+  `.`, `_`, `-`, at most 64), so OAuth fragments are dropped; the whole
+  address is at most 1 KiB. Residual risk: a secret in a parameter with an
+  innocent name, a short value (16 characters or fewer) or an allowlisted
+  name can still reach the model; turn page sharing off for such a page.
+  On a YouTube video page the captions, channel and description are read
+  from the person's own tab (the same reader as "Save video summary") and
+  sent inside the fence as untrusted data, only when page sharing is on.
+  The text of a `file://` page is never sent; caps are in UTF-8 bytes and
+  cut at a character boundary.
 - The message, page text included, reaches the chat process on stdin
   (`--prompt-stdin`), not on its command line.
 - Replies show explicit Markdown links only, each with its real host beside
