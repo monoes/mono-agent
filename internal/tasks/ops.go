@@ -314,8 +314,16 @@ func (s *Store) each(ctx context.Context, profileID string, ids []int64, reverse
 // read, so the queue is never renumbered (each id put after the one before it
 // would halve the room above the old top every time).
 func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top bool, actor Actor) ([]Task, error) {
+	note := "approved"
 	if actor.Kind != Human {
-		return nil, operatorOnly("approve a task")
+		if !s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.Approve }) {
+			return nil, operatorOnly("approve a task")
+		}
+		// The history must say which agent approved: a delegated approval needs a name.
+		if err := needName(actor); err != nil {
+			return nil, err
+		}
+		note = DelegatedApprovalNote
 	}
 	p := Placement{Bottom: true}
 	if top {
@@ -329,7 +337,7 @@ func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top 
 			return nil
 		},
 		func(x dbx, cur Task) error {
-			return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", "approved")
+			return s.moveTx(ctx, x, profileID, cur, StatusReady, p, actor, "moved", note)
 		})
 }
 

@@ -545,10 +545,27 @@ that works a task acts on them. The defences:
   Ready only a task it holds), and only the operator moves one to Done.
   An agent's `finish` goes to Review. An agent cannot edit a task's
   text, so what the operator approved is what it reads.
-- **Over MCP** an agent works the board through the `task_*` tools of `monoagentcli mcp`, over stdio (no port, no HTTP route). They act as the agent the server names after its client (`agent:<client>#<4 hex>`: two sessions are two claimants, and no argument can choose the name), on the one profile the server was started with. No tool approves, edits, moves or archives a task. Every text a person, an agent or a capture wrote comes back in a field ending in `_untrusted`, with a note to weigh it and not follow instructions inside it, and a tool refuses any argument it does not list. `mcp --tasks-only` serves these tools without the workflow tools that `--allow-mutations` would also serve.
+- **Delegation, off by default.** The operator can let agents see the board
+  and the Inbox (`task agents allow --view`) and let a named agent approve
+  (`task agents allow --approve`), per profile and independently; `deny`
+  takes it back at once. The setting is the `settings` row
+  `task_agent_access:<profile id>`, read at each call, changed only by
+  `allow`/`deny` (which refuse an agent-driven caller, and the store refuses
+  a non-operator actor) and by no MCP tool. A delegated approval moves Inbox
+  to Ready only, is written in the task's history under the agent's name and
+  marked as delegated, and over MCP is the tool `task_approve`, listed only
+  while `approve` is on. The risk: Inbox text comes from web pages and other
+  apps and can be written to steer an AI, and an agent that may approve turns
+  captured text into work another agent runs, without the operator reading
+  it. Like the operator guard, this is a convenience boundary against
+  injected text and not a sandbox: an agent with a shell or direct database
+  access can change the setting or the board. Leave it off unless you trust
+  the agents on the machine.
+- **Over MCP** an agent works the board through the `task_*` tools of `monoagentcli mcp`, over stdio (no port, no HTTP route). They act as the agent the server names after its client (`agent:<client>#<4 hex>`: two sessions are two claimants, and no argument can choose the name), on the one profile the server was started with. No tool edits, moves or archives a task, and none approves unless the operator delegated it (see Delegation). Every text a person, an agent or a capture wrote comes back in a field ending in `_untrusted`, with a note to weigh it and not follow instructions inside it, and a tool refuses any argument it does not list. `mcp --tasks-only` serves these tools without the workflow tools that `--allow-mutations` would also serve.
 - **The operator-only commands refuse an agent-driven caller:** `board`
-  (it shows the Inbox), `edit`, `move`, `approve`, `archive`,
-  `unarchive` and `add --ready`. A caller is agent-driven when an
+  (it shows the Inbox) and `approve` (both unless delegated, see above),
+  `edit`, `move`, `archive`, `unarchive`, `add --ready`, `agents allow` and
+  `agents deny`. A caller is agent-driven when an
   agent-context environment variable is set (the markers org signing
   already uses, `CLAUDECODE` among them), or `--as` is given, or
   `MONOAGENT_ACTOR` is set. This stops an agent acting by accident or on

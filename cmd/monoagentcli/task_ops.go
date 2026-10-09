@@ -146,14 +146,24 @@ func newTaskApproveCmd(cfg *globalConfig) *cobra.Command {
 	var top bool
 	cmd := &cobra.Command{
 		Use:   "approve ID... [--top]",
-		Short: "Move Inbox tasks to Ready, where an AI agent may take them (you only)",
+		Short: "Move Inbox tasks to Ready, where an AI agent may take them (you only, unless you delegated it)",
 		Long: `Approving is the step where you have read a task: agents work only what is in
 Ready. The task goes to the bottom of Ready (the queue), or the top with --top.
-If any task is not in the Inbox, nothing is approved.`,
+If any task is not in the Inbox, nothing is approved. An AI agent is refused unless
+you ran task agents allow --approve; then a named agent (--as NAME) may approve, and
+the history records it as that agent, marked as delegated.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			actor, err := callerFor(flagAs(cmd)).operator("approve a task")
+			caller := callerFor(flagAs(cmd))
+			actor, err := caller.operator("approve a task")
 			if err != nil {
-				return err
+				// An agent is refused, unless the operator delegated approving (task agents allow
+				// --approve), read now. Then it must be named: the history says who approved.
+				if !agentMay(cfg, cmd, caller, func(a tasks.AgentAccess) bool { return a.Approve }) {
+					return err
+				}
+				if actor, err = caller.agent(); err != nil {
+					return err
+				}
 			}
 			if len(args) == 0 {
 				return errInvalidInput("task approve takes the ids of the tasks to approve, written 42 or #42")
