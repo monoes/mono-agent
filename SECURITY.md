@@ -176,6 +176,44 @@ recommendation is to keep tools off (the default) when chatting over
 mail synced from sources you do not trust, and to enable `runs` only in
 trusted sessions.
 
+### The extension's side-panel chat (`--tools monoagent:read`)
+
+The MonoAgent Bridge extension can chat about the page you are looking at.
+That page is text written by whoever controls it, so every turn the
+extension starts runs in a mode of its own, `--tools monoagent:read`
+(with or without a page attached; one mode, so a later message cannot
+widen what an earlier page reached the model with):
+
+- **Three tools only**: `list_workflows`, `get_workflow`,
+  `list_node_types`. There is no secret, credential, vault, profile
+  document, synced message, contact, publication, org, template or social
+  list tool; no tool that writes or deletes anything; no `run_workflow`;
+  no workflow or canvas builder; no Bash; no knowledge-graph search. A tool
+  that is not in that list is not registered with the model, and a call
+  made for it anyway is refused ("not available in this session").
+- The page counts as untrusted content for every gate that remains
+  (`checkInjectionGate`), and a model-supplied `confirm:true` is never
+  consent for a gated tool: the gate is checked before `confirm` is read.
+- The page is delivered inside a fence the page cannot close (no bracket
+  characters survive in page fields; zero-width and control characters are
+  dropped; url and title are one line each; the page text comes last, and a
+  line after the fence says it has ended). The address keeps scheme, host
+  and path only (no query, fragment or credentials, in the extension and
+  again in MonoAgent); the text of a `file://` page is never sent; caps are
+  in UTF-8 bytes and cut at a character boundary.
+- The message, page text included, reaches the chat process on stdin
+  (`--prompt-stdin`), not on its command line.
+- Replies show explicit Markdown links only, each with its real host beside
+  it; bare addresses stay text. The first message of a conversation shares
+  the page by default, later ones do not unless you turn the chip on, and a
+  send is refused if the active tab is no longer the one the chip showed.
+
+**Residual risk:** hidden text on a page can still steer what the three
+read tools show (workflow definitions, which may name accounts or targets)
+and the wording of the model's reply, including a link you may choose to
+click (its host is shown). The page text and the reply stay in the local
+conversation database like any chat.
+
 ## Network use, telemetry and crash reporting
 
 **No analytics or usage counters.** The account gate is dormant: it makes no

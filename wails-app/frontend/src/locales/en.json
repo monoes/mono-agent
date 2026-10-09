@@ -1370,6 +1370,7 @@
     "quickAddPlaceholder": "New task title",
     "addToReady": "Add to Ready",
     "add": "Add",
+    "newTask": "New task",
     "approve": "Approve to Ready",
     "archive": "Archive",
     "claimedBy": "Claimed by {{by}}",

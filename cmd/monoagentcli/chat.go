@@ -65,6 +65,8 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 		tools     string
 		noHistory bool
 
+		promptStdin bool
+
 		conversationID string
 		turnID         string
 		instanceID     string
@@ -89,20 +91,39 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
 			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
 			"`history` or `turn` subcommand.",
-		Args: cobra.MinimumNArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if promptStdin {
+				if len(args) > 0 {
+					return errInvalidInput("--prompt-stdin takes the prompt from stdin; drop the prompt argument")
+				}
+				return nil
+			}
+			return cobra.MinimumNArgs(1)(cmd, args)
+		},
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"
   monoagentcli chat --runtime claude --resume th_9f2a "continue"
   monoagentcli chat --conversation <id> --turn <uuid> --tools monoagent -- "what changed today?"`,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			prompt := strings.Join(args, " ")
+			if promptStdin {
+				p, perr := readPromptStdin(cmd.InOrStdin())
+				if perr != nil {
+					return perr
+				}
+				prompt = p
+			}
 			timeout, err := parseDurationFlag(timeoutS)
 			if err != nil {
 				return err
 			}
-			wantMonoagentTools, wantRuns, err := parseToolsFlag(tools)
+			pageRead := isPageReadTools(tools)
+			wantMonoagentTools, wantRuns, err := parseToolsMode(tools, pageRead)
 			if err != nil {
 				return err
+			}
+			if pageRead && canvasID != "" {
+				return errInvalidInput("--tools %s does not combine with --canvas", toolsPageRead)
 			}
 			ctx := cmd.Context()
 
@@ -201,7 +222,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			// model's own create_workflow call replaces it with a real id
 			// for every subsequent tool call in the turn.
 			effectiveCanvasID := canvasID
-			if effectiveCanvasID == "" && wantMonoagentTools {
+			if effectiveCanvasID == "" && wantMonoagentTools && !pageRead {
 				effectiveCanvasID = "draft"
 			}
 
@@ -254,6 +275,9 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 					// enabled (--tools monoagent,runs). A model-supplied
 					// confirm:true can never flip this.
 					monoTools.SetAllowRuns(wantRuns)
+					if pageRead {
+						monoTools.SetPageReadOnly()
+					}
 				}
 			}
 
@@ -322,7 +346,13 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				}
 				toolSpecs = append(toolSpecs, canvasToolSpecs(canvas)...)
 			}
-			if monoTools != nil {
+			if monoTools != nil && pageRead {
+				// Page text is in this turn: only the read tools exist, there
+				// is no shell, no --cwd, no knowledge-graph search (see
+				// toolsPageRead).
+				toolSpecs = append(toolSpecs, monoagentToolSpecs(monoTools)...)
+				systemPromptParts = append(systemPromptParts, pageReadSystemPrompt)
+			} else if monoTools != nil {
 				// MONOMIND_CWD scopes monograph_search/memory_kg_search
 				// below to this profile's own knowledge-graph databases,
 				// independent of --cwd (set right below) — kept as its own
@@ -415,7 +445,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				opts.Tools = toolSpecs
 				opts.ToolTimeout = 2 * time.Minute
 				opts.OnToolCall = func(ctx context.Context, name string, args json.RawMessage) (string, error) {
-					if name == "monograph_search" || name == "memory_kg_search" {
+					if !pageRead && (name == "monograph_search" || name == "memory_kg_search") {
 						return runKGTool(ctx, bin, name, args, profiledir.MonomindDir(db.DB, profileID))
 					}
 					if canvas != nil {
@@ -526,9 +556,10 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")
 	cmd.Flags().StringVar(&historyID, "history-id", "", "Persistence/session bucket key (defaults to --canvas's id when unset)")
-	cmd.Flags().StringVar(&tools, "tools", "", `Comma-separated tool surface to enable: "monoagent" gives the agent read/write access (no run execution) to workflows, vault, people, communications; append ",runs" (i.e. "monoagent,runs") to also allow run_workflow execution`)
+	cmd.Flags().StringVar(&tools, "tools", "", `Comma-separated tool surface to enable: "monoagent" gives the agent read/write access (no run execution) to workflows, vault, people, communications; append ",runs" (i.e. "monoagent,runs") to also allow run_workflow execution; "monoagent:read" (alone) is the browser extension's mode for turns that carry web-page text: three read-only workflow tools, nothing else`)
 	cmd.Flags().StringVar(&timeoutS, "timeout", "", "Overall timeout (e.g. 90s, 10m)")
 	cmd.Flags().Float64Var(&budget, "budget-usd", 0, "Spend cap for this turn")
+	cmd.Flags().BoolVar(&promptStdin, "prompt-stdin", false, "Read the prompt from stdin instead of an argument, so it is in no process listing (the browser extension's chat uses this for page text)")
 	cmd.Flags().StringVar(&conversationID, "conversation", "", "Run the turn in this stored conversation (see chat history), journaling its events")
 	cmd.Flags().StringVar(&turnID, "turn", "", "Client-chosen turn id for --conversation; a repeated id never runs twice")
 	cmd.Flags().StringVar(&instanceID, "instance", "", "App instance id recorded as the turn's owner (used with --conversation)")

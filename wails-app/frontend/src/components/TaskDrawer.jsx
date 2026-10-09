@@ -49,35 +49,35 @@ export default function TaskDrawer({ task, readOnly, onClose, onEdit, onComment,
   }
 
   return (
-    <aside role="dialog" aria-label={task.title} style={{ width: 340, flexShrink: 0, borderLeft: '1px solid var(--border)', padding: 16, overflowY: 'auto', background: 'var(--elevated)' }}>
-      <button type="button" aria-label={t('tasks.close')} onClick={onClose} style={{ float: 'right', background: 'none', border: 0, color: 'inherit', cursor: 'pointer' }}><X size={16} /></button>
-      <label style={{ display: 'block', marginBottom: 8 }}>
+    <aside role="dialog" aria-label={task.title} className="tb-drawer">
+      <button type="button" aria-label={t('tasks.close')} onClick={onClose} className="btn btn-ghost btn-icon btn-sm tb-drawer-close"><X size={16} /></button>
+      <label className="tb-field">
         <div>{t('tasks.drawer.title')}</div>
-        <input value={title} disabled={readOnly} onChange={e => setTitle(e.target.value)} style={{ width: '100%' }} />
+        <input className="form-input" value={title} disabled={readOnly} onChange={e => setTitle(e.target.value)} />
       </label>
-      <label style={{ display: 'block', marginBottom: 8 }}>
+      <label className="tb-field">
         <div>{t('tasks.drawer.notes')}</div>
-        <textarea value={notes} disabled={readOnly} rows={5} onChange={e => setNotes(e.target.value)} style={{ width: '100%' }} />
+        <textarea className="form-textarea" value={notes} disabled={readOnly} rows={5} onChange={e => setNotes(e.target.value)} />
       </label>
-      {!readOnly && <button type="button" disabled={!dirty || !title.trim()} onClick={save}>{t('tasks.drawer.save')}</button>}
-      {!readOnly && onArchive && <button type="button" disabled={archiving} onClick={onArchive} style={{ marginLeft: 8 }}>{archiving ? t('tasks.archiving') : t('tasks.archive')}</button>}
+      <div className="tb-drawer-actions">{!readOnly && <button className="btn btn-primary btn-sm" type="button" disabled={!dirty || !title.trim()} onClick={save}>{t('tasks.drawer.save')}</button>}
+      {!readOnly && onArchive && <button className="btn btn-secondary btn-sm" type="button" disabled={archiving} onClick={onArchive}>{archiving ? t('tasks.archiving') : t('tasks.archive')}</button>}</div>
       {archiveError && <div role="alert">{t('tasks.archiveFailed')}: {archiveError}</div>}
 
-      <h3 style={{ marginTop: 16 }}>{t('tasks.drawer.history')}</h3>
+      <h3 className="tb-drawer-h">{t('tasks.drawer.history')}</h3>
       {loadError && <div role="alert">{t('tasks.drawer.loadError')}: {loadError}</div>}
-      <ul style={{ listStyle: 'none', padding: 0, fontSize: 12 }}>
+      <ul className="tb-history">
         {events.map(e => (
-          <li key={e.id} style={{ marginBottom: 6 }}>
+          <li key={e.id}>
             <strong>{e.actor}</strong> {t(`tasks.drawer.kind.${e.kind}`, { defaultValue: e.kind })}{e.to_status ? ` → ${t(`tasks.column.${e.to_status}`, { defaultValue: e.to_status })}` : ''}
-            {e.note && <div style={{ whiteSpace: 'pre-wrap', opacity: 0.85 }}>{e.note}</div>}
+            {e.note && <div className="tb-note">{e.note}</div>}
           </li>
         ))}
       </ul>
 
       {!readOnly && (
-        <div>
-          <textarea aria-label={t('tasks.drawer.comment')} placeholder={t('tasks.drawer.comment')} rows={2} value={text} onChange={e => setText(e.target.value)} style={{ width: '100%' }} />
-          <button type="button" disabled={!text.trim()} onClick={send}>{t('tasks.drawer.send')}</button>
+        <div className="tb-comment">
+          <textarea className="form-textarea" aria-label={t('tasks.drawer.comment')} placeholder={t('tasks.drawer.comment')} rows={2} value={text} onChange={e => setText(e.target.value)} />
+          <button className="btn btn-secondary btn-sm" type="button" disabled={!text.trim()} onClick={send}>{t('tasks.drawer.send')}</button>
         </div>
       )}
     </aside>

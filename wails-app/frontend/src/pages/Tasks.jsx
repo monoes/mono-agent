@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AppWindow, Archive, Check, CircleHelp, Globe, LayoutGrid, Sparkles, Terminal } from 'lucide-react'
+import { AppWindow, Archive, Plus, Check, CircleHelp, Globe, LayoutGrid, Sparkles, Terminal } from 'lucide-react'
 import { tasksApi } from '../services/tasks.js'
 import { useTaskBoard } from '../lib/useTaskBoard.js'
 import { COLUMNS, findTask, filterBoard, placeFor, isNoopDrop, dropIndex, keyMove, focusTarget, isTypingTarget, claimState, sourceChip, shortAge, splitMinutes, actorColor } from '../lib/taskModel.js'
@@ -21,9 +21,9 @@ function QuickAdd({ status, onAdd, t }) {
     setTitle('')
   }
   return (
-    <form onSubmit={submit} style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-      <input aria-label={t('tasks.quickAddPlaceholder')} placeholder={t('tasks.quickAddPlaceholder')} value={title} onChange={e => setTitle(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-      <button type="submit" disabled={!title.trim()}>{status === 'ready' ? t('tasks.addToReady') : t('tasks.add')}</button>
+    <form onSubmit={submit} className="tb-quick">
+      <input className="form-input" aria-label={t('tasks.quickAddPlaceholder')} placeholder={t('tasks.quickAddPlaceholder')} value={title} onChange={e => setTitle(e.target.value)} />
+      <button className="btn btn-secondary btn-sm" type="submit" disabled={!title.trim()}>{status === 'ready' ? t('tasks.addToReady') : t('tasks.add')}</button>
     </form>
   )
 }
@@ -32,12 +32,12 @@ const CAPTURE_COMMANDS = ['monoagentcli task add -- "Title"', 'monoagentcli task
 
 function CaptureHelp({ t }) {
   return (
-    <details>
+    <details className="tb-help">
       <summary><CircleHelp size={12} /> {t('tasks.capture.title')}</summary>
-      <ul style={{ margin: '4px 0', paddingLeft: 18 }}>
+      <ul>
         <li>{t('tasks.capture.chrome')}</li>
         <li>{t('tasks.capture.mac')}</li>
-        <li>{t('tasks.capture.cli')} {CAPTURE_COMMANDS.map(c => <code key={c} style={{ display: 'block' }}>{c}</code>)}</li>
+        <li>{t('tasks.capture.cli')} {CAPTURE_COMMANDS.map(c => <code key={c}>{c}</code>)}</li>
         <li>{t('tasks.capture.agents')}</li>
       </ul>
     </details>
@@ -64,11 +64,10 @@ function Card({ task, status, readOnly, selected, pulse, now, onOpen, onKey, onD
   return (
     <div
       data-task-id={task.id}
-      className={pulse ? `tb-card--${pulse}` : undefined}
       draggable={!readOnly}
       onClick={e => { if (!e.target.closest('button')) onOpen(task.id) }}
       onDragStart={e => { e.dataTransfer?.setData('text/plain', String(task.id)); onDragStart(task.id) }}
-      style={{ padding: 8, marginBottom: 6, border: `1px solid ${selected ? 'var(--accent, #00b4d8)' : cs?.stale ? 'var(--orange, #f59e0b)' : 'var(--border)'}`, borderRadius: 6, background: 'var(--elevated)', cursor: 'pointer' }}
+      className={`tb-card${selected ? ' is-selected' : ''}${cs?.stale ? ' is-stale' : ''}${pulse ? ` tb-card--${pulse}` : ''}`}
     >
       <button
         type="button"
@@ -76,7 +75,7 @@ function Card({ task, status, readOnly, selected, pulse, now, onOpen, onKey, onD
         aria-pressed={selected}
         onClick={() => onOpen(task.id)}
         onKeyDown={e => onKey(e, task)}
-        style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, padding: 0, color: 'inherit', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}
+        className="tb-card-title"
       >{task.title}</button>
       <div style={{ ...meta, marginTop: 4 }}>
         <span title={t(`tasks.source.${chip.kind}`)} style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}>
@@ -94,11 +93,11 @@ function Card({ task, status, readOnly, selected, pulse, now, onOpen, onKey, onD
         </div>
       )}
       {!readOnly && (
-        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+        <div className="tb-card-actions">
           {status === 'inbox' && (
-            <button type="button" title={t('tasks.approve')} aria-label={`${t('tasks.approve')}: ${task.title}`} onClick={() => onApprove(task.id)}><Check size={12} /></button>
+            <button className="btn btn-ghost btn-icon btn-sm" type="button" title={t('tasks.approve')} aria-label={`${t('tasks.approve')}: ${task.title}`} onClick={() => onApprove(task.id)}><Check size={12} /></button>
           )}
-          <button type="button" title={t('tasks.archive')} aria-label={`${t('tasks.archive')}: ${task.title}`} onClick={() => onArchive(task.id)}><Archive size={12} /></button>
+          <button className="btn btn-ghost btn-icon btn-sm" type="button" title={t('tasks.archive')} aria-label={`${t('tasks.archive')}: ${task.title}`} onClick={() => onArchive(task.id)}><Archive size={12} /></button>
         </div>
       )}
     </div>
@@ -208,30 +207,36 @@ export default function Tasks({ isActive = true }) {
   }
 
   return (
-    <div className={visible ? 'page' : 'page tb-paused'} ref={root} style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16, gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h1 style={{ margin: 0 }}>{t('tasks.title')}</h1>
-        <input type="search" aria-label={t('tasks.search')} placeholder={t('tasks.search')} value={query} onChange={e => setQuery(e.target.value)} />
+    <div className={visible ? 'page tb-page' : 'page tb-page tb-paused'} ref={root}>
+      <div className="page-header">
+        <div className="page-header-left">
+          <h1 className="page-title">{t('tasks.title')}</h1>
+        </div>
+        <div className="page-header-right">
+          <input className="search-input" type="search" aria-label={t('tasks.search')} placeholder={t('tasks.search')} value={query} onChange={e => setQuery(e.target.value)} />
+          {!readOnly && <button type="button" className="btn btn-primary btn-sm" onClick={() => root.current?.querySelector('.tb-quick input')?.focus()}><Plus size={12} /> {t('tasks.newTask')}</button>}
+        </div>
       </div>
+      <div className="tb-body">
       <CaptureHelp t={t} />
       {readOnly && <div role="note">{t('tasks.readOnly')}</div>}
       {b.error && <div role="alert">{t('tasks.loadError')}: {b.error}</div>}
       {b.notice && (
         <div role="alert" onClick={b.clearNotice}>{t('tasks.refused', { error: b.notice.error })}</div>
       )}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 8 }}>
-        <div style={{ display: 'flex', flex: 1, gap: 8, minWidth: 0 }}>
+      <div className="tb-main">
+        <div className="tb-cols">
           {COLUMNS.map(status => (
             <section
               key={status}
               aria-label={t(`tasks.column.${status}`)}
               onDragOver={e => e.preventDefault()}
               onDrop={e => onDrop(e, status)}
-              style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 8, border: '1px solid var(--border)', borderRadius: 6 }}
+              className="tb-col"
             >
-              <h2 style={{ fontSize: 14, marginTop: 0 }}>{t(`tasks.column.${status}`)} <span>{shown.counts[status] ?? shown.columns[status].length}</span></h2>
+              <h2 className="tb-col-head">{t(`tasks.column.${status}`)} <span className="tb-count">{shown.counts[status] ?? shown.columns[status].length}</span></h2>
               {!readOnly && (status === 'inbox' || status === 'ready') && <QuickAdd status={status} onAdd={b.add} t={t} />}
-              {shown.columns[status].length === 0 && <div style={{ opacity: 0.6 }}>{t(`tasks.emptyBy.${status}`, { defaultValue: t('tasks.empty') })}</div>}
+              {shown.columns[status].length === 0 && <div className="tb-empty">{t(`tasks.emptyBy.${status}`, { defaultValue: t('tasks.empty') })}</div>}
               {shown.columns[status].map(task => (
                 <Card
                   key={task.id} task={task} status={status} readOnly={readOnly} selected={openId === task.id} now={now}
@@ -244,6 +249,7 @@ export default function Tasks({ isActive = true }) {
           ))}
         </div>
         {open && <TaskDrawer task={open} readOnly={readOnly} onClose={() => setOpenId(null)} onEdit={b.edit} onComment={b.comment} onArchive={() => archiveRes(open.id)} archiving={archiving === open.id} archiveError={archiveError} />}
+      </div>
       </div>
     </div>
   )

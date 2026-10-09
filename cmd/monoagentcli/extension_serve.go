@@ -71,6 +71,10 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 	// profile they name (extension_tasks.go). Advertised in ping, so a newer
 	// extension knows this bridge takes tasks.
 	srv.SetTaskSink(extensionTaskSink(defaultDBPath))
+	// chat.send / chat.stop / chat.events: the side panel's chat, run as the
+	// same `chat --conversation --turn` child the desktop app runs
+	// (internal/extension/chat.go). Read-mostly tools only, never runs.
+	srv.SetChatBackend(extension.NewCLIChatBackend())
 	srv.SetVersion(getVersion())
 	// Every bridge that owns the connection writes the summaries its
 	// captures ask for. `extension serve` re-installs this with its own
