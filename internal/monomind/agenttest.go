@@ -60,6 +60,18 @@ var agentTestGrace = 15 * time.Second
 // tests the runtime's default. Cancelling ctx kills monomind's whole
 // process group, including the runtime it started.
 func AgentTest(ctx context.Context, bin, runtime, model string, timeout time.Duration) (*AgentTestResult, error) {
+	return AgentTestSandboxed(ctx, bin, runtime, model, timeout, "", false)
+}
+
+// AgentTestSandboxed is AgentTest under `--sandbox <sandbox>` (capability
+// CapAgentTestSandbox; the caller checks it), so the test runs the way the
+// real turn will. With fallbackStrictest (CapAgentExecSandboxFallback) a
+// runtime lacking the mode runs in its strictest one instead of failing;
+// monomind reports the mode used as sandbox_applied. sandbox "" is AgentTest.
+func AgentTestSandboxed(ctx context.Context, bin, runtime, model string, timeout time.Duration, sandbox string, fallbackStrictest bool) (*AgentTestResult, error) {
+	if strings.HasPrefix(sandbox, "-") {
+		return nil, fmt.Errorf("invalid sandbox mode %q: must not start with \"-\"", sandbox)
+	}
 	// runtime is positional and model a flag value: a leading dash would be
 	// read as a flag of its own.
 	if runtime == "" || strings.HasPrefix(runtime, "-") {
@@ -77,6 +89,12 @@ func AgentTest(ctx context.Context, bin, runtime, model string, timeout time.Dur
 	args := []string{"agent", "test", runtime, "--json"}
 	if model != "" {
 		args = append(args, "--model="+model)
+	}
+	if sandbox != "" {
+		args = append(args, SandboxFlag, sandbox)
+		if fallbackStrictest {
+			args = append(args, "--sandbox-fallback", "strictest")
+		}
 	}
 	parent := ctx
 	if timeout > 0 {

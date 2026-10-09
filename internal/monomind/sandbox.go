@@ -56,6 +56,7 @@ var sandboxEnvRuntimes = map[string]bool{"codex": true, "grok": true}
 const (
 	SandboxStatusSandboxed        = "sandboxed"         // ran in the runtime's sandbox
 	SandboxStatusScoped           = "scoped"            // claude: --access scoped restricts it (no monomind sandbox yet)
+	SandboxStatusRestricted       = "restricted"        // monomind ran the mode's restricted fallback: the CLI's approval rules, weaker than sandboxed
 	SandboxStatusUnsupported      = "unsupported"       // monomind has --sandbox, but this runtime can't honour it
 	SandboxStatusAwaitingMonomind = "awaiting-monomind" // this runtime needs monomind#396; ran without a sandbox
 	SandboxStatusNeedsMonomind    = "needs-monomind"    // monomind older than SandboxEnvMinVersion; ran as before
@@ -180,6 +181,8 @@ func sandboxStatus(effective string, start SandboxFields) string {
 		return SandboxStatusUnsupported
 	case start.Sandbox == SandboxFull || start.Sandbox == "off":
 		return SandboxStatusOff
+	case start.Sandbox == "restricted":
+		return SandboxStatusRestricted
 	case start.Sandbox != "":
 		return SandboxStatusSandboxed
 	}

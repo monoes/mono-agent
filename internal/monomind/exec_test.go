@@ -843,3 +843,22 @@ exit 0
 		t.Errorf("Err = %+v, want nil — a missing done is not itself a protocol error, just missing evidence", res.Err)
 	}
 }
+
+// TestFilteredEnvironKeepsOperatorSettings: MONOMIND_CLAUDE_PATH and the
+// coder agent caps are operator choices, not per-call scoping.
+func TestFilteredEnvironKeepsOperatorSettings(t *testing.T) {
+	t.Setenv("MONOMIND_CLAUDE_PATH", "/usr/bin/claude")
+	t.Setenv("MONOMIND_CODER_MAX_AGENTS", "80")
+	t.Setenv("MONOMIND_CWD", "/elsewhere")
+	got := map[string]bool{}
+	for _, kv := range FilteredEnviron() {
+		k, _, _ := strings.Cut(kv, "=")
+		got[k] = true
+	}
+	if !got["MONOMIND_CLAUDE_PATH"] || !got["MONOMIND_CODER_MAX_AGENTS"] {
+		t.Errorf("operator settings dropped: %v", got)
+	}
+	if got["MONOMIND_CWD"] {
+		t.Error("MONOMIND_CWD must still be stripped")
+	}
+}

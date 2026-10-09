@@ -228,7 +228,7 @@ func (c *Catalog) load(ctx context.Context) (models []ModelInfo, degraded bool, 
 			modes = e.SandboxModes
 		}
 		_, sandboxStatus := monomind.SandboxArgs(caps, modes, e.ID, monomind.TurnSandboxMode)
-		sandboxable := sandboxStatus == monomind.SandboxStatusSandboxed
+		sandboxable := sandboxStatus == monomind.SandboxStatusSandboxed && !e.RuleBasedSandbox(monomind.TurnSandboxMode)
 		seen := map[string]bool{}
 		add := func(m monomind.RuntimeModel) {
 			if seen[m.ID] || !modelRE.MatchString(m.ID) {

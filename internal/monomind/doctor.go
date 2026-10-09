@@ -17,6 +17,13 @@ import (
 // CapDoctorJSON: `monomind doctor --json` (protocol rev 9, §10).
 const CapDoctorJSON = "doctor-json"
 
+// CapDoctorReadOnly: `doctor --json` without --fix/--install writes nothing.
+// CapDoctorOffline: `doctor --offline` skips the checks that use the network.
+const (
+	CapDoctorReadOnly = "doctor-read-only"
+	CapDoctorOffline  = "doctor-offline"
+)
+
 // DoctorTimeout bounds one `monomind doctor` run (some checks shell out to
 // git, npm and the network).
 const DoctorTimeout = 2 * time.Minute
@@ -25,7 +32,7 @@ const DoctorTimeout = 2 * time.Minute
 type DoctorResult struct {
 	Component string  `json:"component"`
 	Name      string  `json:"name"`
-	Status    string  `json:"status"` // pass | warn | fail | info
+	Status    string  `json:"status"` // pass | warn | fail | info | skipped
 	Message   string  `json:"message"`
 	Fix       *string `json:"fix"`
 	FixSafety *string `json:"fix_safety"` // auto | confirm | manual
@@ -41,6 +48,7 @@ type DoctorReport struct {
 		Warnings int `json:"warnings"`
 		Failed   int `json:"failed"`
 		Info     int `json:"info"`
+		Skipped  int `json:"skipped"`
 	} `json:"summary"`
 	Results []DoctorResult `json:"results"`
 	Fixes   []struct {
@@ -55,6 +63,7 @@ type DoctorOptions struct {
 	Component string // "" = all checks
 	Fix       bool   // --fix (auto fixes)
 	Install   bool   // --install (confirm fixes)
+	Offline   bool   // --offline (capability doctor-offline): skip the checks that use the network
 }
 
 // DoctorReportVersion is the `monomind doctor --json` format this reads.
@@ -79,6 +88,9 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 	}
 	if opts.Install {
 		args = append(args, "--install")
+	}
+	if opts.Offline {
+		args = append(args, "--offline")
 	}
 	ctx, cancel := context.WithTimeout(ctx, DoctorTimeout)
 	defer cancel()

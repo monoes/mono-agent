@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,6 +33,25 @@ func coderSystemPrompt(cwd string) string {
 		"access to this computer, working in " + cwd + ". The user sees every tool call you make " +
 		"(commands, edits, file writes) live in the chat. Work inside that folder unless the user " +
 		"asks for something elsewhere, and say plainly what you changed."
+}
+
+// dropKiloOptions clears the options kilo's runner refuses outright
+// (--effort and --budget-usd; it accepts only --access full --settings
+// user,project,local) and names what it cleared, "" when nothing.
+func dropKiloOptions(opts *monomind.ExecOptions) string {
+	if opts.Runtime != "kilo" {
+		return ""
+	}
+	var dropped []string
+	if opts.Effort != "" {
+		opts.Effort = ""
+		dropped = append(dropped, "effort")
+	}
+	if opts.BudgetUSD != 0 {
+		opts.BudgetUSD = 0
+		dropped = append(dropped, "budget")
+	}
+	return strings.Join(dropped, " or ")
 }
 
 // runCoderTurn runs t through monomind with full access. journal is nil for
@@ -70,6 +90,7 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		BudgetUSD:    settings.BudgetUSD,
 		SystemPrompt: coderSystemPrompt(t.cwd) + "\n\n" + publicationAgentPrompt(cfg),
 	}
+	kiloDropped := dropKiloOptions(&opts)
 	onEvent := func(ev monomind.Event) {
 		b, _ := json.Marshal(ev)
 		fmt.Fprintln(cmd.OutOrStdout(), string(b))
@@ -79,6 +100,9 @@ func runCoderTurn(cmd *cobra.Command, cfg *globalConfig, journal *turnJournal, t
 		journal.coderRuntime = rt
 		journal.notice(noticeCoderWorkspace, "Working in "+t.cwd, chatevents.SeverityInfo)
 		onEvent = journal.handle
+		if kiloDropped != "" {
+			journal.notice(noticeCoderStatus, "Kilo takes no "+kiloDropped+": this turn runs without it", chatevents.SeverityWarning)
+		}
 	}
 	var closeOrg func()
 	if journal != nil && t.orgMode == ai.OrgModeDynamic {

@@ -84,6 +84,45 @@ func TestInitProfile(t *testing.T) {
 	}
 }
 
+// A monomind with capability init-json registers the folder itself
+// (--register-claude-project): no claude turn, and Repin adds --force.
+func TestInitProfileRegistersThroughMonomind(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fakes")
+	}
+	root := t.TempDir()
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls")
+	fake := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo '{\"v\":1,\"version\":\"2.24.4\",\"min_caller\":\"1.0.0\",\"capabilities\":[\"agent-exec\",\"agent-scan\",\"org-json-v1\",\"init-json\"]}'; exit 0; fi\n" +
+		"echo \"monomind $*\" >> " + log + "\n" +
+		"case \"$*\" in *--json*) echo '{\"claude_project_registered\":true}';; *) mkdir -p .monomind && echo x > .monomind/config.yaml;; esac\n"
+	os.WriteFile(filepath.Join(bin, "monomind"), []byte(fake), 0o755)
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"claude $*\" >> "+log+"\n"), 0o755)
+	t.Setenv(EnvOverride, filepath.Join(bin, "monomind"))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+
+	var lines []string
+	if err := InitProfile(context.Background(), InitOptions{Root: root, Repin: true, Progress: func(l string) { lines = append(lines, l) }}); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := os.ReadFile(log)
+	for _, want := range []string{
+		"monomind init --yes --no-watch --no-install --force\n",
+		"--if-missing --json --no-graph --register-claude-project --yes --no-watch --no-install\n",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("calls\n%s\nmissing %q", calls, want)
+		}
+	}
+	if strings.Contains(string(calls), "claude ") {
+		t.Errorf("a claude turn ran although monomind registers the folder:\n%s", calls)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "Registered with Claude Code") {
+		t.Errorf("progress:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 // Without claude on PATH the registration is skipped and said so; a
 // failing init returns its last output lines.
 func TestInitProfileWithoutClaudeAndFailing(t *testing.T) {

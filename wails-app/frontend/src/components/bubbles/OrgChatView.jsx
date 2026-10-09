@@ -49,7 +49,7 @@ function Card({ item, icon: Icon, title, children }) {
   )
 }
 
-function QuestionCard({ item, nameOf, canAct, busy, outcome, onAnswer }) {
+function QuestionCard({ item, nameOf, canAct, busy, outcome, onAnswer, onDismiss }) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const pending = item.pending && !outcome?.state
@@ -67,6 +67,12 @@ function QuestionCard({ item, nameOf, canAct, busy, outcome, onAnswer }) {
           <button type="button" className="btn btn-primary btn-sm" data-testid="org-chat-answer" disabled={!canAct || busy || !text.trim()} onClick={submit}>
             {busy ? <Loader size={11} className="spin" /> : t('orgBubble.answer')}
           </button>
+          {item.blocking && (
+            <button type="button" className="btn btn-ghost btn-sm" data-testid="org-chat-dismiss" disabled={!canAct || busy}
+              title={t('orgBubble.dismissHint')} onClick={() => onDismiss(item.ref)}>
+              {t('orgBubble.dismiss')}
+            </button>
+          )}
         </div>
       ) : <ResolvedLine item={item} outcome={outcome} />}
       <ActionError outcome={outcome} />
@@ -164,6 +170,7 @@ export function OrgChatView({ conv, nameOf, draft, onDraftChange }) {
     if (await conv.send(draft)) onDraftChange('')
   }
   const answer = (ref, text) => conv.resolveItem(ref, { answer: text })
+  const dismiss = ref => conv.resolveItem(ref, { dismiss: true })
   const decide = (ref, approve, note) => conv.resolveItem(ref, { approve, note })
 
   const bossName = history?.boss_title || history?.boss || t('orgBubble.boss')
@@ -191,7 +198,7 @@ export function OrgChatView({ conv, nameOf, draft, onDraftChange }) {
             case 'boss':
               return <Speech key={key} who={nameOf(item.role)}><ChatMarkdown content={item.text || ''} /></Speech>
             case 'question':
-              return <QuestionCard key={key} item={item} nameOf={nameOf} canAct={canAct} busy={!!busy[item.ref]} outcome={outcome[item.ref]} onAnswer={answer} />
+              return <QuestionCard key={key} item={item} nameOf={nameOf} canAct={canAct} busy={!!busy[item.ref]} outcome={outcome[item.ref]} onAnswer={answer} onDismiss={dismiss} />
             case 'approval':
             case 'gate':
               return <DecisionCard key={key} item={item} nameOf={nameOf} canAct={canAct} busy={!!busy[item.ref]} outcome={outcome[item.ref]} onResolve={decide} />

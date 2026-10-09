@@ -135,7 +135,9 @@ type WorkspaceInit struct {
 }
 
 // InitWorkspace sets dir up as a monomind project without touching any file
-// already there (--if-missing), so it is safe on the user's own repos. The
+// already there (--if-missing). On a folder not yet set up for monomind it
+// still adds monomind's agent roster (core plus WorkspacePacks), so the
+// user's own repo gains those files on its first coder chat. The
 // code graph is skipped (--no-graph) so a new chat is ready in seconds;
 // monomind builds it on first use. Only the chat runtime's setup is added
 // (--target, its CoderRuntime.InitTarget): the folder may be the user's own
@@ -157,7 +159,7 @@ func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit
 	}
 	ctx, cancel := context.WithTimeout(ctx, InitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", target, "--yes", "--no-watch", "--no-install")
+	cmd := exec.CommandContext(ctx, bin, workspaceInitArgs(dir, target)...)
 	cmd.Dir = dir
 	cmd.Env = PinEnvIn(append(FilteredEnviron(), "CI=true"), bin, dir)
 	var stderr bytes.Buffer
@@ -182,6 +184,26 @@ func InitWorkspace(ctx context.Context, bin, dir, target string) (*WorkspaceInit
 		return nil, fmt.Errorf("monomind init %s: unreadable result: %w", dir, err)
 	}
 	return &res, nil
+}
+
+// WorkspacePacks are the opt-in monomind packs a fresh coder folder gets on
+// top of core (monomind#411): dynamic-org staffing picks agents from the
+// folder's own registry, and the specialist (data, SRE, mobile, ...) and
+// business (marketing) agents live only in these two. An older monomind
+// ignores the flag and installs everything anyway.
+const WorkspacePacks = "specialists,business"
+
+// workspaceInitArgs is InitWorkspace's argv. Packs are added only to a
+// folder not yet set up for monomind and only for a target with an agent
+// roster (`agents` writes AGENTS.md alone), so an existing project is not
+// given agent files it did not have; a folder that is not set up yet does
+// get the roster, because org-building chats need it.
+func workspaceInitArgs(dir, target string) []string {
+	args := []string{"init", "--project", dir, "--if-missing", "--json", "--no-graph", "--target", target, "--yes", "--no-watch", "--no-install"}
+	if target != "agents" && !IsInitializedAt(dir) {
+		args = append(args, "--packs", WorkspacePacks)
+	}
+	return args
 }
 
 // fallbackAgentsMD is the AGENTS.md written for a runtime monomind has no

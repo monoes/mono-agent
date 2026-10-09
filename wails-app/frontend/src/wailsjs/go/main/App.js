@@ -338,6 +338,10 @@ export function DisableAutomation(arg1) {
   return window['go']['main']['App']['DisableAutomation'](arg1);
 }
 
+export function DismissOrgChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DismissOrgChat'](arg1, arg2, arg3);
+}
+
 export function DoctorAutomations(arg1) {
   return window['go']['main']['App']['DoctorAutomations'](arg1);
 }

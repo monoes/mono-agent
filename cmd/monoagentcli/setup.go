@@ -21,6 +21,7 @@ type setupWants struct {
 	runtimes  []string
 	autostart bool
 	mcp       bool
+	deps      bool
 }
 
 // setupOutcome is a fix outcome in setup's report: doctor's, plus
@@ -60,7 +61,8 @@ func newSetupCmd(cfg *globalConfig) *cobra.Command {
      anything that installs software or starts the daemon (--yes accepts)
   3. offers the optional extras: an AI agent runtime, starting the daemon at
      login, registering monoagent's MCP server with Claude Code (or pass
-     --runtime/--autostart/--mcp); an extra that can't be done is reported
+     --runtime/--autostart/--mcp); --deps also downloads the Claude Agent SDK
+     ahead of its first use; an extra that can't be done is reported
      as skipped, with why
   4. prints the final report and what is left to do by hand
 
@@ -153,6 +155,7 @@ Safe to run again at any time; it only does what is still missing.`,
 	cmd.Flags().StringSliceVar(&wants.runtimes, "runtime", nil, "Also install these AI agent runtimes (e.g. claude, codex)")
 	cmd.Flags().BoolVar(&wants.autostart, "autostart", false, "Also start the daemon at login")
 	cmd.Flags().BoolVar(&wants.mcp, "mcp", false, "Also register monoagent's MCP server with Claude Code")
+	cmd.Flags().BoolVar(&wants.deps, "deps", false, "Also download the Claude Agent SDK (about 300 MB) now instead of on the first Claude turn")
 	return cmd
 }
 
@@ -369,6 +372,9 @@ func optionalFixIDs(rep *health.Report, w setupWants, ask func(question string) 
 	}
 	extra(health.FixAutostart, health.CheckAutostart, w.autostart, "Start the workflow daemon automatically at login?", "already set up")
 	extra(health.FixMCPRegister, health.CheckMCP, w.mcp, "Register monoagent's tools (MCP) with Claude Code?", "already registered")
+	if w.deps { // flag only: a codex-only user would be asked on every run
+		extra(health.FixMonomindDeps, health.CheckMonomindDeps, true, "", "already installed")
+	}
 	return plan
 }
 

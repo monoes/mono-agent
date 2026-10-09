@@ -150,8 +150,8 @@ func ServeMaybeLive(projectRoot string) bool {
 // (isOrgRunning in org-manage.ts), so an org started from the GUI's Run
 // button counts as running without `org serve` (#294).
 func OrgRunLive(projectRoot, name string) bool {
-	pid, ok := runningRecord(projectRoot, name)
-	return ok && daemonhb.ProcessAlive(pid)
+	pid, start, ok := runningRecord(projectRoot, name)
+	return ok && recordedPidAlive(pid, start)
 }
 
 // OrgRunDead reports whether the org's runtime.json still says "running"
@@ -159,24 +159,26 @@ func OrgRunLive(projectRoot, name string) bool {
 // (monoes/monomind#573). monomind's own `org status` keeps reporting such a
 // run as running.
 func OrgRunDead(projectRoot, name string) bool {
-	pid, ok := runningRecord(projectRoot, name)
-	return ok && pid > 0 && !daemonhb.ProcessAlive(pid)
+	pid, start, ok := runningRecord(projectRoot, name)
+	return ok && pid > 0 && !recordedPidAlive(pid, start)
 }
 
-// runningRecord is the pid of the org's runtime.json when it says "running".
-func runningRecord(projectRoot, name string) (int, bool) {
+// runningRecord is the pid (and its pidStart identity, monomind 2.24.3+) of
+// the org's runtime.json when it says "running".
+func runningRecord(projectRoot, name string) (int, string, bool) {
 	b, err := os.ReadFile(filepath.Join(projectRoot, ".monomind", "orgs", name, "runtime.json"))
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
 	var rt struct {
-		Status string `json:"status"`
-		PID    int    `json:"pid"`
+		Status   string `json:"status"`
+		PID      int    `json:"pid"`
+		PIDStart string `json:"pidStart"`
 	}
 	if json.Unmarshal(b, &rt) != nil || rt.Status != "running" {
-		return 0, false
+		return 0, "", false
 	}
-	return rt.PID, true
+	return rt.PID, rt.PIDStart, true
 }
 
 // OrgServeStart starts `monomind org serve` for projectRoot as a detached

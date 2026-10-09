@@ -265,6 +265,7 @@ func (j *turnJournal) handle(ev monomind.Event) {
 		j.usageLocked("usage")
 	case monomind.EventResult:
 		j.usageLocked("result")
+		j.resultNoticesLocked(ev)
 	case monomind.EventError:
 		if ev.Code == monomind.ErrRateLimited {
 			// agent exec gave up retrying; its message says why and what

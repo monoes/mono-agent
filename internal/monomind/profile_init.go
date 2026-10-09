@@ -3,6 +3,7 @@ package monomind
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ func IsInitializedAt(root string) bool {
 // InitOptions configures InitProfile.
 type InitOptions struct {
 	Root     string            // folder to initialize (a profile root)
+	Repin    bool              // --force: refresh monomind's own files, .mcp.json's version pin included
 	Progress func(line string) // receives every output line; may be nil
 	Prepare  func(*exec.Cmd)   // platform tweaks, e.g. hiding the window; may be nil
 }
@@ -52,7 +54,15 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 	// --no-install skips a potential global `npm install -g
 	// @anthropic-ai/claude-code`. CI=true makes every prompt path treat
 	// this as non-interactive even if monomind's TTY check changes.
-	cmd := exec.CommandContext(ctx, bin, "init", "--yes", "--no-watch", "--no-install")
+	// --force (Repin) merges monomind's own server entry into .mcp.json (the
+	// user's other entries are kept); an edited managed block in CLAUDE.md or
+	// AGENTS.md is replaced after a backup in .monomind/backups/. Without it
+	// an existing .mcp.json is left alone.
+	args := []string{"init", "--yes", "--no-watch", "--no-install"}
+	if opts.Repin {
+		args = append(args, "--force")
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	if opts.Prepare != nil {
 		opts.Prepare(cmd)
 	}
@@ -82,8 +92,45 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 	if err := cmd.Wait(); err != nil {
 		return errors.New(InitFailureMessage(bin, err, tail))
 	}
-	registerClaudeCodeProject(ctx, opts.Root, opts.Prepare, progress)
+	if !registerViaInit(ctx, bin, opts.Root, opts.Prepare, progress) {
+		registerClaudeCodeProject(ctx, opts.Root, opts.Prepare, progress)
+	}
 	return nil
+}
+
+// registerViaInit registers root with Claude Code's project list by
+// `monomind init --register-claude-project --json` (capability init-json):
+// it creates ~/.claude/projects/<slug>/ itself, with no model turn and no
+// login, in about a second (--if-missing leaves every file as it is). It
+// reports false when this monomind lacks the capability or the call failed,
+// or the folder did not end up registered, so the caller falls back to
+// registerClaudeCodeProject.
+func registerViaInit(ctx context.Context, bin, root string, prepare func(*exec.Cmd), progress func(string)) bool {
+	vi, err := Handshake(ctx, bin)
+	if err != nil || !vi.HasCapability(CapInitJSON) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "init", "--project", root, "--if-missing", "--json", "--no-graph",
+		"--register-claude-project", "--yes", "--no-watch", "--no-install")
+	if prepare != nil {
+		prepare(cmd)
+	}
+	cmd.Dir = root
+	cmd.Env = PinEnvIn(append(os.Environ(), "CI=true"), bin, root)
+	out, err := cmd.Output()
+	var res struct {
+		Registered bool `json:"claude_project_registered"`
+	}
+	if err != nil || json.Unmarshal(lastJSONLine(out), &res) != nil {
+		return false
+	}
+	if !res.Registered {
+		return false
+	}
+	progress("Registered with Claude Code's project list.")
+	return true
 }
 
 // InitFailureMessage turns a failed `monomind init` into something
@@ -104,8 +151,9 @@ func InitFailureMessage(bin string, err error, tail []string) string {
 // registerClaudeCodeProject makes root show up in monomind's web dashboard
 // project list. That list is sourced from ~/.claude/projects/<slug>/, the
 // per-directory folder Claude Code creates the first time `claude` runs
-// there; monomind init never creates it. One lightweight --print turn is
-// enough. Best effort: failures are reported as progress lines only.
+// there. This is the fallback for a monomind without capability init-json
+// (see registerViaInit): one lightweight --print turn is enough. Best
+// effort: failures are reported as progress lines only.
 func registerClaudeCodeProject(ctx context.Context, root string, prepare func(*exec.Cmd), progress func(string)) {
 	claudeBin, err := exec.LookPath("claude")
 	if err != nil {

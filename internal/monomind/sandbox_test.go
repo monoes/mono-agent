@@ -290,6 +290,7 @@ func TestSandboxStatus(t *testing.T) {
 		{SandboxStatusSandboxed, SandboxFields{Sandbox: "workspace-write"}, SandboxStatusSandboxed},
 		{SandboxStatusSandboxed, SandboxFields{Sandbox: "full", SandboxUnsupported: true}, SandboxStatusUnsupported},
 		{SandboxStatusSandboxed, SandboxFields{Sandbox: "full"}, SandboxStatusOff},
+		{SandboxStatusUnsupported, SandboxFields{Sandbox: "restricted"}, SandboxStatusRestricted}, // --sandbox-fallback strictest
 	}
 	for _, tc := range cases {
 		if got := sandboxStatus(tc.effective, tc.start); got != tc.want {

@@ -75,7 +75,7 @@ monoagentcli doctor                 # check everything monoagent needs; exit 1 =
 monoagentcli doctor --json          # stable report (schema "v":1): results[] with id/group/status/summary/fix
 monoagentcli doctor --fix [--yes]   # apply fixes (auto ones directly, confirm ones after asking / with --yes)
 monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":"line"|"done"|"error"}
-monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: fix everything, offer extras, report
+monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp] [--deps]  # guided: fix everything, offer extras, report
 ```
 
 When a bridge version differs from the CLI, `doctor` offers
@@ -99,7 +99,14 @@ has expired, and a refresh that asks first for other failures). With a monomind 
 monomind's own checks for the profile folder (fixes: `doctor fix
 monomind.doctor.fix:<component>`); `--projects` / `--project <path|name>` run
 them in each monomind project inside the profile folder
-(`monomind.doctor.fix:<component>@<project>`). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
+(`monomind.doctor.fix:<component>@<project>`). With `doctor-read-only` and
+`doctor-offline` plain `doctor` runs monomind's own checks read-only with
+`--offline`; `--deep` runs them whole (a monomind without both leaves them to
+`--deep`). The group also checks that the profile's `.mcp.json` pins the
+installed monomind (`monomind.mcp_pin`, fix `monomind.repin` = `monomind init
+--force` in the profile folder) and whether the Claude Agent SDK is in
+`~/.monomind/deps` (`monomind.deps`, optional fix = `monomind deps install`,
+also `setup --deps`). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
 (e.g. update availability). Checks never change anything — only fixes do.
 Run `doctor` first when something environment-related fails.
 
@@ -241,6 +248,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `org chat send <org> -- <text>` messages the boss as `human:operator` (live, or queued for the org's next start).
   - `org chat history <org> [--run R] [--limit N]` is the boss thread, built from the bus log and the org's questions, approvals and gates. It holds your messages, the boss's replies (its `chat` events), questions, approvals and gates (each `pending` or with its `resolution`), role-to-role messages as `team` rows, and the org starting and stopping. It also returns the roles (for the stage) and the org's status. A part that can't be read is listed in `warnings`.
   - `org chat answer <org> <questionId> -- <answer>` and `org chat approve|deny <org> <gate-id|request-id|role:action> [-- note]` are idempotent. An item already resolved returns `"already": true` with how it ended, and nothing is sent. While the org is not running they refuse with exit 3 and send nothing, so the item stays pending.
+  - `org chat dismiss <org> <questionId> [--reason <text>]` closes a question without answering it (monomind 2.21+; a blocking question stops holding the org back). Same idempotency and not-running refusal as `answer`. `org chat history` marks questions `blocking` and, for a `crashed` run (monomind 2.21+: a dead `running` record), returns the cause in `status_error`.
   - `org stop|pause|resume <org>` are the bubble's controls.
 - **OpenAI-compatible API:** `api status`, `api models [--for loopback|network] [--confinement C] [--context-confinement C] [--auto-confinement C]` and `api key list|create --name N [--context]|update <id> --context|--no-context|update <id> --name=N|revoke <id> --yes`, for Settings › "OpenAI-compatible API" (`wails-app/app_api.go`), and `api config show|set|unset` (with `--dry-run` and `--yes`) and `daemon restart` for its Server settings (`wails-app/app_api_config.go`). The app shows every listener `api status` lists that serves `/v1`, and asks `api models` for the policy that `api status` reports for the first one that answers `/v1` (the first listed when none does). `api key create --json` is the one call that returns a key (`"key"`): the app shows it once and drops it when the dialog closes. The settings calls pass the keys of the ten settings, a text for each attached to its flag, and the paths of the two TLS files, never their contents. A failed call keeps its exit class in the text the app receives (`not_found: …` for exit 2, `invalid_input: …` for exit 3).
 
@@ -1412,6 +1420,11 @@ monoagentcli chat --runtime claude --tools monoagent,runs "…"            # + r
 monoagentcli chat --runtime codex --canvas <workflow-id> "add a Slack step"  # workflow-builder mode
 ```
 
+`--budget-usd` never trips for a runtime whose scan entry has
+`reports_cost: false`: no cost is reported, so nothing is ever summed
+against it. Kilo's runner refuses `--budget-usd` and `--effort` outright, so
+a kilo coder turn drops both and says so in a `coder.status` notice.
+
 `--model`, `--timeout` and `--budget-usd` are optional per turn. Each
 `chat` invocation runs one turn and exits — `--history-id` only tags
 where the transcript is persisted (for later lookup/GUI display, e.g. by
@@ -1530,6 +1543,13 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   runtime's key setup files: `.clinerules/monomind.md` for cline,
   `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
   and pi. The app shows `dsh` as "DeepSeek Harness".
+
+A claude coder lead caps its own agent launches: `MONOMIND_CODER_MAX_AGENTS`
+(default 40) and `MONOMIND_CODER_MAX_REVIEW_AGENTS` (default 12), with the
+subagent model pinned through `CLAUDE_CODE_SUBAGENT_MODEL`. Both caps pass
+through `FilteredEnviron`. A `result` event's `unexpected_models` and
+`context_warning` (monomind 2.24.4) appear as `coder.result` warnings in the
+turn journal.
 
 #### Dynamic org (a coder chat that spawns workers)
 
@@ -1994,6 +2014,12 @@ login (and its bill) is what the turn uses.
     prompt (hermes, cline and kimicode write one under their temp directory) go
     where the child's `TMPDIR` points: a caller that runs turns for others sets
     `ExecOptions.Env` `TMPDIR`, `TMP` and `TEMP`, as the API gateway does.
+    hermes 0.19 puts the whole prompt in its argv, visible to any local user
+    through `ps`: do not route private profile data to hermes.
+  - **Rule-based modes.** A scan entry's `sandbox_mode_reports` says what each
+    mode reports; `approvals: "on"` (copilot `workspace-write`) is the CLI's
+    own allow/deny rules, not an OS sandbox, so the OpenAI-compatible API
+    classifies that runtime `unconfined`, not `sandboxed`.
   - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
     `scoped`, `unsupported` (after #396, a runtime that can't honour it),
     `awaiting-monomind`, `needs-monomind` or `off`. Once monomind reports

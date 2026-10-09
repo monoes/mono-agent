@@ -41,6 +41,27 @@ func TestReadScheduleAuditRecorded2241Line(t *testing.T) {
 
 // Synthetic lines (not monomind output): an unknown event, junk and a torn
 // last line never fail the read.
+// monomind 2.24.4 (#656) logs an unsigned definition and a failed precheck
+// as scheduled-start-refused; the reason reaches the view verbatim.
+func TestReadScheduleAuditUnsignedAndPrecheckRefusals(t *testing.T) {
+	root := writeAudit(t, strings.Join([]string{
+		`{"ts":1000,"event":"scheduled-start-refused","msg":"org \"sched\" is not signed — skipping scheduled run"}`,
+		`{"ts":2000,"event":"scheduled-start-refused","msg":"precheck \"disk\" failed — skipping scheduled run: full"}`,
+	}, "\n"))
+	v, err := ReadScheduleAudit(root, "sched")
+	if err != nil || len(v.Entries) != 2 {
+		t.Fatalf("view = %+v, %v", v, err)
+	}
+	for _, e := range v.Entries {
+		if e.Kind != ScheduleRefused || !strings.Contains(e.Msg, "skipping scheduled run") {
+			t.Errorf("entry = %+v, want a refusal carrying its reason", e)
+		}
+	}
+	if !strings.Contains(v.Entries[0].Msg, "precheck") || !strings.Contains(v.Entries[1].Msg, "not signed") {
+		t.Errorf("newest first: %+v", v.Entries)
+	}
+}
+
 func TestReadScheduleAuditToleratesUnknownAndDamagedLines(t *testing.T) {
 	root := writeAudit(t, strings.Join([]string{
 		`{"ts":1000,"event":"scheduled-start-refused","msg":"preflight: no runtime"}`,

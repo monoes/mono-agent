@@ -35,6 +35,14 @@ const (
 	CapAgentExecFullAccessTools = "agent-exec-full-access-tools"
 	CapAgentExecAccessRead      = "agent-exec-access-read"
 	CapAgentExecSubagentEvents  = "agent-exec-subagent-events"
+
+	// Monomind 2.24: `--sandbox-fallback` on exec and test, `agent test
+	// --sandbox`, an unknown cost as null (never 0), and agent models
+	// entries that keep an alias with its target.
+	CapAgentExecSandboxFallback = "agent-exec-sandbox-fallback"
+	CapAgentTestSandbox         = "agent-test-sandbox"
+	CapAgentExecCostNull        = "agent-exec-cost-null"
+	CapAgentModelsAliasOf       = "agent-models-alias-of"
 )
 
 // ErrFeatureNeedsMonomind reports that the installed monomind lacks a

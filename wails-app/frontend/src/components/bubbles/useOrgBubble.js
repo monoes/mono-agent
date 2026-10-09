@@ -124,16 +124,17 @@ export function useOrgBubble(orgName) {
     }
   }, [orgName, sending, scheduleRefresh])
 
-  // resolveItem answers a question (answer given) or approves/denies an
-  // approval or gate. A ref already in flight is ignored.
-  const resolveItem = useCallback(async (ref, { answer, approve = false, note = '' } = {}) => {
+  // resolveItem answers a question (answer given), dismisses one (dismiss,
+  // note is the reason) or approves/denies an approval or gate. A ref already in flight is ignored.
+  const resolveItem = useCallback(async (ref, { answer, dismiss = false, approve = false, note = '' } = {}) => {
     if (!ref || busyRef.current[ref]) return null
     busyRef.current = { ...busyRef.current, [ref]: true }
     setBusy(busyRef.current)
     try {
-      const res = answer != null
-        ? await api.answerOrgChat(orgName, ref, answer)
-        : await api.resolveOrgChat(orgName, ref, approve, note)
+      let res
+      if (dismiss) res = await api.dismissOrgChat(orgName, ref, note)
+      else if (answer != null) res = await api.answerOrgChat(orgName, ref, answer)
+      else res = await api.resolveOrgChat(orgName, ref, approve, note)
       setOutcome(o => ({ ...o, [ref]: res?.error ? { error: res.error } : { state: res.state, already: !!res.already } }))
       if (!res?.error) scheduleRefresh()
       return res

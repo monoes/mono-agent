@@ -690,6 +690,14 @@ var sessionMarkerEnvPrefixes = []string{
 	"MONOMIND_",
 }
 
+// operatorEnvVars are MONOMIND_* settings the operator sets on purpose
+// (monomind 2.24): they are not per-call scoping, so they pass through.
+var operatorEnvVars = []string{
+	"MONOMIND_CLAUDE_PATH",
+	"MONOMIND_CODER_MAX_AGENTS",
+	"MONOMIND_CODER_MAX_REVIEW_AGENTS",
+}
+
 // FilteredEnviron returns the current process environment with Claude
 // Code's session-marker variables and ambient MONOMIND_* overrides
 // removed. Exported so command builders outside this package (e.g. the
@@ -701,6 +709,10 @@ func FilteredEnviron() []string {
 	for _, kv := range env {
 		key, _, _ := strings.Cut(kv, "=")
 		if slices.Contains(sessionMarkerEnvVars, key) {
+			continue
+		}
+		if slices.Contains(operatorEnvVars, key) {
+			out = append(out, kv)
 			continue
 		}
 		skip := false
