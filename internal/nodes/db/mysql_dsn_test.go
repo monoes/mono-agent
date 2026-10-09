@@ -135,8 +135,12 @@ func TestParseMySQLDSN(t *testing.T) {
 				t.Errorf("got addr=%q user=%q password=%q db=%q; want addr=%q user=%q password=%q db=%q",
 					c.Addr, c.User, c.Password, c.DB, tc.addr, tc.user, tc.password, tc.db)
 			}
-			if c.Params.Encode() != tc.params.Encode() {
-				t.Errorf("params = %v; want %v", c.Params, tc.params)
+			want := url.Values{"retries": {"off"}} // retries=off is always the default
+			for k, v := range tc.params {
+				want[k] = v
+			}
+			if c.Params.Encode() != want.Encode() {
+				t.Errorf("params = %v; want %v", c.Params, want)
 			}
 		})
 	}
@@ -191,5 +195,101 @@ func TestParseMySQLDSNErrorsDoNotLeakPassword(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "hunter2secret") {
 		t.Fatalf("error leaks the password: %v", err)
+	}
+}
+
+func TestParseMySQLDSNRetriesDefaultOff(t *testing.T) {
+	// A dropped connection after a statement was sent must not re-run it.
+	c, err := parseMySQLDSN("u:p@tcp(h:1)/d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Params.Get("retries"); got != "off" {
+		t.Fatalf("retries default = %q; want off", got)
+	}
+	c, err = parseMySQLDSN("u:p@tcp(h:1)/d?retries=on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Params.Get("retries"); got != "on" {
+		t.Fatalf("explicit retries=on = %q; want on", got)
+	}
+}
+
+// tls and ssl resolve to exactly one mode, deterministically.
+func TestParseMySQLDSNTLSResolution(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantTLS  string // expected "tls" param
+		wantVerf bool   // expected monoagentTLSVerify param
+		wantErr  bool
+	}{
+		{"tls true", "tls=true", "", true, false},
+		{"ssl true", "ssl=true", "", true, false},
+		{"tls false", "tls=false", "", false, false},
+		{"ssl skip-verify", "ssl=skip-verify", "skip-verify", false, false},
+		{"tls true + ssl true", "tls=true&ssl=true", "", true, false},
+		{"tls skip + ssl skip", "tls=skip-verify&ssl=skip-verify", "skip-verify", false, false},
+		{"duplicate tls last wins", "tls=skip-verify&tls=true", "", true, false},
+		{"conflict true vs skip-verify", "tls=true&ssl=skip-verify", "", false, true},
+		{"conflict skip-verify vs true", "tls=skip-verify&ssl=true", "", false, true},
+		{"conflict false vs true", "tls=false&ssl=true", "", false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := 0; i < 200; i++ {
+				c, err := parseMySQLDSN("u:p@tcp(h:1)/d?" + tc.query)
+				if tc.wantErr {
+					if err == nil {
+						t.Fatalf("run %d: expected a conflict error, got params %v", i, c.Params)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if c.Params.Get("tls") != tc.wantTLS || (c.Params.Get(mysqlVerifiedTLSParam) != "") != tc.wantVerf {
+					t.Fatalf("run %d: params = %v", i, c.Params)
+				}
+				if c.Params.Get("tls") != "" && c.Params.Get(mysqlVerifiedTLSParam) != "" {
+					t.Fatalf("both TLS mechanisms set: %v", c.Params)
+				}
+			}
+		})
+	}
+}
+
+func TestParseMySQLDSNEdgeCases(t *testing.T) {
+	bad := []string{
+		"u:SECRET/w@127.0.0.1:1",
+		"u:3306/x@h",
+		"u:SECRET/w@tcp(h:1)",
+		"u:SECRETPW@h/a/b",
+		"u:SECRETPW@tcp(h/a:1)/d",
+		"u:SECRETPW@/tmp/mysql.sock",
+	}
+	for _, dsn := range bad {
+		_, err := parseMySQLDSN(dsn)
+		if err == nil {
+			t.Errorf("parseMySQLDSN(%q): expected an error", dsn)
+			continue
+		}
+		for _, leak := range []string{"SECRET", "3306", "127.0.0.1", "u:", "w@"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("parseMySQLDSN(%q) error leaks %q: %v", dsn, leak, err)
+			}
+		}
+	}
+	// Still accepted: awkward passwords when a /db is present.
+	for _, dsn := range []string{
+		"alice:p@ss/w:rd?x#%@tcp(db:3306)/myapp",
+		"alice:@db:3306/myapp",
+		"u:SECRET/w@127.0.0.1:1/db",
+		"mysql://alice:secret@[::1]:3307/myapp",
+	} {
+		if _, err := parseMySQLDSN(dsn); err != nil {
+			t.Errorf("parseMySQLDSN(%q): %v", dsn, err)
+		}
 	}
 }

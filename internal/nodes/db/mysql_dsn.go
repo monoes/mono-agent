@@ -32,7 +32,11 @@ const mysqlSupportedOptions = "tls (true|false|skip-verify), ssl (alias of tls),
 // port defaults to 3306 and the host to 127.0.0.1. Options go-mysql-org does
 // not implement are rejected, never ignored.
 func parseMySQLDSN(dsn string) (mydriver.Connector, error) {
-	c := mydriver.Connector{Params: url.Values{}}
+	// retries=off: with the driver's default (on), a dropped connection or a
+	// read timeout after the statement was sent makes database/sql re-run it
+	// (up to 3 attempts), so INSERT/UPDATE could be applied several times.
+	// An explicit retries=on in the connection string still overrides this.
+	c := mydriver.Connector{Params: url.Values{"retries": {"off"}}}
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
 		return c, fmt.Errorf("connection string is empty")
@@ -45,6 +49,12 @@ func parseMySQLDSN(dsn string) (mydriver.Connector, error) {
 		c.DB = dsn[i+1:]
 		if j := strings.IndexByte(c.DB, '?'); j >= 0 {
 			c.DB, query = c.DB[:j], c.DB[j+1:]
+		}
+		if strings.ContainsRune(c.DB, '@') {
+			// The last "/" was inside the credentials (a password with "/" and
+			// no database), so the split is wrong. Never guess: the guess
+			// would dial part of the password.
+			return mydriver.Connector{}, fmt.Errorf("invalid connection string: put a database name after the last \"/\" (a \"/\" in the password needs one, even if empty)")
 		}
 	}
 
@@ -64,7 +74,13 @@ func parseMySQLDSN(dsn string) (mydriver.Connector, error) {
 	if err != nil {
 		return c, fmt.Errorf("invalid options in the connection string query: %w", err)
 	}
+	if err := applyMySQLTLS(&c, values); err != nil {
+		return c, err
+	}
 	for _, key := range sortedKeys(values) {
+		if key == "tls" || key == "ssl" {
+			continue
+		}
 		if err := applyMySQLOption(&c, key, values[key][len(values[key])-1]); err != nil {
 			return c, err
 		}
@@ -77,12 +93,16 @@ func parseMySQLDSN(dsn string) (mydriver.Connector, error) {
 func mysqlAddress(s string) (string, error) {
 	if i := strings.IndexByte(s, '('); i >= 0 {
 		if !strings.HasSuffix(s, ")") {
-			return "", fmt.Errorf("invalid address %q: missing ) after tcp(", s)
+			return "", fmt.Errorf("invalid address: missing ) after tcp(")
 		}
 		if proto := s[:i]; proto != "tcp" {
-			return "", fmt.Errorf("network %q is not supported (only tcp; unix sockets are not supported by the go-mysql-org driver)", proto)
+			return "", fmt.Errorf("network %q is not supported (only tcp; unix sockets are not supported by the go-mysql-org driver)", sanitizeNetwork(proto))
 		}
 		s = s[i+1 : len(s)-1]
+	}
+	if strings.ContainsRune(s, '/') {
+		// go-mysql-org treats an address with "/" as a unix socket path.
+		return "", fmt.Errorf("invalid host in the connection string: it must not contain \"/\" (unix sockets are not supported)")
 	}
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
@@ -102,17 +122,6 @@ func applyMySQLOption(c *mydriver.Connector, key, value string) error {
 		return fmt.Errorf("connection string option %q has unsupported value %q (supported: %s)", key, value, want)
 	}
 	switch key {
-	case "tls", "ssl":
-		switch value {
-		case "false":
-		case "skip-verify":
-			c.Params.Set("tls", "skip-verify")
-		case "true":
-			host, _, _ := net.SplitHostPort(c.Addr)
-			c.Params.Set(mysqlVerifiedTLSParam, host)
-		default:
-			return bad("true, false, skip-verify; named or custom TLS configurations and preferred are not supported")
-		}
 	case "timeout", "readTimeout", "writeTimeout":
 		if _, err := time.ParseDuration(value); err != nil {
 			return bad("a duration such as 5s or 1m30s")
@@ -149,6 +158,47 @@ func applyMySQLOption(c *mydriver.Connector, key, value string) error {
 		return fmt.Errorf("connection string option %q is not supported by the go-mysql-org MySQL driver (supported: %s)", key, mysqlSupportedOptions)
 	}
 	return nil
+}
+
+// applyMySQLTLS resolves tls and ssl (aliases) into one mode before anything is
+// applied, and sets exactly one of the two internal mechanisms. Two different
+// values are an error: applying both would depend on order and could silently
+// skip certificate verification.
+func applyMySQLTLS(c *mydriver.Connector, values url.Values) error {
+	mode := ""
+	for _, key := range []string{"tls", "ssl"} {
+		vs, ok := values[key]
+		if !ok {
+			continue
+		}
+		v := vs[len(vs)-1]
+		switch v {
+		case "true", "false", "skip-verify":
+		default:
+			return fmt.Errorf("connection string option %q has unsupported value %q (supported: true, false, skip-verify; named or custom TLS configurations and preferred are not supported)", key, v)
+		}
+		if mode != "" && mode != v {
+			return fmt.Errorf("connection string options \"tls\" and \"ssl\" are aliases and have conflicting values; set only one")
+		}
+		mode = v
+	}
+	switch mode {
+	case "skip-verify":
+		c.Params.Set("tls", "skip-verify")
+	case "true":
+		host, _, _ := net.SplitHostPort(c.Addr)
+		c.Params.Set(mysqlVerifiedTLSParam, host)
+	}
+	return nil
+}
+
+// sanitizeNetwork keeps the network name out of error text unless it is a
+// short plain word (in a malformed DSN it may be a slice of the credentials).
+func sanitizeNetwork(s string) string {
+	if len(s) > 16 || strings.ContainsAny(s, ":@/ ") {
+		return "?"
+	}
+	return s
 }
 
 func sortedKeys(v url.Values) []string {

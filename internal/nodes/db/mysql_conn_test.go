@@ -248,6 +248,11 @@ func TestMySQLIntegration(t *testing.T) {
 	}
 
 	// Context cancellation interrupts a running query promptly.
+	//
+	// Note: `go test -race` with MONOAGENT_TEST_MYSQL_DSN set reports a benign
+	// data race inside go-mysql-org's context watcher (driver.go:246 against
+	// packet/conn.go:506: one byte of packet state on a connection that is
+	// being closed). It is in the library, not in this code.
 	cctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -290,5 +295,85 @@ func TestMySQLIntegration(t *testing.T) {
 	}
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE i = 98").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("committed row missing: n=%d err=%v", n, err)
+	}
+}
+
+// mysqlTestDSN returns MONOAGENT_TEST_MYSQL_DSN with its options replaced by query.
+func mysqlTestDSN(t *testing.T, query string) string {
+	t.Helper()
+	dsn := os.Getenv("MONOAGENT_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("MONOAGENT_TEST_MYSQL_DSN not set")
+	}
+	if i := strings.IndexByte(dsn, '?'); i >= 0 {
+		dsn = dsn[:i]
+	}
+	if query != "" {
+		dsn += "?" + query
+	}
+	return dsn
+}
+
+// A read timeout after the statement was sent must not run it again: with the
+// driver's default retries=on, database/sql re-ran the INSERT up to 3 times.
+func TestMySQLIntegrationNoDuplicateWriteOnReadTimeout(t *testing.T) {
+	dsn := mysqlTestDSN(t, "readTimeout=1s")
+	ctx := context.Background()
+	table := "monoagent_retry_it"
+	run := func(query string) error {
+		_, err := (&MySQLNode{}).Execute(ctx, workflow.NodeInput{}, map[string]interface{}{
+			"connection_string": dsn, "operation": "execute", "query": query,
+		})
+		return err
+	}
+	if err := run("DROP TABLE IF EXISTS " + table); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = run("DROP TABLE IF EXISTS " + table) })
+	if err := run("CREATE TABLE " + table + " (id INT)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("INSERT INTO " + table + " (id) SELECT 500+SLEEP(2)"); err == nil {
+		t.Fatal("expected the read timeout to fail the statement")
+	}
+	time.Sleep(3 * time.Second) // let the server finish the abandoned statement
+	c, err := parseMySQLDSN(mysqlTestDSN(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(newMySQLConnector(c))
+	defer db.Close()
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE id = 500").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n > 1 {
+		t.Fatalf("statement ran %d times after a read timeout; want at most once", n)
+	}
+}
+
+// tls=true must verify the server certificate on every run, also next to a
+// conflicting ssl option (which must be an error, never a silent skip-verify).
+// The test server has a self-signed certificate.
+func TestMySQLIntegrationTLSVerifies(t *testing.T) {
+	ctx := context.Background()
+	connect := func(q string) error {
+		_, err := (&MySQLNode{}).Execute(ctx, workflow.NodeInput{}, map[string]interface{}{
+			"connection_string": mysqlTestDSN(t, q), "query": "SELECT 1",
+		})
+		return err
+	}
+	for i := 0; i < 20; i++ {
+		for _, q := range []string{"tls=true", "ssl=true", "tls=true&ssl=skip-verify", "ssl=true&tls=skip-verify"} {
+			if connect(q) == nil {
+				t.Fatalf("run %d: %q connected; certificate verification was skipped", i, q)
+			}
+		}
+	}
+	if err := connect("tls=true"); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("tls=true error should be a certificate failure, got: %v", err)
+	}
+	if err := connect("tls=skip-verify"); err != nil {
+		t.Fatalf("tls=skip-verify should connect: %v", err)
 	}
 }
