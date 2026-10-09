@@ -104,19 +104,26 @@ func TestPinnedKeysAreWellFormed(t *testing.T) {
 	}
 }
 
-// The production signing key is pinned exactly as monoes.me published it
-// (https://monoes.me/api/auth/jwks, 2026-10-09). This fails if the constant is
-// edited by accident; a deliberate rotation updates it together with the server.
-func TestProductionSigningKeyIsPinned(t *testing.T) {
-	const wantKID = "GB6kESA9qO98637VArEGR2EjW6wSyYqO"
-	const wantHex = "ca570571b89cde8feb93c0e03581b78968ed75a953ac9bd349f01edf2ee9d26f"
+// The production signing keys are pinned exactly as generated: the key monoes.me
+// publishes today, the configured current key and the next key. This fails if a
+// constant is edited by accident; a deliberate rotation updates it together with
+// the server.
+func TestProductionSigningKeysArePinned(t *testing.T) {
+	want := map[string]string{
+		"GB6kESA9qO98637VArEGR2EjW6wSyYqO":            "ca570571b89cde8feb93c0e03581b78968ed75a953ac9bd349f01edf2ee9d26f",
+		"iPa0jEFWi05aKEmOZ-tQmDSVBJzuBIj-YT-UwVJJYr4": "5722b257d42cbfc2826f965c0e29a89d8ea371b6d39ff8433b42dc4a9644b6b2",
+		"nwholqtwhkaDi1bs1Byt1LwB5-7J9fMtzIuhv2i7qW0": "0f2a84c65cec9e26e148018cae0314168534273a148d2d12e12fc4f0deb720f3",
+	}
+	if len(pinnedKeys) != len(want) {
+		t.Fatalf("pinned %d keys, want %d", len(pinnedKeys), len(want))
+	}
 	for _, k := range pinnedKeys {
-		if k.KID == wantKID {
-			if got := hex.EncodeToString(k.Public); got != wantHex {
-				t.Fatalf("pinned key %q has public key %s, want %s", wantKID, got, wantHex)
-			}
-			return
+		wantHex, ok := want[k.KID]
+		if !ok {
+			t.Fatalf("unexpected pinned key %q", k.KID)
+		}
+		if got := hex.EncodeToString(k.Public); got != wantHex {
+			t.Fatalf("pinned key %q has public key %s, want %s", k.KID, got, wantHex)
 		}
 	}
-	t.Fatalf("the production signing key %q is not pinned", wantKID)
 }
