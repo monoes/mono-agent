@@ -130,6 +130,11 @@ func TestTheTaskSkillNamesTheRealTaskTools(t *testing.T) {
 		t.Fatalf("the skill names %d task tools", len(named))
 	}
 	for _, name := range named {
+		// task_approve is served only while the operator delegated approving (spec D33), so a default
+		// server does not list it; the skill names it in its section on delegation.
+		if name == "task_approve" {
+			continue
+		}
 		if !served[name] {
 			t.Errorf("the skill names %s, which a --tasks-only server does not serve", name)
 		}

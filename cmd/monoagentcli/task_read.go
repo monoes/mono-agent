@@ -283,7 +283,7 @@ func newTaskListCmd(cfg *globalConfig) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "list [--status S[,S...]] [--source K] [--claimed-by NAME] [--stale] [--limit N]",
-		Short: "List the profile's tasks (every column for you; ready, in progress and review for an agent)",
+		Short: "List the profile's tasks (every column for you; ready, in progress and review for an agent, and the Inbox too if you allowed it)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return errInvalidInput("task list takes no arguments (got %q): narrow it with --status, --source, --claimed-by, --stale or --limit", cutArg(args[0]))
@@ -332,7 +332,7 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 	var doneLimit int
 	cmd := &cobra.Command{
 		Use:   "board [--done-limit N]",
-		Short: "Show the whole board: the five columns, the counts and the revision (for you, not for agents)",
+		Short: "Show the whole board: the five columns, the counts and the revision (for you; for agents only if you allowed it)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return errInvalidInput("task board takes no arguments (got %q): its one option is --done-limit", cutArg(args[0]))
@@ -342,6 +342,10 @@ func newTaskBoardCmd(cfg *globalConfig) *cobra.Command {
 			// opened (the store's Board refuses it too).
 			caller := callerFor(flagAs(cmd))
 			operator, err := caller.operator("show the board")
+			if err != nil && agentMay(cfg, cmd, caller, func(a tasks.AgentAccess) bool { return a.View }) {
+				// The operator delegated seeing the board (task agents allow --view), read now.
+				operator, err = caller.actor, nil
+			}
 			if err != nil {
 				// No profile id is known before the database is opened: the command names a placeholder.
 				// It is the agent's form, with the agent's name, or a placeholder for one: pasted without

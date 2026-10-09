@@ -198,6 +198,10 @@ func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Acto
 	}
 	if len(statuses) == 0 {
 		statuses = defaultStatuses(actor)
+		// An agent the operator let see the board also sees the Inbox in the default list.
+		if s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.View }) {
+			statuses = BoardStatuses
+		}
 	}
 	if f.Source != "" && !validSource(f.Source) {
 		return nil, invalid("unknown source %q", echo(f.Source))
@@ -250,7 +254,9 @@ func (s *Store) List(ctx context.Context, profileID string, f Filter, actor Acto
 func (s *Store) Board(ctx context.Context, profileID string, doneLimit int, actor Actor) (Board, error) {
 	// Who is asking comes before what is asked, as in Edit.
 	if actor.Kind != Human {
-		return Board{}, operatorOnly("show the board")
+		if !s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.View }) {
+			return Board{}, operatorOnly("show the board")
+		}
 	}
 	b := Board{Tasks: map[Status][]Task{}}
 	err := s.snapshot(ctx, func(x dbx) error {
