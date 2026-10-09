@@ -248,3 +248,25 @@ func TestDelegatedApproveIsCappedAtTenIDs(t *testing.T) {
 		t.Fatalf("operator with 12 ids: %v", err)
 	}
 }
+
+// Each half of the "created by an agent" test stands alone: a task whose source says cli but whose
+// creation event names an agent, and one whose source says agent but whose creation names the operator.
+func TestDelegatedApproveChecksSourceAndCreatorSeparately(t *testing.T) {
+	s, db, _ := newTestStore(t)
+	if err := s.SetAgentAccess(bg, "default", AgentAccess{View: true, Approve: true}, human); err != nil {
+		t.Fatal(err)
+	}
+	byEvent, _, _ := s.Add(bg, "default", AddInput{Title: "creator is an agent"}, bot("bob"))
+	if _, err := db.Exec(`UPDATE tasks SET source_kind = 'cli' WHERE id = ?`, byEvent.ID); err != nil {
+		t.Fatal(err)
+	}
+	bySource := mustAdd(t, s, "default", "source is agent", false)
+	if _, err := db.Exec(`UPDATE tasks SET source_kind = 'agent' WHERE id = ?`, bySource.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{byEvent.ID, bySource.ID} {
+		if _, err := s.Approve(bg, "default", []int64{id}, false, bot("amy")); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "created by an agent") {
+			t.Errorf("task #%d: %v", id, err)
+		}
+	}
+}
