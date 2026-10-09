@@ -133,17 +133,22 @@
     if (context) params.context = context;
 
     sending.add(key);
+    let remembered = false;
     try {
       const data = await root.MonoAsk.request("chat.send", withProfile(params, profile), {
         timeoutMs: 600000,
         idleTimeoutMs: 60000,
         onProgress: (progress) => {
-          // The conversation may be named before the turn ends; keep it even
-          // if nobody is listening (a closed panel).
-          if (progress && progress.stage === "session.bound") {
+          // The conversation may be named before the turn ends (the progress
+          // wrapper's `conversation`); keep it even if nobody is listening
+          // (a closed panel), once.
+          if (!remembered) {
             const ev = Core().parseProgress(progress);
-            const c = ev && (ev.payload.conversation || ev.payload.conversation_id);
-            if (typeof c === "string") Core().rememberConversation(storage(), profile, c);
+            const c = ev && (ev.conversation || ev.payload.conversation || ev.payload.conversation_id);
+            if (typeof c === "string" && c) {
+              remembered = true;
+              Core().rememberConversation(storage(), profile, c);
+            }
           }
           chrome.runtime.sendMessage({ type: "chat_progress", tag: msg.tag || "", progress }).catch(() => {});
         },
@@ -171,9 +176,12 @@
       const conversation = String(msg.conversation || "");
       if (!conversation) throw new Error("there is no conversation to read");
       const params = { conversation };
-      if (Number.isFinite(msg.after_seq) && msg.after_seq > 0) params.after_seq = msg.after_seq;
+      // seq is per turn, so after_seq only means something with its turn.
+      if (msg.turn !== undefined && msg.turn !== null && msg.turn !== "") params.turn = msg.turn;
+      if (Number.isFinite(msg.after_seq) && msg.after_seq > 0 && params.turn !== undefined) params.after_seq = msg.after_seq;
       const data = await root.MonoAsk.request("chat.events", withProfile(params, profileOf(msg)), { timeoutMs: 20000, idleTimeoutMs: 20000 });
-      return { ok: true, events: Core().normalizeEvents(data && data.events), turn_active: !!(data && data.turn_active) };
+      const turn = data && data.turn !== undefined && data.turn !== null ? String(data.turn) : "";
+      return { ok: true, turn, events: Core().normalizeEvents(data && data.events, turn), turn_active: !!(data && data.turn_active) };
     },
   };
 

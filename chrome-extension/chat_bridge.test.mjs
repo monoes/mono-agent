@@ -167,8 +167,8 @@ test("chat_stop and chat_events pass the conversation and profile through", asyn
   const t = setup({ reply: async (m) => (m === "chat.events" ? { events: [{ seq: 3, type: "assistant.delta", payload: { text: "x" } }, { bad: 1 }], turn_active: true } : {}) });
   assert.equal((await t.send({ type: "chat_stop", profile: "p-work", conversation: "c-1" })).ok, true);
   assert.deepEqual(t.calls[0], { method: "chat.stop", params: { conversation: "c-1", profile: "p-work" }, opts: t.calls[0].opts });
-  const ev = await t.send({ type: "chat_events", profile: "p-work", conversation: "c-1", after_seq: 2 });
-  assert.deepEqual(t.calls[1].params, { conversation: "c-1", after_seq: 2, profile: "p-work" });
+  const ev = await t.send({ type: "chat_events", profile: "p-work", conversation: "c-1", after_seq: 2, turn: "t-4" });
+  assert.deepEqual(t.calls[1].params, { conversation: "c-1", after_seq: 2, turn: "t-4", profile: "p-work" });
   assert.deepEqual([ev.events.length, ev.turn_active], [1, true]);
   assert.equal((await t.send({ type: "chat_stop" })).ok, false);
   assert.equal((await t.send({ type: "chat_events" })).ok, false);
@@ -178,6 +178,26 @@ test("a profile id that is a path is not passed on", async () => {
   const t = setup();
   await t.send({ type: "chat_send", profile: "../etc", message: "hi" });
   assert.equal("profile" in t.calls[0].params, false);
+});
+
+test("chat_events omits after_seq without a turn, and returns the reply's turn on every event", async () => {
+  const t = setup({ reply: async () => ({ turn: 5, events: [{ seq: 1, type: "turn.started", payload: { text: "q" } }], turn_active: false }) });
+  const out = await t.send({ type: "chat_events", conversation: "c-1", after_seq: 9 });
+  assert.deepEqual(t.calls[0].params, { conversation: "c-1" });
+  assert.deepEqual([out.turn, out.events[0].turn], ["5", "5"]);
+});
+
+test("a conversation named in the progress wrapper is remembered at once, whatever the event", async () => {
+  const t = setup({
+    reply: async (_m, _p, opts) => {
+      opts.onProgress({ stage: "session.bound", detail: JSON.stringify({ seq: 1, payload: { runtime: "claude", sessionId: "s" } }) });
+      assert.equal(t.stored["chatConv:_"], undefined, "session.bound alone names no conversation");
+      opts.onProgress({ stage: "assistant.delta", detail: JSON.stringify({ seq: 2, conversation: "c-w", turn: "t-1", payload: { partId: "p", text: "x" } }) });
+      throw Object.assign(new Error("quiet"), { code: "timeout" });
+    },
+  });
+  await t.send({ type: "chat_send", message: "q" });
+  assert.equal(t.stored["chatConv:_"], "c-w");
 });
 
 test("page context: the active tab's url, title, text and selection", async () => {

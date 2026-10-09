@@ -94,15 +94,32 @@
     }
     if (!body || !Number.isFinite(body.seq)) return null;
     const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
-    return { seq: body.seq, type: progress.stage, payload };
+    const ev = { seq: body.seq, type: progress.stage, payload };
+    // The wrapper may name the conversation and turn ({"seq","conversation","turn","payload"}).
+    if (idOf(body.turn)) ev.turn = idOf(body.turn);
+    if (idOf(body.conversation)) ev.conversation = idOf(body.conversation);
+    return ev;
   }
 
-  /** normalizeEvents keeps only well-formed events from a chat.events reply, in seq order. */
-  function normalizeEvents(list) {
+  /** idOf reads an id that may arrive as a string or a number. */
+  function idOf(v) {
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    return typeof v === "string" ? v : "";
+  }
+
+  /**
+   * normalizeEvents keeps only well-formed events from a chat.events reply,
+   * in seq order. `turn` is the reply's turn: seq is per turn, so each event
+   * is stamped with it.
+   */
+  function normalizeEvents(list, turn) {
     const out = [];
     for (const e of Array.isArray(list) ? list : []) {
       if (!e || typeof e.type !== "string" || !Number.isFinite(e.seq)) continue;
-      out.push({ seq: e.seq, type: e.type, payload: e.payload && typeof e.payload === "object" ? e.payload : {} });
+      const ev = { seq: e.seq, type: e.type, payload: e.payload && typeof e.payload === "object" ? e.payload : {} };
+      const t = idOf(e.turn) || idOf(turn);
+      if (t) ev.turn = t;
+      out.push(ev);
     }
     return out.sort((a, b) => a.seq - b.seq);
   }
@@ -113,6 +130,7 @@
     const s = saved && typeof saved === "object" ? saved : {};
     return {
       conversation: str(s.conversation),
+      turn: str(s.turn), // the turn lastSeq belongs to: seq restarts every turn
       lastSeq: Number.isFinite(s.lastSeq) ? s.lastSeq : 0,
       messages: Array.isArray(s.messages) ? s.messages.filter(validMessage).map(cloneMessage) : [],
       nextId: Number.isFinite(s.nextId) ? s.nextId : 1,
@@ -155,6 +173,10 @@
   /** startTurn records what the person sent; the reply opens with its first event. */
   function startTurn(state, text, pageTitle) {
     closeOpen(state);
+    // A new turn numbers its events from 1 again; its id is learned from the
+    // first event that names it, or from the final reply.
+    state.turn = "";
+    state.lastSeq = 0;
     const msg = { role: "user", text: str(text) };
     if (pageTitle) msg.page = pageTitle;
     push(state, msg);
@@ -174,12 +196,21 @@
    * design) and changes nothing. Returns true when the state changed.
    */
   function applyEvent(state, ev) {
-    if (!ev || ev.seq <= state.lastSeq) return false;
+    if (!ev) return false;
+    // seq is per turn: an event of another turn starts counting afresh.
+    if (ev.turn && ev.turn !== state.turn) {
+      state.turn = ev.turn;
+      state.lastSeq = 0;
+    }
+    if (ev.conversation && !state.conversation) state.conversation = ev.conversation;
+    if (ev.seq <= state.lastSeq) return false;
     state.lastSeq = ev.seq;
     const p = ev.payload || {};
     switch (ev.type) {
+      case "turn.started":
       case "user.message": {
-        // A replayed user message the transcript does not already end with.
+        // The user's text, for a replay of a turn this transcript lacks; not
+        // added again when it already ends the transcript.
         const t = textOf(p);
         const last = state.messages[state.messages.length - 1];
         if (t && !(last && last.role === "user" && last.text === t)) {
@@ -189,6 +220,9 @@
         return true;
       }
       case "assistant.delta": {
+        // A worker's output (agentId set) is not the reply; the backend
+        // leaves it out of the final text too.
+        if (p.agentId) return true;
         const t = textOf(p);
         if (t) openAssistant(state).text += t;
         return true;
@@ -196,7 +230,7 @@
       case "tool.started": {
         const a = openAssistant(state);
         a.tools.push({
-          id: str(p.id) || str(p.call_id) || str(p.tool_id) || `t${ev.seq}`,
+          id: str(p.callId) || str(p.id) || str(p.call_id) || str(p.tool_id) || `t${ev.seq}`,
           name: clip(str(p.name) || str(p.tool) || str(p.title) || "tool", 80),
           status: "running",
         });
@@ -204,7 +238,7 @@
       }
       case "tool.completed": {
         const a = openAssistant(state);
-        const id = str(p.id) || str(p.call_id) || str(p.tool_id);
+        const id = str(p.callId) || str(p.id) || str(p.call_id) || str(p.tool_id);
         const name = str(p.name) || str(p.tool) || str(p.title);
         let t = id ? a.tools.find((x) => x.id === id) : null;
         if (!t) t = [...a.tools].reverse().find((x) => x.status === "running" && (!name || x.name === name));
@@ -212,12 +246,30 @@
           t = { id: id || `t${ev.seq}`, name: clip(name || "tool", 80), status: "running" };
           a.tools.push(t);
         }
-        t.status = p.error || p.is_error || p.status === "error" || p.status === "failed" ? "failed" : "done";
+        // ok is a pointer on the wire: absent means nothing was said.
+        const failed =
+          p.ok === false || !!p.denied || !!p.cancelled || !!p.error || !!p.is_error || p.status === "error" || p.status === "failed";
+        t.status = failed ? "failed" : "done";
         return true;
       }
       case "notice": {
-        const t = textOf(p) || str(p.message);
-        if (t) push(state, { role: "notice", text: clip(t, 500) });
+        const t = str(p.message) || textOf(p);
+        if (t) {
+          const n = { role: "notice", text: clip(t, 500) };
+          if (p.severity === "error") n.error = true;
+          push(state, n);
+        }
+        return true;
+      }
+      case "turn.finished": {
+        closeOpen(state);
+        const status = str(p.status);
+        const code = str(p.code);
+        if (status === "cancelled" || status === "canceled") {
+          push(state, { role: "notice", text: "Stopped." });
+        } else if (code || status === "failed" || status === "error") {
+          push(state, { role: "notice", text: clip(`The reply ended: ${code || status}`, 500), error: true });
+        }
         return true;
       }
       case "turn.completed":
@@ -226,7 +278,7 @@
         closeOpen(state);
         return true;
       case "session.bound": {
-        // The first turn's conversation id, before the turn ends: Stop needs it.
+        // Real payload is {runtime, sessionId}: no conversation. Tolerated if one is named.
         const c = str(p.conversation) || str(p.conversation_id);
         if (c && !state.conversation) state.conversation = c;
         return true;
@@ -238,7 +290,15 @@
   }
 
   /** finishTurn closes the reply; `text` is the final text, used if no deltas arrived. */
-  function finishTurn(state, text) {
+  function finishTurn(state, text, turn) {
+    if (idOf(turn) && idOf(turn) !== state.turn) {
+      // The final reply names the turn the events belonged to.
+      if (!state.turn) state.turn = idOf(turn);
+      else {
+        state.turn = idOf(turn);
+        state.lastSeq = 0;
+      }
+    }
     const last = state.messages[state.messages.length - 1];
     const finalText = str(text);
     if (finalText && !(last && last.role === "assistant" && last.text)) {
@@ -258,6 +318,7 @@
   function serialize(state) {
     return {
       conversation: state.conversation,
+      turn: state.turn,
       lastSeq: state.lastSeq,
       nextId: state.nextId,
       messages: state.messages.slice(-KEEP_MESSAGES).map((m) =>
@@ -283,6 +344,7 @@
       if (conv !== state.conversation) {
         if (state.conversation) state.messages = [];
         state.conversation = conv;
+        state.turn = "";
         state.lastSeq = 0;
       }
       return state;
