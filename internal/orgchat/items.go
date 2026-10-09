@@ -22,6 +22,9 @@ const (
 	StateApproved = "approved"
 	StateDenied   = "denied"
 	StateRejected = "rejected"
+	// StateDismissed: the operator closed a question without answering
+	// (`org questions dismiss`, monomind 2.21+).
+	StateDismissed = "dismissed"
 )
 
 // Question is one ask_human question (`org questions <org> --all`).
@@ -31,6 +34,7 @@ type Question struct {
 	Question   string  `json:"question"`
 	TS         int64   `json:"ts"`
 	Answer     *string `json:"answer"`
+	State      string  `json:"state,omitempty"`
 	Blocking   *bool   `json:"blocking,omitempty"`
 }
 

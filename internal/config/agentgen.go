@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -81,13 +82,24 @@ func (g *AgentGenerator) resolve(ctx context.Context) (bin, runtime string, err 
 		return "", "", fmt.Errorf("cache-only mode: agent scan failed: %w", err)
 	}
 	for _, want := range runtimePriority {
-		if e := scan.Find(want); e != nil && e.Installed {
+		// kilo/freebuff run full-access only (or not at all); a scoped
+		// generation turn would be refused with `unsupported`.
+		if e := scan.Find(want); e != nil && e.Installed && runsScoped(e) {
 			g.resolvedBin = resolvedBin
 			g.resolvedRuntime = want
 			return g.resolvedBin, g.resolvedRuntime, nil
 		}
 	}
 	return "", "", fmt.Errorf("cache-only mode: %w", monomind.ErrNoRuntime)
+}
+
+// runsScoped reports whether a plain (scoped-access) turn can run on the
+// runtime. An older monomind that lists no access modes is assumed to.
+func runsScoped(e *monomind.ScanEntry) bool {
+	if _, no := e.UnsupportedReason(); no {
+		return false
+	}
+	return len(e.AccessModes) == 0 || slices.Contains(e.AccessModes, "scoped")
 }
 
 const agentSystemPrompt = `You generate field-extraction config JSON for Mono Agent browser automation.

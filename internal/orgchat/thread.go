@@ -247,7 +247,11 @@ func (b *builder) event(e Event) {
 		kind, ref, verdict, by := str(d, "kind"), str(d, "ref"), str(d, "verdict"), str(d, "resolver")
 		switch kind {
 		case "question":
-			b.resolve(ItemQuestion, ref, StateAnswered, by)
+			state := StateAnswered
+			if verdict == StateDismissed {
+				state = StateDismissed
+			}
+			b.resolve(ItemQuestion, ref, state, by)
 		case "gate":
 			state := StateRejected
 			if verdict == "approved" {
@@ -281,8 +285,10 @@ func (b *builder) merge(h HumanItems) {
 		if q.Question != "" {
 			it.Text = q.Question
 		}
-		it.Pending = q.Answer == nil
-		if q.Answer != nil {
+		it.Pending = q.Answer == nil && q.State != StateDismissed
+		if q.State == StateDismissed {
+			it.Resolution = StateDismissed
+		} else if q.Answer != nil {
 			it.Resolution = StateAnswered
 			it.Answer = *q.Answer
 		}

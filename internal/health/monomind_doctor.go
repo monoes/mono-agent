@@ -185,6 +185,8 @@ func doctorRow(r monomind.DoctorResult, id, project string) Result {
 		row.Status = StatusWarn
 	case "fail":
 		row.Status = StatusFail
+	case "skipped":
+		row.Status = StatusSkip
 	default:
 		row.Status = StatusInfo
 	}

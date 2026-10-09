@@ -25,7 +25,7 @@ const DoctorTimeout = 2 * time.Minute
 type DoctorResult struct {
 	Component string  `json:"component"`
 	Name      string  `json:"name"`
-	Status    string  `json:"status"` // pass | warn | fail | info
+	Status    string  `json:"status"` // pass | warn | fail | info | skipped
 	Message   string  `json:"message"`
 	Fix       *string `json:"fix"`
 	FixSafety *string `json:"fix_safety"` // auto | confirm | manual
@@ -41,6 +41,7 @@ type DoctorReport struct {
 		Warnings int `json:"warnings"`
 		Failed   int `json:"failed"`
 		Info     int `json:"info"`
+		Skipped  int `json:"skipped"`
 	} `json:"summary"`
 	Results []DoctorResult `json:"results"`
 	Fixes   []struct {

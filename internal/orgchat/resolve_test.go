@@ -255,3 +255,15 @@ func TestLockHasOneHolderAtATime(t *testing.T) {
 		t.Fatalf("%d holders at once", most)
 	}
 }
+
+func TestResolveDismissedQuestionIsAlreadyDone(t *testing.T) {
+	f := newFake()
+	f.questions[0].State = StateDismissed
+	res, err := Resolve(context.Background(), f, t.TempDir(), Request{Org: "acme", Ref: "q-1", Answer: true, Text: "1.2.0"})
+	if err != nil || !res.Already || res.State != StateDismissed {
+		t.Fatalf("answer on a dismissed question = %+v, %v", res, err)
+	}
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v, want nothing for a dismissed question", f.sent)
+	}
+}

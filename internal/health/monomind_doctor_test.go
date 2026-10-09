@@ -228,3 +228,10 @@ func TestMonomindOptionRunsOnlyMonomindNetworkChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorRowMapsSkipped(t *testing.T) {
+	row := doctorRow(monomind.DoctorResult{Component: "kg", Name: "KG", Status: "skipped", Message: "Skipped (read-only)"}, "id", "")
+	if row.Status != StatusSkip {
+		t.Fatalf("skipped mapped to %v, want StatusSkip", row.Status)
+	}
+}

@@ -151,6 +151,10 @@ func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, 
 		if q == nil {
 			return nil, ErrNotFound
 		}
+		if q.State == StateDismissed {
+			res.State, res.Already = StateDismissed, true
+			return res, nil
+		}
 		if q.Answer != nil {
 			res.State, res.Already = StateAnswered, true
 			return res, nil

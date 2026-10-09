@@ -113,15 +113,17 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		outJSON["_org_closed_by"] = st.ClosedBy
 		return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{{JSON: outJSON}}}}, nil
 
-	case st.ClosedBy != "":
-		return nil, fmt.Errorf("org.run (%s): run ended without completing (closed_by=%s)", orgName, st.ClosedBy)
-
+	// crashed first: since monomind 2.21 a killed run is closed with
+	// closed_by=liveness-check AND the reason in error ("pid N gone").
 	case st.Status == "crashed":
 		msg := st.Error
 		if msg == "" {
 			msg = "org crashed"
 		}
 		return nil, fmt.Errorf("org.run (%s): %s", orgName, msg)
+
+	case st.ClosedBy != "":
+		return nil, fmt.Errorf("org.run (%s): run ended without completing (closed_by=%s)", orgName, st.ClosedBy)
 
 	case st.Status == "running":
 		if exclusive && !startedHere {
