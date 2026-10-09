@@ -41,13 +41,15 @@ func (c Class) String() string {
 //   - native_sandbox "monomind": monomind enforces the access mode itself, so
 //     claude's default scoped access exposes no native tool: ChatOnly.
 //   - otherwise, when Exec would apply the workspace-write sandbox to this
-//     runtime (monomind.SandboxArgs says "sandboxed"): Sandboxed.
+//     runtime (monomind.SandboxArgs says "sandboxed"): Sandboxed, unless the
+//     scan reports that mode as rule-based (copilot's allow/deny rules), which
+//     is no boundary.
 //   - otherwise Unconfined.
 func ClassifyRuntime(e monomind.ScanEntry, caps *monomind.CapabilitySet) Class {
 	if e.NativeSandbox == "monomind" {
 		return ChatOnly
 	}
-	if _, status := monomind.SandboxArgs(caps, e.SandboxModes, e.ID, monomind.SandboxWorkspaceWrite); status == monomind.SandboxStatusSandboxed {
+	if _, status := monomind.SandboxArgs(caps, e.SandboxModes, e.ID, monomind.SandboxWorkspaceWrite); status == monomind.SandboxStatusSandboxed && !e.RuleBasedSandbox(monomind.SandboxWorkspaceWrite) {
 		return Sandboxed
 	}
 	return Unconfined

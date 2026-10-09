@@ -1412,6 +1412,11 @@ monoagentcli chat --runtime claude --tools monoagent,runs "…"            # + r
 monoagentcli chat --runtime codex --canvas <workflow-id> "add a Slack step"  # workflow-builder mode
 ```
 
+`--budget-usd` never trips for a runtime whose scan entry has
+`reports_cost: false`: no cost is reported, so nothing is ever summed
+against it. Kilo's runner refuses `--budget-usd` and `--effort` outright, so
+a kilo coder turn drops both and says so in a `coder.status` notice.
+
 `--model`, `--timeout` and `--budget-usd` are optional per turn. Each
 `chat` invocation runs one turn and exits — `--history-id` only tags
 where the transcript is persisted (for later lookup/GUI display, e.g. by
@@ -1530,6 +1535,13 @@ monoagentcli chat --mode coder --cwd ~/code/app -- "…"   # one unjournaled tur
   runtime's key setup files: `.clinerules/monomind.md` for cline,
   `CONVENTIONS.md` and `.aider.conf.yml` for aider, and `AGENTS.md` for dsh
   and pi. The app shows `dsh` as "DeepSeek Harness".
+
+A claude coder lead caps its own agent launches: `MONOMIND_CODER_MAX_AGENTS`
+(default 40) and `MONOMIND_CODER_MAX_REVIEW_AGENTS` (default 12), with the
+subagent model pinned through `CLAUDE_CODE_SUBAGENT_MODEL`. Both caps pass
+through `FilteredEnviron`. A `result` event's `unexpected_models` and
+`context_warning` (monomind 2.24.4) appear as `coder.result` warnings in the
+turn journal.
 
 #### Dynamic org (a coder chat that spawns workers)
 
@@ -1994,6 +2006,12 @@ login (and its bill) is what the turn uses.
     prompt (hermes, cline and kimicode write one under their temp directory) go
     where the child's `TMPDIR` points: a caller that runs turns for others sets
     `ExecOptions.Env` `TMPDIR`, `TMP` and `TEMP`, as the API gateway does.
+    hermes 0.19 puts the whole prompt in its argv, visible to any local user
+    through `ps`: do not route private profile data to hermes.
+  - **Rule-based modes.** A scan entry's `sandbox_mode_reports` says what each
+    mode reports; `approvals: "on"` (copilot `workspace-write`) is the CLI's
+    own allow/deny rules, not an OS sandbox, so the OpenAI-compatible API
+    classifies that runtime `unconfined`, not `sandboxed`.
   - **Verdict.** `monomind.TurnResult.SandboxStatus` is `sandboxed`,
     `scoped`, `unsupported` (after #396, a runtime that can't honour it),
     `awaiting-monomind`, `needs-monomind` or `off`. Once monomind reports

@@ -251,3 +251,25 @@ func backgroundNotice(pids []int) chatevents.NoticePayload {
 		Pids: pids, Processes: refs,
 	}
 }
+
+// noticeCoderResult is the coder.result notice a turn's result event earns
+// when it ran on a model other than the selected one or on a context so
+// large that every further call re-reads it (protocol rev 30).
+const noticeCoderResult = "coder.result"
+
+// resultNoticesLocked journals unexpected_models and context_warning from a
+// result event, each as a warning; a result without them adds nothing.
+func (j *turnJournal) resultNoticesLocked(ev monomind.Event) {
+	var msgs []string
+	if len(ev.UnexpectedModels) > 0 {
+		msgs = append(msgs, "This turn also ran on "+strings.Join(ev.UnexpectedModels, ", ")+", not only the selected model.")
+	}
+	if ev.ContextWarning {
+		msgs = append(msgs, fmt.Sprintf("The conversation context reached %d tokens: every further call re-reads it. Consider a new conversation.", ev.PeakContextTokens))
+	}
+	for _, m := range msgs {
+		j.forceFlushLocked()
+		bounded, _, _ := chatevents.BoundText(m, chatevents.MaxToolPreviewBytes)
+		_ = j.appendLocked(chatevents.EventNotice, chatevents.NoticePayload{Code: noticeCoderResult, Message: bounded, Severity: chatevents.SeverityWarning})
+	}
+}

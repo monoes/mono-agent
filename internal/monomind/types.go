@@ -94,6 +94,40 @@ type Event struct {
 	// start: the sandbox the turn runs in (see sandbox.go).
 	SandboxFields
 	SubagentFields
+	ResultFields
+}
+
+// ResultFields are a `result` event's visibility fields (protocol rev 30,
+// monomind 2.24.4): what the request actually ran on beside what was
+// selected. All optional; older monomind never sends them.
+type ResultFields struct {
+	// ModelUsage is per model served, child agents included.
+	ModelUsage map[string]ModelUsage `json:"model_usage,omitempty"`
+	// Effort is the effort the request was sent with.
+	Effort string `json:"effort,omitempty"`
+	// PeakContextTokens is the largest main-thread context sent in one call.
+	PeakContextTokens int64 `json:"peak_context_tokens,omitempty"`
+	// ContextWarning: the peak is large enough that every further call
+	// re-reads an expensive history.
+	ContextWarning bool `json:"context_warning,omitempty"`
+	// UnexpectedModels are served models that are not the selected one.
+	UnexpectedModels []string `json:"unexpected_models,omitempty"`
+	// AgentLaunches counts agent launches this turn (coder mode, claude).
+	AgentLaunches *AgentLaunches `json:"agent_launches,omitempty"`
+}
+
+// ModelUsage is one model's token usage in ResultFields.ModelUsage.
+type ModelUsage struct {
+	Input         int64 `json:"input"`
+	Output        int64 `json:"output"`
+	CacheRead     int64 `json:"cache_read"`
+	CacheCreation int64 `json:"cache_creation"`
+}
+
+// AgentLaunches counts a turn's agent launches, reviews counted apart.
+type AgentLaunches struct {
+	Total  int `json:"total"`
+	Review int `json:"review"`
 }
 
 // CoderFields are the events and fields full-access ("coder") turns add to
@@ -206,6 +240,7 @@ type eventJSON struct {
 	// start: the sandbox the turn runs in (see sandbox.go).
 	SandboxFields
 	SubagentFields
+	ResultFields
 }
 
 // UnmarshalJSON decodes the wire event and records, in HasInputTokens/
@@ -230,6 +265,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		CoderFields:    w.CoderFields,
 		SandboxFields:  w.SandboxFields,
 		SubagentFields: w.SubagentFields,
+		ResultFields:   w.ResultFields,
 	}
 	if w.ExitCode != nil {
 		e.ExitCode = *w.ExitCode
@@ -270,6 +306,7 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		CoderFields:    e.CoderFields,
 		SandboxFields:  e.SandboxFields,
 		SubagentFields: e.SubagentFields,
+		ResultFields:   e.ResultFields,
 	}
 	if e.HasExitCode || e.ExitCode != 0 {
 		w.ExitCode = &e.ExitCode
@@ -413,6 +450,11 @@ type ScanEntry struct {
 	// (agent-exec-sandbox, monomind 2.19.0); nil from an older monomind.
 	// monomind refuses any other mode, so SandboxArgs checks this first.
 	SandboxModes []string `json:"sandbox_modes,omitempty"`
+	// SandboxModeReports says, per accepted mode, what a scoped turn
+	// reports (protocol rev 26); nil from an older monomind. Approvals "on"
+	// means the mode is the CLI's own allow/deny rules (copilot
+	// workspace-write), not an OS sandbox.
+	SandboxModeReports map[string]SandboxReport `json:"sandbox_mode_reports,omitempty"`
 	// NativeSandbox says who confines the runtime's own tools: "monomind"
 	// (its allow-list gate is the only tool gate, as for claude), a vendor
 	// sandbox mode, or "none"; "" from a monomind that predates the field.
@@ -424,6 +466,18 @@ type ScanEntry struct {
 	AccessModes               []string `json:"access_modes,omitempty"`
 	CallerTools               bool     `json:"caller_tools,omitempty"`
 	CallerToolsWithFullAccess bool     `json:"caller_tools_with_full_access,omitempty"`
+}
+
+// SandboxReport is one sandbox mode's native_sandbox and approvals.
+type SandboxReport struct {
+	NativeSandbox string `json:"native_sandbox"`
+	Approvals     string `json:"approvals"`
+}
+
+// RuleBasedSandbox reports whether mode is enforced by the runtime's own
+// approval rules rather than an OS sandbox. False when the scan did not say.
+func (e ScanEntry) RuleBasedSandbox(mode string) bool {
+	return e.SandboxModeReports[mode].Approvals == "on"
 }
 
 // UnsupportedReason returns monomind's reason when it reports the runtime
