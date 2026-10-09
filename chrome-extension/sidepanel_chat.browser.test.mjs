@@ -216,15 +216,16 @@ describe("the side panel chat", { skip: browser ? false : why, concurrency: 1 },
     }
   });
 
-  it("the page chip leaves the page out of one message, and the next shares again", async () => {
-    await ev(panel, `document.getElementById("chat-page").click()`);
+  it("the page is shared with the first message only; the chip is off afterwards", async () => {
+    // The first message (previous test) shared the page; the chip is now off.
     assert.equal(await ev(panel, `document.getElementById("chat-page").getAttribute("aria-pressed")`), "false");
+    assert.equal(await ev(panel, `document.getElementById("chat-page").textContent`), "Not sharing this page");
     await typeAndSend("A private follow-up");
     await until(`document.querySelectorAll("#chat-log .chat-msg[data-role=assistant]").length === 2 && document.getElementById("chat-state").textContent === ""`, "the second reply", 8000);
     const calls = await reqs("chat.send");
     assert.equal("context" in calls[1].params, false);
     assert.equal(calls[1].params.conversation, "c-test", "the conversation carries on");
-    assert.equal(await ev(panel, `document.getElementById("chat-page").getAttribute("aria-pressed")`), "true");
+    assert.equal(await ev(panel, `document.getElementById("chat-page").getAttribute("aria-pressed")`), "false", "the page is not shared again on its own");
   });
 
   it("closing and reopening the panel restores the chat and replays only what came after", async () => {
