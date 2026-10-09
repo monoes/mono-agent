@@ -54,9 +54,10 @@ func InitProfile(ctx context.Context, opts InitOptions) error {
 	// --no-install skips a potential global `npm install -g
 	// @anthropic-ai/claude-code`. CI=true makes every prompt path treat
 	// this as non-interactive even if monomind's TTY check changes.
-	// --force (Repin) merges monomind's own server entry into .mcp.json and
-	// keeps files the user edited (as <file>.monomind-new), so it is safe on
-	// a profile in use; without it an existing .mcp.json is left alone.
+	// --force (Repin) merges monomind's own server entry into .mcp.json (the
+	// user's other entries are kept); an edited managed block in CLAUDE.md or
+	// AGENTS.md is replaced after a backup in .monomind/backups/. Without it
+	// an existing .mcp.json is left alone.
 	args := []string{"init", "--yes", "--no-watch", "--no-install"}
 	if opts.Repin {
 		args = append(args, "--force")

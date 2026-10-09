@@ -476,6 +476,8 @@ type SandboxReport struct {
 
 // RuleBasedSandbox reports whether mode is enforced by the runtime's own
 // approval rules rather than an OS sandbox. False when the scan did not say.
+// This keys on approvals=="on", which monomind also reports for dsh (a real
+// sandbox), so dsh is over-demoted: fail-closed, never served as Sandboxed.
 func (e ScanEntry) RuleBasedSandbox(mode string) bool {
 	return e.SandboxModeReports[mode].Approvals == "on"
 }

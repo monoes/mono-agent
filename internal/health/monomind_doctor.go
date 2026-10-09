@@ -44,8 +44,8 @@ func monomindDoctorChecks() []Check {
 		// Network: `monomind doctor` asks npm for the latest version and, in
 		// a monomind before capabilities doctor-read-only and doctor-offline,
 		// also writes .monomind/registry.json. With both it is read-only
-		// by default, and plain `doctor` runs it with --offline; --deep (or
-		// --check) runs it whole. checkMonomindDoctor skips an older monomind
+		// by default, and plain `doctor` runs it with --offline; --deep runs it
+		// whole (a bare --check does not). checkMonomindDoctor skips an older monomind
 		// unless the run is online.
 		{ID: CheckMonomindDoctor, Group: GroupMonomind, Title: "monomind checks", Network: true, OfflineCapable: true,
 			DependsOn: []string{CheckMonomindProfileInit}, Timeout: monomindDoctorTimeout, Run: checkMonomindDoctor},
@@ -106,7 +106,7 @@ func checkMonomindDoctor(ctx context.Context, env *Env) Result {
 	offline := !Online(ctx)
 	if offline {
 		vi, _ := env.MonomindHandshake(ctx) // hasDoctorJSON got it
-		if !vi.HasCapability(monomind.CapDoctorReadOnly) || !vi.HasCapability(monomind.CapDoctorOffline) {
+		if vi == nil || !vi.HasCapability(monomind.CapDoctorReadOnly) || !vi.HasCapability(monomind.CapDoctorOffline) {
 			return Result{Status: StatusSkip, Summary: fmt.Sprintf("monomind %s's checks write files and use the network — run doctor --deep, or update monomind", version)}
 		}
 	}

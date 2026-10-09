@@ -60,7 +60,7 @@ func OrgAnswerWith(ctx context.Context, projectRoot, name, questionID, answer st
 
 // orgDismissMinVersion is the monomind that has `org questions dismiss`
 // (#572). It advertises no capability for it, so it is gated on the version.
-const orgDismissMinVersion = "2.21.0"
+const orgDismissMinVersion = "2.22.0"
 
 // OrgDismissQuestionWith closes a pending ask_human question without an
 // answer, attributed (--by). reason may be empty; it is passed as

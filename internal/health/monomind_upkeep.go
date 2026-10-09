@@ -32,7 +32,7 @@ func monomindUpkeepFixes() []Fix {
 	return []Fix{
 		{FixInfo: FixInfo{ID: FixMonomindRepin, Label: "Pin this profile's monomind MCP server to the installed version", Safety: SafetyConfirm,
 			Command: "monomind init --force --yes --no-watch --no-install in the profile folder (refreshes monomind's own files and the " +
-				".mcp.json version pin; files you edited are kept, with monomind's version beside them as <file>.monomind-new)"},
+				".mcp.json version pin; an edited managed block in CLAUDE.md/AGENTS.md is replaced, with a copy kept in .monomind/backups/)"},
 			Apply: fixMonomindRepin},
 		{FixInfo: FixInfo{ID: FixMonomindDeps, Label: "Download the Claude Agent SDK (about 300 MB)", Safety: SafetyConfirm,
 			Command: "monomind deps install", Optional: true}, Apply: fixMonomindDeps},
