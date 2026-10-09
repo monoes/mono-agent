@@ -50,7 +50,7 @@ echo '{"seq":2,"type":"turn.finished","payload":{"status":"completed"}}'
 	if len(got) != 2 || got[0].Type != "assistant.delta" || got[1].Seq != 2 {
 		t.Fatalf("events = %+v", got)
 	}
-	want := "--profile=p-work --json chat --conversation=c1 --turn=t1 --instance=ext-1 --tools=monoagent -- --sneaky"
+	want := "--profile=p-work --json chat --conversation=c1 --turn=t1 --instance=ext-1 --tools=monoagent:read -- --sneaky"
 	if lines := readLog(t, log); len(lines) != 1 || lines[0] != want {
 		t.Fatalf("argv = %q", lines)
 	}

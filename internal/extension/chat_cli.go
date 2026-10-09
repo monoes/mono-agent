@@ -44,6 +44,13 @@ func (b *cliChatBackend) binary() (string, error) {
 	return bin, nil
 }
 
+// chatToolsMode is the --tools value of every turn the extension starts, with
+// or without page text attached: the page-read set (three read-only workflow
+// tools; see cmd/monoagentcli/chat_pageread.go). One mode for all of the
+// panel's turns, so a later message in the same conversation can never widen
+// what a page reached the model with.
+const chatToolsMode = "monoagent:read"
+
 // chatBase is the global flags every call carries.
 func chatBase(profile string) []string {
 	args := []string{"--json"}
@@ -55,7 +62,7 @@ func chatBase(profile string) []string {
 
 func chatTurnArgv(s ChatTurnSpec) []string {
 	args := append(chatBase(s.Profile), "chat", "--conversation="+s.Conversation, "--turn="+s.Turn,
-		"--instance="+s.Instance, "--tools=monoagent", "--", s.Message)
+		"--instance="+s.Instance, "--tools="+chatToolsMode, "--", s.Message)
 	return args
 }
 

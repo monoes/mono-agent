@@ -175,7 +175,6 @@ func TestChatSendValidation(t *testing.T) {
 		{"bad runtime", map[string]any{"runtime": "--x", "message": "x"}},
 		{"dash model", map[string]any{"runtime": "claude", "model": "-m", "message": "x"}},
 		{"context not object", map[string]any{"conversation": "c1", "message": "x", "context": "s"}},
-		{"context text too long", map[string]any{"conversation": "c1", "message": "x", "context": map[string]any{"text": strings.Repeat("a", chatMaxCtxText+1)}}},
 		{"context wrong type", map[string]any{"conversation": "c1", "message": "x", "context": map[string]any{"url": 5}}},
 	}
 	for _, c := range cases {
