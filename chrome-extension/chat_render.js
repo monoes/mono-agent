@@ -35,7 +35,25 @@
     }
   }
 
-  const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>)\]]+)/;
+  /**
+   * hostOf is the host the browser will go to for an href that safeHref
+   * accepted (userinfo, escapes and IDN already resolved by URL), shown next
+   * to a link so the label cannot claim a different site.
+   */
+  function hostOf(href) {
+    try {
+      const u = new URL(href);
+      if (u.protocol === "mailto:") return decodeURIComponent(u.pathname).split("@").pop().toLowerCase();
+      return u.host;
+    } catch {
+      return "";
+    }
+  }
+
+  // Only an explicit Markdown link is a link. A bare address in a reply stays
+  // text: a model talked into writing one with someone's data in its query
+  // must not leave it one tap away.
+  const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\[[^\]\n]+\]\([^)\s]+\))/;
 
   /** inline splits one line of text into runs. */
   function inline(text) {
@@ -55,14 +73,11 @@
         out.push({ t: "strong", text: tok.slice(2, -2) });
       } else if (m[3]) {
         out.push({ t: "em", text: tok.slice(1, -1) });
-      } else if (m[4]) {
+      } else {
         const close = tok.indexOf("](");
         const label = tok.slice(1, close);
         const href = safeHref(tok.slice(close + 2, -1));
-        out.push(href ? { t: "link", text: label, href } : { t: "text", text: label });
-      } else {
-        const href = safeHref(tok);
-        out.push(href ? { t: "link", text: tok, href } : { t: "text", text: tok });
+        out.push(href ? { t: "link", text: label, href, host: hostOf(href) } : { t: "text", text: label });
       }
       rest = rest.slice(m.index + tok.length);
     }
@@ -155,6 +170,8 @@
       }
       node.textContent = r.text;
       parent.appendChild(node);
+      // Where the link really goes, in plain text beside it.
+      if (r.t === "link" && r.host) parent.appendChild(doc.createTextNode(` (${r.host})`));
     }
   }
 

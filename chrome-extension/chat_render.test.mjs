@@ -53,7 +53,7 @@ test("a fence that has not closed yet (a streaming reply) is still code", () => 
 test("inline code, bold, italic and links", () => {
   const runs = R.inline("use `x` and **bold** and *it* see [docs](https://a.example/d) or https://b.example/z");
   assert.deepEqual(runs.filter((r) => r.t !== "text").map((r) => [r.t, r.text]), [
-    ["code", "x"], ["strong", "bold"], ["em", "it"], ["link", "docs"], ["link", "https://b.example/z"],
+    ["code", "x"], ["strong", "bold"], ["em", "it"], ["link", "docs"],
   ]);
 });
 
@@ -82,6 +82,37 @@ test("everything built is from a short allowlist, and links carry noopener", () 
   const a = doc.made.find((n) => n.tag === "a");
   assert.deepEqual(a.attrs, { href: "https://a.example/", target: "_blank", rel: "noopener noreferrer" });
   for (const n of doc.made) for (const k of Object.keys(n.attrs)) assert.ok(["href", "target", "rel"].includes(k), k);
+});
+
+// A bare address in a reply is text: the model can be talked into writing one
+// with someone's data in its query, and a click must not be one tap away.
+test("a bare https:// address is never turned into a link", () => {
+  const bare = "see https://evil.example/?d=SECRET and http://x.example/y or www.z.example";
+  assert.ok(R.inline(bare).every((r) => r.t === "text"));
+  const { doc } = render(`${bare}\n\n- https://evil.example/?d=SECRET\n\n> https://evil.example/?d=SECRET`);
+  assert.equal(doc.made.filter((n) => n.tag === "a").length, 0);
+});
+
+test("an explicit link shows its real host next to the text", () => {
+  const { frag, doc } = render("Open [details](https://evil.example:8443/p?d=SECRET) or [https://good.example](https://evil.example/x) or [mail me](mailto:a@Corp.example)");
+  const anchors = doc.made.filter((n) => n.tag === "a");
+  assert.equal(anchors.length, 3);
+  assert.equal(anchors[0].attrs.href, "https://evil.example:8443/p?d=SECRET");
+  assert.match(frag.textContent, /details \(evil\.example:8443\)/);
+  assert.match(frag.textContent, /https:\/\/good\.example \(evil\.example\)/);
+  assert.match(frag.textContent, /mail me \(corp\.example\)/);
+});
+
+test("the shown host is the one the browser will use, not the one the text claims", () => {
+  for (const [href, host] of [
+    ["https://good.example@evil.example/x", "evil.example"],
+    ["https://%65vil.example/", "evil.example"],
+    ["https://еvil.example/", "xn--vil-qdd.example"],
+  ]) {
+    const runs = R.inline(`[safe](${href})`);
+    assert.equal(runs[0].t, "link", href);
+    assert.equal(runs[0].host, host, href);
+  }
 });
 
 test("the renderer and the panel never use innerHTML or friends", () => {
