@@ -91,7 +91,7 @@ export default function Publication({ isActive = true, profileId, onNavigate }) 
       </div>
       <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}><RefreshCw size={12} /> {t('publication.refresh')}</button>
     </div>
-    <div className="page-body">
+    <div className="page-body pub-body">
       <form onSubmit={e => { e.preventDefault(); setOffset(0); setFilters({ ...draft }) }} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         {Object.keys(emptyFilters).map(key => <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, minWidth: 145, flex: '1 1 145px', maxWidth: 230 }}>
           {t(`publication.filter.${key}`)}
@@ -117,7 +117,7 @@ export default function Publication({ isActive = true, profileId, onNavigate }) 
             </div>
           </button>)}
         </div>}
-      {!loading && !error && <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 16 }}>
+      {!loading && !error && <div className="pub-pager">
         <button className="btn btn-ghost btn-sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>{t('publication.previous')}</button>
         <span>{t('publication.page', { page: Math.floor(offset / pageSize) + 1 })}</span>
         <button className="btn btn-ghost btn-sm" disabled={!hasNext} onClick={() => setOffset(offset + pageSize)}>{t('publication.next')}</button>
