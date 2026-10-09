@@ -6,6 +6,7 @@
   <title>MonoAgent</title>
   <link rel="stylesheet" href="sidepanel.css" />
   <link rel="stylesheet" href="sidepanel_ai.css" />
+  <link rel="stylesheet" href="sidepanel_chat.css" />
 </head>
 <body>
   <!--
@@ -114,6 +115,32 @@
         page to get the newest version.
       </p>
     </div>
+
+    <!-- Issue #451: chat with the agent about the page in front of you. Open
+         by default and first, because asking is what most people open the
+         panel for. sidepanel_chat.js; the long request runs in the worker. -->
+    <details class="panel chat" id="chat" open>
+      <summary><span>Chat</span><span id="chat-state" class="panel-count"></span></summary>
+      <div class="panel-body">
+        <p id="chat-notice" class="chat-notice" role="status" hidden></p>
+        <div id="chat-log" class="chat-log" role="log" aria-label="Conversation" aria-relevant="additions text" tabindex="0">
+          <p id="chat-empty" class="chat-empty">Ask about this page, or anything else.</p>
+        </div>
+        <div class="chat-tools">
+          <button type="button" id="chat-summarize" class="btn-secondary btn-tiny">Summarize this page</button>
+          <button type="button" id="chat-new" class="btn-secondary btn-tiny">New chat</button>
+        </div>
+        <button type="button" id="chat-page" class="chip chat-page" aria-pressed="true"></button>
+        <div class="field">
+          <label for="chat-input" class="sr-only">Message</label>
+          <textarea id="chat-input" rows="2" maxlength="20000" placeholder="Message MonoAgent. Enter sends, Shift+Enter adds a line."></textarea>
+        </div>
+        <div class="row row-start">
+          <button type="button" id="chat-send" class="btn-secondary">Send</button>
+          <button type="button" id="chat-stop" class="btn-secondary" hidden>Stop</button>
+        </div>
+      </div>
+    </details>
 
     <!-- CLIP-07: a capture with a reason. Every field is optional — the
          button alone saves the page, exactly as the shortcut does. -->
@@ -426,5 +453,9 @@
   <script src="sidepanel_record.js"></script>
   <!-- The task box. Also after sidepanel.js, for `ask` and `profiles`. -->
   <script src="sidepanel_tasks.js"></script>
+  <!-- The chat. After sidepanel.js, for `ask`, `profiles` and `page`. -->
+  <script src="chat_core.js"></script>
+  <script src="chat_render.js"></script>
+  <script src="sidepanel_chat.js"></script>
 </body>
 </html>

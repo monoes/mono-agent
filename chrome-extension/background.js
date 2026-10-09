@@ -29,6 +29,10 @@ importScripts("ask.js", "account_state.js", "saved.js", "highlights.js", "recall
 // Tasks from the browser (the task board): the outbox and the worker's half.
 // After the recall group: tasks are sent over ask.js, which MonoRecall installs.
 importScripts("task_outbox.js", "task_bridge.js", "task_menu.js");
+
+// The side panel's chat (issue #451): it asks over ask.js, so it also follows
+// the recall group. summary_ai.js (loaded above) supplies its runtime/model.
+importScripts("chat_core.js", "chat_bridge.js");
 // The raw CDP proxy (GLU-01/RIG-07): the generalisation of eval_cdp/type_cdp
 // that lets monobrowse drive the user's own Chrome. Events flow back through
 // it unasked-for, which is why it needs its own module rather than another
@@ -1344,6 +1348,12 @@ MonoCaptureActions.install({
 // hand it the socket.
 MonoRecall.install({
   send: sendFrame,
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
+
+// The chat's messages from the side panel; it reuses the ask channel above.
+MonoChat.install({
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,
 });
