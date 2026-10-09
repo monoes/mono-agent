@@ -58,7 +58,7 @@ None.
 | github.com/pingcap/log | v1.1.1-0.20260227082333-572e590d08f1 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/pingcap/tidb/pkg/parser | v0.0.0-20260504140133-511dba1dbe17 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/pkg/errors | v0.9.1 | BSD-2-Clause | app darwin/arm64, app linux/amd64, app windows/amd64 |
-| github.com/redis/go-redis/v9 | v9.22.0 | BSD-2-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| github.com/redis/go-redis/v9 | v9.23.0 | BSD-2-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | github.com/rivo/uniseg | v0.4.7 | MIT | app darwin/arm64, app linux/amd64, app windows/amd64 |
 | github.com/robfig/cron/v3 | v3.0.1 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
@@ -79,7 +79,7 @@ None.
 | github.com/yuin/goldmark | v1.8.6 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/zalando/go-keyring | v0.2.8 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | go.mongodb.org/mongo-driver/v2 | v2.9.1 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
-| go.uber.org/atomic | v1.11.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| go.uber.org/atomic | v1.12.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | go.uber.org/multierr | v1.11.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | go.uber.org/zap | v1.28.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | golang.org/x/crypto | v0.57.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
