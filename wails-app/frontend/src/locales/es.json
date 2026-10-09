@@ -1176,6 +1176,7 @@
       "running": "en marcha",
       "paused": "en pausa",
       "stopped": "detenida",
+      "crashed": "caída",
       "neverRun": "nunca ejecutada",
       "loading": "…"
     },
@@ -1203,8 +1204,11 @@
       "answered": "respondida",
       "approved": "aprobada",
       "denied": "denegada",
-      "rejected": "rechazada"
+      "rejected": "rechazada",
+      "dismissed": "descartada"
     },
+    "dismiss": "Descartar",
+    "dismissHint": "Cierra esta pregunta sin responder; se avisa al rol",
     "asks": "{{name}} pregunta",
     "yourAnswer": "Respuesta: {{answer}}",
     "answerLabel": "Tu respuesta",

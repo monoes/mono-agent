@@ -24,7 +24,11 @@ type chatFake struct {
 }
 
 func (f *chatFake) Status(context.Context, string, string) (json.RawMessage, error) {
-	return json.Marshal(map[string]interface{}{"v": 1, "status": f.status, "run": "run-a", "paused": false})
+	st := map[string]interface{}{"v": 1, "status": f.status, "run": "run-a", "paused": false}
+	if f.status == "crashed" {
+		st["error"] = "pid 4242 gone"
+	}
+	return json.Marshal(st)
 }
 func (f *chatFake) All(_ context.Context, _, _, kind string) (json.RawMessage, error) {
 	f.mu.Lock()
@@ -43,6 +47,20 @@ func (f *chatFake) Answer(_ context.Context, _, _, id, answer string) error {
 	}
 	f.lists["questions"], _ = json.Marshal(p)
 	f.sent = append(f.sent, "answer "+id+" "+answer)
+	return nil
+}
+func (f *chatFake) Dismiss(_ context.Context, _, _, id, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var p map[string][]map[string]interface{}
+	_ = json.Unmarshal(f.lists["questions"], &p)
+	for _, q := range p["items"] {
+		if q["questionId"] == id {
+			q["state"] = "dismissed"
+		}
+	}
+	f.lists["questions"], _ = json.Marshal(p)
+	f.sent = append(f.sent, "dismiss "+id+" "+reason)
 	return nil
 }
 func (f *chatFake) Approve(_ context.Context, _, _, role, action string, approve bool, _ string) error {
@@ -332,5 +350,36 @@ func TestOrgChatRefusesFlagLikeRefs(t *testing.T) {
 	out, err = runOrgChat(t, cfg, "approve", "--", "acme", "gate-1850-x1", "ship")
 	if err != nil || !strings.Contains(out, `"state":"approved"`) || fake.sent[1] != "gate gate-1850-x1 ship" {
 		t.Fatalf("approve after --: %v %s %v", err, out, fake.sent)
+	}
+}
+
+func TestOrgChatHistoryCarriesACrashReason(t *testing.T) {
+	cfg, fake, _ := setupOrgChat(t)
+	fake.status = "crashed"
+	out, err := runOrgChat(t, cfg, "history", "acme")
+	if err != nil || !strings.Contains(out, `"status":"crashed"`) || !strings.Contains(out, `"status_error":"pid 4242 gone"`) {
+		t.Fatalf("history of a crashed run: %v %s", err, out)
+	}
+}
+
+func TestOrgChatDismiss(t *testing.T) {
+	cfg, fake, _ := setupOrgChat(t)
+	out, err := runOrgChat(t, cfg, "dismiss", "acme", "q-2250-cd34", "--reason", "moot")
+	if err != nil || !strings.Contains(out, `"already":false`) || !strings.Contains(out, `"state":"dismissed"`) {
+		t.Fatalf("dismiss: %v %s", err, out)
+	}
+	out, err = runOrgChat(t, cfg, "dismiss", "acme", "q-2250-cd34")
+	if err != nil || !strings.Contains(out, `"already":true`) {
+		t.Fatalf("second dismiss: %v %s", err, out)
+	}
+	if len(fake.sent) != 1 || fake.sent[0] != "dismiss q-2250-cd34 moot" {
+		t.Fatalf("sent %v", fake.sent)
+	}
+	if _, err := runOrgChat(t, cfg, "dismiss", "acme", "q-nope"); exitCodeFor(err) != 2 {
+		t.Errorf("unknown question: %v", err)
+	}
+	fake.status = "stopped"
+	if _, err := runOrgChat(t, cfg, "dismiss", "acme", "q-0900-zz99"); exitCodeFor(err) != 3 {
+		t.Errorf("stopped org: %v", err)
 	}
 }

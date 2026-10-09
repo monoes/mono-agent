@@ -77,6 +77,8 @@ type Item struct {
 	Resolution string `json:"resolution,omitempty"`
 	ResolvedBy string `json:"resolved_by,omitempty"`
 	Answer     string `json:"answer,omitempty"`
+	// Blocking: a question that holds the org back until it is closed.
+	Blocking bool `json:"blocking,omitempty"`
 }
 
 var approvalStatus = regexp.MustCompile(`^Approval (granted|denied) for (.+)$`)
@@ -198,7 +200,7 @@ func (b *builder) event(e Event) {
 			if _, dup := b.byRef[ItemQuestion+"\x00"+qid]; dup {
 				return
 			}
-			b.byRef[ItemQuestion+"\x00"+qid] = b.add(Item{ID: e.ID, TS: e.TS, Kind: ItemQuestion, Role: e.From, Ref: qid, Text: str(d, "question"), Pending: true})
+			b.byRef[ItemQuestion+"\x00"+qid] = b.add(Item{ID: e.ID, TS: e.TS, Kind: ItemQuestion, Role: e.From, Ref: qid, Text: str(d, "question"), Pending: true, Blocking: d["blocking"] == true})
 			return
 		}
 		if action := str(d, "action"); action != "" {
@@ -284,6 +286,9 @@ func (b *builder) merge(h HumanItems) {
 		it := &b.items[i]
 		if q.Question != "" {
 			it.Text = q.Question
+		}
+		if q.Blocking != nil {
+			it.Blocking = *q.Blocking
 		}
 		it.Pending = q.Answer == nil && q.State != StateDismissed
 		if q.State == StateDismissed {

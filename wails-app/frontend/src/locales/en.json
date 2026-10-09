@@ -1218,6 +1218,7 @@
       "running": "running",
       "paused": "paused",
       "stopped": "stopped",
+      "crashed": "crashed",
       "neverRun": "never run",
       "loading": "…"
     },
@@ -1245,8 +1246,11 @@
       "answered": "answered",
       "approved": "approved",
       "denied": "denied",
-      "rejected": "rejected"
+      "rejected": "rejected",
+      "dismissed": "dismissed"
     },
+    "dismiss": "Dismiss",
+    "dismissHint": "Close this question without answering; the role is told",
     "asks": "{{name}} asks",
     "yourAnswer": "Answer: {{answer}}",
     "answerLabel": "Your answer",

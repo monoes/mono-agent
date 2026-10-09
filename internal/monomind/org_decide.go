@@ -3,6 +3,7 @@ package monomind
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // ResolveOptions attributes a resolution (capability
@@ -55,6 +56,32 @@ func OrgDenyWith(ctx context.Context, projectRoot, name, role, action string, op
 func OrgAnswerWith(ctx context.Context, projectRoot, name, questionID, answer string, opts ResolveOptions) (json.RawMessage, error) {
 	cmd := append([]string{"answer"}, attributionArgs(ctx, opts, false)...)
 	return runOrgJSONText(ctx, projectRoot, cmd, name, questionID, answer)
+}
+
+// orgDismissMinVersion is the monomind that has `org questions dismiss`
+// (#572). It advertises no capability for it, so it is gated on the version.
+const orgDismissMinVersion = "2.21.0"
+
+// OrgDismissQuestionWith closes a pending ask_human question without an
+// answer, attributed (--by). reason may be empty; it is passed as
+// --reason=<text> so a leading dash is not read as a flag. Refused before
+// anything runs when this monomind predates the command.
+func OrgDismissQuestionWith(ctx context.Context, projectRoot, name, questionID, reason string, opts ResolveOptions) (json.RawMessage, error) {
+	caps, err := Capabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !versionAtLeast(caps.Version, orgDismissMinVersion) {
+		return nil, fmt.Errorf("monomind %s cannot dismiss questions (needs %s or newer)", caps.Version, orgDismissMinVersion)
+	}
+	cmd := []string{"questions", "dismiss"}
+	if opts.By != "" {
+		cmd = append(cmd, "--by", opts.By)
+	}
+	if reason != "" {
+		cmd = append(cmd, "--reason="+reason)
+	}
+	return runOrgJSONText(ctx, projectRoot, cmd, name, questionID)
 }
 
 // OrgGateResolveWith approves or rejects a gate, attributed.

@@ -27,6 +27,15 @@ func (a *App) AnswerOrgChat(org, questionID, answer string) string {
 	return a.runOrgCLI("chat", "answer", "--", org, questionID, answer)
 }
 
+// DismissOrgChat closes one of the org's questions without answering it;
+// reason is optional.
+func (a *App) DismissOrgChat(org, questionID, reason string) string {
+	if reason == "" {
+		return a.runOrgCLI("chat", "dismiss", "--", org, questionID)
+	}
+	return a.runOrgCLI("chat", "dismiss", "--reason="+reason, "--", org, questionID)
+}
+
 // ResolveOrgChat approves or denies an approval request or a gate; note is
 // a gate's resolution.
 func (a *App) ResolveOrgChat(org, ref string, approve bool, note string) string {

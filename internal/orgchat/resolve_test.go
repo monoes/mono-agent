@@ -51,6 +51,18 @@ func (f *fakeClient) Answer(_ context.Context, _, _, id, answer string) error {
 	return nil
 }
 
+func (f *fakeClient) Dismiss(_ context.Context, _, _, id, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.questions {
+		if f.questions[i].QuestionID == id {
+			f.questions[i].State = StateDismissed
+		}
+	}
+	f.sent = append(f.sent, "dismiss "+id+" "+reason)
+	return nil
+}
+
 func (f *fakeClient) Approve(_ context.Context, _, _, role, action string, approve bool, requestID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -265,5 +277,51 @@ func TestResolveDismissedQuestionIsAlreadyDone(t *testing.T) {
 	}
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v, want nothing for a dismissed question", f.sent)
+	}
+}
+
+func TestResolveDismissIsIdempotent(t *testing.T) {
+	f := newFake()
+	ctx := context.Background()
+	root := t.TempDir()
+	res, err := Resolve(ctx, f, root, Request{Org: "acme", Ref: "q-1", Dismiss: true, Text: " moot "})
+	if err != nil || res.Already || res.State != StateDismissed || res.Kind != KindQuestion {
+		t.Fatalf("first dismiss = %+v, %v", res, err)
+	}
+	res, err = Resolve(ctx, f, root, Request{Org: "acme", Ref: "q-1", Dismiss: true})
+	if err != nil || !res.Already || res.State != StateDismissed {
+		t.Fatalf("second dismiss = %+v, %v", res, err)
+	}
+	// An answer after a dismissal reports the dismissal and sends nothing.
+	res, err = Resolve(ctx, f, root, Request{Org: "acme", Ref: "q-1", Answer: true, Text: "late"})
+	if err != nil || !res.Already || res.State != StateDismissed {
+		t.Fatalf("answer after dismiss = %+v, %v", res, err)
+	}
+	if len(f.sent) != 1 || f.sent[0] != "dismiss q-1 moot" {
+		t.Fatalf("sent %v, want one trimmed dismiss", f.sent)
+	}
+}
+
+func TestResolveDismissAnsweredIsAlready(t *testing.T) {
+	f := newFake()
+	ans := "yes"
+	f.questions[0].Answer = &ans
+	res, err := Resolve(context.Background(), f, t.TempDir(), Request{Org: "acme", Ref: "q-1", Dismiss: true})
+	if err != nil || !res.Already || res.State != StateAnswered || len(f.sent) != 0 {
+		t.Fatalf("dismiss of answered = %+v, %v, sent %v", res, err, f.sent)
+	}
+}
+
+func TestResolveDismissNotFoundAndStopped(t *testing.T) {
+	f := newFake()
+	ctx := context.Background()
+	if _, err := Resolve(ctx, f, t.TempDir(), Request{Org: "acme", Ref: "q-nope", Dismiss: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown question: %v, want ErrNotFound", err)
+	}
+	f.status = "stopped"
+	_, err := Resolve(ctx, f, t.TempDir(), Request{Org: "acme", Ref: "q-1", Dismiss: true})
+	var stopped *NotRunningError
+	if !errors.As(err, &stopped) || len(f.sent) != 0 {
+		t.Fatalf("stopped org: %v, sent %v", err, f.sent)
 	}
 }
