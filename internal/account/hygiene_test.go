@@ -1,6 +1,7 @@
 package account
 
 import (
+	"encoding/hex"
 	"go/parser"
 	"go/token"
 	"path/filepath"
@@ -101,4 +102,21 @@ func TestPinnedKeysAreWellFormed(t *testing.T) {
 		}
 		seen[k.KID] = true
 	}
+}
+
+// The production signing key is pinned exactly as monoes.me published it
+// (https://monoes.me/api/auth/jwks, 2026-10-09). This fails if the constant is
+// edited by accident; a deliberate rotation updates it together with the server.
+func TestProductionSigningKeyIsPinned(t *testing.T) {
+	const wantKID = "GB6kESA9qO98637VArEGR2EjW6wSyYqO"
+	const wantHex = "ca570571b89cde8feb93c0e03581b78968ed75a953ac9bd349f01edf2ee9d26f"
+	for _, k := range pinnedKeys {
+		if k.KID == wantKID {
+			if got := hex.EncodeToString(k.Public); got != wantHex {
+				t.Fatalf("pinned key %q has public key %s, want %s", wantKID, got, wantHex)
+			}
+			return
+		}
+	}
+	t.Fatalf("the production signing key %q is not pinned", wantKID)
 }
