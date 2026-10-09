@@ -13,6 +13,7 @@
 
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { findChrome } from "./browser_harness.mjs";
 import { attach, sleep, start } from "./extension_harness.mjs";
@@ -24,9 +25,15 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>Fixture
 <p>Another paragraph of real content, padded so that the extractor is satisfied that there is an article here worth reading, and keeps it.</p>
 </article></body></html>`;
 
+// What the real daemon records as the turn's text when a page was sent: the
+// wrapper Go builds (internal/extension/testdata), with the typed message last.
+const GOLDEN = JSON.parse(readFileSync(new URL("../internal/extension/testdata/chat_wrapper.golden.json", import.meta.url), "utf8")).find((c) => c.name === "page");
+const WRAP_PREFIX = GOLDEN.wrapped.slice(0, GOLDEN.wrapped.length - GOLDEN.message.length);
+
 // The fake daemon, installed in the worker. Records every request it gets in
 // self.__reqs and answers per the chat.* contract.
 const DAEMON = `(() => {
+  const WRAP_PREFIX = ${JSON.stringify(WRAP_PREFIX)};
   self.__reqs = [];
   self.__methods = ["ping", "chat.send", "chat.stop", "chat.events"];
   self.__events = [];
@@ -59,7 +66,7 @@ const DAEMON = `(() => {
         if (frame.method === "chat.send") {
           const turn = ++self.__turn;
           let seq = 0;
-          progress(id, ++seq, "turn.started", { text: frame.params.message });
+          progress(id, ++seq, "turn.started", { text: frame.params.context ? WRAP_PREFIX + frame.params.message : frame.params.message });
           progress(id, ++seq, "session.bound", { runtime: "claude", sessionId: "s-1" });
           progress(id, ++seq, "tool.started", { callId: "t1", name: "read_page", arguments: {} });
           progress(id, ++seq, "assistant.delta", { partId: "p1", text: "Hello " });
@@ -216,6 +223,17 @@ describe("the side panel chat", { skip: browser ? false : why, concurrency: 1 },
     }
   });
 
+  it("the page is sent in the background: the transcript shows what was typed and the chip, nothing of the wrapper or the page", async () => {
+    const [call] = await reqs("chat.send");
+    assert.ok(call.params.context.text.length > 0, "the page did go to the model");
+    const wrapped = JSON.parse(await ev(sw, `JSON.stringify(self.__events.filter((e) => e.type === "turn.started")[0].payload.text)`));
+    assert.match(wrapped, /untrusted/, "the daemon's record of the turn does carry the wrapper");
+    const users = JSON.parse(await ev(panel, `JSON.stringify([...document.querySelectorAll("#chat-log .chat-msg[data-role=user]")].map((m) => ({ n: m.querySelectorAll(".chat-text").length, text: m.querySelector(".chat-text").textContent, about: (m.querySelector(".chat-about") || {}).textContent })))`));
+    assert.deepEqual(users, [{ n: 1, text: "What is this page about?", about: "Using this page: Fixture page" }]);
+    const shown = await ev(panel, `document.getElementById("chat-log").innerText`);
+    assert.doesNotMatch(shown, /untrusted|fence|fenced|SECRET PAGE TEXT|quick brown fox|url:|looking at a web page|message follows/i);
+  });
+
   it("the page is shared with the first message only; the chip is off afterwards", async () => {
     // The first message (previous test) shared the page; the chip is now off.
     assert.equal(await ev(panel, `document.getElementById("chat-page").getAttribute("aria-pressed")`), "false");
@@ -235,6 +253,10 @@ describe("the side panel chat", { skip: browser ? false : why, concurrency: 1 },
     await until(`document.querySelectorAll("#chat-log .chat-msg").length >= 4`, "the transcript to come back");
     const texts = JSON.parse(await ev(panel, `JSON.stringify([...document.querySelectorAll("#chat-log .chat-msg")].map((m) => m.dataset.role))`));
     assert.deepEqual(texts.slice(0, 4), ["user", "assistant", "user", "assistant"]);
+    // The replay carries the wrapped turn.started again: still only what was typed.
+    const shown = await ev(panel, `document.getElementById("chat-log").innerText`);
+    assert.doesNotMatch(shown, /untrusted|fence|fenced|quick brown fox|url:|looking at a web page|message follows/i);
+    assert.equal(await ev(panel, `document.querySelectorAll("#chat-log .chat-msg[data-role=user]").length`), 2);
     const events = await reqs("chat.events");
     const last = events.at(-1).params;
     assert.equal(last.conversation, "c-test");

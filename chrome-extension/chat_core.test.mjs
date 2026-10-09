@@ -55,10 +55,10 @@ test("caps count UTF-8 bytes, so a CJK, Cyrillic or emoji page still fits the se
   assert.ok(utf8(msg) <= 16 * 1024, "the typed message is clipped to the server's 16 KiB too");
 });
 
-test("the address keeps scheme, host and path: no query, fragment or credentials", () => {
+test("the address sent keeps its query with secret-looking values redacted, and no credentials; comparisons ignore the query", () => {
   const cases = [
-    ["https://a.example/p?token=secret&x=1#frag", "https://a.example/p"],
-    ["https://user:pw@a.example:8443/p/q?x=1", "https://a.example:8443/p/q"],
+    ["https://a.example/p?token=secret&x=1#frag", "https://a.example/p?token=REDACTED&x=1#frag"],
+    ["https://user:pw@a.example:8443/p/q?x=1", "https://a.example:8443/p/q?x=1"],
     ["http://a.example/#/route?token=1", "http://a.example/"],
     ["https://a.example", "https://a.example/"],
   ];

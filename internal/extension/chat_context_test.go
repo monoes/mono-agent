@@ -67,7 +67,7 @@ func TestChatFieldsAreOneLineAndPageTextComesLast(t *testing.T) {
 	}, "summarize")
 	in := fenced(t, msg)
 	lines := strings.Split(strings.TrimSpace(in), "\n")
-	if !strings.HasPrefix(lines[0], "url: ") || !strings.HasPrefix(lines[1], "title: ") || !strings.HasPrefix(lines[2], "selection: ") || !strings.HasPrefix(lines[3], "text: ") {
+	if !strings.HasPrefix(lines[0], "url: ") || !strings.HasPrefix(lines[1], "title: ") || lines[2] != "selection:" || lines[3] != "| sel" || lines[4] != "text:" || lines[5] != "| page body" || lines[6] != "| second line" {
 		t.Fatalf("fields out of order or split over lines: %q", lines)
 	}
 	if strings.ContainsAny(lines[0]+lines[1], "\r\u0007\u0000\u200b") {
@@ -83,14 +83,14 @@ func TestChatFieldsAreOneLineAndPageTextComesLast(t *testing.T) {
 	}
 }
 
-func TestChatContextURLKeepsSchemeHostPathOnly(t *testing.T) {
+func TestChatContextURLRedactsSecretsKeepsIdentity(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"https://a.test/p?token=secret&x=1#frag", "https://a.test/p"},
-		{"https://user:pw@a.test:8443/p/q?x=1", "https://a.test:8443/p/q"},
+		{"https://a.test/p?token=secret&x=1#frag", "https://a.test/p?token=REDACTED&x=1#frag"},
+		{"https://user:pw@a.test:8443/p/q?x=1", "https://a.test:8443/p/q?x=1"},
 		{"http://a.test/#/route?token=1", "http://a.test/"},
-		{"https://a.test", "https://a.test"},
+		{"https://a.test", "https://a.test/"},
 		{"https://a.test/p?", "https://a.test/p"},
-		{"https://a.test/%7Euser/p?q=%0A", "https://a.test/%7Euser/p"},
+		{"https://a.test/%7Euser/p?q=%0A", "https://a.test/%7Euser/p?q=%0A"},
 	}
 	for _, c := range cases {
 		msg := sendWithContext(t, map[string]any{"url": c.in, "text": "x"}, "hi")
@@ -98,7 +98,7 @@ func TestChatContextURLKeepsSchemeHostPathOnly(t *testing.T) {
 		if line != "url: "+c.want {
 			t.Errorf("url %q -> %q, want %q", c.in, line, "url: "+c.want)
 		}
-		for _, leak := range []string{"secret", "token", "pw@", "frag"} {
+		for _, leak := range []string{"secret", "pw@"} {
 			if strings.Contains(msg, leak) && strings.Contains(c.in, leak) && !strings.Contains(c.want, leak) {
 				t.Errorf("url %q leaked %q", c.in, leak)
 			}
@@ -138,7 +138,11 @@ func TestChatContextTruncatesAtRuneBoundary(t *testing.T) {
 			t.Errorf("%s: invalid UTF-8 reached the model", c.name)
 		}
 		for key, max := range map[string]int{"title": chatMaxCtxTitle, "selection": chatMaxCtxSel, "text": chatMaxCtxText} {
-			m := regexp.MustCompile(`(?m)^` + key + `: (.*)$`).FindStringSubmatch(msg)
+			pat := `(?m)^` + key + `: (.*)$`
+			if key != "title" {
+				pat = `(?m)^` + key + `:\n\| (.*)$`
+			}
+			m := regexp.MustCompile(pat).FindStringSubmatch(msg)
 			if m == nil {
 				t.Errorf("%s: no %s line", c.name, key)
 				continue
