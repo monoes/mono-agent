@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -36,18 +35,12 @@ func (n *MySQLNode) Execute(ctx context.Context, input workflow.NodeInput, confi
 	if dsn == "" {
 		return nil, fmt.Errorf("db.mysql: 'connection_string' is required")
 	}
-	if !strings.Contains(dsn, "parseTime=true") {
-		if strings.Contains(dsn, "?") {
-			dsn += "&parseTime=true"
-		} else {
-			dsn += "?parseTime=true"
-		}
+	connector, err := parseMySQLDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db.mysql: invalid connection_string: %w", err)
 	}
 
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("db.mysql: open failed: %w", err)
-	}
+	db := sql.OpenDB(newMySQLConnector(connector))
 	defer db.Close()
 
 	if err := db.PingContext(ctx); err != nil {
