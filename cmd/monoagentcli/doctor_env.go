@@ -114,6 +114,16 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	env.InitMonomindProfile = func(ctx context.Context, root string, progress func(string)) error {
 		return monomind.InitProfile(ctx, monomind.InitOptions{Root: root, Progress: progress})
 	}
+	env.RepinMonomindProfile = func(ctx context.Context, root string, progress func(string)) error {
+		return monomind.InitProfile(ctx, monomind.InitOptions{Root: root, Repin: true, Progress: progress})
+	}
+	env.InstallMonomindDeps = func(ctx context.Context, progress func(string)) error {
+		bin, err := monomind.Find()
+		if err != nil {
+			return err
+		}
+		return monomind.DepsInstall(ctx, bin, progress)
+	}
 	env.InstallRuntime = func(ctx context.Context, id string, progress func(string)) error {
 		// The fix itself is the consent (it is a confirm fix), so vendor
 		// scripts are allowed here.

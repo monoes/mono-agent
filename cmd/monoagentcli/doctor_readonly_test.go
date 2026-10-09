@@ -23,7 +23,7 @@ import (
 // fixes do).
 var mutatingHooks = map[string]bool{
 	"Migrate": true, "EnsureProfile": true, "InstallNode": true, "UpdateNode": true, "RemoveNode": true,
-	"InstallMonomind": true, "InitMonomindProfile": true, "InstallRuntime": true, "InstallAutostart": true,
+	"InstallMonomind": true, "InitMonomindProfile": true, "RepinMonomindProfile": true, "InstallMonomindDeps": true, "InstallRuntime": true, "InstallAutostart": true,
 	"StartDaemon": true, "RestartBridge": true, "InstallClaudeSkills": true, "RegisterMCP": true, "RefreshConnection": true,
 }
 

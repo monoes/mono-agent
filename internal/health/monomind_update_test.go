@@ -71,14 +71,15 @@ func TestMonomindBinaryListsShadowedCopies(t *testing.T) {
 	}
 }
 
-// The profile-init confirmation says it also runs a Claude turn.
-func TestProfileInitFixSaysItContactsClaude(t *testing.T) {
+// The profile-init confirmation registers the folder through monomind, and
+// says an older monomind falls back to a Claude turn.
+func TestProfileInitFixSaysHowItRegisters(t *testing.T) {
 	f, ok := Default().Fix(FixMonomindProfileInit)
 	if !ok {
 		t.Fatal("no profile-init fix")
 	}
-	if !strings.Contains(f.Label, "Claude account") || !strings.Contains(f.Command, "claude -p") {
-		t.Fatalf("label %q / command %q should say it runs claude -p on the user's account", f.Label, f.Command)
+	if strings.Contains(f.Label, "Claude account") || !strings.Contains(f.Command, "--register-claude-project") || !strings.Contains(f.Command, "claude -p") {
+		t.Fatalf("label %q / command %q should name --register-claude-project and the claude -p fallback", f.Label, f.Command)
 	}
 }
 

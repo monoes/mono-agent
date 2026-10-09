@@ -75,7 +75,7 @@ monoagentcli doctor                 # check everything monoagent needs; exit 1 =
 monoagentcli doctor --json          # stable report (schema "v":1): results[] with id/group/status/summary/fix
 monoagentcli doctor --fix [--yes]   # apply fixes (auto ones directly, confirm ones after asking / with --yes)
 monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":"line"|"done"|"error"}
-monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: fix everything, offer extras, report
+monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp] [--deps]  # guided: fix everything, offer extras, report
 ```
 
 When a bridge version differs from the CLI, `doctor` offers
@@ -99,7 +99,14 @@ has expired, and a refresh that asks first for other failures). With a monomind 
 monomind's own checks for the profile folder (fixes: `doctor fix
 monomind.doctor.fix:<component>`); `--projects` / `--project <path|name>` run
 them in each monomind project inside the profile folder
-(`monomind.doctor.fix:<component>@<project>`). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
+(`monomind.doctor.fix:<component>@<project>`). With `doctor-read-only` and
+`doctor-offline` plain `doctor` runs monomind's own checks read-only with
+`--offline`; `--deep` runs them whole (a monomind without both leaves them to
+`--deep`). The group also checks that the profile's `.mcp.json` pins the
+installed monomind (`monomind.mcp_pin`, fix `monomind.repin` = `monomind init
+--force` in the profile folder) and whether the Claude Agent SDK is in
+`~/.monomind/deps` (`monomind.deps`, optional fix = `monomind deps install`,
+also `setup --deps`). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
 (e.g. update availability). Checks never change anything — only fixes do.
 Run `doctor` first when something environment-related fails.
 

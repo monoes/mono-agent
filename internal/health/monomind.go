@@ -88,14 +88,15 @@ func monomindFixes() []Fix {
 		{FixInfo: FixInfo{ID: FixMonomindShadowed, Label: "Remove the older monomind that comes first on PATH", Safety: SafetyManual,
 			Command: "remove the monomind that `which monomind` prints (or set " + monomind.EnvOverride + " to the newer one)"},
 			Apply: func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }},
-		// It says it contacts Claude: after init, one `claude -p` turn runs
-		// in the folder on the user's own Claude account (it registers the
-		// folder with Claude Code, see monomind.InitProfile).
+		// The folder is registered with Claude Code by monomind itself
+		// (capability init-json); only a monomind without it falls back to
+		// one `claude -p` turn there, see monomind.InitProfile.
 		{FixInfo: FixInfo{ID: FixMonomindProfileInit,
-			Label:  "Set up this profile's folder for monomind (also sends one short prompt through your Claude account)",
+			Label:  "Set up this profile's folder for monomind",
 			Safety: SafetyConfirm,
 			Command: "monomind init --yes --no-watch --no-install in the profile folder, then " +
-				"claude -p \"monomind initialized\" there (one Claude Code turn on your account, so the folder shows in monomind's dashboard)"},
+				"monomind init --register-claude-project there so the folder shows in monomind's dashboard " +
+				"(an older monomind without it sends one short prompt through your Claude account instead: claude -p \"monomind initialized\")"},
 			Apply: fixMonomindProfileInit},
 	}
 }

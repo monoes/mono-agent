@@ -41,10 +41,13 @@ const monomindDoctorTimeout = 150 * time.Second
 
 func monomindDoctorChecks() []Check {
 	return []Check{
-		// Network: `monomind doctor` itself writes .monomind/registry.json
-		// and asks npm for the latest version, so it runs only with --deep
-		// (or --check), keeping plain `doctor` free of writes and traffic.
-		{ID: CheckMonomindDoctor, Group: GroupMonomind, Title: "monomind checks", Network: true,
+		// Network: `monomind doctor` asks npm for the latest version and, in
+		// a monomind before capabilities doctor-read-only and doctor-offline,
+		// also writes .monomind/registry.json. With both it is read-only
+		// by default, and plain `doctor` runs it with --offline; --deep (or
+		// --check) runs it whole. checkMonomindDoctor skips an older monomind
+		// unless the run is online.
+		{ID: CheckMonomindDoctor, Group: GroupMonomind, Title: "monomind checks", Network: true, OfflineCapable: true,
 			DependsOn: []string{CheckMonomindProfileInit}, Timeout: monomindDoctorTimeout, Run: checkMonomindDoctor},
 		{ID: CheckMonomindProjects, Group: GroupMonomind, Title: "monomind projects", OnDemand: true, Network: true,
 			DependsOn: []string{CheckMonomindHandshake, CheckProfile}, Timeout: 10 * time.Minute, Run: checkMonomindProjects},
@@ -100,7 +103,14 @@ func checkMonomindDoctor(ctx context.Context, env *Env) Result {
 	if !monomind.IsInitializedAt(root) {
 		return Result{Status: StatusSkip, Summary: "this profile's folder is not set up for monomind yet"}
 	}
-	rep, err := env.MonomindDoctor(ctx, monomind.DoctorOptions{Dir: root})
+	offline := !Online(ctx)
+	if offline {
+		vi, _ := env.MonomindHandshake(ctx) // hasDoctorJSON got it
+		if !vi.HasCapability(monomind.CapDoctorReadOnly) || !vi.HasCapability(monomind.CapDoctorOffline) {
+			return Result{Status: StatusSkip, Summary: fmt.Sprintf("monomind %s's checks write files and use the network — run doctor --deep, or update monomind", version)}
+		}
+	}
+	rep, err := env.MonomindDoctor(ctx, monomind.DoctorOptions{Dir: root, Offline: offline})
 	if errors.Is(err, monomind.ErrDoctorFormat) {
 		return Result{Status: StatusInfo, Summary: "monomind reports its checks in a newer format — update monoagent to see them", Detail: err.Error()}
 	}

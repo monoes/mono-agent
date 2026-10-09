@@ -62,6 +62,16 @@ func (r *Registry) Fix(id string) (Fix, bool) {
 	}}, true
 }
 
+type onlineKey struct{}
+
+// Online reports whether the run was asked for its network checks (Deep, or
+// Monomind); an OfflineCapable check that runs without them stays offline.
+// A context that did not come from Registry.Run is not online.
+func Online(ctx context.Context) bool {
+	on, _ := ctx.Value(onlineKey{}).(bool)
+	return on
+}
+
 // Options selects which checks run.
 type Options struct {
 	Deep     bool // include Network checks
@@ -79,7 +89,7 @@ type Options struct {
 }
 
 func (o Options) selects(c Check) bool {
-	if c.Network && !o.Deep && len(o.IDs) == 0 && !(o.Monomind && c.Group == GroupMonomind) {
+	if c.Network && !c.OfflineCapable && !o.Deep && len(o.IDs) == 0 && !(o.Monomind && c.Group == GroupMonomind) {
 		return false
 	}
 	if c.OnDemand && !o.OnDemand && !contains(o.IDs, c.ID) {
@@ -103,6 +113,7 @@ func (o Options) selects(c Check) bool {
 // run too (their results are included) so a single `--check` is still
 // judged in context.
 func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
+	ctx = context.WithValue(ctx, onlineKey{}, opts.Deep || opts.Monomind)
 	byID := map[string]Check{}
 	for _, c := range r.checks {
 		byID[c.ID] = c
