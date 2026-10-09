@@ -111,7 +111,7 @@ github.com/monoes/mono-agent/
 │       │   ├── execute_command.go     — system.execute_command
 │       │   └── rss_read.go            — system.rss_read (mmcdole/gofeed)
 │       ├── db/
-│       │   ├── mysql.go               — db.mysql (go-sql-driver/mysql)
+│       │   ├── mysql.go               — db.mysql (go-mysql-org/go-mysql)
 │       │   ├── postgres.go            — db.postgres (lib/pq)
 │       │   ├── mongodb.go             — db.mongodb (mongo-driver)
 │       │   └── redis.go               — db.redis (go-redis/redis)
@@ -1970,7 +1970,7 @@ go get golang.org/x/crypto@latest                       # http.ssh (golang.org/x
 go get github.com/mmcdole/gofeed@latest                 # system.rss_read: RSS/Atom parsing
 
 # Database nodes
-go get github.com/go-sql-driver/mysql@latest            # db.mysql
+go get github.com/go-mysql-org/go-mysql@latest          # db.mysql
 go get github.com/lib/pq@latest                         # db.postgres
 go get go.mongodb.org/mongo-driver@latest               # db.mongodb
 go get github.com/redis/go-redis/v9@latest              # db.redis
@@ -1997,7 +1997,7 @@ go get github.com/yuin/goldmark@latest
 go get github.com/jlaffaye/ftp@latest
 go get golang.org/x/crypto@latest
 go get github.com/mmcdole/gofeed@latest
-go get github.com/go-sql-driver/mysql@latest
+go get github.com/go-mysql-org/go-mysql@latest
 go get github.com/lib/pq@latest
 go get go.mongodb.org/mongo-driver@latest
 go get github.com/redis/go-redis/v9@latest
