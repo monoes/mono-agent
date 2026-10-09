@@ -326,9 +326,11 @@ func (cb *chatBridge) handleSend(ctx context.Context, req *Request, progress Pro
 			payload = json.RawMessage("null")
 		}
 		if b, merr := json.Marshal(struct {
-			Seq     int64           `json:"seq"`
-			Payload json.RawMessage `json:"payload"`
-		}{ev.Seq, payload}); merr == nil {
+			Seq          int64           `json:"seq"`
+			Conversation string          `json:"conversation"`
+			Turn         string          `json:"turn"`
+			Payload      json.RawMessage `json:"payload"`
+		}{ev.Seq, conv, spec.Turn, payload}); merr == nil {
 			progress(ev.Type, string(b))
 		}
 	})
