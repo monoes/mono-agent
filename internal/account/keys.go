@@ -14,11 +14,17 @@ type Key struct {
 }
 
 // pinnedKeys is the set a release trusts: the current signing key and the next
-// one, so a rotation never strands a client (spec §4.7). It is empty until
-// spike S1 settles how monoes.me signs with a key that can be pinned; the first
-// entry goes here as pinKey("<kid>", "<64 hex digits>"). B5a must not set the
-// enforcement date while it is empty (TestEnforcedBuildPinsAKey).
-var pinnedKeys = []Key{}
+// one, so a rotation never strands a client (spec §4.7).
+//
+// Pinned on 2026-10-09 from https://monoes.me/api/auth/jwks, which published
+// exactly one key at that time (EdDSA, Ed25519). A second, "next" key must be
+// published by monoes.me and pinned here in a release BEFORE the first rotation,
+// or clients that have not updated are stranded. Pinning a key does not turn
+// enforcement on: that is the enforcement date, which stays zero (rollout.go).
+// B5a must not set that date while this set is empty (TestEnforcedBuildPinsAKey).
+var pinnedKeys = []Key{
+	pinKey("GB6kESA9qO98637VArEGR2EjW6wSyYqO", "ca570571b89cde8feb93c0e03581b78968ed75a953ac9bd349f01edf2ee9d26f"),
+}
 
 // keysOverride replaces the whole trusted set while a test holds it
 // (SetTrustedKeysForTest); keysOverridden tells an empty override from none.
