@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Go standard library and `golang.org/x/net` updated.** The pinned toolchain moves from go1.26.6 to go1.26.9 and `golang.org/x/net` from v0.59.0 to v0.60.0, which fixes 12 standard-library advisories (net/http, crypto/tls, mime/multipart, html/template, os; GO-2026-6599 through GO-2026-6617) that `govulncheck` reported against released binaries. The vulnerability scan is clean again.
+
 ### Changed
 - **Signed updates: the release signing key is pinned.** `update`, `update --app` and the doctor version check now trust a manifest signed by key `3b3e972f459a3151` (the private half is the `RELEASE_SIGNING_KEY` secret of the protected `release` environment). Until a release publishes a signed manifest to the releases repo, updates keep using the GitHub fallback.
 - **Account documentation** describes the currently dormant gate, machine sign-in, headless file-keyring setup and future conditional enforcement. New offline `ref account` documents recovery commands and serving behavior. No enforcement date is set and no production signing keys are pinned; local work still requires no account. The MIT license is unchanged.
