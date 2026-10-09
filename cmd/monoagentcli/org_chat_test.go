@@ -24,7 +24,11 @@ type chatFake struct {
 }
 
 func (f *chatFake) Status(context.Context, string, string) (json.RawMessage, error) {
-	return json.Marshal(map[string]interface{}{"v": 1, "status": f.status, "run": "run-a", "paused": false})
+	st := map[string]interface{}{"v": 1, "status": f.status, "run": "run-a", "paused": false}
+	if f.status == "crashed" {
+		st["error"] = "pid 4242 gone"
+	}
+	return json.Marshal(st)
 }
 func (f *chatFake) All(_ context.Context, _, _, kind string) (json.RawMessage, error) {
 	f.mu.Lock()
@@ -346,6 +350,15 @@ func TestOrgChatRefusesFlagLikeRefs(t *testing.T) {
 	out, err = runOrgChat(t, cfg, "approve", "--", "acme", "gate-1850-x1", "ship")
 	if err != nil || !strings.Contains(out, `"state":"approved"`) || fake.sent[1] != "gate gate-1850-x1 ship" {
 		t.Fatalf("approve after --: %v %s %v", err, out, fake.sent)
+	}
+}
+
+func TestOrgChatHistoryCarriesACrashReason(t *testing.T) {
+	cfg, fake, _ := setupOrgChat(t)
+	fake.status = "crashed"
+	out, err := runOrgChat(t, cfg, "history", "acme")
+	if err != nil || !strings.Contains(out, `"status":"crashed"`) || !strings.Contains(out, `"status_error":"pid 4242 gone"`) {
+		t.Fatalf("history of a crashed run: %v %s", err, out)
 	}
 }
 

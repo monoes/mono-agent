@@ -156,11 +156,16 @@ func newOrgChatHistoryCmd(env *orgEnv) *cobra.Command {
 					pending[it.Kind+"s"]++
 				}
 			}
-			return printJSONValue(map[string]interface{}{
+			out := map[string]interface{}{
 				"v": 1, "org": org, "boss": boss, "boss_title": bossTitle, "roles": roles,
 				"status": h.status.Status, "paused": h.status.Paused, "run": h.status.Run,
 				"items": items, "pending": pending, "warnings": h.warnings,
-			})
+			}
+			// A crashed run says why ("pid 123 gone", monomind 2.21+).
+			if h.status.Error != "" {
+				out["status_error"] = h.status.Error
+			}
+			return printJSONValue(out)
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Specific run id (default: the most recent run)")
@@ -175,6 +180,7 @@ type orgChatState struct {
 		Status string `json:"status"`
 		Paused bool   `json:"paused"`
 		Run    string `json:"run"`
+		Error  string `json:"error"`
 	}
 	warnings []string
 }

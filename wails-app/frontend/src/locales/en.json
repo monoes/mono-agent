@@ -1218,6 +1218,7 @@
       "running": "running",
       "paused": "paused",
       "stopped": "stopped",
+      "crashed": "crashed",
       "neverRun": "never run",
       "loading": "…"
     },

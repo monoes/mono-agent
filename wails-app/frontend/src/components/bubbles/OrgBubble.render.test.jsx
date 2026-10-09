@@ -130,6 +130,15 @@ describe('an org bubble', () => {
     expect(screen.getAllByTestId('org-chat-question')[1]).toHaveTextContent('answered')
   })
 
+  it('shows a crashed run as crashed, with why', async () => {
+    api.getOrgChatHistory.mockResolvedValue({ ...history, status: 'crashed', status_error: 'pid 4242 gone' })
+    render(<Harness />)
+    await waitFor(() => expect(screen.getByTestId('org-bubble-status')).toHaveAttribute('data-status', 'crashed'))
+    const badge = screen.getByTestId('org-bubble-status')
+    expect(badge).toHaveTextContent('crashed')
+    expect(badge).toHaveAttribute('title', 'pid 4242 gone')
+  })
+
   it('offers Dismiss only on a blocking question, and dismisses it once', async () => {
     const items = history.items.map(it => (it.ref === 'q-2250-cd34' ? { ...it, blocking: true } : it))
     api.getOrgChatHistory.mockResolvedValue({ ...history, items })

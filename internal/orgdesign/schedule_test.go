@@ -45,6 +45,33 @@ func TestSetScheduleOnSectionsOrgSavesAndKeepsSections(t *testing.T) {
 	}
 }
 
+// Sections orgs are GA since monomind 2.24.0: a definition that already
+// carries a schedule and no run_config.experimental flag validates as is.
+func TestScheduledSectionsOrgNeedsNoExperimentalFlag(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".monomind", "orgs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := strings.Replace(sectionsOrg, `"schedule": null`, `"schedule": "15m"`, 1)
+	if strings.Contains(src, "experimental") {
+		t.Fatal("the fixture must not set run_config.experimental")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sec-org.json"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := Load(root, "sec-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.SectionsEnabled() || string(d.Schedule) != `"15m"` {
+		t.Fatalf("sections=%v schedule=%s", d.SectionsEnabled(), d.Schedule)
+	}
+	if err := Validate(d); err != nil {
+		t.Fatalf("a scheduled sections org without the experimental flag must validate: %v", err)
+	}
+}
+
 func TestSetScheduleValidatesMonomindsFormat(t *testing.T) {
 	for in, ok := range map[string]bool{
 		"15m": true, "2h": true, "45s": true, " 10m ": true, "": true, "90": true,

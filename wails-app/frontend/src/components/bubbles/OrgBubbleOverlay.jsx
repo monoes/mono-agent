@@ -116,7 +116,7 @@ export function OrgBubbleOverlay({ bubble, store, originRect, onCollapse, onClos
   const status = history?.status || ''
   const running = status === 'running'
   const paused = running && !!history?.paused
-  const statusKey = paused ? 'paused' : running ? 'running' : status === 'never run' ? 'neverRun' : status ? 'stopped' : 'loading'
+  const statusKey = paused ? 'paused' : running ? 'running' : status === 'never run' ? 'neverRun' : status === 'crashed' ? 'crashed' : status ? 'stopped' : 'loading'
 
   const control = async (verb) => {
     const ok = await confirm(t(`orgBubble.confirm.${verb}Body`, { name: orgName }), {
@@ -146,8 +146,8 @@ export function OrgBubbleOverlay({ bubble, store, originRect, onCollapse, onClos
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0, flexWrap: 'wrap' }}>
           <Network size={13} style={{ color: 'var(--cyan)' }} aria-hidden="true" />
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{orgName}</span>
-          <span data-testid="org-bubble-status" data-status={statusKey}
-            style={{ fontFamily: mono, fontSize: 9.5, color: running && !paused ? 'var(--teal, #00f5d4)' : 'var(--text-muted)', border: '1px solid var(--border-bright)', borderRadius: 999, padding: '1px 7px' }}>
+          <span data-testid="org-bubble-status" data-status={statusKey} title={statusKey === 'crashed' ? history?.status_error || undefined : undefined}
+            style={{ fontFamily: mono, fontSize: 9.5, color: running && !paused ? 'var(--teal, #00f5d4)' : statusKey === 'crashed' ? 'var(--red, #ef4444)' : 'var(--text-muted)', border: '1px solid var(--border-bright)', borderRadius: 999, padding: '1px 7px' }}>
             {t(`orgBubble.status.${statusKey}`)}
           </span>
           {(boss?.runtime || boss?.model) && (

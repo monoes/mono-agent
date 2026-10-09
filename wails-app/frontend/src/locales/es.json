@@ -1176,6 +1176,7 @@
       "running": "en marcha",
       "paused": "en pausa",
       "stopped": "detenida",
+      "crashed": "caída",
       "neverRun": "nunca ejecutada",
       "loading": "…"
     },

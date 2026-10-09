@@ -23,7 +23,7 @@ const maxScheduleAudit = 200
 // Tick outcomes the view groups the monomind events under. An event this
 // build does not know is kept as ScheduleOther with its own name.
 const (
-	ScheduleRefused   = "refused"   // scheduled-start-refused: startOrg threw (host preflight, eval gate, daemon lock, unsigned def)
+	ScheduleRefused   = "refused"   // scheduled-start-refused: startOrg threw (host preflight, eval gate, daemon lock) or the tick was refused up front (unsigned def, failed precheck)
 	ScheduleSkipped   = "skipped"   // scheduled-tick-skipped: a run was already live, the tick yielded
 	ScheduleCoalesced = "coalesced" // scheduled-tick-deferred: tick landed mid-run, held for one catch-up run
 	ScheduleOther     = "other"
@@ -60,9 +60,9 @@ func ScheduleAuditKind(event string) string {
 }
 
 // ReadScheduleAudit reads the org's schedule-audit.jsonl read-only. A
-// missing file is an empty view (a refused start of an unsigned scheduled
-// org leaves no line at all — monomind only logs that to `org serve`'s
-// stdout). Lines that do not parse, and events this build does not know,
+// missing file is an empty view. Since monomind 2.24.4 (#656) a scheduled
+// start refused for an unsigned definition or a failed precheck writes a
+// scheduled-start-refused line whose msg is the reason. Lines that do not parse, and events this build does not know,
 // are never fatal: the former are skipped, the latter shown as "other".
 func ReadScheduleAudit(root, org string) (ScheduleAuditView, error) {
 	if !orgdesign.ValidOrgName(org) {
