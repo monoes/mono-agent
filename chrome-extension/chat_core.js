@@ -211,7 +211,11 @@
       case "user.message": {
         // The user's text, for a replay of a turn this transcript lacks; not
         // added again when it already ends the transcript.
-        const t = textOf(p);
+        // The backend wraps the page in front of the message; show only what was typed.
+        const marker = "[/untrusted]\n\nThe person's message:\n";
+        let t = textOf(p);
+        const cut = t.indexOf(marker);
+        if (cut >= 0) t = t.slice(cut + marker.length);
         const last = state.messages[state.messages.length - 1];
         if (t && !(last && last.role === "user" && last.text === t)) {
           closeOpen(state);

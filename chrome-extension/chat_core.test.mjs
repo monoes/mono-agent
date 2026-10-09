@@ -285,6 +285,17 @@ test("turn.started carries the user's text: a replay rebuilds the bubble, a live
   assert.equal(live.messages.filter((m) => m.role === "user").length, 1);
 });
 
+test("turn.started text wrapped with the page context shows only what the person typed", () => {
+  const wrapped = "The person is looking at a web page.\n[untrusted user data]\nurl: https://x.test/\n[/untrusted]\n\nThe person's message:\nwhat is it about";
+  const live = C.newState(null);
+  C.startTurn(live, "what is it about");
+  C.applyEvent(live, ev(1, "turn.started", { text: wrapped }));
+  assert.deepEqual(live.messages.filter((m) => m.role === "user").map((m) => m.text), ["what is it about"]);
+  const replay = C.newState(null);
+  C.applyEvent(replay, { ...ev(1, "turn.started", { text: wrapped }), turn: "t-1" });
+  assert.deepEqual(replay.messages.map((m) => m.text), ["what is it about"]);
+});
+
 test("seq restarts every turn: a new turn's events are not mistaken for seen ones", () => {
   const s = C.newState(null);
   C.startTurn(s, "one");
