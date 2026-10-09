@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"strings"
 )
 
@@ -14,6 +16,26 @@ import (
 const toolsPageRead = "monoagent:read"
 
 func isPageReadTools(tools string) bool { return strings.TrimSpace(tools) == toolsPageRead }
+
+// maxPromptStdin bounds a prompt read from stdin: the extension's message
+// (16 KiB) plus its fenced page (about 40 KiB) fits many times over.
+const maxPromptStdin = 256 * 1024
+
+// readPromptStdin reads a --prompt-stdin prompt.
+func readPromptStdin(r io.Reader) (string, error) {
+	b, err := io.ReadAll(io.LimitReader(r, maxPromptStdin+1))
+	if err != nil {
+		return "", fmt.Errorf("reading the prompt from stdin: %w", err)
+	}
+	if len(b) > maxPromptStdin {
+		return "", errInvalidInput("the prompt on stdin is longer than %d bytes", maxPromptStdin)
+	}
+	prompt := strings.TrimSpace(string(b))
+	if prompt == "" {
+		return "", errInvalidInput("--prompt-stdin got an empty prompt")
+	}
+	return prompt, nil
+}
 
 // parseToolsMode is parseToolsFlag plus the page-read mode. The desktop
 // app's own --tools values go through parseToolsFlag unchanged.

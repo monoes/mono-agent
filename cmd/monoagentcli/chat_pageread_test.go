@@ -125,6 +125,62 @@ func TestPageReadTurnOffersOnlyTheReadTools(t *testing.T) {
 	}
 }
 
+// runChatCmdStdin is runChatCmd with a stdin.
+func runChatCmdStdin(t *testing.T, dbPath, stdin string, args ...string) error {
+	t.Helper()
+	cfg := &globalConfig{DBPath: dbPath, ProfileID: "default"}
+	cmd := newChatCmd(cfg)
+	cmd.SetArgs(args)
+	cmd.SetIn(strings.NewReader(stdin))
+	r, w, _ := os.Pipe()
+	realStdout := os.Stdout
+	os.Stdout = w
+	err := cmd.Execute()
+	os.Stdout = realStdout
+	w.Close()
+	_, _ = r.Read(make([]byte, 1))
+	return err
+}
+
+// The page text can be read from stdin, so it need not sit in argv where any
+// process listing shows it.
+func TestChatPromptCanComeFromStdin(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	_, argsLog, _, _ := writeCapturingMonomind(t)
+	page := "text from a page: --not-a-flag 世界"
+	if err := runChatCmdStdin(t, dbPath, page, "--runtime", "claude", "--tools", "monoagent:read", "--prompt-stdin"); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	argv, _ := os.ReadFile(argsLog)
+	if strings.Contains(string(argv), "text from a page") {
+		t.Errorf("the prompt reached an argv: %s", argv)
+	}
+	if !strings.Contains(string(argv), "--prompt-file") {
+		t.Errorf("monomind was not handed a prompt file: %s", argv)
+	}
+}
+
+func TestChatPromptStdinRefusals(t *testing.T) {
+	dbPath := newChatCLITestDB(t)
+	writeCapturingMonomind(t)
+	for name, c := range map[string]struct {
+		stdin string
+		args  []string
+	}{
+		"also a positional prompt": {"hi", []string{"--runtime", "claude", "--prompt-stdin", "--", "other"}},
+		"empty stdin":              {"  \n", []string{"--runtime", "claude", "--prompt-stdin"}},
+		"too large":                {strings.Repeat("x", maxPromptStdin+1), []string{"--runtime", "claude", "--prompt-stdin"}},
+	} {
+		if err := runChatCmdStdin(t, dbPath, c.stdin, c.args...); err == nil {
+			t.Errorf("%s: want a refusal", name)
+		}
+	}
+	// Without the flag a prompt is still required.
+	if err := runChatCmdStdin(t, dbPath, "hi", "--runtime", "claude"); err == nil {
+		t.Error("no prompt at all must be refused")
+	}
+}
+
 func TestPageReadRefusesToBeWidened(t *testing.T) {
 	dbPath := newChatCLITestDB(t)
 	bin, _, _, _ := writeCapturingMonomind(t)

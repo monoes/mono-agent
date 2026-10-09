@@ -61,9 +61,10 @@ func chatBase(profile string) []string {
 }
 
 func chatTurnArgv(s ChatTurnSpec) []string {
-	args := append(chatBase(s.Profile), "chat", "--conversation="+s.Conversation, "--turn="+s.Turn,
-		"--instance="+s.Instance, "--tools="+chatToolsMode, "--", s.Message)
-	return args
+	// The message, page text included, goes over stdin: argv is world-readable
+	// in a process listing and has a size limit.
+	return append(chatBase(s.Profile), "chat", "--conversation="+s.Conversation, "--turn="+s.Turn,
+		"--instance="+s.Instance, "--tools="+chatToolsMode, "--prompt-stdin")
 }
 
 // run execs the CLI to completion and returns stdout.
@@ -139,6 +140,7 @@ func (b *cliChatBackend) RunTurn(ctx context.Context, spec ChatTurnSpec, onEvent
 	}
 	cmd := exec.CommandContext(ctx, bin, chatTurnArgv(spec)...)
 	cmd.WaitDelay = monomindWaitDelay
+	cmd.Stdin = strings.NewReader(spec.Message)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

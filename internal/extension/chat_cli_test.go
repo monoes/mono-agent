@@ -37,6 +37,7 @@ func readLog(t *testing.T, log string) []string {
 
 func TestCLIBackendRunTurn(t *testing.T) {
 	bin, log := fakeCLI(t, `
+cat > "$0.stdin"
 echo '{"admitted":true,"existed":false,"turn":{"id":"t1"}}'
 echo '{"seq":1,"type":"assistant.delta","payload":{"partId":"p","text":"yo"}}'
 echo '{"seq":2,"type":"turn.finished","payload":{"status":"completed"}}'
@@ -50,9 +51,14 @@ echo '{"seq":2,"type":"turn.finished","payload":{"status":"completed"}}'
 	if len(got) != 2 || got[0].Type != "assistant.delta" || got[1].Seq != 2 {
 		t.Fatalf("events = %+v", got)
 	}
-	want := "--profile=p-work --json chat --conversation=c1 --turn=t1 --instance=ext-1 --tools=monoagent:read -- --sneaky"
+	want := "--profile=p-work --json chat --conversation=c1 --turn=t1 --instance=ext-1 --tools=monoagent:read --prompt-stdin"
 	if lines := readLog(t, log); len(lines) != 1 || lines[0] != want {
 		t.Fatalf("argv = %q", lines)
+	}
+	// The message (page text included) goes over stdin, so it is in no
+	// process listing.
+	if in, err := os.ReadFile(bin + ".stdin"); err != nil || string(in) != "--sneaky" {
+		t.Fatalf("stdin = %q, %v", in, err)
 	}
 	if strings.Contains(want, "runs") {
 		t.Fatal("tools must never include runs")
@@ -77,6 +83,7 @@ func TestCLIBackendRefusals(t *testing.T) {
 func TestCLIBackendFinishesStrandedTurn(t *testing.T) {
 	bin, log := fakeCLI(t, `
 case "$*" in *history*) exit 0;; esac
+cat > "$0.stdin"
 echo '{"admitted":true,"existed":false,"turn":{"id":"t1"}}'
 exit 1
 `)
@@ -93,6 +100,7 @@ exit 1
 func TestCLIBackendCancelRecordsCancelled(t *testing.T) {
 	bin, log := fakeCLI(t, `
 case "$*" in *history*) exit 0;; esac
+cat > "$0.stdin"
 echo '{"admitted":true,"existed":false,"turn":{"id":"t1"}}'
 exec sleep 30
 `)
