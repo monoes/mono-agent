@@ -51,6 +51,7 @@
     },
     {
       "answer": "1.2.0",
+      "blocking": true,
       "id": "run-a-1700-15",
       "kind": "question",
       "pending": false,

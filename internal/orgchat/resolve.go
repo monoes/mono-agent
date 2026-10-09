@@ -21,6 +21,8 @@ type Client interface {
 	// resolved ones included.
 	All(ctx context.Context, root, org, kind string) (json.RawMessage, error)
 	Answer(ctx context.Context, root, org, questionID, answer string) error
+	// Dismiss closes a question without an answer; reason may be empty.
+	Dismiss(ctx context.Context, root, org, questionID, reason string) error
 	Approve(ctx context.Context, root, org, role, action string, approve bool, requestID string) error
 	Gate(ctx context.Context, root, org, gateID string, approve bool, resolution string) error
 }
@@ -39,6 +41,10 @@ func (MonomindClient) All(ctx context.Context, root, org, kind string) (json.Raw
 }
 func (MonomindClient) Answer(ctx context.Context, root, org, questionID, answer string) error {
 	_, err := monomind.OrgAnswerWith(ctx, root, org, questionID, answer, monomind.ResolveOptions{By: Resolver})
+	return err
+}
+func (MonomindClient) Dismiss(ctx context.Context, root, org, questionID, reason string) error {
+	_, err := monomind.OrgDismissQuestionWith(ctx, root, org, questionID, reason, monomind.ResolveOptions{By: Resolver})
 	return err
 }
 func (MonomindClient) Approve(ctx context.Context, root, org, role, action string, approve bool, requestID string) error {
@@ -74,12 +80,14 @@ func (e *NotRunningError) Error() string {
 	return fmt.Sprintf("org %q is not running (status: %s); nothing was sent — start or resume it, then try again", e.Org, st)
 }
 
-// Request resolves one item: answer a question (Text), or approve or deny
-// (Approve) an approval or a gate. Text on a gate is its resolution note.
+// Request resolves one item: answer a question (Text), dismiss one
+// (Dismiss; Text is the optional reason), or approve or deny (Approve) an
+// approval or a gate. Text on a gate is its resolution note.
 type Request struct {
 	Org     string
 	Ref     string
 	Answer  bool // a question; otherwise an approval or a gate
+	Dismiss bool // a question, closed without an answer
 	Approve bool
 	Text    string
 }
@@ -120,7 +128,7 @@ func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, 
 	if !orgdesign.ValidOrgName(req.Org) {
 		return nil, fmt.Errorf("orgchat: invalid org name %q", req.Org)
 	}
-	if req.Answer && strings.TrimSpace(req.Text) == "" {
+	if req.Answer && !req.Dismiss && strings.TrimSpace(req.Text) == "" {
 		return nil, errors.New("orgchat: an answer needs text")
 	}
 	unlock, err := lockOrg(ctx, root, req.Org)
@@ -132,7 +140,7 @@ func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, 
 	res := &Result{OK: true, Org: req.Org, Ref: req.Ref}
 	var act func() error
 	switch {
-	case req.Answer:
+	case req.Answer || req.Dismiss:
 		res.Kind = KindQuestion
 		raw, err := c.All(ctx, root, req.Org, "questions")
 		if err != nil {
@@ -158,6 +166,11 @@ func Resolve(ctx context.Context, c Client, root string, req Request) (*Result, 
 		if q.Answer != nil {
 			res.State, res.Already = StateAnswered, true
 			return res, nil
+		}
+		if req.Dismiss {
+			res.State = StateDismissed
+			act = func() error { return c.Dismiss(ctx, root, req.Org, q.QuestionID, strings.TrimSpace(req.Text)) }
+			break
 		}
 		res.State = StateAnswered
 		act = func() error { return c.Answer(ctx, root, req.Org, q.QuestionID, req.Text) }

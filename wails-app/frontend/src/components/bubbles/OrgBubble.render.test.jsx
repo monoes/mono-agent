@@ -130,6 +130,23 @@ describe('an org bubble', () => {
     expect(screen.getAllByTestId('org-chat-question')[1]).toHaveTextContent('answered')
   })
 
+  it('offers Dismiss only on a blocking question, and dismisses it once', async () => {
+    const items = history.items.map(it => (it.ref === 'q-2250-cd34' ? { ...it, blocking: true } : it))
+    api.getOrgChatHistory.mockResolvedValue({ ...history, items })
+    api.dismissOrgChat = vi.fn().mockResolvedValue({ ok: true, state: 'dismissed', already: false })
+    render(<Harness />)
+    await waitFor(() => expect(screen.getAllByTestId('org-chat-question')).toHaveLength(3))
+    const cards = screen.getAllByTestId('org-chat-question')
+    expect(cards[2].querySelector('[data-testid="org-chat-dismiss"]')).toBeNull()
+    const button = cards[1].querySelector('[data-testid="org-chat-dismiss"]')
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(api.dismissOrgChat).toHaveBeenCalledTimes(1)
+    expect(api.dismissOrgChat).toHaveBeenCalledWith('acme', 'q-2250-cd34', '')
+    await waitFor(() => expect(screen.getAllByTestId('org-chat-question')[1]).toHaveAttribute('data-pending', 'false'))
+    expect(screen.getAllByTestId('org-chat-question')[1]).toHaveTextContent('dismissed')
+  })
+
   it('says so when an item was already resolved elsewhere', async () => {
     api.resolveOrgChat.mockResolvedValue({ ok: true, kind: 'gate', ref: 'gate-1850-x1', state: 'rejected', already: true })
     render(<Harness />)

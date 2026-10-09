@@ -173,6 +173,8 @@ export function DenyOrgAction(arg1:string,arg2:string,arg3:string):Promise<strin
 
 export function DisableAutomation(arg1:string):Promise<string>;
 
+export function DismissOrgChat(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function DoctorAutomations(arg1:string):Promise<string>;
 
 export function EnableAutomation(arg1:string):Promise<string>;

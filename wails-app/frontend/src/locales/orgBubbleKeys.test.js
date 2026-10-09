@@ -15,7 +15,7 @@ const sources = [
 const literal = [...new Set(sources.flatMap(f => [...readFileSync(f, 'utf8').matchAll(/['"`](orgBubble\.[a-zA-Z0-9_.]+)['"`]/g)].map(m => m[1])))]
 const dynamic = [
   ...['running', 'paused', 'stopped', 'neverRun', 'loading'].map(s => `orgBubble.status.${s}`),
-  ...['answered', 'approved', 'denied', 'rejected'].map(s => `orgBubble.state.${s}`),
+  ...['answered', 'approved', 'denied', 'rejected', 'dismissed'].map(s => `orgBubble.state.${s}`),
   ...['pause', 'resume', 'stop'].flatMap(v => [`orgBubble.${v}`, `orgBubble.confirm.${v}Title`, `orgBubble.confirm.${v}Body`]),
   'stage.status.blocked', 'stage.direction.message',
 ]

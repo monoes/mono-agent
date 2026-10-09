@@ -55,7 +55,7 @@ func newOrgChatCmd(env *orgEnv) *cobra.Command {
 			"(exit 3) while the org is not running, so nothing is lost; the item stays pending.",
 	}
 	c.AddCommand(newOrgChatSendCmd(env), newOrgChatHistoryCmd(env), newOrgChatAnswerCmd(env),
-		newOrgChatResolveCmd(env, "approve", true), newOrgChatResolveCmd(env, "deny", false))
+		newOrgChatDismissCmd(env), newOrgChatResolveCmd(env, "approve", true), newOrgChatResolveCmd(env, "deny", false))
 	return c
 }
 
@@ -278,6 +278,22 @@ func newOrgChatAnswerCmd(env *orgEnv) *cobra.Command {
 			return runOrgChatResolve(cmd, env, orgchat.Request{Org: args[0], Ref: args[1], Answer: true, Text: text})
 		},
 	}
+}
+
+func newOrgChatDismissCmd(env *orgEnv) *cobra.Command {
+	var reason string
+	c := &cobra.Command{
+		Use:   "dismiss <org> <questionId> [--reason <text>]",
+		Short: "Close an org's question without answering it (idempotent; refused while the org is not running)",
+		Long: "Closes a question nobody will answer, so a blocking one stops holding the org back; the asking " +
+			"role is told. A question already answered or dismissed reports \"already\": true and nothing is sent.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runOrgChatResolve(cmd, env, orgchat.Request{Org: args[0], Ref: args[1], Dismiss: true, Text: reason})
+		},
+	}
+	c.Flags().StringVar(&reason, "reason", "", "Why it is dismissed (shown to the role)")
+	return c
 }
 
 func newOrgChatResolveCmd(env *orgEnv, verb string, approve bool) *cobra.Command {
