@@ -448,13 +448,14 @@ export const HELP_GUIDES = {
   mysql: {
     connstring: {
       title: 'MySQL Connection String',
-      getKeyURL: 'https://pkg.go.dev/github.com/go-sql-driver/mysql#readme-dsn-data-source-name',
+      getKeyURL: 'https://pkg.go.dev/github.com/go-mysql-org/go-mysql/driver',
       steps: [
-        'Format: username:password@tcp(host:port)/database',
+        'Format: username:password@tcp(host:port)/database (username:password@host:port/database also works)',
         'Example: alice:secret@tcp(localhost:3306)/myapp',
         'For SSL: append ?tls=true or ?tls=skip-verify',
         'For PlanetScale / AWS RDS: copy the connection string from your dashboard',
         'Cloud providers often require SSL — use ?tls=true for hosted MySQL',
+        'Other options: timeout, readTimeout, writeTimeout, collation, compress. Any other option is rejected with an error',
       ],
     },
   },

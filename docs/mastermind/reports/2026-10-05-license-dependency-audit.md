@@ -1,15 +1,14 @@
 # Dependency license audit
 
-Commit 2e76ad6e; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
+Commit a9dd7075; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
 
-- Go modules linked into the CLI or the app: 74 (licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSD-3-Clause+MIT+Public-Domain, ISC, MIT, MPL-2.0)
+- Go modules linked into the CLI or the app: 81 (licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSD-3-Clause+MIT+Public-Domain, ISC, MIT)
 - npm packages that ship in the app: 111 (licenses: ISC, MIT)
 - npm packages that are build tooling only, not distributed: 117 (licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, CC0-1.0, ISC, MIT, MIT-0, MPL-2.0)
 
 ## Flagged: copyleft or unclassified, in what ships
 
-- `github.com/go-sql-driver/mysql` v1.10.1: MPL-2.0 (cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64)
-
+None.
 ## Go modules
 
 | Module | Version | License | Built into |
@@ -23,15 +22,16 @@ Commit 2e76ad6e; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
 | github.com/clipperhouse/displaywidth | v0.10.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/clipperhouse/uax29/v2 | v2.6.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/cloudflare/circl | v1.6.3 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
+| github.com/coreos/go-semver | v0.3.1 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/danieljoos/wincred | v1.2.3 | MIT | cli windows/amd64, app windows/amd64 |
 | github.com/disintegration/imaging | v1.6.2 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/dlclark/regexp2 | v1.11.4 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/dop251/goja | v0.0.0-20260305124333-6a7976c22267 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/dustin/go-humanize | v1.0.1 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | github.com/fatih/color | v1.18.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| github.com/go-mysql-org/go-mysql | v1.16.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/go-rod/rod | v0.116.2 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | github.com/go-sourcemap/sourcemap | v2.1.3+incompatible | BSD-2-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
-| github.com/go-sql-driver/mysql | v1.10.1 | MPL-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/go-telegram-bot-api/telegram-bot-api/v5 | v5.5.1 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/godbus/dbus/v5 | v5.2.2 | BSD-2-Clause | cli linux/amd64, cli linux/arm64, app linux/amd64 |
 | github.com/google/pprof | v0.0.0-20260802141513-ef3492d7dac3 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
@@ -54,6 +54,9 @@ Commit 2e76ad6e; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
 | github.com/olekukonko/errors | v1.2.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/olekukonko/ll | v0.1.6 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/olekukonko/tablewriter | v1.1.5 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| github.com/pingcap/errors | v0.11.5-0.20260310054046-9c8b3586e4b2 | BSD-2-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| github.com/pingcap/log | v1.1.1-0.20260227082333-572e590d08f1 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| github.com/pingcap/tidb/pkg/parser | v0.0.0-20260504140133-511dba1dbe17 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/pkg/errors | v0.9.1 | BSD-2-Clause | app darwin/arm64, app linux/amd64, app windows/amd64 |
 | github.com/redis/go-redis/v9 | v9.22.0 | BSD-2-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
@@ -77,13 +80,16 @@ Commit 2e76ad6e; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
 | github.com/zalando/go-keyring | v0.2.8 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | go.mongodb.org/mongo-driver/v2 | v2.9.1 | Apache-2.0 | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | go.uber.org/atomic | v1.11.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| go.uber.org/multierr | v1.11.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| go.uber.org/zap | v1.28.0 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | golang.org/x/crypto | v0.57.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | golang.org/x/image | v0.45.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
-| golang.org/x/net | v0.59.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
+| golang.org/x/net | v0.60.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | golang.org/x/sync | v0.23.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | golang.org/x/sys | v0.48.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | golang.org/x/term | v0.46.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | golang.org/x/text | v0.42.0 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
+| gopkg.in/natefinch/lumberjack.v2 | v2.2.1 | MIT | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64 |
 | modernc.org/libc | v1.77.1 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
 | modernc.org/memory | v1.12.1 | BSD-3-Clause | cli darwin/amd64, cli darwin/arm64, cli linux/amd64, cli linux/arm64, cli windows/amd64, app darwin/arm64, app linux/amd64, app windows/amd64 |
@@ -91,7 +97,7 @@ Commit 2e76ad6e; `python3 scripts/licenseaudit/audit.py deps`. Not legal advice.
 
 ## Findings
 
-1. **`github.com/go-sql-driver/mysql` is MPL-2.0 and is linked into the CLI** (the MySQL node, `internal/nodes/db/mysql.go`). MPL-2.0 is a per-file copyleft: a binary that includes it may be distributed under other terms for the rest of the program if recipients are told how to get the source of the MPL-covered files (MPL-2.0 §3.2) and the MPL text travels with the binary. No modified copy is vendored here, so naming the module and version as the source meets that; `NOTICE` does it (`Source code: https://github.com/go-sql-driver/mysql`). Counsel confirms; the alternative is to drop the node.
+1. **Resolved: the MySQL driver is now MIT.** `github.com/go-sql-driver/mysql` (MPL-2.0) was linked into the CLI by the MySQL node (`internal/nodes/db/mysql.go`). It is replaced by `github.com/go-mysql-org/go-mysql` (MIT), which adds `coreos/go-semver` (Apache-2.0), `pingcap/errors` (BSD-2-Clause), `pingcap/log` (Apache-2.0), `pingcap/tidb/pkg/parser` (Apache-2.0), `go.uber.org/multierr` and `go.uber.org/zap` (MIT) and `gopkg.in/natefinch/lumberjack.v2` (MIT). No copyleft Go module is linked any more.
 2. **No other copyleft code ships.** The twelve MPL-2.0 npm packages (`lightningcss` and its platform binaries) are build tooling and are not in the app's files.
 3. **Releases ship binaries without third-party license texts today** (`release.yml`, "Flatten and checksum all release files": binaries, archives and checksums only). MIT, BSD, ISC and Apache-2.0 ask for their text to accompany a binary. `NOTICE` is that text; Task 4 attaches it to every release with one `cp` line, a change that can land alone whether or not the repository is ever closed.
 4. **`modernc.org/sqlite`** keeps BSD-3-Clause, MIT (sqlite-vec) and the SQLite public-domain dedication in separate files, plus `LICENSE-3RD-PARTY.md` for the C it transpiles; `NOTICE` includes all of them, and the Apache-2.0 modules' `NOTICE` files likewise.
