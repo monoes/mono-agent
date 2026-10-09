@@ -48,11 +48,17 @@ type MonoagentTools struct {
 	// it — only the chat session's explicit opt-in (CLI --tools
 	// monoagent,runs; GUI persisted setting) sets it at construction.
 	allowRuns bool
-	// sawSyncedComms records that get_message/list_messages returned
-	// communications content into this session's context — run tools
-	// refuse afterwards, since synced message bodies are untrusted
-	// user-side content and a proven prompt-injection vector.
-	sawSyncedComms bool
+	// sawUntrustedContent records that content nobody vouches for entered
+	// this session's context: get_message/list_messages returned synced
+	// communications, or the turn carries text from a web page. Gated
+	// tools refuse afterwards — both are proven prompt-injection vectors.
+	sawUntrustedContent bool
+	// untrustedSource names what was seen ("synced communications" or "web
+	// page"), for the refusal's wording.
+	untrustedSource string
+	// pageReadOnly restricts the session to PageReadToolNames: the mode of a
+	// turn that carries page text from the browser extension.
+	pageReadOnly bool
 	// orgProjectRoot is a test/explicit override for profileRoot(); empty
 	// means resolve normally.
 	orgProjectRoot string
@@ -94,15 +100,60 @@ func (mt *MonoagentTools) runsAllowed() bool {
 }
 
 func (mt *MonoagentTools) markSyncedCommsSeen() {
+	mt.markUntrusted("synced communications")
+}
+
+// MarkPageContextSeen records that this turn carries text from a web page.
+// It trips the same injection gate synced messages do.
+func (mt *MonoagentTools) MarkPageContextSeen() {
+	mt.markUntrusted("web page")
+}
+
+func (mt *MonoagentTools) markUntrusted(source string) {
 	mt.mu.Lock()
-	mt.sawSyncedComms = true
+	if !mt.sawUntrustedContent {
+		mt.untrustedSource = source
+	}
+	mt.sawUntrustedContent = true
 	mt.mu.Unlock()
 }
 
-func (mt *MonoagentTools) syncedCommsSeen() bool {
+func (mt *MonoagentTools) untrustedContentSeen() (string, bool) {
 	mt.mu.RLock()
 	defer mt.mu.RUnlock()
-	return mt.sawSyncedComms
+	return mt.untrustedSource, mt.sawUntrustedContent
+}
+
+// PageReadToolNames is the whole tool set of a page-read session (the
+// extension's chat): read-only, and none of it reaches credentials, the
+// vault, profile documents, synced messages, people, publications, orgs or
+// anything that writes. Hidden text on a page can steer what these show; it
+// cannot make them change or leak anything private.
+var PageReadToolNames = []string{"list_workflows", "get_workflow", "list_node_types"}
+
+// SetPageReadOnly confines this session to PageReadToolNames and counts the
+// turn's page text as untrusted content. Only the CLI's --tools
+// monoagent:read start-time choice may call it, never a model turn.
+func (mt *MonoagentTools) SetPageReadOnly() {
+	mt.mu.Lock()
+	mt.pageReadOnly = true
+	mt.mu.Unlock()
+	mt.MarkPageContextSeen()
+}
+
+func (mt *MonoagentTools) pageRead() bool {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.pageReadOnly
+}
+
+func pageReadAllows(name string) bool {
+	for _, n := range PageReadToolNames {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRunGate enforces the mechanical preconditions every run tool must
@@ -125,10 +176,17 @@ func (mt *MonoagentTools) checkRunGate(tool string) error {
 // not become the write primitive a prompt injection reaches for once
 // checkRunGate has already shut that door for run_workflow.
 func (mt *MonoagentTools) checkInjectionGate(tool string) error {
-	if mt.syncedCommsSeen() {
-		return fmt.Errorf("%s refused: synced communications content was read into this session (possible prompt-injection vector) — start a fresh session without reading messages first to execute", tool)
+	// A refusal here never depends on an argument: a model-supplied
+	// confirm:true is not consent, so the gate is checked before confirm is
+	// even looked at.
+	source, seen := mt.untrustedContentSeen()
+	if !seen {
+		return nil
 	}
-	return nil
+	if source == "web page" {
+		return fmt.Errorf("%s refused: this turn carries text from a web page (possible prompt-injection vector) — do this from the app's own chat, not from a page", tool)
+	}
+	return fmt.Errorf("%s refused: synced communications content was read into this session (possible prompt-injection vector) — start a fresh session without reading messages first to execute", tool)
 }
 
 // ProfileID returns the active profile id under the read lock.
@@ -578,6 +636,15 @@ func (mt *MonoagentTools) ToolDefs() []ToolDef {
 	}
 	defs = append(defs, orgUnificationToolDefs(def)...)
 	defs = append(defs, publicationToolDefs()...)
+	if mt.pageRead() {
+		kept := make([]ToolDef, 0, len(PageReadToolNames))
+		for _, d := range defs {
+			if pageReadAllows(d.Function.Name) {
+				kept = append(kept, d)
+			}
+		}
+		return kept
+	}
 	return defs
 }
 
@@ -601,6 +668,9 @@ func (mt *MonoagentTools) Execute(name string, args string) (string, error) {
 // ExecuteContext dispatches a monoagent-domain tool call by name, deriving
 // run-tool subprocess lifetimes from ctx (no Background-derived orphans).
 func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args string) (string, error) {
+	if mt.pageRead() && !pageReadAllows(name) {
+		return "", fmt.Errorf("%s is not available in this session", name)
+	}
 	switch name {
 	case "list_workflows":
 		return mt.listWorkflows(args)
