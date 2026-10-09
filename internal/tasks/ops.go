@@ -316,12 +316,16 @@ func (s *Store) each(ctx context.Context, profileID string, ids []int64, reverse
 func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top bool, actor Actor) ([]Task, error) {
 	note := "approved"
 	if actor.Kind != Human {
-		if !s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.Approve }) {
+		// A delegate approves only what it can see: approve needs view as well.
+		if !s.agentMay(ctx, profileID, actor, func(a AgentAccess) bool { return a.Approve && a.View }) {
 			return nil, operatorOnly("approve a task")
 		}
 		// The history must say which agent approved: a delegated approval needs a name.
 		if err := needName(actor); err != nil {
 			return nil, err
+		}
+		if len(ids) > MaxDelegatedApprove {
+			return nil, invalid("an agent approves at most %d tasks in one call (got %d): the operator approves more", MaxDelegatedApprove, len(ids))
 		}
 		note = DelegatedApprovalNote
 	}
@@ -333,6 +337,9 @@ func (s *Store) Approve(ctx context.Context, profileID string, ids []int64, top 
 		func(cur Task) error {
 			if cur.Status != StatusInbox {
 				return invalid("task #%d is %s, not inbox: only an inbox task is approved", cur.ID, cur.Status)
+			}
+			if actor.Kind != Human {
+				return s.refuseAgentCreated(ctx, cur)
 			}
 			return nil
 		},

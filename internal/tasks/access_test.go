@@ -69,12 +69,8 @@ func TestViewSwitchShowsInboxAndBoardToAgents(t *testing.T) {
 func TestApproveSwitchLetsANamedAgentApproveAndMarksTheEvent(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	inbox := mustAdd(t, s, "default", "captured text", false)
-	if err := s.SetAgentAccess(bg, "default", AgentAccess{Approve: true}, human); err != nil {
+	if err := s.SetAgentAccess(bg, "default", AgentAccess{View: true, Approve: true}, human); err != nil {
 		t.Fatal(err)
-	}
-	// approve alone does not open the board or the default list.
-	if _, err := s.Board(bg, "default", 0, bot("amy")); !errors.Is(err, ErrOperatorOnly) {
-		t.Fatalf("approve allowed the board: %v", err)
 	}
 	// A nameless agent is refused: the history must say who approved.
 	if _, err := s.Approve(bg, "default", []int64{inbox.ID}, false, Actor{Kind: Agent}); err == nil {
@@ -168,5 +164,87 @@ func TestDelegationDoesNotExtendToOtherOperatorVerbs(t *testing.T) {
 	}
 	if _, err := s.Edit(bg, "default", inbox.ID, Edit{}, am); !errors.Is(err, ErrOperatorOnly) {
 		t.Errorf("edit: %v", err)
+	}
+}
+
+// A delegate cannot approve what it cannot see: approve needs view as well.
+func TestDelegatedApproveNeedsView(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	inbox := mustAdd(t, s, "default", "captured", false)
+	if err := s.SetAgentAccess(bg, "default", AgentAccess{Approve: true}, human); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Approve(bg, "default", []int64{inbox.ID}, false, bot("amy")); !errors.Is(err, ErrOperatorOnly) {
+		t.Fatalf("approve without view: %v", err)
+	}
+	if _, err := s.Board(bg, "default", 0, bot("amy")); !errors.Is(err, ErrOperatorOnly) {
+		t.Fatalf("approve allowed the board: %v", err)
+	}
+}
+
+// The loop "an agent adds a task, the same agent approves it" is closed: a delegate approves only
+// tasks the operator wrote or a capture surface filed.
+func TestDelegatedApproveRefusesTasksAnAgentCreated(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	if err := s.SetAgentAccess(bg, "default", AgentAccess{View: true, Approve: true}, human); err != nil {
+		t.Fatal(err)
+	}
+	own, _, err := s.Add(bg, "default", AddInput{Title: "injected"}, bot("bob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, _ := s.Add(bg, "default", AddInput{Title: "by another agent"}, bot("eve"))
+	op := mustAdd(t, s, "default", "operator's", false)
+	chrome, _, err := s.Add(bg, "default", AddInput{Title: "from chrome", SourceKind: SourceChrome}, Actor{Kind: Capture, Name: "chrome"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{own.ID, other.ID} {
+		_, err := s.Approve(bg, "default", []int64{id}, false, bot("bob"))
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "created by an agent") {
+			t.Fatalf("approving agent task #%d: %v", id, err)
+		}
+	}
+	// A batch with one agent task approves nothing.
+	if _, err := s.Approve(bg, "default", []int64{op.ID, own.ID}, false, bot("bob")); err == nil {
+		t.Fatal("a batch with an agent's task was approved")
+	}
+	if got, _, _ := s.Get(bg, "default", op.ID); got.Status != StatusInbox {
+		t.Fatalf("the batch moved a task: %s", got.Status)
+	}
+	if _, err := s.Approve(bg, "default", []int64{op.ID, chrome.ID}, false, bot("bob")); err != nil {
+		t.Fatalf("operator and capture tasks: %v", err)
+	}
+	// The operator may approve an agent's task, as before.
+	if _, err := s.Approve(bg, "default", []int64{own.ID}, false, human); err != nil {
+		t.Fatalf("operator approving an agent task: %v", err)
+	}
+}
+
+func TestDelegatedApproveIsCappedAtTenIDs(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	if err := s.SetAgentAccess(bg, "default", AgentAccess{View: true, Approve: true}, human); err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for i := 0; i < MaxDelegatedApprove+1; i++ {
+		ids = append(ids, mustAdd(t, s, "default", "t", false).ID)
+	}
+	if _, err := s.Approve(bg, "default", ids, false, bot("amy")); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "at most 10") {
+		t.Fatalf("11 ids: %v", err)
+	}
+	if _, err := s.Approve(bg, "default", ids[:MaxDelegatedApprove], false, bot("amy")); err != nil {
+		t.Fatalf("10 ids: %v", err)
+	}
+	// The operator has no cap.
+	if _, err := s.Approve(bg, "default", ids[MaxDelegatedApprove:], false, human); err != nil {
+		t.Fatal(err)
+	}
+	more := make([]int64, 0, 12)
+	for i := 0; i < 12; i++ {
+		more = append(more, mustAdd(t, s, "default", "m", false).ID)
+	}
+	if _, err := s.Approve(bg, "default", more, false, human); err != nil {
+		t.Fatalf("operator with 12 ids: %v", err)
 	}
 }

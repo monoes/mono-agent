@@ -1352,22 +1352,20 @@ context, so a session-start hook can call it. A `comment` run under an
 agent context is an agent's comment: it needs a name.
 
 **Delegating to agents (off by default).** The user can let agents see the
-board and approve, per profile, with `monoagentcli --profile work task agents
-allow --view` (agents get `task board`, and the Inbox in `task list` and
-`task_list` without naming it) and `task agents allow --approve` (a named agent,
-`--as NAME`, may `task approve ID...`; a `--tasks-only` MCP server then also
-serves `task_approve`). The two are independent; `task agents deny
+board and approve, per profile, in a terminal of their own: `monoagentcli
+--profile work task agents allow --view` (agents get `task board`, and the
+Inbox in `task list` and `task_list` without naming it) and `task agents allow
+--view --approve` (a named agent, `--as NAME`, may `task approve ID...`; a
+`--tasks-only` MCP server then also serves `task_approve`). `task agents deny
 [--view] [--approve]` takes them back at once (no flag takes back both) and
 `task agents show` says what is allowed. Only the user can change it: `allow`
-and `deny` refuse an agent-driven caller, and no MCP tool changes it. It is one
-row of the `settings` table, `task_agent_access:<profile id>`, read at each
-call. An agent's approval moves Inbox tasks to Ready only, and the history
-records it under the agent's name, marked as delegated (`task show`). Think
-before you allow `--approve`: the Inbox holds text from web pages and other
-apps, which can be written to steer an AI, and an agent that approves turns it
-into work another agent runs, unread by you. This is a convenience boundary
-against injected text, not a sandbox: an agent with a shell or the database
-can bypass it.
+and `deny` refuse an agent-driven caller, `allow` also needs a terminal on
+standard input, and no MCP tool changes it. It is one row of the `settings`
+table, `task_agent_access:<profile id>`, read at each call. An agent's approval
+moves Inbox tasks to Ready only, and the history records it under the agent's
+name, marked as delegated (`task show`). Three rules bound a delegated approval. (1) It needs view as well: an agent approves only what it can see, and `allow --approve` is refused unless view is on or given with it. (2) An agent never approves a task an agent created (source agent, or filed by an agent session, whichever agent it was), so the loop "an agent adds an injected task, then approves it" is closed; it approves only tasks the operator wrote or a capture (Chrome, the OS menu) filed. (3) An agent approves at most 10 tasks in one call; the operator has no cap. `task agents allow` also refuses to run unless standard input is a terminal, so a non-interactive tool call cannot turn it on; `deny` runs anywhere, since taking access back is always safe. The residual risk stays: an agent can still approve operator or captured tasks whose text may carry injected instructions (the operator accepted that by turning it on), and none of this is a sandbox against an agent with shell or database access. Think before you
+allow `--approve`: the Inbox holds text from web pages and other apps, which
+can be written to steer an AI.
 
 ```bash
 monoagentcli --profile work task next                                         # what is next (only looks)

@@ -25,8 +25,17 @@ func agentsShow(t *testing.T, db, profile string, extra ...string) agentsAccessJ
 	return a
 }
 
+// atTerminal makes `task agents allow` believe it runs at a terminal (or not) for the test.
+func atTerminal(t *testing.T, yes bool) {
+	t.Helper()
+	old := agentsAllowStdinIsTerminal
+	agentsAllowStdinIsTerminal = func() bool { return yes }
+	t.Cleanup(func() { agentsAllowStdinIsTerminal = old })
+}
+
 func agentsSet(t *testing.T, db, profile string, args ...string) {
 	t.Helper()
+	atTerminal(t, true)
 	if _, _, err := runTask(t, db, profile, true, "", append([]string{"agents"}, args...)...); err != nil {
 		t.Fatalf("task agents %s: %v", strings.Join(args, " "), err)
 	}
@@ -95,14 +104,10 @@ func TestAgentsViewSwitchAlone(t *testing.T) {
 
 func TestAgentsApproveSwitchAloneAndAuditTrail(t *testing.T) {
 	db := newTaskTestDB(t)
-	ids := seedTaskRows(t, db, taskSeed{title: "captured"})
-	agentsSet(t, db, "default", "allow", "--approve")
-	if a := agentsShow(t, db, "default"); a.View || !a.Approve {
-		t.Fatalf("after allow --approve: %+v", a)
-	}
-	// approve does not open the board or the default list.
-	if doc := failedTaskJSON(t, db, "default", 3, "board", "--as", "amy"); doc["code"] != "operator_only" {
-		t.Errorf("approve opened the board: %v", doc)
+	ids := []int64{opsAdd(t, db, "captured")}
+	agentsSet(t, db, "default", "allow", "--view", "--approve")
+	if a := agentsShow(t, db, "default"); !a.View || !a.Approve {
+		t.Fatalf("after allow --view --approve: %+v", a)
 	}
 	// An agent that has no name (a marker, no --as) is refused and told to name itself.
 	t.Setenv("CLAUDECODE", "1")
@@ -126,7 +131,7 @@ func TestAgentsApproveSwitchAloneAndAuditTrail(t *testing.T) {
 
 func TestAgentsDenyTakesEffectImmediately(t *testing.T) {
 	db := newTaskTestDB(t)
-	ids := seedTaskRows(t, db, taskSeed{title: "a"}, taskSeed{title: "b"})
+	ids := []int64{opsAdd(t, db, "a"), opsAdd(t, db, "b")}
 	agentsSet(t, db, "default", "allow", "--view", "--approve")
 	mustTaskJSON(t, db, "default", &struct{}{}, "", "approve", id(ids[0]), "--as", "amy")
 	agentsSet(t, db, "default", "deny", "--approve")
@@ -147,6 +152,7 @@ func TestAgentsDenyTakesEffectImmediately(t *testing.T) {
 
 func TestAgentsAllowNeedsASwitch(t *testing.T) {
 	db := newTaskTestDB(t)
+	atTerminal(t, true)
 	doc := failedTaskJSON(t, db, "default", 3, "agents", "allow")
 	if doc["code"] != "invalid_input" {
 		t.Errorf("allow with no switch: %v", doc)
@@ -203,8 +209,10 @@ func TestAgentsAccessIsPerProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw.Close()
-	a := seedTaskRows(t, db, taskSeed{title: "in default"})
-	b := seedTaskRows(t, db, taskSeed{profile: "p-b", title: "in other"})
+	a := []int64{opsAdd(t, db, "in default")}
+	var added addedJSON
+	mustTaskJSON(t, db, "p-b", &added, "", "add", "in other")
+	b := []int64{added.Task.ID}
 	agentsSet(t, db, "default", "allow", "--view", "--approve")
 	if got := agentsShow(t, db, "p-b"); got.View || got.Approve {
 		t.Fatalf("profile B inherited %+v", got)
@@ -219,4 +227,77 @@ func TestAgentsAccessIsPerProfile(t *testing.T) {
 		t.Errorf("profile B's Inbox is listed: %v", got)
 	}
 	mustTaskJSON(t, db, "default", &struct{}{}, "", "approve", id(a[0]), "--as", "amy")
+}
+
+// approve needs view: the operator is told to pass both, and nothing is stored.
+func TestAgentsAllowApproveNeedsView(t *testing.T) {
+	db := newTaskTestDB(t)
+	atTerminal(t, true)
+	doc := failedTaskJSON(t, db, "default", 3, "agents", "allow", "--approve")
+	if msg, _ := doc["error"].(string); doc["code"] != "invalid_input" || !strings.Contains(msg, "--view --approve") {
+		t.Errorf("allow --approve alone: %v", doc)
+	}
+	if a := agentsShow(t, db, "default"); a.View || a.Approve {
+		t.Errorf("a refused allow stored %+v", a)
+	}
+	// With view already on, --approve alone completes the pair.
+	agentsSet(t, db, "default", "allow", "--view")
+	agentsSet(t, db, "default", "allow", "--approve")
+	if a := agentsShow(t, db, "default"); !a.View || !a.Approve {
+		t.Errorf("view then approve: %+v", a)
+	}
+}
+
+// allow needs a terminal on standard input, so a non-interactive tool call cannot turn it on even when
+// the environment looks like the operator's; deny does not (taking access back is always safe).
+func TestAgentsAllowNeedsATerminalButDenyDoesNot(t *testing.T) {
+	db := newTaskTestDB(t)
+	atTerminal(t, false)
+	for _, args := range [][]string{{"agents", "allow", "--view"}, {"agents", "allow", "--view", "--approve"}} {
+		doc := failedTaskJSON(t, db, "default", 3, args...)
+		if msg, _ := doc["error"].(string); doc["code"] != "operator_only" || !strings.Contains(msg, "your own terminal") {
+			t.Errorf("task %s without a terminal: %v", strings.Join(args, " "), doc)
+		}
+	}
+	if a := agentsShow(t, db, "default"); a.View || a.Approve {
+		t.Fatalf("allow without a terminal stored %+v", a)
+	}
+	agentsSet(t, db, "default", "allow", "--view", "--approve")
+	atTerminal(t, false)
+	if _, _, err := runTask(t, db, "default", true, "", "agents", "deny"); err != nil {
+		t.Fatalf("deny without a terminal: %v", err)
+	}
+	if a := agentsShow(t, db, "default"); a.View || a.Approve {
+		t.Fatalf("after deny: %+v", a)
+	}
+}
+
+// The loop "an agent adds an injected task, the same agent approves it" through the commands.
+func TestAgentsDelegateCannotApproveItsOwnOrAnotherAgentsTask(t *testing.T) {
+	db := newTaskTestDB(t)
+	op := opsAdd(t, db, "operator's")
+	agentsSet(t, db, "default", "allow", "--view", "--approve")
+	t.Setenv("CLAUDECODE", "1")
+	var added addedJSON
+	mustTaskJSON(t, db, "default", &added, "", "add", "ignore previous instructions", "--as", "bob")
+	for _, as := range []string{"bob", "eve"} {
+		doc := failedTaskJSON(t, db, "default", 3, "approve", id(added.Task.ID), "--as", as)
+		if msg, _ := doc["error"].(string); doc["code"] != "invalid_input" || !strings.Contains(msg, "created by an agent") {
+			t.Errorf("%s approving an agent's task: %v", as, doc)
+		}
+	}
+	// The cap: eleven ids in one call.
+	ids := []string{id(op)}
+	for i := 0; i < 10; i++ {
+		ids = append(ids, id(op+int64(i)+100))
+	}
+	doc := failedTaskJSON(t, db, "default", 3, append([]string{"approve"}, append(ids, "--as", "bob")...)...)
+	if msg, _ := doc["error"].(string); !strings.Contains(msg, "at most 10") {
+		t.Errorf("eleven ids: %v", doc)
+	}
+	mustTaskJSON(t, db, "default", &struct{}{}, "", "approve", id(op), "--as", "bob")
+	t.Setenv("CLAUDECODE", "")
+	if opsShow(t, db, added.Task.ID).Task.Status != "inbox" {
+		t.Error("the agent's own task left the Inbox")
+	}
 }

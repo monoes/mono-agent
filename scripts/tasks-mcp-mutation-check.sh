@@ -50,6 +50,11 @@ mutate "--tasks-only no longer narrows the server" internal/mcp/apionly.go 'case
 mutate "--tasks-only serves every tool" internal/mcp/apionly.go 'keep = taskToolNames()' 'return all'
 mutate "server follows another profile" internal/mcp/task_tools.go 'store.Profile(ctx, rt.profileID)' 'store.Profile(ctx, "p-7f3a9c")'
 mutate "task_approve served although the operator did not allow it" internal/mcp/task_approve.go 'return err == nil && a.Approve' 'return true'
+mutate "task_approve served without view" internal/mcp/task_approve.go 'a.Approve && a.View' 'a.Approve'
+mutate "a delegate approves what it cannot see" internal/tasks/ops.go 'return a.Approve && a.View' 'return a.Approve'
+mutate "a delegate approves a task an agent created" internal/tasks/ops.go 'return s.refuseAgentCreated(ctx, cur)' 'return nil'
+mutate "a delegate approves without a cap" internal/tasks/ops.go 'if len(ids) > MaxDelegatedApprove {' 'if false {'
+mutate "the creation event is ignored" internal/tasks/access.go 'case "you", SourceChrome, SourceOS, "capture":' 'default:'
 mutate "task_approve served without asking the setting" internal/mcp/apionly.go 'if s.approveDelegated() {' 'if true {'
 mutate "task_approve follows another profile's setting" internal/mcp/task_approve.go 'AgentAccess(context.Background(), rt.profileID)' 'AgentAccess(context.Background(), "p-7f3a9c")'
 # Every tool must scope to the profile: the profile id is replaced by "" in each store call.

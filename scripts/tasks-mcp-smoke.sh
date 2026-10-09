@@ -80,11 +80,21 @@ grep -q "only the operator" "$root/err" || fail "agents allow by an agent: $(cat
 run --json task agents show | jq -e '.view==false and .approve==false' >/dev/null || fail "delegation is not off by default"
 out="$({ echo "$init"; echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; } | rpc --allow-mutations)"
 [ "$(resp "$out" 2 | jq -r '[.result.tools[].name]|sort|join(",")')" = "task_add,task_claim,task_comment,task_finish,task_get,task_list,task_next,task_release" ] || fail "tools/list changed while delegation is off"
-run task agents allow --approve >/dev/null || fail "operator: task agents allow --approve"
+# allow needs a terminal on standard input: refused here (no terminal), done below through a pseudo-terminal.
+if run task agents allow --view --approve </dev/null >/dev/null 2>"$root/err"; then fail "task agents allow ran without a terminal"; fi
+grep -q "your own terminal" "$root/err" || fail "allow without a terminal: $(cat "$root/err")"
+allow_tty() { env -i "PATH=$PATH" "HOME=$home" "TMPDIR=$root/tmp" python3 -c 'import pty,sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)' "$cli" --db-path "$db" task agents allow "$@" >/dev/null; }
+if allow_tty --approve; then fail "allow --approve without --view was accepted"; fi
+allow_tty --view --approve || fail "operator: task agents allow --view --approve"
 out="$({ echo "$init"; echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; call 3 task_approve "{\"ids\":[$inbox_id]}"; } | rpc --allow-mutations)"
 resp "$out" 2 | jq -e '[.result.tools[].name]|index("task_approve")!=null' >/dev/null || fail "task_approve not listed while allowed"
 resp "$out" 3 | jq -e '.result.isError!=true' >/dev/null || fail "task_approve: $(resp "$out" 3)"
 run --json task show "$inbox_id" | jq -e '.task.status=="ready" and (.events[-1].actor|startswith("agent:smoke-client#")) and (.events[-1].note|contains("delegated"))' >/dev/null || fail "the approval is not recorded as delegated: $(run --json task show "$inbox_id")"
+# the loop is closed: a task an agent added over MCP cannot be approved by an agent
+out="$({ echo "$init"; call 2 task_add '{"title":"injected"}'; } | rpc --allow-mutations)"
+agent_id="$(resp "$out" 2 | jq -r '.result.content[0].text | fromjson | .task.id')"
+out="$({ echo "$init"; call 3 task_approve "{\"ids\":[$agent_id]}"; } | rpc --allow-mutations)"
+resp "$out" 3 | jq -e '.result.isError==true and (.result.content[0].text|contains("created by an agent"))' >/dev/null || fail "an agent approved a task an agent created: $(resp "$out" 3)"
 run task agents deny >/dev/null || fail "operator: task agents deny"
 out="$({ echo "$init"; echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; call 3 task_approve '{"ids":[1]}'; } | rpc --allow-mutations)"
 resp "$out" 2 | jq -e '[.result.tools[].name]|index("task_approve")==null' >/dev/null || fail "task_approve still listed after deny"

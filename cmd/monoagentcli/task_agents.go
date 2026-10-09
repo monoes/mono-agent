@@ -53,6 +53,10 @@ func writeAgentAccess(cfg *globalConfig, cmd *cobra.Command, p tasks.Profile, a 
 	return nil
 }
 
+// agentsAllowStdinIsTerminal says whether `task agents allow` runs at a terminal. A variable so that
+// a test can stand in for one.
+var agentsAllowStdinIsTerminal = stdinIsTerminal
+
 func newTaskAgentsCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agents",
@@ -65,11 +69,15 @@ two abilities, for one profile at a time, and take them back at any moment:
               and in the task_list tool, without naming it
   --approve   a NAMED agent (--as NAME) moves Inbox tasks to Ready, in the history
               as that agent and marked as delegated; the MCP server started with
-              --tasks-only then also serves task_approve
+              --tasks-only then also serves task_approve. It needs --view too
+              (an agent approves only what it can see): allow --view --approve.
+              An agent approves at most 10 tasks a call, and never a task that an
+              agent created, so "an agent adds a task and approves it" is closed.
 
-The two are independent. Both are off until you turn them on, and only you can:
-allow and deny refuse any caller that is an AI agent, so an agent cannot grant itself
-access. Run them in your own terminal.
+Both are off until you turn them on, and only you can: allow and deny refuse any
+caller that is an AI agent, so an agent cannot grant itself access, and allow also
+refuses to run unless standard input is a terminal. Run them in your own terminal
+(deny works from a script too: taking access back is always safe).
 
 Take care with --approve. The text of an Inbox task can come from web pages and other
 apps, so it can carry instructions meant for an AI. An agent that may approve can turn
@@ -109,7 +117,7 @@ func newTaskAgentsSetCmd(cfg *globalConfig, on bool) *cobra.Command {
 	var view, approve bool
 	use, short := "deny [--view] [--approve]", "Take back what you delegated to AI agents (you only; no flag takes back both)"
 	if on {
-		use, short = "allow --view|--approve", "Let AI agents see the board and the Inbox, or approve Inbox tasks (you only; off by default)"
+		use, short = "allow --view [--approve]", "Let AI agents see the board and the Inbox, or approve Inbox tasks (you only; off by default)"
 	}
 	cmd := &cobra.Command{
 		Use:   use,
@@ -118,6 +126,9 @@ func newTaskAgentsSetCmd(cfg *globalConfig, on bool) *cobra.Command {
 			actor, err := callerFor(flagAs(cmd)).operator("change what AI agents may do with the Inbox")
 			if err != nil {
 				return err
+			}
+			if on && !agentsAllowStdinIsTerminal() {
+				return operatorOnlyError("task agents allow needs a terminal on standard input, which this run does not have: run it in your own terminal")
 			}
 			if len(args) != 0 {
 				return errInvalidInput("task agents takes only the flags --view and --approve (got %q)", cutArg(args[0]))
@@ -138,6 +149,9 @@ func newTaskAgentsSetCmd(cfg *globalConfig, on bool) *cobra.Command {
 				}
 				if approve {
 					a.Approve = on
+				}
+				if on && a.Approve && !a.View {
+					return errInvalidInput("--approve needs --view as well (an agent approves only what it can see): run task agents allow --view --approve")
 				}
 				if err := store.SetAgentAccess(ctx, p.ID, a, actor); err != nil {
 					return taskErr(err)

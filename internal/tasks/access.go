@@ -24,6 +24,9 @@ type AgentAccess struct {
 // on the operator's delegation: it marks the approval in the task's history.
 const DelegatedApprovalNote = "approved (delegated: the operator lets agents approve)"
 
+// MaxDelegatedApprove is how many tasks a delegated agent approves in one call.
+const MaxDelegatedApprove = 10
+
 // agentAccessKey is the row of the settings table that holds a profile's access.
 // The value is the enabled switches, comma separated ("view", "approve"); no row
 // means both are off.
@@ -94,4 +97,26 @@ func (s *Store) agentMay(ctx context.Context, profileID string, actor Actor, pic
 	}
 	a, err := s.AgentAccess(ctx, profileID)
 	return err == nil && pick(a)
+}
+
+// refuseAgentCreated is the rule that closes the loop "an agent adds a task and the same agent
+// approves it": a delegated agent approves only a task the operator wrote or a capture surface
+// filed. A task is an agent's when its source is agent, or when its creation event names anyone
+// but the operator ("you") or a capture ("chrome", "os", "capture"); a task whose creation cannot
+// be read counts as an agent's.
+func (s *Store) refuseAgentCreated(ctx context.Context, t Task) error {
+	rule := invalid("task #%d was created by an agent, and an agent approves only tasks the operator wrote or a capture filed: leave it in the Inbox for the operator", t.ID)
+	if t.Source.Kind == SourceAgent {
+		return rule
+	}
+	var creator string
+	err := s.db.QueryRowContext(ctx, `SELECT actor FROM task_events WHERE task_id = ? AND kind = 'created' ORDER BY id LIMIT 1`, t.ID).Scan(&creator)
+	if err != nil {
+		return rule
+	}
+	switch creator {
+	case "you", SourceChrome, SourceOS, "capture":
+		return nil
+	}
+	return rule
 }

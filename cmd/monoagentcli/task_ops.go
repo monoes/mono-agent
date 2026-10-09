@@ -158,7 +158,7 @@ the history records it as that agent, marked as delegated.`,
 			if err != nil {
 				// An agent is refused, unless the operator delegated approving (task agents allow
 				// --approve), read now. Then it must be named: the history says who approved.
-				if !agentMay(cfg, cmd, caller, func(a tasks.AgentAccess) bool { return a.Approve }) {
+				if !agentMay(cfg, cmd, caller, func(a tasks.AgentAccess) bool { return a.Approve && a.View }) {
 					return err
 				}
 				if actor, err = caller.agent(); err != nil {
