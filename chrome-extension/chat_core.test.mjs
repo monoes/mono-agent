@@ -31,6 +31,48 @@ test("a cap never splits an emoji", () => {
   assert.doesNotMatch(out, /[\ud800-\udbff]$/);
 });
 
+const utf8 = (s) => new TextEncoder().encode(s).length;
+const ctxOf = (o) => C.buildContext({ url: "https://a.example/", title: "", text: "", selection: "", ...o });
+
+// The server counts bytes (24,576 for the text, 8,192 for the selection, 512
+// for the title), so the client clips by bytes too: a page in any script is
+// shortened, never refused.
+test("caps count UTF-8 bytes, so a CJK, Cyrillic or emoji page still fits the server's limits", () => {
+  const server = { text: 24 * 1024, selection: 8 * 1024, title: 512, url: 2048 };
+  for (const [name, unit] of [["ascii", "a"], ["cjk", "世"], ["cyrillic", "д"], ["emoji", "😀"]]) {
+    const big = unit.repeat(30000);
+    const c = ctxOf({ title: big, text: big, selection: big });
+    for (const k of ["text", "selection", "title"]) {
+      assert.ok(utf8(c[k]) <= server[k], `${name} ${k}: ${utf8(c[k])} bytes`);
+      assert.ok(utf8(c[k]) > server[k] / 3, `${name} ${k} was cut far too short`);
+      assert.doesNotMatch(c[k], /[\ud800-\udbff]$/, `${name} ${k} ends in half an emoji`);
+      assert.ok(!c[k].includes("�"), `${name} ${k}`);
+    }
+  }
+  // 9,000 CJK characters (27,000 bytes): the report that started this.
+  assert.ok(utf8(ctxOf({ text: "世".repeat(9000) }).text) <= 24 * 1024);
+  const msg = C.checkMessage("世".repeat(9000));
+  assert.ok(utf8(msg) <= 16 * 1024, "the typed message is clipped to the server's 16 KiB too");
+});
+
+test("the address keeps scheme, host and path: no query, fragment or credentials", () => {
+  const cases = [
+    ["https://a.example/p?token=secret&x=1#frag", "https://a.example/p"],
+    ["https://user:pw@a.example:8443/p/q?x=1", "https://a.example:8443/p/q"],
+    ["http://a.example/#/route?token=1", "http://a.example/"],
+    ["https://a.example", "https://a.example/"],
+  ];
+  for (const [raw, want] of cases) assert.equal(ctxOf({ url: raw }).url, want, raw);
+  assert.equal(C.stripUrl("https://a.example/p?q=1#h"), "https://a.example/p");
+  assert.equal(C.stripUrl("chrome://settings"), "");
+  assert.equal(C.stripUrl("https://"), "");
+});
+
+test("a local file page is named, but its text and selection are not sent", () => {
+  const c = ctxOf({ url: "file:///home/me/notes.html?x=1#y", title: "notes", text: "private", selection: "private" });
+  assert.deepEqual(c, { url: "file:///home/me/notes.html", title: "notes", text: "", selection: "" });
+});
+
 test("a message is trimmed and an empty one is nothing", () => {
   assert.equal(C.checkMessage("  hi \n"), "hi");
   assert.equal(C.checkMessage("   "), "");

@@ -28,11 +28,11 @@
 (function (root) {
   "use strict";
 
-  const TEXT_CAP = 20000; // page text sent with a message
+  const TEXT_CAP = 20000; // page text sent with a message (UTF-8 bytes, like every cap but KEEP_*)
   const SELECTION_CAP = 8000;
   const TITLE_CAP = 300;
   const URL_CAP = 2000;
-  const MESSAGE_CAP = 20000; // what a person may send
+  const MESSAGE_CAP = 16 * 1024; // what a person may send (bytes: the server's own limit)
   const KEEP_MESSAGES = 60; // transcript kept in storage
   const KEEP_MESSAGE_CHARS = 40000;
   const KEEP_TOOLS = 20;
@@ -66,19 +66,61 @@
    */
   function buildContext(raw) {
     if (!raw || typeof raw !== "object") return null;
-    const url = clip(raw.url, URL_CAP);
-    if (!/^(https?|file):\/\//i.test(url)) return null;
+    const url = stripUrl(raw.url);
+    if (!url) return null;
+    // A local file's address and title are named; its text never leaves the
+    // machine's browser (it is usually the person's own notes and documents).
+    const local = /^file:/i.test(url);
     return {
       url,
-      title: clip(raw.title, TITLE_CAP).trim(),
-      text: clip(raw.text, TEXT_CAP),
-      selection: clip(raw.selection, SELECTION_CAP),
+      title: clipBytes(raw.title, TITLE_CAP).trim(),
+      text: local ? "" : clipBytes(raw.text, TEXT_CAP),
+      selection: local ? "" : clipBytes(raw.selection, SELECTION_CAP),
     };
+  }
+
+  /** utf8Length is how many bytes of UTF-8 a code point takes. */
+  const utf8Length = (cp) => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
+
+  /**
+   * clipBytes cuts to at most `n` UTF-8 bytes at a character boundary. The
+   * server counts bytes, so counting UTF-16 units here would let a CJK page
+   * through the client and fail on the server.
+   */
+  function clipBytes(s, n) {
+    const text = str(s);
+    if (text.length <= n / 4) return text; // cannot exceed n bytes
+    let bytes = 0;
+    let end = 0;
+    for (const ch of text) {
+      const size = utf8Length(ch.codePointAt(0));
+      if (bytes + size > n) break;
+      bytes += size;
+      end += ch.length;
+    }
+    return text.slice(0, end);
+  }
+
+  /**
+   * stripUrl keeps scheme, host and path of a web or file address: the query
+   * and fragment of a real page carry tokens, session ids and search terms,
+   * and credentials in the address are never sent. "" for anything else.
+   */
+  function stripUrl(raw) {
+    let u;
+    try {
+      u = new URL(clipBytes(raw, URL_CAP));
+    } catch {
+      return "";
+    }
+    if (!/^(https?|file):$/.test(u.protocol)) return "";
+    if (u.protocol !== "file:" && !u.hostname) return "";
+    return `${u.protocol}//${u.protocol === "file:" ? "" : u.host}${u.pathname}`;
   }
 
   /** checkMessage returns the trimmed message, or "" if there is nothing to send. */
   function checkMessage(text) {
-    return clip(str(text).trim(), MESSAGE_CAP);
+    return clipBytes(str(text).trim(), MESSAGE_CAP);
   }
 
   // ── Frames and events ──────────────────────────────────────────────
@@ -376,7 +418,7 @@
   }
 
   root.MonoChatCore = {
-    buildContext, checkMessage, parseProgress, normalizeEvents,
+    buildContext, stripUrl, clipBytes, checkMessage, parseProgress, normalizeEvents,
     newState, startTurn, applyEvent, finishTurn, failTurn, serialize, closeOpen,
     loadState, saveState, rememberConversation, validProfile, clip,
     convKey, logKey,

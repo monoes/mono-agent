@@ -54,7 +54,11 @@
   let remote = false; // a turn is running in the backend that this panel did not start
   let pollTimer = null;
   let loadSeq = 0;
+  // Sharing the page is on for the first message of a conversation only: a
+  // later message goes out without a page unless the chip is turned on again,
+  // so switching tabs mid-conversation never sends the new page unnoticed.
   let usePage = true;
+  let refusal = ""; // why the last send was not made (the page changed under the chip)
   let drawQueued = false;
   const nodes = new Map(); // message id -> { root, sig }
 
@@ -152,8 +156,9 @@
 
   function drawControls() {
     const ready = availability === "ready";
-    notice.hidden = !NOTICES[availability];
-    notice.textContent = NOTICES[availability] || "";
+    const shown = NOTICES[availability] || refusal;
+    notice.hidden = !shown;
+    notice.textContent = shown || "";
     stateEl.textContent = busy() ? "Replying…" : "";
     input.disabled = !ready;
     sendBtn.disabled = !ready || busy();
@@ -218,6 +223,8 @@
     remote = false;
     chat = await Core.loadState(chrome.storage.local, profile);
     if (mine !== loadSeq) return;
+    usePage = !chat.messages.length; // only a conversation's first message shares the page by default
+    refusal = "";
     nodes.forEach((n) => n.root.remove());
     nodes.clear();
     draw();
@@ -238,11 +245,24 @@
 
   // ── sending ──────────────────────────────────────────────────────
 
+  /**
+   * pageContext reads the page the chip showed. The worker is told that tab
+   * and address and refuses when the active tab is no longer them: the person
+   * switched tabs after the chip was drawn, and what they wrote was about the
+   * page they saw. -> { context } or { refused: why }.
+   */
   async function pageContext() {
     const p = pageNow();
-    const answer = await ask({ type: "chat_page_context", windowId: typeof here !== "undefined" ? here.windowId : undefined });
-    if (answer.ok && answer.context) return answer.context;
-    return p && pageShareable() ? Core.buildContext({ url: p.url, title: p.title, text: "", selection: "" }) : null;
+    const answer = await ask({
+      type: "chat_page_context",
+      windowId: typeof here !== "undefined" ? here.windowId : undefined,
+      expect: p ? { tabId: p.tabId, url: p.url } : undefined,
+    });
+    if (answer.ok === false && answer.code === "page_changed") {
+      return { refused: answer.error || "The page changed after you wrote this. Nothing was sent." };
+    }
+    if (answer.ok && answer.context) return { context: answer.context };
+    return { context: p && pageShareable() ? Core.buildContext({ url: p.url, title: p.title, text: "", selection: "" }) : null };
   }
 
   async function send(text, forcePage) {
@@ -252,11 +272,23 @@
     const tag = `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const sentFrom = profile;
     active = { tag };
+    refusal = "";
     input.value = "";
     draw();
 
     let context = null;
-    if (sharing) context = await pageContext();
+    if (sharing) {
+      const got = await pageContext();
+      if (!active || active.tag !== tag) return;
+      if (got.refused) {
+        active = null;
+        refusal = got.refused;
+        input.value = text; // nothing was sent: give back what was typed
+        draw();
+        return;
+      }
+      context = got.context;
+    }
     if (!active || active.tag !== tag) return;
 
     Core.startTurn(chat, message, context ? context.title || context.url : "");
@@ -278,7 +310,7 @@
     } else {
       Core.failTurn(chat, describeFailure(answer));
     }
-    usePage = true; // the choice is for one message
+    usePage = false; // the page was for this message; a follow-up shares nothing unless asked
     await save();
     draw();
     // The turn may have outlived this request (the worker slept, the socket
@@ -302,6 +334,8 @@
     if (busy()) return;
     ++loadSeq;
     chat = Core.newState(null);
+    usePage = true; // a new conversation shares its first page
+    refusal = "";
     await save(); // an empty conversation id: the next send starts a fresh one
     nodes.forEach((n) => n.root.remove());
     nodes.clear();

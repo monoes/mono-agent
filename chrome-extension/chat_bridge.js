@@ -79,9 +79,28 @@
     return tab || null;
   }
 
+  /**
+   * The page changed under the chip: `expect` is the tab id and address the
+   * panel showed the person. Comparing addresses ignores query and fragment,
+   * which are never sent anyway.
+   */
+  const sameAddress = (a, b) => {
+    const x = Core().stripUrl(a);
+    return !!x && x === Core().stripUrl(b);
+  };
+  const pageChanged = () => ({
+    ok: false,
+    code: "page_changed",
+    error: "The page changed after you wrote this: it is not the one shown above the message. Nothing was sent.",
+  });
+  const movedFrom = (expect, tab) =>
+    !!expect && (typeof expect !== "object" || expect.tabId !== tab.id || !sameAddress(tab.url, expect.url));
+
   async function pageContext(msg) {
     const tab = await targetTab(msg);
     if (!tab || !tab.id) return { ok: true, context: null };
+    if (movedFrom(msg.expect, tab)) return pageChanged();
+    const tabInfo = { id: tab.id, url: Core().stripUrl(tab.url) };
     // What the tab itself says is the fallback: a page we cannot read (the
     // web store, a PDF viewer, chrome://) still has an address and a title.
     const fallback = Core().buildContext({ url: tab.url, title: tab.title, text: "", selection: "" });
@@ -93,9 +112,12 @@
         timer = setTimeout(() => reject(new Error("the page did not answer")), CONTEXT_TIMEOUT_MS);
       });
       const [res] = await Promise.race([run, timeout]);
-      return { ok: true, context: Core().buildContext(res && res.result) || fallback };
+      // The page may have navigated by itself (history API) since the tab
+      // was queried: what was read must still be the page that was shown.
+      if (msg.expect && res && res.result && !sameAddress(res.result.url, msg.expect.url)) return pageChanged();
+      return { ok: true, context: Core().buildContext(res && res.result) || fallback, tab: tabInfo };
     } catch {
-      return { ok: true, context: fallback };
+      return { ok: true, context: fallback, tab: tabInfo };
     } finally {
       clearTimeout(timer);
     }

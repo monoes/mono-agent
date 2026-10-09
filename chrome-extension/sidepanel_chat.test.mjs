@@ -140,7 +140,71 @@ test("switching the page chip off leaves the page out of that one message only",
   await settle(30);
   assert.equal(lastOf(t.sent, "chat_send").context, null);
   assert.equal(t.sent.some((m) => m.type === "chat_page_context"), false, "the page is not even read");
-  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "true", "the next message shares again");
+  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "false", "and the page is not shared again on its own");
+});
+
+// The rule that stops "switched tabs, sent a different page": the page is
+// shared with the first message of a conversation; after that it is off until
+// the person turns the chip on again, and the chip says so.
+test("sharing the page is on for the first message only, and the chip says what is shared", async () => {
+  const ctx = { url: "https://a.example/p", title: "A page", text: "b", selection: "" };
+  const t = setup({ replies: { ...READY, chat_page_context: { ok: true, context: ctx }, chat_send: { ok: true, data: { conversation: "c", text: "r" } } } });
+  await settle();
+  assert.equal(t.els["chat-page"].textContent, "Using this page: A page");
+  t.type("first");
+  t.enter();
+  await settle(30);
+  assert.equal(lastOf(t.sent, "chat_send").context.title, "A page");
+  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "false");
+  assert.equal(t.els["chat-page"].textContent, "Not sharing this page");
+
+  t.type("second");
+  t.enter();
+  await settle(30);
+  assert.equal(lastOf(t.sent, "chat_send").context, null, "a follow-up carries no page");
+
+  t.els["chat-page"].fire("click");
+  assert.equal(t.els["chat-page"].textContent, "Using this page: A page");
+  t.type("third, about this page");
+  t.enter();
+  await settle(30);
+  assert.equal(lastOf(t.sent, "chat_send").context.title, "A page");
+  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "false", "off again afterwards");
+
+  t.els["chat-new"].fire("click");
+  await settle();
+  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "true", "a new conversation shares its first page");
+});
+
+test("a reopened conversation does not share the page until asked", async () => {
+  const { MonoChatCore: Core } = loadExtensionScripts(["chat_core.js"]);
+  const earlier = Core.newState(null);
+  Core.startTurn(earlier, "earlier", "");
+  earlier.conversation = "c-9";
+  const stored = { "chatConv:p-work": "c-9", "chatLog:p-work": Core.serialize(earlier) };
+  const t = setup({ stored, replies: { ...READY, chat_events: { ok: true, turn: "", events: [], turn_active: false } } });
+  t.doc.fire("panel:profiles");
+  await settle(40);
+  assert.equal(t.log().length > 0, true, "the earlier message was restored");
+  assert.equal(t.els["chat-page"].attrs["aria-pressed"], "false");
+});
+
+test("the send is refused, with a message, when the page is no longer the one shown", async () => {
+  const t = setup({
+    replies: { ...READY, chat_page_context: { ok: false, code: "page_changed", error: "The page changed after you wrote this. Nothing was sent." } },
+  });
+  await settle();
+  t.type("about the page I was looking at");
+  t.enter();
+  await settle(30);
+  const ask = lastOf(t.sent, "chat_page_context");
+  assert.deepEqual(ask.expect, { tabId: 5, url: "https://a.example/p" }, "the worker is told which tab and address the chip showed");
+  assert.equal(t.sent.some((m) => m.type === "chat_send"), false, "nothing is sent");
+  assert.equal(t.els["chat-input"].value, "about the page I was looking at", "what was typed is given back");
+  assert.equal(t.els["chat-notice"].hidden, false);
+  assert.match(t.els["chat-notice"].textContent, /page changed/);
+  assert.equal(t.log().length, 0, "no turn was started");
+  assert.equal(t.els["chat-send"].disabled, false, "the panel is usable again");
 });
 
 test("a page that cannot be shared is not offered, and nothing of it is sent", async () => {
