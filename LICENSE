@@ -1,0 +1,116 @@
+MONOES PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Nokhodian UG (haftungsbeschränkt), Berlin, Germany
+("Licensor"). All rights reserved.
+
+This license applies to Mono Agent (the "Software"): the monoagentcli
+program, the desktop app, the browser extension and everything distributed
+with them. By installing, copying or using the Software you accept these
+terms. If you do not accept them, do not use the Software.
+
+1. GRANT
+
+The Licensor grants you a personal, non-exclusive, non-transferable,
+revocable license to install and run the Software, in the form in which the
+Licensor distributes it, on devices you own or control, for your own personal
+or internal business purposes. The Software is licensed, not sold. All rights
+not expressly granted are reserved by the Licensor.
+
+2. ACCOUNT
+
+Using the Software requires a monoes.me account. The Software contacts
+monoes.me to sign you in and to keep the sign-in valid; what it sends is
+listed in SECURITY.md. You must keep your credentials secret and are
+responsible for what is done with your account.
+
+3. PRICE
+
+The Software is free of charge for now. The Licensor may charge for the
+Software, or for parts of it, in the future. A fee applies only to versions
+and features released after the Licensor has announced it, and never
+retroactively to a version you have already received under a free license.
+
+4. RESTRICTIONS
+
+You may not, and may not allow anyone else to:
+
+a) copy, modify, translate or create derivative works of the Software, except
+   as these terms or mandatory law allow;
+b) distribute, sell, rent, lease, lend, sublicense, publish or host the
+   Software, or offer it as a service to third parties;
+c) reverse engineer, decompile or disassemble the Software, or try to
+   extract its source code, except to the extent mandatory law (including
+   section 69e of the German Copyright Act) allows this despite this clause;
+d) remove, bypass, disable or tamper with the account check, signature
+   checks, license notices or any other protective mechanism;
+e) remove or alter copyright, trademark or other notices;
+f) use the Software to break the law or the terms of a third-party platform
+   you automate, or to infringe the rights of others. You are responsible for
+   how you use the Software with those platforms.
+
+5. BENCHMARKS AND COMPARISONS
+
+You may run benchmarks and tests of the Software, compare it with other
+products, and publish the results, free of charge and without asking. Please
+state the version you tested and how you tested it, and keep what you
+publish accurate and not misleading. This section gives you no right to copy
+or reuse the Software, and section 4 still applies to everything else.
+
+6. FEEDBACK
+
+Bug reports, suggestions and other feedback you send to the Licensor may be
+used by the Licensor without restriction and without payment. The Licensor
+does not accept source code contributions to the Software.
+
+7. THIRD-PARTY COMPONENTS
+
+The Software contains third-party components under their own licenses, which
+are listed in the file NOTICE shipped with the Software. Those licenses apply
+to those components and are not changed by these terms.
+
+8. EARLIER VERSIONS
+
+Versions of the Software published up to and including v0.133.0 were
+released under the MIT License. That grant stays valid for the copies
+published under it. These terms apply to every later version.
+
+9. WARRANTY AND LIABILITY
+
+While the Software is provided free of charge it is provided "as is", without
+warranty of any kind, and the Licensor is liable only for intent and gross
+negligence, for injury to life, body or health, and where mandatory law
+(such as the German Product Liability Act) requires otherwise. If the
+Software is provided for a fee, the Licensor is also liable for the breach of
+essential contractual duties, limited to the damage that is foreseeable and
+typical for the contract. Liability for loss of data is limited to the cost
+of restoring data that would have been lost despite regular backups.
+
+The Software automates actions on your behalf, including in your browser and
+on third-party platforms. You are responsible for reviewing what a workflow
+does before you run it.
+
+10. TERM AND TERMINATION
+
+This license lasts until terminated. It ends automatically if you breach it.
+The Licensor may end it for a version or for your account with notice, and
+you may end it at any time by deleting the Software. On termination you must
+stop using the Software and delete all copies. Sections 4, 6, 7, 9, 11 and 12
+survive termination.
+
+11. GOVERNING LAW AND VENUE
+
+The law of the Federal Republic of Germany applies, excluding its conflict of
+law rules and the UN Convention on Contracts for the International Sale of
+Goods. If you are a merchant, a legal entity under public law or a special
+fund under public law, the courts of Berlin, Germany have exclusive
+jurisdiction. If you are a consumer, mandatory consumer protection law of
+your country of residence remains unaffected.
+
+12. GENERAL
+
+If a provision is or becomes invalid, the rest stays valid. The Licensor may
+update these terms for future versions; the terms that came with a version
+govern that version. The English text is authoritative.
+
+Contact: security@monoes.me for security reports; https://monoes.me for
+everything else.

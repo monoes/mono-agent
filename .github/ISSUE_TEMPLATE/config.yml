@@ -1,0 +1,15 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Ask a question / discuss ideas"
+    url: https://github.com/monoes/mono-agent/discussions
+    about: >
+      Usage questions, "is this the right tool for X", and feature ideas go
+      here, not the issue tracker. See SUPPORT.md for the full breakdown of
+      where to take what.
+  - name: "Not sure Mono Agent is the right tool? Read the comparison first"
+    url: https://github.com/monoes/mono-agent/blob/main/docs/COMPARISON.md
+    about: >
+      Honest comparison against n8n, Activepieces, Windmill, and Node-RED —
+      including when to use n8n instead. Tool-selection questions belong
+      there, not in the bug tracker. Vulnerability reports go through
+      SECURITY.md, never through issues.
