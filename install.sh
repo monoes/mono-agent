@@ -2,15 +2,16 @@
 # install.sh — install the mono-agent CLI (monoagentcli).
 #
 # Default path (no GitHub API needed):
-#   1. fetch manifest.json from the manifest URL
-#   2. choose the "cli" asset for this host's os/arch
-#   3. download it from the asset's url
-#   4. verify its sha256 against the manifest
-#   5. verify the manifest's Ed25519 signature (manifest.json.sig) when
-#      `openssl` with Ed25519 support is present AND a public key is
-#      configured (RELEASE_PUBKEY below). While no key is configured the
-#      install is checksum-only and says so; it never claims a signature
-#      was verified when it was not.
+#   1. fetch manifest.json from the latest GitHub release of monoes/mono-agent
+#      (monoes.me is tried second)
+#   2. verify the manifest's Ed25519 signature (manifest.json.sig) against the
+#      pinned release key (RELEASE_PUBKEY below). This needs `openssl` with
+#      Ed25519 support; without it the install is checksum-only and says so.
+#      It never claims a signature was verified when it was not.
+#   3. choose the "cli" asset for this host's os/arch (and, with --app, the
+#      "app" asset)
+#   4. download it from the asset's url
+#   5. verify its sha256 against the manifest
 #
 # Legacy path (kept simple, labelled in the output): the GitHub releases API
 # plus SHA256SUMS.txt. Used only when MONOAGENT_ALLOW_LEGACY_GITHUB=1, or
@@ -21,35 +22,64 @@
 # Windows: download the .exe from the releases page.
 #
 # Flags:
+#   --app         also install the desktop app (Linux amd64: into
+#                 ~/.local/share/monoagent with a launcher entry; macOS arm64:
+#                 MonoAgent.app into /Applications, or ~/Applications when
+#                 /Applications is not writable)
 #   --no-verify   skip signature and checksum verification (not recommended)
 #
 # Environment:
-#   INSTALL_DIR                      install location (default /usr/local/bin)
-#   MONOAGENT_MANIFEST_URL           manifest URL (tests, mirrors)
+#   INSTALL_DIR                      install location. Default: /usr/local/bin
+#                                    when it is writable without sudo, else
+#                                    ~/.local/bin. An INSTALL_DIR you set
+#                                    yourself uses sudo when it needs it.
+#   MONOAGENT_APP_DIR                where --app puts the app (default above)
+#   MONOAGENT_MANIFEST_URL           manifest URL (tests, mirrors); only this one is tried
 #   MONOAGENT_RELEASE_PUBKEY         base64 raw Ed25519 public key; overrides RELEASE_PUBKEY
 #   MONOAGENT_ALLOW_LEGACY_GITHUB=1  use the GitHub API path directly
+#   MONOAGENT_TEST_APPLICATIONS_DIR  tests only: stands in for /Applications
+#                                    when --app picks the macOS app folder
 set -euo pipefail
 
 # Repository used by the legacy path.
 REPO="monoes/mono-agent"
 BIN="monoagentcli"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-MANIFEST_URL="${MONOAGENT_MANIFEST_URL:-https://monoes.me/mono-agent/releases/latest/manifest.json}"
+# The manifest is a release asset; GitHub redirects latest/download to the
+# newest release. manifest.json.sig sits next to it under the same name + .sig.
+if [ -n "${MONOAGENT_MANIFEST_URL:-}" ]; then
+  MANIFEST_URLS="$MONOAGENT_MANIFEST_URL"
+else
+  MANIFEST_URLS="https://github.com/${REPO}/releases/latest/download/manifest.json https://monoes.me/mono-agent/releases/latest/manifest.json"
+fi
+MANIFEST_URL=""   # the one that answered, set by install_from_manifest
 # Pinned manifest-signing public key: base64 of the raw 32-byte Ed25519 key,
-# as printed by `monoagentcli release keygen`. Empty until the owner generates
-# the key; empty means checksum-only installs.
-RELEASE_PUBKEY=""
+# as printed by `monoagentcli release keygen`. Key id 3b3e972f459a3151; the
+# same key is pinned in internal/release/keys.go.
+RELEASE_PUBKEY="/GDrvFCQb64EBe+tYDkFWNFXeiwysdr4sAB8kc+b2kU="
 RELEASE_PUBKEY="${MONOAGENT_RELEASE_PUBKEY:-$RELEASE_PUBKEY}"
 
 err() { printf 'install.sh: error: %s\n' "$*" >&2; exit 1; }
 
 NO_VERIFY=0
+WITH_APP=0
 for arg in "$@"; do
   case "$arg" in
     --no-verify) NO_VERIFY=1 ;;
-    *)            err "unknown option '$arg' (supported: --no-verify)" ;;
+    --app)       WITH_APP=1 ;;
+    *)            err "unknown option '$arg' (supported: --app, --no-verify)" ;;
   esac
 done
+
+# Default install dir: /usr/local/bin only when this user can write it without
+# sudo, else ~/.local/bin. An INSTALL_DIR the user set is kept as given (sudo
+# is used for it below when needed).
+if [ -z "${INSTALL_DIR:-}" ]; then
+  if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    INSTALL_DIR="${HOME}/.local/bin"
+  fi
+fi
 
 command -v curl >/dev/null 2>&1 || err "curl is required but not installed"
 
@@ -127,6 +157,13 @@ verify_manifest_signature() {
     echo "NOTE: this openssl cannot read Ed25519 keys; manifest signature verification is SKIPPED (checksum-only)." >&2
     return 2
   fi
+  # Verifying needs pkeyutl -rawin (OpenSSL 1.1.1+). An openssl that reads the
+  # key but lacks it (such as a LibreSSL build) would fail every signature, so
+  # it is treated like one without Ed25519.
+  if ! openssl pkeyutl -help 2>&1 | grep -q -e '-rawin'; then
+    echo "NOTE: this openssl cannot verify raw Ed25519 signatures (no pkeyutl -rawin); manifest signature verification is SKIPPED (checksum-only)." >&2
+    return 2
+  fi
   curl --retry 3 --fail --location -fsSL -o "${m_tmp}/manifest.json.sig" "$m_sigurl" || return 1
   # Contract: ONE line "<keyid> <base64sig>". keyid is the hex of the first 8
   # bytes of SHA-256 of the raw public key. Anything else is malformed.
@@ -168,14 +205,59 @@ ASSET="monoagentcli-${os}-${arch}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 SRC=""   # the downloaded file to install, set by either path
+APP_SRC=""   # the downloaded desktop app archive (--app), set by either path
 TAG=""
 
 # ── Manifest path ────────────────────────────────────────────────────────────
-# Returns 10 when the manifest cannot be fetched (caller may fall back);
+# manifest_fetch_asset <kind> — download this host's <kind> ("cli" or "app")
+# asset named in the verified manifest into $TMP_DIR and check its sha256.
+# Sets A_NAME and A_FILE.
+manifest_fetch_asset() {
+  f_kind="$1"
+  entry=""
+  # Asset objects hold no nested braces, so each is a {...} with no inner { or }.
+  while IFS= read -r obj; do
+    if [ "$(json_field "$obj" os)" = "$os" ] && [ "$(json_field "$obj" arch)" = "$arch" ] \
+       && [ "$(json_field "$obj" kind)" = "$f_kind" ]; then
+      entry="$obj"; break
+    fi
+  done < <(printf '%s' "$flat" | grep -o '{[^{}]*}' || true)
+  if [ -z "$entry" ]; then
+    [ "$f_kind" = cli ] && err "the manifest has no CLI asset for ${os}/${arch}"
+    err "the release has no desktop app for ${os}/${arch} (apps are built for linux/amd64, darwin/arm64 and windows/amd64)"
+  fi
+  A_NAME="$(json_field "$entry" name)"
+  a_url="$(json_field "$entry" url)"
+  a_sha="$(json_field "$entry" sha256)"
+  [ -n "$A_NAME" ] && [ -n "$a_url" ] || err "the manifest entry for ${os}/${arch} is incomplete"
+  asset_url_allowed "$a_url" \
+    || err "the manifest asset url '${a_url}' is not https on an allowed host (monoes.me, github.com, GitHub release assets). Nothing was installed."
+  case "$A_NAME" in */*|..*) err "the manifest asset name '${A_NAME}' is not a plain file name" ;; esac
+
+  echo "Downloading ${A_NAME} (${TAG:-unknown version})..."
+  A_FILE="${TMP_DIR}/${A_NAME}"
+  curl --retry 3 --fail --location --progress-bar -o "$A_FILE" "$a_url" \
+    || err "download failed: $a_url"
+
+  if [ "$NO_VERIFY" -ne 1 ]; then
+    [ -n "$a_sha" ] || err "the manifest gives no sha256 for ${A_NAME}"
+    got="$(sha256_of "$A_FILE")"
+    [ "$got" = "$a_sha" ] \
+      || err "checksum mismatch for ${A_NAME} (manifest ${a_sha}, downloaded ${got}). Nothing was installed."
+    echo "Checksum verified: ${A_NAME} SHA256 ${got}"
+  fi
+}
+
+# Returns 10 when no manifest URL can be fetched (caller may fall back);
 # any other failure exits.
 install_from_manifest() {
-  echo "Fetching release manifest: ${MANIFEST_URL}"
-  curl --retry 3 --fail --location -fsSL -o "${TMP_DIR}/manifest.json" "$MANIFEST_URL" || return 10
+  for u in $MANIFEST_URLS; do
+    echo "Fetching release manifest: ${u}"
+    if curl --retry 3 --fail --location -fsSL -o "${TMP_DIR}/manifest.json" "$u"; then
+      MANIFEST_URL="$u"; break
+    fi
+  done
+  [ -n "$MANIFEST_URL" ] || return 10
 
   if [ "$NO_VERIFY" -eq 1 ]; then
     echo "WARNING: --no-verify given; skipping signature and checksum verification." >&2
@@ -183,7 +265,7 @@ install_from_manifest() {
     sig_status=0
     verify_manifest_signature "${TMP_DIR}/manifest.json" "${MANIFEST_URL}.sig" "$TMP_DIR" || sig_status=$?
     case "$sig_status" in
-      0) echo "Manifest signature verified (Ed25519)." ;;
+      0) echo "Manifest signature verified (Ed25519, key ${m_keyid})." ;;
       2) ;;
       *) err "manifest signature verification FAILED; the manifest is not signed by the pinned release key. Nothing was installed." ;;
     esac
@@ -204,45 +286,23 @@ install_from_manifest() {
         || err "the manifest expired at ${m_exp}; ask the maintainers for a fresh release. Nothing was installed."
     fi
   fi
-  # Asset objects hold no nested braces, so each is a {...} with no inner { or }.
-  entry=""
-  while IFS= read -r obj; do
-    if [ "$(json_field "$obj" os)" = "$os" ] && [ "$(json_field "$obj" arch)" = "$arch" ] \
-       && [ "$(json_field "$obj" kind)" = "cli" ]; then
-      entry="$obj"; break
-    fi
-  done < <(printf '%s' "$flat" | grep -o '{[^{}]*}' || true)
-  [ -n "$entry" ] || err "the manifest has no CLI asset for ${os}/${arch}"
-  a_name="$(json_field "$entry" name)"
-  a_url="$(json_field "$entry" url)"
-  a_sha="$(json_field "$entry" sha256)"
-  [ -n "$a_name" ] && [ -n "$a_url" ] || err "the manifest entry for ${os}/${arch} is incomplete"
-  asset_url_allowed "$a_url" \
-    || err "the manifest asset url '${a_url}' is not https on an allowed host (monoes.me, github.com, GitHub release assets). Nothing was installed."
-  case "$a_name" in */*|..*) err "the manifest asset name '${a_name}' is not a plain file name" ;; esac
 
-  echo "Downloading ${a_name} (${TAG:-unknown version})..."
-  curl --retry 3 --fail --location --progress-bar -o "${TMP_DIR}/${a_name}" "$a_url" \
-    || err "download failed: $a_url"
-
-  if [ "$NO_VERIFY" -ne 1 ]; then
-    [ -n "$a_sha" ] || err "the manifest gives no sha256 for ${a_name}"
-    got="$(sha256_of "${TMP_DIR}/${a_name}")"
-    [ "$got" = "$a_sha" ] \
-      || err "checksum mismatch for ${a_name} (manifest ${a_sha}, downloaded ${got}). Nothing was installed."
-    echo "Checksum verified: ${a_name} SHA256 ${got}"
-  fi
-
-  case "$a_name" in
+  manifest_fetch_asset cli
+  case "$A_NAME" in
     *.tar.gz|*.tgz)
-      command -v tar >/dev/null 2>&1 || err "tar is required to unpack ${a_name}"
+      command -v tar >/dev/null 2>&1 || err "tar is required to unpack ${A_NAME}"
       mkdir -p "${TMP_DIR}/x"
-      tar -xzf "${TMP_DIR}/${a_name}" -C "${TMP_DIR}/x" || err "could not unpack ${a_name}"
+      tar -xzf "$A_FILE" -C "${TMP_DIR}/x" || err "could not unpack ${A_NAME}"
       SRC="$(find "${TMP_DIR}/x" -type f -name "$BIN" | head -n 1)"
-      [ -n "$SRC" ] || err "${a_name} does not contain ${BIN}"
+      [ -n "$SRC" ] || err "${A_NAME} does not contain ${BIN}"
       ;;
-    *) SRC="${TMP_DIR}/${a_name}" ;;
+    *) SRC="$A_FILE" ;;
   esac
+
+  if [ "$WITH_APP" -eq 1 ]; then
+    manifest_fetch_asset app
+    APP_SRC="$A_FILE"
+  fi
 }
 
 # ── Legacy path: GitHub API + SHA256SUMS.txt ─────────────────────────────────
@@ -269,6 +329,24 @@ install_from_github_legacy() {
     echo "Checksum verified: ${ASSET} SHA256 ${VERIFIED}"
   fi
   SRC="${TMP_DIR}/${ASSET}"
+
+  if [ "$WITH_APP" -eq 1 ]; then
+    case "${os}/${arch}" in
+      linux/amd64)  app_asset="MonoAgent-linux-amd64.tar.gz" ;;
+      darwin/arm64) app_asset="MonoAgent-darwin-arm64.zip" ;;
+      *) err "the release has no desktop app for ${os}/${arch} (apps are built for linux/amd64, darwin/arm64 and windows/amd64)" ;;
+    esac
+    echo "Downloading ${app_asset} (${TAG})..."
+    curl --retry 3 --fail --location --progress-bar -o "${TMP_DIR}/${app_asset}" \
+      "https://github.com/${REPO}/releases/download/${TAG}/${app_asset}" \
+      || err "download failed: ${app_asset}"
+    if [ "$NO_VERIFY" -ne 1 ]; then
+      VERIFIED="$(verify_checksum "${TMP_DIR}" "${app_asset}")" \
+        || err "checksum verification FAILED for ${app_asset}; the desktop app was not installed."
+      echo "Checksum verified: ${app_asset} SHA256 ${VERIFIED}"
+    fi
+    APP_SRC="${TMP_DIR}/${app_asset}"
+  fi
 }
 
 if [ "${MONOAGENT_ALLOW_LEGACY_GITHUB:-0}" = "1" ]; then
@@ -277,7 +355,7 @@ else
   rc=0
   install_from_manifest || rc=$?
   if [ "$rc" -eq 10 ]; then
-    echo "Manifest unreachable (${MANIFEST_URL}); falling back to the legacy GitHub path." >&2
+    echo "Manifest unreachable (${MANIFEST_URLS}); falling back to the legacy GitHub path." >&2
     install_from_github_legacy
   fi
 fi
@@ -308,6 +386,94 @@ $SUDO mkdir -p "$INSTALL_DIR" || err "cannot create ${INSTALL_DIR}"
 $SUDO mv "$SRC" "${INSTALL_DIR}/${BIN}" || err "cannot install into ${INSTALL_DIR}"
 
 echo "Installed: ${INSTALL_DIR}/${BIN} (${TAG:-unknown version}, ${os}/${arch})"
+
+# ── Desktop app (--app) ──────────────────────────────────────────────────────
+# Linux: the tarball's MonoAgent-linux-amd64 and its bundled monoagentcli go
+# side by side into ~/.local/share/monoagent (the app runs the CLI next to it),
+# with a ~/.local/bin/monoagent link and a launcher entry. macOS: MonoAgent.app
+# into /Applications, or ~/Applications when that is not writable. No sudo.
+install_app() {
+  case "$os" in
+    linux)
+      app_dir="${MONOAGENT_APP_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/monoagent}"
+      mkdir -p "${TMP_DIR}/app" "$app_dir" "${HOME}/.local/bin" \
+        || err "cannot create ${app_dir}"
+      tar -xzf "$APP_SRC" -C "${TMP_DIR}/app" MonoAgent-linux-amd64 monoagentcli \
+        || err "could not unpack the desktop app"
+      chmod +x "${TMP_DIR}/app/MonoAgent-linux-amd64" "${TMP_DIR}/app/monoagentcli"
+      mv -f "${TMP_DIR}/app/MonoAgent-linux-amd64" "${app_dir}/MonoAgent" \
+        && mv -f "${TMP_DIR}/app/monoagentcli" "${app_dir}/monoagentcli" \
+        || err "cannot install into ${app_dir}"
+      ln -sfn "${app_dir}/MonoAgent" "${HOME}/.local/bin/monoagent"
+      apps_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+      mkdir -p "$apps_dir"
+      cat > "${apps_dir}/monoagent.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=MonoAgent
+GenericName=Workflow Automation
+Exec=${app_dir}/MonoAgent
+Icon=monoagent
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=monoagent
+DESKTOP
+      if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+      fi
+      echo "Installed the desktop app: ${app_dir}/MonoAgent (launcher: MonoAgent, command: monoagent)"
+      ;;
+    darwin)
+      command -v unzip >/dev/null 2>&1 || err "unzip is required to unpack the desktop app"
+      if [ -n "${MONOAGENT_APP_DIR:-}" ]; then
+        app_dir="$MONOAGENT_APP_DIR"
+      elif [ -w "${MONOAGENT_TEST_APPLICATIONS_DIR:-/Applications}" ]; then
+        app_dir="${MONOAGENT_TEST_APPLICATIONS_DIR:-/Applications}"
+      else
+        app_dir="${HOME}/Applications"
+      fi
+      mkdir -p "${TMP_DIR}/app" "$app_dir" || err "cannot create ${app_dir}"
+      unzip -q "$APP_SRC" -d "${TMP_DIR}/app" || err "could not unpack the desktop app"
+      [ -d "${TMP_DIR}/app/MonoAgent.app" ] || err "the desktop app archive has no MonoAgent.app"
+      # Move the old bundle into the temp dir (cleaned on exit) rather than
+      # deleting it in place, so a failed move leaves the old app working.
+      if [ -e "${app_dir}/MonoAgent.app" ]; then
+        mv "${app_dir}/MonoAgent.app" "${TMP_DIR}/MonoAgent.app.old" || err "cannot replace ${app_dir}/MonoAgent.app"
+      fi
+      if ! mv "${TMP_DIR}/app/MonoAgent.app" "${app_dir}/MonoAgent.app"; then
+        [ -e "${TMP_DIR}/MonoAgent.app.old" ] && mv "${TMP_DIR}/MonoAgent.app.old" "${app_dir}/MonoAgent.app"
+        err "cannot install into ${app_dir}"
+      fi
+      echo "Installed the desktop app: ${app_dir}/MonoAgent.app"
+      ;;
+  esac
+}
+if [ -n "$APP_SRC" ]; then install_app; fi
+
+# ── PATH hint ────────────────────────────────────────────────────────────────
+case ":${PATH}:" in
+  *":${INSTALL_DIR}:"*) ;;
+  *)
+    echo
+    echo "${INSTALL_DIR} is not on your PATH. Add it, then open a new terminal:"
+    echo "  bash:  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.bashrc"
+    echo "  zsh:   echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
+    echo "  fish:  fish_add_path ${INSTALL_DIR}"
+    echo
+    ;;
+esac
+
+# An older copy elsewhere on PATH (e.g. a previous sudo install into
+# /usr/local/bin) would shadow this one.
+found="$(command -v "${BIN}" 2>/dev/null || true)"
+if [ -n "$found" ] && [ "$found" != "${INSTALL_DIR}/${BIN}" ]; then
+  echo
+  echo "Note: ${found} comes first on your PATH and is not the copy just installed."
+  echo "Remove it (it may need sudo) or put ${INSTALL_DIR} earlier on your PATH."
+  echo
+fi
+
 echo "Verify with:  ${INSTALL_DIR}/${BIN} version"
+echo "Sign in to monoes.me (required; nothing else works before it):  ${INSTALL_DIR}/${BIN} account login"
 echo "Account and offline behavior:  ${INSTALL_DIR}/${BIN} ref account"
-echo "Sign in to monoes.me (required):  ${INSTALL_DIR}/${BIN} account login"
+echo "Browser extension:  ${INSTALL_DIR}/${BIN} extension install"
